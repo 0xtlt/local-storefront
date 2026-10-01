@@ -1,0 +1,26 @@
+name: Set up Rust
+description: Installs the Rust toolchain pinned in mise.toml, with extra compilation targets.
+
+inputs:
+  targets:
+    description: Target triples to install besides the host's, separated by spaces.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install the toolchain pinned in mise.toml
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        version=$(sed -n 's/^rust *= *{ *version *= *"\([^"]*\)".*/\1/p' mise.toml)
+        if [ -z "$version" ]; then
+          echo "::error file=mise.toml::could not read the Rust version"
+          exit 1
+        fi
+        rustup toolchain install "$version" --profile minimal --no-self-update
+        for target in $TARGETS; do
+          rustup target add --toolchain "$version" "$target"
+        done
+        echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"

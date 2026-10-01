@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
-repository = "https://github.com/thomastastet/shopify-local-theme"
+repository = "https://github.com/0xtlt/shopify-local-theme"
 
 [workspace.dependencies]
 slt-liquid = { path = "crates/liquid" }

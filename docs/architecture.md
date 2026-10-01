@@ -78,6 +78,26 @@ mise run oracle:golden  # regenerate the golden expectations from it
 mise run docs:fetch     # download shopify.dev's Liquid reference for the conformance test
 ```
 
+## Releasing
+
+Set the version in `Cargo.toml` (`workspace.package.version`), commit, then push a tag with
+the same version:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` runs the tests, builds `slt` for macOS, Linux (glibc and
+static musl) and Windows on x86-64 and ARM64, and publishes a GitHub release with one archive
+per platform and a `SHA256SUMS` file. A tag that does not match the version of the crate fails
+before anything is built. Tags with a suffix (`v0.2.0-rc.1`) are published as prereleases.
+
+To try the builds without releasing, run the workflow by hand from the Actions tab: the
+archives are then attached to the run instead of a release.
+
+The Linux targets are cross-compiled with `cargo-zigbuild`, which is what lets the glibc
+builds target glibc 2.17 whatever the runner has. The Rust version comes from `mise.toml`.
+
 After changing the data model, regenerate the field reference with
 `UPDATE_SNAPSHOTS=1 cargo test -p slt-core --test docs`; after an intentional change of the
 rendered HTML, regenerate the snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p slt-core --test render`.

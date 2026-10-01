@@ -33,7 +33,30 @@ limit, and shows exactly the catalog, cart and customer each test asks for.
 
 ## Install
 
-The toolchain is managed by [mise](https://mise.jdx.dev):
+Each [release](https://github.com/0xtlt/shopify-local-theme/releases) has a binary per
+platform, with nothing else to install:
+
+| Platform | Archive |
+|---|---|
+| macOS, Apple silicon | `slt-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `slt-x86_64-apple-darwin.tar.gz` |
+| Linux x86-64 | `slt-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `slt-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux x86-64, static (Alpine) | `slt-x86_64-unknown-linux-musl.tar.gz` |
+| Linux ARM64, static (Alpine) | `slt-aarch64-unknown-linux-musl.tar.gz` |
+| Windows x86-64 | `slt-x86_64-pc-windows-msvc.zip` |
+| Windows ARM64 | `slt-aarch64-pc-windows-msvc.zip` |
+
+The names do not carry the version, so the latest one has a stable URL, which is handy in CI:
+
+```bash
+curl -fsSL https://github.com/0xtlt/shopify-local-theme/releases/latest/download/slt-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin slt
+```
+
+`SHA256SUMS` in the release lists the checksum of every archive. The Linux builds need
+glibc 2.17 or later; the static ones need nothing.
+
+To build from source, the toolchain is managed by [mise](https://mise.jdx.dev):
 
 ```bash
 mise install
