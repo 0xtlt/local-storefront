@@ -1,0 +1,19 @@
+[package]
+name = "slt-liquid"
+description = "A Liquid template engine that mirrors the semantics of Shopify's reference implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+indexmap.workspace = true
+rust_decimal.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+chrono-tz.workspace = true

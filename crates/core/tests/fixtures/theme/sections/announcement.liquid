@@ -1,0 +1,9 @@
+<p>{{ section.settings.text }} | {{ section.location }} | {{ section.index }} | {{ section.id }}</p>
+{% schema %}
+{
+  "name": "Announcement",
+  "tag": "aside",
+  "class": "announcement",
+  "settings": [{ "type": "text", "id": "text", "label": "Text", "default": "Default text" }]
+}
+{% endschema %}

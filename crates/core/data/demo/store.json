@@ -1,0 +1,48 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "shop": {
+    "name": "Local Supply Co.",
+    "description": "Everyday essentials, made to last. A demo store for local theme development.",
+    "email": "hello@localsupply.example",
+    "phone": "+1 555 010 2030",
+    "currency": "USD",
+    "timezone": "America/New_York",
+    "address": {
+      "company": "Local Supply Co.",
+      "address1": "150 Elgin Street",
+      "address2": "8th floor",
+      "city": "Ottawa",
+      "province": "Ontario",
+      "province_code": "ON",
+      "country": "Canada",
+      "country_code": "CA",
+      "zip": "K2P 1L4"
+    },
+    "policies": {
+      "privacy_policy": { "body": "<p>We only collect the data we need to fulfil your order, and we never sell it.</p>" },
+      "refund_policy": { "body": "<p>Changed your mind? Send it back within 30 days for a full refund.</p>" },
+      "shipping_policy": { "body": "<p>Orders ship within two business days. Free shipping over $75.</p>" },
+      "terms_of_service": { "body": "<p>By using this store you agree to these terms.</p>" }
+    },
+    "enabled_payment_types": ["visa", "master", "american_express", "paypal", "apple_pay", "google_pay", "shopify_pay"],
+    "metafields": {
+      "custom": {
+        "announcement": "Free shipping on orders over $75"
+      }
+    }
+  },
+  "localization": {
+    "countries": [
+      { "iso_code": "US", "popular": true },
+      { "iso_code": "CA", "popular": true },
+      { "iso_code": "FR" }
+    ],
+    "languages": [
+      { "iso_code": "en" },
+      { "iso_code": "fr" }
+    ]
+  },
+  "session": {
+    "cart": { "items": [] }
+  }
+}

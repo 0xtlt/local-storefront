@@ -1,0 +1,1 @@
+{ "sections": { "main": { "type": "main-product" } }, "order": ["main"], "wrapper": "div#product.wrap[data-x=1]" }

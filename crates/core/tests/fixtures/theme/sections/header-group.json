@@ -1,0 +1,9 @@
+{
+  "type": "header",
+  "name": "Header group",
+  "sections": {
+    "announcement": { "type": "announcement", "settings": { "text": "Free shipping" } },
+    "hidden": { "type": "announcement", "disabled": true, "settings": { "text": "Hidden" } }
+  },
+  "order": ["announcement", "hidden"]
+}

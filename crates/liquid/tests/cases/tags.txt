@@ -1,0 +1,105 @@
+## assign, capture, case, increment/decrement, raw, comment, liquid, echo, render, include
+#! data {"s": "hello", "n": 5, "arr": [1, 2, 3], "h": {"a": 1}, "t": true}
+#! partial simple Simple partial
+#! partial args [{{ a }}|{{ b }}|{{ s }}|{{ args }}]
+#! partial item ({{ item }}{{ forloop.index }}{{ forloop.last }})
+#! partial with_var <{{ with_var }}|{{ alias }}>
+#! partial nested outer({% render 'simple' %})
+#! partial uses_include {% include 'simple' %}
+#! partial assigns {% assign leaked = 'leak' %}{{ leaked }}
+#! partial errors {{ 1 | divided_by: 0 }}
+#! partial counter {% increment c %}
+#! partial dir/sub sub:{{ sub }}
+#! partial loop {% for i in (1..2) %}{{ i }}{% break %}{% endfor %}
+#! partial recursive {% render 'recursive' %}
+{% assign x = 1 %}{{ x }}{% assign x = x | plus: 1 %}{{ x }}{% assign y = 'a' | append: 'b' | upcase %}{{ y }}
+{% assign x = arr %}{{ x.size }}{% assign z = nil %}[{{ z }}]{% assign q = undefined %}[{{ q }}]{% assign b = false %}[{{ b }}]
+{% assign a-b = 1 %}{{ a-b }}|{% assign a.b = 2 %}{{ a.b }}|{% assign c = 'x' %}{{ c }}
+{% assign x=1 %}{{ x }}{% assign  y  =  'two'  %}{{ y }}
+{% assign x = 'a' 'b' %}{{ x }}
+{% assign %}
+{% assign x %}
+{% assign x = %}[{{ x }}]
+{% assign foo = (1..3) %}{{ foo | join: '-' }}
+{% assign x = s == 'hello' %}{{ x }}
+{% capture c %}a{{ n }}b{% endcapture %}{{ c }}{{ c | size }}
+{% capture c %}{% endcapture %}[{{ c }}]{% if c == '' %}empty{% endif %}{% if c == blank %}blank{% endif %}
+{% capture 'quoted' %}q{% endcapture %}{{ quoted }}
+{% capture a %}{% capture b %}inner{% endcapture %}outer{{ b }}{% endcapture %}{{ a }}
+{% capture %}x{% endcapture %}
+{% case n %}{% when 5 %}five{% when 6 %}six{% else %}other{% endcase %}
+{% case n %}{% when 4, 5 %}a{% when 5 or 6 %}b{% endcase %}
+{% case n %}{% when 5, 5 %}twice{% endcase %}
+{% case s %}{% when 'hello' %}hi{% when 'bye' %}bye{% endcase %}{% case s %}{% when 'x' %}x{% else %}default{% endcase %}
+{% case n %}{% when 1 %}a{% else %}b{% else %}c{% endcase %}
+{% case n %}{% else %}first-else{% when 5 %}five{% endcase %}
+{% case n %}ignored{% when 5 %}five{% endcase %}
+{% case undefined %}{% when nil %}nil{% endcase %}|{% case '' %}{% when blank %}blank{% when empty %}empty{% endcase %}
+{% case arr %}{% when arr %}same{% endcase %}{% case n %}{% when n %}var{% endcase %}{% case 5.0 %}{% when 5 %}float{% endcase %}
+{% case n %}{% when %}x{% endcase %}
+{% case %}{% when 1 %}x{% endcase %}
+{% case n %}{% when 5 %}a{% when 5 %}b{% endcase %}
+{% increment i %}{% increment i %}{% increment i %}|{{ i }}|{% decrement i %}{% decrement d %}{% decrement d %}|{{ d }}
+{% assign i = 10 %}{% increment i %}{% increment i %}{{ i }}
+{% increment a %}{% assign a = 5 %}{% increment a %}{{ a }}
+{% raw %}{{ not }} {% parsed %}{% endraw %}|{% raw %}{% endraw %}|{% raw %} {{ {% endraw %}
+{% raw %}a{% raw %}b{% endraw %}c
+{% comment %}{{ hidden }} {% if %} {% endcomment %}visible
+{% comment %}a{% comment %}b{% endcomment %}c{% endcomment %}d
+{% comment %}{% raw %}{% endcomment %}{% endraw %}{% endcomment %}after
+{% # inline comment %}a{%- # another -%} b
+{% #\n # multi\n # line\n %}ok
+{% doc %}\n @param {string} a\n{% enddoc %}after-doc
+{% echo s %}{% echo n | plus: 1 %}{% echo 'a' | upcase %}
+{% liquid\n assign x = 1\n echo x\n if x == 1\n  echo 'one'\n endif\n %}
+{% liquid\n for i in arr\n  echo i\n  unless forloop.last\n   echo ','\n  endunless\n endfor\n %}
+{%- liquid\n  # comment line\n  assign a = 'x'\n\n  case a\n    when 'x'\n      echo 'X'\n    else\n      echo 'other'\n  endcase\n-%}|
+{% liquid\n capture c\n  echo 'in'\n endcapture\n echo c\n echo c\n %}
+{% liquid\n echo 'a'\n liquid echo 'b'\n echo 'c'\n %}
+{% liquid\n comment\n  echo 'hidden'\n endcomment\n echo 'shown'\n %}
+{% liquid\n assign x = 'multi word' | upcase\n echo x | append: '!'\n %}
+{% liquid\n if true\n %}
+{% liquid\n endif\n %}
+{% liquid\n unknown_tag\n %}
+{% liquid %}|{% liquid\n\n\n %}|
+{% render 'simple' %}|{% render "simple" %}
+{% render 'args', a: 1, b: 'two' %}|{% render 'args', a: n, b: s %}|{% render 'args' a: 1 %}|{% render 'args', args: 'self' %}
+{% render 'item' for arr %}|{% render 'item' for arr as item %}|{% render 'with_var' for arr as alias %}
+{% render 'with_var' with s %}|{% render 'with_var' with s as alias %}|{% render 'with_var' with arr %}|{% render 'with_var', with_var: 'named' %}
+{% render 'item' for s %}|{% render 'item' for h %}|{% render 'item' for (1..2) %}|{% render 'item' for undefined %}
+{% render 'nested' %}|{% render 'dir/sub', sub: 1 %}|{% render 'dir/sub' with 2 %}
+{% render 'uses_include' %}
+{% assign leaked = 'outer' %}{% render 'assigns' %}{{ leaked }}
+{% render 'errors' %}
+{% render 'missing' %}
+{% render simple %}
+{% render 'counter' %}{% render 'counter' %}{% increment c %}
+{% for i in (1..2) %}{% render 'loop' %}{{ i }}{% endfor %}
+{% render 'args', a: forloop.index %}{% for i in (1..2) %}{% render 'args', a: forloop.index, b: i %}{% endfor %}
+{% include 'simple' %}|{% include 'args', a: 1 %}|{% include 'args' %}
+{% assign a = 'ctx' %}{% include 'args' %}{{ a }}
+{% include 'assigns' %}{{ leaked }}
+{% include 'with_var' with s %}|{% include 'with_var' for arr %}|{% include 'item' with arr %}
+{% assign name = 'simple' %}{% include name %}|{% include undefined %}
+{% assign simple = 'var named like partial' %}{% include 'simple' %}{% include 'with_var' %}
+{% include 'missing' %}
+{% include 'counter' %}{% include 'counter' %}{% increment c %}
+{% unknown %}
+{% endif %}
+{% else %}
+{% if true %}
+{% if true %}{% endfor %}
+{% for i in arr %}{% endif %}
+{% if true %}{% else %}{% elsif true %}x{% endif %}
+{% for i in arr %}{% else %}{% else %}{% endfor %}
+{% capture c %}
+{% raw %}
+{% comment %}
+{{ unterminated
+{% unterminated
+{% if true %}{{ unterminated }{% endif %}
+{% %}
+{%  %}x
+{% 123 %}
+{% if-not %}
+{% render 'recursive' %}

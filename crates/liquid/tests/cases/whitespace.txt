@@ -1,0 +1,41 @@
+## Whitespace control and the blank-block rule
+a {{- 'b' -}} c
+a   {{- 'b' }}   c
+a   {{ 'b' -}}   c
+a \n {{- 'b' -}} \n c
+a\n{%- if true -%}\n b \n{%- endif -%}\nc
+a\n{% if true %}\n b \n{% endif %}\nc
+a\n{% if true %}\n{% assign x = 1 %}\n{% endif %}\nc
+a\n{% if true %}\n  {% comment %}hidden{% endcomment %}\n{% endif %}\nc
+a\n{% if false %}\n x \n{% else %}\n  {% assign x = 1 %}\n{% endif %}\nc
+a\n{% if true %}\n{{ 'x' }}\n{% endif %}\nc
+a\n{% for i in (1..2) %}\n  {% assign x = i %}\n{% endfor %}\nc{{ x }}
+a\n{% for i in (1..2) %}\n  {{ i }}\n{% endfor %}\nc
+a\n{% unless false %}\n\n{% endunless %}\nc
+a\n{% case 1 %}\n{% when 1 %}\n  {% assign y = 2 %}\n{% endcase %}\nc{{ y }}
+a\n{% case 1 %}\n  junk \n{% when 1 %}\n  hit \n{% endcase %}\nc
+a\n{% if true %}\n  {% if true %}\n    {% assign x = 1 %}\n  {% endif %}\n{% endif %}\nc
+a\n{% if true %}\n  {% capture z %} cap {% endcapture %}\n{% endif %}\nc[{{ z }}]
+a\n{% if true %}\n  {% increment q %}\n{% endif %}\nc
+a\n{% if true %}\n  {% raw %}{% endraw %}\n{% endif %}\nc
+a\n{% if true %}\n  {% raw %}r{% endraw %}\n{% endif %}\nc
+a\n{% if true %}\n  {% # inline %}\n{% endif %}\nc
+a\n{% if true %}\n  {% liquid\n assign x = 1\n %}\n{% endif %}\nc
+a\n{% if true %}\n  {% liquid\n echo 'e'\n %}\n{% endif %}\nc
+a\n{% if true %}\n  {% break %}\n{% endif %}\nc
+a\n{% if true %}\n  {% cycle 'a', 'b' %}\n{% endif %}\nc
+  {%- assign x = 1 -%}  \n  x
+{%- 'not a tag' -%}
+a {%- comment -%} b {%- endcomment -%} c
+a {% comment %} b {% endcomment -%}   c
+a   {%- raw -%}  b  {%- endraw -%}   c
+a {{- '' -}} b
+ \t\n {{- 'x' -}} \t\n y
+{{ 'a' }}\n\n{{- 'b' }}
+{% assign a = 'x' -%}\n\n  {{ a }}
+a{% assign x = 1 -%}{% assign y = 2 %} b
+a {%- assign x = 1 %}{{ x }} b
+{%-if true-%}yes{%-endif-%}
+{%- if true -%}\n  nested {{- ' x ' -}} end \n{%- endif -%}
+{{-'a'-}}{{-'b'-}}
+a{{- -}}b

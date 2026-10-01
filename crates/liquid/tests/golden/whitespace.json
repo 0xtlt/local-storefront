@@ -1,0 +1,285 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 2,
+      "template": "a {{- 'b' -}} c",
+      "data": {},
+      "partials": {},
+      "expected": "abc"
+    },
+    {
+      "line": 3,
+      "template": "a   {{- 'b' }}   c",
+      "data": {},
+      "partials": {},
+      "expected": "ab   c"
+    },
+    {
+      "line": 4,
+      "template": "a   {{ 'b' -}}   c",
+      "data": {},
+      "partials": {},
+      "expected": "a   bc"
+    },
+    {
+      "line": 5,
+      "template": "a \n {{- 'b' -}} \n c",
+      "data": {},
+      "partials": {},
+      "expected": "abc"
+    },
+    {
+      "line": 6,
+      "template": "a\n{%- if true -%}\n b \n{%- endif -%}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "abc"
+    },
+    {
+      "line": 7,
+      "template": "a\n{% if true %}\n b \n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n b \n\nc"
+    },
+    {
+      "line": 8,
+      "template": "a\n{% if true %}\n{% assign x = 1 %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc"
+    },
+    {
+      "line": 9,
+      "template": "a\n{% if true %}\n  {% comment %}hidden{% endcomment %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc"
+    },
+    {
+      "line": 10,
+      "template": "a\n{% if false %}\n x \n{% else %}\n  {% assign x = 1 %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  \n\nc"
+    },
+    {
+      "line": 11,
+      "template": "a\n{% if true %}\n{{ 'x' }}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nx\n\nc"
+    },
+    {
+      "line": 12,
+      "template": "a\n{% for i in (1..2) %}\n  {% assign x = i %}\n{% endfor %}\nc{{ x }}",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc2"
+    },
+    {
+      "line": 13,
+      "template": "a\n{% for i in (1..2) %}\n  {{ i }}\n{% endfor %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  1\n\n  2\n\nc"
+    },
+    {
+      "line": 14,
+      "template": "a\n{% unless false %}\n\n{% endunless %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc"
+    },
+    {
+      "line": 15,
+      "template": "a\n{% case 1 %}\n{% when 1 %}\n  {% assign y = 2 %}\n{% endcase %}\nc{{ y }}",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc2"
+    },
+    {
+      "line": 16,
+      "template": "a\n{% case 1 %}\n  junk \n{% when 1 %}\n  hit \n{% endcase %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  hit \n\nc"
+    },
+    {
+      "line": 17,
+      "template": "a\n{% if true %}\n  {% if true %}\n    {% assign x = 1 %}\n  {% endif %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc"
+    },
+    {
+      "line": 18,
+      "template": "a\n{% if true %}\n  {% capture z %} cap {% endcapture %}\n{% endif %}\nc[{{ z }}]",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc[ cap ]"
+    },
+    {
+      "line": 19,
+      "template": "a\n{% if true %}\n  {% increment q %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  0\n\nc"
+    },
+    {
+      "line": 20,
+      "template": "a\n{% if true %}\n  {% raw %}{% endraw %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc"
+    },
+    {
+      "line": 21,
+      "template": "a\n{% if true %}\n  {% raw %}r{% endraw %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  r\n\nc"
+    },
+    {
+      "line": 22,
+      "template": "a\n{% if true %}\n  {% # inline %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc"
+    },
+    {
+      "line": 23,
+      "template": "a\n{% if true %}\n  {% liquid\n assign x = 1\n %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\nc"
+    },
+    {
+      "line": 24,
+      "template": "a\n{% if true %}\n  {% liquid\n echo 'e'\n %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  e\n\nc"
+    },
+    {
+      "line": 25,
+      "template": "a\n{% if true %}\n  {% break %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  "
+    },
+    {
+      "line": 26,
+      "template": "a\n{% if true %}\n  {% cycle 'a', 'b' %}\n{% endif %}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\n\n  a\n\nc"
+    },
+    {
+      "line": 27,
+      "template": "  {%- assign x = 1 -%}  \n  x",
+      "data": {},
+      "partials": {},
+      "expected": "x"
+    },
+    {
+      "line": 28,
+      "template": "{%- 'not a tag' -%}",
+      "data": {},
+      "partials": {},
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag '{%- 'not a tag' -%}'"
+    },
+    {
+      "line": 29,
+      "template": "a {%- comment -%} b {%- endcomment -%} c",
+      "data": {},
+      "partials": {},
+      "expected": "ac"
+    },
+    {
+      "line": 30,
+      "template": "a {% comment %} b {% endcomment -%}   c",
+      "data": {},
+      "partials": {},
+      "expected": "a c"
+    },
+    {
+      "line": 31,
+      "template": "a   {%- raw -%}  b  {%- endraw -%}   c",
+      "data": {},
+      "partials": {},
+      "expected": "a  b  c"
+    },
+    {
+      "line": 32,
+      "template": "a {{- '' -}} b",
+      "data": {},
+      "partials": {},
+      "expected": "ab"
+    },
+    {
+      "line": 33,
+      "template": " \t\n {{- 'x' -}} \t\n y",
+      "data": {},
+      "partials": {},
+      "expected": "xy"
+    },
+    {
+      "line": 34,
+      "template": "{{ 'a' }}\n\n{{- 'b' }}",
+      "data": {},
+      "partials": {},
+      "expected": "ab"
+    },
+    {
+      "line": 35,
+      "template": "{% assign a = 'x' -%}\n\n  {{ a }}",
+      "data": {},
+      "partials": {},
+      "expected": "x"
+    },
+    {
+      "line": 36,
+      "template": "a{% assign x = 1 -%}{% assign y = 2 %} b",
+      "data": {},
+      "partials": {},
+      "expected": "a b"
+    },
+    {
+      "line": 37,
+      "template": "a {%- assign x = 1 %}{{ x }} b",
+      "data": {},
+      "partials": {},
+      "expected": "a1 b"
+    },
+    {
+      "line": 38,
+      "template": "{%-if true-%}yes{%-endif-%}",
+      "data": {},
+      "partials": {},
+      "expected": "yes"
+    },
+    {
+      "line": 39,
+      "template": "{%- if true -%}\n  nested {{- ' x ' -}} end \n{%- endif -%}",
+      "data": {},
+      "partials": {},
+      "expected": "nested x end"
+    },
+    {
+      "line": 40,
+      "template": "{{-'a'-}}{{-'b'-}}",
+      "data": {},
+      "partials": {},
+      "expected": "ab"
+    },
+    {
+      "line": 41,
+      "template": "a{{- -}}b",
+      "data": {},
+      "partials": {},
+      "expected": "ab"
+    }
+  ]
+}

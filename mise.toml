@@ -1,0 +1,60 @@
+# Toolchain + tasks for shopify-local-theme. Run `mise install` once, then `mise run <task>`.
+[tools]
+rust = { version = "1.98.1", components = "clippy,rustfmt" }
+# Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem).
+ruby = "3.4.10"
+
+[env]
+SLT_HORIZON_DIR = "{{config_root}}/themes/horizon"
+
+[tasks.build]
+description = "Build the slt binary (release)"
+run = "cargo build --release -p slt"
+
+[tasks.install]
+description = "Build slt and install it into ~/.cargo/bin"
+run = "cargo install --path crates/cli --locked"
+
+[tasks.test]
+description = "Run the whole test suite"
+run = "cargo test --workspace"
+
+[tasks.lint]
+description = "Clippy on the whole workspace, warnings are errors"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.fmt]
+description = "Format the code"
+run = "cargo fmt --all"
+
+[tasks.check]
+description = "fmt check + clippy + tests"
+depends = ["lint", "test"]
+run = "cargo fmt --all -- --check"
+
+[tasks."horizon:install"]
+description = "Clone (or update) Shopify's Horizon theme into themes/horizon"
+run = """
+if [ -d themes/horizon/.git ]; then
+  git -C themes/horizon pull --ff-only
+else
+  git clone --depth 1 https://github.com/Shopify/horizon.git themes/horizon
+fi
+"""
+
+[tasks."horizon:serve"]
+description = "Serve the Horizon theme with the demo store data"
+depends = ["horizon:install"]
+run = "cargo run --release -p slt -- serve --theme themes/horizon"
+
+[tasks."oracle:install"]
+description = "Install Shopify's reference liquid gem locally (used to generate golden tests)"
+run = "GEM_HOME=$PWD/.oracle/gems gem install liquid --no-document"
+
+[tasks."oracle:golden"]
+description = "Regenerate crates/liquid/tests/golden/*.json from the reference liquid gem"
+run = "GEM_HOME=$PWD/.oracle/gems ruby tools/oracle/generate_golden.rb"
+
+[tasks."docs:fetch"]
+description = "Download Shopify's Liquid reference (objects/filters/tags + example outputs) into .cache/"
+run = "tools/docs/fetch.sh"

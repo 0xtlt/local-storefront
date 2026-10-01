@@ -1,0 +1,26 @@
+## date filter (the oracle runs in UTC)
+#! data {"iso": "2024-01-05T09:07:03Z", "plain": "2024-03-14 15:30:45", "d": "2023-12-25", "ts": 1704445623, "ts_str": "1704445623", "human": "March 14, 2016", "z": null, "n": 5, "bad": "not a date", "e": ""}
+{{ iso | date: '%Y-%m-%d %H:%M:%S' }} {{ plain | date: '%Y-%m-%d %H:%M:%S' }} {{ d | date: '%Y-%m-%d %H:%M:%S' }} {{ ts | date: '%Y-%m-%d %H:%M:%S' }} {{ ts_str | date: '%Y-%m-%d %H:%M:%S' }} {{ human | date: '%Y-%m-%d' }}
+{{ iso | date: '%a %A %b %B %d %e %j %m %y %Y %C' }}
+{{ iso | date: '%H %I %k %l %M %S %p %P %L %N %z %:z %::z %Z %s' }}
+{{ iso | date: '%u %w %U %W %V %G %g' }}
+{{ iso | date: '%c | %D | %F | %T | %R | %r | %x | %X | %v' }}
+{{ iso | date: '%-d %-m %-H %-I %-M %-S %-j %-y' }} {{ iso | date: '%_d %_m %_H %3d %05d %10B| %-10B| %^B %^a %#B %#p %^p %010Y' }}
+{{ iso | date: '%% %n %t %Q %E %O %' }}|
+{{ iso | date: '%% %n %t %Q %E %O' }}|
+{{ plain | date: '%I:%M %p' }} {{ '2024-01-01 00:00:00' | date: '%I %l %p' }} {{ '2024-01-01 12:00:00' | date: '%I %l %p' }} {{ '2024-12-31 23:59:59' | date: '%j %U %W %V %G' }} {{ '2021-01-01' | date: '%U %W %V %G %g %u %a' }}
+{{ bad | date: '%Y' }} {{ e | date: '%Y' }}| {{ z | date: '%Y' }}| {{ n | date: '%Y' }} {{ iso | date: '' }} {{ iso | date: z }} {{ 2.5 | date: '%Y' }} {{ true | date: '%Y' }}
+{{ iso | date }}
+{{ iso | date: '%Y', 'x' }}
+{{ '2024-01-05' | date: '%B %-d, %Y' }} {{ 'Jan 5 2024' | date: '%F' }} {{ '5 Jan 2024' | date: '%F' }} {{ '2024/01/05' | date: '%F' }} {{ 'January 5, 2024 3:30 PM' | date: '%F %T' }} {{ 'Fri, 05 Jan 2024 09:07:03 +0000' | date: '%F %T' }} {{ '2024-01-05T09:07:03+00:00' | date: '%F %T %z' }} {{ '20240105' | date: '%F' }}
+{{ '2024-01-05 09:07:03 UTC' | date: '%F %T %Z' }} {{ '2024-01-05T09:07:03.123Z' | date: '%F %T.%L %3N %6N' }} {{ '2024-02-29' | date: '%j' }} {{ '0' | date: '%F %T' }} {{ 0 | date: '%F' }} {{ -1 | date: '%F %T' }}
+{{ 'NOW' | date: '%Y' | size }} {{ 'Today' | date: '%Y' | size }} {{ 'now' | date: '%s' | size }}
+{{ iso | date: 'plain text' }} {{ iso | date: '%Y%m%d%H%M%S' }} {{ iso | date: 'Week %U of %Y' }} {{ iso | date: n }}
+{{ iso | date: '%-5d|%_5d|%05d|%5d|%-_5d|%^5a|%-5a|%05a|%_3Y|%3Y|%-Y|%10N|%2N|%0N|%1L|%12L' }}
+{{ iso | date: '%10Z|%-Z|%^Z|%#Z|%#a|%#b|%#A|%#h|%10c|%-10F|%^c|%20T|%015F' }}
+{{ iso | date: '%e|%-e|%0e|%3e|%k|%-k|%0k|%l|%0l|%-l|%s|%10s|%-s|%_15s' }}
+{{ iso | date: '%C|%-C|%4C|%G|%-G|%8G|%g|%V|%-V|%U|%-U|%j|%-j|%_j|%5j|%y|%-y|%_y|%4y|%m|%_m|%u|%3u|%w|%_3w' }}
+{{ iso | date: '%%|%5%|%-%|%n|%3n|%t|%p|%-p|%5p|%05p|%P|%^P|%#P|%#p|%^#p' }}
+{{ iso | date: '%Ey|%OH|%Ex|%E|%O|%Q|%J|%:|%:z|%::z|%:::z|%::::z|% Y|%!Y|%+' }}
+{{ iso | date: '%10' }}
+{{ iso | date: 'a %-' }}

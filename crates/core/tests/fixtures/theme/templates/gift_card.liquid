@@ -1,0 +1,6 @@
+{% layout none %}
+<p class="code">{{ gift_card.code | format_code }}|{{ gift_card.last_four_characters }}</p>
+<p class="balance">{{ gift_card.balance | money }} of {{ gift_card.initial_value | money }} {{ gift_card.currency }}</p>
+<p class="state">enabled={{ gift_card.enabled }} expired={{ gift_card.expired }} expires={{ gift_card.expires_on | date: '%Y-%m-%d' | default: 'never' }}</p>
+<p class="owner">{{ gift_card.customer.first_name | default: 'nobody' }} / {{ gift_card.recipient.nickname | default: 'nobody' }} / {{ gift_card.product.title | default: 'no product' }}</p>
+<a href="{{ gift_card.url }}">{{ gift_card.qr_identifier }}</a>

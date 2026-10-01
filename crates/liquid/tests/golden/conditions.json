@@ -1,0 +1,1318 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 3,
+      "template": "{% if t %}1{% endif %}{% if fa %}2{% endif %}{% if z %}3{% endif %}{% if e %}4{% endif %}{% if zero %}5{% endif %}{% if ea %}6{% endif %}{% if eh %}7{% endif %}{% if undefined %}8{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "14567"
+    },
+    {
+      "line": 4,
+      "template": "{% if n == 5 %}a{% endif %}{% if n == f %}b{% endif %}{% if n == num_str %}c{% endif %}{% if n != 4 %}d{% endif %}{% if n <> 4 %}e{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abde"
+    },
+    {
+      "line": 5,
+      "template": "{% if n > 4 %}a{% endif %}{% if n >= 5 %}b{% endif %}{% if n < 6 %}c{% endif %}{% if n <= 5 %}d{% endif %}{% if n > 5 %}e{% endif %}{% if f < 5.5 %}f{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abcdf"
+    },
+    {
+      "line": 6,
+      "template": "{% if s == 'hello' %}a{% endif %}{% if s != 'x' %}b{% endif %}{% if s > 'a' %}c{% endif %}{% if s < 'z' %}d{% endif %}{% if 'B' < 'a' %}e{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abcde"
+    },
+    {
+      "line": 7,
+      "template": "{% if s contains 'ell' %}a{% endif %}{% if s contains 'x' %}b{% endif %}{% if arr contains 2 %}c{% endif %}{% if arr contains '2' %}d{% endif %}{% if strs contains 'a' %}e{% endif %}{% if h contains 'a' %}f{% endif %}{% if h contains 'b' %}g{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "acef"
+    },
+    {
+      "line": 8,
+      "template": "{% if s contains n %}a{% endif %}{% if 'a5b' contains n %}b{% endif %}{% if z contains 'a' %}c{% endif %}{% if s contains z %}d{% endif %}{% if n contains 5 %}e{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "b"
+    },
+    {
+      "line": 9,
+      "template": "{% if e == blank %}a{% endif %}{% if ws == blank %}b{% endif %}{% if z == blank %}c{% endif %}{% if fa == blank %}d{% endif %}{% if ea == blank %}e{% endif %}{% if eh == blank %}f{% endif %}{% if s == blank %}g{% endif %}{% if zero == blank %}h{% endif %}{% if t == blank %}i{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abcdef"
+    },
+    {
+      "line": 10,
+      "template": "{% if e == empty %}a{% endif %}{% if ws == empty %}b{% endif %}{% if z == empty %}c{% endif %}{% if fa == empty %}d{% endif %}{% if ea == empty %}e{% endif %}{% if eh == empty %}f{% endif %}{% if s == empty %}g{% endif %}{% if zero == empty %}h{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "aef"
+    },
+    {
+      "line": 11,
+      "template": "{% if blank == e %}a{% endif %}{% if empty == ea %}b{% endif %}{% if s != blank %}c{% endif %}{% if z != empty %}d{% endif %}{% if undefined == blank %}e{% endif %}{% if undefined == empty %}f{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abcde"
+    },
+    {
+      "line": 12,
+      "template": "{% if z == nil %}a{% endif %}{% if z == null %}b{% endif %}{% if undefined == nil %}c{% endif %}{% if e == nil %}d{% endif %}{% if fa == nil %}e{% endif %}{% if z == false %}f{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abc"
+    },
+    {
+      "line": 13,
+      "template": "{% if t and t %}a{% endif %}{% if t and fa %}b{% endif %}{% if fa or t %}c{% endif %}{% if fa or fa %}d{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "ac"
+    },
+    {
+      "line": 14,
+      "template": "{% if true or false and false %}a{% endif %}{% if false and false or true %}b{% endif %}{% if true and false or true %}c{% endif %}{% if false or true and false %}d{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "ac"
+    },
+    {
+      "line": 15,
+      "template": "{% if t == true %}a{% endif %}{% if fa == false %}b{% endif %}{% if t == 'true' %}c{% endif %}{% if 1 == true %}d{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "ab"
+    },
+    {
+      "line": 16,
+      "template": "{% if arr == arr %}a{% endif %}{% if arr == ea %}b{% endif %}{% if h == h %}c{% endif %}{% if arr.size == 3 %}d{% endif %}{% if arr.first == 1 %}e{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "acde"
+    },
+    {
+      "line": 17,
+      "template": "{% if n > z %}a{% else %}b{% endif %}{% if z < n %}c{% else %}d{% endif %}{% if z == z %}e{% endif %}{% if z >= z %}f{% else %}g{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "bdeg"
+    },
+    {
+      "line": 18,
+      "template": "{% if n > 'a' %}x{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): comparison of Integer with String failed"
+    },
+    {
+      "line": 19,
+      "template": "{% if 'a' > n %}x{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): comparison of String with 5 failed"
+    },
+    {
+      "line": 20,
+      "template": "{% if f > 'a' %}x{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): comparison of Float with String failed"
+    },
+    {
+      "line": 21,
+      "template": "{% if 'a' < 1.5 %}x{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): comparison of String with 1.5 failed"
+    },
+    {
+      "line": 22,
+      "template": "{% if arr > 1 %}a{% else %}b{% endif %}{% if t > fa %}c{% else %}d{% endif %}{% if h > 1 %}e{% else %}f{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "bdf"
+    },
+    {
+      "line": 23,
+      "template": "{% if n == 5 %}a{% elsif n == 6 %}b{% else %}c{% endif %}{% if n == 4 %}a{% elsif n == 5 %}b{% else %}c{% endif %}{% if n == 4 %}a{% elsif n == 6 %}b{% else %}c{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abc"
+    },
+    {
+      "line": 24,
+      "template": "{% unless t %}a{% else %}b{% endunless %}{% unless fa %}c{% endunless %}{% unless fa %}d{% elsif t %}e{% else %}f{% endunless %}{% unless t %}g{% elsif t %}h{% else %}i{% endunless %}{% unless t %}g{% elsif fa %}h{% else %}i{% endunless %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "bcdhi"
+    },
+    {
+      "line": 25,
+      "template": "{% if s %}{% if n %}nested{% endif %}{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "nested"
+    },
+    {
+      "line": 26,
+      "template": "{% if (1..5) contains 3 %}a{% endif %}{% if (1..5) contains 7 %}b{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 27,
+      "template": "{% if s.size > 3 %}a{% endif %}{% if s.size == 5 %}b{% endif %}{% if arr.size >= arr.last %}c{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abc"
+    },
+    {
+      "line": 28,
+      "template": "{% if 'a' == \"a\" %}a{% endif %}{% if 1.0 == 1 %}b{% endif %}{% if '1' == 1 %}c{% endif %}{% if nil == nil %}d{% endif %}{% if nil %}e{% else %}f{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abdf"
+    },
+    {
+      "line": 29,
+      "template": "{% if empty %}a{% else %}b{% endif %}{% if blank %}c{% else %}d{% endif %}{% if '' %}e{% endif %}{% if 0 %}f{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "acef"
+    },
+    {
+      "line": 30,
+      "template": "{% if n==5 %}a{% endif %}{% if n>=5 %}b{% endif %}{% if s=='hello' %}c{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "abc",
+      "lax": ""
+    },
+    {
+      "line": 31,
+      "template": "{% if n == 5 and s == 'hello' or fa %}a{% endif %}{% if fa or n == 5 and s == 'x' %}b{% else %}c{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "ac"
+    },
+    {
+      "line": 32,
+      "template": "{% if s contains 'h' and arr contains 3 %}a{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 33,
+      "template": "{% if e %}{% else %}else{% endif %}|{% if t %}{% endif %}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "||"
+    },
+    {
+      "line": 34,
+      "template": "{% if n %}a{% else %}b{% else %}c{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 35,
+      "template": "{% if n != n %}a{% elsif true %}b{% elsif true %}c{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "b"
+    },
+    {
+      "line": 36,
+      "template": "{% if blank == blank %}a{% endif %}{% if empty == empty %}b{% endif %}{% if blank == empty %}c{% endif %}{% if e contains blank %}d{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "d"
+    },
+    {
+      "line": 37,
+      "template": "{% if ws.size > 0 and ws == blank %}a{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 38,
+      "template": "{% assign v = n | plus: 1 %}{% if v == 6 %}a{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 39,
+      "template": "{% if h.a %}a{% endif %}{% if h.b %}b{% endif %}{% if h.a == 1 %}c{% endif %}{% if h['a'] > 0 %}d{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "acd"
+    },
+    {
+      "line": 40,
+      "template": "{% if arr[0] == 1 and arr[1] == 2 %}a{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 41,
+      "template": "{% if \"x\" == 'x' and 'a b' contains ' ' %}a{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 42,
+      "template": "{% if s == 'hello' or s == \"world\" %}a{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 43,
+      "template": "{% if true %}a{% endif %}{% if false %}b{% endif %}{% if nil %}c{% endif %}{% if null %}d{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "a"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+/* Managed by the theme editor */
+{
+  "current": {
+    "accent": "#EA5AB9",
+    "logo": "shopify://shop_images/logo.png",
+    "sections": {
+      "footer": {
+        "type": "footer",
+        "settings": { "note": "Stored note" },
+        "blocks": {
+          "link-1": { "type": "link", "settings": { "label": "Stored link", "url": "shopify://pages/about" } }
+        },
+        "block_order": ["link-1"]
+      }
+    }
+  }
+}

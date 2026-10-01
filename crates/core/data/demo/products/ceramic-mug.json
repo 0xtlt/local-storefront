@@ -1,0 +1,26 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Ceramic Mug",
+  "description": "<p>Hand-thrown stoneware with a satin glaze. Dishwasher safe, microwave safe, and just the right weight in the hand.</p>",
+  "type": "Home",
+  "tags": ["kitchen", "ceramics", "bestseller"],
+  "options": ["Glaze"],
+  "price": 2200,
+  "media": [
+    { "src": "products/mug-oat.jpg", "alt": "Ceramic mug in oat glaze", "width": 1600, "height": 1600 },
+    { "src": "products/mug-slate.jpg", "alt": "Ceramic mug in slate glaze", "width": 1600, "height": 1600 },
+    { "src": "products/mug-rust.jpg", "alt": "Ceramic mug in rust glaze", "width": 1600, "height": 1600 },
+    {
+      "media_type": "external_video",
+      "host": "youtube",
+      "external_id": "dQw4w9WgXcQ",
+      "alt": "A day in the ceramic studio",
+      "preview_image": { "src": "products/mug-video-poster.jpg", "width": 1920, "height": 1080 }
+    }
+  ],
+  "variants": [
+    { "options": ["Oat"], "sku": "MUG-OAT", "inventory_quantity": 30, "image": "products/mug-oat.jpg" },
+    { "options": ["Slate"], "sku": "MUG-SLT", "inventory_quantity": 18, "image": "products/mug-slate.jpg" },
+    { "options": ["Rust"], "sku": "MUG-RST", "inventory_quantity": 0, "inventory_policy": "continue", "image": "products/mug-rust.jpg" }
+  ]
+}

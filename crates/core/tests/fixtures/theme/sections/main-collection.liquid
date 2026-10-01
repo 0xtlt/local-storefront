@@ -1,0 +1,21 @@
+<h1>{{ collection.title }} ({{ collection.products_count }}/{{ collection.all_products_count }})</h1>
+{% paginate collection.products by settings.page_size %}
+<ul>
+{%- for product in collection.products %}
+<li><a href="{{ product.url | within: collection }}">{{ product.title }}</a> {{ product.price | money }}</li>
+{%- endfor %}
+</ul>
+<nav>{{ paginate | default_pagination }}</nav>
+<p>page {{ paginate.current_page }}/{{ paginate.pages }}, {{ paginate.items }} items, sort "{{ collection.sort_by }}" default "{{ collection.default_sort_by }}"</p>
+{% endpaginate %}
+<dl>
+{%- for filter in collection.filters %}
+<dt>{{ filter.label }} ({{ filter.type }}, {{ filter.param_name }})</dt>
+{%- for value in filter.values %}
+<dd>{{ value.label }}: {{ value.count }}{% if value.active %} active{% endif %}</dd>
+{%- endfor %}
+{%- endfor %}
+</dl>
+{% schema %}
+{ "name": "Collection" }
+{% endschema %}

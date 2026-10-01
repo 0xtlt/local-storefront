@@ -1,0 +1,437 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 3,
+      "template": "{{ iso | date: '%Y-%m-%d %H:%M:%S' }} {{ plain | date: '%Y-%m-%d %H:%M:%S' }} {{ d | date: '%Y-%m-%d %H:%M:%S' }} {{ ts | date: '%Y-%m-%d %H:%M:%S' }} {{ ts_str | date: '%Y-%m-%d %H:%M:%S' }} {{ human | date: '%Y-%m-%d' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "2024-01-05 09:07:03 2024-03-14 15:30:45 2023-12-25 00:00:00 2024-01-05 09:07:03 2024-01-05 09:07:03 2016-03-14"
+    },
+    {
+      "line": 4,
+      "template": "{{ iso | date: '%a %A %b %B %d %e %j %m %y %Y %C' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "Fri Friday Jan January 05  5 005 01 24 2024 20"
+    },
+    {
+      "line": 5,
+      "template": "{{ iso | date: '%H %I %k %l %M %S %p %P %L %N %z %:z %::z %Z %s' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "09 09  9  9 07 03 AM am 000 000000000 +0000 +00:00 +00:00:00 UTC 1704445623"
+    },
+    {
+      "line": 6,
+      "template": "{{ iso | date: '%u %w %U %W %V %G %g' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "5 5 00 01 01 2024 24"
+    },
+    {
+      "line": 7,
+      "template": "{{ iso | date: '%c | %D | %F | %T | %R | %r | %x | %X | %v' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "Fri Jan  5 09:07:03 2024 | 01/05/24 | 2024-01-05 | 09:07:03 | 09:07 | 09:07:03 AM | 01/05/24 | 09:07:03 |  5-JAN-2024"
+    },
+    {
+      "line": 8,
+      "template": "{{ iso | date: '%-d %-m %-H %-I %-M %-S %-j %-y' }} {{ iso | date: '%_d %_m %_H %3d %05d %10B| %-10B| %^B %^a %#B %#p %^p %010Y' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "5 1 9 9 7 3 5 24  5  1  9 005 00005    January| January| JANUARY FRI JANUARY am AM 0000002024"
+    },
+    {
+      "line": 9,
+      "template": "{{ iso | date: '%% %n %t %Q %E %O %' }}|",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid format: %% %n %t %Q %E %O %|"
+    },
+    {
+      "line": 10,
+      "template": "{{ iso | date: '%% %n %t %Q %E %O' }}|",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "% \n \t %Q %E %O|"
+    },
+    {
+      "line": 11,
+      "template": "{{ plain | date: '%I:%M %p' }} {{ '2024-01-01 00:00:00' | date: '%I %l %p' }} {{ '2024-01-01 12:00:00' | date: '%I %l %p' }} {{ '2024-12-31 23:59:59' | date: '%j %U %W %V %G' }} {{ '2021-01-01' | date: '%U %W %V %G %g %u %a' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "03:30 PM 12 12 AM 12 12 PM 366 52 53 01 2025 00 00 53 2020 20 5 Fri"
+    },
+    {
+      "line": 12,
+      "template": "{{ bad | date: '%Y' }} {{ e | date: '%Y' }}| {{ z | date: '%Y' }}| {{ n | date: '%Y' }} {{ iso | date: '' }} {{ iso | date: z }} {{ 2.5 | date: '%Y' }} {{ true | date: '%Y' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "not a date | | 1970 2024-01-05T09:07:03Z 2024-01-05T09:07:03Z 2.5 true"
+    },
+    {
+      "line": 13,
+      "template": "{{ iso | date }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2)"
+    },
+    {
+      "line": 14,
+      "template": "{{ iso | date: '%Y', 'x' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 3, expected 2)"
+    },
+    {
+      "line": 15,
+      "template": "{{ '2024-01-05' | date: '%B %-d, %Y' }} {{ 'Jan 5 2024' | date: '%F' }} {{ '5 Jan 2024' | date: '%F' }} {{ '2024/01/05' | date: '%F' }} {{ 'January 5, 2024 3:30 PM' | date: '%F %T' }} {{ 'Fri, 05 Jan 2024 09:07:03 +0000' | date: '%F %T' }} {{ '2024-01-05T09:07:03+00:00' | date: '%F %T %z' }} {{ '20240105' | date: '%F' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "January 5, 2024 2024-01-05 2024-01-05 2024-01-05 2024-01-05 15:30:00 2024-01-05 09:07:03 2024-01-05 09:07:03 +0000 1970-08-23"
+    },
+    {
+      "line": 16,
+      "template": "{{ '2024-01-05 09:07:03 UTC' | date: '%F %T %Z' }} {{ '2024-01-05T09:07:03.123Z' | date: '%F %T.%L %3N %6N' }} {{ '2024-02-29' | date: '%j' }} {{ '0' | date: '%F %T' }} {{ 0 | date: '%F' }} {{ -1 | date: '%F %T' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "2024-01-05 09:07:03 UTC 2024-01-05 09:07:03.123 123 123000 060 1970-01-01 00:00:00 1970-01-01 1969-12-31 23:59:59"
+    },
+    {
+      "line": 17,
+      "template": "{{ 'NOW' | date: '%Y' | size }} {{ 'Today' | date: '%Y' | size }} {{ 'now' | date: '%s' | size }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "4 4 10"
+    },
+    {
+      "line": 18,
+      "template": "{{ iso | date: 'plain text' }} {{ iso | date: '%Y%m%d%H%M%S' }} {{ iso | date: 'Week %U of %Y' }} {{ iso | date: n }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "plain text 20240105090703 Week 00 of 2024 5"
+    },
+    {
+      "line": 19,
+      "template": "{{ iso | date: '%-5d|%_5d|%05d|%5d|%-_5d|%^5a|%-5a|%05a|%_3Y|%3Y|%-Y|%10N|%2N|%0N|%1L|%12L' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "5|    5|00005|00005|5|  FRI|Fri|00Fri|2024|2024|2024|0000000000|00|000000000|0|000000000000"
+    },
+    {
+      "line": 20,
+      "template": "{{ iso | date: '%10Z|%-Z|%^Z|%#Z|%#a|%#b|%#A|%#h|%10c|%-10F|%^c|%20T|%015F' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "       UTC|UTC|UTC|utc|FRI|JAN|FRIDAY|JAN|Fri Jan  5 09:07:03 2024|2024-01-05|FRI JAN  5 09:07:03 2024|            09:07:03|000002024-01-05"
+    },
+    {
+      "line": 21,
+      "template": "{{ iso | date: '%e|%-e|%0e|%3e|%k|%-k|%0k|%l|%0l|%-l|%s|%10s|%-s|%_15s' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": " 5|5|05|  5| 9|9|09| 9|09|9|1704445623|1704445623|1704445623|     1704445623"
+    },
+    {
+      "line": 22,
+      "template": "{{ iso | date: '%C|%-C|%4C|%G|%-G|%8G|%g|%V|%-V|%U|%-U|%j|%-j|%_j|%5j|%y|%-y|%_y|%4y|%m|%_m|%u|%3u|%w|%_3w' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "20|20|0020|2024|2024|00002024|24|01|1|00|0|005|5|  5|00005|24|24|24|0024|01| 1|5|005|5|  5"
+    },
+    {
+      "line": 23,
+      "template": "{{ iso | date: '%%|%5%|%-%|%n|%3n|%t|%p|%-p|%5p|%05p|%P|%^P|%#P|%#p|%^#p' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "%|    %|%|\n|  \n|\t|AM|AM|   AM|000AM|am|AM|AM|am|am"
+    },
+    {
+      "line": 24,
+      "template": "{{ iso | date: '%Ey|%OH|%Ex|%E|%O|%Q|%J|%:|%:z|%::z|%:::z|%::::z|% Y|%!Y|%+' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "24|09|01/05/24|%E|%O|%Q|%J|%:|+00:00|+00:00:00|+00|%::::z|% Y|%!Y|%+"
+    },
+    {
+      "line": 25,
+      "template": "{{ iso | date: '%10' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid format: %10"
+    },
+    {
+      "line": 26,
+      "template": "{{ iso | date: 'a %-' }}",
+      "data": {
+        "iso": "2024-01-05T09:07:03Z",
+        "plain": "2024-03-14 15:30:45",
+        "d": "2023-12-25",
+        "ts": 1704445623,
+        "ts_str": "1704445623",
+        "human": "March 14, 2016",
+        "z": null,
+        "n": 5,
+        "bad": "not a date",
+        "e": ""
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid format: a %-"
+    }
+  ]
+}

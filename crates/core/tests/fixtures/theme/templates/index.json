@@ -1,0 +1,26 @@
+/* Home page */
+{
+  "sections": {
+    "hero": {
+      "type": "hero",
+      "settings": { "color": "#ff0000", "product": "ceramic-mug" },
+      "blocks": {
+        "title": { "type": "_title", "static": true, "settings": { "text": "Stored title" } },
+        "intro": { "type": "text", "settings": { "text": "Shop: {{ shop.name }}" } },
+        "app": { "type": "shopify://apps/reviews/blocks/stars/123", "settings": {} },
+        "group": {
+          "type": "group",
+          "settings": { "product": "canvas-tote-bag" },
+          "blocks": {
+            "nested": { "type": "text", "settings": { "text": "Closest: {{ closest.product.title }}" } },
+            "off": { "type": "text", "disabled": true, "settings": { "text": "Disabled" } }
+          },
+          "block_order": ["nested", "off"]
+        }
+      },
+      "block_order": ["intro", "app", "group"]
+    },
+    "second": { "type": "announcement", "settings": {} }
+  },
+  "order": ["hero", "second"]
+}

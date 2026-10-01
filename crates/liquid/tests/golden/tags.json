@@ -1,0 +1,2917 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 15,
+      "template": "{% assign x = 1 %}{{ x }}{% assign x = x | plus: 1 %}{{ x }}{% assign y = 'a' | append: 'b' | upcase %}{{ y }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "12AB"
+    },
+    {
+      "line": 16,
+      "template": "{% assign x = arr %}{{ x.size }}{% assign z = nil %}[{{ z }}]{% assign q = undefined %}[{{ q }}]{% assign b = false %}[{{ b }}]",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "3[][][false]"
+    },
+    {
+      "line": 17,
+      "template": "{% assign a-b = 1 %}{{ a-b }}|{% assign a.b = 2 %}{{ a.b }}|{% assign c = 'x' %}{{ c }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "1||x"
+    },
+    {
+      "line": 18,
+      "template": "{% assign x=1 %}{{ x }}{% assign  y  =  'two'  %}{{ y }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "1two"
+    },
+    {
+      "line": 19,
+      "template": "{% assign x = 'a' 'b' %}{{ x }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "a"
+    },
+    {
+      "line": 20,
+      "template": "{% assign %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'assign' - Valid syntax: assign [var] = [source]"
+    },
+    {
+      "line": 21,
+      "template": "{% assign x %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'assign' - Valid syntax: assign [var] = [source]"
+    },
+    {
+      "line": 22,
+      "template": "{% assign x = %}[{{ x }}]",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "[]"
+    },
+    {
+      "line": 23,
+      "template": "{% assign foo = (1..3) %}{{ foo | join: '-' }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "1-2-3"
+    },
+    {
+      "line": 24,
+      "template": "{% assign x = s == 'hello' %}{{ x }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "hello"
+    },
+    {
+      "line": 25,
+      "template": "{% capture c %}a{{ n }}b{% endcapture %}{{ c }}{{ c | size }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "a5b3"
+    },
+    {
+      "line": 26,
+      "template": "{% capture c %}{% endcapture %}[{{ c }}]{% if c == '' %}empty{% endif %}{% if c == blank %}blank{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "[]emptyblank"
+    },
+    {
+      "line": 27,
+      "template": "{% capture 'quoted' %}q{% endcapture %}{{ quoted }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "q"
+    },
+    {
+      "line": 28,
+      "template": "{% capture a %}{% capture b %}inner{% endcapture %}outer{{ b }}{% endcapture %}{{ a }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "outerinner"
+    },
+    {
+      "line": 29,
+      "template": "{% capture %}x{% endcapture %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'capture' - Valid syntax: capture [var]"
+    },
+    {
+      "line": 30,
+      "template": "{% case n %}{% when 5 %}five{% when 6 %}six{% else %}other{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "five"
+    },
+    {
+      "line": 31,
+      "template": "{% case n %}{% when 4, 5 %}a{% when 5 or 6 %}b{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "ab"
+    },
+    {
+      "line": 32,
+      "template": "{% case n %}{% when 5, 5 %}twice{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "twicetwice"
+    },
+    {
+      "line": 33,
+      "template": "{% case s %}{% when 'hello' %}hi{% when 'bye' %}bye{% endcase %}{% case s %}{% when 'x' %}x{% else %}default{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "hidefault"
+    },
+    {
+      "line": 34,
+      "template": "{% case n %}{% when 1 %}a{% else %}b{% else %}c{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "bc"
+    },
+    {
+      "line": 35,
+      "template": "{% case n %}{% else %}first-else{% when 5 %}five{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "first-elsefive"
+    },
+    {
+      "line": 36,
+      "template": "{% case n %}ignored{% when 5 %}five{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "five"
+    },
+    {
+      "line": 37,
+      "template": "{% case undefined %}{% when nil %}nil{% endcase %}|{% case '' %}{% when blank %}blank{% when empty %}empty{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "nil|blankempty"
+    },
+    {
+      "line": 38,
+      "template": "{% case arr %}{% when arr %}same{% endcase %}{% case n %}{% when n %}var{% endcase %}{% case 5.0 %}{% when 5 %}float{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "samevarfloat"
+    },
+    {
+      "line": 39,
+      "template": "{% case n %}{% when %}x{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in tag 'case' - Valid when condition: {% when [condition] [or condition2...] %}"
+    },
+    {
+      "line": 40,
+      "template": "{% case %}{% when 1 %}x{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'case' - Valid syntax: case [condition]"
+    },
+    {
+      "line": 41,
+      "template": "{% case n %}{% when 5 %}a{% when 5 %}b{% endcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "ab"
+    },
+    {
+      "line": 42,
+      "template": "{% increment i %}{% increment i %}{% increment i %}|{{ i }}|{% decrement i %}{% decrement d %}{% decrement d %}|{{ d }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "012|3|2-1-2|-2"
+    },
+    {
+      "line": 43,
+      "template": "{% assign i = 10 %}{% increment i %}{% increment i %}{{ i }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "0110"
+    },
+    {
+      "line": 44,
+      "template": "{% increment a %}{% assign a = 5 %}{% increment a %}{{ a }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "015"
+    },
+    {
+      "line": 45,
+      "template": "{% raw %}{{ not }} {% parsed %}{% endraw %}|{% raw %}{% endraw %}|{% raw %} {{ {% endraw %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "{{ not }} {% parsed %}|| {{ "
+    },
+    {
+      "line": 46,
+      "template": "{% raw %}a{% raw %}b{% endraw %}c",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "a{% raw %}bc"
+    },
+    {
+      "line": 47,
+      "template": "{% comment %}{{ hidden }} {% if %} {% endcomment %}visible",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "visible"
+    },
+    {
+      "line": 48,
+      "template": "{% comment %}a{% comment %}b{% endcomment %}c{% endcomment %}d",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "d"
+    },
+    {
+      "line": 49,
+      "template": "{% comment %}{% raw %}{% endcomment %}{% endraw %}{% endcomment %}after",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "after"
+    },
+    {
+      "line": 50,
+      "template": "{% # inline comment %}a{%- # another -%} b",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "ab"
+    },
+    {
+      "line": 51,
+      "template": "{% #\n # multi\n # line\n %}ok",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "ok"
+    },
+    {
+      "line": 52,
+      "template": "{% doc %}\n @param {string} a\n{% enddoc %}after-doc",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "after-doc"
+    },
+    {
+      "line": 53,
+      "template": "{% echo s %}{% echo n | plus: 1 %}{% echo 'a' | upcase %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "hello6A"
+    },
+    {
+      "line": 54,
+      "template": "{% liquid\n assign x = 1\n echo x\n if x == 1\n  echo 'one'\n endif\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "1one"
+    },
+    {
+      "line": 55,
+      "template": "{% liquid\n for i in arr\n  echo i\n  unless forloop.last\n   echo ','\n  endunless\n endfor\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "1,2,3"
+    },
+    {
+      "line": 56,
+      "template": "{%- liquid\n  # comment line\n  assign a = 'x'\n\n  case a\n    when 'x'\n      echo 'X'\n    else\n      echo 'other'\n  endcase\n-%}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "X|"
+    },
+    {
+      "line": 57,
+      "template": "{% liquid\n capture c\n  echo 'in'\n endcapture\n echo c\n echo c\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "inin"
+    },
+    {
+      "line": 58,
+      "template": "{% liquid\n echo 'a'\n liquid echo 'b'\n echo 'c'\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "abc"
+    },
+    {
+      "line": 59,
+      "template": "{% liquid\n comment\n  echo 'hidden'\n endcomment\n echo 'shown'\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "shown"
+    },
+    {
+      "line": 60,
+      "template": "{% liquid\n assign x = 'multi word' | upcase\n echo x | append: '!'\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "MULTI WORD!"
+    },
+    {
+      "line": 61,
+      "template": "{% liquid\n if true\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 4): 'if' tag was never closed"
+    },
+    {
+      "line": 62,
+      "template": "{% liquid\n endif\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 2): 'endif' is not a valid delimiter for liquid tags. use %}"
+    },
+    {
+      "line": 63,
+      "template": "{% liquid\n unknown_tag\n %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 2): Unknown tag 'unknown_tag'"
+    },
+    {
+      "line": 64,
+      "template": "{% liquid %}|{% liquid\n\n\n %}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "||"
+    },
+    {
+      "line": 65,
+      "template": "{% render 'simple' %}|{% render \"simple\" %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Simple partial|Simple partial"
+    },
+    {
+      "line": 66,
+      "template": "{% render 'args', a: 1, b: 'two' %}|{% render 'args', a: n, b: s %}|{% render 'args' a: 1 %}|{% render 'args', args: 'self' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "[1|two||]|[5|hello||]|[1|||]|[|||self]"
+    },
+    {
+      "line": 67,
+      "template": "{% render 'item' for arr %}|{% render 'item' for arr as item %}|{% render 'with_var' for arr as alias %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "(11false)(22false)(33true)|(11false)(22false)(33true)|<|1><|2><|3>"
+    },
+    {
+      "line": 68,
+      "template": "{% render 'with_var' with s %}|{% render 'with_var' with s as alias %}|{% render 'with_var' with arr %}|{% render 'with_var', with_var: 'named' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "<hello|>|<|hello>|<123|>|<named|>"
+    },
+    {
+      "line": 69,
+      "template": "{% render 'item' for s %}|{% render 'item' for h %}|{% render 'item' for (1..2) %}|{% render 'item' for undefined %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "(hello)|(a11true)|(11false)(22true)|()"
+    },
+    {
+      "line": 70,
+      "template": "{% render 'nested' %}|{% render 'dir/sub', sub: 1 %}|{% render 'dir/sub' with 2 %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "outer(Simple partial)|sub:1|sub:2"
+    },
+    {
+      "line": 71,
+      "template": "{% render 'uses_include' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Liquid error (uses_include line 1): include usage is not allowed in this context"
+    },
+    {
+      "line": 72,
+      "template": "{% assign leaked = 'outer' %}{% render 'assigns' %}{{ leaked }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "leakouter"
+    },
+    {
+      "line": 73,
+      "template": "{% render 'errors' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Liquid error (errors line 1): divided by 0"
+    },
+    {
+      "line": 74,
+      "template": "{% render 'missing' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Liquid error (line 1): No such template 'missing'"
+    },
+    {
+      "line": 75,
+      "template": "{% render simple %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax error in tag 'render' - Template name must be a quoted string"
+    },
+    {
+      "line": 76,
+      "template": "{% render 'counter' %}{% render 'counter' %}{% increment c %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "000"
+    },
+    {
+      "line": 77,
+      "template": "{% for i in (1..2) %}{% render 'loop' %}{{ i }}{% endfor %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "1112"
+    },
+    {
+      "line": 78,
+      "template": "{% render 'args', a: forloop.index %}{% for i in (1..2) %}{% render 'args', a: forloop.index, b: i %}{% endfor %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "[|||][1|1||][2|2||]"
+    },
+    {
+      "line": 79,
+      "template": "{% include 'simple' %}|{% include 'args', a: 1 %}|{% include 'args' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Simple partial|[1||hello|]|[||hello|]"
+    },
+    {
+      "line": 80,
+      "template": "{% assign a = 'ctx' %}{% include 'args' %}{{ a }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "[ctx||hello|]ctx"
+    },
+    {
+      "line": 81,
+      "template": "{% include 'assigns' %}{{ leaked }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "leakleak"
+    },
+    {
+      "line": 82,
+      "template": "{% include 'with_var' with s %}|{% include 'with_var' for arr %}|{% include 'item' with arr %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "<hello|>|<1|><2|><3|>|(1)(2)(3)"
+    },
+    {
+      "line": 83,
+      "template": "{% assign name = 'simple' %}{% include name %}|{% include undefined %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Simple partial|Liquid error (line 1): Argument error in tag 'include' - Illegal template name"
+    },
+    {
+      "line": 84,
+      "template": "{% assign simple = 'var named like partial' %}{% include 'simple' %}{% include 'with_var' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Simple partial<|>"
+    },
+    {
+      "line": 85,
+      "template": "{% include 'missing' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Liquid error (line 1): No such template 'missing'"
+    },
+    {
+      "line": 86,
+      "template": "{% include 'counter' %}{% include 'counter' %}{% increment c %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "012"
+    },
+    {
+      "line": 87,
+      "template": "{% unknown %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag 'unknown'"
+    },
+    {
+      "line": 88,
+      "template": "{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag 'endif'"
+    },
+    {
+      "line": 89,
+      "template": "{% else %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unexpected outer 'else' tag"
+    },
+    {
+      "line": 90,
+      "template": "{% if true %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'if' tag was never closed"
+    },
+    {
+      "line": 91,
+      "template": "{% if true %}{% endfor %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'endfor' is not a valid delimiter for if tags. use endif"
+    },
+    {
+      "line": 92,
+      "template": "{% for i in arr %}{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'endif' is not a valid delimiter for for tags. use endfor"
+    },
+    {
+      "line": 93,
+      "template": "{% if true %}{% else %}{% elsif true %}x{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": ""
+    },
+    {
+      "line": 94,
+      "template": "{% for i in arr %}{% else %}{% else %}{% endfor %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag 'endfor'"
+    },
+    {
+      "line": 95,
+      "template": "{% capture c %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'capture' tag was never closed"
+    },
+    {
+      "line": 96,
+      "template": "{% raw %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'raw' tag was never closed"
+    },
+    {
+      "line": 97,
+      "template": "{% comment %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'comment' tag was never closed"
+    },
+    {
+      "line": 98,
+      "template": "{{ unterminated",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Variable '{{' was not properly terminated with regexp: /\\}\\}/"
+    },
+    {
+      "line": 99,
+      "template": "{% unterminated",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Tag '{%' was not properly terminated with regexp: /\\%\\}/"
+    },
+    {
+      "line": 100,
+      "template": "{% if true %}{{ unterminated }{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Variable '{{ unterminated }' was not properly terminated with regexp: /\\}\\}/"
+    },
+    {
+      "line": 101,
+      "template": "{% %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag '{% %}'"
+    },
+    {
+      "line": 102,
+      "template": "{%  %}x",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag '{%  %}'"
+    },
+    {
+      "line": 103,
+      "template": "{% 123 %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag '123'"
+    },
+    {
+      "line": 104,
+      "template": "{% if-not %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'if' tag was never closed"
+    },
+    {
+      "line": 105,
+      "template": "{% render 'recursive' %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "Liquid error (recursive line 1): Nesting too deep"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+<h1 style="color: {{ section.settings.color }}">{{ section.settings.heading }}</h1>
+{%- content_for 'block', type: '_title', id: 'title', label: 'static' -%}
+<div class="blocks">{% content_for 'blocks' %}</div>
+{% render 'meta', label: 'from snippet' %}
+{% stylesheet %}
+.hero { display: block }
+{% endstylesheet %}
+{% javascript %}
+console.log('hero');
+{% endjavascript %}
+{% schema %}
+{
+  "name": "Hero",
+  "class": "hero",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "t:defaults.heading" },
+    { "type": "color", "id": "color", "label": "Color", "default": "#000000" },
+    { "type": "product", "id": "product", "label": "Product" }
+  ],
+  "blocks": [{ "type": "@theme" }, { "type": "@app" }]
+}
+{% endschema %}

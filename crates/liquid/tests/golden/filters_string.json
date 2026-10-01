@@ -1,0 +1,1318 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 3,
+      "template": "{{ s | downcase }} {{ s | upcase }} {{ s | capitalize }} {{ 'hELLO wORLD' | capitalize }} {{ uni | upcase }} {{ uni | downcase }} {{ uni | capitalize }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "hello world HELLO WORLD Hello world Hello world HÉLLO WÖRLD ÉCOLE héllo wörld école Héllo wörld école"
+    },
+    {
+      "line": 4,
+      "template": "{{ n | upcase }} {{ z | upcase }}|{{ arr | upcase }}|{{ h | downcase }}|{{ t | capitalize }}|{{ f | append: 'x' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "5 |[1, 2, 3]|{\"a\"=>1}|True|2.5x"
+    },
+    {
+      "line": 5,
+      "template": "{{ html | escape }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "&lt;p class=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s &lt;b&gt;show&lt;/b&gt;&lt;/p&gt;"
+    },
+    {
+      "line": 6,
+      "template": "{{ html | h }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "&lt;p class=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s &lt;b&gt;show&lt;/b&gt;&lt;/p&gt;"
+    },
+    {
+      "line": 7,
+      "template": "{{ html | escape | escape }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "&amp;lt;p class=&amp;quot;x&amp;quot;&amp;gt;Tom &amp;amp; Jerry&amp;#39;s &amp;lt;b&amp;gt;show&amp;lt;/b&amp;gt;&amp;lt;/p&amp;gt;"
+    },
+    {
+      "line": 8,
+      "template": "{{ html | escape | escape_once }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "&lt;p class=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s &lt;b&gt;show&lt;/b&gt;&lt;/p&gt;"
+    },
+    {
+      "line": 9,
+      "template": "{{ '&lt; < &amp; & &#39; &#x27; &foo &foo; &; &#abc;' | escape_once }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "&lt; &lt; &amp; &amp; &#39; &amp;#x27; &amp;foo &foo; &amp;; &amp;#abc;"
+    },
+    {
+      "line": 10,
+      "template": "{{ z | escape }}|{{ n | escape }}|{{ arr | escape }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "|5|[1, 2, 3]"
+    },
+    {
+      "line": 11,
+      "template": "{{ s | url_encode }} {{ 'a+b c&d=e/f?g#h@i:j' | url_encode }} {{ uni | url_encode }} {{ \"~_.-*'()!\" | url_encode }} {{ z | url_encode }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Hello+World a%2Bb+c%26d%3De%2Ff%3Fg%23h%40i%3Aj h%C3%A9llo+w%C3%B6rld+%C3%89COLE ~_.-%2A%27%28%29%21 |"
+    },
+    {
+      "line": 12,
+      "template": "{{ 'a+b%20c%26d%2Bé%C3%A9' | url_decode }} {{ '%zz %' | url_decode }} {{ z | url_decode }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "a b c&d+éé %zz % |"
+    },
+    {
+      "line": 13,
+      "template": "{{ '%ff' | url_decode }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid byte sequence in UTF-8"
+    },
+    {
+      "line": 14,
+      "template": "{{ s | base64_encode }} {{ 'SGVsbG8gV29ybGQ=' | base64_decode }} {{ uni | base64_encode }} {{ '>>>???' | base64_encode }} {{ '>>>???' | base64_url_safe_encode }} {{ 'Pj4-Pz8_' | base64_url_safe_decode }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "SGVsbG8gV29ybGQ= Hello World aMOpbGxvIHfDtnJsZCDDiUNPTEU= Pj4+Pz8/ Pj4-Pz8_ >>>???"
+    },
+    {
+      "line": 15,
+      "template": "{{ 'not base64!' | base64_decode }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid base64 provided to base64_decode"
+    },
+    {
+      "line": 16,
+      "template": "{{ 'SGVsbG8' | base64_decode }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid base64 provided to base64_decode"
+    },
+    {
+      "line": 17,
+      "template": "{{ z | base64_encode }}|{{ n | base64_encode }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "|NQ=="
+    },
+    {
+      "line": 18,
+      "template": "{{ s | slice: 0 }} {{ s | slice: 1 }} {{ s | slice: 0, 5 }} {{ s | slice: -5, 5 }} {{ s | slice: 6, 100 }} {{ s | slice: 100 }}| {{ s | slice: -100 }}| {{ s | slice: 11 }}| {{ s | slice: 2, 0 }}| {{ s | slice: 2, -1 }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "H e Hello World World | | | | |"
+    },
+    {
+      "line": 19,
+      "template": "{{ arr | slice: 0 }} {{ arr | slice: 1, 2 }} {{ arr | slice: -2, 2 }} {{ arr | slice: 5 }}| {{ arr | slice: 3 }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "1 23 23 | |"
+    },
+    {
+      "line": 20,
+      "template": "{{ uni | slice: 1, 4 }} {{ n | slice: 0 }} {{ 12345 | slice: 1, 2 }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "éllo 5 23"
+    },
+    {
+      "line": 21,
+      "template": "{{ s | slice }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2..3)"
+    },
+    {
+      "line": 22,
+      "template": "{{ s | slice: 'a' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid integer"
+    },
+    {
+      "line": 23,
+      "template": "{{ s | slice: 1.5 }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid integer"
+    },
+    {
+      "line": 24,
+      "template": "{{ s | slice: '1', '3' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "ell"
+    },
+    {
+      "line": 25,
+      "template": "{{ s | truncate: 5 }} {{ s | truncate: 8 }} {{ s | truncate: 11 }} {{ s | truncate: 10 }} {{ s | truncate: 5, '' }} {{ s | truncate: 8, '--' }} {{ s | truncate: 2 }} {{ s | truncate: 0 }} {{ s | truncate }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "He... Hello... Hello World Hello W... Hello Hello -- ... ... Hello World"
+    },
+    {
+      "line": 26,
+      "template": "{{ 'The quick brown fox jumps over the lazy dog and keeps running far away' | truncate }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "The quick brown fox jumps over the lazy dog and..."
+    },
+    {
+      "line": 27,
+      "template": "{{ z | truncate: 5 }}|{{ n | truncate: 5 }}|{{ 1234567890 | truncate: 5 }}|{{ uni | truncate: 9 }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "|5|12...|héllo ..."
+    },
+    {
+      "line": 28,
+      "template": "{{ s | truncate: 'x' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid integer"
+    },
+    {
+      "line": 29,
+      "template": "{{ s | truncate: 5, 1 }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Hell1"
+    },
+    {
+      "line": 30,
+      "template": "{{ 'one two three four' | truncatewords: 2 }}|{{ 'one two three four' | truncatewords: 4 }}|{{ 'one two three four' | truncatewords: 10 }}|{{ 'one two three four' | truncatewords: 2, '--' }}|{{ 'one two three four' | truncatewords: 0 }}|{{ 'one two three four' | truncatewords: -3 }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "one two...|one two three four|one two three four|one two--|one...|one..."
+    },
+    {
+      "line": 31,
+      "template": "{{ '  one   two  \n three   four ' | truncatewords: 2 }}|{{ '  one   two  ' | truncatewords: 2 }}|{{ 'one two three' | truncatewords: 2, '' }}|{{ z | truncatewords: 2 }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "one two...|one two...|one two||"
+    },
+    {
+      "line": 32,
+      "template": "{{ 'a b c d e f g h i j k l m n o p q r s t' | truncatewords }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "a b c d e f g h i j k l m n o..."
+    },
+    {
+      "line": 33,
+      "template": "{{ 'a,b,c' | split: ',' | join: '-' }} {{ 'a,b,,c,,' | split: ',' | size }} {{ ',a' | split: ',' | size }} {{ 'abc' | split: '' | join: '-' }} {{ '  a  b ' | split: ' ' | join: '-' }} {{ 'a b' | split: '  ' | size }} {{ '' | split: ',' | size }} {{ z | split: ',' | size }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "a-b-c 4 2 a-b-c a-b 1 0 0"
+    },
+    {
+      "line": 34,
+      "template": "{{ 'a--b--c' | split: '--' | last }} {{ 'abc' | split: 'x' | first }} {{ 'a1b2c' | split: 1 | join: '|' }} {{ n | split: '' | join: ',' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "c abc a|b2c 5"
+    },
+    {
+      "line": 35,
+      "template": "{{ 'a,b' | split }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2)"
+    },
+    {
+      "line": 36,
+      "template": "{{ s | split: 'o' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Hell Wrld"
+    },
+    {
+      "line": 37,
+      "template": "[{{ sp | strip }}] [{{ sp | lstrip }}] [{{ sp | rstrip }}] [{{ n | strip }}] [{{ z | strip }}]",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "[padded] [padded \t\n] [  padded] [5] []"
+    },
+    {
+      "line": 38,
+      "template": "[{{ '  a   b \n c  ' | squish }}] [{{ z | squish }}]",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "[a b c] []"
+    },
+    {
+      "line": 39,
+      "template": "{{ html | strip_html }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Tom & Jerry's show"
+    },
+    {
+      "line": 40,
+      "template": "{{ '<script>alert(1)</script>a<!-- c -->b<style>x{}</style>c<br/>d<img src=\"x\">e < f > g' | strip_html }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "SYNTAX: Liquid syntax error (line 1): Variable '{{ '<script>alert(1)</script>a<!-- c -->b<style>x{}' was not properly terminated with regexp: /\\}\\}/"
+    },
+    {
+      "line": 41,
+      "template": "{{ '<script>unclosed a<b>c' | strip_html }} {{ 'a<b' | strip_html }} {{ 'a>b' | strip_html }} {{ n | strip_html }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "unclosed ac a<b a>b 5"
+    },
+    {
+      "line": 42,
+      "template": "{{ multi | strip_newlines }}|{{ multi | newline_to_br }}|{{ z | newline_to_br }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "line1line2line3|line1<br />\nline2<br />\nline3||"
+    },
+    {
+      "line": 43,
+      "template": "{{ s | replace: 'o', '0' }} {{ s | replace: 'o' }} {{ s | replace: 'l', 'LL' }} {{ s | replace: '', '-' }} {{ s | replace: 'xyz', '!' }} {{ n | replace: 5, 6 }} {{ s | replace: ' ', z }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Hell0 W0rld Hell Wrld HeLLLLo WorLLd -H-e-l-l-o- -W-o-r-l-d- Hello World 6 HelloWorld"
+    },
+    {
+      "line": 44,
+      "template": "{{ s | replace_first: 'o', '0' }} {{ s | replace_first: 'l' }} {{ s | replace_first: '', '-' }} {{ s | replace_last: 'o', '0' }} {{ s | replace_last: 'zz', '0' }} {{ s | replace_last: '', '!' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Hell0 World Helo World -Hello World Hello W0rld Hello World Hello World!"
+    },
+    {
+      "line": 45,
+      "template": "{{ s | replace_last: 'o' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 2, expected 3)"
+    },
+    {
+      "line": 46,
+      "template": "{{ s | replace }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2..3)"
+    },
+    {
+      "line": 47,
+      "template": "{{ s | remove: 'l' }} {{ s | remove_first: 'l' }} {{ s | remove_last: 'l' }} {{ s | remove: 'xyz' }} {{ n | remove: 5 }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Heo Word Helo World Hello Word Hello World |"
+    },
+    {
+      "line": 48,
+      "template": "{{ 'a.b.c' | replace: '.', '\\' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "a\\b\\c"
+    },
+    {
+      "line": 49,
+      "template": "{{ s | append: ' !' }} {{ s | append: n }} {{ s | append: z }}| {{ z | append: 'x' }} {{ s | prepend: '> ' }} {{ n | prepend: n }} {{ s | append: arr }} {{ arr | append: 'x' }} {{ h | prepend: 'h=' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Hello World ! Hello World5 Hello World| x > Hello World 55 Hello World[1, 2, 3] [1, 2, 3]x h={\"a\"=>1}"
+    },
+    {
+      "line": 50,
+      "template": "{{ s | append }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2)"
+    },
+    {
+      "line": 51,
+      "template": "{{ s | append: 'a', 'b' }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 3, expected 2)"
+    },
+    {
+      "line": 52,
+      "template": "{{ s | size }} {{ uni | size }} {{ arr | size }} {{ h | size }} {{ n | size }} {{ f | size }} {{ z | size }} {{ t | size }} {{ '' | size }}",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "11 17 3 1 8 0 0 0 0"
+    },
+    {
+      "line": 53,
+      "template": "{{ s | first }} {{ s | last }} {{ '' | first }}|{{ '' | last }}|{{ n | first }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "H d |||"
+    },
+    {
+      "line": 54,
+      "template": "{{ 'a' | default: 'd' }} {{ '' | default: 'd' }} {{ z | default: 'd' }} {{ false | default: 'd' }} {{ false | default: 'd', allow_false: true }} {{ z | default: 'd', allow_false: true }} {{ 0 | default: 'd' }} {{ '  ' | default: 'd' }}| {{ undefined | default: n }} {{ z | default }}|",
+      "data": {
+        "s": "Hello World",
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true,
+        "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>",
+        "multi": "line1\nline2\r\nline3",
+        "sp": "  padded \t\n",
+        "uni": "héllo wörld ÉCOLE"
+      },
+      "partials": {},
+      "expected": "a d d d false d 0   | 5 |"
+    },
+    {
+      "line": 56,
+      "template": "{{ ea | default: 'empty-array' }} {{ eh | default: 'empty-hash' }} {{ arr | default: 'x' }} {{ ea | default: ea | size }}",
+      "data": {
+        "ea": [],
+        "eh": {},
+        "arr": [
+          1
+        ]
+      },
+      "partials": {},
+      "expected": "empty-array empty-hash 1 0"
+    }
+  ]
+}

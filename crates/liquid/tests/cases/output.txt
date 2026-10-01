@@ -1,0 +1,46 @@
+## Literals and value rendering
+{{ 'single' }} {{ "double" }} {{ 42 }} {{ -7 }} {{ 3.14 }} {{ -0.5 }} {{ true }} {{ false }} {{ nil }} {{ null }}|
+{{ 1.0 }} {{ 100.0 }} {{ 1.50 }} {{ 0.1 }} {{ 123456789.123 }} {{ 1.2.3 }} {{ 5. }}
+{{ 10000000000000000.0 }} {{ 0.00001 }} {{ 0.0001 }} {{ 1234567890123456789 }}
+{{ blank }}|{{ empty }}|{{ '' }}|{{ "" }}|
+{{ (1..5) }} {{ (3..1) }}
+{{ }}|{{}}|{{  nil  }}|
+{{ 'a' 'b' }}
+{{ "it's" }} {{ 'say "hi"' }}
+{{ -}}x{{- -}} y
+{{ - }}
+#! data {"s": "hello", "n": 5, "f": 2.5, "t": true, "fa": false, "z": null, "arr": [1, 2, 3], "nested": [[1, 2], [3, [4, 5]]], "h": {"a": 1, "b": "two", "c": [1, 2], "d": {"e": null}}, "empty_arr": [], "empty_hash": {}, "strs": ["a", "b"], "mixed": [1, "a", null, true, 2.5]}
+{{ s }} {{ n }} {{ f }} {{ t }} {{ fa }} {{ z }}|
+{{ arr }} {{ nested }} {{ strs }} {{ mixed }}
+{{ h }}
+{{ h.d }} {{ empty_arr }}|{{ empty_hash }}
+{{ h.a }} {{ h.b }} {{ h.c }} {{ h['a'] }} {{ h["b"] }} {{ h.missing }}| {{ h.d.e }}| {{ h.d.e.f.g }}|
+{{ arr[0] }} {{ arr[1] }} {{ arr[-1] }} {{ arr[10] }}| {{ arr.first }} {{ arr.last }} {{ arr.size }}
+{{ arr.0 }}|{{ arr[1.0] }}|{{ arr['0'] }}|{{ arr["first"] }}|
+{{ s.size }} {{ s.first }} {{ s.last }} {{ h.size }} {{ h.first }} {{ h.last }}|
+{{ n.size }} {{ f.size }}| {{ t.size }}|
+{{ empty_arr.first }}|{{ empty_arr.last }}|{{ empty_arr.size }}
+{{ nested[1][1][0] }} {{ nested.first.last }} {{ nested.last.first }}
+{{ h[s] }}|{{ h['c'][0] }}|{{ h.c[n] }}|
+#! data {"key": "a", "h": {"a": 1, "size": 99, "first": "f", "my-key": "dash", "with space": "sp"}, "idx": 1, "arr": ["x", "y", "z"], "name": "h"}
+{{ h[key] }} {{ h.size }} {{ h.first }} {{ h.my-key }} {{ h['with space'] }} {{ arr[idx] }} {{ [name].a }} {{ [name][key] }}
+{{ ['h'].a }} {{ ["arr"][0] }}
+{{ h . a }}|{{ h. a }}|{{ h .a }}|{{ arr [0] }}|{{ arr[ 0 ] }}|{{ arr[ idx ] }}
+{{ undefined }}|{{ undefined.foo.bar }}|{{ undefined[0] }}|{{ undefined | default: 'd' }}
+{{ arr[idx | plus: 1] }}|
+{{ h.a.b }}|{{ arr.foo }}|{{ arr[key] }}|
+{{ true.foo }}|{{ nil.foo }}|{{ 'str'.size }}|{{ 5.size }}
+{{ "a" | append: "b" }} {{ 'a' | append:'b' }} {{ 'a'|append:'b' }} {{ 'a' |append: 'b'| append: 'c' }}
+{{ (1..3) | join: ',' }} {{ (1..idx) | join: ',' }} {{ (idx..3) | size }}
+{{ (1..3).first }} {{ (1..3).last }} {{ (1..3).size }}
+{{ 1 | plus: 1 }}{{ 2 }}  {{ 3 }}
+{{ "a{{b}}c" }}
+{{ 'x' }}}
+{ {{ 'x' }} } {% comment %}x{% endcomment %}} %} {%
+text only, no tags
+{{ arr | join: ', ' | upcase | prepend: '[' | append: ']' }}
+{{ key | upcase: 1 }}
+{{ key | unknown_filter }} {{ key | unknown_filter: 1, 2 | upcase }}
+{{ 1 == 1 }} {{ 1 > 2 }}|
+{{ true and false }}|{{ false or true }}|
+{{ not true }}|

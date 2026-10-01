@@ -1,0 +1,594 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 3,
+      "template": "{{ 1 | plus: 2 }} {{ 1 | plus: 2.0 }} {{ 1.5 | plus: 1.5 }} {{ 0.1 | plus: 0.2 }} {{ '1' | plus: '2' }} {{ '1.5' | plus: 1 }} {{ 'abc' | plus: 1 }} {{ z | plus: 1 }} {{ 1 | plus: z }} {{ t | plus: 1 }} {{ arr | plus: 1 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "3 3.0 3.0 0.3 3 2.5 1 1 1 1 1"
+    },
+    {
+      "line": 4,
+      "template": "{{ 5 | minus: 2 }} {{ 5 | minus: 2.5 }} {{ 0.3 | minus: 0.1 }} {{ 5 | minus: 10 }} {{ '5' | minus: s }} {{ 5.0 | minus: 5 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "3 2.5 0.2 -5 -2 0.0"
+    },
+    {
+      "line": 5,
+      "template": "{{ 3 | times: 4 }} {{ 3 | times: 1.5 }} {{ 0.1 | times: 3 }} {{ 1.1 | times: 1.1 }} {{ '3' | times: '4' }} {{ 3 | times: 0 }} {{ -3 | times: 2 }} {{ 19.99 | times: 100 }} {{ 2.4 | times: 3 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "12 4.5 0.3 1.21 12 0 -6 1999.0 7.2"
+    },
+    {
+      "line": 6,
+      "template": "{{ 10 | divided_by: 3 }} {{ 10 | divided_by: 3.0 }} {{ 10.0 | divided_by: 4 }} {{ -7 | divided_by: 2 }} {{ 7 | divided_by: -2 }} {{ 1 | divided_by: 3.0 }} {{ 20 | divided_by: 7.0 }} {{ '10' | divided_by: '4' }} {{ 9 | divided_by: 3 }} {{ 1 | divided_by: 8.0 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "3 3.3333333333333335 2.5 -4 -4 0.3333333333333333 2.857142857142857 2 3 0.125"
+    },
+    {
+      "line": 7,
+      "template": "{{ 10 | divided_by: 0 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 8,
+      "template": "{{ 10.0 | divided_by: 0 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Infinity"
+    },
+    {
+      "line": 9,
+      "template": "{{ 10 | divided_by: 0.0 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Infinity"
+    },
+    {
+      "line": 10,
+      "template": "{{ 10 | divided_by: 'abc' }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 11,
+      "template": "{{ 10 | modulo: 3 }} {{ -10 | modulo: 3 }} {{ 10 | modulo: -3 }} {{ 10.5 | modulo: 3 }} {{ 10 | modulo: 2.5 }} {{ 5.5 | modulo: 1.5 }} {{ -5.5 | modulo: 2 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "1 2 -2 1.5 0.0 1.0 0.5"
+    },
+    {
+      "line": 12,
+      "template": "{{ 10 | modulo: 0 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 13,
+      "template": "{{ 10.5 | modulo: 0 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 14,
+      "template": "{{ -5 | abs }} {{ 5 | abs }} {{ -5.5 | abs }} {{ '-5' | abs }} {{ '-5.5' | abs }} {{ 'abc' | abs }} {{ z | abs }} {{ 0 | abs }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "5 5 5.5 5 5.5 0 0 0"
+    },
+    {
+      "line": 15,
+      "template": "{{ 4.5 | round }} {{ 4.4 | round }} {{ -4.5 | round }} {{ 2.5 | round }} {{ 3.5 | round }} {{ 4 | round }} {{ '4.6' | round }} {{ 'abc' | round }} {{ z | round }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "5 4 -5 3 4 4 5 0 0"
+    },
+    {
+      "line": 16,
+      "template": "{{ 3.14159 | round: 2 }} {{ 3.14159 | round: 0 }} {{ 3.15 | round: 1 }} {{ 2.675 | round: 2 }} {{ 1234.5 | round: -2 }} {{ 1250 | round: -2 }} {{ 5 | round: 2 }} {{ 3.14159 | round: '2' }} {{ 3.999 | round: 2 }} {{ 1.005 | round: 2 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "3.14 3 3.2 2.68 1200 1300 5 3.14 4.0 1.01"
+    },
+    {
+      "line": 17,
+      "template": "{{ 4.1 | ceil }} {{ 4.9 | ceil }} {{ -4.1 | ceil }} {{ 4 | ceil }} {{ '4.1' | ceil }} {{ 'abc' | ceil }} {{ z | ceil }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "5 5 -4 4 5 0 0"
+    },
+    {
+      "line": 18,
+      "template": "{{ 4.1 | floor }} {{ 4.9 | floor }} {{ -4.1 | floor }} {{ 4 | floor }} {{ '4.9' | floor }} {{ z | floor }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "4 4 -5 4 4 0"
+    },
+    {
+      "line": 19,
+      "template": "{{ 4 | at_least: 5 }} {{ 6 | at_least: 5 }} {{ 4.5 | at_least: 5 }} {{ 4 | at_least: 5.5 }} {{ 5 | at_least: 5.0 }} {{ '4' | at_least: '3' }} {{ z | at_least: 1 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "5 6 5 5.5 5 4 1"
+    },
+    {
+      "line": 20,
+      "template": "{{ 4 | at_most: 5 }} {{ 6 | at_most: 5 }} {{ 6.5 | at_most: 5 }} {{ 6 | at_most: 5.5 }} {{ '4' | at_most: '3' }} {{ z | at_most: -1 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "4 5 5 5.5 3 -1"
+    },
+    {
+      "line": 21,
+      "template": "{{ n | plus: f }} {{ n | times: f }} {{ n | divided_by: f }} {{ s | plus: n }} {{ fs | times: 2 }} {{ bad | plus: n }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "7.5 12.5 2.0 12 3.0 5"
+    },
+    {
+      "line": 22,
+      "template": "{{ 1 | plus }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2)"
+    },
+    {
+      "line": 23,
+      "template": "{{ 1 | plus: 1, 2 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 3, expected 2)"
+    },
+    {
+      "line": 24,
+      "template": "{{ 1 | round: 1, 2 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 3, expected 1..2)"
+    },
+    {
+      "line": 25,
+      "template": "{{ 1 | abs: 2 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 2, expected 1)"
+    },
+    {
+      "line": 26,
+      "template": "{{ 1000000 | times: 1000000 }} {{ 9223372036854775806 | plus: 1 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "1000000000000 9223372036854775807"
+    },
+    {
+      "line": 27,
+      "template": "{{ 1.0 | plus: 0 }} {{ 3.0 | times: 2 }} {{ 6.0 | divided_by: 2 }} {{ 1e3 }} {{ 100 | divided_by: 3 | times: 3 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "1.0 6.0 3.0  99"
+    },
+    {
+      "line": 28,
+      "template": "{{ 0.5 | round }} {{ 1.5 | round }} {{ -0.5 | round }} {{ 0.49999 | round }} {{ 123.456 | round: 1 }} {{ 123.456 | round: 5 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "1 2 -1 0 123.5 123.456"
+    },
+    {
+      "line": 29,
+      "template": "{{ 4.0 | floor }} {{ 4.0 | ceil }} {{ 4.0 | round }} {{ 4.0 | abs }} {{ -0.0 | abs }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "4 4 4 4.0 0.0"
+    },
+    {
+      "line": 30,
+      "template": "{{ ' 12 ' | plus: 1 }} {{ '12abc' | plus: 1 }} {{ '1_000' | plus: 1 }} {{ '1e3' | plus: 1 }} {{ '+5' | plus: 1 }} {{ '-5' | plus: 1 }} {{ '1.5abc' | plus: 1 }} {{ ' 1.5 ' | plus: 1 }} {{ '.5' | plus: 1 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "13 13 1001 2 6 -4 2 2.5 1"
+    },
+    {
+      "line": 31,
+      "template": "{{ 7 | minus: 2 | times: 3 | divided_by: 4 | modulo: 3 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "0"
+    },
+    {
+      "line": 32,
+      "template": "{{ 1999 | divided_by: 100.0 }} {{ 1999 | times: 0.01 }} {{ 2000 | divided_by: 100.0 }} {{ 1 | divided_by: 3.0 | round: 3 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "19.99 19.99 20.0 0.333"
+    },
+    {
+      "line": 33,
+      "template": "{{ 123456789.123456789 | round: 4 }} {{ 0.000001234 | times: 1 }} {{ 12345678901234567890.0 | plus: 0 }}",
+      "data": {
+        "n": 5,
+        "f": 2.5,
+        "z": null,
+        "s": "7",
+        "fs": "1.5",
+        "bad": "abc",
+        "arr": [
+          1,
+          2
+        ],
+        "t": true
+      },
+      "partials": {},
+      "expected": "123456789.1235 1.234e-06 1.2345678901234567e+19"
+    }
+  ]
+}

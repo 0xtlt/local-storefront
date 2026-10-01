@@ -1,0 +1,1230 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 2,
+      "template": "{{ 'single' }} {{ \"double\" }} {{ 42 }} {{ -7 }} {{ 3.14 }} {{ -0.5 }} {{ true }} {{ false }} {{ nil }} {{ null }}|",
+      "data": {},
+      "partials": {},
+      "expected": "single double 42 -7 3.14 -0.5 true false  |"
+    },
+    {
+      "line": 3,
+      "template": "{{ 1.0 }} {{ 100.0 }} {{ 1.50 }} {{ 0.1 }} {{ 123456789.123 }} {{ 1.2.3 }} {{ 5. }}",
+      "data": {},
+      "partials": {},
+      "expected": "1.0 100.0 1.5 0.1 123456789.123 1.2 5.0"
+    },
+    {
+      "line": 4,
+      "template": "{{ 10000000000000000.0 }} {{ 0.00001 }} {{ 0.0001 }} {{ 1234567890123456789 }}",
+      "data": {},
+      "partials": {},
+      "expected": "1.0e+16 1.0e-05 0.0001 1234567890123456789"
+    },
+    {
+      "line": 5,
+      "template": "{{ blank }}|{{ empty }}|{{ '' }}|{{ \"\" }}|",
+      "data": {},
+      "partials": {},
+      "expected": "||||"
+    },
+    {
+      "line": 6,
+      "template": "{{ (1..5) }} {{ (3..1) }}",
+      "data": {},
+      "partials": {},
+      "expected": "1..5 3..1"
+    },
+    {
+      "line": 7,
+      "template": "{{ }}|{{}}|{{  nil  }}|",
+      "data": {},
+      "partials": {},
+      "expected": "|||"
+    },
+    {
+      "line": 8,
+      "template": "{{ 'a' 'b' }}",
+      "data": {},
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 9,
+      "template": "{{ \"it's\" }} {{ 'say \"hi\"' }}",
+      "data": {},
+      "partials": {},
+      "expected": "it's say \"hi\""
+    },
+    {
+      "line": 10,
+      "template": "{{ -}}x{{- -}} y",
+      "data": {},
+      "partials": {},
+      "expected": "xy"
+    },
+    {
+      "line": 11,
+      "template": "{{ - }}",
+      "data": {},
+      "partials": {},
+      "expected": ""
+    },
+    {
+      "line": 13,
+      "template": "{{ s }} {{ n }} {{ f }} {{ t }} {{ fa }} {{ z }}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "hello 5 2.5 true false |"
+    },
+    {
+      "line": 14,
+      "template": "{{ arr }} {{ nested }} {{ strs }} {{ mixed }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "123 12345 ab 1atrue2.5"
+    },
+    {
+      "line": 15,
+      "template": "{{ h }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "{\"a\"=>1, \"b\"=>\"two\", \"c\"=>[1, 2], \"d\"=>{\"e\"=>nil}}"
+    },
+    {
+      "line": 16,
+      "template": "{{ h.d }} {{ empty_arr }}|{{ empty_hash }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "{\"e\"=>nil} |{}"
+    },
+    {
+      "line": 17,
+      "template": "{{ h.a }} {{ h.b }} {{ h.c }} {{ h['a'] }} {{ h[\"b\"] }} {{ h.missing }}| {{ h.d.e }}| {{ h.d.e.f.g }}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "1 two 12 1 two | | |"
+    },
+    {
+      "line": 18,
+      "template": "{{ arr[0] }} {{ arr[1] }} {{ arr[-1] }} {{ arr[10] }}| {{ arr.first }} {{ arr.last }} {{ arr.size }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "1 2 3 | 1 3 3"
+    },
+    {
+      "line": 19,
+      "template": "{{ arr.0 }}|{{ arr[1.0] }}|{{ arr['0'] }}|{{ arr[\"first\"] }}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "||||"
+    },
+    {
+      "line": 20,
+      "template": "{{ s.size }} {{ s.first }} {{ s.last }} {{ h.size }} {{ h.first }} {{ h.last }}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "5 h o 4 a1 |"
+    },
+    {
+      "line": 21,
+      "template": "{{ n.size }} {{ f.size }}| {{ t.size }}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "8 | |"
+    },
+    {
+      "line": 22,
+      "template": "{{ empty_arr.first }}|{{ empty_arr.last }}|{{ empty_arr.size }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "||0"
+    },
+    {
+      "line": 23,
+      "template": "{{ nested[1][1][0] }} {{ nested.first.last }} {{ nested.last.first }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "4 2 3"
+    },
+    {
+      "line": 24,
+      "template": "{{ h[s] }}|{{ h['c'][0] }}|{{ h.c[n] }}|",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 2.5,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4,
+              5
+            ]
+          ]
+        ],
+        "h": {
+          "a": 1,
+          "b": "two",
+          "c": [
+            1,
+            2
+          ],
+          "d": {
+            "e": null
+          }
+        },
+        "empty_arr": [],
+        "empty_hash": {},
+        "strs": [
+          "a",
+          "b"
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          true,
+          2.5
+        ]
+      },
+      "partials": {},
+      "expected": "|1||"
+    },
+    {
+      "line": 26,
+      "template": "{{ h[key] }} {{ h.size }} {{ h.first }} {{ h.my-key }} {{ h['with space'] }} {{ arr[idx] }} {{ [name].a }} {{ [name][key] }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "1 99 f dash sp y 1 1"
+    },
+    {
+      "line": 27,
+      "template": "{{ ['h'].a }} {{ [\"arr\"][0] }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "1 x"
+    },
+    {
+      "line": 28,
+      "template": "{{ h . a }}|{{ h. a }}|{{ h .a }}|{{ arr [0] }}|{{ arr[ 0 ] }}|{{ arr[ idx ] }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "1|1|1|x|x|y"
+    },
+    {
+      "line": 29,
+      "template": "{{ undefined }}|{{ undefined.foo.bar }}|{{ undefined[0] }}|{{ undefined | default: 'd' }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "|||d"
+    },
+    {
+      "line": 30,
+      "template": "{{ arr[idx | plus: 1] }}|",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "0|"
+    },
+    {
+      "line": 31,
+      "template": "{{ h.a.b }}|{{ arr.foo }}|{{ arr[key] }}|",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "|||"
+    },
+    {
+      "line": 32,
+      "template": "{{ true.foo }}|{{ nil.foo }}|{{ 'str'.size }}|{{ 5.size }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "||str|"
+    },
+    {
+      "line": 33,
+      "template": "{{ \"a\" | append: \"b\" }} {{ 'a' | append:'b' }} {{ 'a'|append:'b' }} {{ 'a' |append: 'b'| append: 'c' }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "ab ab ab abc"
+    },
+    {
+      "line": 34,
+      "template": "{{ (1..3) | join: ',' }} {{ (1..idx) | join: ',' }} {{ (idx..3) | size }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "1,2,3 1 3"
+    },
+    {
+      "line": 35,
+      "template": "{{ (1..3).first }} {{ (1..3).last }} {{ (1..3).size }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "  "
+    },
+    {
+      "line": 36,
+      "template": "{{ 1 | plus: 1 }}{{ 2 }}  {{ 3 }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "22  3"
+    },
+    {
+      "line": 37,
+      "template": "{{ \"a{{b}}c\" }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "c\" }}"
+    },
+    {
+      "line": 38,
+      "template": "{{ 'x' }}}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "x}"
+    },
+    {
+      "line": 39,
+      "template": "{ {{ 'x' }} } {% comment %}x{% endcomment %}} %} {%",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "SYNTAX: Liquid syntax error (line 1): Tag '{%' was not properly terminated with regexp: /\\%\\}/"
+    },
+    {
+      "line": 40,
+      "template": "text only, no tags",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "text only, no tags"
+    },
+    {
+      "line": 41,
+      "template": "{{ arr | join: ', ' | upcase | prepend: '[' | append: ']' }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "[X, Y, Z]"
+    },
+    {
+      "line": 42,
+      "template": "{{ key | upcase: 1 }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 2, expected 1)"
+    },
+    {
+      "line": 43,
+      "template": "{{ key | unknown_filter }} {{ key | unknown_filter: 1, 2 | upcase }}",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "a A"
+    },
+    {
+      "line": 44,
+      "template": "{{ 1 == 1 }} {{ 1 > 2 }}|",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "1 1|"
+    },
+    {
+      "line": 45,
+      "template": "{{ true and false }}|{{ false or true }}|",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "true|false|"
+    },
+    {
+      "line": 46,
+      "template": "{{ not true }}|",
+      "data": {
+        "key": "a",
+        "h": {
+          "a": 1,
+          "size": 99,
+          "first": "f",
+          "my-key": "dash",
+          "with space": "sp"
+        },
+        "idx": 1,
+        "arr": [
+          "x",
+          "y",
+          "z"
+        ],
+        "name": "h"
+      },
+      "partials": {},
+      "expected": "|"
+    }
+  ]
+}

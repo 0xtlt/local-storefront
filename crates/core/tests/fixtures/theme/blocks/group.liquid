@@ -1,0 +1,9 @@
+<div class="group-inner">{% content_for 'blocks', closest.product: block.settings.product %}</div>
+{% schema %}
+{
+  "name": "Group",
+  "class": "group",
+  "settings": [{ "type": "product", "id": "product", "label": "Product" }],
+  "blocks": [{ "type": "@theme" }]
+}
+{% endschema %}

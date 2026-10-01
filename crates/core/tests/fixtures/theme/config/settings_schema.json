@@ -1,0 +1,14 @@
+[
+  { "name": "theme_info", "theme_name": "Fixture", "theme_version": "1.0.0" },
+  {
+    "name": "Colors",
+    "settings": [
+      { "type": "color", "id": "accent", "label": "Accent", "default": "#112233" },
+      { "type": "color", "id": "accent_soft", "label": "Soft accent", "default": "{{ settings.accent }}" },
+      { "type": "font_picker", "id": "body_font", "label": "Font", "default": "work_sans_n4" },
+      { "type": "image_picker", "id": "logo", "label": "Logo" },
+      { "type": "checkbox", "id": "show_vendor", "label": "Vendor", "default": true },
+      { "type": "range", "id": "page_size", "label": "Page size", "min": 1, "max": 10, "default": 3 }
+    ]
+  }
+]

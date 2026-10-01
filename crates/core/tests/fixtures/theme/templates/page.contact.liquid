@@ -1,0 +1,6 @@
+{% layout 'bare' %}
+{% form 'contact' %}
+{% if form.posted_successfully? %}<p class="ok">Thanks</p>{% endif %}
+{{ form.errors | default_errors }}
+<input name="contact[email]" value="{{ form.email }}">
+{% endform %}

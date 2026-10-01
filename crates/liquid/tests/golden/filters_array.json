@@ -1,0 +1,3244 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 3,
+      "template": "{{ arr | join }} {{ arr | join: ', ' }} {{ arr | join: '' }} {{ arr | join: n }} {{ s | join: ',' }} {{ z | join: ',' }}| {{ n | join: ',' }} {{ h | join: ',' }} {{ nested | join: ',' }} {{ mixed | join: '|' }} {{ arr | join: z }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "3 1 2 3, 1, 2 312 35152 str | 5 {\"k\"=>\"v\"} 1,2,3,4 1|a||2.5|true 312"
+    },
+    {
+      "line": 4,
+      "template": "{{ arr | sort | join: ',' }} {{ strs | sort | join: ',' }} {{ strs | sort_natural | join: ',' }} {{ with_nil | sort | join: ',' }} {{ e | sort | size }} {{ z | sort | size }} {{ s | sort | join: ',' }} {{ nested | sort | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "1,2,3 A,a,b,c A,a,b,c 1,3, 0 0 str 1,2,3,4"
+    },
+    {
+      "line": 5,
+      "template": "{{ objs | sort: 'v' | map: 'n' | join: ',' }} {{ objs | sort: 'n' | map: 'v' | join: ',' }} {{ objs | sort_natural: 'n' | map: 'v' | join: ',' }} {{ objs | sort: 'missing' | map: 'n' | join: ',' }} {{ objs | sort: 'on' | map: 'n' | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "a,b,c,a 1,4,2,3 1,4,2,3 b,a,c,a Liquid error (line 1): cannot sort values of incompatible types"
+    },
+    {
+      "line": 6,
+      "template": "{{ mixed | sort | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): cannot sort values of incompatible types"
+    },
+    {
+      "line": 7,
+      "template": "{{ arr | sort: 'x' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): cannot select the property 'x'"
+    },
+    {
+      "line": 8,
+      "template": "{{ strs | sort: 'x' | join: ',' }}|",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "b,A,c,a|"
+    },
+    {
+      "line": 9,
+      "template": "{{ with_nil | sort: 'x' }}|",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "|"
+    },
+    {
+      "line": 10,
+      "template": "{{ mixed | sort_natural | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "1,2.5,a,true,"
+    },
+    {
+      "line": 11,
+      "template": "{{ objs | where: 'on' | map: 'n' | join: ',' }} {{ objs | where: 'on', true | map: 'n' | join: ',' }} {{ objs | where: 'on', false | map: 'n' | join: ',' }} {{ objs | where: 'n', 'a' | map: 'v' | join: ',' }} {{ objs | where: 'v', 3 | map: 'n' | join: ',' }} {{ objs | where: 'missing' | size }} {{ objs | where: 'v', '3' | size }} {{ e | where: 'x' | size }} {{ z | where: 'x' | size }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "b,a b,a a 1,4 c 0 0 0 0"
+    },
+    {
+      "line": 12,
+      "template": "{{ objs | where: 'on', nil | map: 'n' | join: ',' }} {{ h | where: 'k' | size }} {{ h | where: 'k', 'v' | size }} {{ h | where: 'x' | size }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "b,a 1 1 0"
+    },
+    {
+      "line": 13,
+      "template": "{{ arr | where: 'x' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): cannot select the property 'x'"
+    },
+    {
+      "line": 14,
+      "template": "{{ strs | where: 'a' | join: ',' }}|{{ strs | where: 'x' | join: ',' }}|",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "a||"
+    },
+    {
+      "line": 15,
+      "template": "{{ with_nil | where: 'x' }}|",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): cannot select the property 'x'|"
+    },
+    {
+      "line": 16,
+      "template": "{{ objs | where }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2..3)"
+    },
+    {
+      "line": 17,
+      "template": "{{ objs | reject: 'on' | map: 'n' | join: ',' }} {{ objs | reject: 'n', 'a' | map: 'v' | join: ',' }} {{ e | reject: 'x' | size }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "a,c 2,3 0"
+    },
+    {
+      "line": 18,
+      "template": "{{ objs | has: 'on' }} {{ objs | has: 'n', 'c' }} {{ objs | has: 'n', 'z' }} {{ objs | has: 'missing' }} {{ e | has: 'x' }} {{ z | has: 'x' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "true true false false false false"
+    },
+    {
+      "line": 19,
+      "template": "{{ objs | find: 'on' }} {{ objs | find: 'n', 'a' }} {{ objs | find: 'n', 'z' }}| {{ e | find: 'x' }}|",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "{\"n\"=>\"b\", \"v\"=>2, \"on\"=>true} {\"n\"=>\"a\", \"v\"=>1, \"on\"=>false} | |"
+    },
+    {
+      "line": 20,
+      "template": "{{ objs | find_index: 'on' }} {{ objs | find_index: 'n', 'c' }} {{ objs | find_index: 'n', 'z' }}| {{ e | find_index: 'x' }}|",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "0 2 | |"
+    },
+    {
+      "line": 21,
+      "template": "{{ dup | uniq | join: ',' }} {{ strs | uniq | join: ',' }} {{ objs | uniq: 'n' | map: 'v' | join: ',' }} {{ objs | uniq: 'missing' | map: 'v' | join: ',' }} {{ z | uniq | size }} {{ s | uniq | join: ',' }} {{ nested | uniq | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "1,2,1,1.0 b,A,c,a 2,1,3 2 0 str 1,2,3,4"
+    },
+    {
+      "line": 22,
+      "template": "{{ arr | reverse | join: ',' }} {{ s | reverse | join: ',' }} {{ z | reverse | size }} {{ nested | reverse | join: ',' }} {{ 'abc' | split: '' | reverse | join: '' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "2,1,3 str 0 4,3,2,1 cba"
+    },
+    {
+      "line": 23,
+      "template": "{{ objs | map: 'n' | join: ',' }} {{ objs | map: 'missing' | join: ',' }}| {{ objs | map: 'on' | join: ',' }} {{ h | map: 'k' | join: ',' }} {{ z | map: 'k' | size }} {{ nested | map: 'x' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "b,a,c,a ,,,| true,false,,true v 0 Liquid error (line 1): cannot select the property 'x'"
+    },
+    {
+      "line": 24,
+      "template": "{{ arr | map: 'x' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): cannot select the property 'x'"
+    },
+    {
+      "line": 25,
+      "template": "{{ strs | map: 'a' | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": ",,,a"
+    },
+    {
+      "line": 26,
+      "template": "{{ with_nil | map: 'x' | size }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): cannot select the property 'x'"
+    },
+    {
+      "line": 27,
+      "template": "{{ objs | map }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2)"
+    },
+    {
+      "line": 28,
+      "template": "{{ with_nil | compact | join: ',' }} {{ mixed | compact | join: ',' }} {{ objs | compact: 'on' | map: 'n' | join: ',' }} {{ z | compact | size }} {{ e | compact | size }} {{ objs | map: 'on' | compact | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "3,1 1,a,2.5,true b,a,a 0 0 true,false,true"
+    },
+    {
+      "line": 29,
+      "template": "{{ arr | concat: strs | join: ',' }} {{ arr | concat: e | join: ',' }} {{ z | concat: arr | join: ',' }} {{ s | concat: arr | join: ',' }} {{ arr | concat: nested | join: ',' }} {{ arr | concat: nested | size }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "3,1,2,b,A,c,a 3,1,2 3,1,2 str,3,1,2 3,1,2,1,2,3,4 5"
+    },
+    {
+      "line": 30,
+      "template": "{{ arr | concat: s }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): concat filter requires an array argument"
+    },
+    {
+      "line": 31,
+      "template": "{{ arr | concat: z }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): concat filter requires an array argument"
+    },
+    {
+      "line": 32,
+      "template": "{{ arr | concat: h }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): concat filter requires an array argument"
+    },
+    {
+      "line": 33,
+      "template": "{{ arr | concat }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2)"
+    },
+    {
+      "line": 34,
+      "template": "{{ arr | first }} {{ arr | last }} {{ e | first }}|{{ e | last }}|{{ z | first }}|{{ h | first }}|{{ h | last }}|{{ nested | first }}|{{ nested | last }}|{{ n | first }}|{{ (1..3) | first }}|{{ (1..3) | last }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "3 2 |||kv||12|34||1|3"
+    },
+    {
+      "line": 35,
+      "template": "{{ arr | sum }} {{ objs | sum: 'v' }} {{ e | sum }} {{ z | sum }} {{ mixed | sum }} {{ strs | sum }} {{ '1,2.5,x' | split: ',' | sum }} {{ nested | sum }} {{ objs | sum: 'missing' }} {{ objs | sum: 'n' }} {{ arr | sum: 'x' }} {{ n | sum }} {{ '3' | sum }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "6 10 0 0 3.5 0 3.5 10 0 0 Liquid error (line 1): cannot select the property 'x' 5 3"
+    },
+    {
+      "line": 36,
+      "template": "{{ '0.1,0.2' | split: ',' | sum }} {{ with_nil | sum }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "0.3 4"
+    },
+    {
+      "line": 37,
+      "template": "{{ arr | size }} {{ e | size }} {{ nested | size }} {{ (1..10) | size }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "3 0 2 10"
+    },
+    {
+      "line": 38,
+      "template": "{{ arr | sort | reverse | first }} {{ strs | sort_natural | uniq | join: '' | upcase }} {{ objs | map: 'v' | sort | join: '-' }} {{ objs | where: 'on' | first }} {{ objs | where: 'on' | map: 'v' | sum }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "3 AABC 1-2-3-4 {\"n\"=>\"b\", \"v\"=>2, \"on\"=>true} 6"
+    },
+    {
+      "line": 39,
+      "template": "{{ (1..5) | sort | reverse | join: ',' }} {{ (1..3) | map: 'x' }} {{ (1..5) | sum }} {{ (1..5) | reverse | first }} {{ (1..3) | concat: arr | join: ',' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "5,4,3,2,1 Liquid error (line 1): cannot select the property 'x' 15 5 1,2,3,3,1,2"
+    },
+    {
+      "line": 40,
+      "template": "{% assign sorted = strs | sort %}{% for x in sorted %}{{ x }}{% endfor %} {{ strs | join: '' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Aabc bAca"
+    },
+    {
+      "line": 41,
+      "template": "{{ objs | where: 'v', 2.0 | size }} {{ dup | where: 'x' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "1 Liquid error (line 1): cannot select the property 'x'"
+    },
+    {
+      "line": 42,
+      "template": "{{ arr | join: ',', 'x' }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 3, expected 1..2)"
+    },
+    {
+      "line": 43,
+      "template": "{{ arr | reverse: 1 }}",
+      "data": {
+        "arr": [
+          3,
+          1,
+          2
+        ],
+        "strs": [
+          "b",
+          "A",
+          "c",
+          "a"
+        ],
+        "z": null,
+        "s": "str",
+        "n": 5,
+        "h": {
+          "k": "v"
+        },
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            [
+              4
+            ]
+          ]
+        ],
+        "objs": [
+          {
+            "n": "b",
+            "v": 2,
+            "on": true
+          },
+          {
+            "n": "a",
+            "v": 1,
+            "on": false
+          },
+          {
+            "n": "c",
+            "v": 3
+          },
+          {
+            "n": "a",
+            "v": 4,
+            "on": true
+          }
+        ],
+        "mixed": [
+          1,
+          "a",
+          null,
+          2.5,
+          true
+        ],
+        "with_nil": [
+          3,
+          null,
+          1
+        ],
+        "dup": [
+          1,
+          1,
+          2,
+          "1",
+          1.0,
+          2
+        ],
+        "e": []
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): wrong number of arguments (given 2, expected 1)"
+    }
+  ]
+}

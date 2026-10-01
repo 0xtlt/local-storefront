@@ -1,0 +1,8 @@
+<p {{ block.shopify_attributes }}>{{ block.settings.text }}{% render 'meta', label: 'text' %}</p>
+{% schema %}
+{
+  "name": "Text",
+  "tag": null,
+  "settings": [{ "type": "inline_richtext", "id": "text", "label": "Text", "default": "Default text" }]
+}
+{% endschema %}

@@ -1,0 +1,33 @@
+## Runtime errors: message format, line numbers, template names, blank-tag suppression
+#! data {"n": 5, "s": "str", "arr": [1, 2]}
+#! partial bad line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after
+#! partial deep {% render 'bad' %}
+#! partial syntax {% if %}
+#! partial unclosed {% if true %}
+line1\nline2\n{{ 1 | divided_by: 0 }}\nline4
+a\n\n\n{% if n > s %}x{% endif %}\nb
+{% assign x = 1 | divided_by: 0 %}[{{ x }}]
+{% capture c %}{{ 1 | divided_by: 0 }}{% endcapture %}[{{ c }}]
+{% if 1 > 'a' %}x{% else %}y{% endif %}|after
+{% for i in arr %}{{ i | divided_by: 0 }}{% endfor %}
+{% for i in arr limit: 'x' %}{{ i }}{% endfor %}|after
+{% render 'bad' %}
+{% render 'deep' %}
+x\n{% render 'bad' %}\ny
+{% include 'bad' %}
+{% render 'syntax' %}
+{% render 'unclosed' %}
+{% include 'syntax' %}
+{{ s | truncate: 'x' }}|{{ s | slice: 'x' }}|{{ arr | concat: 1 }}
+{{ 1 | modulo: 0 }}|{{ arr | map: 'x' }}|{{ arr | sort: 'x' }}
+{% case n %}{% when 5 %}{{ 1 | divided_by: 0 }}{% endcase %}
+{%- liquid\n assign a = 1\n echo a | divided_by: 0\n echo 'ok'\n-%}
+{% liquid\n\n\n echo 1 | divided_by: 0\n %}
+{{ 1 | divided_by: 0 }}{{ 2 | divided_by: 0 }}
+{% echo 1 | divided_by: 0 %}
+{% increment x %}{{ x | divided_by: 0 }}
+{% tablerow i in arr cols: 2 %}{{ i | divided_by: 0 }}{% endtablerow %}
+{% cycle 'a', 'b' %}{{ nil | divided_by: 0 }}
+{% unless 1 > 'a' %}x{% endunless %}
+{% if arr contains 1 and 1 > 'a' %}x{% endif %}
+{% if false and 1 > 'a' %}x{% else %}short-circuit{% endif %}

@@ -1,0 +1,22 @@
+<footer>{{ section.settings.note }}|{{ section.location }}|
+{%- for block in section.blocks -%}
+<a href="{{ block.settings.url }}" data-id="{{ block.id }}" data-type="{{ block.type }}"{{ block.shopify_attributes }}>{{ block.settings.label }}</a>
+{%- endfor -%}
+|{{ 'cart.items' | t: count: cart.item_count }}</footer>
+{% schema %}
+{
+  "name": "Footer",
+  "settings": [{ "type": "text", "id": "note", "label": "Note", "default": "Default note" }],
+  "blocks": [
+    {
+      "type": "link",
+      "name": "Link",
+      "settings": [
+        { "type": "text", "id": "label", "label": "Label", "default": "Link" },
+        { "type": "url", "id": "url", "label": "URL" }
+      ]
+    }
+  ],
+  "default": { "blocks": [{ "type": "link" }] }
+}
+{% endschema %}

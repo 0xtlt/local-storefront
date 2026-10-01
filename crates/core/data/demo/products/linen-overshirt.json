@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Linen Overshirt",
+  "description": "<p>A breezy layer in washed European linen. Wear it open over a tee or buttoned up on its own.</p>",
+  "type": "Apparel",
+  "tags": ["linen", "tops", "sale"],
+  "options": ["Size"],
+  "price": 6800,
+  "compare_at_price": 8900,
+  "images": [
+    { "src": "products/overshirt-front.jpg", "alt": "Linen overshirt, front", "width": 1600, "height": 2000 },
+    { "src": "products/overshirt-back.jpg", "alt": "Linen overshirt, back", "width": 1600, "height": 2000 }
+  ],
+  "variants": [
+    { "options": ["S"], "sku": "OVS-S", "inventory_quantity": 4 },
+    { "options": ["M"], "sku": "OVS-M", "inventory_quantity": 7 },
+    { "options": ["L"], "sku": "OVS-L", "inventory_quantity": 1 }
+  ]
+}

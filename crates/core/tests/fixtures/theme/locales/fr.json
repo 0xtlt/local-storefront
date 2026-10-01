@@ -1,0 +1,6 @@
+{
+  "general": { "greeting": "Bonjour {{ name }}" },
+  "cart": {
+    "items": { "one": "{{ count }} article", "other": "{{ count }} articles" }
+  }
+}

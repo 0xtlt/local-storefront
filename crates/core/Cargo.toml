@@ -1,0 +1,23 @@
+[package]
+name = "slt-core"
+description = "Renders Shopify themes locally: theme loading, store fixtures, Shopify's Liquid objects, filters and tags"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+slt-liquid.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { version = "1", features = ["indexmap2"] }
+jsonschema = { version = "0.58", default-features = false }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+md-5 = "0.11"
+sha1 = "0.11"
+sha2 = "0.11"
+hmac = "0.13"
+blake3 = { version = "1", default-features = false }

@@ -1,0 +1,3 @@
+<article>{{ page.title }}: {{ page.content }}</article>
+<p>{{ 'general.greeting' | t: name: page.author }} / {{ 'general.unsafe' | t }} / {{ 'general.safe_html' | t: name: '<i>x</i>' }} / {{ 'general.missing' | t }}</p>
+<p>{{ page.published_at | date: '%Y-%m-%d' }} / {{ page.published_at | date: format: 'month_and_year' }} / {{ page.published_at | time_tag: '%b %-d' }}</p>

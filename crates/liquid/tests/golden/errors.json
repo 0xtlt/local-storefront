@@ -1,0 +1,518 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 7,
+      "template": "line1\nline2\n{{ 1 | divided_by: 0 }}\nline4",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "line1\nline2\nLiquid error (line 3): divided by 0\nline4"
+    },
+    {
+      "line": 8,
+      "template": "a\n\n\n{% if n > s %}x{% endif %}\nb",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "a\n\n\nLiquid error (line 4): comparison of Integer with String failed\nb"
+    },
+    {
+      "line": 9,
+      "template": "{% assign x = 1 | divided_by: 0 %}[{{ x }}]",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "[]"
+    },
+    {
+      "line": 10,
+      "template": "{% capture c %}{{ 1 | divided_by: 0 }}{% endcapture %}[{{ c }}]",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "[Liquid error (line 1): divided by 0]"
+    },
+    {
+      "line": 11,
+      "template": "{% if 1 > 'a' %}x{% else %}y{% endif %}|after",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): comparison of Integer with String failed|after"
+    },
+    {
+      "line": 12,
+      "template": "{% for i in arr %}{{ i | divided_by: 0 }}{% endfor %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): divided by 0Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 13,
+      "template": "{% for i in arr limit: 'x' %}{{ i }}{% endfor %}|after",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): invalid integer|after"
+    },
+    {
+      "line": 14,
+      "template": "{% render 'bad' %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "line1\nLiquid error (bad line 2): divided by 0\nafter"
+    },
+    {
+      "line": 15,
+      "template": "{% render 'deep' %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "line1\nLiquid error (bad line 2): divided by 0\nafter"
+    },
+    {
+      "line": 16,
+      "template": "x\n{% render 'bad' %}\ny",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "x\nline1\nLiquid error (bad line 2): divided by 0\nafter\ny"
+    },
+    {
+      "line": 17,
+      "template": "{% include 'bad' %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "line1\nLiquid error (bad line 2): divided by 0\nafter"
+    },
+    {
+      "line": 18,
+      "template": "{% render 'syntax' %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid syntax error (syntax line 1): Syntax Error in tag 'if' - Valid syntax: if [expression]"
+    },
+    {
+      "line": 19,
+      "template": "{% render 'unclosed' %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid syntax error (unclosed line 1): 'if' tag was never closed"
+    },
+    {
+      "line": 20,
+      "template": "{% include 'syntax' %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid syntax error (syntax line 1): Syntax Error in tag 'if' - Valid syntax: if [expression]"
+    },
+    {
+      "line": 21,
+      "template": "{{ s | truncate: 'x' }}|{{ s | slice: 'x' }}|{{ arr | concat: 1 }}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): invalid integer|Liquid error (line 1): invalid integer|Liquid error (line 1): concat filter requires an array argument"
+    },
+    {
+      "line": 22,
+      "template": "{{ 1 | modulo: 0 }}|{{ arr | map: 'x' }}|{{ arr | sort: 'x' }}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): divided by 0|Liquid error (line 1): cannot select the property 'x'|Liquid error (line 1): cannot select the property 'x'"
+    },
+    {
+      "line": 23,
+      "template": "{% case n %}{% when 5 %}{{ 1 | divided_by: 0 }}{% endcase %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 24,
+      "template": "{%- liquid\n assign a = 1\n echo a | divided_by: 0\n echo 'ok'\n-%}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 3): divided by 0ok"
+    },
+    {
+      "line": 25,
+      "template": "{% liquid\n\n\n echo 1 | divided_by: 0\n %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 4): divided by 0"
+    },
+    {
+      "line": 26,
+      "template": "{{ 1 | divided_by: 0 }}{{ 2 | divided_by: 0 }}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): divided by 0Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 27,
+      "template": "{% echo 1 | divided_by: 0 %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 28,
+      "template": "{% increment x %}{{ x | divided_by: 0 }}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "0Liquid error (line 1): divided by 0"
+    },
+    {
+      "line": 29,
+      "template": "{% tablerow i in arr cols: 2 %}{{ i | divided_by: 0 }}{% endtablerow %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">Liquid error (line 1): divided by 0</td><td class=\"col2\">Liquid error (line 1): divided by 0</td></tr>\n"
+    },
+    {
+      "line": 30,
+      "template": "{% cycle 'a', 'b' %}{{ nil | divided_by: 0 }}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "aLiquid error (line 1): divided by 0"
+    },
+    {
+      "line": 31,
+      "template": "{% unless 1 > 'a' %}x{% endunless %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): comparison of Integer with String failed"
+    },
+    {
+      "line": 32,
+      "template": "{% if arr contains 1 and 1 > 'a' %}x{% endif %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "Liquid error (line 1): comparison of Integer with String failed"
+    },
+    {
+      "line": 33,
+      "template": "{% if false and 1 > 'a' %}x{% else %}short-circuit{% endif %}",
+      "data": {
+        "n": 5,
+        "s": "str",
+        "arr": [
+          1,
+          2
+        ]
+      },
+      "partials": {
+        "bad": "line1\n{{ 1 | divided_by: 0 }}\n{% assign q = 1 | divided_by: 0 %}after",
+        "deep": "{% render 'bad' %}",
+        "syntax": "{% if %}",
+        "unclosed": "{% if true %}"
+      },
+      "expected": "short-circuit"
+    }
+  ]
+}

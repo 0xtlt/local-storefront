@@ -1,0 +1,2657 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 4,
+      "template": "{{ a | append: 'x' 'y' }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Ax"
+    },
+    {
+      "line": 5,
+      "template": "{{ a | append 'x' }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): wrong number of arguments (given 1, expected 2)"
+    },
+    {
+      "line": 6,
+      "template": "{{ a | }}|{{ | upcase }}|{{ a || upcase }}|{{ a | | upcase }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "A||A|A"
+    },
+    {
+      "line": 7,
+      "template": "{{ a = b }}|{{ a == b }}|{{ a b }}|{{ a, b }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "A|A|A|A"
+    },
+    {
+      "line": 8,
+      "template": "{{ a | append: 'b', }}|{{ a | append: , 'b' }}|{{ a | append: 'b' , 'c' }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Ab|Ab|Liquid error (line 1): wrong number of arguments (given 3, expected 2)"
+    },
+    {
+      "line": 9,
+      "template": "{{ a[ }}|{{ a[0 }}|{{ a.b. }}|{{ .a }}|{{ a..b }}|{{ a. b }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "A|||A||"
+    },
+    {
+      "line": 10,
+      "template": "{{ 1..3 }}|{{ (1...3) }}|{{ (1..3 }}|{{ 1..3) }}|{{ (a..n) }}|{{ ('1'..'3') }}|{{ (1.5..3.9) }}|{{ (nil..2) }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "1.0|1..3|||0..5|1..3|1..3|0..2"
+    },
+    {
+      "line": 11,
+      "template": "{{ 'unterminated }}|{{ \"a\" \"b\" | upcase }}|{{ 'a'b }}|{{ a'b' }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "|A|a|"
+    },
+    {
+      "line": 12,
+      "template": "{{ a-b }}|{{ a - b }}|{{ -a }}|{{ a? }}|{{ a! }}|{{ a.b? }}|{{ - }}|{{ -1 }}|{{ - 1 }}|{{ --1 }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "|A|||A|||-1||"
+    },
+    {
+      "line": 13,
+      "template": "{{ 5 | plus:1 | minus:2 }}|{{ 5|plus:1|minus:2 }}|{{ 5 | plus : 1 }}|{{ 5 | plus :1 }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "4|4|6|6"
+    },
+    {
+      "line": 14,
+      "template": "{{ 'a:b' | split: ':' | last }}|{{ \"a|b\" | split: \"|\" | first }}|{{ 'a, b' | split: ', ' | join: '|' }}|{{ 'a' | append: 'b|c' }}|{{ 'x' | append: \"k: v\" }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "b|a|a|b|ab|c|xk: v"
+    },
+    {
+      "line": 15,
+      "template": "{{ a | default: b, allow_false: true }}|{{ f | default: b, allow_false: t }}|{{ f | default: allow_false: true }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "A|false|{\"allow_false\"=>true}"
+    },
+    {
+      "line": 16,
+      "template": "{{ a | append: k: 'v' }}|{{ a | upcase: k: 'v' }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "A{\"k\"=>\"v\"}|Liquid error (line 1): wrong number of arguments (given 2, expected 1)"
+    },
+    {
+      "line": 17,
+      "template": "{% if a = b %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): Unknown operator ="
+    },
+    {
+      "line": 18,
+      "template": "{% if a && b %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 19,
+      "template": "{% if a == %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "y"
+    },
+    {
+      "line": 20,
+      "template": "{% if == a %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): Unknown operator a"
+    },
+    {
+      "line": 21,
+      "template": "{% if %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in tag 'if' - Valid syntax: if [expression]"
+    },
+    {
+      "line": 22,
+      "template": "{% if a contains %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "y"
+    },
+    {
+      "line": 23,
+      "template": "{% if contains a %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): Unknown operator a"
+    },
+    {
+      "line": 24,
+      "template": "{% if 'contains' == 'contains' %}x{% endif %}{% if h.contains %}y{% endif %}{% if h.contains == 'c' %}z{% endif %}{% if h.and == 'x' %}w{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "xyzw"
+    },
+    {
+      "line": 25,
+      "template": "{% if a and %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in tag 'if' - Valid syntax: if [expression]"
+    },
+    {
+      "line": 26,
+      "template": "{% if and a %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in tag 'if' - Valid syntax: if [expression]"
+    },
+    {
+      "line": 27,
+      "template": "{% if a or or b %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in tag 'if' - Valid syntax: if [expression]"
+    },
+    {
+      "line": 28,
+      "template": "{% if (a) %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 29,
+      "template": "{% if a > b c %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "y"
+    },
+    {
+      "line": 30,
+      "template": "{% if a == 'A' extra %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 31,
+      "template": "{% if a === 'A' %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): Unknown operator ==="
+    },
+    {
+      "line": 32,
+      "template": "{% if a =! 'A' %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): Unknown operator =!"
+    },
+    {
+      "line": 33,
+      "template": "{% if a is b %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): Unknown operator is"
+    },
+    {
+      "line": 34,
+      "template": "{% if t == true and a %}x{% endif %}{% if t and a == 'A' and n > 1 %}y{% endif %}{% if f or f or t %}z{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "xyz"
+    },
+    {
+      "line": 35,
+      "template": "{% if n > 1 and n < 10 or f %}x{% endif %}{% if f and t or t %}y{% else %}z{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "xz"
+    },
+    {
+      "line": 36,
+      "template": "{% if a  ==  'A'  and  b  !=  'A' %}x{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 37,
+      "template": "{% if a=='A' or b=='B' %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x",
+      "lax": "y"
+    },
+    {
+      "line": 38,
+      "template": "{% if not a %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Liquid error (line 1): Unknown operator a"
+    },
+    {
+      "line": 39,
+      "template": "{% if !a %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 40,
+      "template": "{% if a.size==1 %}x{% else %}y{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x",
+      "lax": "y"
+    },
+    {
+      "line": 41,
+      "template": "{% unless a == 'A' and b == 'B' %}x{% else %}y{% endunless %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "y"
+    },
+    {
+      "line": 42,
+      "template": "{% for i in %}x{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'for loop' - Valid syntax: for [item] in [collection]"
+    },
+    {
+      "line": 43,
+      "template": "{% for in arr %}x{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'for loop' - Valid syntax: for [item] in [collection]"
+    },
+    {
+      "line": 44,
+      "template": "{% for i arr %}x{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'for loop' - Valid syntax: for [item] in [collection]"
+    },
+    {
+      "line": 45,
+      "template": "{% for i in arr limit %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 46,
+      "template": "{% for i in arr limit: %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 47,
+      "template": "{% for i in arr bogus: 1 %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 48,
+      "template": "{% for i in arr, limit: 1 %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "1"
+    },
+    {
+      "line": 49,
+      "template": "{% for i in arr limit: 1, offset: 1, %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "2"
+    },
+    {
+      "line": 50,
+      "template": "{% for i in arr limit:1 offset:1 reversed %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "2"
+    },
+    {
+      "line": 51,
+      "template": "{% for i in arr reversed, limit: 2 %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "21"
+    },
+    {
+      "line": 52,
+      "template": "{% for i in arr | reverse %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 53,
+      "template": "{% for i in (1..3) | reverse %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 54,
+      "template": "{% for i in arr.size %}{{ i }}{% endfor %}|{% for i in (1..arr.size) %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "|123"
+    },
+    {
+      "line": 55,
+      "template": "{% for my-item in arr %}{{ my-item }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 56,
+      "template": "{% for 'i' in arr %}x{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'for loop' - Valid syntax: for [item] in [collection]"
+    },
+    {
+      "line": 57,
+      "template": "{% for i in arr limit: 2 offset: continue %}{{ i }}{% endfor %}{% for i in arr limit: 2 offset: continue %}{{ i }}{% endfor %}{% for i in arr limit: 2 offset: continue %}{{ i }}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 58,
+      "template": "{% assign x = 'a' | append: %}{{ x }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": ""
+    },
+    {
+      "line": 59,
+      "template": "{% assign x = | upcase %}[{{ x }}]",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[]"
+    },
+    {
+      "line": 60,
+      "template": "{% assign x y = 1 %}{{ x }}|{{ y }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "|1"
+    },
+    {
+      "line": 61,
+      "template": "{% assign 'x' = 1 %}{{ x }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'assign' - Valid syntax: assign [var] = [source]"
+    },
+    {
+      "line": 62,
+      "template": "{% assign x == 1 %}[{{ x }}]",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[]"
+    },
+    {
+      "line": 63,
+      "template": "{% assign x = 1 | plus: 1 | times: %}{{ x }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": ""
+    },
+    {
+      "line": 64,
+      "template": "{% assign and = 1 %}{{ and }}{% assign contains = 2 %}{{ contains }}{% assign or = 3 %}{{ or }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "123"
+    },
+    {
+      "line": 65,
+      "template": "{% assign nil = 1 %}[{{ nil }}]{% assign true = 'x' %}[{{ true }}]{% assign empty = 'e' %}[{{ empty }}]{% assign blank = 'b' %}[{{ blank }}]",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[][true][][]"
+    },
+    {
+      "line": 66,
+      "template": "{% assign forloop = 'f' %}{{ forloop }}{% for i in (1..2) %}{{ forloop.index }}{% endfor %}{{ forloop }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "f12f"
+    },
+    {
+      "line": 67,
+      "template": "{% case n extra %}{% when 5 %}x{% endcase %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 68,
+      "template": "{% case n %}{% when 5 6 %}x{% endcase %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 69,
+      "template": "{% case n %}{% when 4 or 5 or 6 %}x{% endcase %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 70,
+      "template": "{% case n %}{% when 4,5,6 %}x{% endcase %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 71,
+      "template": "{% case n %}{% when 4 , 5 %}x{% when %}y{% endcase %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in tag 'case' - Valid when condition: {% when [condition] [or condition2...] %}"
+    },
+    {
+      "line": 72,
+      "template": "{% case a %}{% when 'A' or 'B', 'C' %}x{% endcase %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 73,
+      "template": "{% case a %}{% when \"A\" %}x{% when 'A' %}y{% else %}z{% endcase %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "xy"
+    },
+    {
+      "line": 74,
+      "template": "{% render 'args', a: 1, %}|{% render 'args' , a : 1 %}|{% render 'args' a: 1 b: 2 %}|{% render 'args', a: 1 b: 2 %}|{% render 'args',a:1,b:2 %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[1|]|[1|]|[1|2]|[1|2]|[1|2]"
+    },
+    {
+      "line": 75,
+      "template": "{% render 'args', a: a, b: b | upcase %}|{% render 'args', a: h.k, b: arr[0] %}|{% render 'args', a: 'x y', b: \"z, w\" %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[A|B]|[v|1]|[x y|z, w]"
+    },
+    {
+      "line": 76,
+      "template": "{% render 'args' with a %}|{% render 'args' with a as b %}|{% render 'args' for arr as a %}|{% render 'args' as a %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[|]|[|A]|[1|][2|][3|]|[|]"
+    },
+    {
+      "line": 77,
+      "template": "{% render 'args' %}{% render 'args'%}{%render 'args'%}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[|][|][|]"
+    },
+    {
+      "line": 78,
+      "template": "{% render %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax error in tag 'render' - Template name must be a quoted string"
+    },
+    {
+      "line": 79,
+      "template": "{% render args %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax error in tag 'render' - Template name must be a quoted string"
+    },
+    {
+      "line": 80,
+      "template": "{% render 'args' 'args' %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[|]"
+    },
+    {
+      "line": 81,
+      "template": "{% include 'args' a: 1 %}|{% include 'args', a: 1, b: 2 %}|{% include 'args' with a as b %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "[1|B]|[1|2]|[A|A]"
+    },
+    {
+      "line": 82,
+      "template": "{%if t%}x{%endif%}{%- if t -%} y {%- endif -%}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "xy"
+    },
+    {
+      "line": 83,
+      "template": "{%\nif\nt\n%}x{% endif %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 84,
+      "template": "{{\n a\n|\nappend: 'x'\n}}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "Ax"
+    },
+    {
+      "line": 85,
+      "template": "{% if t %}x{% endif extra %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "x"
+    },
+    {
+      "line": 86,
+      "template": "{% endif extra %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Unknown tag 'endif'"
+    },
+    {
+      "line": 87,
+      "template": "{% if t %}x{% end %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'end' is not a valid delimiter for if tags. use endif"
+    },
+    {
+      "line": 88,
+      "template": "{% if t %}x{% endunless %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'endunless' is not a valid delimiter for if tags. use endif"
+    },
+    {
+      "line": 89,
+      "template": "{% for i in arr %}x{% endif %}{% endfor %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'endif' is not a valid delimiter for for tags. use endfor"
+    },
+    {
+      "line": 90,
+      "template": "{% capture x %}y{% endcapture extra %}{{ x }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "y"
+    },
+    {
+      "line": 91,
+      "template": "{% raw extra %}x{% endraw %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'raw' - Valid syntax: raw"
+    },
+    {
+      "line": 92,
+      "template": "{% comment extra %}x{% endcomment %}after",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "after"
+    },
+    {
+      "line": 93,
+      "template": "{% break extra %}after",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": ""
+    },
+    {
+      "line": 94,
+      "template": "{% increment %}|{% increment a b %}|{% increment 'q' %}|{% decrement %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "0|0|0|0"
+    },
+    {
+      "line": 95,
+      "template": "{% cycle 'a' 'b' %}|{% cycle 'a',, 'b' %}|{% cycle a, b %}{% cycle a, b %}|{% cycle 'x': %}|{% cycle :'a' %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "a|a|AA||A"
+    },
+    {
+      "line": 96,
+      "template": "{% echo %}|{% echo a | append %}|{% echo 'a' 'b' %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "|Liquid error (line 1): wrong number of arguments (given 1, expected 2)|a"
+    },
+    {
+      "line": 97,
+      "template": "{% tablerow i in arr cols:2 %}{{ i }}{% endtablerow %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1</td><td class=\"col2\">2</td></tr>\n<tr class=\"row2\"><td class=\"col1\">3</td></tr>\n"
+    },
+    {
+      "line": 98,
+      "template": "{% tablerow i in arr cols: 'x' %}{{ i }}{% endtablerow %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1</td><td class=\"col2\">2</td><td class=\"col3\">3</td></tr>\n"
+    },
+    {
+      "line": 99,
+      "template": "{% tablerow in arr %}{{ i }}{% endtablerow %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'table_row loop' - Valid syntax: table_row [item] in [collection] cols=3"
+    },
+    {
+      "line": 100,
+      "template": "{% tablerow i in arr cols: 2, limit: 2 %}{{ i }}{% endtablerow %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1</td><td class=\"col2\">2</td></tr>\n"
+    },
+    {
+      "line": 101,
+      "template": "{% tablerow i in arr range: 2 %}{{ i }}{% endtablerow %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1</td><td class=\"col2\">2</td><td class=\"col3\">3</td></tr>\n"
+    },
+    {
+      "line": 102,
+      "template": "{% ifchanged %}a{% endifchanged %}{% ifchanged %}a{% endifchanged %}{% ifchanged %}b{% endifchanged %}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "ab"
+    },
+    {
+      "line": 103,
+      "template": "{{ h.k.size }}|{{ h.size }}|{{ h.first }}|{{ h['and'] }}|{{ h.and }}|{{ arr.first.first }}|{{ arr.last.size }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "1|3|containsc|x|x||8"
+    },
+    {
+      "line": 104,
+      "template": "{{ arr[n] }}|{{ arr[-n] }}|{{ arr[arr.first] }}|{{ arr[arr[0]] }}|{{ arr[\"1\"] }}|{{ h[arr] }}|{{ h[nil] }}|{{ arr[nil] }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "||2|2||||"
+    },
+    {
+      "line": 105,
+      "template": "{{ a.size.size }}|{{ a.first.first }}|{{ n.first }}|{{ t.size }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "8|A||"
+    },
+    {
+      "line": 106,
+      "template": "{{ 'a' | append: undefined | append: nil | append: false | append: 1.0 }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "afalse1.0"
+    },
+    {
+      "line": 107,
+      "template": "{{ \"tag {% inside %} string\" }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Variable '{{ \"tag {% inside %}' was not properly terminated with regexp: /\\}\\}/"
+    },
+    {
+      "line": 108,
+      "template": "{{ 'a' }}{{ 'b' }}{% assign c = 'c' %}{{ c }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "abc"
+    },
+    {
+      "line": 109,
+      "template": "{{ true | append: 'x' }}{{ nil | append: 'x' }}{{ 1 | append: 2 }}",
+      "data": {
+        "a": "A",
+        "b": "B",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "contains": "c",
+          "and": "x",
+          "k": "v"
+        },
+        "t": true,
+        "f": false
+      },
+      "partials": {
+        "args": "[{{ a }}|{{ b }}]"
+      },
+      "expected": "truexx12"
+    }
+  ]
+}

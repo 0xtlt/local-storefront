@@ -1,0 +1,109 @@
+## Malformed or unusual markup: the lax parser decides what happens
+#! data {"a": "A", "b": "B", "n": 5, "arr": [1, 2, 3], "h": {"contains": "c", "and": "x", "k": "v"}, "t": true, "f": false}
+#! partial args [{{ a }}|{{ b }}]
+{{ a | append: 'x' 'y' }}
+{{ a | append 'x' }}
+{{ a | }}|{{ | upcase }}|{{ a || upcase }}|{{ a | | upcase }}
+{{ a = b }}|{{ a == b }}|{{ a b }}|{{ a, b }}
+{{ a | append: 'b', }}|{{ a | append: , 'b' }}|{{ a | append: 'b' , 'c' }}
+{{ a[ }}|{{ a[0 }}|{{ a.b. }}|{{ .a }}|{{ a..b }}|{{ a. b }}
+{{ 1..3 }}|{{ (1...3) }}|{{ (1..3 }}|{{ 1..3) }}|{{ (a..n) }}|{{ ('1'..'3') }}|{{ (1.5..3.9) }}|{{ (nil..2) }}
+{{ 'unterminated }}|{{ "a" "b" | upcase }}|{{ 'a'b }}|{{ a'b' }}
+{{ a-b }}|{{ a - b }}|{{ -a }}|{{ a? }}|{{ a! }}|{{ a.b? }}|{{ - }}|{{ -1 }}|{{ - 1 }}|{{ --1 }}
+{{ 5 | plus:1 | minus:2 }}|{{ 5|plus:1|minus:2 }}|{{ 5 | plus : 1 }}|{{ 5 | plus :1 }}
+{{ 'a:b' | split: ':' | last }}|{{ "a|b" | split: "|" | first }}|{{ 'a, b' | split: ', ' | join: '|' }}|{{ 'a' | append: 'b|c' }}|{{ 'x' | append: "k: v" }}
+{{ a | default: b, allow_false: true }}|{{ f | default: b, allow_false: t }}|{{ f | default: allow_false: true }}
+{{ a | append: k: 'v' }}|{{ a | upcase: k: 'v' }}
+{% if a = b %}x{% else %}y{% endif %}
+{% if a && b %}x{% else %}y{% endif %}
+{% if a == %}x{% else %}y{% endif %}
+{% if == a %}x{% else %}y{% endif %}
+{% if %}x{% else %}y{% endif %}
+{% if a contains %}x{% else %}y{% endif %}
+{% if contains a %}x{% else %}y{% endif %}
+{% if 'contains' == 'contains' %}x{% endif %}{% if h.contains %}y{% endif %}{% if h.contains == 'c' %}z{% endif %}{% if h.and == 'x' %}w{% endif %}
+{% if a and %}x{% else %}y{% endif %}
+{% if and a %}x{% else %}y{% endif %}
+{% if a or or b %}x{% else %}y{% endif %}
+{% if (a) %}x{% else %}y{% endif %}
+{% if a > b c %}x{% else %}y{% endif %}
+{% if a == 'A' extra %}x{% else %}y{% endif %}
+{% if a === 'A' %}x{% else %}y{% endif %}
+{% if a =! 'A' %}x{% else %}y{% endif %}
+{% if a is b %}x{% else %}y{% endif %}
+{% if t == true and a %}x{% endif %}{% if t and a == 'A' and n > 1 %}y{% endif %}{% if f or f or t %}z{% endif %}
+{% if n > 1 and n < 10 or f %}x{% endif %}{% if f and t or t %}y{% else %}z{% endif %}
+{% if a  ==  'A'  and  b  !=  'A' %}x{% endif %}
+{% if a=='A' or b=='B' %}x{% else %}y{% endif %}
+{% if not a %}x{% else %}y{% endif %}
+{% if !a %}x{% else %}y{% endif %}
+{% if a.size==1 %}x{% else %}y{% endif %}
+{% unless a == 'A' and b == 'B' %}x{% else %}y{% endunless %}
+{% for i in %}x{% endfor %}
+{% for in arr %}x{% endfor %}
+{% for i arr %}x{% endfor %}
+{% for i in arr limit %}{{ i }}{% endfor %}
+{% for i in arr limit: %}{{ i }}{% endfor %}
+{% for i in arr bogus: 1 %}{{ i }}{% endfor %}
+{% for i in arr, limit: 1 %}{{ i }}{% endfor %}
+{% for i in arr limit: 1, offset: 1, %}{{ i }}{% endfor %}
+{% for i in arr limit:1 offset:1 reversed %}{{ i }}{% endfor %}
+{% for i in arr reversed, limit: 2 %}{{ i }}{% endfor %}
+{% for i in arr | reverse %}{{ i }}{% endfor %}
+{% for i in (1..3) | reverse %}{{ i }}{% endfor %}
+{% for i in arr.size %}{{ i }}{% endfor %}|{% for i in (1..arr.size) %}{{ i }}{% endfor %}
+{% for my-item in arr %}{{ my-item }}{% endfor %}
+{% for 'i' in arr %}x{% endfor %}
+{% for i in arr limit: 2 offset: continue %}{{ i }}{% endfor %}{% for i in arr limit: 2 offset: continue %}{{ i }}{% endfor %}{% for i in arr limit: 2 offset: continue %}{{ i }}{% endfor %}
+{% assign x = 'a' | append: %}{{ x }}
+{% assign x = | upcase %}[{{ x }}]
+{% assign x y = 1 %}{{ x }}|{{ y }}
+{% assign 'x' = 1 %}{{ x }}
+{% assign x == 1 %}[{{ x }}]
+{% assign x = 1 | plus: 1 | times: %}{{ x }}
+{% assign and = 1 %}{{ and }}{% assign contains = 2 %}{{ contains }}{% assign or = 3 %}{{ or }}
+{% assign nil = 1 %}[{{ nil }}]{% assign true = 'x' %}[{{ true }}]{% assign empty = 'e' %}[{{ empty }}]{% assign blank = 'b' %}[{{ blank }}]
+{% assign forloop = 'f' %}{{ forloop }}{% for i in (1..2) %}{{ forloop.index }}{% endfor %}{{ forloop }}
+{% case n extra %}{% when 5 %}x{% endcase %}
+{% case n %}{% when 5 6 %}x{% endcase %}
+{% case n %}{% when 4 or 5 or 6 %}x{% endcase %}
+{% case n %}{% when 4,5,6 %}x{% endcase %}
+{% case n %}{% when 4 , 5 %}x{% when %}y{% endcase %}
+{% case a %}{% when 'A' or 'B', 'C' %}x{% endcase %}
+{% case a %}{% when "A" %}x{% when 'A' %}y{% else %}z{% endcase %}
+{% render 'args', a: 1, %}|{% render 'args' , a : 1 %}|{% render 'args' a: 1 b: 2 %}|{% render 'args', a: 1 b: 2 %}|{% render 'args',a:1,b:2 %}
+{% render 'args', a: a, b: b | upcase %}|{% render 'args', a: h.k, b: arr[0] %}|{% render 'args', a: 'x y', b: "z, w" %}
+{% render 'args' with a %}|{% render 'args' with a as b %}|{% render 'args' for arr as a %}|{% render 'args' as a %}
+{% render 'args' %}{% render 'args'%}{%render 'args'%}
+{% render %}
+{% render args %}
+{% render 'args' 'args' %}
+{% include 'args' a: 1 %}|{% include 'args', a: 1, b: 2 %}|{% include 'args' with a as b %}
+{%if t%}x{%endif%}{%- if t -%} y {%- endif -%}
+{%\nif\nt\n%}x{% endif %}
+{{\n a\n|\nappend: 'x'\n}}
+{% if t %}x{% endif extra %}
+{% endif extra %}
+{% if t %}x{% end %}
+{% if t %}x{% endunless %}
+{% for i in arr %}x{% endif %}{% endfor %}
+{% capture x %}y{% endcapture extra %}{{ x }}
+{% raw extra %}x{% endraw %}
+{% comment extra %}x{% endcomment %}after
+{% break extra %}after
+{% increment %}|{% increment a b %}|{% increment 'q' %}|{% decrement %}
+{% cycle 'a' 'b' %}|{% cycle 'a',, 'b' %}|{% cycle a, b %}{% cycle a, b %}|{% cycle 'x': %}|{% cycle :'a' %}
+{% echo %}|{% echo a | append %}|{% echo 'a' 'b' %}
+{% tablerow i in arr cols:2 %}{{ i }}{% endtablerow %}
+{% tablerow i in arr cols: 'x' %}{{ i }}{% endtablerow %}
+{% tablerow in arr %}{{ i }}{% endtablerow %}
+{% tablerow i in arr cols: 2, limit: 2 %}{{ i }}{% endtablerow %}
+{% tablerow i in arr range: 2 %}{{ i }}{% endtablerow %}
+{% ifchanged %}a{% endifchanged %}{% ifchanged %}a{% endifchanged %}{% ifchanged %}b{% endifchanged %}
+{{ h.k.size }}|{{ h.size }}|{{ h.first }}|{{ h['and'] }}|{{ h.and }}|{{ arr.first.first }}|{{ arr.last.size }}
+{{ arr[n] }}|{{ arr[-n] }}|{{ arr[arr.first] }}|{{ arr[arr[0]] }}|{{ arr["1"] }}|{{ h[arr] }}|{{ h[nil] }}|{{ arr[nil] }}
+{{ a.size.size }}|{{ a.first.first }}|{{ n.first }}|{{ t.size }}
+{{ 'a' | append: undefined | append: nil | append: false | append: 1.0 }}
+{{ "tag {% inside %} string" }}
+{{ 'a' }}{{ 'b' }}{% assign c = 'c' %}{{ c }}
+{{ true | append: 'x' }}{{ nil | append: 'x' }}{{ 1 | append: 2 }}

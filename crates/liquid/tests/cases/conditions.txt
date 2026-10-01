@@ -1,0 +1,43 @@
+## if / unless / comparison semantics
+#! data {"s": "hello", "n": 5, "f": 5.0, "t": true, "fa": false, "z": null, "arr": [1, 2, 3], "strs": ["a", "b"], "h": {"a": 1}, "e": "", "ws": "  ", "ea": [], "eh": {}, "zero": 0, "num_str": "5"}
+{% if t %}1{% endif %}{% if fa %}2{% endif %}{% if z %}3{% endif %}{% if e %}4{% endif %}{% if zero %}5{% endif %}{% if ea %}6{% endif %}{% if eh %}7{% endif %}{% if undefined %}8{% endif %}
+{% if n == 5 %}a{% endif %}{% if n == f %}b{% endif %}{% if n == num_str %}c{% endif %}{% if n != 4 %}d{% endif %}{% if n <> 4 %}e{% endif %}
+{% if n > 4 %}a{% endif %}{% if n >= 5 %}b{% endif %}{% if n < 6 %}c{% endif %}{% if n <= 5 %}d{% endif %}{% if n > 5 %}e{% endif %}{% if f < 5.5 %}f{% endif %}
+{% if s == 'hello' %}a{% endif %}{% if s != 'x' %}b{% endif %}{% if s > 'a' %}c{% endif %}{% if s < 'z' %}d{% endif %}{% if 'B' < 'a' %}e{% endif %}
+{% if s contains 'ell' %}a{% endif %}{% if s contains 'x' %}b{% endif %}{% if arr contains 2 %}c{% endif %}{% if arr contains '2' %}d{% endif %}{% if strs contains 'a' %}e{% endif %}{% if h contains 'a' %}f{% endif %}{% if h contains 'b' %}g{% endif %}
+{% if s contains n %}a{% endif %}{% if 'a5b' contains n %}b{% endif %}{% if z contains 'a' %}c{% endif %}{% if s contains z %}d{% endif %}{% if n contains 5 %}e{% endif %}
+{% if e == blank %}a{% endif %}{% if ws == blank %}b{% endif %}{% if z == blank %}c{% endif %}{% if fa == blank %}d{% endif %}{% if ea == blank %}e{% endif %}{% if eh == blank %}f{% endif %}{% if s == blank %}g{% endif %}{% if zero == blank %}h{% endif %}{% if t == blank %}i{% endif %}
+{% if e == empty %}a{% endif %}{% if ws == empty %}b{% endif %}{% if z == empty %}c{% endif %}{% if fa == empty %}d{% endif %}{% if ea == empty %}e{% endif %}{% if eh == empty %}f{% endif %}{% if s == empty %}g{% endif %}{% if zero == empty %}h{% endif %}
+{% if blank == e %}a{% endif %}{% if empty == ea %}b{% endif %}{% if s != blank %}c{% endif %}{% if z != empty %}d{% endif %}{% if undefined == blank %}e{% endif %}{% if undefined == empty %}f{% endif %}
+{% if z == nil %}a{% endif %}{% if z == null %}b{% endif %}{% if undefined == nil %}c{% endif %}{% if e == nil %}d{% endif %}{% if fa == nil %}e{% endif %}{% if z == false %}f{% endif %}
+{% if t and t %}a{% endif %}{% if t and fa %}b{% endif %}{% if fa or t %}c{% endif %}{% if fa or fa %}d{% endif %}
+{% if true or false and false %}a{% endif %}{% if false and false or true %}b{% endif %}{% if true and false or true %}c{% endif %}{% if false or true and false %}d{% endif %}
+{% if t == true %}a{% endif %}{% if fa == false %}b{% endif %}{% if t == 'true' %}c{% endif %}{% if 1 == true %}d{% endif %}
+{% if arr == arr %}a{% endif %}{% if arr == ea %}b{% endif %}{% if h == h %}c{% endif %}{% if arr.size == 3 %}d{% endif %}{% if arr.first == 1 %}e{% endif %}
+{% if n > z %}a{% else %}b{% endif %}{% if z < n %}c{% else %}d{% endif %}{% if z == z %}e{% endif %}{% if z >= z %}f{% else %}g{% endif %}
+{% if n > 'a' %}x{% endif %}
+{% if 'a' > n %}x{% endif %}
+{% if f > 'a' %}x{% endif %}
+{% if 'a' < 1.5 %}x{% endif %}
+{% if arr > 1 %}a{% else %}b{% endif %}{% if t > fa %}c{% else %}d{% endif %}{% if h > 1 %}e{% else %}f{% endif %}
+{% if n == 5 %}a{% elsif n == 6 %}b{% else %}c{% endif %}{% if n == 4 %}a{% elsif n == 5 %}b{% else %}c{% endif %}{% if n == 4 %}a{% elsif n == 6 %}b{% else %}c{% endif %}
+{% unless t %}a{% else %}b{% endunless %}{% unless fa %}c{% endunless %}{% unless fa %}d{% elsif t %}e{% else %}f{% endunless %}{% unless t %}g{% elsif t %}h{% else %}i{% endunless %}{% unless t %}g{% elsif fa %}h{% else %}i{% endunless %}
+{% if s %}{% if n %}nested{% endif %}{% endif %}
+{% if (1..5) contains 3 %}a{% endif %}{% if (1..5) contains 7 %}b{% endif %}
+{% if s.size > 3 %}a{% endif %}{% if s.size == 5 %}b{% endif %}{% if arr.size >= arr.last %}c{% endif %}
+{% if 'a' == "a" %}a{% endif %}{% if 1.0 == 1 %}b{% endif %}{% if '1' == 1 %}c{% endif %}{% if nil == nil %}d{% endif %}{% if nil %}e{% else %}f{% endif %}
+{% if empty %}a{% else %}b{% endif %}{% if blank %}c{% else %}d{% endif %}{% if '' %}e{% endif %}{% if 0 %}f{% endif %}
+{% if n==5 %}a{% endif %}{% if n>=5 %}b{% endif %}{% if s=='hello' %}c{% endif %}
+{% if n == 5 and s == 'hello' or fa %}a{% endif %}{% if fa or n == 5 and s == 'x' %}b{% else %}c{% endif %}
+{% if s contains 'h' and arr contains 3 %}a{% endif %}
+{% if e %}{% else %}else{% endif %}|{% if t %}{% endif %}|
+{% if n %}a{% else %}b{% else %}c{% endif %}
+{% if n != n %}a{% elsif true %}b{% elsif true %}c{% endif %}
+{% if blank == blank %}a{% endif %}{% if empty == empty %}b{% endif %}{% if blank == empty %}c{% endif %}{% if e contains blank %}d{% endif %}
+{% if ws.size > 0 and ws == blank %}a{% endif %}
+{% assign v = n | plus: 1 %}{% if v == 6 %}a{% endif %}
+{% if h.a %}a{% endif %}{% if h.b %}b{% endif %}{% if h.a == 1 %}c{% endif %}{% if h['a'] > 0 %}d{% endif %}
+{% if arr[0] == 1 and arr[1] == 2 %}a{% endif %}
+{% if "x" == 'x' and 'a b' contains ' ' %}a{% endif %}
+{% if s == 'hello' or s == "world" %}a{% endif %}
+{% if true %}a{% endif %}{% if false %}b{% endif %}{% if nil %}c{% endif %}{% if null %}d{% endif %}

@@ -1,0 +1,6 @@
+/target
+/themes/
+/.oracle/
+/.cache/
+.DS_Store
+*.swp

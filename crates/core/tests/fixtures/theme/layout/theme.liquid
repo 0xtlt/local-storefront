@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="{{ request.locale.iso_code }}">
+<head>
+<title>{{ page_title }}{% unless page_title == shop.name %} – {{ shop.name }}{% endunless %}</title>
+<link rel="canonical" href="{{ canonical_url }}">
+{{ 'base.css' | asset_url | stylesheet_tag }}
+{{ content_for_header }}
+</head>
+<body class="template-{{ template.name }}{% if template.suffix %} suffix-{{ template.suffix }}{% endif %}" data-page-type="{{ request.page_type }}" style="--accent: {{ settings.accent }}">
+{% sections 'header-group' %}
+<main>
+{{ content_for_layout }}
+</main>
+{% section 'footer' %}
+</body>
+</html>

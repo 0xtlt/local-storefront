@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/liquid", "crates/core", "crates/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/thomastastet/shopify-local-theme"
+
+[workspace.dependencies]
+slt-liquid = { path = "crates/liquid" }
+slt-core = { path = "crates/core" }
+
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10"
+indexmap = { version = "2", features = ["serde"] }
+rust_decimal = { version = "1", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

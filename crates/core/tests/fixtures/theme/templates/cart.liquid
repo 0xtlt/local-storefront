@@ -1,0 +1,3 @@
+{% layout none %}
+{% for item in cart.items %}{{ item.quantity }} x {{ item.title }} = {{ item.final_line_price | money }}
+{% endfor %}total {{ cart.total_price | money_with_currency }} ({{ cart.item_count }}){% if cart.empty? %} empty{% endif %}

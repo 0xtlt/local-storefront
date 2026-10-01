@@ -1,0 +1,2453 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 3,
+      "template": "{% for i in arr %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "12345"
+    },
+    {
+      "line": 4,
+      "template": "{% for i in arr %}{{ i }}{% unless forloop.last %},{% endunless %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1,2,3,4,5"
+    },
+    {
+      "line": 5,
+      "template": "{% for i in strs %}{{ forloop.index }}:{{ forloop.index0 }}:{{ forloop.rindex }}:{{ forloop.rindex0 }}:{{ forloop.first }}:{{ forloop.last }}:{{ forloop.length }} {% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1:0:3:2:true:false:3 2:1:2:1:false:false:3 3:2:1:0:false:true:3 "
+    },
+    {
+      "line": 6,
+      "template": "{% for i in arr limit: 2 %}{{ i }}{% endfor %}|{% for i in arr offset: 2 %}{{ i }}{% endfor %}|{% for i in arr limit: 2 offset: 1 %}{{ i }}{% endfor %}|{% for i in arr limit:2, offset:1 %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "12|345|23|23"
+    },
+    {
+      "line": 7,
+      "template": "{% for i in arr reversed %}{{ i }}{% endfor %}|{% for i in arr reversed limit: 2 %}{{ i }}{% endfor %}|{% for i in arr limit: 2 reversed %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "54321|21|12"
+    },
+    {
+      "line": 8,
+      "template": "{% for i in arr limit: n %}{{ i }}{% endfor %}|{% for i in arr offset: n %}{{ i }}{% endfor %}|{% for i in arr limit: 0 %}{{ i }}{% else %}none{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "123|45|none"
+    },
+    {
+      "line": 9,
+      "template": "{% for i in arr limit: 2 %}{{ i }}{% endfor %}|{% for i in arr limit: 2 offset: continue %}{{ i }}{% endfor %}|{% for i in arr offset: continue %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "12|34|5"
+    },
+    {
+      "line": 10,
+      "template": "{% for i in (1..3) %}{{ i }}{% endfor %}|{% for i in (1..n) %}{{ i }}{% endfor %}|{% for i in (n..5) %}{{ i }}{% endfor %}|{% for i in (5..1) %}{{ i }}{% else %}empty{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "123|123|345|empty"
+    },
+    {
+      "line": 11,
+      "template": "{% for i in (1..5) limit: 2 offset: 1 %}{{ i }}{% endfor %}|{% for i in (1..5) reversed %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "23|54321"
+    },
+    {
+      "line": 12,
+      "template": "{% for i in e %}{{ i }}{% else %}empty{% endfor %}|{% for i in z %}{{ i }}{% else %}nil{% endfor %}|{% for i in undefined %}x{% endfor %}|",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "empty|nil||"
+    },
+    {
+      "line": 13,
+      "template": "{% for pair in h %}{{ pair[0] }}={{ pair[1] }};{% endfor %}|{% for pair in h %}{{ pair.first }}-{{ pair.last }} {% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "x=1;y=2;|x-1 y-2 "
+    },
+    {
+      "line": 14,
+      "template": "{% for c in s %}[{{ c }}]{% endfor %}|{% for c in '' %}x{% else %}emptystr{% endfor %}|{% for c in n %}[{{ c }}]{% else %}int{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[str]|emptystr|int"
+    },
+    {
+      "line": 15,
+      "template": "{% for i in arr %}{% if i == 3 %}{% break %}{% endif %}{{ i }}{% endfor %}|{% for i in arr %}{% if i == 3 %}{% continue %}{% endif %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "12|1245"
+    },
+    {
+      "line": 16,
+      "template": "{% for i in arr %}{% for j in strs %}{% if j == 'b' %}{% break %}{% endif %}{{ i }}{{ j }} {% endfor %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1a 2a 3a 4a 5a "
+    },
+    {
+      "line": 17,
+      "template": "{% for row in nested %}{% for cell in row %}{{ forloop.parentloop.index }}.{{ forloop.index }}={{ cell }} {% endfor %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1.1=1 1.2=2 2.1=3 2.2=4 "
+    },
+    {
+      "line": 18,
+      "template": "{% for i in strs %}{{ forloop.parentloop }}|{{ forloop.name }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "|i-strs|i-strs|i-strs"
+    },
+    {
+      "line": 19,
+      "template": "{% for o in objs %}{{ o.n }}={{ o.v }} {% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a=1 b=2 "
+    },
+    {
+      "line": 20,
+      "template": "{% for i in arr %}{% assign last_seen = i %}{% endfor %}{{ last_seen }}|{{ i }}|{{ forloop }}|",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "5|||"
+    },
+    {
+      "line": 21,
+      "template": "{% assign i = 'outer' %}{% for i in strs %}{{ i }}{% endfor %}{{ i }}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "abcouter"
+    },
+    {
+      "line": 22,
+      "template": "{% for i in strs %}{% assign i = 'x' %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "abc"
+    },
+    {
+      "line": 23,
+      "template": "{% for i in arr %}{{ i }}{% break %}{{ i }}{% endfor %}|after",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1|after"
+    },
+    {
+      "line": 24,
+      "template": "{% break %}after break",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": ""
+    },
+    {
+      "line": 25,
+      "template": "a{% continue %}b",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a"
+    },
+    {
+      "line": 26,
+      "template": "{% for i in arr %}{% capture c %}{{ i }}{% if i == 2 %}{% break %}{% endif %}x{% endcapture %}{{ c }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1x"
+    },
+    {
+      "line": 27,
+      "template": "{% for i in (1..3) %}{% cycle 'a', 'b' %}{% endfor %}|{% for i in (1..3) %}{% cycle 'a', 'b' %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "aba|bab"
+    },
+    {
+      "line": 28,
+      "template": "{% for i in (1..4) %}{% cycle 'g1': 'a', 'b', 'c' %}{% cycle 'g2': 'x', 'y' %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "axbycxay"
+    },
+    {
+      "line": 29,
+      "template": "{% for i in (1..3) %}{% cycle 1, 2 %}{% cycle 1, 2 %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "121212"
+    },
+    {
+      "line": 30,
+      "template": "{% for i in (1..3) %}{% cycle n, s %}{% cycle n, s %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "33strstr33"
+    },
+    {
+      "line": 31,
+      "template": "{% for i in (1..3) %}{% cycle s: 'a', 'b' %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "aba"
+    },
+    {
+      "line": 32,
+      "template": "{% cycle 'a' %}{% cycle 'a' %}{% cycle 'a', 'b' %}{% cycle 'a', 'b' %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "aaab"
+    },
+    {
+      "line": 33,
+      "template": "{% cycle %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'cycle' - Valid syntax: cycle [name :] var [, var2, var3 ...]"
+    },
+    {
+      "line": 34,
+      "template": "{% for i in (1..4) %}{% cycle 'odd', 'even' %} {% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "odd even odd even "
+    },
+    {
+      "line": 35,
+      "template": "{% tablerow i in arr cols: 2 %}{{ i }}{% endtablerow %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1</td><td class=\"col2\">2</td></tr>\n<tr class=\"row2\"><td class=\"col1\">3</td><td class=\"col2\">4</td></tr>\n<tr class=\"row3\"><td class=\"col1\">5</td></tr>\n"
+    },
+    {
+      "line": 36,
+      "template": "{% tablerow i in arr cols:3 limit:4 %}{{ i }}:{{ tablerowloop.col }}:{{ tablerowloop.row }}:{{ tablerowloop.col_first }}:{{ tablerowloop.col_last }}{% endtablerow %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1:1:1:true:false</td><td class=\"col2\">2:2:1:false:false</td><td class=\"col3\">3:3:1:false:true</td></tr>\n<tr class=\"row2\"><td class=\"col1\">4:1:2:true:false</td></tr>\n"
+    },
+    {
+      "line": 37,
+      "template": "{% tablerow i in arr %}{{ i }}{% endtablerow %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1</td><td class=\"col2\">2</td><td class=\"col3\">3</td><td class=\"col4\">4</td><td class=\"col5\">5</td></tr>\n"
+    },
+    {
+      "line": 38,
+      "template": "{% tablerow i in e cols: 2 %}{{ i }}{% endtablerow %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "<tr class=\"row1\">\n</tr>\n"
+    },
+    {
+      "line": 39,
+      "template": "{% tablerow i in z cols: 2 %}{{ i }}{% endtablerow %}|",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "|"
+    },
+    {
+      "line": 40,
+      "template": "{% tablerow i in (1..4) cols: 2 offset: 1 %}{{ tablerowloop.index }}/{{ tablerowloop.length }}/{{ tablerowloop.col0 }}/{{ tablerowloop.rindex }}/{{ tablerowloop.first }}/{{ tablerowloop.last }} {% endtablerow %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1/3/0/3/true/false </td><td class=\"col2\">2/3/1/2/false/false </td></tr>\n<tr class=\"row2\"><td class=\"col1\">3/3/0/1/false/true </td></tr>\n"
+    },
+    {
+      "line": 41,
+      "template": "{% tablerow i in arr cols: 2 %}{% if i == 3 %}{% break %}{% endif %}{{ i }}{% endtablerow %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "<tr class=\"row1\">\n<td class=\"col1\">1</td><td class=\"col2\">2</td></tr>\n<tr class=\"row2\"><td class=\"col1\"></td></tr>\n"
+    },
+    {
+      "line": 42,
+      "template": "{% for i in arr %}{% increment c %}{% endfor %}|{{ c }}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "01234|5"
+    },
+    {
+      "line": 43,
+      "template": "{% for i in (1..2) %}{% for j in (1..2) %}{{ forloop.index }}{{ forloop.parentloop.index }}{{ forloop.parentloop.parentloop.index }} {% endfor %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "11 21 12 22 "
+    },
+    {
+      "line": 44,
+      "template": "{% for i in arr limit: 'x' %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid integer"
+    },
+    {
+      "line": 45,
+      "template": "{% for i in arr offset: 1.5 %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): invalid integer"
+    },
+    {
+      "line": 46,
+      "template": "{% for i in arr limit: '2' %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "12"
+    },
+    {
+      "line": 47,
+      "template": "{% for i in arr limit: -1 %}{{ i }}{% else %}neg{% endfor %}|{% for i in arr offset: -2 %}{{ i }}{% endfor %}|{% for i in arr offset: 10 %}{{ i }}{% else %}past{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "neg|12345|past"
+    },
+    {
+      "line": 48,
+      "template": "{% for i in arr %}{{ i }}{% else %}never{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "12345"
+    },
+    {
+      "line": 49,
+      "template": "{% for i in (1..2) %}{% for i in (3..4) %}{{ i }}{% endfor %}{{ i }}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "341342"
+    },
+    {
+      "line": 50,
+      "template": "{% for item in arr %}{% if forloop.first %}first {% elsif forloop.last %}last{% else %}mid {% endif %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "first mid mid mid last"
+    },
+    {
+      "line": 51,
+      "template": "{% for x in h.x %}{{ x }}{% else %}scalar{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "scalar"
+    },
+    {
+      "line": 52,
+      "template": "{% for i in (1..3) %}{% ifchanged %}{{ i | divided_by: 2 }}{% endifchanged %}{% endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "01"
+    },
+    {
+      "line": 53,
+      "template": "{% for i in arr -%}\n  {{ i }}\n{%- endfor %}",
+      "data": {
+        "arr": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "strs": [
+          "a",
+          "b",
+          "c"
+        ],
+        "h": {
+          "x": 1,
+          "y": 2
+        },
+        "s": "str",
+        "e": [],
+        "z": null,
+        "n": 3,
+        "nested": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "objs": [
+          {
+            "n": "a",
+            "v": 1
+          },
+          {
+            "n": "b",
+            "v": 2
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "12345"
+    }
+  ]
+}

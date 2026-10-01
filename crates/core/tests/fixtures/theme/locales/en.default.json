@@ -1,0 +1,11 @@
+{
+  "general": {
+    "greeting": "Hello {{ name }}",
+    "unsafe": "Tom & <b>Jerry</b>",
+    "safe_html": "Tom &amp; <b>{{ name }}</b>"
+  },
+  "cart": {
+    "items": { "one": "{{ count }} item", "other": "{{ count }} items" }
+  },
+  "date_formats": { "month_and_year": "%B %Y" }
+}

@@ -1,0 +1,56 @@
+## String filters
+#! data {"s": "Hello World", "n": 5, "f": 2.5, "z": null, "arr": [1, 2, 3], "h": {"a": 1}, "t": true, "html": "<p class=\"x\">Tom & Jerry's <b>show</b></p>", "multi": "line1\nline2\r\nline3", "sp": "  padded \t\n", "uni": "héllo wörld ÉCOLE"}
+{{ s | downcase }} {{ s | upcase }} {{ s | capitalize }} {{ 'hELLO wORLD' | capitalize }} {{ uni | upcase }} {{ uni | downcase }} {{ uni | capitalize }}
+{{ n | upcase }} {{ z | upcase }}|{{ arr | upcase }}|{{ h | downcase }}|{{ t | capitalize }}|{{ f | append: 'x' }}
+{{ html | escape }}
+{{ html | h }}
+{{ html | escape | escape }}
+{{ html | escape | escape_once }}
+{{ '&lt; < &amp; & &#39; &#x27; &foo &foo; &; &#abc;' | escape_once }}
+{{ z | escape }}|{{ n | escape }}|{{ arr | escape }}
+{{ s | url_encode }} {{ 'a+b c&d=e/f?g#h@i:j' | url_encode }} {{ uni | url_encode }} {{ "~_.-*'()!" | url_encode }} {{ z | url_encode }}|
+{{ 'a+b%20c%26d%2Bé%C3%A9' | url_decode }} {{ '%zz %' | url_decode }} {{ z | url_decode }}|
+{{ '%ff' | url_decode }}
+{{ s | base64_encode }} {{ 'SGVsbG8gV29ybGQ=' | base64_decode }} {{ uni | base64_encode }} {{ '>>>???' | base64_encode }} {{ '>>>???' | base64_url_safe_encode }} {{ 'Pj4-Pz8_' | base64_url_safe_decode }}
+{{ 'not base64!' | base64_decode }}
+{{ 'SGVsbG8' | base64_decode }}
+{{ z | base64_encode }}|{{ n | base64_encode }}
+{{ s | slice: 0 }} {{ s | slice: 1 }} {{ s | slice: 0, 5 }} {{ s | slice: -5, 5 }} {{ s | slice: 6, 100 }} {{ s | slice: 100 }}| {{ s | slice: -100 }}| {{ s | slice: 11 }}| {{ s | slice: 2, 0 }}| {{ s | slice: 2, -1 }}|
+{{ arr | slice: 0 }} {{ arr | slice: 1, 2 }} {{ arr | slice: -2, 2 }} {{ arr | slice: 5 }}| {{ arr | slice: 3 }}|
+{{ uni | slice: 1, 4 }} {{ n | slice: 0 }} {{ 12345 | slice: 1, 2 }}
+{{ s | slice }}
+{{ s | slice: 'a' }}
+{{ s | slice: 1.5 }}
+{{ s | slice: '1', '3' }}
+{{ s | truncate: 5 }} {{ s | truncate: 8 }} {{ s | truncate: 11 }} {{ s | truncate: 10 }} {{ s | truncate: 5, '' }} {{ s | truncate: 8, '--' }} {{ s | truncate: 2 }} {{ s | truncate: 0 }} {{ s | truncate }}
+{{ 'The quick brown fox jumps over the lazy dog and keeps running far away' | truncate }}
+{{ z | truncate: 5 }}|{{ n | truncate: 5 }}|{{ 1234567890 | truncate: 5 }}|{{ uni | truncate: 9 }}
+{{ s | truncate: 'x' }}
+{{ s | truncate: 5, 1 }}
+{{ 'one two three four' | truncatewords: 2 }}|{{ 'one two three four' | truncatewords: 4 }}|{{ 'one two three four' | truncatewords: 10 }}|{{ 'one two three four' | truncatewords: 2, '--' }}|{{ 'one two three four' | truncatewords: 0 }}|{{ 'one two three four' | truncatewords: -3 }}
+{{ '  one   two  \n three   four ' | truncatewords: 2 }}|{{ '  one   two  ' | truncatewords: 2 }}|{{ 'one two three' | truncatewords: 2, '' }}|{{ z | truncatewords: 2 }}|
+{{ 'a b c d e f g h i j k l m n o p q r s t' | truncatewords }}
+{{ 'a,b,c' | split: ',' | join: '-' }} {{ 'a,b,,c,,' | split: ',' | size }} {{ ',a' | split: ',' | size }} {{ 'abc' | split: '' | join: '-' }} {{ '  a  b ' | split: ' ' | join: '-' }} {{ 'a b' | split: '  ' | size }} {{ '' | split: ',' | size }} {{ z | split: ',' | size }}
+{{ 'a--b--c' | split: '--' | last }} {{ 'abc' | split: 'x' | first }} {{ 'a1b2c' | split: 1 | join: '|' }} {{ n | split: '' | join: ',' }}
+{{ 'a,b' | split }}
+{{ s | split: 'o' }}
+[{{ sp | strip }}] [{{ sp | lstrip }}] [{{ sp | rstrip }}] [{{ n | strip }}] [{{ z | strip }}]
+[{{ '  a   b \n c  ' | squish }}] [{{ z | squish }}]
+{{ html | strip_html }}
+{{ '<script>alert(1)</script>a<!-- c -->b<style>x{}</style>c<br/>d<img src="x">e < f > g' | strip_html }}
+{{ '<script>unclosed a<b>c' | strip_html }} {{ 'a<b' | strip_html }} {{ 'a>b' | strip_html }} {{ n | strip_html }}
+{{ multi | strip_newlines }}|{{ multi | newline_to_br }}|{{ z | newline_to_br }}|
+{{ s | replace: 'o', '0' }} {{ s | replace: 'o' }} {{ s | replace: 'l', 'LL' }} {{ s | replace: '', '-' }} {{ s | replace: 'xyz', '!' }} {{ n | replace: 5, 6 }} {{ s | replace: ' ', z }}
+{{ s | replace_first: 'o', '0' }} {{ s | replace_first: 'l' }} {{ s | replace_first: '', '-' }} {{ s | replace_last: 'o', '0' }} {{ s | replace_last: 'zz', '0' }} {{ s | replace_last: '', '!' }}
+{{ s | replace_last: 'o' }}
+{{ s | replace }}
+{{ s | remove: 'l' }} {{ s | remove_first: 'l' }} {{ s | remove_last: 'l' }} {{ s | remove: 'xyz' }} {{ n | remove: 5 }}|
+{{ 'a.b.c' | replace: '.', '\\' }}
+{{ s | append: ' !' }} {{ s | append: n }} {{ s | append: z }}| {{ z | append: 'x' }} {{ s | prepend: '> ' }} {{ n | prepend: n }} {{ s | append: arr }} {{ arr | append: 'x' }} {{ h | prepend: 'h=' }}
+{{ s | append }}
+{{ s | append: 'a', 'b' }}
+{{ s | size }} {{ uni | size }} {{ arr | size }} {{ h | size }} {{ n | size }} {{ f | size }} {{ z | size }} {{ t | size }} {{ '' | size }}
+{{ s | first }} {{ s | last }} {{ '' | first }}|{{ '' | last }}|{{ n | first }}|
+{{ 'a' | default: 'd' }} {{ '' | default: 'd' }} {{ z | default: 'd' }} {{ false | default: 'd' }} {{ false | default: 'd', allow_false: true }} {{ z | default: 'd', allow_false: true }} {{ 0 | default: 'd' }} {{ '  ' | default: 'd' }}| {{ undefined | default: n }} {{ z | default }}|
+#! data {"ea": [], "eh": {}, "arr": [1]}
+{{ ea | default: 'empty-array' }} {{ eh | default: 'empty-hash' }} {{ arr | default: 'x' }} {{ ea | default: ea | size }}

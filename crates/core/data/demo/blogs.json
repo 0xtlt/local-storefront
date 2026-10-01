@@ -1,0 +1,39 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "blogs": [
+    {
+      "title": "Journal",
+      "comments_enabled": true,
+      "articles": [
+        {
+          "title": "How to care for linen",
+          "author": "Maya Ortiz",
+          "published_at": "2024-06-12T09:00:00-04:00",
+          "excerpt": "<p>Linen gets softer every time you wash it. Here is how to keep it looking its best.</p>",
+          "content": "<p>Linen gets softer every time you wash it. Here is how to keep it looking its best.</p><h2>Wash cool</h2><p>A cool, gentle cycle is all it needs.</p><h2>Skip the dryer</h2><p>Hang it to dry and embrace the wrinkles.</p>",
+          "image": { "src": "articles/linen-care.jpg", "alt": "Linen shirts drying on a line", "width": 2400, "height": 1600 },
+          "tags": ["care", "linen"],
+          "comments": [
+            { "author": "Sam", "email": "sam@example.com", "content": "<p>Great tips, thank you!</p>", "created_at": "2024-06-13T14:30:00-04:00" }
+          ]
+        },
+        {
+          "title": "Behind the scenes: the ceramic studio",
+          "author": "Maya Ortiz",
+          "published_at": "2024-04-02T09:00:00-04:00",
+          "excerpt": "<p>Every mug is thrown, trimmed and glazed by hand. We spent a day with the people who make them.</p>",
+          "content": "<p>Every mug is thrown, trimmed and glazed by hand. We spent a day with the people who make them.</p>",
+          "image": { "src": "articles/ceramic-studio.jpg", "alt": "Hands shaping clay on a wheel", "width": 2400, "height": 1600 },
+          "tags": ["makers"]
+        },
+        {
+          "title": "Five ways to carry a tote",
+          "author": "Jonas Weber",
+          "published_at": "2024-02-20T09:00:00-05:00",
+          "content": "<p>Over the shoulder, in the hand, on the handlebars: a good tote goes anywhere.</p>",
+          "tags": ["style"]
+        }
+      ]
+    }
+  ]
+}
