@@ -18,7 +18,8 @@ npm install --save-dev local-storefront
 npx local-storefront serve
 ```
 
-Open <http://127.0.0.1:9292>. Your theme is running, with a demo store.
+Open <http://127.0.0.1:9292>. Your theme is running, with a demo store. If that port is taken,
+`lsf` uses the next free one and prints the address.
 
 > In this README, `lsf` stands for `npx local-storefront`. Do not type `npx lsf`: that is
 > another package on npm. In the `scripts` of your `package.json`, plain `lsf` works.
@@ -82,7 +83,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:9292' },
   webServer: {
-    command: 'npx local-storefront serve --static --quiet --strict',
+    command: 'npx local-storefront serve --port 9292 --static --quiet --strict',
     url: 'http://127.0.0.1:9292/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
@@ -206,7 +207,7 @@ Every command accepts `--theme <dir>` (default: the current folder) and `--data 
 
 | Option | What it does |
 |---|---|
-| `--port <port>`, `-p` | Port to listen on. Default `9292`. `0` picks a free one. |
+| `--port <port>`, `-p` | Port to listen on, and no other: the server does not start if it is taken. `0` picks a free one. Without the option: `9292`, or the next free port up to `9391`. |
 | `--host <address>` | Address to listen on. Default `127.0.0.1`. Use `0.0.0.0` in a container. |
 | `--live-reload` | Reloads the page when you edit the theme or the data. For development, not for tests. |
 | `--static` | Reads the files once. The fastest mode, for tests. |

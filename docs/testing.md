@@ -15,6 +15,7 @@ lsf serve --theme path/to/theme --port 9292 --static --quiet --strict
 | `--static` | Reads the theme and the data once. Fastest, and nothing changes under a running test. |
 | `--strict` | Refuses to start when the store data has errors, instead of serving what is valid. |
 | `--quiet` | No request log. |
+| `--port 9292` | The port the tests expect, or an error: without `--port`, a taken `9292` makes the server move to the next free port. |
 | `--port 0` | Picks a free port; the chosen address is printed as `ready:  http://127.0.0.1:<port>/`. |
 | `--host 0.0.0.0` | Listens on every interface, e.g. inside a container. |
 | `--throttle <rules>` | Answers requests late: a preset (`simulated`, `slow`) or rules by kind. See [Simulating a slow network](#simulating-a-slow-network). |
