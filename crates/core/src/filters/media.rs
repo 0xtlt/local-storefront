@@ -102,11 +102,28 @@ pub fn resolve_image(site: &std::sync::Arc<Site>, input: &Value) -> Option<(Imag
     }
 }
 
+/// A number of pixels. Themes compute sizes with float arithmetic (`width | times: ratio`) and
+/// pass the result as is, which Shopify accepts: the fraction is dropped.
+fn pixels(value: &Value) -> Result<i64> {
+    match value {
+        Value::Int(pixels) => Ok(*pixels),
+        Value::Float(pixels) if pixels.is_finite() => Ok(pixels.trunc() as i64),
+        Value::Str(text) => match text.trim().parse::<f64>() {
+            Ok(pixels) if pixels.is_finite() => Ok(pixels.trunc() as i64),
+            _ => to_integer(value),
+        },
+        other => to_integer(other),
+    }
+}
+
+/// The parameters of `image_url` that are numbers of pixels besides `width` and `height`.
+const REGION_PARAMETERS: [&str; 4] = ["crop_left", "crop_top", "crop_width", "crop_height"];
+
 fn dimension(args: &FilterArgs, name: &str) -> Result<Option<u32>> {
     match args.named(name) {
         None | Some(Value::Nil) => Ok(None),
         Some(value) => {
-            let size = to_integer(value)?;
+            let size = pixels(value)?;
             if !(1..=MAX_DIMENSION).contains(&size) {
                 return Err(Error::argument(format!(
                     "{name} must be between 1 and {MAX_DIMENSION}"
@@ -132,7 +149,12 @@ fn image_url(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
         if matches!(key.as_str(), "width" | "height") || value.is_nil() {
             continue;
         }
-        params.push((key.clone(), urls::encode_component(&value.to_str())));
+        let text = if REGION_PARAMETERS.contains(&key.as_str()) {
+            pixels(value)?.max(0).to_string()
+        } else {
+            value.to_str().into_owned()
+        };
+        params.push((key.clone(), urls::encode_component(&text)));
     }
     let base = image_base_url(site, &image);
     let url = build_url(&base, width, height, &params);
@@ -265,7 +287,7 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let width_attribute = args
         .named("width")
         .filter(|width| !width.is_nil())
-        .and_then(|width| to_integer(width).ok());
+        .and_then(|width| pixels(width).ok());
     let srcset_value = match args.named("srcset") {
         Some(Value::Nil) => None,
         Some(custom) => Some(custom.to_str().into_owned()),
@@ -684,4 +706,20 @@ pub(super) fn register(env: &mut Environment) {
     env.register_filter("external_video_tag", external_video_tag);
     env.register_filter("model_viewer_tag", model_viewer_tag);
     env.register_filter("media_tag", media_tag);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pixel_sizes_may_be_decimal() {
+        assert_eq!(pixels(&Value::Int(300)).unwrap(), 300);
+        assert_eq!(pixels(&Value::Float(300.0)).unwrap(), 300);
+        assert_eq!(pixels(&Value::Float(450.9)).unwrap(), 450);
+        assert_eq!(pixels(&Value::from("240")).unwrap(), 240);
+        assert_eq!(pixels(&Value::from("240.5")).unwrap(), 240);
+        assert!(pixels(&Value::from("wide")).is_err());
+        assert!(pixels(&Value::Float(f64::NAN)).is_err());
+    }
 }
