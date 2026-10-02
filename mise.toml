@@ -20,6 +20,8 @@ run = "cargo install --path crates/cli --locked"
 [tasks."npm:first-publish"]
 description = "Publish the npm packages of a release from this machine and let GitHub Actions publish the next ones (once per new package)"
 run = "npm/first-publish.sh"
+# npm asks for two-factor authentication: it needs the terminal.
+raw = true
 
 [tasks.test]
 description = "Run the whole test suite"

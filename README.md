@@ -33,8 +33,29 @@ limit, and shows exactly the catalog, cart and customer each test asks for.
 
 ## Install
 
-Each [release](https://github.com/0xtlt/local-storefront/releases) has a binary per
-platform, with nothing else to install:
+In a theme that already has a `package.json` (for Playwright, say), add it to the dev
+dependencies. The version is then pinned with the rest of the test tooling, and CI gets it
+from `npm ci`:
+
+```bash
+npm install --save-dev local-storefront
+```
+
+```bash
+npx lsf serve
+```
+
+The package is a launcher: npm installs next to it the binary built for the machine (macOS,
+Linux and Windows, on x64 and arm64). pnpm and yarn work the same way.
+
+With [mise](https://mise.jdx.dev), straight from the GitHub releases:
+
+```bash
+mise use github:0xtlt/local-storefront
+```
+
+Or by hand: each [release](https://github.com/0xtlt/local-storefront/releases) has a binary
+per platform, with nothing else to install:
 
 | Platform | Archive |
 |---|---|

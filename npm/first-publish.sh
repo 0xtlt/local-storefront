@@ -51,7 +51,8 @@ for directory in "$work"/npm-dist/local-storefront-*/ "$work"/npm-dist/local-sto
     echo "$name@$version is already published"
   else
     echo "Publishing $name@$version"
-    npm publish "$directory" --access public --registry https://registry.npmjs.org ${dry_run:+--dry-run} > /dev/null
+    # Not redirected: npm only asks for two-factor authentication when it runs in a terminal.
+    npm publish "$directory" --access public --registry https://registry.npmjs.org --loglevel=warn ${dry_run:+--dry-run}
   fi
 done
 

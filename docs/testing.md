@@ -30,7 +30,7 @@ export default defineConfig({
   fullyParallel: true,
   use: { baseURL: 'http://127.0.0.1:9292' },
   webServer: {
-    command: 'lsf serve --port 9292 --static --quiet --strict',
+    command: 'npx lsf serve --port 9292 --static --quiet --strict',
     url: 'http://127.0.0.1:9292/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
@@ -198,10 +198,12 @@ lsf render '/collections/all?sort_by=price-ascending' --strict > collection.html
 
 ## In CI
 
+With `local-storefront` in the dev dependencies of the theme, `npm ci` installs `lsf`:
+
 ```yaml
-- run: cargo install --path crates/cli   # or download a prebuilt `lsf`
-- run: lsf validate --theme theme        # fail fast on bad fixtures
-- run: lsf check --theme theme           # every Liquid file parses, every filter exists
+- run: npm ci
+- run: npx lsf validate        # fail fast on bad fixtures
+- run: npx lsf check           # every Liquid file parses, every filter exists
 - run: npx playwright test
 ```
 
