@@ -146,6 +146,82 @@ fn parse_duration(text: &str) -> Result<Duration, String> {
     Ok(duration)
 }
 
+/// A set of rules that comes with lsf, in milliseconds per kind.
+pub struct Preset {
+    pub name: &'static str,
+    rules: [(Kind, u64); 13],
+}
+
+/// The presets, by name.
+///
+/// `simulated` follows what Shopify's own Horizon demo store answers in, timed from a fast
+/// connection in October 2026: about 70 ms for a page or a section (served from the edge
+/// cache), 150 ms for the cart, 200 to 300 ms for search, recommendations and product data,
+/// and well under 100 ms for assets and images. Requests that write (cart changes, forms)
+/// were not timed against someone's store: their values are estimates, set above the reads.
+pub const PRESETS: [Preset; 2] = [
+    // A Shopify storefront on a good connection.
+    Preset {
+        name: "simulated",
+        rules: [
+            (Kind::Page, 80),
+            (Kind::Section, 80),
+            (Kind::CartRead, 150),
+            (Kind::CartAdd, 300),
+            (Kind::CartChange, 300),
+            (Kind::CartUpdate, 300),
+            (Kind::CartClear, 300),
+            (Kind::Search, 250),
+            (Kind::Recommendations, 250),
+            (Kind::Product, 200),
+            (Kind::Form, 400),
+            (Kind::Asset, 30),
+            (Kind::Image, 40),
+        ],
+    },
+    // The same storefront on a slow mobile connection.
+    Preset {
+        name: "slow",
+        rules: [
+            (Kind::Page, 800),
+            (Kind::Section, 600),
+            (Kind::CartRead, 700),
+            (Kind::CartAdd, 1200),
+            (Kind::CartChange, 1200),
+            (Kind::CartUpdate, 1200),
+            (Kind::CartClear, 1200),
+            (Kind::Search, 1000),
+            (Kind::Recommendations, 1000),
+            (Kind::Product, 800),
+            (Kind::Form, 1500),
+            (Kind::Asset, 300),
+            (Kind::Image, 500),
+        ],
+    },
+];
+
+/// The word that removes every rule, to lift the server's throttle for a session.
+const NONE: &str = "none";
+
+fn preset(name: &str) -> Option<&'static Preset> {
+    PRESETS.iter().find(|preset| preset.name == name)
+}
+
+fn unknown_word(word: &str) -> String {
+    let names: Vec<&str> = PRESETS
+        .iter()
+        .map(|preset| preset.name)
+        .chain([NONE])
+        .collect();
+    let suggestion = lsf_core::util::closest_match(word, names.iter().copied())
+        .map(|name| format!(" Did you mean \"{name}\"?"))
+        .unwrap_or_default();
+    format!(
+        "\"{word}\" is neither a duration (300ms, 1.5s, 250) nor a preset.{suggestion} Presets: {}.",
+        names.join(", ")
+    )
+}
+
 /// How long each kind of request is held before it is answered.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Throttle {
@@ -158,8 +234,9 @@ impl Throttle {
         self.rules.values().all(Duration::is_zero)
     }
 
-    /// Parses rules written like on the command line: `500ms` (everything), or
-    /// `cart=500ms,cart-add=1s,image=0`.
+    /// Parses rules written like on the command line: `500ms` (everything),
+    /// `cart=500ms,cart-add=1s,image=0`, or a preset and what to change in it
+    /// (`simulated,cart-add=2s`). Rules apply in order: a later one replaces an earlier one.
     pub fn parse<'a>(specs: impl IntoIterator<Item = &'a str>) -> Result<Throttle, String> {
         let mut throttle = Throttle::default();
         for rule in specs.into_iter().flat_map(|spec| spec.split(',')) {
@@ -167,13 +244,35 @@ impl Throttle {
             if rule.is_empty() {
                 continue;
             }
-            let (scope, duration) = match rule.split_once('=') {
-                Some((name, duration)) => (Scope::parse(name.trim())?, duration),
-                None => (Scope::All, rule),
-            };
-            throttle.rules.insert(scope, parse_duration(duration)?);
+            match rule.split_once('=') {
+                Some((name, duration)) => {
+                    throttle
+                        .rules
+                        .insert(Scope::parse(name.trim())?, parse_duration(duration)?);
+                }
+                None => throttle.apply_word(rule)?,
+            }
         }
         Ok(throttle)
+    }
+
+    /// Applies a rule that stands on its own: a preset, `none`, or a duration for everything.
+    fn apply_word(&mut self, word: &str) -> Result<(), String> {
+        if word == NONE {
+            self.rules.clear();
+        } else if let Some(preset) = preset(word) {
+            // A preset says everything: nothing before it survives.
+            self.rules.clear();
+            for (kind, milliseconds) in preset.rules {
+                self.rules
+                    .insert(Scope::Kind(kind), Duration::from_millis(milliseconds));
+            }
+        } else if word.starts_with(|c: char| c.is_ascii_digit() || c == '.' || c == '-') {
+            self.rules.insert(Scope::All, parse_duration(word)?);
+        } else {
+            return Err(unknown_word(word));
+        }
+        Ok(())
     }
 
     /// Parses the `throttle` of a session: a string like on the command line, a number of
@@ -193,8 +292,20 @@ impl Throttle {
             }),
             Json::Object(map) => {
                 let mut throttle = Throttle::default();
+                // The preset first, whatever the order of the keys: the rules adjust it.
+                if let Some(name) = map.get("preset") {
+                    match name.as_str() {
+                        Some(name) if name == NONE || preset(name).is_some() => {
+                            throttle.apply_word(name)?
+                        }
+                        Some(name) => return Err(unknown_word(name)),
+                        None => return Err(format!("{name} is not the name of a preset")),
+                    }
+                }
                 for (name, value) in map {
-                    throttle.rules.insert(Scope::parse(name)?, duration(value)?);
+                    if name != "preset" {
+                        throttle.rules.insert(Scope::parse(name)?, duration(value)?);
+                    }
                 }
                 Ok(throttle)
             }
@@ -319,6 +430,79 @@ mod tests {
         assert!(Throttle::default().is_empty());
         assert!(Throttle::parse(["0"]).unwrap().is_empty());
         assert!(!only_add.is_empty());
+    }
+
+    #[test]
+    fn presets_are_rules_that_can_be_adjusted() {
+        let simulated = Throttle::parse(["simulated"]).unwrap();
+        assert_eq!(simulated.delay(Kind::Page), MS(80));
+        assert_eq!(simulated.delay(Kind::CartRead), MS(150));
+        assert_eq!(simulated.delay(Kind::CartAdd), MS(300));
+        // Every kind has a value, and reads are faster than writes.
+        for kind in Kind::ALL {
+            assert!(!simulated.delay(kind).is_zero(), "{}", kind.name());
+            assert!(
+                Throttle::parse(["slow"]).unwrap().delay(kind) > simulated.delay(kind),
+                "{}",
+                kind.name()
+            );
+        }
+
+        let adjusted = Throttle::parse(["simulated,cart-add=2s,image=0"]).unwrap();
+        assert_eq!(adjusted.delay(Kind::CartAdd), MS(2000));
+        assert_eq!(adjusted.delay(Kind::Image), MS(0));
+        assert_eq!(adjusted.delay(Kind::Page), MS(80));
+        // Rules apply in order.
+        assert_eq!(
+            Throttle::parse(["cart-add=2s", "simulated"])
+                .unwrap()
+                .delay(Kind::CartAdd),
+            MS(300)
+        );
+        assert!(Throttle::parse(["simulated,none"]).unwrap().is_empty());
+
+        let from_json = Throttle::from_json(&json!({"cart-add": "2s", "preset": "slow"})).unwrap();
+        assert_eq!(from_json.delay(Kind::CartAdd), MS(2000));
+        assert_eq!(from_json.delay(Kind::Page), MS(800));
+        assert_eq!(Throttle::from_json(&json!("simulated")).unwrap(), simulated);
+        assert!(Throttle::from_json(&json!("none")).unwrap().is_empty());
+
+        let unknown = Throttle::parse(["simulted"]).unwrap_err();
+        assert!(unknown.contains("Did you mean \"simulated\"?"), "{unknown}");
+        assert!(
+            unknown.contains("Presets: simulated, slow, none."),
+            "{unknown}"
+        );
+        assert!(Throttle::from_json(&json!({"preset": "fast"})).is_err());
+    }
+
+    /// The README gives the values of the presets: it must say what the code does.
+    #[test]
+    fn the_readme_lists_the_presets_as_they_are() {
+        let readme = include_str!("../../../../README.md");
+        let value = |name: &str, kind: Kind| {
+            let preset = preset(name).expect("a preset");
+            let (_, milliseconds) = preset.rules.iter().find(|(k, _)| *k == kind).unwrap();
+            *milliseconds
+        };
+        for kind in Kind::ALL {
+            let row = readme
+                .lines()
+                .find(|line| line.starts_with(&format!("| `{}` |", kind.name())))
+                .unwrap_or_else(|| panic!("the README has no row for `{}`", kind.name()));
+            let expected = format!("| {} | {} |", value("simulated", kind), value("slow", kind));
+            assert!(
+                row.ends_with(&expected),
+                "README: {row}\nexpected to end with {expected}"
+            );
+        }
+        for preset in &PRESETS {
+            assert!(
+                readme.contains(&format!("| `{}` |", preset.name)),
+                "{}",
+                preset.name
+            );
+        }
     }
 
     #[test]

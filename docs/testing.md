@@ -17,7 +17,7 @@ lsf serve --theme path/to/theme --port 9292 --static --quiet --strict
 | `--quiet` | No request log. |
 | `--port 0` | Picks a free port; the chosen address is printed as `ready:  http://127.0.0.1:<port>/`. |
 | `--host 0.0.0.0` | Listens on every interface, e.g. inside a container. |
-| `--throttle <rules>` | Answers requests late, by kind. See [Simulating a slow network](#simulating-a-slow-network). |
+| `--throttle <rules>` | Answers requests late: a preset (`simulated`, `slow`) or rules by kind. See [Simulating a slow network](#simulating-a-slow-network). |
 
 Leave `--live-reload` off: it injects a script into the pages.
 
@@ -140,42 +140,10 @@ session to what the data files define.
 
 ## Simulating a slow network
 
-A local server answers in milliseconds, so loading states (a spinner on the add-to-cart
-button, a skeleton in the cart drawer) flash by before a test can see them. `--throttle`
-holds requests for a while before answering them:
-
-```bash
-lsf serve --throttle 300ms
-```
-
-```bash
-lsf serve --throttle cart=500ms,cart-add=1s
-```
-
-A duration on its own delays every request. `<kind>=<duration>` delays one kind, and the most
-specific rule wins: the kind itself, then `cart` for any cart request, then `all`. A rule of
-`0` exempts a kind, as in `--throttle 300ms,asset=0,image=0`. Durations are written `300ms`,
-`1.5s`, or as a number of milliseconds.
-
-| Kind | Requests |
-|---|---|
-| `all` | Everything below. |
-| `page` | Pages. |
-| `section` | Section Rendering API requests (`?section_id=`, `?sections=`). |
-| `cart` | Every cart request: the five kinds below. |
-| `cart-read` | `GET /cart.js` |
-| `cart-add` | `/cart/add.js`, and the product form |
-| `cart-change` | `/cart/change.js` |
-| `cart-update` | `/cart/update.js`, and the cart form |
-| `cart-clear` | `/cart/clear.js` |
-| `search` | Predictive search (`/search/suggest`). |
-| `recommendations` | Product recommendations. |
-| `product` | Product data (`/products/<handle>.js`, `products.json`). |
-| `form` | Form submissions: contact, login, localization, comments. |
-| `asset` | Theme assets, bundles, fonts and the scripts lsf injects. |
-| `image` | Images under `/cdn/shop/files/`. |
-
-The control API (`/__lsf/...`) is never delayed, so setting a test up stays instant.
+A local server answers in milliseconds, so loading states flash by before a test can see
+them. `lsf serve --throttle simulated` answers each kind of request as late as a real Shopify
+storefront does; `--throttle cart-add=1s` delays one kind. The presets, the kinds of requests
+and the syntax of the rules are in the [README](../README.md#throttling).
 
 A throttle on the command line slows the whole suite. To slow one test, give its session a
 throttle of its own, which replaces the server's for that session:
@@ -191,9 +159,11 @@ test('the button shows a spinner while the item is added', async ({ page }) => {
 });
 ```
 
-`throttle` takes the same rules as the command line, as a string (`"cart=500ms"`), a number
-of milliseconds for everything, or an object. `0` lifts the server's throttle for the session.
-A delayed response carries the header `x-lsf-throttle: 1000ms`.
+`throttle` takes the same rules as the command line: a string (`"simulated"`,
+`"simulated,cart-add=2s"`), a number of milliseconds for everything, or an object
+(`{ "preset": "slow", "image": 0 }`). `"none"` lifts the server's throttle for the session.
+The control API is never delayed, and a delayed response carries the header
+`x-lsf-throttle: 1000ms`.
 
 ## What to assert on
 

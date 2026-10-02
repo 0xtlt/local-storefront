@@ -38,12 +38,13 @@ pub struct Args {
     #[arg(long)]
     strict: bool,
 
-    /// Answer requests late, to see what the storefront shows while it waits. A duration
-    /// delays every request (`--throttle 300ms`); `<kind>=<duration>` delays one kind
-    /// (`--throttle cart=500ms,cart-add=1s`), the most specific rule winning. Kinds: all,
-    /// cart, page, section, cart-read, cart-add, cart-change, cart-update, cart-clear,
-    /// search, recommendations, product, form, asset, image. A session can have its own
-    /// through `PUT /__lsf/session`.
+    /// Answer requests late, to see what the storefront shows while it waits. A preset
+    /// (`--throttle simulated`: a Shopify storefront on a good connection; `slow`: on a slow
+    /// mobile one), a duration for every request (`--throttle 300ms`), or
+    /// `<kind>=<duration>` for one kind (`--throttle cart=500ms,cart-add=1s`), also to adjust
+    /// a preset (`--throttle simulated,cart-add=2s`). Kinds: all, cart, page, section,
+    /// cart-read, cart-add, cart-change, cart-update, cart-clear, search, recommendations,
+    /// product, form, asset, image. A session can have its own through `PUT /__lsf/session`.
     #[arg(long, env = "LSF_THROTTLE", value_name = "RULES")]
     throttle: Vec<String>,
 }
