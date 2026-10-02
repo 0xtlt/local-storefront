@@ -967,6 +967,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "indexmap",
+ "regex",
  "rust_decimal",
  "serde_json",
 ]

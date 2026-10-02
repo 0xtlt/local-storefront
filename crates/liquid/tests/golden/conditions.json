@@ -1313,6 +1313,70 @@
       },
       "partials": {},
       "expected": "a"
+    },
+    {
+      "line": 45,
+      "template": "{% assign nan = 0.0 | divided_by: 0 %}{{ nan }} {% if nan < 100 %}a{% else %}b{% endif %}{% if nan > 100 %}a{% else %}b{% endif %}{% if nan <= nan %}a{% else %}b{% endif %}{% if nan == nan %}a{% else %}b{% endif %}{% if 1 >= nan %}a{% else %}b{% endif %}{% if nan != nan %}a{% else %}b{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "NaN bbbbba"
+    },
+    {
+      "line": 46,
+      "template": "{% assign nan = 0.0 | divided_by: 0 %}{% if nan < 'a' %}a{% else %}b{% endif %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "f": 5.0,
+        "t": true,
+        "fa": false,
+        "z": null,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "strs": [
+          "a",
+          "b"
+        ],
+        "h": {
+          "a": 1
+        },
+        "e": "",
+        "ws": "  ",
+        "ea": [],
+        "eh": {},
+        "zero": 0,
+        "num_str": "5"
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): comparison of Float with String failed"
     }
   ]
 }

@@ -303,16 +303,31 @@ impl<'e, 's> Parser<'e, 's> {
 
     /// Consumes raw tokens up to `end<name>` without parsing them, as `raw` does.
     pub fn parse_raw_body(&mut self, block_name: &str) -> Result<String> {
+        self.raw_body(block_name, true)
+    }
+
+    /// Like [`Parser::parse_raw_body`], for a block that must not contain a tag of its own
+    /// name (`doc`).
+    pub fn parse_unnested_raw_body(&mut self, block_name: &str) -> Result<String> {
+        self.raw_body(block_name, false)
+    }
+
+    fn raw_body(&mut self, block_name: &str, nestable: bool) -> Result<String> {
         let delimiter = format!("end{block_name}");
         let mut body = String::new();
         while let Some(token) = self.tokenizer.shift() {
-            if let Some((before, name)) = full_token_possibly_invalid(token)
-                && name == delimiter
-            {
-                self.trim_whitespace = trims_right(token);
-                body.push_str(before);
-                self.line_number = self.tokenizer.line_number();
-                return Ok(body);
+            if let Some((before, name)) = full_token_possibly_invalid(token) {
+                if !nestable && name == block_name {
+                    return Err(Error::syntax(format!(
+                        "Syntax Error in '{block_name}' - Nested {block_name} tags are not allowed"
+                    )));
+                }
+                if name == delimiter {
+                    self.trim_whitespace = trims_right(token);
+                    body.push_str(before);
+                    self.line_number = self.tokenizer.line_number();
+                    return Ok(body);
+                }
             }
             body.push_str(token);
         }

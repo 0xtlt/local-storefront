@@ -238,7 +238,9 @@ fn truncate(input: &Value, args: Args<'_>, _ctx: &Context) -> Result<Value> {
     if char_count <= length {
         return Ok(Value::from(s.into_owned()));
     }
-    let keep = (length - ellipsis.chars().count() as i64).max(0) as usize;
+    let keep = length
+        .saturating_sub(ellipsis.chars().count() as i64)
+        .max(0) as usize;
     let mut out: String = s.chars().take(keep).collect();
     out.push_str(&ellipsis);
     Ok(Value::from(out))
@@ -414,11 +416,20 @@ fn newline_to_br(input: &Value, args: Args<'_>, _ctx: &Context) -> Result<Value>
     ))
 }
 
-/// Expands the back-references Ruby interprets in a `sub`/`gsub` replacement string.
-fn expand_replacement(replacement: &str, matched: &str, out: &mut String) {
+/// Expands the back-references Ruby interprets in a `sub`/`gsub` replacement string, for the
+/// match `input[start..end]` of a string pattern: `\0` and `\&` are the match, `` \` `` and
+/// `\'` what precedes and follows it. A string pattern has no groups, so `\1` to `\9` and `\+`
+/// are empty and `\k<name>` is the `IndexError` Ruby raises.
+fn expand_replacement(
+    replacement: &str,
+    input: &str,
+    start: usize,
+    end: usize,
+    out: &mut String,
+) -> Result<()> {
     if !replacement.contains('\\') {
         out.push_str(replacement);
-        return;
+        return Ok(());
     }
     let mut chars = replacement.chars().peekable();
     while let Some(c) = chars.next() {
@@ -428,11 +439,26 @@ fn expand_replacement(replacement: &str, matched: &str, out: &mut String) {
         }
         match chars.peek() {
             Some('0' | '&') => {
-                out.push_str(matched);
+                out.push_str(&input[start..end]);
                 chars.next();
             }
-            Some('1'..='9') => {
+            Some('`') => {
+                out.push_str(&input[..start]);
                 chars.next();
+            }
+            Some('\'') => {
+                out.push_str(&input[end..]);
+                chars.next();
+            }
+            Some('1'..='9' | '+') => {
+                chars.next();
+            }
+            Some('k') => {
+                chars.next();
+                if chars.peek() == Some(&'<') {
+                    return Err(Error::internal());
+                }
+                out.push_str("\\k");
             }
             Some('\\') => {
                 out.push('\\');
@@ -441,34 +467,38 @@ fn expand_replacement(replacement: &str, matched: &str, out: &mut String) {
             _ => out.push('\\'),
         }
     }
+    Ok(())
 }
 
-fn gsub(input: &str, pattern: &str, replacement: &str, first_only: bool) -> String {
+fn gsub(input: &str, pattern: &str, replacement: &str, first_only: bool) -> Result<String> {
     let mut out = String::with_capacity(input.len());
     if pattern.is_empty() {
         // An empty pattern matches between every character.
-        expand_replacement(replacement, "", &mut out);
+        expand_replacement(replacement, input, 0, 0, &mut out)?;
         if first_only {
             out.push_str(input);
-            return out;
+            return Ok(out);
         }
-        for c in input.chars() {
+        for (index, c) in input.char_indices() {
             out.push(c);
-            expand_replacement(replacement, "", &mut out);
+            let at = index + c.len_utf8();
+            expand_replacement(replacement, input, at, at, &mut out)?;
         }
-        return out;
+        return Ok(out);
     }
-    let mut rest = input;
-    while let Some(index) = rest.find(pattern) {
-        out.push_str(&rest[..index]);
-        expand_replacement(replacement, pattern, &mut out);
-        rest = &rest[index + pattern.len()..];
+    let mut pos = 0;
+    while let Some(index) = input[pos..].find(pattern) {
+        let start = pos + index;
+        let end = start + pattern.len();
+        out.push_str(&input[pos..start]);
+        expand_replacement(replacement, input, start, end, &mut out)?;
+        pos = end;
         if first_only {
             break;
         }
     }
-    out.push_str(rest);
-    out
+    out.push_str(&input[pos..]);
+    Ok(out)
 }
 
 fn replace_with(input: &Value, args: Args<'_>, min: usize, first_only: bool) -> Result<Value> {
@@ -478,12 +508,7 @@ fn replace_with(input: &Value, args: Args<'_>, min: usize, first_only: bool) -> 
         .get(1)
         .map(|v| v.to_str().into_owned())
         .unwrap_or_default();
-    Ok(Value::from(gsub(
-        &input.to_str(),
-        &args[0].to_str(),
-        &replacement,
-        first_only,
-    )))
+    gsub(&input.to_str(), &args[0].to_str(), &replacement, first_only).map(Value::from)
 }
 
 fn replace(input: &Value, args: Args<'_>, _ctx: &Context) -> Result<Value> {
@@ -520,23 +545,13 @@ fn replace_last(input: &Value, args: Args<'_>, _ctx: &Context) -> Result<Value> 
 fn remove(input: &Value, args: Args<'_>, _ctx: &Context) -> Result<Value> {
     let args = ruby_args(args);
     check_arity(&args, 1, 1)?;
-    Ok(Value::from(gsub(
-        &input.to_str(),
-        &args[0].to_str(),
-        "",
-        false,
-    )))
+    gsub(&input.to_str(), &args[0].to_str(), "", false).map(Value::from)
 }
 
 fn remove_first(input: &Value, args: Args<'_>, _ctx: &Context) -> Result<Value> {
     let args = ruby_args(args);
     check_arity(&args, 1, 1)?;
-    Ok(Value::from(gsub(
-        &input.to_str(),
-        &args[0].to_str(),
-        "",
-        true,
-    )))
+    gsub(&input.to_str(), &args[0].to_str(), "", true).map(Value::from)
 }
 
 fn remove_last(input: &Value, args: Args<'_>, _ctx: &Context) -> Result<Value> {
@@ -623,10 +638,18 @@ mod tests {
 
     #[test]
     fn substitutes() {
+        let gsub = |input, pattern, replacement, first_only| {
+            gsub(input, pattern, replacement, first_only).unwrap()
+        };
         assert_eq!(gsub("a-b-c", "-", "+", false), "a+b+c");
         assert_eq!(gsub("a-b-c", "-", "+", true), "a+b-c");
         assert_eq!(gsub("abc", "", "-", false), "-a-b-c-");
         assert_eq!(gsub("abc", "b", "[\\0]", false), "a[b]c");
+        assert_eq!(gsub("toto", "t", "\\'", false), "otoooo");
+        assert_eq!(gsub("toto", "t", "\\`", false), "otoo");
+        assert_eq!(gsub("toto", "t", "\\1\\+", false), "oo");
+        assert_eq!(gsub("toto", "t", "\\k", false), "\\ko\\ko");
         assert_eq!(replace_last_str("a-b-c", "-", "+"), "a-b+c");
+        assert!(super::gsub("toto", "t", "\\k<name>", false).is_err());
     }
 }

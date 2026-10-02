@@ -124,7 +124,7 @@ impl Tag for Render {
         let partial = ctx.load_partial(&self.template_name)?;
         let variable_name = context_variable_name(&self.call.alias, &self.template_name);
         let variable = match &self.call.variable {
-            Some(expr) => expr.evaluate(ctx)?,
+            Some(expr) => ctx.detach(expr.evaluate(ctx)?),
             None => Value::Nil,
         };
         let mut render_one =
@@ -135,7 +135,7 @@ impl Tag for Render {
                     inner.set("forloop", Value::Object(forloop.clone()));
                 }
                 for (key, expr) in &self.call.attributes {
-                    inner.set(key.clone(), expr.evaluate(ctx)?);
+                    inner.set(key.clone(), ctx.detach(expr.evaluate(ctx)?));
                 }
                 if !value.is_nil() {
                     inner.set(variable_name, value);

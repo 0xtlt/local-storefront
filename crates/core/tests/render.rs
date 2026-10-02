@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use lsf_core::render::Target;
+use lsf_core::render::page::{Page, Resource};
 use lsf_core::store::load::{DataSource, LoadOptions, load};
 use lsf_core::store::{CartLine, Store};
 use lsf_core::theme::Revalidate;
@@ -183,6 +184,36 @@ fn forms_show_the_outcome_of_a_submission() {
     assert_clean(&rendered);
     assert_eq!(rendered.template, "page.contact");
     assert_snapshot("contact-with-errors.html", &rendered.body);
+}
+
+#[test]
+fn contact_forms_come_back_to_their_own_id() {
+    let fixture = fixture();
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/"),
+        Session::initial(&fixture.store),
+    );
+    let (output, errors) = fixture
+        .renderer
+        .render_liquid(
+            &site,
+            Page::new("index", Resource::Index),
+            "{% form 'contact', id: 'ContactForm', class: 'isolate' %}{% endform %}\n\
+             {% form 'customer', id: 'ContactFooter', class: 'newsletter-form' %}{% endform %}\n\
+             {% form 'contact' %}{% endform %}",
+            &[],
+        )
+        .expect("the forms parse");
+    assert!(errors.is_empty(), "{errors:?}");
+    // The first two are what Shopify renders for the contact and newsletter forms of Dawn.
+    for form in [
+        r#"<form method="post" action="/contact#ContactForm" id="ContactForm" accept-charset="UTF-8" class="isolate">"#,
+        r#"<form method="post" action="/contact#ContactFooter" id="ContactFooter" accept-charset="UTF-8" class="newsletter-form">"#,
+        r#"<form method="post" action="/contact#contact_form" id="contact_form" accept-charset="UTF-8" class="contact-form">"#,
+    ] {
+        assert!(output.contains(form), "{form} is not in {output}");
+    }
 }
 
 #[test]

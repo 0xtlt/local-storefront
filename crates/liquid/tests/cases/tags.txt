@@ -103,3 +103,18 @@
 {% 123 %}
 {% if-not %}
 {% render 'recursive' %}
+{% doc %}{% docEXTRA %}x{% enddocEXTRA %}y{% enddoc %}after
+{%- if true -%}\n  {%- doc -%}\n    {%- docs -%}wut{% enddocs -%}xyz\n  {%- enddoc -%}\n{%- endif -%}
+{% doc %}{% doc %}content{% enddoc %}
+{% doc %}\n{{ x }\n{%- doc -%}\n{% enddoc %}
+{% doc %}{% enddoc
+{% assign x ) = 1 %}{{ x }}
+{% assign x ( = 1 %}{{ x }}
+{% assign (x) = 1 %}{{ x }}|{{ (x) }}
+{% assign ((x = 1 %}{{ x }}|{{ (x }}
+{% assign x)) = 1 %}{{ x }}
+{% assign a b = 1 %}{{ a }}|{{ b }}
+{% assign = x = 1 %}{{ x }}
+{% liquid\nfor i in (1..3)\necho i\n%}
+{% liquid\nfor i in (1..3)\necho i\n\n\n%}
+{% liquid\n\n\nif true\n  echo 'a'\n\n%}

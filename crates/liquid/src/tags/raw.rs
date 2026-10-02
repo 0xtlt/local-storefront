@@ -59,12 +59,7 @@ pub(super) fn parse_doc(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Re
             "Syntax Error in 'doc' - Valid syntax: {% doc %}{% enddoc %}",
         ));
     }
-    let body = parser.parse_raw_body("doc")?;
-    if body.contains("{% doc %}") || body.contains("{%- doc") || body.contains("{% doc") {
-        return Err(Error::syntax(
-            "Syntax Error in 'doc' - Nested doc tags are not allowed",
-        ));
-    }
+    let body = parser.parse_unnested_raw_body("doc")?;
     Ok(Box::new(Silent {
         blank: body.is_empty(),
     }))

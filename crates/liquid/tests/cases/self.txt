@@ -1,0 +1,25 @@
+## The self object: the variables of the current scope
+#! data {"s": "hello", "k": "s", "n": 5, "h": {"a": 1}, "items": ["s", "n"], "size": 7}
+#! partial inner {% assign n = 2 %}{{ outer.n }}|{{ self.n }}|{{ n }}|{{ outer.later }}
+#! partial plain {{ self.s }}|{{ self.n }}|{{ self['arg'] }}
+#! partial shadowed {{ self.n }}|{{ self }}
+#! partial nested {% assign n = 3 %}{% assign mine = self %}{% render 'leaf', outer: outer, middle: mine %}
+#! partial leaf {% assign n = 4 %}{{ outer.n }}|{{ middle.n }}|{{ self.n }}
+#! partial shared {{ self.s }}|{{ self.local }}
+{{ self['s'] }} {{ self.s }} {{ self[k] }} {{ self['h'].a }} {{ self.h.a }} {{ self[self['k']] }}|{{ self['missing'] }}|{{ self.missing.deeper }}|
+{{ self }} {{ self | upcase }} {{ self | size }} {{ self.size }} {{ self['size'] }} {{ self.first }}|{{ self | first }}|{{ self[0] }}|
+{% assign local = 'L' %}{{ self.local }} {{ self['local'] }}{% for item in items %} {{ self[item] }}{% endfor %}
+{% for i in (1..2) %}{{ self.i }}{{ self.forloop.index }}{% endfor %}
+{% assign mine = self %}{% assign later = 'late' %}{{ mine.later }} {{ mine.s }} {{ mine }}
+{% if self %}truthy{% endif %} {% if self == self %}same{% endif %} {% assign a = self %}{% assign b = self %}{% if a == b %}equal{% endif %} {% if self contains 's' %}contains{% else %}no{% endif %} {% if self == empty %}empty{% else %}full{% endif %}
+{% assign self = 'shadow' %}{{ self }} {{ self.s }}|{{ self.size }}
+{% capture self %}captured{% endcapture %}{{ self }}
+{% increment self %} {{ self }}
+{% assign x = 'X' %}{{ self | map: 'x' | join: ',' }}|{{ self | map: 'missing' | join: ',' }}|{{ self | where: 'x' | size }}
+{% assign n = 1 %}{% assign later = 'late' %}{% render 'inner', outer: self %}
+{% assign n = 1 %}{% assign mine = self %}{% render 'nested', outer: mine %}
+{% render 'plain' %} {% render 'plain', arg: 'given', n: 9 %}
+{% render 'shadowed', self: 'value', n: 1 %} {% assign n = 1 %}{% render 'shadowed', self: self %}
+{% assign local = 'L' %}{% include 'shared' %}
+{% for item in self %}never{% else %}nothing{% endfor %} {{ self | json }}
+{% liquid\nassign v = 'liquid'\necho self.v\necho self['k']\n%}

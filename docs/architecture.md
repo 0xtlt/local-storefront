@@ -28,7 +28,10 @@ Values that are not plain data implement the `Object` trait (`get`, `index`, `it
 
 Tests: `tests/golden.rs` renders `tests/cases/*.txt` and compares with `tests/golden/*.json`,
 which `tools/oracle/generate_golden.rb` produces by running the same templates through the
-real gem.
+real gem. `tests/liquid_spec.rs` replays Shopify's
+[liquid-spec](https://github.com/Shopify/liquid-spec) suite, downloaded by
+`mise run liquid-spec:fetch`: it reports the specs that pass, differ and do not apply for each
+suite, and fails when fewer pass than its recorded baselines.
 
 ## `lsf-core`: Shopify
 
@@ -72,12 +75,13 @@ thread with a large stack, because deeply nested snippets and blocks recurse.
 ## Development
 
 ```bash
-mise install            # Rust, and Ruby for the oracle
-mise run check          # format check, clippy, tests
-mise run horizon:serve  # clone Shopify's Horizon theme and serve it
-mise run oracle:install # install the reference liquid gem
-mise run oracle:golden  # regenerate the golden expectations from it
-mise run docs:fetch     # download shopify.dev's Liquid reference for the conformance test
+mise install               # Rust, and Ruby for the oracle
+mise run check             # format check, clippy, tests
+mise run horizon:serve     # clone Shopify's Horizon theme and serve it
+mise run oracle:install    # install the reference liquid gem
+mise run oracle:golden     # regenerate the golden expectations from it
+mise run docs:fetch        # download shopify.dev's Liquid reference for the conformance test
+mise run liquid-spec:fetch # download Shopify's liquid-spec suite, which the engine's tests replay
 ```
 
 ## Releasing

@@ -1,7 +1,9 @@
 //! The render-time state: variable scopes, registers, interrupts and error collection.
 
 use std::any::{Any, TypeId};
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
@@ -41,6 +43,59 @@ impl Object for NoGlobals {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// The `self` object: the variables of the scope it was read in, so that `self[name]` and
+/// `self.name` read the variable `name`.
+///
+/// The context it belongs to answers its lookups, which is how it sees variables assigned after
+/// it was read. Handed to another context (an argument of `render`) or to a filter, it takes
+/// the variables along as they are at that point; its own context cannot change them until the
+/// partial or the filter is done.
+pub struct SelfDrop {
+    scope: u64,
+    captured: Option<Captured>,
+}
+
+struct Captured {
+    variables: HashMap<String, Value>,
+    inherited: Arc<HashMap<String, Value>>,
+    globals: Arc<dyn Object>,
+}
+
+impl Object for SelfDrop {
+    fn type_name(&self) -> &str {
+        "self"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        let captured = self.captured.as_ref()?;
+        captured
+            .variables
+            .get(key)
+            .or_else(|| captured.inherited.get(key))
+            .cloned()
+            .or_else(|| captured.globals.get(key))
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Borrowed("Liquid::SelfDrop")
+    }
+
+    fn identity(&self) -> Option<String> {
+        Some(format!("self:{}", self.scope))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Numbers the contexts, so that a `SelfDrop` knows the one it belongs to.
+static NEXT_SCOPE: AtomicU64 = AtomicU64::new(0);
+
+fn next_scope() -> u64 {
+    NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +191,7 @@ impl ContextBuilder {
             template_name: self.template_name,
             base_depth: 0,
             include_disabled: false,
+            scope: next_scope(),
         }
     }
 }
@@ -158,6 +214,8 @@ pub struct Context {
     base_depth: usize,
     /// Set inside `render`, where `include` is not allowed.
     include_disabled: bool,
+    /// Identifies this context to the `self` objects read in it.
+    scope: u64,
 }
 
 impl Context {
@@ -205,13 +263,14 @@ impl Context {
             template_name: self.template_name.clone(),
             base_depth: self.base_depth + 1,
             include_disabled: self.include_disabled,
+            scope: next_scope(),
         })
     }
 
     // --- variables -------------------------------------------------------------------------
 
     /// Resolves a top-level variable: local scopes, then render assigns and counters, then
-    /// globals.
+    /// globals. `self` is the scope itself unless a variable has that name.
     pub fn find_variable(&self, name: &str) -> Value {
         for scope in self.scopes.iter().rev() {
             if let Some(value) = scope.get(name) {
@@ -226,7 +285,50 @@ impl Context {
         if let Some(value) = self.inherited.get(name) {
             return value.clone();
         }
-        self.shared.globals.get(name).unwrap_or(Value::Nil)
+        match self.shared.globals.get(name) {
+            Some(value) if !value.is_nil() => value,
+            _ if name == "self" => Value::object(SelfDrop {
+                scope: self.scope,
+                captured: None,
+            }),
+            _ => Value::Nil,
+        }
+    }
+
+    /// Whether `value` is the `self` of this context, whose lookups are variable lookups here.
+    pub fn is_self(&self, value: &Value) -> bool {
+        value
+            .downcast::<SelfDrop>()
+            .is_some_and(|drop| drop.scope == self.scope)
+    }
+
+    /// Prepares a value that leaves this context, for a partial or a filter: `self` takes the
+    /// variables it stands for along.
+    pub fn detach(&self, value: Value) -> Value {
+        if !self.is_self(&value) {
+            return value;
+        }
+        let mut variables: HashMap<String, Value> = self
+            .environment
+            .iter()
+            .filter(|(_, value)| !value.is_nil())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        for scope in &self.scopes {
+            variables.extend(
+                scope
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
+        }
+        Value::object(SelfDrop {
+            scope: self.scope,
+            captured: Some(Captured {
+                variables,
+                inherited: self.inherited.clone(),
+                globals: self.shared.globals.clone(),
+            }),
+        })
     }
 
     /// Sets a variable that this context and every sub-context created from it can read.

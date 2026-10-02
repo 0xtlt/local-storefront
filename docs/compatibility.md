@@ -7,12 +7,18 @@ page says how that is checked, what is covered, and where the local server knowi
 
 - **Liquid itself** is a port of Shopify's reference implementation (the `liquid` Ruby gem,
   version 5.14), including its lax parsing mode, whitespace control, number and string
-  coercions, and error messages. 548 templates covering every tag and filter are rendered by
+  coercions, and error messages. 590 templates covering every tag and filter are rendered by
   both implementations and must produce the same output (`mise run oracle:golden` regenerates
   the expectations from the gem).
+- **Shopify's test suite of the language**, [liquid-spec](https://github.com/Shopify/liquid-spec),
+  is replayed against the engine (`mise run liquid-spec:fetch` downloads it). 4,630 of its
+  7,369 language specs apply here, and 4,608 of them pass. The others expect a strict parser
+  to reject a template that Shopify accepts in a theme (1,923), or need what the engine has
+  no equivalent for: Ruby objects, byte strings, render limits (816). The 22 that differ are
+  [listed below](#differences-with-liquid-spec).
 - **Shopify's objects, filters and tags** are checked against the examples of
   [shopify.dev](https://shopify.dev/docs/api/liquid): each example's code and data are replayed
-  and compared with the documented output. 195 of 313 examples match. The others depend on the
+  and compared with the documented output. 196 of 313 examples match. The others depend on the
   content of Shopify's own demo store (products, images and ids that are not in the examples'
   data), not on behaviour known to differ.
 - **Real themes.** Shopify's Horizon and Dawn themes render every page type without a Liquid
@@ -48,7 +54,7 @@ Global objects: `shop`, `cart`, `customer`, `request`, `routes`, `localization`,
 `paginate`, `form`, `forloop`, `tablerowloop`, `canonical_url`, `page_title`,
 `page_description`, `page_image`, `handle`, `current_page`, `current_tags`, `shop_locale`,
 `content_for_header`, `content_for_layout`, `country_option_tags`, `all_country_option_tags`,
-`powered_by_link`, `additional_checkout_buttons`, `robots`.
+`powered_by_link`, `additional_checkout_buttons`, `robots`, `self`.
 
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
@@ -127,7 +133,26 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. |
 | Theme editor | `request.design_mode` is always `false`, `Shopify.designMode` is not set, and `block.shopify_attributes` is empty. |
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |
+| Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |
 | Sitemaps | `/robots.txt` is rendered from `templates/robots.txt.liquid`, or with Shopify's default rules. `/sitemap.xml` links one sitemap per kind (products, pages, collections, blogs), in the primary language only and without paging. |
 
 Found a difference that is not in this table? It is a bug: a Liquid snippet and the HTML
 Shopify renders for it are enough to reproduce it.
+
+### Differences with liquid-spec
+
+The specs of liquid-spec that apply to the engine and do not pass, at the revision recorded in
+`tools/liquid-spec/REVISION`:
+
+| Specs | Reason |
+|---|---|
+| 15 | Integers beyond 64 bits: literals such as `18446744073709551615`, and the way Shopify's renderer reads such numbers from strings that end with a NUL character. |
+| 3 | A date written with a UTC offset (`'2020-06-15 14:30:00 -0400' \| date: '%z'`) is shown in the shop's time zone, like every date of a storefront. The reference gem keeps the offset it was written with. |
+| 2 | How the host stores files: a recording expects `{% include ".liquid" %}` not to find a file named `""`, another expects a renderer without a file system. |
+| 1 | The spec expects `{{ #{1+1} }}` to print nothing. The gem (5.14) reports a variable that is not terminated, and so does the engine. |
+| 1 | The recording injects a failure into Shopify's renderer and expects `Liquid error: internal`. |
+
+The suite also has 26 sections of the Dawn theme with the HTML Shopify rendered. They are not
+replayed: the specs hold neither the snippets, the translations nor the section settings the
+HTML was rendered with. Those are in Dawn 5.0.0, so replaying them takes that theme and store
+data written from the specs' environments.

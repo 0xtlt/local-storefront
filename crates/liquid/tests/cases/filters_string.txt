@@ -54,3 +54,10 @@
 {{ 'a' | default: 'd' }} {{ '' | default: 'd' }} {{ z | default: 'd' }} {{ false | default: 'd' }} {{ false | default: 'd', allow_false: true }} {{ z | default: 'd', allow_false: true }} {{ 0 | default: 'd' }} {{ '  ' | default: 'd' }}| {{ undefined | default: n }} {{ z | default }}|
 #! data {"ea": [], "eh": {}, "arr": [1]}
 {{ ea | default: 'empty-array' }} {{ eh | default: 'empty-hash' }} {{ arr | default: 'x' }} {{ ea | default: ea | size }}
+## Back-references in the replacement of replace, replace_first and remove
+{{ 'toto' | replace: 't', "[\\']" }} {{ 'toto' | replace: 't', '[\\`]' }} {{ 'toto' | replace: 't', '[\\0]' }} {{ 'toto' | replace: 't', '[\\&]' }} {{ 'toto' | replace: 't', '[\\1]' }} {{ 'toto' | replace: 't', '[\\9]' }} {{ 'toto' | replace: 't', '[\\+]' }}
+{{ 'toto' | replace: 't', '[\\k]' }} {{ 'toto' | replace: 't', '[\\x]' }} {{ 'toto' | replace: 't', '[\\\\0]' }} {{ 'toto' | replace: 't', '\\' }} {{ 'toto' | replace_first: 't', "[\\']" }} {{ 'toto' | replace_last: 't', "[\\']" }} {{ 'toto' | replace: '', '[\\`]' }}
+{{ 'toto' | replace: 't', '\\k<name>' }}
+{{ 'toto' | replace_first: 't', '\\k<name' }}
+{{ 'héllo wörld' | replace: 'l', "(\\')" }} {{ 'héllo' | replace: 'l', '(\\`)' }}
+{{ 'foobar' | truncate: -9223372036854775808 }} {{ 'foobar' | truncate: 9223372036854775807 }} {{ 'foobar' | truncatewords: -9223372036854775808 }}

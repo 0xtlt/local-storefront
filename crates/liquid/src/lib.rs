@@ -29,7 +29,7 @@ pub mod tokenizer;
 pub mod value;
 pub mod variable;
 
-pub use context::{Context, ContextBuilder, Interrupt, PartialLoader};
+pub use context::{Context, ContextBuilder, Interrupt, PartialLoader, SelfDrop};
 pub use environment::{Environment, FilterFn, TagParser};
 pub use error::{Error, ErrorKind, Result};
 pub use expr::Expr;

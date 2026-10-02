@@ -1313,6 +1313,84 @@
       },
       "partials": {},
       "expected": "empty-array empty-hash 1 0"
+    },
+    {
+      "line": 58,
+      "template": "{{ 'toto' | replace: 't', \"[\\']\" }} {{ 'toto' | replace: 't', '[\\`]' }} {{ 'toto' | replace: 't', '[\\0]' }} {{ 'toto' | replace: 't', '[\\&]' }} {{ 'toto' | replace: 't', '[\\1]' }} {{ 'toto' | replace: 't', '[\\9]' }} {{ 'toto' | replace: 't', '[\\+]' }}",
+      "data": {
+        "ea": [],
+        "eh": {},
+        "arr": [
+          1
+        ]
+      },
+      "partials": {},
+      "expected": "[oto]o[o]o []o[to]o [t]o[t]o [t]o[t]o []o[]o []o[]o []o[]o"
+    },
+    {
+      "line": 59,
+      "template": "{{ 'toto' | replace: 't', '[\\k]' }} {{ 'toto' | replace: 't', '[\\x]' }} {{ 'toto' | replace: 't', '[\\\\0]' }} {{ 'toto' | replace: 't', '\\' }} {{ 'toto' | replace_first: 't', \"[\\']\" }} {{ 'toto' | replace_last: 't', \"[\\']\" }} {{ 'toto' | replace: '', '[\\`]' }}",
+      "data": {
+        "ea": [],
+        "eh": {},
+        "arr": [
+          1
+        ]
+      },
+      "partials": {},
+      "expected": "[\\k]o[\\k]o [\\x]o[\\x]o [\\0]o[\\0]o \\o\\o [oto]oto to[\\']o []t[t]o[to]t[tot]o[toto]"
+    },
+    {
+      "line": 60,
+      "template": "{{ 'toto' | replace: 't', '\\k<name>' }}",
+      "data": {
+        "ea": [],
+        "eh": {},
+        "arr": [
+          1
+        ]
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): internal"
+    },
+    {
+      "line": 61,
+      "template": "{{ 'toto' | replace_first: 't', '\\k<name' }}",
+      "data": {
+        "ea": [],
+        "eh": {},
+        "arr": [
+          1
+        ]
+      },
+      "partials": {},
+      "expected": "Liquid error (line 1): internal"
+    },
+    {
+      "line": 62,
+      "template": "{{ 'héllo wörld' | replace: 'l', \"(\\')\" }} {{ 'héllo' | replace: 'l', '(\\`)' }}",
+      "data": {
+        "ea": [],
+        "eh": {},
+        "arr": [
+          1
+        ]
+      },
+      "partials": {},
+      "expected": "hé(lo wörld)(o wörld)o wör(d)d hé(hé)(hél)o"
+    },
+    {
+      "line": 63,
+      "template": "{{ 'foobar' | truncate: -9223372036854775808 }} {{ 'foobar' | truncate: 9223372036854775807 }} {{ 'foobar' | truncatewords: -9223372036854775808 }}",
+      "data": {
+        "ea": [],
+        "eh": {},
+        "arr": [
+          1
+        ]
+      },
+      "partials": {},
+      "expected": "... foobar foobar"
     }
   ]
 }

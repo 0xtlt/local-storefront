@@ -41,3 +41,6 @@
 {% if "x" == 'x' and 'a b' contains ' ' %}a{% endif %}
 {% if s == 'hello' or s == "world" %}a{% endif %}
 {% if true %}a{% endif %}{% if false %}b{% endif %}{% if nil %}c{% endif %}{% if null %}d{% endif %}
+## A float that is not a number is neither below nor above anything
+{% assign nan = 0.0 | divided_by: 0 %}{{ nan }} {% if nan < 100 %}a{% else %}b{% endif %}{% if nan > 100 %}a{% else %}b{% endif %}{% if nan <= nan %}a{% else %}b{% endif %}{% if nan == nan %}a{% else %}b{% endif %}{% if 1 >= nan %}a{% else %}b{% endif %}{% if nan != nan %}a{% else %}b{% endif %}
+{% assign nan = 0.0 | divided_by: 0 %}{% if nan < 'a' %}a{% else %}b{% endif %}

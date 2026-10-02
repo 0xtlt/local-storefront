@@ -172,8 +172,9 @@ The storefront is never locked: nothing redirects to that page.
 
 ## What you get
 
-- **The same HTML as Shopify.** The Liquid engine is checked against Shopify's own. Shopify's
-  Horizon and Dawn themes render every page without an error.
+- **The same HTML as Shopify.** The Liquid engine is checked against Shopify's own, and
+  against Shopify's test suite of the language. Shopify's Horizon and Dawn themes render
+  every page without an error.
 - **A working storefront.** Cart, section rendering, predictive search, recommendations,
   collection filters, forms, languages, customer accounts, B2B companies, the password page,
   `robots.txt` and sitemaps.

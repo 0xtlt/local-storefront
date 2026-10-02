@@ -153,13 +153,15 @@ pub fn equal(left_expr: &Expr, left: &Value, right_expr: &Expr, right: &Value) -
 /// `<`, `>`, `<=`, `>=`: `Ok(None)` when one side does not support ordering (the condition is
 /// then false) and an error when both do but are of incompatible types.
 fn compare(left: &Value, right: &Value) -> Result<Option<Ordering>> {
-    let orderable =
-        |value: &Value| matches!(value, Value::Int(_) | Value::Float(_) | Value::Str(_));
+    let number = |value: &Value| matches!(value, Value::Int(_) | Value::Float(_));
+    let orderable = |value: &Value| number(value) || matches!(value, Value::Str(_));
     if !orderable(left) || !orderable(right) {
         return Ok(None);
     }
     match left.ruby_cmp(right) {
         Some(ordering) => Ok(Some(ordering)),
+        // Two numbers that have no order: one is NaN, and nothing is below or above NaN.
+        None if number(left) && number(right) => Ok(None),
         None => {
             let right_description = match right {
                 Value::Int(i) => i.to_string(),

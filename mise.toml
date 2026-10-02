@@ -3,7 +3,8 @@
 rust = { version = "1.98.1", components = "clippy,rustfmt" }
 # For the npm packaging (`npm/`) and the tests of the injected scripts.
 node = "26"
-# Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem).
+# Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem)
+# and for the tasks that download test material (`docs:fetch`, `liquid-spec:fetch`).
 ruby = "3.4.10"
 
 [env]
@@ -71,3 +72,7 @@ run = "GEM_HOME=$PWD/.oracle/gems ruby tools/oracle/generate_golden.rb"
 [tasks."docs:fetch"]
 description = "Download Shopify's Liquid reference (objects/filters/tags + example outputs) into .cache/"
 run = "tools/docs/fetch.sh"
+
+[tasks."liquid-spec:fetch"]
+description = "Download Shopify's liquid-spec test suite into .cache/ (run by the lsf-liquid tests when present)"
+run = "tools/liquid-spec/fetch.sh"

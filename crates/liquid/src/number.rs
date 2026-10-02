@@ -382,7 +382,8 @@ pub fn float_to_s(f: f64) -> String {
     if f < 0.0 {
         out.push('-');
     }
-    if 0 < decpt && decpt <= 16 {
+    // Fixed notation holds up to 15 digits before the point, or 16 when a fraction follows.
+    if 0 < decpt && (decpt <= 15 || (decpt as usize) < digits.len()) {
         let decpt = decpt as usize;
         if digits.len() <= decpt {
             out.push_str(&digits);
@@ -421,7 +422,10 @@ mod tests {
         assert_eq!(float_to_s(1.0), "1.0");
         assert_eq!(float_to_s(0.3), "0.3");
         assert_eq!(float_to_s(-12.5), "-12.5");
-        assert_eq!(float_to_s(1e15), "1000000000000000.0");
+        assert_eq!(float_to_s(1e14), "100000000000000.0");
+        assert_eq!(float_to_s(1e15), "1.0e+15");
+        assert_eq!(float_to_s(1234567890123456.0), "1.234567890123456e+15");
+        assert_eq!(float_to_s(1234567890123456.8), "1234567890123456.8");
         assert_eq!(float_to_s(1e16), "1.0e+16");
         assert_eq!(float_to_s(1.5e20), "1.5e+20");
         assert_eq!(float_to_s(0.0001), "0.0001");

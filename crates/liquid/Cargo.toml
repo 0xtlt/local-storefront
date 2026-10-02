@@ -17,3 +17,5 @@ serde_json.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 chrono-tz.workspace = true
+# For the patterns of liquid-spec (tests/liquid_spec.rs).
+regex.workspace = true

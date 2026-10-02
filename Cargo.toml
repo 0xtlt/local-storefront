@@ -17,9 +17,11 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 indexmap = { version = "2", features = ["serde"] }
+regex = "1"
 rust_decimal = { version = "1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+# `float_roundtrip`: without it a number such as 1234.3838300038383 is read one bit off.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 
 [profile.dev]
 opt-level = 1

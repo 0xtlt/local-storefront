@@ -2912,6 +2912,486 @@
         "recursive": "{% render 'recursive' %}"
       },
       "expected": "Liquid error (recursive line 1): Nesting too deep"
+    },
+    {
+      "line": 106,
+      "template": "{% doc %}{% docEXTRA %}x{% enddocEXTRA %}y{% enddoc %}after",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "after"
+    },
+    {
+      "line": 107,
+      "template": "{%- if true -%}\n  {%- doc -%}\n    {%- docs -%}wut{% enddocs -%}xyz\n  {%- enddoc -%}\n{%- endif -%}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": ""
+    },
+    {
+      "line": 108,
+      "template": "{% doc %}{% doc %}content{% enddoc %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'doc' - Nested doc tags are not allowed"
+    },
+    {
+      "line": 109,
+      "template": "{% doc %}\n{{ x }\n{%- doc -%}\n{% enddoc %}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'doc' - Nested doc tags are not allowed"
+    },
+    {
+      "line": 110,
+      "template": "{% doc %}{% enddoc",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): 'doc' tag was never closed"
+    },
+    {
+      "line": 111,
+      "template": "{% assign x ) = 1 %}{{ x }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'assign' - Valid syntax: assign [var] = [source]"
+    },
+    {
+      "line": 112,
+      "template": "{% assign x ( = 1 %}{{ x }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'assign' - Valid syntax: assign [var] = [source]"
+    },
+    {
+      "line": 113,
+      "template": "{% assign (x) = 1 %}{{ x }}|{{ (x) }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "|"
+    },
+    {
+      "line": 114,
+      "template": "{% assign ((x = 1 %}{{ x }}|{{ (x }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "|"
+    },
+    {
+      "line": 115,
+      "template": "{% assign x)) = 1 %}{{ x }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 1): Syntax Error in 'assign' - Valid syntax: assign [var] = [source]"
+    },
+    {
+      "line": 116,
+      "template": "{% assign a b = 1 %}{{ a }}|{{ b }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "|1"
+    },
+    {
+      "line": 117,
+      "template": "{% assign = x = 1 %}{{ x }}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "1"
+    },
+    {
+      "line": 118,
+      "template": "{% liquid\nfor i in (1..3)\necho i\n%}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 4): 'for' tag was never closed"
+    },
+    {
+      "line": 119,
+      "template": "{% liquid\nfor i in (1..3)\necho i\n\n\n%}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 4): 'for' tag was never closed"
+    },
+    {
+      "line": 120,
+      "template": "{% liquid\n\n\nif true\n  echo 'a'\n\n%}",
+      "data": {
+        "s": "hello",
+        "n": 5,
+        "arr": [
+          1,
+          2,
+          3
+        ],
+        "h": {
+          "a": 1
+        },
+        "t": true
+      },
+      "partials": {
+        "simple": "Simple partial",
+        "args": "[{{ a }}|{{ b }}|{{ s }}|{{ args }}]",
+        "item": "({{ item }}{{ forloop.index }}{{ forloop.last }})",
+        "with_var": "<{{ with_var }}|{{ alias }}>",
+        "nested": "outer({% render 'simple' %})",
+        "uses_include": "{% include 'simple' %}",
+        "assigns": "{% assign leaked = 'leak' %}{{ leaked }}",
+        "errors": "{{ 1 | divided_by: 0 }}",
+        "counter": "{% increment c %}",
+        "dir/sub": "sub:{{ sub }}",
+        "loop": "{% for i in (1..2) %}{{ i }}{% break %}{% endfor %}",
+        "recursive": "{% render 'recursive' %}"
+      },
+      "expected": "SYNTAX: Liquid syntax error (line 6): 'if' tag was never closed"
     }
   ]
 }

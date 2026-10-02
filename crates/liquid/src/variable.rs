@@ -95,7 +95,7 @@ impl Variable {
             for (key, expr) in &filter.kwargs {
                 args.named.push((key.clone(), expr.evaluate(ctx)?));
             }
-            value = ctx.invoke_filter(&filter.name, &value, &args)?;
+            value = ctx.invoke_filter(&filter.name, &ctx.detach(value), &args)?;
         }
         Ok(value)
     }

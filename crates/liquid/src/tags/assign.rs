@@ -8,9 +8,38 @@ use crate::template::{BlockBody, Tag};
 use crate::value::Value;
 use crate::variable::Variable;
 
-/// `VariableSignature = /\(?[\w\-\.\[\]]\)?/`, treated as a character class.
+/// The characters `VariableSignature = /\(?[\w\-\.\[\]]\)?/` is made of.
 fn is_signature_char(c: char) -> bool {
-    lax::is_word(c) || matches!(c, '-' | '.' | '[' | ']' | '(' | ')')
+    is_signature_core(c) || matches!(c, '(' | ')')
+}
+
+fn is_signature_core(c: char) -> bool {
+    lax::is_word(c) || matches!(c, '-' | '.' | '[' | ']')
+}
+
+/// Where the longest run of `VariableSignature`s that ends `text` starts: a parenthesis only
+/// counts next to the character it wraps.
+fn signature_start(text: &str) -> Option<usize> {
+    let chars: Vec<(usize, char)> = text
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_signature_char(*c))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let len = chars.len();
+    let core = |i: usize| chars.get(i).is_some_and(|(_, c)| is_signature_core(*c));
+    let is = |i: usize, c: char| chars.get(i).is_some_and(|(_, found)| *found == c);
+    // `ends[i]`: the characters from `i` on are a sequence of signatures.
+    let mut ends = vec![false; len + 1];
+    ends[len] = true;
+    for i in (0..len).rev() {
+        let open = usize::from(is(i, '('));
+        ends[i] =
+            core(i + open) && (ends[i + open + 1] || (is(i + open + 1, ')') && ends[i + open + 2]));
+    }
+    (0..len).find(|i| ends[*i]).map(|i| chars[i].0)
 }
 
 struct Assign {
@@ -38,13 +67,7 @@ pub(super) fn parse_assign(
     let markup = token.markup;
     for (eq, _) in markup.match_indices('=') {
         let before = markup[..eq].trim_end_matches(crate::number::is_ruby_space);
-        let name_start = before
-            .char_indices()
-            .rev()
-            .take_while(|(_, c)| is_signature_char(*c))
-            .last()
-            .map(|(i, _)| i);
-        if let Some(start) = name_start {
+        if let Some(start) = signature_start(before) {
             let rest = &markup[lax::skip_space(markup, eq + 1)..];
             return Ok(Box::new(Assign {
                 to: before[start..].to_string(),

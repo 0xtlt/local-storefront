@@ -22,10 +22,16 @@ impl<'s> Tokenizer<'s> {
         }
     }
 
-    /// Tokenizes the body of a `{% liquid %}` tag: one token per line.
+    /// Tokenizes the body of a `{% liquid %}` tag: one token per line. Like Ruby's `split`, the
+    /// empty lines that end the body are not tokens, which shows in the line of an error
+    /// reported at the end of the body.
     pub fn for_liquid_tag(source: &'s str, line_number: u32) -> Self {
+        let mut tokens: Vec<&str> = source.split('\n').collect();
+        while tokens.last().is_some_and(|line| line.is_empty()) {
+            tokens.pop();
+        }
         Tokenizer {
-            tokens: source.split('\n').collect(),
+            tokens,
             offset: 0,
             line_number,
             for_liquid_tag: true,

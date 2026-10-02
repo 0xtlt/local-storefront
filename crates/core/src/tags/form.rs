@@ -107,6 +107,9 @@ impl Object for FormErrors {
 /// The shape of the `<form>` element of each form type.
 struct Shape {
     action: String,
+    /// The action ends with `#<id of the form>`, which brings the browser back to the form
+    /// once it is submitted.
+    anchored: bool,
     id: Option<String>,
     class: Option<&'static str>,
     multipart: bool,
@@ -122,6 +125,7 @@ impl Shape {
     fn new(action: String) -> Self {
         Shape {
             action,
+            anchored: false,
             id: None,
             class: None,
             multipart: false,
@@ -169,7 +173,8 @@ fn shape(
             shape
         }
         "contact" | "customer" => {
-            let mut shape = Shape::new(format!("{}#contact_form", path("/contact")));
+            let mut shape = Shape::new(path("/contact"));
+            shape.anchored = true;
             shape.id = Some("contact_form".to_string());
             shape.class = Some("contact-form");
             shape
@@ -290,6 +295,11 @@ impl Tag for Form {
             }
         }
 
+        if shape.anchored
+            && let Some(id) = &id
+        {
+            shape.action = format!("{}#{id}", shape.action);
+        }
         out.push_str(&format!(
             "<form method=\"post\" action=\"{}\"",
             escape_html(&shape.action)
