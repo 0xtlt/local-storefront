@@ -1,16 +1,16 @@
 //! End-to-end rendering of a small fixture theme against the demo store.
 //!
 //! The expected HTML lives in `tests/snapshots/`. After an intentional change, regenerate the
-//! snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p slt-core --test render` and review the diff.
+//! snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test render` and review the diff.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use slt_core::render::Target;
-use slt_core::store::load::{DataSource, LoadOptions, load};
-use slt_core::store::{CartLine, Store};
-use slt_core::theme::Revalidate;
-use slt_core::{FormResult, Rendered, Renderer, Request, Session, Theme};
+use lsf_core::render::Target;
+use lsf_core::store::load::{DataSource, LoadOptions, load};
+use lsf_core::store::{CartLine, Store};
+use lsf_core::theme::Revalidate;
+use lsf_core::{FormResult, Rendered, Renderer, Request, Session, Theme};
 
 struct Fixture {
     renderer: Renderer,
@@ -19,7 +19,7 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/theme");
-    let env = Arc::new(slt_core::environment());
+    let env = Arc::new(lsf_core::environment());
     let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("fixture theme"));
     let options = LoadOptions {
         theme_locales: vec!["en".to_string(), "fr".to_string()],

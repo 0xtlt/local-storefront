@@ -1,11 +1,11 @@
 //! JSON, hashing and string helpers specific to Shopify.
 
 use hmac::{Hmac, KeyInit, Mac};
+use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 use md5::Md5;
 use serde_json::{Value as Json, json};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
-use slt_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use super::site;
 use crate::drops::content::ArticleDrop;
@@ -132,7 +132,7 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
                 "@type": "Product",
                 "brand": { "@type": "Brand", "name": product.vendor },
                 "category": product.product_type,
-                "description": slt_strip(&product.description),
+                "description": plain_text(&product.description),
                 "image": image,
                 "name": product.title,
                 "offers": offer(&product.variants[0]),
@@ -145,7 +145,7 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
                 "@type": "ProductGroup",
                 "brand": { "@type": "Brand", "name": product.vendor },
                 "category": product.product_type,
-                "description": slt_strip(&product.description),
+                "description": plain_text(&product.description),
                 "hasVariant": product.variants.iter().map(|variant| json!({
                     "@id": format!("{url}?variant={}#variant", variant.id),
                     "@type": "Product",
@@ -162,15 +162,15 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
         return Ok(Value::from(to_script_safe_json(&data)));
     }
     if let Some(drop) = input.downcast::<ArticleDrop>() {
-        let get = |key: &str| slt_liquid::Object::get(drop, key).unwrap_or(Value::Nil);
+        let get = |key: &str| lsf_liquid::Object::get(drop, key).unwrap_or(Value::Nil);
         let data = json!({
             "@context": "http://schema.org/",
             "@id": format!("{}#article", drop.url()),
             "@type": "Article",
             "mainEntityOfPage": { "@type": "WebPage", "@id": format!("{origin}{}", drop.url()) },
-            "articleBody": slt_strip(&get("content").to_str()),
+            "articleBody": plain_text(&get("content").to_str()),
             "headline": get("title").to_str(),
-            "description": slt_strip(&get("excerpt_or_content").to_str()),
+            "description": plain_text(&get("excerpt_or_content").to_str()),
             "datePublished": get("published_at").to_json(),
             "dateModified": get("updated_at").to_json(),
             "author": { "@type": "Person", "name": get("author").to_str() },
@@ -182,7 +182,7 @@ fn structured_data(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<V
 }
 
 /// Plain text from HTML, for structured data.
-fn slt_strip(html: &str) -> String {
+fn plain_text(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let mut in_tag = false;
     for c in html.chars() {

@@ -21,17 +21,17 @@ use std::time::{Duration, Instant, SystemTime};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue, Request as HttpRequest, Response, StatusCode};
+use lsf_core::diagnostics::Diagnostics;
+use lsf_core::{Request, Session, Store};
 use serde_json::Value as Json;
-use slt_core::diagnostics::Diagnostics;
-use slt_core::{Request, Session, Store};
 
 use self::reply::Reply;
 use crate::app::App;
 
 /// The cookie that identifies a visitor's session.
-pub const SESSION_COOKIE: &str = "_slt_session";
+pub const SESSION_COOKIE: &str = "_lsf_session";
 /// A header that selects a session explicitly, for API clients without a cookie jar.
-pub const SESSION_HEADER: &str = "x-slt-session";
+pub const SESSION_HEADER: &str = "x-lsf-session";
 
 /// The bytes of a transformed image and their content type.
 pub type CachedImage = Arc<(Vec<u8>, &'static str)>;
@@ -320,7 +320,7 @@ impl ServerState {
     }
 
     fn dispatch(&self, incoming: &Incoming) -> Reply {
-        if incoming.path.starts_with("/__slt") {
+        if incoming.path.starts_with("/__lsf") {
             return control::handle(self, incoming);
         }
         if incoming.path.starts_with("/cdn/") {
@@ -376,12 +376,12 @@ async fn handle(
 
     if !quiet
         && !parts.uri.path().starts_with("/cdn/")
-        && !parts.uri.path().starts_with("/__slt/livereload")
+        && !parts.uri.path().starts_with("/__lsf/livereload")
     {
         let errors = reply
             .headers
             .iter()
-            .find(|(name, _)| name == "x-slt-liquid-errors")
+            .find(|(name, _)| name == "x-lsf-liquid-errors")
             .map(|(_, count)| format!(" ({count} Liquid errors)"))
             .unwrap_or_default();
         eprintln!(

@@ -1,7 +1,7 @@
 # Store data reference
 
 Every type of the store data format. This file is generated from the JSON Schema the
-validator uses (`slt docs --reference`); the guide is in [data-format.md](data-format.md).
+validator uses (`lsf docs --reference`); the guide is in [data-format.md](data-format.md).
 
 ## Data file
 
@@ -551,7 +551,7 @@ One of:
 
 ## GiftCard
 
-An issued gift card, shown by `templates/gift_card.liquid` at the URL `slt routes` lists
+An issued gift card, shown by `templates/gift_card.liquid` at the URL `lsf routes` lists
 (`/gift_cards/<shop id>/<token>`).
 
 | Field | Type | Description |
@@ -637,7 +637,7 @@ A file in `files/` that needs metadata. Files without an entry work too.
 ## Session
 
 The state a browser session starts with. Tests can replace it per session through the
-control API (`PUT /__slt/session`).
+control API (`PUT /__lsf/session`).
 
 | Field | Type | Description |
 |---|---|---|

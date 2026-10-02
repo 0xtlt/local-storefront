@@ -5,8 +5,8 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use slt_liquid::filters::escape_html;
-use slt_liquid::{Object, Value};
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::{Object, Value};
 
 use super::page::{Page, Resource};
 use crate::drops::cart::CartDrop;
@@ -248,7 +248,7 @@ impl Globals {
             },
             // Outside blocks, `closest` is the resource of the page.
             "closest" => {
-                let mut closest = slt_liquid::Hash::new();
+                let mut closest = lsf_liquid::Hash::new();
                 for name in ["product", "collection", "article", "blog", "page"] {
                     if let Some(value) = Object::get(self, name) {
                         closest.insert(name.to_string(), value);

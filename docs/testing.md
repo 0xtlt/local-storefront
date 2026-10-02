@@ -1,13 +1,13 @@
-# End-to-end testing against `slt`
+# End-to-end testing against `lsf`
 
-`slt serve` gives a theme a storefront that needs no network, has no rate limit and renders a
+`lsf serve` gives a theme a storefront that needs no network, has no rate limit and renders a
 page in a few milliseconds. This guide shows how to drive it from a test runner. The examples
 use Playwright; nothing is specific to it.
 
 ## Starting the server
 
 ```bash
-slt serve --theme path/to/theme --port 9292 --static --quiet --strict
+lsf serve --theme path/to/theme --port 9292 --static --quiet --strict
 ```
 
 | Flag | Why in tests |
@@ -30,8 +30,8 @@ export default defineConfig({
   fullyParallel: true,
   use: { baseURL: 'http://127.0.0.1:9292' },
   webServer: {
-    command: 'slt serve --port 9292 --static --quiet --strict',
-    url: 'http://127.0.0.1:9292/__slt/status',
+    command: 'lsf serve --port 9292 --static --quiet --strict',
+    url: 'http://127.0.0.1:9292/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
 });
@@ -40,7 +40,7 @@ export default defineConfig({
 ## Sessions: every test is isolated
 
 The server keeps one **session** per browser: the cart, the logged-in customer, the selected
-country, and optionally data of its own. A session is identified by the `_slt_session` cookie,
+country, and optionally data of its own. A session is identified by the `_lsf_session` cookie,
 which the server sets on the first response. A Playwright test gets a fresh browser context,
 hence a fresh cookie jar, hence its own session: tests can run in parallel against one server
 without seeing each other's carts.
@@ -48,12 +48,12 @@ without seeing each other's carts.
 Clients without a cookie jar (curl, an API test) can name their session with a header instead:
 
 ```bash
-curl -H 'x-slt-session: my-test' http://127.0.0.1:9292/cart.js
+curl -H 'x-lsf-session: my-test' http://127.0.0.1:9292/cart.js
 ```
 
 ## Putting a session in a known state
 
-`PUT /__slt/session` replaces the state of the caller's session. The body is a
+`PUT /__lsf/session` replaces the state of the caller's session. The body is a
 [session](data-reference.md#session):
 
 ```ts
@@ -61,7 +61,7 @@ import { test, expect } from '@playwright/test';
 
 test('a logged-in customer sees their cart', async ({ page }) => {
   // page.request shares its cookies with the page.
-  const response = await page.request.put('/__slt/session', {
+  const response = await page.request.put('/__lsf/session', {
     data: {
       customer: 'jane.doe@example.com',
       cart: { items: [{ variant: 'TEE-BLK-M', quantity: 2 }], note: 'Gift wrap' },
@@ -76,7 +76,7 @@ test('a logged-in customer sees their cart', async ({ page }) => {
 ```
 
 Variants are referenced by SKU, by id, or by a product handle (its first variant). When the
-body is wrong the answer is `422` with the same diagnostics as `slt validate --format json`:
+body is wrong the answer is `422` with the same diagnostics as `lsf validate --format json`:
 
 ```json
 {
@@ -100,7 +100,7 @@ Fail the test on it, so that a wrong fixture never looks like a theme bug:
 
 ```ts
 async function setSession(page: Page, session: object) {
-  const response = await page.request.put('/__slt/session', { data: session });
+  const response = await page.request.put('/__lsf/session', { data: session });
   if (!response.ok()) throw new Error(JSON.stringify(await response.json(), null, 2));
 }
 ```
@@ -134,7 +134,7 @@ Other sessions keep seeing the data on disk. This is the way to test edge cases 
 collection, a product with 100 variants, a sold-out state, a long title, another currency)
 without growing the shared fixtures.
 
-`GET /__slt/session` returns the current state, and `DELETE /__slt/session` resets the
+`GET /__lsf/session` returns the current state, and `DELETE /__lsf/session` resets the
 session to what the data files define.
 
 ## What to assert on
@@ -144,21 +144,21 @@ session to what the data files define.
   `srcset`s, money formats and translations follow Shopify's output.
 - **Liquid errors.** A page with Liquid errors renders them inline, as Shopify does
   (`Liquid error (sections/x line 12): ...`), and the response carries the header
-  `x-slt-liquid-errors: <count>`. A blanket check catches regressions on every navigation:
+  `x-lsf-liquid-errors: <count>`. A blanket check catches regressions on every navigation:
 
   ```ts
   test.beforeEach(async ({ page }) => {
     page.on('response', (response) => {
-      const errors = response.headers()['x-slt-liquid-errors'];
+      const errors = response.headers()['x-lsf-liquid-errors'];
       if (errors) throw new Error(`${response.url()} rendered with ${errors} Liquid error(s)`);
     });
   });
   ```
 
-- **The template.** `x-slt-template` names the template that rendered the page (`product`,
+- **The template.** `x-lsf-template` names the template that rendered the page (`product`,
   `product.alternate`, `404`, ...).
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.
-- **Images.** A response with `x-slt-placeholder: 1` is a generated placeholder: the data
+- **Images.** A response with `x-lsf-placeholder: 1` is a generated placeholder: the data
   references a file that is not in `files/`. Placeholders have the declared size, so layout
   assertions hold; put real files in `files/` for visual regression tests.
 
@@ -175,7 +175,7 @@ Everything a theme talks to on a storefront:
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
 | Forms | Contact, newsletter (`customer`), blog comment, customer login and logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. |
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
-| Control | `/__slt` (a status page), `/__slt/status`, `/__slt/session`, `/__slt/schema/<kind>`, `POST /__slt/reload`. |
+| Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`. |
 
 Not simulated: checkout (`/checkout` shows a summary of the cart and nothing else), customer
 registration, password reset and address editing (the forms answer with an error saying so),
@@ -187,11 +187,11 @@ Renders are deterministic: ids, handles, asset versions (`?v=`, derived from fil
 default dates do not depend on the machine or the run. The one moving part is the clock. Set
 `"now"` in the data when the theme shows relative dates, countdowns or "new" badges.
 
-`slt render /products/ceramic-mug` prints the HTML of a page without starting a server, which
+`lsf render /products/ceramic-mug` prints the HTML of a page without starting a server, which
 is handy for snapshot tests of the markup:
 
 ```bash
-slt render '/collections/all?sort_by=price-ascending' --strict > collection.html
+lsf render '/collections/all?sort_by=price-ascending' --strict > collection.html
 ```
 
 `--strict` makes it exit with an error when the page has Liquid errors.
@@ -199,11 +199,11 @@ slt render '/collections/all?sort_by=price-ascending' --strict > collection.html
 ## In CI
 
 ```yaml
-- run: cargo install --path crates/cli   # or download a prebuilt `slt`
-- run: slt validate --theme theme        # fail fast on bad fixtures
-- run: slt check --theme theme           # every Liquid file parses, every filter exists
+- run: cargo install --path crates/cli   # or download a prebuilt `lsf`
+- run: lsf validate --theme theme        # fail fast on bad fixtures
+- run: lsf check --theme theme           # every Liquid file parses, every filter exists
 - run: npx playwright test
 ```
 
-`slt validate` and `slt check` take a fraction of a second, so they are worth running before
+`lsf validate` and `lsf check` take a fraction of a second, so they are worth running before
 the browser tests.

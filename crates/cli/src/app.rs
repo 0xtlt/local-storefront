@@ -3,10 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use slt_core::diagnostics::Diagnostics;
-use slt_core::store::load::{DataSource, LoadOptions, load};
-use slt_core::theme::Revalidate;
-use slt_core::{Renderer, Store, Theme};
+use lsf_core::diagnostics::Diagnostics;
+use lsf_core::store::load::{DataSource, LoadOptions, load};
+use lsf_core::theme::Revalidate;
+use lsf_core::{Renderer, Store, Theme};
 
 /// The data directory looked for inside the theme when `--data` is not given.
 pub const DEFAULT_DATA_DIRECTORY: &str = "shopify-local";
@@ -23,14 +23,14 @@ impl App {
         data_dir: Option<&Path>,
         revalidate: Revalidate,
     ) -> Result<App, String> {
-        let env = Arc::new(slt_core::environment());
+        let env = Arc::new(lsf_core::environment());
         let theme =
             Arc::new(Theme::open(theme_dir, env, revalidate).map_err(|error| error.to_string())?);
         let source = match data_dir {
             Some(directory) => {
                 if !directory.is_dir() {
                     return Err(format!(
-                        "the data directory {} does not exist. Run `slt init --data {}` to create it.",
+                        "the data directory {} does not exist. Run `lsf init --data {}` to create it.",
                         directory.display(),
                         directory.display()
                     ));
@@ -82,7 +82,7 @@ impl App {
         match &self.source {
             DataSource::Directory(directory) => directory.display().to_string(),
             DataSource::Demo => {
-                "built-in demo store (run `slt init` to get an editable copy)".to_string()
+                "built-in demo store (run `lsf init` to get an editable copy)".to_string()
             }
         }
     }

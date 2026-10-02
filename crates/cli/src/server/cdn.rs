@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use slt_core::filters::html_payment_icon;
-use slt_core::images::{Transform, placeholder, transform_file};
+use lsf_core::filters::html_payment_icon;
+use lsf_core::images::{Transform, placeholder, transform_file};
 
 use super::reply::{Reply, content_type};
 use super::{Incoming, ServerState};
@@ -78,7 +78,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
              <rect x=\"24\" y=\"132\" width=\"120\" height=\"14\" rx=\"7\" fill=\"#c9c6c0\"/>\
              <rect x=\"24\" y=\"156\" width=\"72\" height=\"14\" rx=\"7\" fill=\"#c9c6c0\"/></svg>",
         )
-        .header("x-slt-placeholder", "1"),
+        .header("x-lsf-placeholder", "1"),
         // Shopify's shared scripts and styles are not available offline: answer with an empty
         // file of the right type rather than a 404 that would show up as a page error.
         ["shopifycloud", ..] | ["s", "global", ..] => Reply::new(
@@ -103,9 +103,9 @@ fn font(state: &ServerState, name: &str) -> Reply {
         .and_then(|path| std::fs::read(path).ok());
     match local {
         Some(bytes) => Reply::new(200, content_type(name), bytes).immutable(),
-        None => Reply::new(200, "font/ttf", slt_core::fonts::blank_font())
+        None => Reply::new(200, "font/ttf", lsf_core::fonts::blank_font())
             .immutable()
-            .header("x-slt-placeholder", "1"),
+            .header("x-lsf-placeholder", "1"),
     }
 }
 
@@ -230,7 +230,7 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
             cache.insert(cache_key, entry.clone());
             let reply = Reply::new(200, entry.1, entry.0.clone()).immutable();
             if path.is_none() {
-                reply.header("x-slt-placeholder", "1")
+                reply.header("x-lsf-placeholder", "1")
             } else {
                 reply
             }

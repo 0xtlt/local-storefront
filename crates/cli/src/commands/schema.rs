@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use slt_core::store::validate::{FileKind, schema};
+use lsf_core::store::validate::{FileKind, schema};
 
 #[derive(clap::Args)]
 pub struct Args {

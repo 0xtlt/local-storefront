@@ -1,6 +1,6 @@
 //! `schema`, `stylesheet`, `javascript`, `style` and `layout`.
 
-use slt_liquid::{BlockBody, Context, Error, Expr, Parser, Result, Tag, TagToken};
+use lsf_liquid::{BlockBody, Context, Error, Expr, Parser, Result, Tag, TagToken};
 
 use crate::render::state::RenderState;
 use crate::theme::Layout;
@@ -79,7 +79,7 @@ impl Tag for LayoutTag {
         let layout = match &self.name {
             None => Layout::None,
             Some(expr) => match expr.evaluate(ctx)? {
-                slt_liquid::Value::Str(name) if !name.is_empty() => Layout::Named(name.to_string()),
+                lsf_liquid::Value::Str(name) if !name.is_empty() => Layout::Named(name.to_string()),
                 _ => Layout::None,
             },
         };
@@ -125,15 +125,15 @@ pub(super) fn parse_render(
     parser: &mut Parser<'_, '_>,
     token: &TagToken<'_>,
 ) -> Result<Box<dyn Tag>> {
-    let markup = slt_liquid::markup::strip(token.markup);
+    let markup = lsf_liquid::markup::strip(token.markup);
     let starts_with_name = markup
         .chars()
         .next()
         .is_some_and(|c| c.is_alphabetic() || c == '_');
-    if starts_with_name && slt_liquid::markup::quoted_fragment(markup, 0) == Some(markup.len()) {
+    if starts_with_name && lsf_liquid::markup::quoted_fragment(markup, 0) == Some(markup.len()) {
         return Ok(Box::new(RenderObject {
             object: Expr::parse(markup),
         }));
     }
-    slt_liquid::tags::parse_render(parser, token)
+    lsf_liquid::tags::parse_render(parser, token)
 }

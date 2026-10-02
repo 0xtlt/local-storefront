@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::borrow::Cow;
 
-use slt_liquid::{Object, Value};
+use lsf_liquid::{Object, Value};
 
 use super::SiteRef;
 use super::localization::language_value;

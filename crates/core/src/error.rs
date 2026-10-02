@@ -16,7 +16,7 @@ pub enum Error {
     /// The store data is invalid. The diagnostics say where and why.
     Data(crate::diagnostics::Diagnostics),
     /// A Liquid file could not be parsed.
-    Liquid(slt_liquid::Error),
+    Liquid(lsf_liquid::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -35,8 +35,8 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-impl From<slt_liquid::Error> for Error {
-    fn from(error: slt_liquid::Error) -> Self {
+impl From<lsf_liquid::Error> for Error {
+    fn from(error: lsf_liquid::Error) -> Self {
         Error::Liquid(error)
     }
 }

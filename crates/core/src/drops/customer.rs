@@ -2,7 +2,7 @@
 
 use std::any::Any;
 
-use slt_liquid::{Object, Value};
+use lsf_liquid::{Object, Value};
 
 use super::metafield::MetafieldsDrop;
 use super::product::{ProductDrop, VariantDrop, product_url};
@@ -177,7 +177,7 @@ fn order_value(site: &SiteRef, customer: &Customer, order: &Order) -> Value {
         ("transactions", Value::array(Vec::new())),
         ("shipping_methods", Value::array(Vec::new())),
         ("tags", Value::array(Vec::new())),
-        ("attributes", Value::hash(slt_liquid::Hash::new())),
+        ("attributes", Value::hash(lsf_liquid::Hash::new())),
         ("pickup_in_store?", Value::Bool(false)),
     ])
 }

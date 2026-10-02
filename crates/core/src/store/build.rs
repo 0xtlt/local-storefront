@@ -122,7 +122,7 @@ impl Builder<'_> {
         let Some(text) = input else {
             return default;
         };
-        match slt_liquid::time::parse_time(&text.to_lowercase(), self.timezone, epoch()) {
+        match lsf_liquid::time::parse_time(&text.to_lowercase(), self.timezone, epoch()) {
             Some(date) => date.with_timezone(&Utc),
             None => {
                 self.error("invalid_date", origin, format!("\"{text}\" is not a date"))

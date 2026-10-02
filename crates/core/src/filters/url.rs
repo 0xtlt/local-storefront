@@ -1,7 +1,7 @@
 //! Filters that build URLs and links.
 
-use slt_liquid::filters::escape_html;
-use slt_liquid::{Context, Environment, FilterArgs, Result, Value};
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use super::{html_attributes, site};
 use crate::drops::collection::CollectionDrop;

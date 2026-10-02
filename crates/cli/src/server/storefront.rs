@@ -2,24 +2,24 @@
 
 use std::sync::Arc;
 
+use lsf_core::drops::cart::cart_json;
+use lsf_core::drops::collection::CollectionDrop;
+use lsf_core::drops::product::ProductDrop;
+use lsf_core::drops::search::{predictive_search_value, recommendations_value};
+use lsf_core::render::page::{Page, Resource};
+use lsf_core::render::{Rendered, Target};
+use lsf_core::{Request, Session, Site, Store};
 use serde_json::{Value as Json, json};
-use slt_core::drops::cart::cart_json;
-use slt_core::drops::collection::CollectionDrop;
-use slt_core::drops::product::ProductDrop;
-use slt_core::drops::search::{predictive_search_value, recommendations_value};
-use slt_core::render::page::{Page, Resource};
-use slt_core::render::{Rendered, Target};
-use slt_core::{Request, Session, Site, Store};
 
 use super::reply::Reply;
 use super::{Incoming, SESSION_COOKIE, ServerState, cart, forms};
 
 /// The script injected by `--live-reload`: it reloads the page when the theme or data change.
-const LIVE_RELOAD_SCRIPT: &str = r#"<script data-slt-live-reload>
+const LIVE_RELOAD_SCRIPT: &str = r#"<script data-lsf-live-reload>
 (function () {
   var token = null;
   function poll() {
-    fetch('/__slt/livereload').then(function (response) { return response.text(); }).then(function (next) {
+    fetch('/__lsf/livereload').then(function (response) { return response.text(); }).then(function (next) {
       if (token !== null && next !== token) { location.reload(); return; }
       token = next;
       setTimeout(poll, 700);
@@ -91,7 +91,7 @@ impl Visit<'_> {
                     .unwrap_or_else(|| "/".to_string()),
             ),
         };
-        let page = slt_core::render::routes::resolve(&site);
+        let page = lsf_core::render::routes::resolve(&site);
         let rendered =
             self.state
                 .app
@@ -244,10 +244,10 @@ fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
         }
     }
     let mut reply = Reply::new(rendered.status, rendered.content_type, body.into_bytes())
-        .header("x-slt-template", rendered.template)
+        .header("x-lsf-template", rendered.template)
         .header("content-language", visit.request.locale.clone());
     if !rendered.errors.is_empty() {
-        reply = reply.header("x-slt-liquid-errors", rendered.errors.len().to_string());
+        reply = reply.header("x-lsf-liquid-errors", rendered.errors.len().to_string());
     }
     for preload in rendered.preloads {
         reply = reply.header("link", preload);
@@ -359,7 +359,7 @@ fn products_json(visit: &Visit<'_>, collection: Option<&str>) -> Reply {
 }
 
 /// A search result as `/search/suggest.json` describes resources.
-fn suggestion(value: &slt_liquid::Value) -> Json {
+fn suggestion(value: &lsf_liquid::Value) -> Json {
     let text = |key: &str| value.get(key).to_json();
     let mut entry = json!({
         "id": text("id"),

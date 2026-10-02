@@ -7,7 +7,7 @@ mod paginate;
 mod section;
 mod simple;
 
-use slt_liquid::Environment;
+use lsf_liquid::Environment;
 
 pub use form::FormDrop;
 pub use paginate::paginate_url;

@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use slt_liquid::{Object, Value};
+use lsf_liquid::{Object, Value};
 
 use super::SiteRef;
 use crate::store::{Link, LinkTarget, Menu};

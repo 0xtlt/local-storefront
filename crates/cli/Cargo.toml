@@ -1,5 +1,5 @@
 [package]
-name = "slt"
+name = "lsf"
 description = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API"
 version.workspace = true
 edition.workspace = true
@@ -7,12 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "slt"
+name = "lsf"
 path = "src/main.rs"
 
 [dependencies]
-slt-core.workspace = true
-slt-liquid.workspace = true
+lsf-core.workspace = true
+lsf-liquid.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true

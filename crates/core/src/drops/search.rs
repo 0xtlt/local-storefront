@@ -1,6 +1,6 @@
 //! Storefront search over the store data: `search`, `predictive_search`, `recommendations`.
 
-use slt_liquid::Value;
+use lsf_liquid::Value;
 
 use super::collection::{CollectionDrop, sort_options};
 use super::content::{ArticleDrop, PageDrop};

@@ -1,8 +1,8 @@
 //! `{% paginate collection.products by 12 %}`.
 
-use slt_liquid::lexer::{MarkupParser, TokenKind};
-use slt_liquid::number::to_integer;
-use slt_liquid::{BlockBody, Context, Error, Expr, Hash, Parser, Result, Tag, TagToken, Value};
+use lsf_liquid::lexer::{MarkupParser, TokenKind};
+use lsf_liquid::number::to_integer;
+use lsf_liquid::{BlockBody, Context, Error, Expr, Hash, Parser, Result, Tag, TagToken, Value};
 
 use crate::drops::PaginatedList;
 use crate::drops::lists::Lookup;

@@ -1,7 +1,7 @@
 //! `money` and its variants.
 
-use slt_liquid::number::{Number, to_number};
-use slt_liquid::{Context, Environment, FilterArgs, Result, Value};
+use lsf_liquid::number::{Number, to_number};
+use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use super::site;
 

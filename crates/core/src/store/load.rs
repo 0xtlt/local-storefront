@@ -10,7 +10,7 @@
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
 //!   files/            images and other files, served under /cdn/shop/files/
-//!   schema/           JSON Schemas written by `slt init` for editor support (ignored here)
+//!   schema/           JSON Schemas written by `lsf init` for editor support (ignored here)
 //! ```
 
 use std::path::{Path, PathBuf};

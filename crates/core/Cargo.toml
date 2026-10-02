@@ -1,5 +1,5 @@
 [package]
-name = "slt-core"
+name = "lsf-core"
 description = "Renders Shopify themes locally: theme loading, store fixtures, Shopify's Liquid objects, filters and tags"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-slt-liquid.workspace = true
+lsf-liquid.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 indexmap.workspace = true

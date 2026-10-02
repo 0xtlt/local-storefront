@@ -5,7 +5,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use slt_liquid::{Object, Value};
+use lsf_liquid::{Object, Value};
 
 use super::collection::CollectionDrop;
 use super::content::{ArticleDrop, BlogDrop, PageDrop};

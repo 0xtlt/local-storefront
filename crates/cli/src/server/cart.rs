@@ -1,9 +1,9 @@
 //! The Cart AJAX API: `/cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js`.
 
 use indexmap::IndexMap;
+use lsf_core::drops::cart::{cart_json, line_json, line_key, resolve_lines};
+use lsf_core::store::{CartLine, InventoryPolicy};
 use serde_json::{Value as Json, json};
-use slt_core::drops::cart::{cart_json, line_json, line_key, resolve_lines};
-use slt_core::store::{CartLine, InventoryPolicy};
 
 use super::params::{integer, text};
 use super::reply::Reply;
@@ -161,7 +161,7 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
     }
 }
 
-fn line_title(product: &slt_core::store::Product, variant: &slt_core::store::Variant) -> String {
+fn line_title(product: &lsf_core::store::Product, variant: &lsf_core::store::Variant) -> String {
     if product.has_only_default_variant() {
         product.title.clone()
     } else {

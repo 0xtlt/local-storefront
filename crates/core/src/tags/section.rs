@@ -1,7 +1,7 @@
 //! `{% section 'name' %}` and `{% sections 'group' %}`.
 
+use lsf_liquid::{Context, Error, Expr, Parser, Result, Tag, TagToken};
 use serde_json::Value as Json;
-use slt_liquid::{Context, Error, Expr, Parser, Result, Tag, TagToken};
 
 use crate::render::section::{Placement, render_section};
 use crate::render::state::RenderState;

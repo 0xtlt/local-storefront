@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use slt_core::store::docs::reference;
+use lsf_core::store::docs::reference;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -12,7 +12,7 @@ pub struct Args {
 /// The heading the guide ends with; what follows it is replaced by the generated reference.
 const REFERENCE_HEADING: &str = "\n## Field reference\n";
 
-/// The guide written into the data directory by `slt init`: the handwritten explanations
+/// The guide written into the data directory by `lsf init`: the handwritten explanations
 /// followed by the reference of every field, generated from the schema.
 pub fn guide() -> String {
     let handwritten = include_str!("../../../../docs/data-format.md");

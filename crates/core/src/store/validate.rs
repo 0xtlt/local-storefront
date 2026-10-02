@@ -25,7 +25,7 @@ pub enum FileKind {
     Blog,
     Customer,
     Menu,
-    /// The state of one browser session (`PUT /__slt/session`).
+    /// The state of one browser session (`PUT /__lsf/session`).
     Session,
 }
 

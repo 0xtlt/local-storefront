@@ -10,8 +10,8 @@ pub mod state;
 use std::sync::Arc;
 
 use chrono::Utc;
-use slt_liquid::filters::escape_html;
-use slt_liquid::{Context, Environment, PartialLoader, Template, Value};
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::{Context, Environment, PartialLoader, Template, Value};
 
 use self::globals::Globals;
 use self::page::{Page, Resource};
@@ -37,11 +37,11 @@ struct ThemePartials {
 }
 
 impl PartialLoader for ThemePartials {
-    fn load(&self, name: &str) -> slt_liquid::Result<Arc<Template>> {
+    fn load(&self, name: &str) -> lsf_liquid::Result<Arc<Template>> {
         let path = format!("snippets/{name}.liquid");
         match self.theme.liquid(&path)? {
             Some(file) => Ok(file.template.clone()),
-            None => Err(slt_liquid::Error::file_system(format!(
+            None => Err(lsf_liquid::Error::file_system(format!(
                 "Could not find asset {path}"
             ))),
         }
@@ -67,7 +67,7 @@ pub struct Rendered {
     /// `Link` headers requested by `preload_tag` and friends.
     pub preloads: Vec<String>,
     /// The Liquid errors printed into the page.
-    pub errors: Vec<slt_liquid::Error>,
+    pub errors: Vec<lsf_liquid::Error>,
     /// Non-fatal problems: unknown filters, missing translations, missing assets.
     pub warnings: Vec<String>,
     /// The template that rendered the page, e.g. `product.alternate`.
@@ -314,7 +314,7 @@ impl Renderer {
             }
             Resource::NotFound => "<h1>404 Not Found</h1>".to_string(),
             _ => format!(
-                "<!-- slt: the theme has no templates/{}.json or .liquid -->",
+                "<!-- lsf: the theme has no templates/{}.json or .liquid -->",
                 escape_html(&page.template.full())
             ),
         }
@@ -419,7 +419,7 @@ impl Renderer {
         page: Page,
         source: &str,
         variables: &[(String, Value)],
-    ) -> std::result::Result<(String, Vec<slt_liquid::Error>), slt_liquid::Error> {
+    ) -> std::result::Result<(String, Vec<lsf_liquid::Error>), lsf_liquid::Error> {
         let template = Template::parse(&self.env, source)?;
         let (ctx, _, _) = self.context(site, &page);
         let mut inner = ctx.isolated()?;

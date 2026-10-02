@@ -2,9 +2,9 @@
 
 use std::any::Any;
 
-use slt_liquid::filters::escape_html;
-use slt_liquid::lexer::{MarkupParser, TokenKind};
-use slt_liquid::{
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::lexer::{MarkupParser, TokenKind};
+use lsf_liquid::{
     BlockBody, Context, Error, Expr, Hash, Object, Parser, Result, Tag, TagToken, Value,
 };
 

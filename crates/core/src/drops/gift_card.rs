@@ -2,7 +2,7 @@
 
 use std::any::Any;
 
-use slt_liquid::{Object, Value};
+use lsf_liquid::{Object, Value};
 
 use super::customer::CustomerDrop;
 use super::product::ProductDrop;

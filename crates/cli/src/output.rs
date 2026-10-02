@@ -1,6 +1,6 @@
 //! Terminal output.
 
-use slt_core::diagnostics::Diagnostics;
+use lsf_core::diagnostics::Diagnostics;
 
 /// Prints diagnostics to stderr, followed by a one-line summary.
 pub fn print_diagnostics(diagnostics: &Diagnostics) {

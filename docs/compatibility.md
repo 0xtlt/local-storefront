@@ -19,7 +19,7 @@ page says how that is checked, what is covered, and where the local server knowi
   error, and their JavaScript (variant pickers, cart drawer, predictive search, filters, section
   rendering) runs against the local endpoints unchanged.
 
-`slt check` reports what a theme uses that is not implemented: Liquid that does not parse, and
+`lsf check` reports what a theme uses that is not implemented: Liquid that does not parse, and
 filters that do not exist here.
 
 ## Liquid tags

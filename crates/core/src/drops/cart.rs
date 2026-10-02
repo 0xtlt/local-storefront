@@ -3,8 +3,8 @@
 use std::any::Any;
 
 use indexmap::IndexMap;
+use lsf_liquid::{Hash, Object, Value};
 use serde_json::{Value as Json, json};
-use slt_liquid::{Hash, Object, Value};
 
 use super::localization::currency_value;
 use super::media::{ImageDrop, image_base_url};

@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use slt_core::theme::Revalidate;
+use lsf_core::theme::Revalidate;
 
 use crate::app::App;
 use crate::output::print_diagnostics;
@@ -73,7 +73,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
         let local = listener.local_addr().map_err(|error| error.to_string())?;
         eprintln!("theme:  {}", theme.display());
         eprintln!("data:   {source}");
-        eprintln!("ready:  http://{local}/   (status and control API: http://{local}/__slt)");
+        eprintln!("ready:  http://{local}/   (status and control API: http://{local}/__lsf)");
         run_server(Arc::new(state), listener)
             .await
             .map_err(|error| error.to_string())

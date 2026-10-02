@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use slt_core::store::demo;
+use lsf_core::store::demo;
 
 use crate::app::DEFAULT_DATA_DIRECTORY;
 use crate::commands::{docs, schema};
@@ -52,6 +52,6 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
         "{}: wrote {written} file(s), kept {skipped} existing one(s), refreshed schema/",
         directory.display()
     );
-    eprintln!("next: `slt serve` to see the theme, `slt validate` after editing the data");
+    eprintln!("next: `lsf serve` to see the theme, `lsf validate` after editing the data");
     Ok(ExitCode::SUCCESS)
 }

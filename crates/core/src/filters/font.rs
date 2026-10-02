@@ -1,6 +1,6 @@
 //! Font filters.
 
-use slt_liquid::{Context, Environment, FilterArgs, Result, Value};
+use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use super::site;
 use crate::drops::font::{Font, FontDrop};

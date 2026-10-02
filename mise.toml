@@ -5,14 +5,14 @@ rust = { version = "1.98.1", components = "clippy,rustfmt" }
 ruby = "3.4.10"
 
 [env]
-SLT_HORIZON_DIR = "{{config_root}}/themes/horizon"
+LSF_HORIZON_DIR = "{{config_root}}/themes/horizon"
 
 [tasks.build]
-description = "Build the slt binary (release)"
-run = "cargo build --release -p slt"
+description = "Build the lsf binary (release)"
+run = "cargo build --release -p lsf"
 
 [tasks.install]
-description = "Build slt and install it into ~/.cargo/bin"
+description = "Build lsf and install it into ~/.cargo/bin"
 run = "cargo install --path crates/cli --locked"
 
 [tasks.test]
@@ -45,7 +45,7 @@ fi
 [tasks."horizon:serve"]
 description = "Serve the Horizon theme with the demo store data"
 depends = ["horizon:install"]
-run = "cargo run --release -p slt -- serve --theme themes/horizon"
+run = "cargo run --release -p lsf -- serve --theme themes/horizon"
 
 [tasks."oracle:install"]
 description = "Install Shopify's reference liquid gem locally (used to generate golden tests)"

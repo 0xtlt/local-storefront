@@ -1,4 +1,4 @@
-//! `slt`: serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API.
+//! `lsf`: serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API.
 
 mod app;
 mod commands;
@@ -12,21 +12,21 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "slt",
+    name = "lsf",
     version,
     about = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API",
     long_about = "Serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API.\n\n\
                   Run it in a theme directory (the one with layout/, sections/, templates/, ...). The store \
                   data is read from ./shopify-local when it exists, otherwise a built-in demo store is used; \
-                  `slt init` writes that demo store to disk as a starting point."
+                  `lsf init` writes that demo store to disk as a starting point."
 )]
 struct Cli {
     /// The theme directory.
-    #[arg(long, global = true, env = "SLT_THEME", default_value = ".")]
+    #[arg(long, global = true, env = "LSF_THEME", default_value = ".")]
     theme: PathBuf,
 
     /// The store data directory. Defaults to <theme>/shopify-local, or the built-in demo store.
-    #[arg(long, global = true, env = "SLT_DATA")]
+    #[arg(long, global = true, env = "LSF_DATA")]
     data: Option<PathBuf>,
 
     #[command(subcommand)]

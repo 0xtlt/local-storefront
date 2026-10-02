@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use slt_core::theme::Revalidate;
+use lsf_core::theme::Revalidate;
 
 use crate::app::App;
 use crate::server::{ServeOptions, ServerState, routes};

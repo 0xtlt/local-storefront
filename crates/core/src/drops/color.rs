@@ -3,8 +3,8 @@
 use std::any::Any;
 use std::borrow::Cow;
 
-use slt_liquid::number::float_to_s;
-use slt_liquid::{Object, Value};
+use lsf_liquid::number::float_to_s;
+use lsf_liquid::{Object, Value};
 
 /// The notation a color was written in. Color filters answer in the notation of their input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

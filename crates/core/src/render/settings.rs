@@ -6,8 +6,8 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use lsf_liquid::{Context, Hash, Object, Template, Value, Variable};
 use serde_json::{Map, Value as Json};
-use slt_liquid::{Context, Hash, Object, Template, Value, Variable};
 
 use super::state::RenderState;
 use crate::drops::collection::CollectionDrop;

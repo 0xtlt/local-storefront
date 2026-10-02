@@ -1,6 +1,6 @@
 //! Cart filters.
 
-use slt_liquid::{Context, Environment, FilterArgs, Result, Value};
+use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use crate::drops::cart::{CartDrop, LineItemDrop};
 use crate::drops::product::{ProductDrop, VariantDrop};
@@ -16,7 +16,7 @@ fn item_count_for_variant(input: &Value, args: &FilterArgs, _ctx: &Context) -> R
     if input.downcast::<CartDrop>().is_none() {
         return Ok(Value::Int(0));
     }
-    let wanted = slt_liquid::number::to_number(&args.at(0)).to_f64() as u64;
+    let wanted = lsf_liquid::number::to_number(&args.at(0)).to_f64() as u64;
     let count: i64 = line_items(input)
         .iter()
         .filter(|item| {

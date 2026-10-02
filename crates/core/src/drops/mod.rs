@@ -23,8 +23,8 @@ pub mod shop;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use slt_liquid::time::Time;
-use slt_liquid::{Hash, Value};
+use lsf_liquid::time::Time;
+use lsf_liquid::{Hash, Value};
 
 use crate::site::Site;
 
@@ -109,7 +109,7 @@ impl PaginatedList {
     }
 }
 
-impl slt_liquid::Object for PaginatedList {
+impl lsf_liquid::Object for PaginatedList {
     fn type_name(&self) -> &str {
         "array"
     }

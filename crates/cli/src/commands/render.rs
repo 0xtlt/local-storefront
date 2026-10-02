@@ -2,9 +2,9 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use slt_core::render::Target;
-use slt_core::theme::Revalidate;
-use slt_core::{Request, Session};
+use lsf_core::render::Target;
+use lsf_core::theme::Revalidate;
+use lsf_core::{Request, Session};
 
 use crate::app::App;
 use crate::output::print_diagnostics;

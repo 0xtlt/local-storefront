@@ -2,8 +2,8 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use slt_core::Theme;
-use slt_core::theme::Revalidate;
+use lsf_core::Theme;
+use lsf_core::theme::Revalidate;
 
 /// Tags whose body is not Liquid.
 const RAW_TAGS: [&str; 6] = [
@@ -92,7 +92,7 @@ fn filters_used(source: &str) -> Vec<(String, usize)> {
 }
 
 pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
-    let env = Arc::new(slt_core::environment());
+    let env = Arc::new(lsf_core::environment());
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
         .map_err(|error| error.to_string())?;
     let mut files = 0;

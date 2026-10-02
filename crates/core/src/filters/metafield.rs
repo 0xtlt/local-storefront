@@ -1,10 +1,10 @@
 //! `metafield_tag` and `metafield_text`.
 
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::number::float_to_s;
+use lsf_liquid::time::strftime;
+use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 use serde_json::Value as Json;
-use slt_liquid::filters::escape_html;
-use slt_liquid::number::float_to_s;
-use slt_liquid::time::strftime;
-use slt_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use super::misc::to_script_safe_json;
 use super::money::format_money;
@@ -53,7 +53,7 @@ fn text_of(
             } else {
                 "%b %-d, %Y, %-l:%M %P"
             };
-            slt_liquid::time::to_time(value, ctx)
+            lsf_liquid::time::to_time(value, ctx)
                 .and_then(|time| strftime(&time, pattern).ok())
                 .unwrap_or_else(|| value.to_str().into_owned())
         }
@@ -74,7 +74,7 @@ fn text_of(
 }
 
 fn number(value: &Value) -> f64 {
-    slt_liquid::number::to_number(value).to_f64()
+    lsf_liquid::number::to_number(value).to_f64()
 }
 
 /// Rich text is stored either as HTML or as Shopify's rich text JSON tree.
@@ -193,7 +193,7 @@ fn single_tag(
             escape_html(&value.to_str())
         ),
         "date" | "date_time" => {
-            let datetime = slt_liquid::time::to_time(value, ctx)
+            let datetime = lsf_liquid::time::to_time(value, ctx)
                 .map(|time| {
                     if kind == "date" {
                         time.format("%Y-%m-%d").to_string()

@@ -5,11 +5,11 @@
 //! (`form.posted_successfully?`, `form.errors`).
 
 use indexmap::IndexMap;
+use lsf_core::FormResult;
+use lsf_core::drops::cart::resolve_lines;
+use lsf_core::filters::money::format_money;
+use lsf_liquid::filters::escape_html;
 use serde_json::Value as Json;
-use slt_core::FormResult;
-use slt_core::drops::cart::resolve_lines;
-use slt_core::filters::money::format_money;
-use slt_liquid::filters::escape_html;
 
 use super::reply::Reply;
 use super::storefront::Visit;
@@ -295,10 +295,10 @@ pub fn checkout(visit: &Visit<'_>) -> Reply {
             "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Checkout</title>\
              <style>body{{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem}}\
              table{{width:100%;border-collapse:collapse}}td,th{{text-align:left;padding:.5rem;border-bottom:1px solid #ddd}}</style></head>\
-             <body data-slt-checkout><h1>Checkout</h1>\
+             <body data-lsf-checkout><h1>Checkout</h1>\
              <p>Checkout is hosted by Shopify and is not simulated locally. This is the cart that would be checked out.</p>\
              <table><thead><tr><th>Item</th><th>Quantity</th><th>Total</th></tr></thead><tbody>{rows}</tbody>\
-             <tfoot><tr><th colspan=\"2\">Total</th><th data-slt-checkout-total>{}</th></tr></tfoot></table>\
+             <tfoot><tr><th colspan=\"2\">Total</th><th data-lsf-checkout-total>{}</th></tr></tfoot></table>\
              <p><a href=\"{}\">Back to cart</a></p></body></html>",
             format_money(total, format),
             visit.localized("/cart")

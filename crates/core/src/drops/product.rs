@@ -3,8 +3,8 @@
 use std::any::Any;
 use std::borrow::Cow;
 
+use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
-use slt_liquid::{Object, Value};
 
 use super::media::{MediaDrop, image_base_url, image_media_json};
 use super::metafield::MetafieldsDrop;

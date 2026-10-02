@@ -5,7 +5,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use slt_liquid::{Context, Error, Hash, Object, Result, Value};
+use lsf_liquid::{Context, Error, Hash, Object, Result, Value};
 
 use super::settings;
 use super::state::RenderState;

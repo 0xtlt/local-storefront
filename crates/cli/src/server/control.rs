@@ -1,22 +1,22 @@
-//! The control API under `/__slt/`: what tests and tools use to inspect the server and to put
+//! The control API under `/__lsf/`: what tests and tools use to inspect the server and to put
 //! a session in the exact state they need.
 
 use std::sync::Arc;
 
+use lsf_core::Session;
+use lsf_core::diagnostics::Diagnostics;
+use lsf_core::store::build::resolve_cart;
+use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
+use lsf_core::store::model::SessionInput;
+use lsf_core::store::validate::{FileKind, schema, validate};
+use lsf_liquid::filters::escape_html;
 use serde_json::{Value as Json, json};
-use slt_core::Session;
-use slt_core::diagnostics::Diagnostics;
-use slt_core::store::build::resolve_cart;
-use slt_core::store::load::{OVERLAY_FILE, load_with_overlay};
-use slt_core::store::model::SessionInput;
-use slt_core::store::validate::{FileKind, schema, validate};
-use slt_liquid::filters::escape_html;
 
 use super::reply::Reply;
 use super::{Incoming, SESSION_COOKIE, ServerState};
 
 pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
-    let path = incoming.path.trim_start_matches("/__slt").trim_matches('/');
+    let path = incoming.path.trim_start_matches("/__lsf").trim_matches('/');
     let segments: Vec<&str> = if path.is_empty() {
         Vec::new()
     } else {
@@ -147,7 +147,7 @@ fn session_json(state: &ServerState, id: &str) -> Json {
     })
 }
 
-/// `PUT /__slt/session`: replaces the session's state.
+/// `PUT /__lsf/session`: replaces the session's state.
 ///
 /// The body is a session (`customer`, `cart`, `country`) and may carry a `data` object in the
 /// store data format that is applied on top of the data files for this session only.
@@ -271,20 +271,20 @@ fn dashboard(state: &ServerState) -> Reply {
     Reply::html(
         200,
         format!(
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>slt · local storefront</title>\
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>lsf · local storefront</title>\
              <style>body{{font:15px/1.5 system-ui,sans-serif;max-width:56rem;margin:3rem auto;padding:0 1rem;color:#1a1a1a}}\
              code,pre{{font:13px ui-monospace,monospace}}pre{{white-space:pre-wrap;background:#f5f5f5;padding:.75rem;border-radius:6px}}\
              .ok{{color:#0a7a3c}}.bad{{color:#b3261e}}ul{{padding-left:1.2rem}}li{{margin:.15rem 0}}\
              dt{{font-weight:600;margin-top:.5rem}}dd{{margin:0}}</style></head><body>\
-             <h1>slt · local storefront</h1>\
+             <h1>lsf · local storefront</h1>\
              <dl><dt>Theme</dt><dd><code>{}</code></dd><dt>Store data</dt><dd><code>{}</code></dd></dl>\
              <h2>Store data</h2>{problems}\
              <h2>Pages</h2><ul>{links}</ul>\
              <h2>Control API</h2><ul>\
-             <li><code>GET /__slt/status</code>: this page as JSON</li>\
-             <li><code>GET|PUT|DELETE /__slt/session</code>: read, set or reset the session (cart, customer, per-session data)</li>\
-             <li><code>GET /__slt/schema/store</code>: JSON Schema of the data format</li>\
-             <li><code>POST /__slt/reload</code>: reload the data files</li></ul>\
+             <li><code>GET /__lsf/status</code>: this page as JSON</li>\
+             <li><code>GET|PUT|DELETE /__lsf/session</code>: read, set or reset the session (cart, customer, per-session data)</li>\
+             <li><code>GET /__lsf/schema/store</code>: JSON Schema of the data format</li>\
+             <li><code>POST /__lsf/reload</code>: reload the data files</li></ul>\
              </body></html>",
             escape_html(&state.app.theme.files().root().display().to_string()),
             escape_html(&state.app.describe_source()),

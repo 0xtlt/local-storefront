@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a tag `vX.Y.Z` tests the code, builds `slt` for every platform and publishes a GitHub
+# Pushing a tag `vX.Y.Z` tests the code, builds `lsf` for every platform and publishes a GitHub
 # release with one archive per platform and their checksums.
 #
 # Running the workflow by hand ("Run workflow") does the same without publishing: the archives
@@ -37,7 +37,7 @@ jobs:
         if: github.ref_type == 'tag'
         run: |
           version=$(cargo metadata --no-deps --locked --format-version 1 \
-            | jq -r '.packages[] | select(.name == "slt") | .version')
+            | jq -r '.packages[] | select(.name == "lsf") | .version')
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error file=Cargo.toml::the tag $GITHUB_REF_NAME does not match the version $version"
             exit 1
@@ -101,35 +101,35 @@ jobs:
       - name: Build
         run: |
           if [ -n "$ZIG_TARGET" ]; then
-            cargo zigbuild --release --locked -p slt --target "$ZIG_TARGET"
+            cargo zigbuild --release --locked -p lsf --target "$ZIG_TARGET"
           else
-            cargo build --release --locked -p slt --target "$TARGET"
+            cargo build --release --locked -p lsf --target "$TARGET"
           fi
 
       # Only where the runner can execute what it built.
       - name: Smoke test
         if: matrix.smoke
         run: |
-          slt="target/$TARGET/release/slt"
-          "$slt" --version
-          "$slt" --theme crates/core/tests/fixtures/theme validate
+          lsf="target/$TARGET/release/lsf"
+          "$lsf" --version
+          "$lsf" --theme crates/core/tests/fixtures/theme validate
           # The home page: a path argument starting with `/` would be rewritten by Git Bash
           # on Windows.
-          "$slt" --theme crates/core/tests/fixtures/theme render --strict > /dev/null
+          "$lsf" --theme crates/core/tests/fixtures/theme render --strict > /dev/null
 
       - name: Package
         run: |
           mkdir dist
           cd "target/$TARGET/release"
           if [ "$RUNNER_OS" = "Windows" ]; then
-            7z a -tzip "../../../dist/slt-$TARGET.zip" slt.exe
+            7z a -tzip "../../../dist/lsf-$TARGET.zip" lsf.exe
           else
-            tar -czf "../../../dist/slt-$TARGET.tar.gz" slt
+            tar -czf "../../../dist/lsf-$TARGET.tar.gz" lsf
           fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: slt-${{ matrix.target }}
+          name: lsf-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 7
@@ -145,13 +145,13 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
-          pattern: slt-*
+          pattern: lsf-*
           merge-multiple: true
 
       - name: Checksums
         working-directory: dist
         run: |
-          sha256sum slt-* > SHA256SUMS
+          sha256sum lsf-* > SHA256SUMS
           cat SHA256SUMS
 
       - name: Publish

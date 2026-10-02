@@ -3,12 +3,12 @@
 Three crates, each depending only on the one before it.
 
 ```text
-crates/liquid   slt-liquid   the Liquid language: no knowledge of Shopify
-crates/core     slt-core     Shopify on top of it: store data, objects, filters, tags, rendering
-crates/cli      slt          the command line and the HTTP server
+crates/liquid   lsf-liquid   the Liquid language: no knowledge of Shopify
+crates/core     lsf-core     Shopify on top of it: store data, objects, filters, tags, rendering
+crates/cli      lsf          the command line and the HTTP server
 ```
 
-## `slt-liquid`: the language
+## `lsf-liquid`: the language
 
 A port of Shopify's `liquid` gem, kept faithful to it down to the error messages. Nothing in
 it is specific to a storefront.
@@ -30,7 +30,7 @@ Tests: `tests/golden.rs` renders `tests/cases/*.txt` and compares with `tests/go
 which `tools/oracle/generate_golden.rb` produces by running the same templates through the
 real gem.
 
-## `slt-core`: Shopify
+## `lsf-core`: Shopify
 
 | Module | Role |
 |---|---|
@@ -52,7 +52,7 @@ Tests: unit tests next to the code, `tests/render.rs` (a fixture theme rendered 
 demo store, with HTML snapshots), `tests/conformance.rs` (the examples of shopify.dev,
 downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference is current).
 
-## `slt`: commands and server
+## `lsf`: commands and server
 
 `commands/` holds one file per subcommand. `server/` is the HTTP side:
 
@@ -62,7 +62,7 @@ downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference i
 | `storefront` | Pages, the Section Rendering API, product, search and recommendation JSON. |
 | `cart`, `forms` | The Cart Ajax API and form submissions. |
 | `cdn` | Theme assets, files, image transformations, bundles, fonts. |
-| `control` | The `/__slt` API. |
+| `control` | The `/__lsf` API. |
 
 Rendering is CPU-bound and synchronous; the async server hands each request to a blocking
 thread with a large stack, because deeply nested snippets and blocks recurse.
@@ -87,7 +87,7 @@ the same version:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-`.github/workflows/release.yml` runs the tests, builds `slt` for macOS, Linux (glibc and
+`.github/workflows/release.yml` runs the tests, builds `lsf` for macOS, Linux (glibc and
 static musl) and Windows on x86-64 and ARM64, and publishes a GitHub release with one archive
 per platform and a `SHA256SUMS` file. A tag that does not match the version of the crate fails
 before anything is built. Tags with a suffix (`v0.2.0-rc.1`) are published as prereleases.
@@ -99,5 +99,5 @@ The Linux targets are cross-compiled with `cargo-zigbuild`, which is what lets t
 builds target glibc 2.17 whatever the runner has. The Rust version comes from `mise.toml`.
 
 After changing the data model, regenerate the field reference with
-`UPDATE_SNAPSHOTS=1 cargo test -p slt-core --test docs`; after an intentional change of the
-rendered HTML, regenerate the snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p slt-core --test render`.
+`UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test docs`; after an intentional change of the
+rendered HTML, regenerate the snapshots with `UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test render`.

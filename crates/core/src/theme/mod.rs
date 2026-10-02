@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use lsf_liquid::{Environment, Template};
 use serde_json::Value as Json;
-use slt_liquid::{Environment, Template};
 
 pub use files::{Revalidate, ThemeFiles};
 pub use locales::Translations;
@@ -39,7 +39,7 @@ type Cache<T> = Mutex<HashMap<String, Cached<T>>>;
 pub struct Theme {
     files: ThemeFiles,
     env: Arc<Environment>,
-    liquid: Cache<std::result::Result<Arc<LiquidFile>, slt_liquid::Error>>,
+    liquid: Cache<std::result::Result<Arc<LiquidFile>, lsf_liquid::Error>>,
     json: Cache<std::result::Result<Arc<Json>, String>>,
     translations: Cache<Arc<Translations>>,
     /// Derived values that are expensive to recompute on every request, with when they were
@@ -120,7 +120,7 @@ impl Theme {
     pub fn liquid(
         &self,
         path: &str,
-    ) -> std::result::Result<Option<Arc<LiquidFile>>, slt_liquid::Error> {
+    ) -> std::result::Result<Option<Arc<LiquidFile>>, lsf_liquid::Error> {
         let Some(source) = self.files.read(path) else {
             return Ok(None);
         };

@@ -3,8 +3,8 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 
+use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
-use slt_liquid::{Object, Value};
 
 use super::media::ImageDrop;
 use super::metafield::MetafieldsDrop;

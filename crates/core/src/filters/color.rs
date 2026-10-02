@@ -1,7 +1,7 @@
 //! Color filters. They answer in the notation of their input: hex in, hex out.
 
-use slt_liquid::number::{float_to_s, to_number};
-use slt_liquid::{Context, Environment, FilterArgs, Result, Value};
+use lsf_liquid::number::{float_to_s, to_number};
+use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use crate::drops::color::{Color, ColorDrop, Notation};
 

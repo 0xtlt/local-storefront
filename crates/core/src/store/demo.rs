@@ -1,5 +1,5 @@
 //! The built-in demo store: used when a theme has no data directory yet, and written to disk
-//! by `slt init` as a starting point.
+//! by `lsf init` as a starting point.
 
 /// The files of the demo data directory, as `(relative path, content)`.
 pub const FILES: &[(&str, &str)] = &[

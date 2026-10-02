@@ -3,15 +3,15 @@ resolver = "3"
 members = ["crates/liquid", "crates/core", "crates/cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
 repository = "https://github.com/0xtlt/local-storefront"
 
 [workspace.dependencies]
-slt-liquid = { path = "crates/liquid" }
-slt-core = { path = "crates/core" }
+lsf-liquid = { path = "crates/liquid" }
+lsf-core = { path = "crates/core" }
 
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

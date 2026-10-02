@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono_tz::Tz;
-use slt_liquid::{Context, Environment, Error, PartialLoader, Template, Value};
+use lsf_liquid::{Context, Environment, Error, PartialLoader, Template, Value};
 
 struct Partials {
     env: Arc<Environment>,

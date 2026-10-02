@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use slt_liquid::lexer::{MarkupParser, TokenKind};
-use slt_liquid::{Context, Error, Expr, Hash, Parser, Result, Tag, TagToken, Value};
+use lsf_liquid::lexer::{MarkupParser, TokenKind};
+use lsf_liquid::{Context, Error, Expr, Hash, Parser, Result, Tag, TagToken, Value};
 
 use crate::render::section::{CONTAINER_VARIABLE, Container, render_block};
 use crate::theme::BlockInstance;

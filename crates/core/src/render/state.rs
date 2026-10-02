@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use slt_liquid::{Context, Error, Result, Value};
+use lsf_liquid::{Context, Error, Result, Value};
 
 use super::page::Page;
 use crate::site::Site;

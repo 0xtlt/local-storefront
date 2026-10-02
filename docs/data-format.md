@@ -1,11 +1,11 @@
 # Store data format
 
-`slt` renders a Shopify theme from JSON files instead of the Shopify API. This document
-describes those files. It is printed by `slt docs`, and `slt init` writes it next to the data
+`lsf` renders a Shopify theme from JSON files instead of the Shopify API. This document
+describes those files. It is printed by `lsf docs`, and `lsf init` writes it next to the data
 as `README.md`.
 
 The format is strict on purpose: unknown fields, wrong types and broken references are errors.
-Run `slt validate` after every change. Each problem is reported with a code, the file, a JSON
+Run `lsf validate` after every change. Each problem is reported with a code, the file, a JSON
 pointer to the value, and usually a hint:
 
 ```text
@@ -14,7 +14,7 @@ error[unknown_field]: unknown field "titel"
   hint: did you mean "title"?
 ```
 
-`slt validate --format json` prints the same report as JSON, for tools and LLMs:
+`lsf validate --format json` prints the same report as JSON, for tools and LLMs:
 
 ```json
 {
@@ -39,8 +39,8 @@ The exit status is `0` when the data is valid and `1` when it has errors. Warnin
 ## The data directory
 
 By default the data is read from `shopify-local/` inside the theme. Pass `--data <dir>` (or
-set `SLT_DATA`) to use another directory. Without any data directory, a built-in demo store is
-used; `slt init` writes that demo store to disk as a starting point.
+set `LSF_DATA`) to use another directory. Without any data directory, a built-in demo store is
+used; `lsf init` writes that demo store to disk as a starting point.
 
 ```text
 shopify-local/
@@ -54,7 +54,7 @@ shopify-local/
   customers/            customers,
   menus/                and menus (the file name is the menu handle)
   files/                images, videos, fonts: served under /cdn/shop/files/
-  schema/               JSON Schemas for editors, written by `slt init` (not read back)
+  schema/               JSON Schemas for editors, written by `lsf init` (not read back)
   README.md             this document
 ```
 
@@ -78,9 +78,9 @@ Point `$schema` at the schema of the file's kind to get completion and inline er
 { "$schema": "../schema/product.schema.json", "title": "Blue shirt", "price": "19.99" }
 ```
 
-`slt schema <kind>` prints a schema (`store`, `product`, `collection`, `page`, `blog`,
-`customer`, `menu`, `session`), `slt schema --out <dir>` writes them all, and a running server
-serves them at `/__slt/schema/<kind>`.
+`lsf schema <kind>` prints a schema (`store`, `product`, `collection`, `page`, `blog`,
+`customer`, `menu`, `session`), `lsf schema --out <dir>` writes them all, and a running server
+serves them at `/__lsf/schema/<kind>`.
 
 ## Conventions
 
@@ -284,17 +284,17 @@ server. The body is a session, optionally with a `data` object: a data file appl
 the files on disk for that session only.
 
 ```bash
-curl -X PUT http://127.0.0.1:9292/__slt/session \
-  -H 'x-slt-session: my-test' -H 'content-type: application/json' \
+curl -X PUT http://127.0.0.1:9292/__lsf/session \
+  -H 'x-lsf-session: my-test' -H 'content-type: application/json' \
   -d '{"customer": "jane.doe@example.com", "data": {"shop": {"name": "Another name"}}}'
 ```
 
-A wrong body is answered with `422` and the same diagnostics as `slt validate --format json`.
+A wrong body is answered with `422` and the same diagnostics as `lsf validate --format json`.
 
 ## Gift cards
 
 Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is listed by
-`slt routes`.
+`lsf routes`.
 
 ```json
 {
@@ -344,7 +344,7 @@ work too.
 
 **The file does not have to exist.** When it is missing, the server draws a placeholder of the
 declared `width` × `height` (1200 × 1200 when not declared) showing the file name, and answers
-with the header `x-slt-placeholder: 1`. Layout, aspect ratios and `srcset` are then the same as
+with the header `x-lsf-placeholder: 1`. Layout, aspect ratios and `srcset` are then the same as
 with real images, so fixtures do not need to ship binaries. When the file exists, its real
 size is read from it.
 

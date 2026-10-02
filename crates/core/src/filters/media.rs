@@ -3,9 +3,9 @@
 use std::any::Any;
 use std::borrow::Cow;
 
-use slt_liquid::filters::escape_html;
-use slt_liquid::number::to_integer;
-use slt_liquid::{Context, Environment, Error, FilterArgs, Object, Result, Value};
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::number::to_integer;
+use lsf_liquid::{Context, Environment, Error, FilterArgs, Object, Result, Value};
 
 use super::{html_attributes, site};
 use crate::drops::media::{ImageDrop, MediaDrop, focal_point_css, image_base_url, source_url};

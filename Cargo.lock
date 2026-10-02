@@ -911,6 +911,57 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lsf"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "clap",
+ "form_urlencoded",
+ "futures-util",
+ "indexmap",
+ "lsf-core",
+ "lsf-liquid",
+ "multer",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "lsf-core"
+version = "0.2.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "chrono-tz",
+ "hmac",
+ "image",
+ "indexmap",
+ "jsonschema",
+ "lsf-liquid",
+ "md-5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+]
+
+[[package]]
+name = "lsf-liquid"
+version = "0.2.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "chrono-tz",
+ "indexmap",
+ "rust_decimal",
+ "serde_json",
+]
+
+[[package]]
 name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1529,57 +1580,6 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-
-[[package]]
-name = "slt"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bytes",
- "clap",
- "form_urlencoded",
- "futures-util",
- "indexmap",
- "multer",
- "percent-encoding",
- "serde",
- "serde_json",
- "slt-core",
- "slt-liquid",
- "tokio",
-]
-
-[[package]]
-name = "slt-core"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chrono",
- "chrono-tz",
- "hmac",
- "image",
- "indexmap",
- "jsonschema",
- "md-5",
- "schemars",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "slt-liquid",
-]
-
-[[package]]
-name = "slt-liquid"
-version = "0.1.0"
-dependencies = [
- "base64",
- "chrono",
- "chrono-tz",
- "indexmap",
- "rust_decimal",
- "serde_json",
-]
 
 [[package]]
 name = "smallvec"

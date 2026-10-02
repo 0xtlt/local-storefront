@@ -11,7 +11,7 @@ pub const THEME_ID: u64 = 1;
 
 /// Percent-encodes a query component like Ruby's `CGI.escape`, with spaces as `+`.
 pub fn encode_component(input: &str) -> String {
-    slt_liquid::filters::url_encode(input)
+    lsf_liquid::filters::url_encode(input)
 }
 
 /// Percent-encodes a path, leaving `/` and the characters that are safe in a path.

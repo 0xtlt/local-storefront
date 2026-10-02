@@ -1,10 +1,10 @@
 //! Translations (`t`), locale-aware dates and unit formatting.
 
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::number::float_to_s;
+use lsf_liquid::time::{strftime, to_time};
+use lsf_liquid::{Context, Environment, Error, FilterArgs, Result, Value};
 use serde_json::Value as Json;
-use slt_liquid::filters::escape_html;
-use slt_liquid::number::float_to_s;
-use slt_liquid::time::{strftime, to_time};
-use slt_liquid::{Context, Environment, Error, FilterArgs, Result, Value};
 
 use super::money::format_money;
 use super::site;
@@ -185,7 +185,7 @@ fn compact_number(value: f64) -> String {
 }
 
 fn weight_with_unit(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    let grams = slt_liquid::number::to_number(input).to_f64();
+    let grams = lsf_liquid::number::to_number(input).to_f64();
     let unit = args
         .get(0)
         .map(|unit| unit.to_str().into_owned())
@@ -204,14 +204,14 @@ fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) 
     let price = match input {
         Value::Str(text) => text.to_string(),
         other => {
-            let cents = slt_liquid::number::to_number(other).to_f64().round() as i64;
+            let cents = lsf_liquid::number::to_number(other).to_f64().round() as i64;
             format_money(cents, &site(ctx)?.store.shop.money_format)
         }
     };
     let measurement = args.at(0);
     let unit = measurement.get("reference_unit").to_str().into_owned();
     let reference = measurement.get("reference_value");
-    let prefix = match slt_liquid::number::to_number(&reference).to_f64() {
+    let prefix = match lsf_liquid::number::to_number(&reference).to_f64() {
         value if value == 1.0 || value == 0.0 => String::new(),
         value => compact_number(value),
     };
@@ -219,7 +219,7 @@ fn unit_price_with_measurement(input: &Value, args: &FilterArgs, ctx: &Context) 
 }
 
 fn pluralize(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    let count = slt_liquid::number::to_number(input).to_f64();
+    let count = lsf_liquid::number::to_number(input).to_f64();
     Ok(if count == 1.0 { args.at(0) } else { args.at(1) })
 }
 

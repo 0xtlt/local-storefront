@@ -1,16 +1,16 @@
 # local-storefront
 
-A local storefront for Shopify themes. Its command, `slt`, serves a theme from your machine,
-rendered from JSON fixtures instead of the Shopify API.
+A local storefront for Shopify themes. Its command, `lsf`, serves a theme from your
+machine, rendered from JSON fixtures instead of the Shopify API.
 
 ```bash
 cd my-theme
-slt serve
+lsf serve
 # ready:  http://127.0.0.1:9292/
 ```
 
 It exists for end-to-end tests. A theme tested against a development store is throttled by
-Shopify and depends on whatever the store contains that day. Against `slt`, a test suite talks
+Shopify and depends on whatever the store contains that day. Against `lsf`, a test suite talks
 to a local process that renders a page in a few milliseconds, never calls Shopify, has no rate
 limit, and shows exactly the catalog, cart and customer each test asks for.
 
@@ -19,7 +19,7 @@ limit, and shows exactly the catalog, cart and customer each test asks for.
   tags are checked against the examples of shopify.dev. Shopify's Horizon and Dawn themes
   render every page type without a Liquid error. See [compatibility](docs/compatibility.md).
 - **Data as validated JSON.** Products, collections, pages, blogs, menus, customers, carts,
-  metafields and metaobjects are plain JSON files. `slt validate` rejects typos, wrong types
+  metafields and metaobjects are plain JSON files. `lsf validate` rejects typos, wrong types
   and broken references, and says where and how to fix them, in text or in JSON for tools and
   LLMs. See the [data format](docs/data-format.md) and its [field reference](docs/data-reference.md).
 - **Local images.** `image_url` and `image_tag` produce URLs of Shopify's shape that point to
@@ -38,19 +38,19 @@ platform, with nothing else to install:
 
 | Platform | Archive |
 |---|---|
-| macOS, Apple silicon | `slt-aarch64-apple-darwin.tar.gz` |
-| macOS, Intel | `slt-x86_64-apple-darwin.tar.gz` |
-| Linux x86-64 | `slt-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux ARM64 | `slt-aarch64-unknown-linux-gnu.tar.gz` |
-| Linux x86-64, static (Alpine) | `slt-x86_64-unknown-linux-musl.tar.gz` |
-| Linux ARM64, static (Alpine) | `slt-aarch64-unknown-linux-musl.tar.gz` |
-| Windows x86-64 | `slt-x86_64-pc-windows-msvc.zip` |
-| Windows ARM64 | `slt-aarch64-pc-windows-msvc.zip` |
+| macOS, Apple silicon | `lsf-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `lsf-x86_64-apple-darwin.tar.gz` |
+| Linux x86-64 | `lsf-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `lsf-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux x86-64, static (Alpine) | `lsf-x86_64-unknown-linux-musl.tar.gz` |
+| Linux ARM64, static (Alpine) | `lsf-aarch64-unknown-linux-musl.tar.gz` |
+| Windows x86-64 | `lsf-x86_64-pc-windows-msvc.zip` |
+| Windows ARM64 | `lsf-aarch64-pc-windows-msvc.zip` |
 
 The names do not carry the version, so the latest one has a stable URL, which is handy in CI:
 
 ```bash
-curl -fsSL https://github.com/0xtlt/local-storefront/releases/latest/download/slt-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin slt
+curl -fsSL https://github.com/0xtlt/local-storefront/releases/latest/download/lsf-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin lsf
 ```
 
 `SHA256SUMS` in the release lists the checksum of every archive. The Linux builds need
@@ -66,7 +66,7 @@ mise install
 mise run install
 ```
 
-The second command builds `slt` and puts it in `~/.cargo/bin`. Without mise:
+The second command builds `lsf` and puts it in `~/.cargo/bin`. Without mise:
 `cargo install --path crates/cli` with Rust 1.98 or later.
 
 ## Quick start
@@ -84,21 +84,21 @@ cd my-theme
 ```
 
 ```bash
-slt init
+lsf init
 ```
 
 ```bash
-slt serve --live-reload
+lsf serve --live-reload
 ```
 
-`slt init` creates `shopify-local/` in the theme with a demo store to edit, JSON Schemas for
+`lsf init` creates `shopify-local/` in the theme with a demo store to edit, JSON Schemas for
 editor completion, and the guide of the format. The directory is not one of the theme's own
 (`assets/`, `sections/`, ...), so it is not uploaded with the theme.
 
 Edit the data, then check it:
 
 ```bash
-slt validate
+lsf validate
 ```
 
 ```text
@@ -136,17 +136,17 @@ The smallest useful data directory is one file:
 
 | Command | What it does |
 |---|---|
-| `slt serve` | Serves the theme. `--port`, `--host`, `--live-reload`, `--static`, `--strict`, `--quiet`. |
-| `slt render <path>` | Prints the HTML of one URL, without a server. `--section-id` renders a single section. |
-| `slt validate` | Checks the store data. `--format json` for a machine-readable report. Exit status 1 on errors. |
-| `slt check` | Parses every Liquid and JSON file of the theme and reports what is not supported. |
-| `slt init` | Creates the data directory with a demo store, schemas and the guide. |
-| `slt routes` | Lists the URLs the data gives a page to. |
-| `slt schema [kind]` | Prints a JSON Schema of the format; `--out <dir>` writes them all. |
-| `slt docs` | Prints the guide and the field reference of the format. |
+| `lsf serve` | Serves the theme. `--port`, `--host`, `--live-reload`, `--static`, `--strict`, `--quiet`. |
+| `lsf render <path>` | Prints the HTML of one URL, without a server. `--section-id` renders a single section. |
+| `lsf validate` | Checks the store data. `--format json` for a machine-readable report. Exit status 1 on errors. |
+| `lsf check` | Parses every Liquid and JSON file of the theme and reports what is not supported. |
+| `lsf init` | Creates the data directory with a demo store, schemas and the guide. |
+| `lsf routes` | Lists the URLs the data gives a page to. |
+| `lsf schema [kind]` | Prints a JSON Schema of the format; `--out <dir>` writes them all. |
+| `lsf docs` | Prints the guide and the field reference of the format. |
 
-Every command takes `--theme <dir>` (default: the current directory, or `SLT_THEME`) and
-`--data <dir>` (default: `<theme>/shopify-local`, or `SLT_DATA`).
+Every command takes `--theme <dir>` (default: the current directory, or `LSF_THEME`) and
+`--data <dir>` (default: `<theme>/shopify-local`, or `LSF_DATA`).
 
 ## In a test
 
@@ -154,7 +154,7 @@ Every command takes `--theme <dir>` (default: the current directory, or `SLT_THE
 import { test, expect } from '@playwright/test';
 
 test('adding to the cart updates the bubble', async ({ page }) => {
-  await page.request.put('/__slt/session', {
+  await page.request.put('/__lsf/session', {
     data: { cart: { items: [{ variant: 'OVS-M', quantity: 1 }] } },
   });
   await page.goto('/products/blue-shirt');
@@ -168,7 +168,7 @@ assert on and CI.
 
 ## Documentation
 
-- [Store data format](docs/data-format.md): the guide. Also `slt docs`.
+- [Store data format](docs/data-format.md): the guide. Also `lsf docs`.
 - [Field reference](docs/data-reference.md): every field, generated from the JSON Schema.
 - [Testing](docs/testing.md): end-to-end tests, the control API.
 - [Compatibility](docs/compatibility.md): what is covered, and the known differences.
@@ -176,6 +176,6 @@ assert on and CI.
 
 ## Limits
 
-`slt` renders themes. It does not simulate checkout, apps, discounts, selling plans, B2B,
+`lsf` renders themes. It does not simulate checkout, apps, discounts, selling plans, B2B,
 taxes or shipping rates, and customer registration is not simulated. The full list is in
 [compatibility](docs/compatibility.md#known-differences).

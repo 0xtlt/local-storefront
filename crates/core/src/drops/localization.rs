@@ -2,7 +2,7 @@
 
 use std::any::Any;
 
-use slt_liquid::{Object, Value};
+use lsf_liquid::{Object, Value};
 
 use super::{SiteRef, hash};
 use crate::store::{Country, Language, reference};

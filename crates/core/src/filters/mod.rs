@@ -11,8 +11,8 @@ mod misc;
 pub mod money;
 mod url;
 
-use slt_liquid::filters::escape_html;
-use slt_liquid::{Context, Environment, Result, Value};
+use lsf_liquid::filters::escape_html;
+use lsf_liquid::{Context, Environment, Result, Value};
 
 use crate::render::state::RenderState;
 use crate::site::Site;

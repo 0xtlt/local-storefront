@@ -9,17 +9,17 @@
 //! next to each example. Examples that depend on more than that data cannot pass and are
 //! listed in the report as such, so the number to watch is the pass count: it must not go down.
 //!
-//! Run with `cargo test -p slt-core --test conformance -- --nocapture` to see the report. The
+//! Run with `cargo test -p lsf-core --test conformance -- --nocapture` to see the report. The
 //! test is skipped when the pages have not been downloaded.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use slt_core::render::page::{Page, Resource};
-use slt_core::store::load::{DataSource, LoadOptions, load_with_overlay};
-use slt_core::theme::Revalidate;
-use slt_core::{Renderer, Request, Session, Theme};
-use slt_liquid::Value;
+use lsf_core::render::page::{Page, Resource};
+use lsf_core::store::load::{DataSource, LoadOptions, load_with_overlay};
+use lsf_core::theme::Revalidate;
+use lsf_core::{Renderer, Request, Session, Theme};
+use lsf_liquid::Value;
 
 /// The number of examples that must pass. Raise it when more pass; never lower it.
 const BASELINE: usize = 195;
@@ -112,7 +112,7 @@ fn normalize(text: &str) -> String {
     // The documentation re-flows the output of its examples (it shows one item per line where
     // Liquid's whitespace control actually removes the line breaks), so whitespace cannot be
     // compared. Exact whitespace behaviour is covered by the tests against the reference
-    // implementation in `slt-liquid`.
+    // implementation in `lsf-liquid`.
     out.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
@@ -129,7 +129,7 @@ fn matches_shopify_documentation_examples() {
     }
 
     // A minimal theme: the examples only need the Liquid environment.
-    let theme_dir = std::env::temp_dir().join(format!("slt-conformance-{}", std::process::id()));
+    let theme_dir = std::env::temp_dir().join(format!("lsf-conformance-{}", std::process::id()));
     for directory in [
         "layout",
         "templates",
@@ -153,7 +153,7 @@ fn matches_shopify_documentation_examples() {
     )
     .unwrap();
 
-    let env = Arc::new(slt_core::environment());
+    let env = Arc::new(lsf_core::environment());
     let theme = Arc::new(Theme::open(&theme_dir, env, Revalidate::Never).unwrap());
     let renderer = Renderer::new(theme);
     // The shop the documentation's examples were rendered on.

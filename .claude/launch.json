@@ -3,13 +3,13 @@
   "configurations": [
     {
       "name": "horizon",
-      "runtimeExecutable": "./target/debug/slt",
+      "runtimeExecutable": "./target/debug/lsf",
       "runtimeArgs": ["serve", "--theme", "themes/horizon", "--port", "9292"],
       "port": 9292
     },
     {
       "name": "dawn",
-      "runtimeExecutable": "./target/debug/slt",
+      "runtimeExecutable": "./target/debug/lsf",
       "runtimeArgs": ["serve", "--theme", "themes/dawn", "--port", "9293"],
       "port": 9293
     }

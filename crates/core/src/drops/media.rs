@@ -3,9 +3,9 @@
 use std::any::Any;
 use std::borrow::Cow;
 
+use lsf_liquid::number::float_to_s;
+use lsf_liquid::{Object, Value};
 use serde_json::json;
-use slt_liquid::number::float_to_s;
-use slt_liquid::{Object, Value};
 
 use super::{Memo, SiteRef, hash};
 use crate::store::{Image, Media, MediaKind, MediaSource, VideoHost};

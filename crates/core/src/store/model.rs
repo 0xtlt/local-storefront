@@ -1,7 +1,7 @@
 //! The store data format: what you write in the data directory.
 //!
 //! These types are the single source of truth for the format. The JSON Schema used to validate
-//! the data (`slt schema`) and the reference documentation (`slt docs`) are generated from them,
+//! the data (`lsf schema`) and the reference documentation (`lsf docs`) are generated from them,
 //! so every doc comment here is user-facing documentation.
 //!
 //! Conventions shared by all types:
@@ -1073,7 +1073,7 @@ pub struct CartInput {
 }
 
 /// The state a browser session starts with. Tests can replace it per session through the
-/// control API (`PUT /__slt/session`).
+/// control API (`PUT /__lsf/session`).
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionInput {
@@ -1103,7 +1103,7 @@ pub struct GiftCardRecipientInput {
     pub nickname: Option<String>,
 }
 
-/// An issued gift card, shown by `templates/gift_card.liquid` at the URL `slt routes` lists
+/// An issued gift card, shown by `templates/gift_card.liquid` at the URL `lsf routes` lists
 /// (`/gift_cards/<shop id>/<token>`).
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use lsf_core::theme::Revalidate;
 use serde_json::{Value as Json, json};
-use slt_core::theme::Revalidate;
 
 use super::reply::Reply;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
@@ -89,9 +89,9 @@ fn a_new_visitor_gets_a_session_cookie() {
     incoming.headers.remove(SESSION_HEADER);
     let reply = state.dispatch(&incoming);
     assert_eq!(reply.status, 200);
-    assert!(header(&reply, "set-cookie").is_some_and(|cookie| cookie.starts_with("_slt_session=")));
-    assert_eq!(header(&reply, "x-slt-template"), Some("index"));
-    assert_eq!(header(&reply, "x-slt-liquid-errors"), None);
+    assert!(header(&reply, "set-cookie").is_some_and(|cookie| cookie.starts_with("_lsf_session=")));
+    assert_eq!(header(&reply, "x-lsf-template"), Some("index"));
+    assert_eq!(header(&reply, "x-lsf-liquid-errors"), None);
 }
 
 #[test]
@@ -216,7 +216,7 @@ fn the_control_api_sets_up_a_session() {
     let state = server();
     let reply = state.dispatch(&request(
         "PUT",
-        "/__slt/session",
+        "/__lsf/session",
         json!({
             "customer": "jane.doe@example.com",
             "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}], "note": "From a test"},
@@ -241,13 +241,13 @@ fn the_control_api_sets_up_a_session() {
     assert_eq!(get(&state, "/products/only-here", "other").status, 404);
     assert!(text(&get(&state, "/", "controlled")).contains("<title>Overlaid Shop</title>"));
 
-    let session = body_json(&get(&state, "/__slt/session", "controlled"));
+    let session = body_json(&get(&state, "/__lsf/session", "controlled"));
     assert_eq!(session["customer"], "jane.doe@example.com");
     assert_eq!(session["custom_data"], true);
 
     state.dispatch(&request(
         "DELETE",
-        "/__slt/session",
+        "/__lsf/session",
         json!({}),
         "controlled",
     ));
@@ -262,7 +262,7 @@ fn the_control_api_explains_invalid_input() {
     let state = server();
     let reply = state.dispatch(&request(
         "PUT",
-        "/__slt/session",
+        "/__lsf/session",
         json!({"custmer": "x", "cart": {"items": [{"variant": "NOPE"}]}}),
         "invalid",
     ));
@@ -277,7 +277,7 @@ fn the_control_api_explains_invalid_input() {
 
     let unknown = state.dispatch(&request(
         "PUT",
-        "/__slt/session",
+        "/__lsf/session",
         json!({"cart": {"items": [{"variant": "TEE-BLK-XXL"}]}}),
         "invalid",
     ));
@@ -292,7 +292,7 @@ fn the_control_api_explains_invalid_input() {
 
     let bad_data = state.dispatch(&request(
         "PUT",
-        "/__slt/session",
+        "/__lsf/session",
         json!({"data": {"products": [{"title": "x", "price": 1.5}]}}),
         "invalid",
     ));
@@ -389,7 +389,7 @@ fn customers_log_in_and_out() {
     );
     assert_eq!(header(&wrong, "location"), Some("/account/login"));
     assert_eq!(
-        body_json(&get(&state, "/__slt/session", "login"))["customer"],
+        body_json(&get(&state, "/__lsf/session", "login"))["customer"],
         Json::Null
     );
 
@@ -401,13 +401,13 @@ fn customers_log_in_and_out() {
     );
     assert_eq!(header(&right, "location"), Some("/account"));
     assert_eq!(
-        body_json(&get(&state, "/__slt/session", "login"))["customer"],
+        body_json(&get(&state, "/__lsf/session", "login"))["customer"],
         "jane.doe@example.com"
     );
 
     get(&state, "/account/logout", "login");
     assert_eq!(
-        body_json(&get(&state, "/__slt/session", "login"))["customer"],
+        body_json(&get(&state, "/__lsf/session", "login"))["customer"],
         Json::Null
     );
 }
@@ -428,7 +428,7 @@ fn locale_prefixes_select_the_language() {
     );
     assert_eq!(header(&switched, "location"), Some("/fr/pages/about"));
     assert_eq!(
-        body_json(&get(&state, "/__slt/session", "locale"))["country"],
+        body_json(&get(&state, "/__lsf/session", "locale"))["country"],
         "CA"
     );
 }
@@ -454,7 +454,7 @@ fn the_cdn_serves_assets_bundles_and_placeholder_images() {
     );
     assert_eq!(image.status, 200);
     assert_eq!(header(&image, "content-type"), Some("image/jpeg"));
-    assert_eq!(header(&image, "x-slt-placeholder"), Some("1"));
+    assert_eq!(header(&image, "x-lsf-placeholder"), Some("1"));
     // A JPEG stores its size in the SOF0 segment: 250 × 200 for a 1600 × 2000 source.
     let position = image
         .body
@@ -512,7 +512,7 @@ fn the_cdn_serves_assets_bundles_and_placeholder_images() {
 #[test]
 fn the_status_endpoint_describes_the_server() {
     let state = server();
-    let status = body_json(&get(&state, "/__slt/status", "status"));
+    let status = body_json(&get(&state, "/__lsf/status", "status"));
     assert_eq!(status["counts"]["products"], 8);
     assert_eq!(status["data_diagnostics"]["ok"], true);
     assert!(
@@ -522,5 +522,5 @@ fn the_status_endpoint_describes_the_server() {
             .iter()
             .any(|route| route == "/products/ceramic-mug")
     );
-    assert!(get(&state, "/__slt/schema/product", "status").status == 200);
+    assert!(get(&state, "/__lsf/schema/product", "status").status == 200);
 }

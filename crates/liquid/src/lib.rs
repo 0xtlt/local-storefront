@@ -4,7 +4,7 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use slt_liquid::{Context, Environment, Template};
+//! use lsf_liquid::{Context, Environment, Template};
 //!
 //! let env = Arc::new(Environment::standard());
 //! let template = Template::parse(&env, "{{ 'hello' | upcase }} {{ 0.1 | plus: 0.2 }}").unwrap();

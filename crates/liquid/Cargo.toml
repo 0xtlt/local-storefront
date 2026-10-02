@@ -1,5 +1,5 @@
 [package]
-name = "slt-liquid"
+name = "lsf-liquid"
 description = "A Liquid template engine that mirrors the semantics of Shopify's reference implementation"
 version.workspace = true
 edition.workspace = true

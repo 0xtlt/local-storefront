@@ -5,9 +5,9 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
+use lsf_liquid::time::Time;
+use lsf_liquid::{Object, Value};
 use serde_json::Value as Json;
-use slt_liquid::time::Time;
-use slt_liquid::{Object, Value};
 
 use super::media::ImageDrop;
 use super::{SiteRef, hash};
@@ -174,7 +174,7 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         "date" | "date_time" => Time::parse_iso(text(), site.store.shop.timezone)
             .map(Value::object)
             .or_else(|| {
-                slt_liquid::time::parse_time(
+                lsf_liquid::time::parse_time(
                     &text().to_lowercase(),
                     site.store.shop.timezone,
                     site.now,
