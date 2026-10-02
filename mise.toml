@@ -1,6 +1,8 @@
 # Toolchain + tasks for local-storefront. Run `mise install` once, then `mise run <task>`.
 [tools]
 rust = { version = "1.98.1", components = "clippy,rustfmt" }
+# Only needed for the npm packaging (`npm/`).
+node = "26"
 # Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem).
 ruby = "3.4.10"
 
@@ -14,6 +16,10 @@ run = "cargo build --release -p lsf"
 [tasks.install]
 description = "Build lsf and install it into ~/.cargo/bin"
 run = "cargo install --path crates/cli --locked"
+
+[tasks."npm:first-publish"]
+description = "Publish the npm packages of a release from this machine and let GitHub Actions publish the next ones (once per new package)"
+run = "npm/first-publish.sh"
 
 [tasks.test]
 description = "Run the whole test suite"

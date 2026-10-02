@@ -9,7 +9,7 @@ inputs:
     description: The version to give the packages, without the leading "v".
     required: true
   publish:
-    description: Publish to npm when "true". Needs NODE_AUTH_TOKEN in the environment, or npm trusted publishing.
+    description: Publish to npm when "true", as the trusted publisher of the packages (or with NODE_AUTH_TOKEN).
     default: "false"
 
 runs:

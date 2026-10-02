@@ -97,28 +97,38 @@ archives are then attached to the run instead of a release.
 
 ### npm
 
-The same workflow publishes the npm packages when the repository variable `NPM_PUBLISH` is
-`true`. `npm/build.mjs` assembles them from the release archives: `local-storefront`, a
-launcher (`npm/local-storefront/`), and one package per platform holding the binary
-(`local-storefront-<os>-<cpu>`), which the launcher lists as optional dependencies so that
-npm installs only the one that matches the machine. Linux gets the static musl build, which
-runs on every distribution.
+`npm/build.mjs` assembles the npm packages from the archives of a release:
+`local-storefront`, a launcher (`npm/local-storefront/`), and one package per platform
+holding the binary (`local-storefront-<os>-<cpu>`), which the launcher lists as optional
+dependencies so that npm installs only the one that matches the machine. Linux gets the
+static musl build, which runs on every distribution.
 
-Publishing authenticates with the `NPM_TOKEN` secret when it is set. Without it, npm's
-trusted publishing is used: each of the seven packages must then name this repository and
-`release.yml` as a trusted publisher on npmjs.com, which is only possible once the package
-exists, so the first release needs the token.
-
-A run of `release.yml` started by hand assembles the packages, installs them the way a
-project would and runs `lsf` through `npx`, without publishing.
-
-`.github/workflows/npm.yml` publishes the packages of a release that already exists, from the
-archives attached to it. Run it by hand with the tag of the release when a publication failed
-(an expired token, say), or for a release made before npm publishing was enabled:
+`.github/workflows/npm.yml` publishes them. No token is stored: on npmjs.com each package
+names this repository and `npm.yml` as its *trusted publisher*, and npm recognises the
+workflow run. When the repository variable `NPM_PUBLISH` is `true`, `release.yml` starts
+`npm.yml` once the GitHub release is published. It can also be run by hand, for a release
+made before publishing was enabled or after a publication that failed:
 
 ```bash
 gh workflow run npm.yml -f tag=v0.2.0
 ```
+
+npm can only trust a workflow for a package that already exists. The first publication is
+therefore made from a machine, once, and again whenever a package is added (a new platform):
+
+```bash
+npm login
+```
+
+```bash
+mise run npm:first-publish v0.2.0
+```
+
+The script publishes the packages of that release that are not on npm yet, then registers
+`npm.yml` as their trusted publisher. It needs two-factor authentication on the npm account.
+
+Every run of `release.yml`, including one started by hand, assembles the packages, installs
+them the way a project would and runs `lsf` through `npx`, without publishing.
 
 The Linux targets are cross-compiled with `cargo-zigbuild`, which is what lets the glibc
 builds target glibc 2.17 whatever the runner has. The Rust version comes from `mise.toml`.

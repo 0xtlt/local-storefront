@@ -1,9 +1,12 @@
 name: npm
 
-# Publishes the npm packages of a release that already exists, from the archives attached to
-# it: for a release made before npm publishing was set up, or after a publication that failed
-# (an expired token, say). Releases made by pushing a tag publish to npm on their own (see
-# release.yml).
+# Publishes the npm packages of a release, from the archives attached to it. release.yml
+# starts it after publishing a release; it can also be run by hand, for a release made before
+# npm publishing was enabled or after a publication that failed.
+#
+# This is the workflow npm trusts ("trusted publishing"): each package on npmjs.com names this
+# repository and this file as its publisher, so no token is stored anywhere. A package has to
+# exist before it can be configured that way: npm/first-publish.sh takes care of the first time.
 on:
   workflow_dispatch:
     inputs:
@@ -33,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # For the provenance statement of the packages, and for publishing without a token.
+      # What lets npm recognise this workflow as the trusted publisher of the packages.
       id-token: write
     env:
       TAG: ${{ inputs.tag }}
@@ -60,6 +63,7 @@ jobs:
 
       - uses: ./.github/actions/npm-packages
         env:
+          # Only as a fallback: left unset, npm authenticates as the trusted publisher.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         with:
           artifacts: dist
