@@ -1,46 +1,14 @@
 # local-storefront
 
-A local storefront for Shopify themes. Its command, `lsf`, serves a theme from your
-machine, rendered from JSON fixtures instead of the Shopify API.
+Run a Shopify theme on your machine, without Shopify.
 
-```bash
-cd my-theme
-lsf serve
-# ready:  http://127.0.0.1:9292/
-```
+`lsf` reads your theme and a few JSON files (products, cart, customers) and serves the
+storefront locally. No development store, no API calls, no rate limit. It is made for
+end-to-end tests: every test gets the exact store it needs, in milliseconds.
 
-It exists for end-to-end tests. A theme tested against a development store is throttled by
-Shopify and depends on whatever the store contains that day. Against `lsf`, a test suite talks
-to a local process that renders a page in a few milliseconds, never calls Shopify, has no rate
-limit, and shows exactly the catalog, cart and customer each test asks for.
+## Quick start
 
-- **Same output as Shopify.** The Liquid engine is a port of Shopify's reference
-  implementation, checked against it by 548 differential tests; Shopify's objects, filters and
-  tags are checked against the examples of shopify.dev. Shopify's Horizon and Dawn themes
-  render every page type without a Liquid error. See [compatibility](docs/compatibility.md).
-- **Data as validated JSON.** Products, collections, pages, blogs, menus, customers, carts,
-  metafields and metaobjects are plain JSON files. `lsf validate` rejects typos, wrong types
-  and broken references, and says where and how to fix them, in text or in JSON for tools and
-  LLMs. See the [data format](docs/data-format.md) and its [field reference](docs/data-reference.md).
-- **Local images.** `image_url` and `image_tag` produce URLs of Shopify's shape that point to
-  the local server, which resizes and crops like Shopify's CDN. Missing files become
-  placeholders of the right size, so fixtures do not need to ship images.
-- **A storefront, not only pages.** Cart Ajax API, Section Rendering API, predictive search,
-  product recommendations, collection filters and sorting, forms, localization, customer login.
-- **The scripts Shopify injects.** Pages carry the `Shopify` JavaScript object, the standard
-  storefront actions (`Shopify.actions`), `Shopify.loadFeatures`, the Customer Privacy API and
-  `ShopifyAnalytics.meta`, backed by the local server.
-- **Latency on demand.** `--throttle simulated` answers requests as late as a real storefront
-  does, for the whole server or for one test's session, so that loading states can be tested.
-- **Isolated sessions.** Each browser context has its own cart, customer and, if it wants,
-  its own store data, set with one HTTP call. Tests run in parallel against one server. See
-  [testing](docs/testing.md).
-
-## Install
-
-In a theme that already has a `package.json` (for Playwright, say), add it to the dev
-dependencies. The version is then pinned with the rest of the test tooling, and CI gets it
-from `npm ci`:
+In your theme folder:
 
 ```bash
 npm install --save-dev local-storefront
@@ -50,98 +18,19 @@ npm install --save-dev local-storefront
 npx local-storefront serve
 ```
 
-Write `npx local-storefront`, not `npx lsf`: an unrelated package named `lsf` exists on npm,
-and `npx lsf` downloads and runs it wherever `local-storefront` is not installed. Inside the
-`scripts` of `package.json`, where only installed commands are looked up, `lsf` is fine.
+Open <http://127.0.0.1:9292>. Your theme is running, with a demo store.
 
-The package is a launcher: npm installs next to it the binary built for the machine (macOS,
-Linux and Windows, on x64 and arm64). pnpm and yarn work the same way.
+> In this README, `lsf` stands for `npx local-storefront`. Do not type `npx lsf`: that is
+> another package on npm. In the `scripts` of your `package.json`, plain `lsf` works.
 
-With [mise](https://mise.jdx.dev), straight from the GitHub releases:
-
-```bash
-mise use github:0xtlt/local-storefront
-```
-
-Or by hand: each [release](https://github.com/0xtlt/local-storefront/releases) has a binary
-per platform, with nothing else to install:
-
-| Platform | Archive |
-|---|---|
-| macOS, Apple silicon | `lsf-aarch64-apple-darwin.tar.gz` |
-| macOS, Intel | `lsf-x86_64-apple-darwin.tar.gz` |
-| Linux x86-64 | `lsf-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux ARM64 | `lsf-aarch64-unknown-linux-gnu.tar.gz` |
-| Linux x86-64, static (Alpine) | `lsf-x86_64-unknown-linux-musl.tar.gz` |
-| Linux ARM64, static (Alpine) | `lsf-aarch64-unknown-linux-musl.tar.gz` |
-| Windows x86-64 | `lsf-x86_64-pc-windows-msvc.zip` |
-| Windows ARM64 | `lsf-aarch64-pc-windows-msvc.zip` |
-
-The names do not carry the version, so the latest one has a stable URL, which is handy in CI:
-
-```bash
-curl -fsSL https://github.com/0xtlt/local-storefront/releases/latest/download/lsf-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin lsf
-```
-
-`SHA256SUMS` in the release lists the checksum of every archive. The Linux builds need
-glibc 2.17 or later; the static ones need nothing.
-
-To build from source, the toolchain is managed by [mise](https://mise.jdx.dev):
-
-```bash
-mise install
-```
-
-```bash
-mise run install
-```
-
-The second command builds `lsf` and puts it in `~/.cargo/bin`. Without mise:
-`cargo install --path crates/cli` with Rust 1.98 or later.
-
-## Quick start
-
-To see it work on Shopify's Horizon theme with the built-in demo store:
-
-```bash
-mise run horizon:serve
-```
-
-On your own theme:
-
-```bash
-cd my-theme
-```
+## Use your own data
 
 ```bash
 lsf init
 ```
 
-```bash
-lsf serve --live-reload
-```
-
-`lsf init` creates `shopify-local/` in the theme with a demo store to edit, JSON Schemas for
-editor completion, and the guide of the format. The directory is not one of the theme's own
-(`assets/`, `sections/`, ...), so it is not uploaded with the theme.
-
-Edit the data, then check it:
-
-```bash
-lsf validate
-```
-
-```text
-error[unknown_field]: unknown field "titel"
-  --> products/shirt.json at /titel
-  hint: did you mean "title"?
-
-error[unknown_collection]: there is no collection with the handle "aparel"
-  --> products/shirt.json at /collections/0
-  hint: did you mean "apparel"?
-```
-
-The smallest useful data directory is one file:
+This creates a `shopify-local/` folder in your theme, with the demo store for you to edit. A
+store is plain JSON:
 
 ```json
 {
@@ -162,143 +51,256 @@ The smallest useful data directory is one file:
 }
 ```
 
+You can describe products, collections, pages, blogs, menus, customers, gift cards, metafields
+and metaobjects. Images do not have to exist: a missing image becomes a placeholder of the
+right size.
+
+After editing, check your data:
+
+```bash
+lsf validate
+```
+
+Mistakes are explained, with the file, the place and a suggestion:
+
+```text
+error[unknown_field]: unknown field "titel"
+  --> products/shirt.json at /titel
+  hint: did you mean "title"?
+```
+
+The full format is in the [data guide](docs/data-format.md).
+
+## Use it in tests
+
+Let your test runner start the server. With Playwright:
+
+```ts
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: { baseURL: 'http://127.0.0.1:9292' },
+  webServer: {
+    command: 'npx local-storefront serve --static --quiet --strict',
+    url: 'http://127.0.0.1:9292/__lsf/status',
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
+Each test has its own session: its own cart and its own customer. Tests can run in parallel.
+One call puts a session in the state you want. With the demo store:
+
+```ts
+import { test, expect } from '@playwright/test';
+
+test('a customer sees their cart', async ({ page }) => {
+  await page.request.put('/__lsf/session', {
+    data: {
+      customer: 'jane.doe@example.com',
+      cart: { items: [{ variant: 'TEE-BLK-M', quantity: 2 }] },
+    },
+  });
+
+  await page.goto('/cart');
+  await expect(page.getByText('Organic Cotton T-Shirt')).toBeVisible();
+});
+```
+
+A test can also bring its own data, for that test only:
+
+```ts
+await page.request.put('/__lsf/session', {
+  data: {
+    data: { products: [{ title: 'Sold out thing', price: '10.00', available: false }] },
+  },
+});
+await page.goto('/products/sold-out-thing');
+```
+
+More in the [testing guide](docs/testing.md).
+
+## What you get
+
+- **The same HTML as Shopify.** The Liquid engine is checked against Shopify's own. Shopify's
+  Horizon and Dawn themes render every page without an error.
+- **A working storefront.** Cart, section rendering, predictive search, recommendations,
+  collection filters, forms, languages, customer login.
+- **Images served locally.** `image_url` and `image_tag` point to your machine, which resizes
+  and crops like Shopify's CDN.
+- **Shopify's scripts.** Pages have the `Shopify` JavaScript object, `Shopify.actions`,
+  `Shopify.loadFeatures`, the Customer Privacy API and `ShopifyAnalytics.meta`.
+- **Clear errors.** Wrong data is refused with a message a person or an LLM can act on.
+
+Details and known differences: [compatibility](docs/compatibility.md).
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `lsf serve` | Serves the theme. `--port`, `--host`, `--live-reload`, `--static`, `--strict`, `--quiet`, `--throttle`. |
-| `lsf render <path>` | Prints the HTML of one URL, without a server. `--section-id` renders a single section. |
-| `lsf validate` | Checks the store data. `--format json` for a machine-readable report. Exit status 1 on errors. |
-| `lsf check` | Parses every Liquid and JSON file of the theme and reports what is not supported. |
-| `lsf init` | Creates the data directory with a demo store, schemas and the guide. |
-| `lsf routes` | Lists the URLs the data gives a page to. |
-| `lsf schema [kind]` | Prints a JSON Schema of the format; `--out <dir>` writes them all. |
-| `lsf docs` | Prints the guide and the field reference of the format. |
+| `lsf serve` | Serves the theme. |
+| `lsf init` | Creates `shopify-local/` with a demo store to edit. |
+| `lsf validate` | Checks your data. Add `--format json` for a report a tool can read. |
+| `lsf check` | Checks that every Liquid file of the theme is understood. |
+| `lsf render <path>` | Prints the HTML of one page, without a server. |
+| `lsf routes` | Lists the pages your data creates. |
+| `lsf schema [kind]` | Prints the JSON Schema of the data format. |
+| `lsf docs` | Prints the data guide. |
 
-Every command takes `--theme <dir>` (default: the current directory, or `LSF_THEME`) and
-`--data <dir>` (default: `<theme>/shopify-local`, or `LSF_DATA`).
+Every command accepts `--theme <dir>` (default: the current folder) and `--data <dir>`
+(default: `<theme>/shopify-local`).
 
-### `lsf serve`
+### Options of `lsf serve`
 
 | Option | What it does |
 |---|---|
-| `--port <port>`, `-p` | The port to listen on. Default `9292`; `0` picks a free one. |
-| `--host <address>` | The address to listen on. Default `127.0.0.1`; `0.0.0.0` for a container. |
-| `--live-reload` | Reloads open pages when the theme or the data change. It injects a script: leave it off in tests. |
-| `--static` | Reads the theme and the data once. Fastest, for test runs. |
-| `--strict` | Refuses to start when the store data has errors. |
+| `--port <port>`, `-p` | Port to listen on. Default `9292`. `0` picks a free one. |
+| `--host <address>` | Address to listen on. Default `127.0.0.1`. Use `0.0.0.0` in a container. |
+| `--live-reload` | Reloads the page when you edit the theme or the data. For development, not for tests. |
+| `--static` | Reads the files once. The fastest mode, for tests. |
+| `--strict` | Refuses to start if the data has errors. |
 | `--quiet`, `-q` | Does not log requests. |
-| `--throttle <rules>` | Answers requests late. See [Throttling](#throttling). Also `LSF_THROTTLE`. |
+| `--throttle <rules>` | Answers late, to test loading states. See below. |
 
 ## Throttling
 
-A local server answers in a few milliseconds, so loading states (a spinner on the add-to-cart
-button, a skeleton in the cart drawer) flash by before anyone can see them. `--throttle` holds
-requests for a while before answering them.
+A local server answers instantly, so you never see a spinner. `--throttle` makes it answer
+late.
+
+Like a real Shopify store:
 
 ```bash
 lsf serve --throttle simulated
 ```
 
-### Presets
+Like a real store on a slow phone:
 
-| Preset | What it stands for |
-|---|---|
-| `simulated` | A Shopify storefront on a good connection. |
-| `slow` | The same storefront on a slow mobile connection. |
-| `none` | No delay. Useful to lift the server's throttle for one session. |
+```bash
+lsf serve --throttle slow
+```
 
-What each preset holds a request for, in milliseconds:
-
-| Kind | Requests | `simulated` | `slow` |
-|---|---|---|---|
-| `page` | Pages | 80 | 800 |
-| `section` | Section Rendering API (`?section_id=`, `?sections=`) | 80 | 600 |
-| `cart-read` | `GET /cart.js` | 150 | 700 |
-| `cart-add` | `/cart/add.js`, and the product form | 300 | 1200 |
-| `cart-change` | `/cart/change.js` | 300 | 1200 |
-| `cart-update` | `/cart/update.js`, and the cart form | 300 | 1200 |
-| `cart-clear` | `/cart/clear.js` | 300 | 1200 |
-| `search` | Predictive search (`/search/suggest`) | 250 | 1000 |
-| `recommendations` | Product recommendations | 250 | 1000 |
-| `product` | Product data (`/products/<handle>.js`, `products.json`) | 200 | 800 |
-| `form` | Form submissions: contact, login, localization, comments | 400 | 1500 |
-| `asset` | Theme assets, bundles, fonts, the scripts lsf injects | 30 | 300 |
-| `image` | Images under `/cdn/shop/files/` | 40 | 500 |
-
-The reads of `simulated` follow what Shopify's own Horizon demo store answered in, timed from
-a fast connection in October 2026. Requests that write (cart changes, forms) were not timed
-against someone's store: their values are estimates, set above the reads. `slow` is not
-measured: it is `simulated` with the latency of a poor mobile connection added.
-
-### Your own rules
-
-A duration on its own delays every request. `<kind>=<duration>` delays one kind. Durations
-are written `300ms`, `1.5s`, or as a number of milliseconds.
+Your own delay, for everything or for one kind of request:
 
 ```bash
 lsf serve --throttle 300ms
 ```
 
 ```bash
-lsf serve --throttle cart=500ms,cart-add=1s
+lsf serve --throttle cart-add=1s
 ```
+
+A preset with a change:
 
 ```bash
-lsf serve --throttle simulated,cart-add=2s,image=0
+lsf serve --throttle simulated,cart-add=2s
 ```
 
-- The most specific rule wins: the kind itself (`cart-add`), then `cart` for any cart request,
-  then `all` (which is what a duration on its own sets).
-- Rules apply in order, so a rule after a preset adjusts it.
-- A rule of `0` exempts a kind.
-- The control API (`/__lsf/...`) is never delayed, so setting a test up stays instant.
-- A delayed response carries the header `x-lsf-throttle: 300ms`.
-
-### For one test only
-
-A throttle on the command line slows the whole suite. A session can have a throttle of its
-own, which replaces the server's for that session:
+For one test only, without slowing the others:
 
 ```ts
-await page.request.put('/__lsf/session', {
-  data: { throttle: 'simulated' },
-});
+await page.request.put('/__lsf/session', { data: { throttle: 'simulated' } });
 ```
 
-`throttle` takes the same rules as the command line, as a string (`"simulated,cart-add=2s"`),
-as a number of milliseconds for everything, or as an object
-(`{ "preset": "simulated", "cart-add": "2s" }`). `"none"` lifts the server's throttle for the
-session, and setting the session again without `throttle` goes back to the server's.
+### Kinds of requests and presets
 
-## In a test
+Delays are in milliseconds.
 
-```ts
-import { test, expect } from '@playwright/test';
+| Kind | Requests | `simulated` | `slow` |
+|---|---|---|---|
+| `page` | Pages | 80 | 800 |
+| `section` | Section Rendering API | 80 | 600 |
+| `cart-read` | Reading the cart (`/cart.js`) | 150 | 700 |
+| `cart-add` | Adding to the cart | 300 | 1200 |
+| `cart-change` | Changing a quantity | 300 | 1200 |
+| `cart-update` | Updating the cart | 300 | 1200 |
+| `cart-clear` | Emptying the cart | 300 | 1200 |
+| `search` | Predictive search | 250 | 1000 |
+| `recommendations` | Product recommendations | 250 | 1000 |
+| `product` | Product data (`/products/<handle>.js`) | 200 | 800 |
+| `form` | Forms: contact, login, language | 400 | 1500 |
+| `asset` | Theme files (CSS, JavaScript, fonts) | 30 | 300 |
+| `image` | Images | 40 | 500 |
 
-test('adding to the cart updates the bubble', async ({ page }) => {
-  await page.request.put('/__lsf/session', {
-    data: { cart: { items: [{ variant: 'OVS-M', quantity: 1 }] } },
-  });
-  await page.goto('/products/blue-shirt');
-  await page.getByRole('button', { name: 'Add to cart' }).click();
-  await expect(page.locator('.cart-bubble')).toHaveText('2');
-});
+Two more names group several kinds: `cart` (the five cart kinds) and `all` (everything).
+
+| Preset | Meaning |
+|---|---|
+| `simulated` | A Shopify store on a good connection. |
+| `slow` | The same store on a slow mobile connection. |
+| `none` | No delay. |
+
+### Rules
+
+- Write durations as `300ms`, `1.5s`, or a number of milliseconds.
+- The most precise rule wins: `cart-add`, then `cart`, then `all`.
+- Rules apply in order. A rule after a preset changes that preset.
+- `0` removes the delay for a kind: `--throttle 300ms,image=0`.
+- The control API (`/__lsf/...`) is never delayed.
+- In a session, `throttle` is a string (`"simulated,cart-add=2s"`), a number of milliseconds,
+  or an object (`{ "preset": "slow", "image": 0 }`). It replaces the server's throttle for that
+  session. `"none"` removes it.
+
+The reads of `simulated` were timed on Shopify's Horizon demo store in October 2026. The
+writes (cart changes, forms) are estimates. `slow` is not measured.
+
+## Control API
+
+Tests talk to the server through `/__lsf`.
+
+| Request | What it does |
+|---|---|
+| `PUT /__lsf/session` | Sets the session: `customer`, `cart`, `country`, `data`, `throttle`. |
+| `GET /__lsf/session` | Shows the session. |
+| `DELETE /__lsf/session` | Resets the session. |
+| `GET /__lsf/status` | Shows the theme, the data, its errors and every page. |
+| `POST /__lsf/reload` | Reloads the data files. |
+| `GET /__lsf` | The same status, as a page for a browser. |
+
+A session follows the browser's cookies. Without cookies, name it with the header
+`x-lsf-session: my-test`.
+
+Responses carry headers a test can check:
+
+| Header | Meaning |
+|---|---|
+| `x-lsf-template` | The template that rendered the page. |
+| `x-lsf-liquid-errors` | The number of Liquid errors in the page. Absent when there are none. |
+| `x-lsf-placeholder` | The image is a placeholder: the file is not in `shopify-local/files/`. |
+| `x-lsf-throttle` | The delay that was applied. |
+
+## Other ways to install
+
+With [mise](https://mise.jdx.dev):
+
+```bash
+mise use github:0xtlt/local-storefront
 ```
 
-The [testing guide](docs/testing.md) covers server flags, sessions, per-test data, what to
-assert on and CI.
+As a single binary: download it from the
+[releases](https://github.com/0xtlt/local-storefront/releases). There is one for macOS, Linux
+and Windows, on x64 and ARM64. On Linux, for example:
 
-## Documentation
+```bash
+curl -fsSL https://github.com/0xtlt/local-storefront/releases/latest/download/lsf-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin lsf
+```
 
-- [Store data format](docs/data-format.md): the guide. Also `lsf docs`.
-- [Field reference](docs/data-reference.md): every field, generated from the JSON Schema.
-- [Testing](docs/testing.md): end-to-end tests, the control API.
-- [Compatibility](docs/compatibility.md): what is covered, and the known differences.
-- [Architecture](docs/architecture.md): how the code is organised, and how to work on it.
+From source, with Rust 1.98 or later:
 
-## Limits
+```bash
+cargo install --path crates/cli
+```
 
-`lsf` renders themes. It does not simulate checkout, apps, discounts, selling plans, B2B,
-taxes or shipping rates, and customer registration is not simulated. The full list is in
+## What it does not do
+
+`lsf` renders themes. It does not simulate checkout, apps, discounts, selling plans, B2B, taxes
+or shipping rates. Customers can log in, but not register. The full list is in
 [compatibility](docs/compatibility.md#known-differences).
+
+## More documentation
+
+- [Data guide](docs/data-format.md): how to write the store data.
+- [Field reference](docs/data-reference.md): every field.
+- [Testing guide](docs/testing.md): sessions, per-test data, CI.
+- [Compatibility](docs/compatibility.md): what is covered, and what differs from Shopify.
+- [Architecture](docs/architecture.md): how the code is organised, and how to release.
