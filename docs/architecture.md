@@ -95,6 +95,31 @@ before anything is built. Tags with a suffix (`v0.2.0-rc.1`) are published as pr
 To try the builds without releasing, run the workflow by hand from the Actions tab: the
 archives are then attached to the run instead of a release.
 
+### npm
+
+The same workflow publishes the npm packages when the repository variable `NPM_PUBLISH` is
+`true`. `npm/build.mjs` assembles them from the release archives: `local-storefront`, a
+launcher (`npm/local-storefront/`), and one package per platform holding the binary
+(`local-storefront-<os>-<cpu>`), which the launcher lists as optional dependencies so that
+npm installs only the one that matches the machine. Linux gets the static musl build, which
+runs on every distribution.
+
+Publishing authenticates with the `NPM_TOKEN` secret when it is set. Without it, npm's
+trusted publishing is used: each of the seven packages must then name this repository and
+`release.yml` as a trusted publisher on npmjs.com, which is only possible once the package
+exists, so the first release needs the token.
+
+A run of `release.yml` started by hand assembles the packages, installs them the way a
+project would and runs `lsf` through `npx`, without publishing.
+
+`.github/workflows/npm.yml` publishes the packages of a release that already exists, from the
+archives attached to it. Run it by hand with the tag of the release when a publication failed
+(an expired token, say), or for a release made before npm publishing was enabled:
+
+```bash
+gh workflow run npm.yml -f tag=v0.2.0
+```
+
 The Linux targets are cross-compiled with `cargo-zigbuild`, which is what lets the glibc
 builds target glibc 2.17 whatever the runner has. The Rust version comes from `mise.toml`.
 

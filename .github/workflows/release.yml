@@ -3,8 +3,13 @@ name: Release
 # Pushing a tag `vX.Y.Z` tests the code, builds `lsf` for every platform and publishes a GitHub
 # release with one archive per platform and their checksums.
 #
+# When the repository variable NPM_PUBLISH is `true`, the tag also publishes the npm packages
+# (`local-storefront` and one package per platform), authenticated by the NPM_TOKEN secret or,
+# without it, by npm trusted publishing.
+#
 # Running the workflow by hand ("Run workflow") does the same without publishing: the archives
-# are kept as artifacts of the run. Use it to try the builds before tagging.
+# are kept as artifacts of the run, and the npm packages are assembled and tried. Use it to try
+# the builds before tagging.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
@@ -169,3 +174,42 @@ jobs:
           flags=()
           case "$TAG" in *-*) flags+=(--prerelease) ;; esac
           gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG" "${flags[@]}"
+
+  npm:
+    name: npm packages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # For the provenance statement of the packages, and for publishing without a token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: lsf-*
+          merge-multiple: true
+
+      - name: Read the version
+        id: version
+        run: |
+          # On a tag, the test job has checked that this is the version of the tag.
+          version=$(sed -n '/^\[workspace.package\]/,/^\[workspace.dependencies\]/ s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/npm-packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        with:
+          artifacts: dist
+          version: ${{ steps.version.outputs.version }}
+          publish: ${{ github.ref_type == 'tag' && vars.NPM_PUBLISH == 'true' }}
+
+      - name: Publishing is off
+        if: github.ref_type == 'tag' && vars.NPM_PUBLISH != 'true'
+        run: echo "::notice::The npm packages were not published. Set the repository variable NPM_PUBLISH to true to publish them (see docs/architecture.md)."

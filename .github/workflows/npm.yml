@@ -1,0 +1,67 @@
+name: npm
+
+# Publishes the npm packages of a release that already exists, from the archives attached to
+# it: for a release made before npm publishing was set up, or after a publication that failed
+# (an expired token, say). Releases made by pushing a tag publish to npm on their own (see
+# release.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release to publish, e.g. v0.1.1
+        required: true
+        type: string
+      publish:
+        description: Publish to npm (untick to only assemble and try the packages)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-${{ inputs.tag }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  npm:
+    name: npm packages of ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # For the provenance statement of the packages, and for publishing without a token.
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Download the archives of the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::\"$TAG\" is not a release tag (expected vX.Y.Z)"; exit 1 ;;
+          esac
+          gh release download "$TAG" --dir dist --pattern 'lsf-*' --pattern SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/npm-packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        with:
+          artifacts: dist
+          version: ${{ steps.release.outputs.version }}
+          publish: ${{ inputs.publish }}

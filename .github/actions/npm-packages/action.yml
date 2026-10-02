@@ -1,0 +1,56 @@
+name: npm packages
+description: Assembles the npm packages from release archives, tries them, and optionally publishes them.
+
+inputs:
+  artifacts:
+    description: The directory holding the release archives (lsf-<target>.tar.gz and .zip).
+    required: true
+  version:
+    description: The version to give the packages, without the leading "v".
+    required: true
+  publish:
+    description: Publish to npm when "true". Needs NODE_AUTH_TOKEN in the environment, or npm trusted publishing.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Assemble the packages
+      shell: bash
+      env:
+        ARTIFACTS: ${{ inputs.artifacts }}
+        VERSION: ${{ inputs.version }}
+      run: node npm/build.mjs --artifacts "$ARTIFACTS" --out npm-dist --version "$VERSION"
+
+    # Installed the way a project would, from the packed files, then run through npx.
+    - name: Try the packages
+      shell: bash
+      run: |
+        launcher=$(cd npm-dist && npm pack --silent ./local-storefront)
+        binary=$(cd npm-dist && npm pack --silent ./local-storefront-linux-x64)
+        mkdir "$RUNNER_TEMP/try"
+        cd "$RUNNER_TEMP/try"
+        echo '{"private": true}' > package.json
+        npm install --save-dev "$GITHUB_WORKSPACE/npm-dist/$launcher" "$GITHUB_WORKSPACE/npm-dist/$binary"
+        npx lsf --version
+        npx lsf --theme "$GITHUB_WORKSPACE/crates/core/tests/fixtures/theme" validate
+
+    - name: Publish to npm
+      if: inputs.publish == 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        flags=(--access public --provenance)
+        # `1.2.0-rc.1` and the like must not become what `npm install` picks by default.
+        case "$VERSION" in *-*) flags+=(--tag next) ;; esac
+        # The platform packages first: the launcher depends on them.
+        for directory in npm-dist/local-storefront-*/ npm-dist/local-storefront/; do
+          name=$(node -p "require('./$directory/package.json').name")
+          # A re-run skips what a previous attempt already published.
+          if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+            echo "$name@$VERSION is already published"
+          else
+            npm publish "./$directory" "${flags[@]}"
+          fi
+        done
