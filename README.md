@@ -42,8 +42,12 @@ npm install --save-dev local-storefront
 ```
 
 ```bash
-npx lsf serve
+npx local-storefront serve
 ```
+
+Write `npx local-storefront`, not `npx lsf`: an unrelated package named `lsf` exists on npm,
+and `npx lsf` downloads and runs it wherever `local-storefront` is not installed. Inside the
+`scripts` of `package.json`, where only installed commands are looked up, `lsf` is fine.
 
 The package is a launcher: npm installs next to it the binary built for the machine (macOS,
 Linux and Windows, on x64 and arm64). pnpm and yarn work the same way.

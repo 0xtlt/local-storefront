@@ -32,8 +32,10 @@ runs:
         cd "$RUNNER_TEMP/try"
         echo '{"private": true}' > package.json
         npm install --save-dev "$GITHUB_WORKSPACE/npm-dist/$launcher" "$GITHUB_WORKSPACE/npm-dist/$binary"
+        npx local-storefront --version
+        npx local-storefront --theme "$GITHUB_WORKSPACE/crates/core/tests/fixtures/theme" validate
+        # The short name works too once the package is installed.
         npx lsf --version
-        npx lsf --theme "$GITHUB_WORKSPACE/crates/core/tests/fixtures/theme" validate
 
     - name: Publish to npm
       if: inputs.publish == 'true'

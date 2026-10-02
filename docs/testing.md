@@ -30,7 +30,7 @@ export default defineConfig({
   fullyParallel: true,
   use: { baseURL: 'http://127.0.0.1:9292' },
   webServer: {
-    command: 'npx lsf serve --port 9292 --static --quiet --strict',
+    command: 'npx local-storefront serve --port 9292 --static --quiet --strict',
     url: 'http://127.0.0.1:9292/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
@@ -202,8 +202,8 @@ With `local-storefront` in the dev dependencies of the theme, `npm ci` installs 
 
 ```yaml
 - run: npm ci
-- run: npx lsf validate        # fail fast on bad fixtures
-- run: npx lsf check           # every Liquid file parses, every filter exists
+- run: npx local-storefront validate   # fail fast on bad fixtures
+- run: npx local-storefront check      # every Liquid file parses, every filter exists
 - run: npx playwright test
 ```
 

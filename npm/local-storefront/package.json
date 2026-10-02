@@ -11,7 +11,8 @@
     "url": "git+https://github.com/0xtlt/local-storefront.git"
   },
   "bin": {
-    "lsf": "bin/lsf.js"
+    "lsf": "bin/lsf.js",
+    "local-storefront": "bin/lsf.js"
   },
   "files": ["bin/lsf.js"],
   "engines": {

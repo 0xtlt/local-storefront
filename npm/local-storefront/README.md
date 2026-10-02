@@ -9,8 +9,12 @@ npm install --save-dev local-storefront
 ```
 
 ```bash
-npx lsf serve
+npx local-storefront serve
 ```
+
+Write `npx local-storefront`, not `npx lsf`: an unrelated package named `lsf` exists on npm,
+and `npx lsf` downloads and runs it wherever this package is not installed. Inside the
+`scripts` of `package.json`, where only installed commands are looked up, `lsf` is fine.
 
 With Playwright:
 
@@ -21,7 +25,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:9292' },
   webServer: {
-    command: 'npx lsf serve --port 9292 --static --quiet --strict',
+    command: 'npx local-storefront serve --port 9292 --static --quiet --strict',
     url: 'http://127.0.0.1:9292/__lsf/status',
     reuseExistingServer: !process.env.CI,
   },
