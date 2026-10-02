@@ -20,7 +20,7 @@ fetch() {
   local kind="$1" name="$2"
   local out=".cache/shopify-docs/$kind/$name.md"
   [ -s "$out" ] && return 0
-  curl -sS --fail -m 30 -A "shopify-local-theme docs fetch" -o "$out" "https://shopify.dev/docs/api/liquid/$kind/$name.md" || echo "failed: $kind/$name" >&2
+  curl -sS --fail -m 30 -A "local-storefront docs fetch" -o "$out" "https://shopify.dev/docs/api/liquid/$kind/$name.md" || echo "failed: $kind/$name" >&2
 }
 export -f fetch
 

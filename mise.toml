@@ -1,4 +1,4 @@
-# Toolchain + tasks for shopify-local-theme. Run `mise install` once, then `mise run <task>`.
+# Toolchain + tasks for local-storefront. Run `mise install` once, then `mise run <task>`.
 [tools]
 rust = { version = "1.98.1", components = "clippy,rustfmt" }
 # Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem).

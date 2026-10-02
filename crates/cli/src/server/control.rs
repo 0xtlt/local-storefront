@@ -271,12 +271,12 @@ fn dashboard(state: &ServerState) -> Reply {
     Reply::html(
         200,
         format!(
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>shopify-local-theme</title>\
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>slt · local storefront</title>\
              <style>body{{font:15px/1.5 system-ui,sans-serif;max-width:56rem;margin:3rem auto;padding:0 1rem;color:#1a1a1a}}\
              code,pre{{font:13px ui-monospace,monospace}}pre{{white-space:pre-wrap;background:#f5f5f5;padding:.75rem;border-radius:6px}}\
              .ok{{color:#0a7a3c}}.bad{{color:#b3261e}}ul{{padding-left:1.2rem}}li{{margin:.15rem 0}}\
              dt{{font-weight:600;margin-top:.5rem}}dd{{margin:0}}</style></head><body>\
-             <h1>shopify-local-theme</h1>\
+             <h1>slt · local storefront</h1>\
              <dl><dt>Theme</dt><dd><code>{}</code></dd><dt>Store data</dt><dd><code>{}</code></dd></dl>\
              <h2>Store data</h2>{problems}\
              <h2>Pages</h2><ul>{links}</ul>\

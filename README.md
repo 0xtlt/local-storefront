@@ -1,7 +1,7 @@
-# shopify-local-theme
+# local-storefront
 
-`slt` serves a Shopify theme from your machine, rendered from JSON fixtures instead of the
-Shopify API.
+A local storefront for Shopify themes. Its command, `slt`, serves a theme from your machine,
+rendered from JSON fixtures instead of the Shopify API.
 
 ```bash
 cd my-theme
@@ -33,7 +33,7 @@ limit, and shows exactly the catalog, cart and customer each test asks for.
 
 ## Install
 
-Each [release](https://github.com/0xtlt/shopify-local-theme/releases) has a binary per
+Each [release](https://github.com/0xtlt/local-storefront/releases) has a binary per
 platform, with nothing else to install:
 
 | Platform | Archive |
@@ -50,7 +50,7 @@ platform, with nothing else to install:
 The names do not carry the version, so the latest one has a stable URL, which is handy in CI:
 
 ```bash
-curl -fsSL https://github.com/0xtlt/shopify-local-theme/releases/latest/download/slt-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin slt
+curl -fsSL https://github.com/0xtlt/local-storefront/releases/latest/download/slt-x86_64-unknown-linux-gnu.tar.gz | sudo tar -xz -C /usr/local/bin slt
 ```
 
 `SHA256SUMS` in the release lists the checksum of every archive. The Linux builds need

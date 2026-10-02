@@ -314,7 +314,7 @@ impl Renderer {
             }
             Resource::NotFound => "<h1>404 Not Found</h1>".to_string(),
             _ => format!(
-                "<!-- shopify-local-theme: the theme has no templates/{}.json or .liquid -->",
+                "<!-- slt: the theme has no templates/{}.json or .liquid -->",
                 escape_html(&page.template.full())
             ),
         }
