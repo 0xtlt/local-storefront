@@ -61,10 +61,7 @@ pub fn translate(site: &Site, key: &str, named: &[(String, Value)]) -> Option<St
             Value::Str(text) => text.parse().ok(),
             _ => None,
         });
-    let locale = &site.request.locale;
-    let default_locale = site.theme.default_locale();
-    for candidate in [locale.as_str(), default_locale.as_str()] {
-        let translations = site.theme.translations(candidate);
+    for (candidate, translations) in site.translations() {
         if let Some(text) = translations
             .lookup(key)
             .and_then(|node| plural_form(node, candidate, count))

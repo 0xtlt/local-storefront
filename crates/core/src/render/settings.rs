@@ -428,10 +428,7 @@ pub fn resolve(
         vars,
         ctx: None,
     };
-    let schema_translations = state
-        .site
-        .theme
-        .schema_translations(&state.site.request.locale);
+    let schema_translations = state.site.schema_translations();
     let mut out = Hash::with_capacity(defs.len());
     for def in defs {
         let raw: Option<&Json> = values.get(&def.id).or(def.default.as_ref());

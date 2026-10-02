@@ -105,7 +105,7 @@ pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
         "blocks",
         "snippets",
     ] {
-        for name in theme.files().list(directory) {
+        for name in theme.files().list(directory).iter() {
             if !name.ends_with(".liquid") {
                 continue;
             }
@@ -130,7 +130,7 @@ pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
         }
     }
     for directory in ["templates", "sections", "config", "locales"] {
-        for name in theme.files().list(directory) {
+        for name in theme.files().list(directory).iter() {
             if !name.ends_with(".json") {
                 continue;
             }

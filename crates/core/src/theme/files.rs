@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
-/// How often a cached file is checked against the file system.
+/// How often what is cached about a file (its content, whether it exists, its directory's
+/// listing) is checked against the file system.
 #[derive(Clone, Copy, Debug)]
 pub enum Revalidate {
     /// Re-check the modification time, at most once per interval. Suits development, where
@@ -21,11 +22,30 @@ struct Entry {
     checked: Instant,
 }
 
+/// Something read from the file system (a directory listing, whether a file exists), and when.
+struct Checked<T> {
+    value: T,
+    checked: Instant,
+}
+
+type CheckedCache<T> = RwLock<HashMap<String, Checked<T>>>;
+
+struct Version {
+    modified: Option<SystemTime>,
+    version: u64,
+    checked: Instant,
+}
+
 pub struct ThemeFiles {
     root: PathBuf,
     revalidate: Revalidate,
     cache: RwLock<HashMap<String, Entry>>,
-    versions: RwLock<HashMap<String, (Option<SystemTime>, u64)>>,
+    // Rendering a page asks for listings, existence and versions hundreds of times. Each one
+    // is a system call, and the kernel serves those on one directory one at a time, so they
+    // are cached like file contents: concurrent renders must not queue on the file system.
+    listings: CheckedCache<Arc<[String]>>,
+    existence: CheckedCache<bool>,
+    versions: RwLock<HashMap<String, Version>>,
 }
 
 impl ThemeFiles {
@@ -34,6 +54,8 @@ impl ThemeFiles {
             root: root.into(),
             revalidate,
             cache: RwLock::new(HashMap::new()),
+            listings: RwLock::new(HashMap::new()),
+            existence: RwLock::new(HashMap::new()),
             versions: RwLock::new(HashMap::new()),
         }
     }
@@ -54,11 +76,33 @@ impl ThemeFiles {
         (!escapes).then(|| self.root.join(relative))
     }
 
-    fn is_fresh(&self, entry: &Entry) -> bool {
+    /// Whether something checked at `checked` can be used without looking at the file system.
+    fn is_fresh(&self, checked: Instant) -> bool {
         match self.revalidate {
             Revalidate::Never => true,
-            Revalidate::Every(interval) => entry.checked.elapsed() < interval,
+            Revalidate::Every(interval) => checked.elapsed() < interval,
         }
+    }
+
+    /// The cached answer for `key` while it is fresh, otherwise what `look` finds now.
+    fn checked<T: Clone>(&self, cache: &CheckedCache<T>, key: &str, look: impl FnOnce() -> T) -> T {
+        if let Ok(cache) = cache.read()
+            && let Some(entry) = cache.get(key)
+            && self.is_fresh(entry.checked)
+        {
+            return entry.value.clone();
+        }
+        let value = look();
+        if let Ok(mut cache) = cache.write() {
+            cache.insert(
+                key.to_string(),
+                Checked {
+                    value: value.clone(),
+                    checked: Instant::now(),
+                },
+            );
+        }
+        value
     }
 
     /// The content of a theme file (`snippets/price.liquid`), or `None` when it does not exist.
@@ -66,7 +110,7 @@ impl ThemeFiles {
     pub fn read(&self, relative: &str) -> Option<Arc<str>> {
         if let Ok(cache) = self.cache.read()
             && let Some(entry) = cache.get(relative)
-            && self.is_fresh(entry)
+            && self.is_fresh(entry.checked)
         {
             return entry.content.clone();
         }
@@ -97,24 +141,29 @@ impl ThemeFiles {
     }
 
     pub fn exists(&self, relative: &str) -> bool {
-        self.resolve(relative).is_some_and(|path| path.is_file())
+        let Some(path) = self.resolve(relative) else {
+            return false;
+        };
+        self.checked(&self.existence, relative, || path.is_file())
     }
 
     /// The file names directly inside a theme directory, sorted.
-    pub fn list(&self, directory: &str) -> Vec<String> {
+    pub fn list(&self, directory: &str) -> Arc<[String]> {
         let Some(path) = self.resolve(directory) else {
-            return Vec::new();
+            return Arc::default();
         };
-        let mut names: Vec<String> = std::fs::read_dir(path)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| !name.starts_with('.'))
-            .collect();
-        names.sort();
-        names
+        self.checked(&self.listings, directory, || {
+            let mut names: Vec<String> = std::fs::read_dir(path)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .filter(|name| !name.starts_with('.'))
+                .collect();
+            names.sort();
+            names.into()
+        })
     }
 
     /// A number that changes when the file's content changes, used for `?v=` cache busting.
@@ -124,14 +173,21 @@ impl ThemeFiles {
         let Some(path) = self.resolve(relative) else {
             return 0;
         };
+        if let Ok(versions) = self.versions.read()
+            && let Some(cached) = versions.get(relative)
+            && self.is_fresh(cached.checked)
+        {
+            return cached.version;
+        }
         let modified = std::fs::metadata(&path)
             .ok()
             .and_then(|meta| meta.modified().ok());
-        if let Ok(versions) = self.versions.read()
-            && let Some((cached_modified, version)) = versions.get(relative)
-            && *cached_modified == modified
+        if let Ok(mut versions) = self.versions.write()
+            && let Some(cached) = versions.get_mut(relative)
+            && cached.modified == modified
         {
-            return *version;
+            cached.checked = Instant::now();
+            return cached.version;
         }
         let version = match (modified, std::fs::read(&path)) {
             (Some(_), Ok(bytes)) => {
@@ -146,8 +202,56 @@ impl ThemeFiles {
             _ => 0,
         };
         if let Ok(mut versions) = self.versions.write() {
-            versions.insert(relative.to_string(), (modified, version));
+            versions.insert(
+                relative.to_string(),
+                Version {
+                    modified,
+                    version,
+                    checked: Instant::now(),
+                },
+            );
         }
         version
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A theme directory with one snippet. Then a second snippet appears and the first changes.
+    fn changing_theme(name: &str, revalidate: Revalidate) -> (PathBuf, ThemeFiles, u64) {
+        let root = std::env::temp_dir().join(format!("lsf-files-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("snippets")).unwrap();
+        std::fs::write(root.join("snippets/a.liquid"), "a").unwrap();
+        let files = ThemeFiles::new(root.clone(), revalidate);
+        assert_eq!(*files.list("snippets"), ["a.liquid".to_string()]);
+        assert!(files.exists("snippets/a.liquid"));
+        assert!(!files.exists("snippets/b.liquid"));
+        let version = files.version("snippets/a.liquid");
+
+        std::fs::write(root.join("snippets/b.liquid"), "b").unwrap();
+        std::fs::write(root.join("snippets/a.liquid"), "changed").unwrap();
+        (root, files, version)
+    }
+
+    #[test]
+    fn static_files_are_looked_at_once() {
+        let (root, files, version) = changing_theme("static", Revalidate::Never);
+        assert_eq!(*files.list("snippets"), ["a.liquid".to_string()]);
+        assert!(!files.exists("snippets/b.liquid"));
+        assert_eq!(files.version("snippets/a.liquid"), version);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn revalidated_files_follow_the_file_system() {
+        let (root, files, _) = changing_theme("revalidated", Revalidate::Every(Duration::ZERO));
+        assert_eq!(
+            *files.list("snippets"),
+            ["a.liquid".to_string(), "b.liquid".to_string()]
+        );
+        assert!(files.exists("snippets/b.liquid"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -1,13 +1,13 @@
 //! Everything a render needs to know that does not change while it runs: the theme, the store,
 //! the request and the visitor's session.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 
 use crate::store::{CartLine, Store};
-use crate::theme::Theme;
+use crate::theme::{Theme, Translations};
 
 /// The request being rendered.
 #[derive(Clone, Debug)]
@@ -145,9 +145,48 @@ pub struct Site {
     pub session: Session,
     /// The instant `'now'` resolves to for this render.
     pub now: DateTime<Utc>,
+    // A page translates hundreds of keys. The theme's translations are looked up once per
+    // render, because asking the theme takes locks that every other render takes too.
+    translations: OnceLock<[(String, Arc<Translations>); 2]>,
+    schema_translations: OnceLock<Arc<Translations>>,
 }
 
 impl Site {
+    pub fn new(
+        theme: Arc<Theme>,
+        store: Arc<Store>,
+        request: Request,
+        session: Session,
+        now: DateTime<Utc>,
+    ) -> Site {
+        Site {
+            theme,
+            store,
+            request,
+            session,
+            now,
+            translations: OnceLock::new(),
+            schema_translations: OnceLock::new(),
+        }
+    }
+
+    /// The storefront translations a key is looked up in, in order: those of the request's
+    /// locale, then those of the theme's default locale. Each comes with its locale.
+    pub fn translations(&self) -> &[(String, Arc<Translations>)] {
+        self.translations.get_or_init(|| {
+            [self.request.locale.clone(), self.theme.default_locale()].map(|locale| {
+                let translations = self.theme.translations(&locale);
+                (locale, translations)
+            })
+        })
+    }
+
+    /// Translations for the `t:` keys used in schemas, in the request's locale.
+    pub fn schema_translations(&self) -> &Translations {
+        self.schema_translations
+            .get_or_init(|| self.theme.schema_translations(&self.request.locale))
+    }
+
     /// The country the visitor shops in.
     pub fn country(&self) -> &crate::store::Country {
         self.session

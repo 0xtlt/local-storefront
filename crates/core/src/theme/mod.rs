@@ -8,7 +8,7 @@ pub mod template_json;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use lsf_liquid::{Environment, Template};
 use serde_json::Value as Json;
@@ -34,7 +34,45 @@ struct Cached<T> {
     value: T,
 }
 
-type Cache<T> = Mutex<HashMap<String, Cached<T>>>;
+/// Values built from theme files, by path. Renders running at the same time all go through
+/// it for every snippet and translation, so a lookup only takes the lock for reading.
+struct Cache<T>(RwLock<HashMap<String, Cached<T>>>);
+
+impl<T: Clone> Cache<T> {
+    fn new() -> Self {
+        Cache(RwLock::new(HashMap::new()))
+    }
+
+    fn lookup(cache: &HashMap<String, Cached<T>>, path: &str, source: &Arc<str>) -> Option<T> {
+        cache
+            .get(path)
+            .filter(|cached| Arc::ptr_eq(&cached.source, source))
+            .map(|cached| cached.value.clone())
+    }
+
+    /// The value built from `source`, built now when the file is new or has changed.
+    fn get(&self, path: &str, source: Arc<str>, build: impl FnOnce(&str) -> T) -> T {
+        if let Some(value) =
+            Self::lookup(&self.0.read().expect("theme cache poisoned"), path, &source)
+        {
+            return value;
+        }
+        // Built under the write lock, so that a source is only ever built once.
+        let mut cache = self.0.write().expect("theme cache poisoned");
+        if let Some(value) = Self::lookup(&cache, path, &source) {
+            return value;
+        }
+        let value = build(&source);
+        cache.insert(
+            path.to_string(),
+            Cached {
+                source,
+                value: value.clone(),
+            },
+        );
+        value
+    }
+}
 
 pub struct Theme {
     files: ThemeFiles,
@@ -76,9 +114,9 @@ impl Theme {
         Ok(Theme {
             files: ThemeFiles::new(root, revalidate),
             env,
-            liquid: Mutex::new(HashMap::new()),
-            json: Mutex::new(HashMap::new()),
-            translations: Mutex::new(HashMap::new()),
+            liquid: Cache::new(),
+            json: Cache::new(),
+            translations: Cache::new(),
             versions: Mutex::new(HashMap::new()),
             revalidate,
         })
@@ -124,34 +162,24 @@ impl Theme {
         let Some(source) = self.files.read(path) else {
             return Ok(None);
         };
-        let mut cache = self.liquid.lock().expect("theme cache poisoned");
-        if let Some(cached) = cache.get(path)
-            && Arc::ptr_eq(&cached.source, &source)
-        {
-            return cached.value.clone().map(Some);
-        }
-        // The name in error messages has no extension: `snippets/price`.
-        let name = path.strip_suffix(".liquid").unwrap_or(path);
-        let value = Template::parse_named(&self.env, &source, Some(name)).map(|template| {
-            let schema = schema::extract_block(&source, "schema")
-                .and_then(|body| {
-                    serde_json::from_str::<Json>(&crate::json::strip_comments(body)).ok()
+        self.liquid
+            .get(path, source, |source| {
+                // The name in error messages has no extension: `snippets/price`.
+                let name = path.strip_suffix(".liquid").unwrap_or(path);
+                Template::parse_named(&self.env, source, Some(name)).map(|template| {
+                    let schema = schema::extract_block(source, "schema")
+                        .and_then(|body| {
+                            serde_json::from_str::<Json>(&crate::json::strip_comments(body)).ok()
+                        })
+                        .map(Schema::from_json)
+                        .unwrap_or_default();
+                    Arc::new(LiquidFile {
+                        template: Arc::new(template),
+                        schema: Arc::new(schema),
+                    })
                 })
-                .map(Schema::from_json)
-                .unwrap_or_default();
-            Arc::new(LiquidFile {
-                template: Arc::new(template),
-                schema: Arc::new(schema),
             })
-        });
-        cache.insert(
-            path.to_string(),
-            Cached {
-                source,
-                value: value.clone(),
-            },
-        );
-        value.map(Some)
+            .map(Some)
     }
 
     /// Loads a JSON file (comments allowed). `Ok(None)` means the file does not exist.
@@ -159,35 +187,17 @@ impl Theme {
         let Some(source) = self.files.read(path) else {
             return Ok(None);
         };
-        let mut cache = self.json.lock().expect("theme cache poisoned");
-        if let Some(cached) = cache.get(path)
-            && Arc::ptr_eq(&cached.source, &source)
-        {
-            return cached
-                .value
-                .clone()
-                .map(Some)
-                .map_err(|message| Error::Json {
-                    path: path.to_string(),
-                    message,
-                });
-        }
-        let value = match parse_lenient(path, &source) {
-            Ok(json) => Ok(Arc::new(json)),
-            Err(Error::Json { message, .. }) => Err(message),
-            Err(other) => Err(other.to_string()),
-        };
-        cache.insert(
-            path.to_string(),
-            Cached {
-                source,
-                value: value.clone(),
-            },
-        );
-        value.map(Some).map_err(|message| Error::Json {
-            path: path.to_string(),
-            message,
-        })
+        self.json
+            .get(path, source, |source| match parse_lenient(path, source) {
+                Ok(json) => Ok(Arc::new(json)),
+                Err(Error::Json { message, .. }) => Err(message),
+                Err(other) => Err(other.to_string()),
+            })
+            .map(Some)
+            .map_err(|message| Error::Json {
+                path: path.to_string(),
+                message,
+            })
     }
 
     /// The schema of `sections/<kind>.liquid` or `blocks/<kind>.liquid`.
@@ -223,23 +233,11 @@ impl Theme {
         let Some(source) = self.files.read(path) else {
             return Arc::new(Translations::default());
         };
-        let mut cache = self.translations.lock().expect("theme cache poisoned");
-        if let Some(cached) = cache.get(path)
-            && Arc::ptr_eq(&cached.source, &source)
-        {
-            return cached.value.clone();
-        }
-        let value = Arc::new(Translations::new(
-            parse_lenient(path, &source).unwrap_or(Json::Null),
-        ));
-        cache.insert(
-            path.to_string(),
-            Cached {
-                source,
-                value: value.clone(),
-            },
-        );
-        value
+        self.translations.get(path, source, |source| {
+            Arc::new(Translations::new(
+                parse_lenient(path, source).unwrap_or(Json::Null),
+            ))
+        })
     }
 
     /// Storefront translations for a locale, falling back from `fr-CA` to `fr`.
@@ -283,7 +281,7 @@ impl Theme {
             ("templates/customers", "customers/"),
             ("templates/metaobject", "metaobject/"),
         ] {
-            for file in self.files.list(directory) {
+            for file in self.files.list(directory).iter() {
                 if let Some(name) = file
                     .strip_suffix(".json")
                     .or_else(|| file.strip_suffix(".liquid"))

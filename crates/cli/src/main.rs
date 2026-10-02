@@ -10,6 +10,12 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+// Rendering a page makes hundreds of thousands of small allocations. The system allocators
+// (macOS's and musl's in particular) make threads that allocate at the same time slow each
+// other down, which caps how many pages the server renders in parallel.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(
     name = "lsf",

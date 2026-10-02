@@ -7,7 +7,8 @@ pub mod section;
 pub mod settings;
 pub mod state;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use lsf_liquid::filters::escape_html;
@@ -34,13 +35,25 @@ pub fn environment() -> Environment {
 /// Loads the snippets `render` and `include` refer to.
 struct ThemePartials {
     theme: Arc<Theme>,
+    /// The snippets this render has loaded. A page renders the same few snippets hundreds of
+    /// times; asking the theme each time takes locks that every other render takes too.
+    loaded: Mutex<HashMap<String, Arc<Template>>>,
 }
 
 impl PartialLoader for ThemePartials {
     fn load(&self, name: &str) -> lsf_liquid::Result<Arc<Template>> {
+        if let Some(template) = self.loaded.lock().expect("partials poisoned").get(name) {
+            return Ok(template.clone());
+        }
         let path = format!("snippets/{name}.liquid");
         match self.theme.liquid(&path)? {
-            Some(file) => Ok(file.template.clone()),
+            Some(file) => {
+                self.loaded
+                    .lock()
+                    .expect("partials poisoned")
+                    .insert(name.to_string(), file.template.clone());
+                Ok(file.template.clone())
+            }
             None => Err(lsf_liquid::Error::file_system(format!(
                 "Could not find asset {path}"
             ))),
@@ -147,13 +160,7 @@ impl Renderer {
     /// The immutable description of one render.
     pub fn site(&self, store: Arc<Store>, request: Request, session: Session) -> Arc<Site> {
         let now = store.now.unwrap_or_else(Utc::now);
-        Arc::new(Site {
-            theme: self.theme.clone(),
-            store,
-            request,
-            session,
-            now,
-        })
+        Arc::new(Site::new(self.theme.clone(), store, request, session, now))
     }
 
     fn context(&self, site: &Arc<Site>, page: &Page) -> (Context, Arc<RenderState>, Arc<Globals>) {
@@ -163,6 +170,7 @@ impl Renderer {
             .globals(globals.clone())
             .partials(Arc::new(ThemePartials {
                 theme: self.theme.clone(),
+                loaded: Mutex::new(HashMap::new()),
             }))
             .register(state.clone())
             .now(site.now)
@@ -369,7 +377,7 @@ impl Renderer {
                 }
             }
         }
-        for file in self.theme.files().list("sections") {
+        for file in self.theme.files().list("sections").iter() {
             let Some(group_name) = file.strip_suffix(".json") else {
                 continue;
             };
@@ -463,7 +471,7 @@ impl Renderer {
 fn compiled(theme: &Theme, tag: &str, wrap: impl Fn(&str) -> String) -> String {
     let mut out = String::new();
     for directory in ["sections", "blocks", "snippets"] {
-        for file in theme.files().list(directory) {
+        for file in theme.files().list(directory).iter() {
             if !file.ends_with(".liquid") {
                 continue;
             }
