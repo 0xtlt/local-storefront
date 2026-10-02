@@ -53,17 +53,6 @@ pub fn resolve(site: &Site) -> Page {
         path.split('/').collect()
     };
 
-    // A locked storefront shows the password page for everything.
-    if store.shop.password.is_some()
-        && !site.session.password_unlocked
-        && segments.first() != Some(&"password")
-    {
-        let mut page = Page::new("password", Resource::Password);
-        page.title = store.shop.name.clone();
-        page.canonical_path = "/password".to_string();
-        return page;
-    }
-
     let mut page = match segments.as_slice() {
         [] => {
             let mut page = Page::new("index", Resource::Index);

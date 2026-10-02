@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use lsf_core::Session;
 use lsf_core::diagnostics::Diagnostics;
-use lsf_core::store::build::resolve_cart;
+use lsf_core::store::build::{resolve_cart, resolve_company_location};
 use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, schema, validate};
@@ -24,7 +24,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         path.split('/').collect()
     };
     match (incoming.method.as_str(), segments.as_slice()) {
-        ("GET", []) => dashboard(state),
+        ("GET", []) => dashboard(state, incoming),
         ("GET", ["status"]) => Reply::json(200, &status(state)),
         ("GET", ["livereload"]) => Reply::text(200, state.change_token().to_string()),
         ("POST", ["reload"]) => {
@@ -43,6 +43,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             Reply::json(200, &session_json(state, &id))
         }
         ("PUT" | "POST", ["session"]) => set_session(state, incoming),
+        ("GET", ["login"]) => login(state, incoming),
         ("DELETE", ["session"]) => {
             let (id, _) = state.session_id(incoming);
             state.reset_session(&id);
@@ -71,6 +72,11 @@ fn status(state: &ServerState) -> Json {
         "throttle": state.options.throttle.to_json(),
         "templates": state.app.theme.template_names(),
         "locales": store.languages.iter().map(|language| language.iso_code.clone()).collect::<Vec<_>>(),
+        "customer_accounts": if lsf_core::site::hosted_accounts(&state.app.theme, store) { "new" } else { "legacy" },
+        "customers": store.customers.iter().map(|customer| json!({
+            "email": customer.email,
+            "company": customer.company.map(|index| store.companies[index].name.clone()),
+        })).collect::<Vec<_>>(),
         "counts": {
             "products": store.products.len(),
             "collections": store.collections.len(),
@@ -92,7 +98,17 @@ pub fn routes(state: &ServerState) -> Vec<String> {
         "/collections".to_string(),
         "/cart".to_string(),
         "/search".to_string(),
+        "/account".to_string(),
     ];
+    if ["json", "liquid"].iter().any(|extension| {
+        state
+            .app
+            .theme
+            .files()
+            .exists(&format!("templates/password.{extension}"))
+    }) {
+        routes.push("/password".to_string());
+    }
     routes.extend(
         store
             .collections
@@ -130,11 +146,51 @@ pub fn routes(state: &ServerState) -> Vec<String> {
     routes
 }
 
+/// `GET /__lsf/login?customer=<email|default|none>&return_to=<path>`: logs the browser in as
+/// a customer of the data, without a password. A link a person can follow.
+fn login(state: &ServerState, incoming: &Incoming) -> Reply {
+    let (id, is_new) = state.session_id(incoming);
+    let (_, store) = state.snapshot(&id);
+    let who = incoming.query_param("customer").unwrap_or("default");
+    let customer = match store.customer_named(who) {
+        Ok(customer) => customer.map(|customer| customer.id),
+        Err(problem) => return Reply::json(422, &json!({"ok": false, "error": problem})),
+    };
+    state.with_session(&id, |entry| {
+        if entry.session.customer_id != customer {
+            entry.session.customer_id = customer;
+            entry.session.company_location = None;
+        }
+    });
+    let target = super::account::local_path(incoming.query_param("return_to"))
+        .unwrap_or_else(|| "/account".to_string());
+    let reply = Reply::redirect(&target);
+    if is_new {
+        reply.header(
+            "set-cookie",
+            format!("{SESSION_COOKIE}={id}; Path=/; HttpOnly; SameSite=Lax"),
+        )
+    } else {
+        reply
+    }
+}
+
 fn session_json(state: &ServerState, id: &str) -> Json {
     let (session, store) = state.snapshot(id);
+    let customer = session
+        .customer_id
+        .and_then(|customer| store.customer_by_id(customer));
+    let company =
+        customer.and_then(|customer| customer.company.map(|index| &store.companies[index]));
+    let location = customer
+        .and_then(|customer| customer.current_location(session.company_location, &store))
+        .zip(company)
+        .map(|(index, company)| company.locations[index].name.clone());
     json!({
         "id": id,
-        "customer": session.customer_id.and_then(|customer| store.customer_by_id(customer)).map(|customer| customer.email.clone()),
+        "customer": customer.map(|customer| customer.email.clone()),
+        "company": company.map(|company| company.name.clone()),
+        "company_location": location,
         "country": session.country,
         "cart": {
             "note": session.cart_note,
@@ -214,14 +270,34 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
         .clone()
         .unwrap_or_else(|| state.loaded().store.clone());
 
-    let mut session = Session::initial(&store);
-    if let Some(email) = &input.customer {
-        match store.customer_by_email(email) {
-            Some(customer) => session.customer_id = Some(customer.id),
-            None => {
+    let mut session = state.initial_session(&store);
+    if let Some(who) = &input.customer {
+        match store.customer_named(who) {
+            Ok(customer) => {
+                let customer = customer.map(|customer| customer.id);
+                if session.customer_id != customer {
+                    session.customer_id = customer;
+                    session.company_location = None;
+                }
+            }
+            Err(problem) => {
                 diagnostics
-                    .error("unknown_customer", OVERLAY_FILE, "/customer", format!("there is no customer with the email \"{email}\""))
-                    .hint("add the customer to the store data, or to \"data\".\"customers\" in this request");
+                    .error("unknown_customer", OVERLAY_FILE, "/customer", problem)
+                    .hint("add the customer to the store data, or to \"data\".\"customers\" in this request. \"default\" and \"none\" also work");
+            }
+        }
+    }
+    if let Some(name) = &input.company_location {
+        let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
+        match resolve_company_location(&store, customer, name) {
+            Ok(location) => session.company_location = Some(location),
+            Err(problem) => {
+                diagnostics.error(
+                    "unknown_location",
+                    OVERLAY_FILE,
+                    "/company_location",
+                    problem,
+                );
             }
         }
     }
@@ -269,7 +345,10 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
     }
 }
 
-fn dashboard(state: &ServerState) -> Reply {
+fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
+    let (id, _) = state.session_id(incoming);
+    let (session, store) = state.snapshot(&id);
+    let customers = super::account::chooser(&store, session.customer_id, "/__lsf");
     let loaded = state.loaded();
     let diagnostics = &loaded.diagnostics;
     let problems: String = if diagnostics.is_empty() {
@@ -297,14 +376,18 @@ fn dashboard(state: &ServerState) -> Reply {
              <style>body{{font:15px/1.5 system-ui,sans-serif;max-width:56rem;margin:3rem auto;padding:0 1rem;color:#1a1a1a}}\
              code,pre{{font:13px ui-monospace,monospace}}pre{{white-space:pre-wrap;background:#f5f5f5;padding:.75rem;border-radius:6px}}\
              .ok{{color:#0a7a3c}}.bad{{color:#b3261e}}ul{{padding-left:1.2rem}}li{{margin:.15rem 0}}\
-             dt{{font-weight:600;margin-top:.5rem}}dd{{margin:0}}</style></head><body>\
+             dt{{font-weight:600;margin-top:.5rem}}dd{{margin:0}}\
+             .muted{{color:#666}}.badge{{font-size:.75rem;border:1px solid #bbb;border-radius:99px;padding:.05rem .5rem}}\
+             .people{{list-style:none;padding:0}}</style></head><body>\
              <h1>lsf · local storefront</h1>\
              <dl><dt>Theme</dt><dd><code>{}</code></dd><dt>Store data</dt><dd><code>{}</code></dd></dl>\
              <h2>Store data</h2>{problems}\
+             <h2>Customer</h2><p>Choose who this browser is logged in as.</p>{customers}\
              <h2>Pages</h2><ul>{links}</ul>\
              <h2>Control API</h2><ul>\
              <li><code>GET /__lsf/status</code>: this page as JSON</li>\
              <li><code>GET|PUT|DELETE /__lsf/session</code>: read, set or reset the session (cart, customer, per-session data)</li>\
+             <li><code>GET /__lsf/login?customer=&lt;email|default|none&gt;</code>: log this browser in as a customer</li>\
              <li><code>GET /__lsf/schema/store</code>: JSON Schema of the data format</li>\
              <li><code>POST /__lsf/reload</code>: reload the data files</li></ul>\
              </body></html>",

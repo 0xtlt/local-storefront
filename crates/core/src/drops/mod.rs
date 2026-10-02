@@ -6,6 +6,7 @@
 pub mod cart;
 pub mod collection;
 pub mod color;
+pub mod company;
 pub mod content;
 pub mod customer;
 pub mod font;

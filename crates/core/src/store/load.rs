@@ -360,6 +360,12 @@ fn merge_store_file(
             origin: origin(format!("/customers/{index}")),
         });
     }
+    for (index, value) in input.companies.into_iter().enumerate() {
+        merged.companies.push(Sourced {
+            value,
+            origin: origin(format!("/companies/{index}")),
+        });
+    }
     for (index, value) in input.gift_cards.into_iter().enumerate() {
         merged.gift_cards.push(Sourced {
             value,
@@ -484,6 +490,9 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
     upsert!(customers, |customer: &model::CustomerInput| customer
         .email
         .to_lowercase());
+    upsert!(companies, |company: &model::CompanyInput| company
+        .name
+        .to_lowercase());
     upsert!(gift_cards, |card: &model::GiftCardInput| card
         .code
         .to_uppercase());
@@ -598,6 +607,97 @@ mod tests {
         assert_eq!(store.menu("main-menu").expect("menu").levels(), 3);
         assert_eq!(store.customers[0].orders[0].line_items.len(), 2);
         assert_eq!(store.languages.len(), 2);
+        // A B2B customer buys for a company, at every location unless the data says which.
+        let buyer = store
+            .customer_by_email("alex.morgan@example.com")
+            .expect("buyer");
+        let company = &store.companies[buyer.company.expect("company")];
+        assert_eq!(company.name, "Northwind Hotels");
+        assert_eq!(buyer.company_locations, vec![0, 1]);
+        assert_eq!(buyer.current_location(None, &store), Some(0));
+        assert_eq!(
+            buyer.current_location(Some(company.locations[1].id), &store),
+            Some(1)
+        );
+        assert_eq!(store.customers[0].company, None);
+        // The password page has a password.
+        assert_eq!(store.shop.password, "password");
+    }
+
+    fn inline(data: serde_json::Value) -> (crate::store::Store, Diagnostics) {
+        load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&data))
+    }
+
+    #[test]
+    fn customers_are_named_by_email_default_or_none() {
+        let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
+        let email = |who: &str| {
+            store
+                .customer_named(who)
+                .map(|customer| customer.map(|customer| customer.email.as_str()))
+        };
+        assert_eq!(email("none"), Ok(None));
+        assert_eq!(email("default"), Ok(Some("jane.doe@example.com")));
+        assert_eq!(
+            email("ALEX.MORGAN@example.com"),
+            Ok(Some("alex.morgan@example.com"))
+        );
+        assert!(email("nobody@example.com").is_err());
+    }
+
+    #[test]
+    fn a_store_without_customers_has_a_default_one() {
+        let directory =
+            std::env::temp_dir().join(format!("lsf-no-customers-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{"products": [{"title": "Thing", "price": 100}], "session": {"customer": "default"}}"#,
+        )
+        .expect("store");
+        let (store, diagnostics) = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        assert_eq!(store.customers.len(), 1);
+        assert_eq!(
+            store.customers[0].email,
+            crate::store::build::DEFAULT_CUSTOMER_EMAIL
+        );
+        assert_eq!(
+            crate::Session::initial(&store).customer_id,
+            Some(store.customers[0].id)
+        );
+    }
+
+    #[test]
+    fn company_mistakes_are_explained() {
+        let (_, diagnostics) = inline(serde_json::json!({
+            "companies": [{"name": "Empty Co", "locations": []}],
+            "customers": [
+                {"email": "a@example.com", "company": "Northwind Hotel"},
+                {"email": "b@example.com", "company": "Northwind Hotels", "company_locations": ["Northwind Portlnd"]},
+                {"email": "c@example.com", "company_locations": ["Anywhere"]}
+            ],
+            "session": {"customer": "jane.doe@example.com", "company_location": "Northwind Portland"}
+        }));
+        let report = diagnostics.to_string();
+        for expected in [
+            "the company \"Empty Co\" has no location",
+            "there is no company named \"Northwind Hotel\"",
+            "did you mean \"Northwind Hotels\"?",
+            "has no location named \"Northwind Portlnd\"",
+            "did you mean \"Northwind Portland\"?",
+            "lists company locations but names no company",
+            "jane.doe@example.com does not buy for a company",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
     }
 
     #[test]

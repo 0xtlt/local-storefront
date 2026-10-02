@@ -4,6 +4,7 @@ use std::any::Any;
 
 use lsf_liquid::{Object, Value};
 
+use super::company::{CompanyDrop, CompanyLocationDrop, available_locations};
 use super::metafield::MetafieldsDrop;
 use super::product::{ProductDrop, VariantDrop, product_url};
 use super::shop::AddressDrop;
@@ -27,6 +28,14 @@ impl CustomerDrop {
 
     fn customer(&self) -> Option<&Customer> {
         self.site.store.customer_by_id(self.id)
+    }
+
+    /// The company and the location the customer buys for, as indexes.
+    fn current_location(&self) -> Option<(usize, usize)> {
+        let customer = self.customer()?;
+        let location =
+            customer.current_location(self.site.session.company_location, &self.site.store)?;
+        Some((customer.company?, location))
     }
 }
 
@@ -257,10 +266,22 @@ impl Object for CustomerDrop {
                     .sum(),
             ),
             "metafields" => MetafieldsDrop::value(site, &customer.metafields),
-            "b2b?" | "has_avatar?" => Value::Bool(false),
-            "payment_methods" | "company_available_locations" => Value::array(Vec::new()),
-            "company_available_locations_count" => Value::Int(0),
-            "current_location" | "current_company" | "store_credit_account" => Value::Nil,
+            "b2b?" => Value::Bool(self.current_location().is_some()),
+            "current_company" => self.current_location().map_or(Value::Nil, |(company, _)| {
+                CompanyDrop::value(site, self.id, company)
+            }),
+            "current_location" => self
+                .current_location()
+                .map_or(Value::Nil, |(company, location)| {
+                    CompanyLocationDrop::value(site, self.id, company, location)
+                }),
+            "company_available_locations" => self.memo.get("company_available_locations", || {
+                available_locations(site, customer)
+            }),
+            "company_available_locations_count" => Value::from(customer.company_locations.len()),
+            "has_avatar?" => Value::Bool(false),
+            "payment_methods" => Value::array(Vec::new()),
+            "store_credit_account" => Value::Nil,
             _ => return None,
         })
     }

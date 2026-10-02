@@ -21,6 +21,7 @@ fn server() -> ServerState {
             watch: false,
             quiet: true,
             throttle: Default::default(),
+            customer: None,
         },
     );
     assert!(diagnostics.is_empty(), "{diagnostics}");
@@ -399,7 +400,8 @@ fn customers_log_in_and_out() {
         json!({"customer": {"email": "jane.doe@example.com", "password": "nope"}}),
         "login",
     );
-    assert_eq!(header(&wrong, "location"), Some("/account/login"));
+    // The fixture theme has no login page: accounts are hosted, and `/account` is the way in.
+    assert_eq!(header(&wrong, "location"), Some("/account"));
     assert_eq!(
         body_json(&get(&state, "/__lsf/session", "login"))["customer"],
         Json::Null
@@ -666,6 +668,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
             watch: false,
             quiet: true,
             throttle: Throttle::parse([rules]).expect("valid rules"),
+            customer: None,
         },
     );
     state
@@ -746,4 +749,320 @@ fn a_session_can_have_a_throttle_of_its_own() {
             .unwrap()
             .contains("Did you mean \"cart-add\"?")
     );
+}
+
+/// The session as the control API reports it.
+fn session_of(state: &ServerState, session: &str) -> Json {
+    body_json(&get(state, "/__lsf/session", session))
+}
+
+#[test]
+fn hosted_accounts_have_a_page_to_choose_the_customer() {
+    let state = server();
+
+    // Logged out, the page lists who the visitor can become.
+    let page = get(&state, "/account", "hosted");
+    assert_eq!(page.status, 200);
+    let html = text(&page);
+    assert!(
+        html.contains("data-lsf-account data-lsf-customer=\"\""),
+        "{html}"
+    );
+    assert!(html.contains("data-lsf-login=\"none\""));
+    assert!(html.contains(
+        "href=\"/__lsf/login?customer=jane.doe%40example.com&amp;return_to=%2Faccount\""
+    ));
+    assert!(html.contains("B2B · Northwind Hotels"));
+
+    // Every account URL a theme links to leads there, and keeps where to come back to.
+    for path in [
+        "/account/login",
+        "/account/register",
+        "/account/addresses",
+        "/account/orders/1",
+        "/account/profile",
+        "/customer_authentication/login",
+        "/customer_identity/login",
+    ] {
+        let reply = get(&state, path, "hosted");
+        assert_eq!(reply.status, 302, "{path}");
+        assert_eq!(header(&reply, "location"), Some("/account"), "{path}");
+    }
+    let reply = get(&state, "/account/login?return_to=/cart", "hosted");
+    assert_eq!(
+        header(&reply, "location"),
+        Some("/account?return_to=%2Fcart")
+    );
+    assert!(
+        text(&get(&state, "/account?return_to=/cart", "hosted"))
+            .contains("customer=none&amp;return_to=%2Fcart")
+    );
+
+    // The links log in without a password: as the first customer, as anyone, as nobody.
+    let reply = get(&state, "/__lsf/login?customer=default", "hosted");
+    assert_eq!(header(&reply, "location"), Some("/account"));
+    assert_eq!(
+        session_of(&state, "hosted")["customer"],
+        "jane.doe@example.com"
+    );
+    let html = text(&get(&state, "/account", "hosted"));
+    assert!(html.contains("data-lsf-customer=\"jane.doe@example.com\""));
+    assert!(html.contains("<h2>Jane Doe</h2>"));
+    assert!(html.contains("<h3>Orders</h3>"));
+
+    let reply = get(
+        &state,
+        "/__lsf/login?customer=new.customer@example.com&return_to=/cart",
+        "hosted",
+    );
+    assert_eq!(header(&reply, "location"), Some("/cart"));
+    assert_eq!(
+        session_of(&state, "hosted")["customer"],
+        "new.customer@example.com"
+    );
+    // A link cannot send the visitor to another site.
+    let reply = get(
+        &state,
+        "/__lsf/login?customer=none&return_to=//evil.example",
+        "hosted",
+    );
+    assert_eq!(header(&reply, "location"), Some("/account"));
+    assert_eq!(session_of(&state, "hosted")["customer"], Json::Null);
+
+    let unknown = get(&state, "/__lsf/login?customer=nobody@example.com", "hosted");
+    assert_eq!(unknown.status, 422);
+}
+
+#[test]
+fn legacy_accounts_use_the_theme() {
+    let state = server();
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
+        "legacy",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let reply = get(&state, "/account", "legacy");
+    assert_eq!(header(&reply, "location"), Some("/account/login"));
+    let reply = get(&state, "/customer_authentication/login", "legacy");
+    assert_eq!(header(&reply, "location"), Some("/account/login"));
+    assert_eq!(
+        body_json(&get(&state, "/__lsf/status", "legacy"))["customer_accounts"],
+        "new"
+    );
+}
+
+#[test]
+fn b2b_customers_buy_for_a_company_location() {
+    let state = server();
+    let section = |session: &str| text(&get(&state, "/?section_id=b2b", session));
+
+    // A customer without a company is not a B2B customer.
+    get(&state, "/__lsf/login?customer=default", "b2b");
+    assert!(section("b2b").contains("Jane is not a B2B customer"));
+
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "alex.morgan@example.com"}),
+        "b2b",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let session = session_of(&state, "b2b");
+    assert_eq!(session["company"], "Northwind Hotels");
+    assert_eq!(session["company_location"], "Northwind Portland");
+
+    let html = section("b2b");
+    assert!(
+        html.contains("<p class=\"company\">Northwind Hotels (NW-001)</p>"),
+        "{html}"
+    );
+    assert!(html.contains("<p class=\"terms\">Net 30</p>"));
+    assert!(html.contains("<p class=\"location\">Northwind Portland, Portland, United States</p>"));
+    assert!(html.contains("Loading dock B"));
+    assert!(html.contains("<p class=\"count\">2 of 2</p>"));
+    assert!(html.contains(
+        "<li class=\"current\"><a href=\"http://shop.test/company_location/update?location_id="
+    ));
+
+    // The location is chosen with the URL Shopify gives each location.
+    let seattle = state.loaded().store.companies[0].locations[1].id;
+    let reply = get(
+        &state,
+        &format!("/company_location/update?location_id={seattle}&return_to=/cart"),
+        "b2b",
+    );
+    assert_eq!(header(&reply, "location"), Some("/cart"));
+    assert_eq!(
+        session_of(&state, "b2b")["company_location"],
+        "Northwind Seattle"
+    );
+    assert!(
+        section("b2b")
+            .contains("<p class=\"location\">Northwind Seattle, Seattle, United States</p>")
+    );
+    // A location the customer has no access to changes nothing.
+    get(&state, "/company_location/update?location_id=1", "b2b");
+    assert_eq!(
+        session_of(&state, "b2b")["company_location"],
+        "Northwind Seattle"
+    );
+
+    // A test can start at a location.
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "alex.morgan@example.com", "company_location": "Northwind Seattle"}),
+        "b2b-2",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    assert_eq!(
+        session_of(&state, "b2b-2")["company_location"],
+        "Northwind Seattle"
+    );
+    let wrong = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "alex.morgan@example.com", "company_location": "Northwind Boston"}),
+        "b2b-2",
+    ));
+    assert_eq!(wrong.status, 422);
+    assert!(
+        text(&wrong).contains("Northwind Portland, Northwind Seattle"),
+        "{}",
+        text(&wrong)
+    );
+
+    // The account page shows the company and lets the customer change location.
+    let html = text(&get(&state, "/account", "b2b"));
+    assert!(
+        html.contains("<p data-lsf-company>Northwind Hotels</p>"),
+        "{html}"
+    );
+    assert!(html.contains("data-lsf-location=\"Northwind Seattle\" data-lsf-current-location"));
+}
+
+#[test]
+fn the_server_can_start_logged_in() {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            throttle: Default::default(),
+            customer: Some("alex.morgan@example.com".to_string()),
+        },
+    );
+    assert_eq!(
+        session_of(&state, "start")["customer"],
+        "alex.morgan@example.com"
+    );
+    // A test still decides for itself.
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "none"}),
+        "start",
+    ));
+    assert_eq!(session_of(&state, "start")["customer"], Json::Null);
+}
+
+#[test]
+fn the_password_page_works_and_locks_nothing() {
+    let state = server();
+
+    // Nothing leads to the page: the storefront is always open.
+    assert_eq!(get(&state, "/", "open").status, 200);
+    let page = get(&state, "/password", "open");
+    assert_eq!(page.status, 200);
+    assert_eq!(header(&page, "x-lsf-template"), Some("password"));
+    assert!(text(&page).contains("<body class=\"password\">"));
+    assert!(text(&page).contains("action=\"/password\""));
+
+    // A wrong password stays on the page, with an error shown once.
+    let wrong = post(&state, "/password", json!({"password": "nope"}), "open");
+    assert_eq!(wrong.status, 302);
+    assert_eq!(header(&wrong, "location"), Some("/password"));
+    assert!(
+        text(&get(&state, "/password", "open")).contains("<p class=\"error\">Password incorrect")
+    );
+    assert!(!text(&get(&state, "/password", "open")).contains("class=\"error\""));
+    let wrong = post(&state, "/fr/password", json!({"password": "nope"}), "open");
+    assert_eq!(header(&wrong, "location"), Some("/fr/password"));
+
+    // "password" is the password until the data says otherwise.
+    let right = post(&state, "/password", json!({"password": "password"}), "open");
+    assert_eq!(header(&right, "location"), Some("/"));
+    assert_eq!(get(&state, "/password", "open").status, 200);
+
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"shop": {"password": "sesame", "password_message": "Opening soon"}}}),
+        "custom",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    assert_eq!(get(&state, "/", "custom").status, 200);
+    assert!(
+        text(&get(&state, "/password", "custom")).contains("<p class=\"message\">Opening soon</p>")
+    );
+    let wrong = post(
+        &state,
+        "/password",
+        json!({"password": "password"}),
+        "custom",
+    );
+    assert_eq!(header(&wrong, "location"), Some("/password"));
+    let right = post(&state, "/password", json!({"password": "sesame"}), "custom");
+    assert_eq!(header(&right, "location"), Some("/"));
+}
+
+#[test]
+fn robots_and_sitemaps_are_served() {
+    let state = server();
+    let robots = get(&state, "/robots.txt", "seo");
+    assert_eq!(robots.status, 200);
+    assert_eq!(
+        header(&robots, "content-type"),
+        Some("text/plain; charset=utf-8")
+    );
+    let body = text(&robots);
+    assert!(
+        body.starts_with("# we use Shopify as our ecommerce platform"),
+        "{body}"
+    );
+    assert!(
+        body.contains("User-agent: *\nDisallow: /a/downloads/-/*\n"),
+        "{body}"
+    );
+    assert!(body.contains("Disallow: /cart\n"));
+    assert!(body.contains("Sitemap: http://shop.test/sitemap.xml\n"));
+    assert!(body.contains("User-agent: AhrefsBot\nCrawl-delay: 10\n"));
+
+    let index = get(&state, "/sitemap.xml", "seo");
+    assert_eq!(
+        header(&index, "content-type"),
+        Some("application/xml; charset=utf-8")
+    );
+    let body = text(&index);
+    for kind in ["products", "pages", "collections", "blogs"] {
+        assert!(
+            body.contains(&format!("<loc>http://shop.test/sitemap_{kind}_1.xml")),
+            "{kind}: {body}"
+        );
+    }
+    let products = text(&get(&state, "/sitemap_products_1.xml", "seo"));
+    assert!(
+        products.contains("<loc>http://shop.test/products/ceramic-mug</loc>"),
+        "{products}"
+    );
+    assert!(products.contains("<image:image>"));
+    assert!(
+        text(&get(&state, "/sitemap_pages_1.xml", "seo")).contains("<loc>http://shop.test/pages/")
+    );
+    assert_eq!(get(&state, "/sitemap_orders_1.xml", "seo").status, 404);
 }

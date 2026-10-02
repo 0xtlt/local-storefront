@@ -114,8 +114,8 @@ pub struct Session {
     /// ISO code of the selected country.
     pub country: Option<String>,
     pub form_result: Option<FormResult>,
-    /// Whether the visitor entered the storefront password.
-    pub password_unlocked: bool,
+    /// For a B2B customer: the id of the company location they are buying for.
+    pub company_location: Option<u64>,
     /// The token of the visitor's cart, as `/cart.js` reports it and as the `cart` cookie
     /// holds it. Empty outside a server, where carts take a token derived from the host.
     pub cart_token: String,
@@ -139,13 +139,28 @@ impl Session {
             customer_id: defaults
                 .customer_email
                 .as_deref()
-                .and_then(|email| store.customer_by_email(email))
+                .and_then(|who| store.customer_named(who).ok().flatten())
                 .map(|customer| customer.id),
             country: defaults.country.clone(),
             form_result: None,
-            password_unlocked: false,
+            company_location: defaults.company_location,
             cart_token: String::new(),
         }
+    }
+}
+
+/// Whether customer accounts are hosted by Shopify rather than rendered by the theme: what
+/// the store data says, and otherwise whether the theme has a login template.
+pub fn hosted_accounts(theme: &Theme, store: &Store) -> bool {
+    use crate::store::model::CustomerAccounts;
+    match store.shop.customer_accounts {
+        Some(CustomerAccounts::New) => true,
+        Some(CustomerAccounts::Legacy) => false,
+        None => !["json", "liquid"].iter().any(|extension| {
+            theme
+                .files()
+                .exists(&format!("templates/customers/login.{extension}"))
+        }),
     }
 }
 
@@ -222,5 +237,10 @@ impl Site {
         self.session
             .customer_id
             .and_then(|id| self.store.customer_by_id(id))
+    }
+
+    /// Whether customer accounts are hosted by Shopify rather than rendered by the theme.
+    pub fn hosted_accounts(&self) -> bool {
+        hosted_accounts(&self.theme, &self.store)
     }
 }

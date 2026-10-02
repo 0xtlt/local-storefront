@@ -19,6 +19,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `blogs` | array of [Blog](#blog) | Blogs with their articles. They can also live one per file in `blogs/`. |
 | `menus` | map of [Menu](#menu) | Navigation menus by handle, e.g. `main-menu` and `footer`. |
 | `customers` | array of [Customer](#customer) | Customers. They can also live one per file in `customers/`. |
+| `companies` | array of [Company](#company) | Companies that buy from the store (B2B). Customers join one with their `company`. |
 | `gift_cards` | array of [GiftCard](#giftcard) | Issued gift cards, each with its own page. |
 | `metaobjects` | map of array of [Metaobject](#metaobject) | Metaobject entries by type. |
 | `localization` | [Localization](#localization) | The countries and languages of the store. At most one data file may define it. |
@@ -49,9 +50,10 @@ General store information (the `shop` object). Every field has a sensible defaul
 | `enabled_payment_types` | array of string | Payment icons to show, e.g. `["visa", "master", "american_express", "paypal"]`. |
 | `customer_accounts_enabled` | boolean | Whether customer accounts exist at all. Defaults to `true`. |
 | `customer_accounts_optional` | boolean | Whether checking out as a guest is possible. Defaults to `true`. |
+| `customer_accounts` | [CustomerAccounts](#customeraccounts) | Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and `/account` is a page of lsf where you choose who is logged in. `legacy`: the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has those templates, and to `new` otherwise. |
 | `taxes_included` | boolean | Whether prices include taxes. Defaults to `false`. |
 | `password_message` | string | The message shown on the password page. |
-| `password` | string | When set, the storefront is locked and every page shows the password page until this password is entered. |
+| `password` | string | The password the `/password` page accepts. Defaults to `"password"`. The storefront is never locked: the page is there to be worked on, and nothing leads to it. |
 | `brand` | [Brand](#brand) |  |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
@@ -95,6 +97,15 @@ A store policy (`shop.refund_policy`, `/policies/refund-policy`).
 |---|---|---|
 | `title` | string | Defaults to the standard title of the policy. |
 | `body` | string | **Required.** HTML body. |
+
+## CustomerAccounts
+
+The customer accounts of a store.
+
+One of:
+
+- `"new"`: Accounts hosted by Shopify, outside the theme.
+- `"legacy"`: Accounts rendered by the theme's `templates/customers`.
 
 ## Brand
 
@@ -509,6 +520,8 @@ A customer. Sessions log in as a customer by email (see `session.customer`).
 | `addresses` | array of [Address](#address) | The first address is the default one (`customer.default_address`). |
 | `orders` | array of [Order](#order) |  |
 | `password` | string | The password accepted by the local login form. Any password works when omitted. |
+| `company` | string | The name of a company in `companies`: the customer buys for it (B2B). |
+| `company_locations` | array of string | The names of the locations of the company the customer can buy for. Defaults to all of them. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Order
@@ -548,6 +561,32 @@ One of:
 
 - integer
 - string
+
+## Company
+
+A company that buys from the store (B2B). A customer whose `company` names it is a B2B
+customer: `customer.b2b?` is true, and `customer.current_company` is this company.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | integer |  |
+| `name` | string | **Required.** The name customers refer to the company by. |
+| `external_id` | string | The id the merchant gives the company in its own systems. |
+| `locations` | array of [CompanyLocation](#companylocation) | The places the company buys for. The first one is selected when a customer logs in. |
+| `metafields` | map of map of [Metafield](#metafield) |  |
+
+## CompanyLocation
+
+A place a company buys for (`customer.current_location`): a branch, a shop, a warehouse.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | integer |  |
+| `name` | string | **Required.** |
+| `external_id` | string | The id the merchant gives the location in its own systems. |
+| `shipping_address` | [Address](#address) | Where orders of this location ship to. |
+| `tax_registration_id` | string | The tax number of the location, e.g. a VAT number. |
+| `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## GiftCard
 
@@ -642,9 +681,10 @@ control API (`PUT /__lsf/session`).
 | Field | Type | Description |
 |---|---|---|
 | `$schema` | string | Lets editors validate and autocomplete the file, e.g. `"../schema/session.schema.json"`. |
-| `customer` | string | Email of the logged-in customer. Nobody is logged in when omitted. |
+| `customer` | string | Who is logged in: the email of a customer, `"default"` for the first customer of the data, or `"none"`. Nobody is logged in when omitted. |
 | `cart` | [Cart](#cart) | The content of the cart. Empty when omitted. |
 | `country` | string | ISO code of the selected country. Defaults to the first country. |
+| `company_location` | string | For a B2B customer: the name of the company location they buy for. Defaults to the first one they have access to. |
 
 ## Cart
 

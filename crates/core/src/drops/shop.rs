@@ -138,9 +138,9 @@ impl Object for AddressDrop {
     }
 }
 
-struct CountryName {
-    name: String,
-    iso_code: String,
+pub(crate) struct CountryName {
+    pub name: String,
+    pub iso_code: String,
 }
 
 impl Object for CountryName {

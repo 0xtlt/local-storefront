@@ -1,5 +1,6 @@
 //! The local storefront server.
 
+mod account;
 mod cart;
 mod cdn;
 mod control;
@@ -53,6 +54,9 @@ pub struct ServeOptions {
     pub quiet: bool,
     /// How long each kind of request is held before it is answered.
     pub throttle: throttle::Throttle,
+    /// Who new sessions are logged in as, instead of what the store data says: an email,
+    /// `default` or `none`.
+    pub customer: Option<String>,
 }
 
 /// The store as last loaded from disk.
@@ -296,6 +300,22 @@ impl ServerState {
         }
     }
 
+    /// The state a new session starts with: what the store data says, with the customer of
+    /// `--customer` when there is one.
+    pub fn initial_session(&self, store: &Store) -> Session {
+        let mut session = Session::initial(store);
+        if let Some(who) = &self.options.customer
+            && let Ok(customer) = store.customer_named(who)
+        {
+            let id = customer.map(|customer| customer.id);
+            if session.customer_id != id {
+                session.customer_id = id;
+                session.company_location = None;
+            }
+        }
+        session
+    }
+
     /// Reads the session, creating it with the store's defaults when it is new.
     pub fn with_session<T>(&self, id: &str, action: impl FnOnce(&mut SessionEntry) -> T) -> T {
         let mut sessions = self.sessions.lock().expect("sessions poisoned");
@@ -304,7 +324,7 @@ impl ServerState {
             .or_insert_with(|| SessionEntry {
                 session: Session {
                     cart_token: cart_token_of(id),
-                    ..Session::initial(&self.loaded().store)
+                    ..self.initial_session(&self.loaded().store)
                 },
                 store: None,
                 throttle: None,

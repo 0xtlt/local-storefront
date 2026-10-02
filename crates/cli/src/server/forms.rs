@@ -166,8 +166,8 @@ pub fn localization(visit: &Visit<'_>) -> Reply {
 pub fn password(visit: &Visit<'_>) -> Reply {
     let params = visit.incoming.all_params();
     let given = super::params::text(&params, "password").unwrap_or_default();
-    if visit.store.shop.password.as_deref() == Some(given.as_str()) {
-        visit.update_session(|session| session.password_unlocked = true);
+    // The storefront is never locked: the right password only leads to the home page.
+    if visit.store.shop.password == given {
         return Reply::redirect(&visit.localized("/"));
     }
     flash(
@@ -220,7 +220,7 @@ pub fn login(visit: &Visit<'_>) -> Reply {
                     values: kept,
                 },
             );
-            Reply::redirect(&visit.localized("/account/login"))
+            super::account::entry(visit)
         }
     }
 }

@@ -205,6 +205,7 @@ impl Globals {
                 }
                 Value::object(super::section::ClosestDrop(Arc::new(closest)))
             }
+            "robots" => super::seo::robots_value(site),
             "search" => search_value(site),
             "predictive_search" => predictive_search_value(site),
             "recommendations" => recommendations_value(site),

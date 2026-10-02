@@ -51,9 +51,9 @@ store is plain JSON:
 }
 ```
 
-You can describe products, collections, pages, blogs, menus, customers, gift cards, metafields
-and metaobjects. Images do not have to exist: a missing image becomes a placeholder of the
-right size.
+You can describe products, collections, pages, blogs, menus, customers, companies (B2B), gift
+cards, metafields and metaobjects. Images do not have to exist: a missing image becomes a
+placeholder of the right size.
 
 After editing, check your data:
 
@@ -121,12 +121,62 @@ await page.goto('/products/sold-out-thing');
 
 More in the [testing guide](docs/testing.md).
 
+## Customers and B2B
+
+Open <http://127.0.0.1:9292/account>. This page lists the customers of your data. Click one
+to be logged in as them, or "Nobody" to be logged out. Every account link of your theme leads
+to this page, because Shopify hosts customer accounts outside the theme.
+
+To start logged in:
+
+```bash
+lsf serve --customer default
+```
+
+`default` is the first customer of your data. You can also give an email, or `none`.
+
+A B2B customer is a customer with a company:
+
+```json
+{
+  "companies": [
+    {
+      "name": "Northwind Hotels",
+      "metafields": { "custom": { "payment_terms": "Net 30" } },
+      "locations": [{ "name": "Portland" }, { "name": "Seattle" }]
+    }
+  ],
+  "customers": [
+    { "email": "alex.morgan@example.com", "first_name": "Alex", "company": "Northwind Hotels" }
+  ]
+}
+```
+
+Logged in as Alex, `customer.b2b?` is true, and `customer.current_company` and
+`customer.current_location` are filled. The account page lets you change location. Company
+prices (catalogs) are not simulated.
+
+A theme with `templates/customers` (legacy accounts) keeps its own login page. More in the
+[data guide](docs/data-format.md#logging-in).
+
+## The password page
+
+Open <http://127.0.0.1:9292/password> to see your password page. The password is `password`.
+A wrong password stays on the page with the error. To change the password:
+
+```json
+{ "shop": { "password": "sesame" } }
+```
+
+The storefront is never locked: nothing redirects to that page.
+
 ## What you get
 
 - **The same HTML as Shopify.** The Liquid engine is checked against Shopify's own. Shopify's
   Horizon and Dawn themes render every page without an error.
 - **A working storefront.** Cart, section rendering, predictive search, recommendations,
-  collection filters, forms, languages, customer login.
+  collection filters, forms, languages, customer accounts, B2B companies, the password page,
+  `robots.txt` and sitemaps.
 - **Images served locally.** `image_url` and `image_tag` point to your machine, which resizes
   and crops like Shopify's CDN.
 - **Shopify's scripts.** Pages have the `Shopify` JavaScript object, `Shopify.actions`,
@@ -161,6 +211,7 @@ Every command accepts `--theme <dir>` (default: the current folder) and `--data 
 | `--static` | Reads the files once. The fastest mode, for tests. |
 | `--strict` | Refuses to start if the data has errors. |
 | `--quiet`, `-q` | Does not log requests. |
+| `--customer <email>` | Starts every visitor logged in as this customer. Also `default` (the first customer) or `none`. |
 | `--throttle <rules>` | Answers late, to test loading states. See below. |
 
 ## Throttling
@@ -250,7 +301,8 @@ Tests talk to the server through `/__lsf`.
 
 | Request | What it does |
 |---|---|
-| `PUT /__lsf/session` | Sets the session: `customer`, `cart`, `country`, `data`, `throttle`. |
+| `PUT /__lsf/session` | Sets the session: `customer`, `company_location`, `cart`, `country`, `data`, `throttle`. |
+| `GET /__lsf/login?customer=<email>` | Logs the browser in as a customer, then goes to `return_to` (default `/account`). Also `default` or `none`. A link a person can click. |
 | `GET /__lsf/session` | Shows the session. |
 | `DELETE /__lsf/session` | Resets the session. |
 | `GET /__lsf/status` | Shows the theme, the data, its errors and every page. |
@@ -293,8 +345,8 @@ cargo install --path crates/cli
 
 ## What it does not do
 
-`lsf` renders themes. It does not simulate checkout, apps, discounts, selling plans, B2B, taxes
-or shipping rates. Customers can log in, but not register. The full list is in
+`lsf` renders themes. It does not simulate checkout, apps, discounts, selling plans, B2B
+catalogs, taxes or shipping rates. Customers can log in, but not register. The full list is in
 [compatibility](docs/compatibility.md#known-differences).
 
 ## More documentation

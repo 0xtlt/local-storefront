@@ -62,6 +62,7 @@ downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference i
 | `mod` | State (the loaded store, sessions, caches), the request/response types handlers work with, reloading when files change. Handlers are plain functions from a request to a reply, so they are tested without a network (`tests.rs`). |
 | `storefront` | Pages, the Section Rendering API, product, search and recommendation JSON. |
 | `cart`, `forms` | The Cart Ajax API and form submissions. |
+| `account` | The page that stands in for the customer accounts Shopify hosts, and the B2B location switch. |
 | `cdn` | Theme assets, files, image transformations, bundles, fonts. |
 | `control` | The `/__lsf` API. |
 

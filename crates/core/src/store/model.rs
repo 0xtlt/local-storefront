@@ -164,6 +164,16 @@ pub struct MediaDetail {
     pub aspect_ratio: Option<f64>,
 }
 
+/// The customer accounts of a store.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomerAccounts {
+    /// Accounts hosted by Shopify, outside the theme.
+    New,
+    /// Accounts rendered by the theme's `templates/customers`.
+    Legacy,
+}
+
 /// The kind of a piece of media that is not an image.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -849,6 +859,52 @@ pub struct CustomerInput {
     /// The password accepted by the local login form. Any password works when omitted.
     #[serde(default)]
     pub password: Option<String>,
+    /// The name of a company in `companies`: the customer buys for it (B2B).
+    #[serde(default)]
+    pub company: Option<String>,
+    /// The names of the locations of the company the customer can buy for. Defaults to all
+    /// of them.
+    #[serde(default)]
+    pub company_locations: Vec<String>,
+    #[serde(default)]
+    pub metafields: Metafields,
+}
+
+/// A place a company buys for (`customer.current_location`): a branch, a shop, a warehouse.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyLocationInput {
+    #[serde(default)]
+    pub id: Option<u64>,
+    pub name: String,
+    /// The id the merchant gives the location in its own systems.
+    #[serde(default)]
+    pub external_id: Option<String>,
+    /// Where orders of this location ship to.
+    #[serde(default)]
+    pub shipping_address: Option<AddressInput>,
+    /// The tax number of the location, e.g. a VAT number.
+    #[serde(default)]
+    pub tax_registration_id: Option<String>,
+    #[serde(default)]
+    pub metafields: Metafields,
+}
+
+/// A company that buys from the store (B2B). A customer whose `company` names it is a B2B
+/// customer: `customer.b2b?` is true, and `customer.current_company` is this company.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyInput {
+    #[serde(default)]
+    pub id: Option<u64>,
+    /// The name customers refer to the company by.
+    pub name: String,
+    /// The id the merchant gives the company in its own systems.
+    #[serde(default)]
+    pub external_id: Option<String>,
+    /// The places the company buys for. The first one is selected when a customer logs in.
+    #[serde(default)]
+    pub locations: Vec<CompanyLocationInput>,
     #[serde(default)]
     pub metafields: Metafields,
 }
@@ -948,14 +1004,20 @@ pub struct ShopInput {
     /// Whether checking out as a guest is possible. Defaults to `true`.
     #[serde(default)]
     pub customer_accounts_optional: Option<bool>,
+    /// Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and
+    /// `/account` is a page of lsf where you choose who is logged in. `legacy`: the theme's
+    /// `templates/customers` are rendered. Defaults to `legacy` when the theme has those
+    /// templates, and to `new` otherwise.
+    #[serde(default)]
+    pub customer_accounts: Option<CustomerAccounts>,
     /// Whether prices include taxes. Defaults to `false`.
     #[serde(default)]
     pub taxes_included: bool,
     /// The message shown on the password page.
     #[serde(default)]
     pub password_message: Option<String>,
-    /// When set, the storefront is locked and every page shows the password page until this
-    /// password is entered.
+    /// The password the `/password` page accepts. Defaults to `"password"`. The storefront is
+    /// never locked: the page is there to be worked on, and nothing leads to it.
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
@@ -1080,7 +1142,8 @@ pub struct SessionInput {
     /// Lets editors validate and autocomplete the file, e.g. `"../schema/session.schema.json"`.
     #[serde(default, rename = "$schema", skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    /// Email of the logged-in customer. Nobody is logged in when omitted.
+    /// Who is logged in: the email of a customer, `"default"` for the first customer of the
+    /// data, or `"none"`. Nobody is logged in when omitted.
     #[serde(default)]
     pub customer: Option<String>,
     /// The content of the cart. Empty when omitted.
@@ -1089,6 +1152,10 @@ pub struct SessionInput {
     /// ISO code of the selected country. Defaults to the first country.
     #[serde(default)]
     pub country: Option<String>,
+    /// For a B2B customer: the name of the company location they buy for. Defaults to the
+    /// first one they have access to.
+    #[serde(default)]
+    pub company_location: Option<String>,
 }
 
 /// Who a gift card was sent to.
@@ -1176,6 +1243,9 @@ pub struct StoreInput {
     /// Customers. They can also live one per file in `customers/`.
     #[serde(default)]
     pub customers: Vec<CustomerInput>,
+    /// Companies that buy from the store (B2B). Customers join one with their `company`.
+    #[serde(default)]
+    pub companies: Vec<CompanyInput>,
     /// Issued gift cards, each with its own page.
     #[serde(default)]
     pub gift_cards: Vec<GiftCardInput>,

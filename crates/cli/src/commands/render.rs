@@ -69,7 +69,13 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
         None => Target::Page,
     };
     let session = Session::initial(&store);
-    let rendered = app.renderer.render(store, request, session, &target);
+    // `/robots.txt` is a template too, with rules of its own when the theme has none.
+    let rendered = if request.path == "/robots.txt" {
+        app.renderer
+            .render_robots(&app.renderer.site(store, request, session))
+    } else {
+        app.renderer.render(store, request, session, &target)
+    };
     println!("{}", rendered.body);
 
     let mut seen = Vec::new();

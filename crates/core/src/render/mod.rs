@@ -5,6 +5,7 @@ pub mod page;
 pub mod platform;
 pub mod routes;
 pub mod section;
+pub mod seo;
 pub mod settings;
 pub mod state;
 
@@ -464,6 +465,27 @@ impl Renderer {
         }
         let output = template.render(&mut inner);
         Ok((output, ctx.errors()))
+    }
+
+    /// Renders `/robots.txt`: `templates/robots.txt.liquid` when the theme has one, Shopify's
+    /// default otherwise. Either way it is plain text, without a layout.
+    pub fn render_robots(&self, site: &Arc<Site>) -> Rendered {
+        let page = Page::new("robots.txt", Resource::Index);
+        let (mut ctx, _, _) = self.context(site, &page);
+        let body = match self.theme.liquid("templates/robots.txt.liquid") {
+            Ok(Some(file)) => file.template.render(&mut ctx),
+            Ok(None) => seo::default_robots(site),
+            Err(error) => error.to_string(),
+        };
+        Rendered {
+            status: 200,
+            content_type: "text/plain; charset=utf-8",
+            body,
+            preloads: Vec::new(),
+            errors: ctx.errors(),
+            warnings: ctx.warnings(),
+            template: page.template.full(),
+        }
     }
 
     /// Renders a `.liquid` asset (`assets/theme.css.liquid`), which can read `settings`.

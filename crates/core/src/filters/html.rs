@@ -53,19 +53,39 @@ fn preload_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value>
     )))
 }
 
-/// A neutral placeholder illustration. Shopify draws themed illustrations (a product, a
-/// lifestyle scene, ...); locally a simple shape of the same proportions stands in.
-fn placeholder_svg_tag(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
-    let name = input.to_str();
-    let class = args
-        .get(0)
-        .map(|class| format!(" class=\"{}\"", escape_html(&class.to_str())))
-        .unwrap_or_default();
-    let wide = name.starts_with("hero")
-        || name.starts_with("lifestyle")
-        || name.starts_with("blog")
-        || name == "image";
-    let (view_box, shapes) = if wide {
+/// Shopify's own illustrations, for the placeholder names whose artwork is published under
+/// a free license (see `data/NOTICE.md`). Each file is the complete `<svg>` element.
+const ILLUSTRATIONS: [(&str, &str); 3] = [
+    ("image", include_str!("../../data/placeholders/image.svg")),
+    (
+        "collection-2",
+        include_str!("../../data/placeholders/collection-2.svg"),
+    ),
+    (
+        "lifestyle-2",
+        include_str!("../../data/placeholders/lifestyle-2.svg"),
+    ),
+];
+
+/// What goes between `<svg ...>` and `</svg>`, and the `viewBox`, of a placeholder.
+fn placeholder_artwork(name: &str) -> (&'static str, &'static str) {
+    if let Some((_, svg)) = ILLUSTRATIONS.iter().find(|(known, _)| *known == name) {
+        let view_box = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or("0 0 525.5 525.5");
+        let inner = svg
+            .split_once('>')
+            .and_then(|(_, rest)| rest.trim_end().strip_suffix("</svg>"))
+            .unwrap_or_default();
+        return (view_box, inner);
+    }
+    // The other illustrations are not published: a simple shape of the same proportions
+    // stands in. Lifestyle, hero and blog artwork is wide; the rest is square.
+    let wide =
+        name.starts_with("hero") || name.starts_with("lifestyle") || name.starts_with("blog");
+    if wide {
         (
             "0 0 1052 400",
             "<rect width=\"1052\" height=\"400\" fill=\"#f1f1f1\"/><path d=\"M0 300 260 150l180 110 200-160 412 300H0z\" fill=\"#dcdcdc\"/><circle cx=\"840\" cy=\"100\" r=\"42\" fill=\"#dcdcdc\"/>",
@@ -75,10 +95,19 @@ fn placeholder_svg_tag(input: &Value, args: &FilterArgs, _ctx: &Context) -> Resu
             "0 0 525.5 525.5",
             "<rect width=\"525.5\" height=\"525.5\" fill=\"#f1f1f1\"/><path d=\"M0 420 150 250l110 100 110-140 155.5 210v105.5H0z\" fill=\"#dcdcdc\"/><circle cx=\"390\" cy=\"140\" r=\"40\" fill=\"#dcdcdc\"/>",
         )
-    };
+    }
+}
+
+/// `placeholder_svg_tag`: the `<svg>` of a placeholder illustration.
+fn placeholder_svg_tag(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
+    let name = input.to_str();
+    let class = args
+        .get(0)
+        .map(|class| format!(" class=\"{}\"", escape_html(&class.to_str())))
+        .unwrap_or_default();
+    let (view_box, artwork) = placeholder_artwork(&name);
     Ok(Value::from(format!(
-        "<svg{class} xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{view_box}\" data-placeholder=\"{}\">{shapes}</svg>",
-        escape_html(&name)
+        "<svg{class} xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{view_box}\">{artwork}</svg>"
     )))
 }
 
@@ -329,4 +358,25 @@ pub(super) fn register(env: &mut Environment) {
     env.register_filter("format_address", format_address);
     env.register_filter("currency_selector", currency_selector);
     env.register_filter("highlight", highlight);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn published_placeholders_are_shopifys_own() {
+        for (name, source) in ILLUSTRATIONS {
+            let (view_box, artwork) = placeholder_artwork(name);
+            assert!(
+                source.contains(&format!("viewBox=\"{view_box}\"")),
+                "{name}"
+            );
+            assert!(artwork.starts_with("<path"), "{name}: {artwork:.40}");
+            assert!(!artwork.contains("</svg>"), "{name}");
+        }
+        // The others keep the proportions of the real ones.
+        assert_eq!(placeholder_artwork("product-1").0, "0 0 525.5 525.5");
+        assert_eq!(placeholder_artwork("lifestyle-1").0, "0 0 1052 400");
+    }
 }

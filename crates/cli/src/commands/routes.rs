@@ -15,6 +15,7 @@ pub fn run(theme: &Path, data: Option<&Path>) -> Result<ExitCode, String> {
             watch: false,
             quiet: true,
             throttle: Default::default(),
+            customer: None,
         },
     );
     for route in routes(&state) {

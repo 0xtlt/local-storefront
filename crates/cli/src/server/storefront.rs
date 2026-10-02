@@ -6,12 +6,12 @@ use lsf_core::drops::collection::CollectionDrop;
 use lsf_core::drops::product::ProductDrop;
 use lsf_core::drops::search::{predictive_search_value, recommendations_value};
 use lsf_core::render::page::{Page, Resource};
-use lsf_core::render::{Rendered, Target};
+use lsf_core::render::{Rendered, Target, seo};
 use lsf_core::{Request, Session, Site, Store};
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
-use super::{CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, cart, forms};
+use super::{CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms};
 
 /// The script injected by `--live-reload`: it reloads the page when the theme or data change.
 const LIVE_RELOAD_SCRIPT: &str = r#"<script data-lsf-live-reload>
@@ -198,6 +198,12 @@ fn route(visit: &Visit<'_>) -> Reply {
             forms::unsupported(visit, "recover_customer_password")
         }
         ["account", "addresses", ..] if is_post => forms::unsupported(visit, "customer_address"),
+        ["company_location", "update"] => account::switch_location(visit),
+        // Shopify's own login pages, which a theme links to with `routes.storefront_login_url`.
+        ["customer_authentication" | "customer_identity", ..] => account::entry(visit),
+        // Accounts hosted by Shopify have a single page here, whatever the theme links to.
+        ["account"] if account::hosted(visit) => account::page(visit),
+        ["account", ..] if account::hosted(visit) => account::entry(visit),
         ["account"] | ["account", "addresses"] | ["account", "orders", _]
             if visit.session().customer_id.is_none() =>
         {
@@ -212,7 +218,22 @@ fn route(visit: &Visit<'_>) -> Reply {
         ["search", "suggest"] => special_section(visit, "search"),
         ["recommendations", "products.json"] => recommendations_json(visit),
         ["recommendations", "products"] => special_section(visit, "product"),
-        ["robots.txt"] => Reply::text(200, "User-agent: *\nDisallow: /\n"),
+        ["robots.txt"] => {
+            let rendered = visit.state.app.renderer.render_robots(&visit.site());
+            reply_from(visit, rendered, &Target::Section(String::new()))
+        }
+        ["sitemap.xml"] => Reply::new(
+            200,
+            "application/xml; charset=utf-8",
+            seo::sitemap_index(&visit.site()),
+        ),
+        [name] if name.starts_with("sitemap_") && name.ends_with("_1.xml") => {
+            let kind = &name["sitemap_".len()..name.len() - "_1.xml".len()];
+            match seo::sitemap(&visit.site(), kind) {
+                Some(xml) => Reply::new(200, "application/xml; charset=utf-8", xml),
+                None => Reply::not_found(),
+            }
+        }
         ["favicon.ico"] => Reply::new(204, "image/x-icon", Vec::new()),
         _ if method == "GET" || method == "HEAD" => page(visit),
         _ => Reply::text(404, "Not found"),

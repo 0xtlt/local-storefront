@@ -412,6 +412,25 @@ pub struct Order {
 }
 
 #[derive(Clone, Debug)]
+pub struct CompanyLocation {
+    pub id: u64,
+    pub name: String,
+    pub external_id: Option<String>,
+    pub shipping_address: Option<Address>,
+    pub tax_registration_id: Option<String>,
+    pub metafields: Metafields,
+}
+
+#[derive(Clone, Debug)]
+pub struct Company {
+    pub id: u64,
+    pub name: String,
+    pub external_id: Option<String>,
+    pub locations: Vec<CompanyLocation>,
+    pub metafields: Metafields,
+}
+
+#[derive(Clone, Debug)]
 pub struct Customer {
     pub id: u64,
     pub email: String,
@@ -426,6 +445,23 @@ pub struct Customer {
     pub orders: Vec<Order>,
     pub password: Option<String>,
     pub metafields: Metafields,
+    /// The company the customer buys for, as an index into the store's companies.
+    pub company: Option<usize>,
+    /// The locations of that company the customer can buy for, as indexes into its locations.
+    pub company_locations: Vec<usize>,
+}
+
+impl Customer {
+    /// The location a B2B customer buys for: the one the session selected when they have
+    /// access to it, the first one otherwise.
+    pub fn current_location(&self, selected: Option<u64>, store: &Store) -> Option<usize> {
+        let company = &store.companies[self.company?];
+        self.company_locations
+            .iter()
+            .copied()
+            .find(|index| Some(company.locations[*index].id) == selected)
+            .or_else(|| self.company_locations.first().copied())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -500,9 +536,12 @@ pub struct Shop {
     pub enabled_payment_types: Vec<String>,
     pub customer_accounts_enabled: bool,
     pub customer_accounts_optional: bool,
+    /// Which customer accounts the store uses; decided by the theme when not set.
+    pub customer_accounts: Option<model::CustomerAccounts>,
     pub taxes_included: bool,
     pub password_message: String,
-    pub password: Option<String>,
+    /// The password the `/password` page accepts.
+    pub password: String,
     pub brand: Option<Brand>,
     pub metafields: Metafields,
 }
@@ -557,6 +596,8 @@ pub struct SessionDefaults {
     pub cart_note: String,
     pub cart_attributes: IndexMap<String, String>,
     pub country: Option<String>,
+    /// The id of the company location a B2B customer starts with.
+    pub company_location: Option<u64>,
 }
 
 pub struct Store {
@@ -567,6 +608,7 @@ pub struct Store {
     pub blogs: Vec<Blog>,
     pub menus: Vec<Menu>,
     pub customers: Vec<Customer>,
+    pub companies: Vec<Company>,
     pub gift_cards: Vec<GiftCard>,
     pub metaobjects: Vec<Metaobject>,
     pub countries: Vec<Country>,
@@ -660,6 +702,19 @@ impl Store {
         self.customers
             .iter()
             .find(|customer| customer.email.eq_ignore_ascii_case(email))
+    }
+
+    /// Who a session is logged in as, from the way the data, a flag or a test names them:
+    /// the email of a customer, `default` (the first customer) or `none`.
+    pub fn customer_named(&self, who: &str) -> std::result::Result<Option<&Customer>, String> {
+        match who.trim() {
+            "" | "none" => Ok(None),
+            "default" => Ok(self.customers.first()),
+            email => self
+                .customer_by_email(email)
+                .map(Some)
+                .ok_or_else(|| format!("there is no customer with the email \"{email}\"")),
+        }
     }
 
     pub fn customer_by_id(&self, id: u64) -> Option<&Customer> {

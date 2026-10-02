@@ -1,5 +1,49 @@
 {
   "$schema": "./schema/store.schema.json",
+  "companies": [
+    {
+      "name": "Northwind Hotels",
+      "external_id": "NW-001",
+      "metafields": {
+        "custom": {
+          "account_manager": "Sam Rivera",
+          "payment_terms": "Net 30"
+        }
+      },
+      "locations": [
+        {
+          "name": "Northwind Portland",
+          "external_id": "NW-PDX",
+          "tax_registration_id": "93-1234567",
+          "shipping_address": {
+            "address1": "815 Harbor Way",
+            "city": "Portland",
+            "province": "Oregon",
+            "province_code": "OR",
+            "country": "United States",
+            "country_code": "US",
+            "zip": "97201"
+          },
+          "metafields": {
+            "custom": { "delivery_notes": "Loading dock B, weekdays 8am to 4pm" }
+          }
+        },
+        {
+          "name": "Northwind Seattle",
+          "external_id": "NW-SEA",
+          "shipping_address": {
+            "address1": "2200 Alder Street",
+            "city": "Seattle",
+            "province": "Washington",
+            "province_code": "WA",
+            "country": "United States",
+            "country_code": "US",
+            "zip": "98121"
+          }
+        }
+      ]
+    }
+  ],
   "customers": [
     {
       "email": "jane.doe@example.com",
@@ -56,6 +100,16 @@
       "email": "new.customer@example.com",
       "first_name": "Noah",
       "last_name": "Nguyen"
+    },
+    {
+      "email": "alex.morgan@example.com",
+      "first_name": "Alex",
+      "last_name": "Morgan",
+      "tags": ["wholesale"],
+      "company": "Northwind Hotels",
+      "metafields": {
+        "custom": { "job_title": "Purchasing manager" }
+      }
     }
   ]
 }

@@ -59,7 +59,7 @@ shopify-local/
 ```
 
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
-`products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `gift_cards`,
+`products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `metaobjects`, `localization`, `files`, `session`, `now` and `theme_settings`. Root files are
 merged, so the data can be split however is convenient. Lists add up; `shop`, `localization`,
 `session` and `now` may be defined in one file only.
@@ -244,7 +244,9 @@ Every field of `shop` is optional.
 
 - `money_format` and `money_with_currency_format` default to the usual format of the currency.
 - `timezone` is the zone dates are displayed in by the `date` filter.
-- `password` locks the storefront behind the password page, like a store in development.
+- `password` is the password the `/password` page accepts. It is `password` when you do not
+  set it. The storefront is never locked: the page is always there, and nothing leads to it.
+- `customer_accounts` says which accounts the store uses: `new` or `legacy` (see below).
 - Each policy that is set gets a page under `/policies/`.
 
 ## Customers and sessions
@@ -277,7 +279,69 @@ what is in the cart, which country is selected.
 with an empty cart. A variant is referenced by its SKU, by its id, or by a product handle
 (meaning the product's first variant).
 
-The login form accepts a customer's `password`, or any password when none is set.
+`session.customer` is the email of a customer, `"default"` for the first customer of the data,
+or `"none"`. When the data has no customer at all, there is still one to log in as:
+`customer@example.com`.
+
+### Logging in
+
+How a visitor logs in depends on the accounts the store uses:
+
+- **New customer accounts** are hosted by Shopify and are not part of a theme. Here, `/account`
+  is a page of `lsf` that stands in for them. It lists the customers of the data: click one to
+  be logged in as them, or "Nobody" to be logged out. Every account link of a theme
+  (`routes.account_login_url`, `routes.storefront_login_url`, ...) leads to that page.
+- **Legacy accounts** are rendered by the theme's `templates/customers`. The login form accepts
+  a customer's `password`, or any password when none is set.
+
+`lsf` picks legacy accounts when the theme has `templates/customers/login`, and new accounts
+otherwise. Set `shop.customer_accounts` to `"new"` or `"legacy"` to decide yourself.
+
+`lsf serve --customer <email>` starts every visitor logged in as that customer. It also accepts
+`default` and `none`.
+
+### B2B customers
+
+A B2B customer buys for a **company**, at one of its **locations**. Describe the company, then
+name it in the customer:
+
+```json
+{
+  "companies": [
+    {
+      "name": "Northwind Hotels",
+      "external_id": "NW-001",
+      "metafields": { "custom": { "payment_terms": "Net 30" } },
+      "locations": [
+        {
+          "name": "Northwind Portland",
+          "tax_registration_id": "93-1234567",
+          "shipping_address": { "address1": "815 Harbor Way", "city": "Portland", "country_code": "US" },
+          "metafields": { "custom": { "delivery_notes": "Loading dock B" } }
+        },
+        { "name": "Northwind Seattle" }
+      ]
+    }
+  ],
+  "customers": [
+    {
+      "email": "alex.morgan@example.com",
+      "first_name": "Alex",
+      "company": "Northwind Hotels",
+      "metafields": { "custom": { "job_title": "Purchasing manager" } }
+    }
+  ]
+}
+```
+
+- The customer can buy for every location of the company. List some in `company_locations` to
+  restrict them: `"company_locations": ["Northwind Seattle"]`.
+- They start at the first location. `session.company_location` names another one.
+- In Liquid, `customer.b2b?` is true, and `customer.current_company`,
+  `customer.current_location` and `customer.company_available_locations` are filled.
+- `location.url_to_set_as_current` changes the location, as on Shopify.
+
+Catalogs are not simulated: a B2B customer sees the same products and prices as everyone.
 
 Tests usually set the session per test rather than in the files, by sending it to the running
 server. The body is a session, optionally with a `data` object: a data file applied on top of
@@ -288,6 +352,10 @@ curl -X PUT http://127.0.0.1:9292/__lsf/session \
   -H 'x-lsf-session: my-test' -H 'content-type: application/json' \
   -d '{"customer": "jane.doe@example.com", "data": {"shop": {"name": "Another name"}}}'
 ```
+
+A person can do the same from a browser: `/__lsf` lists the customers, and
+`/__lsf/login?customer=<email>` logs the browser in as one of them (`default` and `none` work
+too).
 
 A wrong body is answered with `422` and the same diagnostics as `lsf validate --format json`.
 
@@ -418,7 +486,8 @@ and read with `{{ metaobjects.designer.sam.name }}` or `{% for d in metaobjects.
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session` or `now` defined in two files. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data. The hint suggests the closest match. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data. The hint suggests the closest match. |
+| `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations without a company. |
 | `missing_price` | A product without a price on itself or on its variants. |
 | `missing_variants`, `missing_options`, `option_mismatch`, `too_many_options` | The options of a product and the option values of its variants do not line up. |
 | `media_conflict`, `missing_sources`, `missing_external_video` | Incomplete or contradictory product media. |

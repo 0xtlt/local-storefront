@@ -47,6 +47,12 @@ pub struct Args {
     /// product, form, asset, image. A session can have its own through `PUT /__lsf/session`.
     #[arg(long, env = "LSF_THROTTLE", value_name = "RULES")]
     throttle: Vec<String>,
+
+    /// Who visitors are logged in as when they arrive: the email of a customer of the data,
+    /// `default` for the first one, or `none`. Without it, the store data decides
+    /// (`session.customer`).
+    #[arg(long, env = "LSF_CUSTOMER", value_name = "EMAIL")]
+    customer: Option<String>,
 }
 
 pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, String> {
@@ -66,9 +72,17 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
             watch: !args.static_files,
             quiet: args.quiet,
             throttle: throttle.clone(),
+            customer: args.customer.clone(),
         },
     );
     print_diagnostics(&diagnostics);
+    if let Some(who) = &args.customer {
+        state
+            .loaded()
+            .store
+            .customer_named(who)
+            .map_err(|problem| format!("--customer: {problem}"))?;
+    }
     if args.strict && diagnostics.has_errors() {
         return Err("the store data has errors (see above)".to_string());
     }

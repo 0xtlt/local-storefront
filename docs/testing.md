@@ -97,7 +97,18 @@ body is wrong the answer is `422` with the same diagnostics as `lsf validate --f
 }
 ```
 
-Fail the test on it, so that a wrong fixture never looks like a theme bug:
+`customer` is an email, `"default"` (the first customer of the data) or `"none"`. For a B2B
+customer, `company_location` names the location they buy for:
+
+```ts
+await page.request.put('/__lsf/session', {
+  data: { customer: 'alex.morgan@example.com', company_location: 'Northwind Seattle' },
+});
+```
+
+To start every test logged in, start the server with `--customer default` (or an email).
+
+Fail the test on a wrong body, so that a wrong fixture never looks like a theme bug:
 
 ```ts
 async function setSession(page: Page, session: object) {
@@ -202,14 +213,16 @@ Everything a theme talks to on a storefront:
 
 | Area | Endpoints |
 |---|---|
-| Pages | `/`, `/products/<handle>`, `/collections`, `/collections/<handle>`, `/collections/<handle>/<tag>`, `/collections/<handle>/products/<handle>`, `/pages/<handle>`, `/blogs/<handle>`, `/blogs/<handle>/tagged/<tag>`, `/blogs/<blog>/<article>`, `/cart`, `/search`, `/policies/<handle>`, `/gift_cards/<shop id>/<token>`, `/password`, `/account`, `/account/login`, `/account/register`, `/account/addresses`, `/account/orders/<id>`, and a 404 for the rest. Each also under a locale prefix (`/fr/...`). |
+| Pages | `/`, `/products/<handle>`, `/collections`, `/collections/<handle>`, `/collections/<handle>/<tag>`, `/collections/<handle>/products/<handle>`, `/pages/<handle>`, `/blogs/<handle>`, `/blogs/<handle>/tagged/<tag>`, `/blogs/<blog>/<article>`, `/cart`, `/search`, `/policies/<handle>`, `/gift_cards/<shop id>/<token>`, `/password`, `/account` and, with legacy customer accounts, `/account/login`, `/account/register`, `/account/addresses`, `/account/orders/<id>`. A 404 for the rest. Each also under a locale prefix (`/fr/...`). |
+| Customer accounts | With new customer accounts, `/account` is a page of `lsf` where the visitor chooses who is logged in; `/account/login`, `/customer_authentication/login` and the other account URLs redirect to it. `/company_location/update?location_id=<id>&return_to=<path>` changes the location of a B2B customer. |
+| Robots and sitemaps | `/robots.txt` (from `templates/robots.txt.liquid`, or Shopify's default rules), `/sitemap.xml` and `/sitemap_<products|pages|collections|blogs>_1.xml`. |
 | Alternate templates | `?view=<suffix>` and the `template_suffix` of the resource. |
 | Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. |
 | Cart Ajax API | `GET /cart.js`, `POST /cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js` (with `sections` and `sections_url`), and the form posts `/cart/add`, `/cart`. Stock limits answer `422` like Shopify. |
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
-| Forms | Contact, newsletter (`customer`), blog comment, customer login and logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. |
+| Forms | Contact, newsletter (`customer`), blog comment, customer login and logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
-| Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`. |
+| Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`. |
 
 Not simulated: checkout (`/checkout` shows a summary of the cart and nothing else), customer
 registration, password reset and address editing (the forms answer with an error saying so),

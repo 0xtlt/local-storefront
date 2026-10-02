@@ -1,0 +1,16 @@
+{%- if customer.b2b? -%}
+<div class="b2b">
+  <p class="company">{{ customer.current_company.name }} ({{ customer.current_company.external_id }})</p>
+  <p class="terms">{{ customer.current_company.metafields.custom.payment_terms }}</p>
+  <p class="location">{{ customer.current_location.name }}, {{ customer.current_location.shipping_address.city }}, {{ customer.current_location.shipping_address.country }}</p>
+  <p class="notes">{{ customer.current_location.metafields.custom.delivery_notes }}</p>
+  <ul>
+    {%- for location in customer.company_available_locations %}
+    <li{% if location.current? %} class="current"{% endif %}><a href="{{ location.url_to_set_as_current }}">{{ location.name }}</a></li>
+    {%- endfor %}
+  </ul>
+  <p class="count">{{ customer.company_available_locations_count }} of {{ customer.current_company.available_locations_count }}</p>
+</div>
+{%- else -%}
+<p class="b2c">{{ customer.first_name | default: 'Guest' }} is not a B2B customer</p>
+{%- endif -%}

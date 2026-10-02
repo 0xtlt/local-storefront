@@ -56,6 +56,7 @@ pub struct MergedInput {
     pub blogs: Vec<Sourced<model::BlogInput>>,
     pub menus: IndexMap<String, Sourced<model::MenuInput>>,
     pub customers: Vec<Sourced<model::CustomerInput>>,
+    pub companies: Vec<Sourced<model::CompanyInput>>,
     pub gift_cards: Vec<Sourced<model::GiftCardInput>>,
     pub metaobjects: Vec<(String, Sourced<model::MetaobjectInput>)>,
     pub localization: Option<Sourced<model::LocalizationInput>>,
@@ -334,6 +335,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         blogs: Vec::new(),
         menus: Vec::new(),
         customers: Vec::new(),
+        companies: Vec::new(),
         gift_cards: Vec::new(),
         metaobjects: Vec::new(),
         countries: Vec::new(),
@@ -364,6 +366,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     build_blogs(&mut builder, &mut store, &input.blogs);
     store.index();
     build_menus(&mut builder, &mut store, &input.menus);
+    build_companies(&mut builder, &mut store, &input.companies);
     build_customers(&mut builder, &mut store, &input.customers);
     build_gift_cards(&mut builder, &mut store, &input.gift_cards);
     build_localization(&mut builder, &mut store, input.localization.as_ref());
@@ -486,9 +489,13 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput) -> Shop {
         }),
         customer_accounts_enabled: input.customer_accounts_enabled.unwrap_or(true),
         customer_accounts_optional: input.customer_accounts_optional.unwrap_or(true),
+        customer_accounts: input.customer_accounts,
         taxes_included: input.taxes_included,
         password_message: input.password_message.clone().unwrap_or_default(),
-        password: input.password.clone(),
+        password: input
+            .password
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PASSWORD.to_string()),
         brand,
         metafields: builder.metafields(&input.metafields),
         name,
@@ -1678,11 +1685,168 @@ fn unknown_variant(
     builder.error("unknown_variant", origin, message).hint(hint);
 }
 
+fn build_companies(
+    builder: &mut Builder<'_>,
+    store: &mut Store,
+    inputs: &[Sourced<model::CompanyInput>],
+) {
+    let mut seen = HashSet::new();
+    for Sourced {
+        value: input,
+        origin,
+    } in inputs
+    {
+        if !seen.insert(input.name.to_lowercase()) {
+            builder.error(
+                "duplicate_company",
+                &origin.child("name"),
+                format!("another company is already named \"{}\"", input.name),
+            );
+        }
+        if input.locations.is_empty() {
+            builder
+                .error(
+                    "missing_locations",
+                    &origin.child("locations"),
+                    format!("the company \"{}\" has no location", input.name),
+                )
+                .hint("a company buys for at least one location: add one to \"locations\", e.g. {\"name\": \"Head office\"}");
+        }
+        let id = input
+            .id
+            .unwrap_or_else(|| stable_id("company", &input.name.to_lowercase()));
+        let mut names = HashSet::new();
+        let locations = input
+            .locations
+            .iter()
+            .enumerate()
+            .map(|(position, location)| {
+                if !names.insert(location.name.to_lowercase()) {
+                    builder.error(
+                        "duplicate_location",
+                        &origin.child("locations").child(position).child("name"),
+                        format!(
+                            "another location of this company is already named \"{}\"",
+                            location.name
+                        ),
+                    );
+                }
+                let location_id = location.id.unwrap_or_else(|| {
+                    stable_id(
+                        "company_location",
+                        &format!("{id}/{}", location.name.to_lowercase()),
+                    )
+                });
+                CompanyLocation {
+                    id: location_id,
+                    name: location.name.clone(),
+                    external_id: location.external_id.clone(),
+                    shipping_address: location
+                        .shipping_address
+                        .as_ref()
+                        .map(|a| address(a, &format!("{location_id}/shipping"))),
+                    tax_registration_id: location.tax_registration_id.clone(),
+                    metafields: builder.metafields(&location.metafields),
+                }
+            })
+            .collect();
+        store.companies.push(Company {
+            id,
+            name: input.name.clone(),
+            external_id: input.external_id.clone(),
+            locations,
+            metafields: builder.metafields(&input.metafields),
+        });
+    }
+}
+
+/// The company a customer names, and the locations of it they can buy for.
+fn customer_company(
+    builder: &mut Builder<'_>,
+    store: &Store,
+    input: &model::CustomerInput,
+    origin: &Origin,
+) -> (Option<usize>, Vec<usize>) {
+    let Some(name) = &input.company else {
+        if !input.company_locations.is_empty() {
+            builder
+                .error(
+                    "missing_company",
+                    &origin.child("company_locations"),
+                    "the customer lists company locations but names no company",
+                )
+                .hint("add \"company\" with the name of a company in \"companies\"");
+        }
+        return (None, Vec::new());
+    };
+    let Some(index) = store
+        .companies
+        .iter()
+        .position(|company| company.name.eq_ignore_ascii_case(name))
+    else {
+        let known: Vec<&str> = store.companies.iter().map(|c| c.name.as_str()).collect();
+        let diagnostic = builder.error(
+            "unknown_company",
+            &origin.child("company"),
+            format!("there is no company named \"{name}\""),
+        );
+        match closest_match(name, known.iter().copied()) {
+            Some(suggestion) => diagnostic.hint(format!("did you mean \"{suggestion}\"?")),
+            None => diagnostic.hint("add the company to \"companies\" first"),
+        };
+        return (None, Vec::new());
+    };
+    let company = &store.companies[index];
+    if input.company_locations.is_empty() {
+        return (Some(index), (0..company.locations.len()).collect());
+    }
+    let mut locations = Vec::new();
+    for (position, wanted) in input.company_locations.iter().enumerate() {
+        match company
+            .locations
+            .iter()
+            .position(|location| location.name.eq_ignore_ascii_case(wanted))
+        {
+            Some(location) => locations.push(location),
+            None => {
+                let known: Vec<&str> = company.locations.iter().map(|l| l.name.as_str()).collect();
+                let diagnostic = builder.error(
+                    "unknown_location",
+                    &origin.child("company_locations").child(position),
+                    format!(
+                        "the company \"{}\" has no location named \"{wanted}\"",
+                        company.name
+                    ),
+                );
+                if let Some(suggestion) = closest_match(wanted, known.iter().copied()) {
+                    diagnostic.hint(format!("did you mean \"{suggestion}\"?"));
+                }
+            }
+        }
+    }
+    (Some(index), locations)
+}
+
 fn build_customers(
     builder: &mut Builder<'_>,
     store: &mut Store,
     inputs: &[Sourced<model::CustomerInput>],
 ) {
+    // A store always has someone to log in as: without customers, a default one is made.
+    let default_customer = [Sourced {
+        value: model::CustomerInput {
+            email: DEFAULT_CUSTOMER_EMAIL.to_string(),
+            first_name: Some("Default".to_string()),
+            last_name: Some("Customer".to_string()),
+            ..model::CustomerInput::default()
+        },
+        origin: Origin::new("(built in)", "/customers/0"),
+    }];
+    let inputs = if inputs.is_empty() {
+        &default_customer[..]
+    } else {
+        inputs
+    };
     let mut seen_emails = HashSet::new();
     let mut order_number = 1000;
     for Sourced {
@@ -1707,6 +1871,7 @@ fn build_customers(
         let id = input
             .id
             .unwrap_or_else(|| stable_id("customer", &input.email.to_lowercase()));
+        let (company, company_locations) = customer_company(builder, store, input, origin);
         let orders = input
             .orders
             .iter()
@@ -1798,6 +1963,8 @@ fn build_customers(
             orders,
             password: input.password.clone(),
             metafields: builder.metafields(&input.metafields),
+            company,
+            company_locations,
         });
     }
 }
@@ -2016,6 +2183,44 @@ fn build_localization(
     }
 }
 
+/// The storefront password when the store data sets none.
+pub const DEFAULT_PASSWORD: &str = "password";
+
+/// The email of the customer lsf makes when the store data has none.
+pub const DEFAULT_CUSTOMER_EMAIL: &str = "customer@example.com";
+
+/// The id of a company location a customer can buy for, by its name.
+pub fn resolve_company_location(
+    store: &Store,
+    customer: Option<&Customer>,
+    name: &str,
+) -> std::result::Result<u64, String> {
+    let customer =
+        customer.ok_or("a company location needs a logged-in customer: set \"customer\" too")?;
+    let company = customer
+        .company
+        .map(|index| &store.companies[index])
+        .ok_or_else(|| format!("the customer {} does not buy for a company", customer.email))?;
+    customer
+        .company_locations
+        .iter()
+        .map(|index| &company.locations[*index])
+        .find(|location| location.name.eq_ignore_ascii_case(name))
+        .map(|location| location.id)
+        .ok_or_else(|| {
+            let known: Vec<&str> = customer
+                .company_locations
+                .iter()
+                .map(|index| company.locations[*index].name.as_str())
+                .collect();
+            format!(
+                "{} cannot buy for a location named \"{name}\". Locations: {}",
+                customer.email,
+                known.join(", ")
+            )
+        })
+}
+
 fn build_session(
     builder: &mut Builder<'_>,
     store: &mut Store,
@@ -2026,7 +2231,7 @@ fn build_session(
         origin,
     } = session;
     if let Some(email) = &input.customer
-        && store.customer_by_email(email).is_none()
+        && store.customer_named(email).is_err()
     {
         let known: Vec<&str> = store
             .customers
@@ -2040,7 +2245,8 @@ fn build_session(
         );
         match closest_match(email, known.iter().copied()) {
             Some(suggestion) => diagnostic.hint(format!("did you mean \"{suggestion}\"?")),
-            None => diagnostic.hint("add the customer to \"customers\" first"),
+            None => diagnostic
+                .hint("add the customer to \"customers\" first, or use \"default\" or \"none\""),
         };
     }
     if let Some(country) = &input.country
@@ -2057,6 +2263,22 @@ fn build_session(
         country: input.country.clone(),
         ..SessionDefaults::default()
     };
+    if let Some(name) = &input.company_location {
+        let customer = input
+            .customer
+            .as_deref()
+            .and_then(|who| store.customer_named(who).ok().flatten());
+        match resolve_company_location(store, customer, name) {
+            Ok(id) => defaults.company_location = Some(id),
+            Err(problem) => {
+                builder.error(
+                    "unknown_location",
+                    &origin.child("company_location"),
+                    problem,
+                );
+            }
+        }
+    }
     if let Some(cart) = &input.cart {
         defaults.cart_note = cart.note.clone().unwrap_or_default();
         defaults.cart_attributes = cart.attributes.clone();
