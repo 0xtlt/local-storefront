@@ -50,6 +50,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Test the injected scripts
+        run: node --test crates/core/assets/platform/tests/
+
   build:
     name: Build ${{ matrix.target }}
     needs: test

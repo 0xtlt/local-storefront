@@ -22,7 +22,7 @@ use lsf_core::{Renderer, Request, Session, Theme};
 use lsf_liquid::Value;
 
 /// The number of examples that must pass. Raise it when more pass; never lower it.
-const BASELINE: usize = 195;
+const BASELINE: usize = 196;
 
 struct Example {
     page: String,

@@ -230,7 +230,10 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
     }
 
     state.with_session(&id, |entry| {
-        entry.session = session;
+        entry.session = Session {
+            cart_token: std::mem::take(&mut entry.session.cart_token),
+            ..session
+        };
         entry.store = custom_store;
     });
     let reply = Reply::json(

@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use lsf_core::drops::cart::cart_json;
 use lsf_core::drops::collection::CollectionDrop;
 use lsf_core::drops::product::ProductDrop;
 use lsf_core::drops::search::{predictive_search_value, recommendations_value};
@@ -12,7 +11,7 @@ use lsf_core::{Request, Session, Site, Store};
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
-use super::{Incoming, SESSION_COOKIE, ServerState, cart, forms};
+use super::{CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, cart, forms};
 
 /// The script injected by `--live-reload`: it reloads the page when the theme or data change.
 const LIVE_RELOAD_SCRIPT: &str = r#"<script data-lsf-live-reload>
@@ -131,7 +130,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         store,
         request,
     };
-    let reply = route(&visit);
+    let reply = with_cart_cookie(&visit, route(&visit));
     if is_new {
         reply.header(
             "set-cookie",
@@ -142,6 +141,31 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         )
     } else {
         reply
+    }
+}
+
+/// Whether the request changes the cart, which creates it if it did not exist.
+fn changes_cart(visit: &Visit<'_>) -> bool {
+    let path = visit.request.path.trim_matches('/');
+    visit.incoming.method == "POST" && (path == "cart" || path.starts_with("cart/"))
+}
+
+/// Gives the visitor the `cart` cookie once they have a cart, as Shopify does. Scripts tell
+/// "no cart yet" from "an empty cart" by it.
+fn with_cart_cookie(visit: &Visit<'_>, reply: Reply) -> Reply {
+    let session = visit.session();
+    if !(session.has_cart() || changes_cart(visit)) {
+        return reply;
+    }
+    let cookie = format!("{CART_COOKIE}={}", session.cart_token);
+    let known = visit
+        .incoming
+        .header("cookie")
+        .is_some_and(|cookies| cookies.split(';').any(|pair| pair.trim() == cookie));
+    if known {
+        reply
+    } else {
+        reply.header("set-cookie", format!("{cookie}; Path=/; SameSite=Lax"))
     }
 }
 
@@ -156,7 +180,7 @@ fn route(visit: &Visit<'_>) -> Reply {
     let is_post = method == "POST";
 
     match segments.as_slice() {
-        ["cart.js" | "cart.json"] => Reply::json(200, &cart_json(&visit.site())),
+        ["cart.js" | "cart.json"] => cart::show(visit),
         ["cart", "add" | "add.js"] => cart::add(visit),
         ["cart", "change" | "change.js"] => cart::change(visit),
         ["cart", "update" | "update.js"] => cart::update(visit),

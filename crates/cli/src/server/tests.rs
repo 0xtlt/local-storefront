@@ -70,6 +70,16 @@ fn header<'a>(reply: &'a Reply, name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
+/// The `Set-Cookie` headers of a reply.
+fn cookies(reply: &Reply) -> Vec<String> {
+    reply
+        .headers
+        .iter()
+        .filter(|(key, _)| key == "set-cookie")
+        .map(|(_, value)| value.clone())
+        .collect()
+}
+
 fn variant_id(state: &ServerState, sku: &str) -> u64 {
     let loaded = state.loaded();
     loaded
@@ -523,4 +533,122 @@ fn the_status_endpoint_describes_the_server() {
             .any(|route| route == "/products/ceramic-mug")
     );
     assert!(get(&state, "/__lsf/schema/product", "status").status == 200);
+}
+
+#[test]
+fn the_cart_cookie_appears_with_the_cart() {
+    let state = server();
+    // Browsing does not create a cart.
+    let home = get(&state, "/", "cookie");
+    assert!(
+        !cookies(&home)
+            .iter()
+            .any(|cookie| cookie.starts_with("cart="))
+    );
+
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": variant_id(&state, "TOTE-NAT")}),
+        "cookie",
+    );
+    let cart = cookies(&added)
+        .into_iter()
+        .find(|cookie| cookie.starts_with("cart="))
+        .expect("the cart cookie");
+    assert!(cart.ends_with("; Path=/; SameSite=Lax"), "{cart}");
+    // The cookie holds the token `/cart.js` reports, and scripts must be able to read it.
+    let token = body_json(&get(&state, "/cart.js", "cookie"))["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(cart, format!("cart={token}; Path=/; SameSite=Lax"));
+    assert!(!cart.contains("HttpOnly"));
+
+    // A browser that already has it is not sent it again.
+    let mut again = request("GET", "/cart.js", json!({}), "cookie");
+    again
+        .headers
+        .insert("cookie".to_string(), format!("cart={token}"));
+    assert!(cookies(&state.dispatch(&again)).is_empty());
+
+    // Two visitors have two carts.
+    post(
+        &state,
+        "/cart/add.js",
+        json!({"id": variant_id(&state, "TOTE-NAT")}),
+        "someone-else",
+    );
+    assert_ne!(
+        body_json(&get(&state, "/cart.js", "someone-else"))["token"],
+        token
+    );
+}
+
+#[test]
+fn cart_attributes_can_be_removed_and_the_cart_bundles_sections() {
+    let state = server();
+    post(
+        &state,
+        "/cart/update.js",
+        json!({"attributes": {"gift": "yes", "wrap": "red"}}),
+        "attributes",
+    );
+    let cart = body_json(&post(
+        &state,
+        "/cart/update.js",
+        json!({"attributes": {"gift": null, "wrap": "blue"}}),
+        "attributes",
+    ));
+    assert_eq!(cart["attributes"], json!({"wrap": "blue"}));
+
+    let with_sections = body_json(&get(&state, "/cart.js?sections=footer", "attributes"));
+    assert!(
+        with_sections["sections"]["footer"]
+            .as_str()
+            .is_some_and(|html| html.contains("</footer>")),
+        "{with_sections}"
+    );
+}
+
+#[test]
+fn pages_carry_the_scripts_shopify_injects() {
+    let state = server();
+    let page = text(&get(&state, "/products/ceramic-mug", "platform"));
+    let head = &page[..page.find("</head>").expect("a head")];
+    for expected in [
+        "window.performance.mark('shopify.content_for_header.start')",
+        "Shopify.shop = \"local-supply-co.myshopify.com\";",
+        "Shopify.routes.root = \"\\/\";",
+        "Shopify.cdnHost = \"shop.test\\/cdn\";",
+        "shopify.loadFeatures = queue();",
+        "<script id=\"__st\">",
+        "\"p\":\"product\",\"rtyp\":\"product\"",
+        "window.ShopifyAnalytics.meta.currency = 'USD';",
+        "\"pageType\":\"product\",\"resourceType\":\"product\"",
+        "replayQueue: []",
+    ] {
+        assert!(head.contains(expected), "missing {expected} in\n{head}");
+    }
+    assert!(page.contains(
+        "<script src=\"//shop.test/cdn/storefront/standard-actions.js\" type=\"module\" data-source-attribution=\"shopify.standard_actions\"></script></body>"
+    ));
+
+    // The scripts the page points at exist.
+    let actions = get(&state, "/cdn/storefront/standard-actions.js", "platform");
+    assert_eq!(
+        header(&actions, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert!(text(&actions).contains("Object.defineProperty(window.Shopify, 'actions'"));
+    let loader = get(
+        &state,
+        "/cdn/shopifycloud/storefront/assets/storefront/load_feature.js",
+        "platform",
+    );
+    assert!(text(&loader).contains("Shopify.loadFeatures = loadFeatures;"));
+
+    // A section on its own is not a page: nothing is added to it.
+    let section = text(&get(&state, "/?section_id=footer", "platform"));
+    assert!(!section.contains("standard-actions.js"));
 }

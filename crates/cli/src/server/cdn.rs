@@ -23,6 +23,10 @@ fn extension(path: &str) -> String {
 
 pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     let path = incoming.path.as_str();
+    // The scripts of the platform: the local counterparts of what Shopify's CDN serves.
+    if let Some(script) = lsf_core::render::platform::asset(path.trim_start_matches("/cdn/")) {
+        return Reply::new(200, "text/javascript; charset=utf-8", script);
+    }
     let segments: Vec<&str> = path.trim_start_matches("/cdn/").split('/').collect();
     match segments.as_slice() {
         ["shop", "t", _, "assets", rest @ ..] => asset(state, incoming, &rest.join("/")),

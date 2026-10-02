@@ -254,6 +254,18 @@ fn section_rendering_api() {
             .starts_with("<div id=\"shopify-section-footer\"")
     );
     assert!(json["nope"].is_null());
+
+    // The id of a template section names its template, so another page can ask for it: a
+    // cart drawer on a product page loads a section of the cart template this way.
+    let elsewhere = fixture.render_with(
+        request("/pages/about"),
+        Session::initial(&fixture.store),
+        &Target::Section(id.clone()),
+    );
+    assert_eq!(elsewhere.status, 200);
+    assert!(elsewhere.body.starts_with(&format!(
+        "<div id=\"shopify-section-{id}\" class=\"shopify-section hero\">"
+    )));
 }
 
 #[test]

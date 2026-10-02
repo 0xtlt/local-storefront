@@ -83,6 +83,8 @@ pub struct Theme {
     /// Derived values that are expensive to recompute on every request, with when they were
     /// computed.
     versions: Mutex<HashMap<&'static str, (std::time::Instant, u64)>>,
+    /// The same for derived text.
+    texts: Mutex<HashMap<&'static str, (std::time::Instant, Arc<str>)>>,
     revalidate: Revalidate,
 }
 
@@ -118,6 +120,7 @@ impl Theme {
             json: Cache::new(),
             translations: Cache::new(),
             versions: Mutex::new(HashMap::new()),
+            texts: Mutex::new(HashMap::new()),
             revalidate,
         })
     }
@@ -127,22 +130,40 @@ impl Theme {
     pub fn cached_version(&self, key: &'static str, compute: impl FnOnce() -> u64) -> u64 {
         if let Some((computed, value)) =
             self.versions.lock().expect("theme cache poisoned").get(key)
+            && self.is_fresh(*computed)
         {
-            let fresh = match self.revalidate {
-                Revalidate::Never => true,
-                Revalidate::Every(interval) => {
-                    computed.elapsed() < interval.max(std::time::Duration::from_secs(1))
-                }
-            };
-            if fresh {
-                return *value;
-            }
+            return *value;
         }
         let value = compute();
         self.versions
             .lock()
             .expect("theme cache poisoned")
             .insert(key, (std::time::Instant::now(), value));
+        value
+    }
+
+    /// Whether a derived value computed at `computed` can still be used.
+    fn is_fresh(&self, computed: std::time::Instant) -> bool {
+        match self.revalidate {
+            Revalidate::Never => true,
+            Revalidate::Every(interval) => {
+                computed.elapsed() < interval.max(std::time::Duration::from_secs(1))
+            }
+        }
+    }
+
+    /// Like [`Theme::cached_version`], for text.
+    pub fn cached_text(&self, key: &'static str, compute: impl FnOnce() -> String) -> Arc<str> {
+        if let Some((computed, value)) = self.texts.lock().expect("theme cache poisoned").get(key)
+            && self.is_fresh(*computed)
+        {
+            return value.clone();
+        }
+        let value: Arc<str> = Arc::from(compute());
+        self.texts
+            .lock()
+            .expect("theme cache poisoned")
+            .insert(key, (std::time::Instant::now(), value.clone()));
         value
     }
 

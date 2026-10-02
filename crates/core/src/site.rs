@@ -116,9 +116,19 @@ pub struct Session {
     pub form_result: Option<FormResult>,
     /// Whether the visitor entered the storefront password.
     pub password_unlocked: bool,
+    /// The token of the visitor's cart, as `/cart.js` reports it and as the `cart` cookie
+    /// holds it. Empty outside a server, where carts take a token derived from the host.
+    pub cart_token: String,
 }
 
 impl Session {
+    /// Whether the visitor has a cart: Shopify only creates one when something goes into it.
+    pub fn has_cart(&self) -> bool {
+        !self.cart_lines.is_empty()
+            || !self.cart_note.is_empty()
+            || !self.cart_attributes.is_empty()
+    }
+
     /// The state a new visitor starts with, as configured in the store data.
     pub fn initial(store: &Store) -> Session {
         let defaults = &store.session_defaults;
@@ -134,6 +144,7 @@ impl Session {
             country: defaults.country.clone(),
             form_result: None,
             password_unlocked: false,
+            cart_token: String::new(),
         }
     }
 }

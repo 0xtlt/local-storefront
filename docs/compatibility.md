@@ -76,6 +76,32 @@ rules and quantity price breaks, unit prices.
 - Assets: `asset_url` and friends, `.liquid` assets, the `{% stylesheet %}` and
   `{% javascript %}` bundles, `{% style %}`, preload headers.
 
+## What Shopify injects into pages
+
+A storefront page is more than the theme's markup: Shopify adds scripts through
+`{{ content_for_header }}`, before `</head>` and before `</body>`. `lsf` adds the same ones,
+modelled on what a Shopify storefront serves, with every URL pointing at the local server:
+
+| What | Where | Local behaviour |
+|---|---|---|
+| `Shopify.shop`, `locale`, `currency`, `country`, `theme`, `cdnHost`, `routes.root`, `modules` | `content_for_header` | Same values and shape as on Shopify. `Shopify.designMode` is not set, as on a live storefront. |
+| `shopify-features` JSON, `__st`, `shopify-digital-wallet` meta, `hreflang` alternates | `content_for_header` | Same shape. The Storefront API token is a placeholder. |
+| `Shopify.loadFeatures`, `Shopify.autoloadFeatures` | `content_for_header` | `consent-tracking-api` installs a local `Shopify.customerPrivacy`. Features hosted by Shopify (`model-viewer-ui`, `shopify-xr`, ...) report an error to `onLoad`, which themes handle. |
+| `Shopify.customerPrivacy` | after `loadFeatures` | Consent is kept in the browser. It has to be collected in the EEA, the United Kingdom and Switzerland (by `Shopify.country`): there, nothing is allowed and `shouldShowBanner()` is true until `setTrackingConsent` is called. A real store decides this in its privacy settings. |
+| `Shopify.PaymentButton` | `content_for_header` | Present; `init()` does nothing, since dynamic checkout buttons are drawn by Shopify. |
+| `ShopifyAnalytics.meta` (`currency`, `page`, `product`), `trekkie` | before `</head>` | Same shape. Nothing is sent anywhere. |
+| `Shopify.analytics.publish` | before `</head>` | Calls are kept in `Shopify.analytics.replayQueue`, which a test can read. |
+| `Shopify.actions` (`getCart`, `updateCart`, `openCart`) | before `</body>` | The [standard storefront actions](https://shopify.dev/docs/api/storefront-events-and-actions), with `configure`, `isDefault`, the `shopify:cart:*` events and the default refresh of Horizon- and Dawn-style carts. They write to the local cart instead of the Storefront API. |
+| `cart` cookie | cart endpoints | Set when something first goes into the cart, as on Shopify: `getCart` resolves with `cart: null` until then. |
+
+Left out, because they only talk to Shopify's own services: analytics collection (web pixels,
+performance monitoring), Shop Pay and sign-in with Shop, bot protection, and the MCP and
+agent endpoints.
+
+A theme that imports Shopify's standard events library from
+`https://cdn.shopify.com/storefront/standard-events.js`, as Horizon does, loads it from
+Shopify's CDN: it is a static file, but it does need network access.
+
 ## Known differences
 
 These are deliberate or not done yet. None of them raises a Liquid error.
@@ -85,7 +111,8 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Checkout | Not part of a theme. `/checkout` shows a summary of the cart. |
 | Apps | App blocks and app embeds render nothing. `content_for_header` contains the scripts a theme relies on (`Shopify.*` globals, routes, the compiled asset tags), not Shopify's analytics and app scripts. |
 | Customer accounts | Login and logout work against the customers of the data. Registration, password reset, activation and address editing are not simulated: their forms answer with an error. New customer accounts (hosted by Shopify) are not available. |
-| Discounts | Carts and orders have no discounts: discount arrays are empty and totals are undiscounted. |
+| Discounts | Carts and orders have no discounts: discount arrays are empty and totals are undiscounted. `Shopify.actions.updateCart` reports every discount code as not applicable. |
+| Standard actions | A change the cart refuses (unknown variant, not enough stock) resolves with `userErrors` whose code is `INVALID`, and leaves that line untouched. The Storefront API would add what is in stock and return a warning. |
 | Selling plans | Products have no selling plans (`selling_plan_groups` is empty). |
 | B2B | No companies, company locations or catalogs. |
 | Markets | One price list: every country sees the shop currency's prices. The selected country changes `localization.country`, not prices. |
@@ -96,7 +123,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Placeholder artwork | `placeholder_svg_tag` draws generic artwork of the right proportions, not Shopify's illustrations. |
 | Fonts | Shopify's font library is not bundled. `font_face` and `font_url` generate the same markup and URLs; the files are blank unless provided in `files/fonts/`. |
 | Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. |
-| Theme editor | `request.design_mode` is always `false`, and `block.shopify_attributes` is empty. |
+| Theme editor | `request.design_mode` is always `false`, `Shopify.designMode` is not set, and `block.shopify_attributes` is empty. |
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |
 | `robots.txt.liquid`, `sitemap` | Not rendered: `/robots.txt` disallows everything. |
 

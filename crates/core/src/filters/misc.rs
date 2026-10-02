@@ -8,6 +8,8 @@ use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
 use super::site;
+use crate::drops::cart::{CartDrop, cart_token, line_key, resolve_lines};
+use crate::drops::collection::CollectionDrop;
 use crate::drops::content::ArticleDrop;
 use crate::drops::product::ProductDrop;
 use crate::util;
@@ -203,32 +205,92 @@ fn format_code(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Valu
     Ok(Value::from(groups.join("-")))
 }
 
-fn standard_event_data(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value> {
+/// A price as standard events carry it: a decimal amount and its currency.
+fn event_price(cents: i64, currency: &str) -> Json {
+    json!({
+        "amount": format!("{}.{:02}", cents / 100, (cents % 100).abs()),
+        "currencyCode": currency,
+    })
+}
+
+/// `standard_event_data`: the payload of a standard storefront event about a product, a
+/// collection or the cart, for the `view-event-payload` attribute of a view event element.
+fn standard_event_data(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
+    let site = site(ctx)?;
+    let currency = site.currency();
+    let context = args
+        .named("context")
+        .filter(|context| !context.is_nil())
+        .map_or(Json::Null, |context| json!(context.to_str()));
     let mut data = serde_json::Map::new();
+
     if let Some(drop) = input.downcast::<ProductDrop>() {
         let product = drop.product();
+        let selected = drop
+            .selected_variant()
+            .map(|index| &product.variants[index]);
+        let options_of = |variant: &crate::store::Variant| -> Vec<Json> {
+            product
+                .options
+                .iter()
+                .zip(&variant.options)
+                .map(|(option, value)| json!({"name": option.name, "value": value}))
+                .collect()
+        };
         data.insert(
             "product".to_string(),
             json!({
                 "id": product.id,
                 "title": product.title,
                 "handle": product.handle,
-                "selectedVariant": drop.selected_variant().map(|index| product.variants[index].id),
+                "selectedVariant": selected.map(|variant| json!({
+                    "id": variant.id,
+                    "title": variant.title,
+                    "availableForSale": variant.available,
+                    "price": event_price(variant.price, currency),
+                    "selectedOptions": options_of(variant),
+                })),
             }),
         );
-        if let Some(context) = args.named("context") {
-            data.insert("context".to_string(), json!(context.to_str()));
-        }
-        data.insert("selectedOptions".to_string(), json!([]));
+        data.insert("context".to_string(), context);
+        data.insert(
+            "selectedOptions".to_string(),
+            Json::Array(selected.map(options_of).unwrap_or_default()),
+        );
+    } else if let Some(drop) = input.downcast::<CollectionDrop>() {
+        let collection = drop.collection();
+        data.insert(
+            "collection".to_string(),
+            json!({
+                // The catalog (`collections.all`) is not a collection of the store.
+                "id": if collection.handle == "all" { Json::Null } else { json!(collection.id) },
+                "handle": collection.handle,
+                "productsCount": drop.product_indexes().len(),
+            }),
+        );
+    } else if input.downcast::<CartDrop>().is_some() {
+        data.insert("context".to_string(), context);
+        let cart = if site.session.has_cart() {
+            let lines = resolve_lines(site);
+            let total: i64 = lines.iter().map(|line| line.line_price()).sum();
+            json!({
+                "id": cart_token(site),
+                "totalQuantity": lines.iter().map(|line| u64::from(line.line.quantity)).sum::<u64>(),
+                "cost": {"totalAmount": event_price(total, currency)},
+                "lines": lines.iter().map(|line| json!({
+                    "id": line_key(line.line),
+                    "quantity": line.line.quantity,
+                    "cost": {"totalAmount": event_price(line.line_price(), currency)},
+                })).collect::<Vec<_>>(),
+                "discountCodes": [],
+            })
+        } else {
+            // Shopify only creates a cart when something goes into it.
+            Json::Null
+        };
+        data.insert("cart".to_string(), cart);
     } else {
-        if let Some(context) = args.named("context") {
-            data.insert("context".to_string(), json!(context.to_str()));
-        }
-        let name = input
-            .as_object()
-            .map_or("value", |object| object.type_name())
-            .to_string();
-        data.insert(name, input.to_json());
+        return Ok(Value::Nil);
     }
     Ok(Value::from(to_script_safe_json(&Json::Object(data))))
 }

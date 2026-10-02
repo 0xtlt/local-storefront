@@ -30,6 +30,13 @@ use crate::app::App;
 
 /// The cookie that identifies a visitor's session.
 pub const SESSION_COOKIE: &str = "_lsf_session";
+/// The cookie Shopify keeps the cart token in. Scripts read it to know whether a cart exists.
+pub const CART_COOKIE: &str = "cart";
+
+/// The cart token of a session: stable for the session, different between sessions.
+pub fn cart_token_of(session_id: &str) -> String {
+    format!("c1-{}", lsf_core::util::short_hash(session_id))
+}
 /// A header that selects a session explicitly, for API clients without a cookie jar.
 pub const SESSION_HEADER: &str = "x-lsf-session";
 
@@ -256,7 +263,10 @@ impl ServerState {
         let entry = sessions
             .entry(id.to_string())
             .or_insert_with(|| SessionEntry {
-                session: Session::initial(&self.loaded().store),
+                session: Session {
+                    cart_token: cart_token_of(id),
+                    ..Session::initial(&self.loaded().store)
+                },
                 store: None,
             });
         action(entry)

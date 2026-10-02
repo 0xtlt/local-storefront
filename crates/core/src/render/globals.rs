@@ -23,7 +23,6 @@ use crate::drops::request::{RequestDrop, RoutesDrop, TemplateDrop};
 use crate::drops::search::{predictive_search_value, recommendations_value, search_value};
 use crate::drops::shop::{ShopDrop, policy_value};
 use crate::drops::{hash, strings};
-use crate::filters::misc_json;
 use crate::site::Site;
 use crate::urls;
 
@@ -52,62 +51,12 @@ impl Globals {
     }
 
     fn theme_value(&self) -> Value {
-        let name = self
-            .site
-            .theme
-            .json("config/settings_schema.json")
-            .ok()
-            .flatten()
-            .and_then(|schema| {
-                schema
-                    .as_array()?
-                    .iter()
-                    .find(|group| {
-                        group.get("name").and_then(|name| name.as_str()) == Some("theme_info")
-                    })?
-                    .get("theme_name")?
-                    .as_str()
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| "Local theme".to_string());
+        let (name, _) = super::platform::theme_info(&self.site.theme);
         hash([
             ("id", Value::Int(urls::THEME_ID as i64)),
             ("name", Value::from(name)),
-            ("role", Value::str("development")),
+            ("role", Value::str("main")),
         ])
-    }
-
-    /// The scripts Shopify injects through `content_for_header`: the `Shopify` JavaScript
-    /// global themes rely on, and the bundles built from `{% stylesheet %}` and
-    /// `{% javascript %}` tags.
-    fn content_for_header(&self) -> String {
-        let site = &self.site;
-        let shopify = serde_json::json!({
-            "shop": site.store.shop.permanent_domain,
-            "locale": site.request.locale,
-            "currency": { "active": site.currency(), "rate": "1.0" },
-            "country": site.country().iso_code,
-            "theme": {
-                "name": self.theme_value().get("name").to_str(),
-                "id": urls::THEME_ID,
-                "schema_name": self.theme_value().get("name").to_str(),
-                "theme_store_id": null,
-                "role": "development",
-            },
-            "routes": { "root": format!("{}/", site.request.root) },
-            "cdnHost": site.request.host,
-            "designMode": false,
-        });
-        let compiled = format!(
-            "{}/cdn/shop/t/{}/compiled_assets",
-            urls::cdn_origin(site),
-            urls::THEME_ID
-        );
-        let version = crate::render::compiled_version(&site.theme);
-        format!(
-            "<script>window.Shopify = Object.assign(window.Shopify || {{}}, {});</script>\n<link rel=\"stylesheet\" href=\"{compiled}/styles.css?v={version}\" media=\"all\">\n<script src=\"{compiled}/scripts.js?v={version}\" defer=\"defer\"></script>",
-            misc_json(&shopify)
-        )
     }
 
     fn page_image(&self) -> Value {
@@ -183,7 +132,7 @@ impl Globals {
             "powered_by_link" => Value::str(
                 "<a target=\"_blank\" rel=\"nofollow\" href=\"https://www.shopify.com?utm_campaign=poweredby&amp;utm_medium=shopify&amp;utm_source=onlinestore\">Powered by Shopify</a>",
             ),
-            "content_for_header" => Value::from(self.content_for_header()),
+            "content_for_header" => Value::from(super::platform::content_for_header(site, page)),
             "content_for_additional_checkout_buttons" => Value::empty_string(),
             // The `<option>`s of a country selector. Provinces are not known locally, so the
             // province selector the theme's script fills from `data-provinces` stays empty.

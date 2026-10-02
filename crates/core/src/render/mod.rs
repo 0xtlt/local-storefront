@@ -2,6 +2,7 @@
 
 pub mod globals;
 pub mod page;
+pub mod platform;
 pub mod routes;
 pub mod section;
 pub mod settings;
@@ -202,10 +203,11 @@ impl Renderer {
                 let (content, layout) = self.render_template(&ctx, &page);
                 globals.set("content_for_layout", Value::from(content.clone()));
                 let layout = state.layout_override().unwrap_or(layout);
+                let html = self.render_layout(&mut ctx, &layout, &page, content);
                 (
                     page.status,
                     "text/html; charset=utf-8",
-                    self.render_layout(&mut ctx, &layout, &page, content),
+                    platform::decorate(site, &page, html),
                 )
             }
             Target::Section(id) => match self.render_section_by_id(&ctx, &page, id) {
@@ -375,6 +377,32 @@ impl Renderer {
                         instance,
                     ));
                 }
+            }
+        }
+        // The id of a template section names its template: a page may ask for a section of
+        // another template, as a cart drawer does when it loads recommendations.
+        if id.starts_with("template--") {
+            for other in self.theme.template_names() {
+                if other == name {
+                    continue;
+                }
+                let Some(key) = id.strip_prefix(&template_section_id(&other, "")) else {
+                    continue;
+                };
+                let instance = self
+                    .theme
+                    .template_json(&format!("templates/{other}.json"))
+                    .ok()
+                    .flatten()
+                    .and_then(|template| template.sections.get(key).cloned())?;
+                return Some(render(
+                    Placement {
+                        id: id.to_string(),
+                        location: "template",
+                        group: None,
+                    },
+                    &instance,
+                ));
             }
         }
         for file in self.theme.files().list("sections").iter() {

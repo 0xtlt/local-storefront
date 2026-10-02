@@ -40,7 +40,8 @@ real gem.
 | `theme/` | Access to a theme directory: cached and revalidated files, parsed Liquid, section schemas, JSON templates, locales. |
 | `drops/` | Shopify's Liquid objects, backed by the `Store`, the session and the request. Properties are computed on demand. |
 | `filters/`, `tags/` | Shopify's filters and tags (`section`, `sections`, `content_for`, `form`, `paginate`, `render` with blocks, ...). |
-| `render/` | URL → template (`routes`), settings resolution, sections and blocks, layouts, the Section Rendering API, the compiled stylesheet and script bundles. |
+| `render/` | URL → template (`routes`), settings resolution, sections and blocks, layouts, the Section Rendering API, the compiled stylesheet and script bundles, and what Shopify injects into pages (`platform`). |
+| `assets/platform/` | The JavaScript counterparts of Shopify's own scripts (`Shopify.actions`, `Shopify.loadFeatures`), embedded in the binary and served from the local CDN. Tested with `node --test` (`mise run test:js`). |
 | `images`, `fonts`, `urls` | Image transformations and placeholders, the blank fallback font, local CDN URLs. |
 | `site` | What one render sees: theme, store, request, session, clock. |
 

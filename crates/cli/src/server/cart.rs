@@ -67,6 +67,15 @@ fn cart_reply(visit: &Visit<'_>, params: &Json) -> Reply {
     Reply::json(200, &with_sections(visit, params, cart_json(&visit.site())))
 }
 
+/// `GET /cart.js`: the cart, with the sections the request asked for.
+pub fn show(visit: &Visit<'_>) -> Reply {
+    let params = visit.incoming.all_params();
+    Reply::json(
+        200,
+        &with_sections(visit, &params, cart_json(&visit.site())),
+    )
+}
+
 /// Adds one item to the session's cart. Returns the key of the line it ended up in.
 fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
     let store = &visit.store;
@@ -256,9 +265,23 @@ pub fn change(visit: &Visit<'_>) -> Reply {
 /// Applies `updates` (by variant id or key, or positionally), `note` and `attributes`.
 fn apply_updates(visit: &Visit<'_>, params: &Json) {
     let note = text(params, "note");
-    let attributes = params
+    // An attribute set to nothing is removed; the others are added or replaced.
+    let attributes: Option<Vec<(String, Option<String>)>> = params
         .get("attributes")
-        .map(|value| properties(Some(value)));
+        .and_then(Json::as_object)
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| {
+                    let value = match value {
+                        Json::Null => None,
+                        Json::String(text) if text.is_empty() => None,
+                        Json::String(text) => Some(text.clone()),
+                        other => Some(other.to_string()),
+                    };
+                    (key.clone(), value)
+                })
+                .collect()
+        });
     let updates = params.get("updates").cloned();
     visit.update_session(|session| {
         if let Some(note) = note {
@@ -266,7 +289,14 @@ fn apply_updates(visit: &Visit<'_>, params: &Json) {
         }
         if let Some(attributes) = attributes {
             for (key, value) in attributes {
-                session.cart_attributes.insert(key, value);
+                match value {
+                    Some(value) => {
+                        session.cart_attributes.insert(key, value);
+                    }
+                    None => {
+                        session.cart_attributes.shift_remove(&key);
+                    }
+                }
             }
         }
         let quantity_of = |value: &Json| match value {

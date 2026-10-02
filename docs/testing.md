@@ -155,6 +155,12 @@ session to what the data files define.
   });
   ```
 
+- **What the theme tells Shopify.** The page has the `Shopify` JavaScript object a storefront
+  has, including the standard actions: `await page.evaluate(() => Shopify.actions.getCart())`
+  reads the cart the way an app would. Analytics events a theme publishes with
+  `Shopify.analytics.publish` are kept in `Shopify.analytics.replayQueue`, and cookie consent
+  goes through `Shopify.customerPrivacy`. See
+  [compatibility](compatibility.md#what-shopify-injects-into-pages).
 - **The template.** `x-lsf-template` names the template that rendered the page (`product`,
   `product.alternate`, `404`, ...).
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.

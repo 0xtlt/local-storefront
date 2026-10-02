@@ -191,8 +191,12 @@ pub fn cart_json(site: &SiteRef) -> Json {
     })
 }
 
-fn cart_token(site: &SiteRef) -> String {
-    format!("local-{}", &short_hash(&site.request.host)[..12])
+pub fn cart_token(site: &SiteRef) -> String {
+    if site.session.cart_token.is_empty() {
+        format!("local-{}", &short_hash(&site.request.host)[..12])
+    } else {
+        site.session.cart_token.clone()
+    }
 }
 
 pub struct CartDrop {

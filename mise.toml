@@ -1,7 +1,7 @@
 # Toolchain + tasks for local-storefront. Run `mise install` once, then `mise run <task>`.
 [tools]
 rust = { version = "1.98.1", components = "clippy,rustfmt" }
-# Only needed for the npm packaging (`npm/`).
+# For the npm packaging (`npm/`) and the tests of the injected scripts.
 node = "26"
 # Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem).
 ruby = "3.4.10"
@@ -25,7 +25,12 @@ raw = true
 
 [tasks.test]
 description = "Run the whole test suite"
+depends = ["test:js"]
 run = "cargo test --workspace"
+
+[tasks."test:js"]
+description = "Test the scripts lsf injects into pages (Shopify.actions, Shopify.loadFeatures)"
+run = "node --test crates/core/assets/platform/tests/"
 
 [tasks.lint]
 description = "Clippy on the whole workspace, warnings are errors"
