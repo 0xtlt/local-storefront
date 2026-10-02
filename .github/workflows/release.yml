@@ -51,7 +51,8 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Test the injected scripts
-        run: node --test crates/core/assets/platform/tests/
+        # The files are listed by the shell: older versions of Node do not take a directory.
+        run: node --test crates/core/assets/platform/tests/*.test.mjs
 
   build:
     name: Build ${{ matrix.target }}

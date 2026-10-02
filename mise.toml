@@ -30,7 +30,7 @@ run = "cargo test --workspace"
 
 [tasks."test:js"]
 description = "Test the scripts lsf injects into pages (Shopify.actions, Shopify.loadFeatures)"
-run = "node --test crates/core/assets/platform/tests/"
+run = "node --test crates/core/assets/platform/tests/*.test.mjs"
 
 [tasks.lint]
 description = "Clippy on the whole workspace, warnings are errors"
