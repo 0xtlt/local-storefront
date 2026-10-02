@@ -7,6 +7,7 @@ use lsf_core::theme::Revalidate;
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
+use super::throttle::Throttle;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
@@ -19,6 +20,7 @@ fn server() -> ServerState {
             live_reload: false,
             watch: false,
             quiet: true,
+            throttle: Default::default(),
         },
     );
     assert!(diagnostics.is_empty(), "{diagnostics}");
@@ -651,4 +653,97 @@ fn pages_carry_the_scripts_shopify_injects() {
     // A section on its own is not a page: nothing is added to it.
     let section = text(&get(&state, "/?section_id=footer", "platform"));
     assert!(!section.contains("standard-actions.js"));
+}
+
+/// A server whose options were given on the command line.
+fn server_with_throttle(rules: &str) -> ServerState {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            throttle: Throttle::parse([rules]).expect("valid rules"),
+        },
+    );
+    state
+}
+
+#[test]
+fn requests_are_delayed_by_kind() {
+    let ms = std::time::Duration::from_millis;
+    let state = server_with_throttle("100ms,cart=300ms,cart-add=1s,asset=0");
+    let delay =
+        |method: &str, path: &str| state.delay_for(&request(method, path, json!({}), "throttled"));
+    assert_eq!(delay("GET", "/"), ms(100));
+    // The kind is told from the path without its locale prefix.
+    assert_eq!(delay("GET", "/fr/products/ceramic-mug"), ms(100));
+    assert_eq!(delay("GET", "/?section_id=footer"), ms(100));
+    assert_eq!(delay("GET", "/cart.js"), ms(300));
+    assert_eq!(delay("POST", "/fr/cart/change.js"), ms(300));
+    assert_eq!(delay("POST", "/cart/add.js"), ms(1000));
+    assert_eq!(delay("GET", "/cdn/shop/t/1/assets/base.css"), ms(0));
+    assert_eq!(
+        delay("GET", "/cdn/shop/files/products/tee-white.jpg"),
+        ms(100)
+    );
+    // Tests set themselves up through the control API: it never waits.
+    assert_eq!(delay("PUT", "/__lsf/session"), ms(0));
+
+    // No rule, no delay.
+    assert_eq!(
+        server().delay_for(&request("POST", "/cart/add.js", json!({}), "x")),
+        ms(0)
+    );
+    assert_eq!(
+        body_json(&get(&state, "/__lsf/status", "throttled"))["throttle"],
+        json!({"all": 100, "cart": 300, "cart-add": 1000, "asset": 0})
+    );
+}
+
+#[test]
+fn a_session_can_have_a_throttle_of_its_own() {
+    let ms = std::time::Duration::from_millis;
+    let state = server_with_throttle("cart=300ms");
+    let put = |session: &str, body: Json| {
+        state.dispatch(&request("PUT", "/__lsf/session", body, session))
+    };
+    let add = |session: &str| state.delay_for(&request("POST", "/cart/add.js", json!({}), session));
+
+    let reply = put("slow", json!({"throttle": {"cart-add": "2s"}}));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        body_json(&reply)["session"]["throttle"],
+        json!({"cart-add": 2000})
+    );
+    assert_eq!(add("slow"), ms(2000));
+    // It replaces the server's rules for that session: the cart is no longer delayed.
+    assert_eq!(
+        state.delay_for(&request("GET", "/cart.js", json!({}), "slow")),
+        ms(0)
+    );
+    // Other sessions keep the server's.
+    assert_eq!(add("other"), ms(300));
+
+    // Zero lifts the server's throttle for one session.
+    put("fast", json!({"throttle": 0}));
+    assert_eq!(add("fast"), ms(0));
+
+    // Setting the session again without a throttle goes back to the server's.
+    put("slow", json!({}));
+    assert_eq!(add("slow"), ms(300));
+
+    let invalid = put("slow", json!({"throttle": {"cart-ad": 100}}));
+    assert_eq!(invalid.status, 422);
+    let diagnostic = &body_json(&invalid)["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "invalid_throttle");
+    assert_eq!(diagnostic["path"], "/throttle");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("Did you mean \"cart-add\"?")
+    );
 }

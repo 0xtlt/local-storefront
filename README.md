@@ -27,6 +27,8 @@ limit, and shows exactly the catalog, cart and customer each test asks for.
   placeholders of the right size, so fixtures do not need to ship images.
 - **A storefront, not only pages.** Cart Ajax API, Section Rendering API, predictive search,
   product recommendations, collection filters and sorting, forms, localization, customer login.
+- **Latency on demand.** `--throttle cart-add=1s` answers a kind of request late, for the
+  whole server or for one test's session, so that loading states can be tested.
 - **Isolated sessions.** Each browser context has its own cart, customer and, if it wants,
   its own store data, set with one HTTP call. Tests run in parallel against one server. See
   [testing](docs/testing.md).
@@ -161,7 +163,7 @@ The smallest useful data directory is one file:
 
 | Command | What it does |
 |---|---|
-| `lsf serve` | Serves the theme. `--port`, `--host`, `--live-reload`, `--static`, `--strict`, `--quiet`. |
+| `lsf serve` | Serves the theme. `--port`, `--host`, `--live-reload`, `--static`, `--strict`, `--quiet`, `--throttle`. |
 | `lsf render <path>` | Prints the HTML of one URL, without a server. `--section-id` renders a single section. |
 | `lsf validate` | Checks the store data. `--format json` for a machine-readable report. Exit status 1 on errors. |
 | `lsf check` | Parses every Liquid and JSON file of the theme and reports what is not supported. |

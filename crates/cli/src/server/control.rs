@@ -13,6 +13,7 @@ use lsf_liquid::filters::escape_html;
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
+use super::throttle::Throttle;
 use super::{Incoming, SESSION_COOKIE, ServerState};
 
 pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
@@ -67,6 +68,7 @@ fn status(state: &ServerState) -> Json {
         "theme": state.app.theme.files().root().display().to_string(),
         "data": state.app.describe_source(),
         "data_diagnostics": diagnostics_json(&loaded.diagnostics),
+        "throttle": state.options.throttle.to_json(),
         "templates": state.app.theme.template_names(),
         "locales": store.languages.iter().map(|language| language.iso_code.clone()).collect::<Vec<_>>(),
         "counts": {
@@ -144,6 +146,7 @@ fn session_json(state: &ServerState, id: &str) -> Json {
             })).collect::<Vec<_>>(),
         },
         "custom_data": state.with_session(id, |entry| entry.store.is_some()),
+        "throttle": state.with_session(id, |entry| entry.throttle.as_ref().map(Throttle::to_json)),
     })
 }
 
@@ -163,6 +166,21 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
     let overlay = body
         .as_object_mut()
         .and_then(|object| object.remove("data"));
+    // The session's own throttle: a matter of the server, not of the store data.
+    let throttle = match body
+        .as_object_mut()
+        .and_then(|object| object.remove("throttle"))
+    {
+        None | Some(Json::Null) => None,
+        Some(rules) => match Throttle::from_json(&rules) {
+            Ok(throttle) => Some(throttle),
+            Err(problem) => {
+                let mut diagnostics = Diagnostics::new();
+                diagnostics.error("invalid_throttle", OVERLAY_FILE, "/throttle", problem);
+                return Reply::json(422, &diagnostics_json(&diagnostics));
+            }
+        },
+    };
 
     let mut diagnostics = Diagnostics::new();
     validate(FileKind::Session, OVERLAY_FILE, &body, "", &mut diagnostics);
@@ -235,6 +253,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
             ..session
         };
         entry.store = custom_store;
+        entry.throttle = throttle;
     });
     let reply = Reply::json(
         200,

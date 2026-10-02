@@ -10,6 +10,7 @@ pub mod reply;
 mod storefront;
 #[cfg(test)]
 mod tests;
+pub mod throttle;
 
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
@@ -50,6 +51,8 @@ pub struct ServeOptions {
     pub watch: bool,
     /// Do not log requests.
     pub quiet: bool,
+    /// How long each kind of request is held before it is answered.
+    pub throttle: throttle::Throttle,
 }
 
 /// The store as last loaded from disk.
@@ -63,6 +66,8 @@ pub struct SessionEntry {
     pub session: Session,
     /// Store data specific to this session, set through the control API.
     pub store: Option<Arc<Store>>,
+    /// A throttle of its own, which replaces the server's for this session.
+    pub throttle: Option<throttle::Throttle>,
 }
 
 pub struct ServerState {
@@ -257,6 +262,40 @@ impl ServerState {
         }
     }
 
+    /// The session a request names, if it names one. Unlike [`ServerState::session_id`], this
+    /// never starts a session.
+    fn named_session(&self, incoming: &Incoming) -> Option<String> {
+        if let Some(id) = incoming.header(SESSION_HEADER).filter(|id| !id.is_empty()) {
+            return Some(id.to_string());
+        }
+        incoming.header("cookie").and_then(|cookies| {
+            cookies
+                .split(';')
+                .filter_map(|cookie| cookie.trim().split_once('='))
+                .find(|(name, _)| *name == SESSION_COOKIE)
+                .map(|(_, value)| value.to_string())
+        })
+    }
+
+    /// How long to hold a request before answering it: the throttle of its session when it
+    /// has one, the server's otherwise.
+    pub fn delay_for(&self, incoming: &Incoming) -> Duration {
+        let (_, _, path) = self.localize(&self.loaded().store, &incoming.path);
+        let wants_sections = incoming.query_param("section_id").is_some()
+            || incoming.query_param("sections").is_some();
+        let Some(kind) = throttle::classify(&incoming.method, &path, wants_sections) else {
+            return Duration::ZERO;
+        };
+        let of_session = self.named_session(incoming).and_then(|id| {
+            let sessions = self.sessions.lock().expect("sessions poisoned");
+            sessions.get(&id).and_then(|entry| entry.throttle.clone())
+        });
+        match of_session {
+            Some(throttle) => throttle.delay(kind),
+            None => self.options.throttle.delay(kind),
+        }
+    }
+
     /// Reads the session, creating it with the store's defaults when it is new.
     pub fn with_session<T>(&self, id: &str, action: impl FnOnce(&mut SessionEntry) -> T) -> T {
         let mut sessions = self.sessions.lock().expect("sessions poisoned");
@@ -268,6 +307,7 @@ impl ServerState {
                     ..Session::initial(&self.loaded().store)
                 },
                 store: None,
+                throttle: None,
             });
         action(entry)
     }
@@ -378,6 +418,11 @@ async fn handle(
 
     let log_line = format!("{} {}", incoming.method, parts.uri);
     let quiet = state.options.quiet;
+    // Held here rather than on a render thread: waiting costs nothing.
+    let delay = state.delay_for(&incoming);
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
     // Rendering is CPU-bound: keep it off the async workers.
     let worker_state = state.clone();
     let reply = tokio::task::spawn_blocking(move || worker_state.dispatch(&incoming))
@@ -401,6 +446,11 @@ async fn handle(
         );
     }
 
+    let reply = if delay.is_zero() {
+        reply
+    } else {
+        reply.header("x-lsf-throttle", format!("{}ms", delay.as_millis()))
+    };
     let mut response =
         Response::builder().status(StatusCode::from_u16(reply.status).unwrap_or(StatusCode::OK));
     for (name, value) in &reply.headers {
