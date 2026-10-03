@@ -6,6 +6,7 @@ mod cdn;
 mod control;
 pub use control::routes;
 mod forms;
+mod live_reload;
 pub mod params;
 pub mod reply;
 mod storefront;
@@ -22,8 +23,10 @@ use std::time::{Duration, Instant, SystemTime};
 
 use axum::body::Body;
 use axum::extract::State;
+use axum::extract::ws::{WebSocketUpgrade, rejection::WebSocketUpgradeRejection};
 use axum::http::{HeaderName, HeaderValue, Request as HttpRequest, Response, StatusCode};
 use lsf_core::diagnostics::Diagnostics;
+use lsf_core::theme::THEME_DIRECTORIES;
 use lsf_core::{Request, Session, Store};
 use serde_json::Value as Json;
 
@@ -83,6 +86,9 @@ pub struct ServerState {
     pub(crate) image_cache: Mutex<HashMap<String, CachedImage>>,
     session_counter: AtomicU64,
     started: Instant,
+    /// The token of the files when live reload last looked at them.
+    last_token: AtomicU64,
+    changes: live_reload::Changes,
 }
 
 /// One HTTP request, decoded.
@@ -182,6 +188,8 @@ impl ServerState {
             image_cache: Mutex::new(HashMap::new()),
             session_counter: AtomicU64::new(0),
             started: Instant::now(),
+            last_token: AtomicU64::new(0),
+            changes: live_reload::Changes::new(),
         };
         (state, diagnostics)
     }
@@ -209,8 +217,9 @@ impl ServerState {
         loaded
     }
 
-    /// Reloads the store when its files changed since the last check.
-    fn refresh_if_changed(&self) {
+    /// Reloads the store when its files changed since the last check. The files are looked at
+    /// every 300 ms at most, unless the caller knows that they changed (`now`).
+    fn refresh_if_changed(&self, now: bool) {
         if !self.options.watch {
             return;
         }
@@ -219,7 +228,7 @@ impl ServerState {
         };
         {
             let mut last_check = self.last_check.lock().expect("check lock poisoned");
-            if last_check.elapsed() < Duration::from_millis(300) {
+            if !now && last_check.elapsed() < Duration::from_millis(300) {
                 return;
             }
             *last_check = Instant::now();
@@ -233,10 +242,31 @@ impl ServerState {
         }
     }
 
-    /// A token that changes whenever the theme or the data change, for live reload.
-    pub fn change_token(&self) -> u64 {
-        let theme = fingerprint(self.app.theme.files().root());
-        theme ^ self.loaded().fingerprint.rotate_left(17)
+    /// A token that changes whenever the theme or the data change, for live reload. Only the
+    /// directories a theme is made of are looked at: what else lives next to them (sources,
+    /// `node_modules`) is not served, and can be large.
+    fn change_token(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let root = self.app.theme.files().root();
+        for directory in THEME_DIRECTORIES {
+            hasher.write_u64(fingerprint(&root.join(directory)));
+        }
+        if let Some(directory) = self.app.data_dir() {
+            hasher.write_u64(fingerprint(directory));
+        }
+        hasher.finish()
+    }
+
+    /// The token of the files as they are now, for live reload. When it is not the one seen
+    /// last, what is cached about the files is dropped: the pages reload at once, and must be
+    /// rendered from the files as they are, not as they were a moment ago.
+    pub fn observe_changes(&self) -> u64 {
+        let token = self.change_token();
+        if self.last_token.swap(token, Ordering::Relaxed) != token {
+            self.app.theme.files().expire();
+            self.refresh_if_changed(true);
+        }
+        token
     }
 
     fn new_session_id(&self) -> String {
@@ -396,7 +426,7 @@ impl ServerState {
         if incoming.path.starts_with("/cdn/") {
             return cdn::handle(self, incoming);
         }
-        self.refresh_if_changed();
+        self.refresh_if_changed(false);
         storefront::handle(self, incoming)
     }
 }
@@ -486,12 +516,28 @@ async fn handle(
         .unwrap_or_else(|_| Response::new(Body::empty()))
 }
 
+/// `/__lsf/livereload`: a WebSocket for the pages that open one, and otherwise the token of
+/// the files, like the rest of the control API.
+async fn live_reload(
+    State(state): State<Arc<ServerState>>,
+    upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
+    request: HttpRequest<Body>,
+) -> Response<Body> {
+    match upgrade {
+        Ok(upgrade) => upgrade.on_upgrade(move |socket| live_reload::serve(socket, state)),
+        Err(_) => handle(State(state), request).await,
+    }
+}
+
 /// Serves the storefront until the process is interrupted.
 pub async fn run(
     state: Arc<ServerState>,
     listener: tokio::net::TcpListener,
 ) -> std::io::Result<()> {
-    let router = axum::Router::new().fallback(handle).with_state(state);
+    let router = axum::Router::new()
+        .route("/__lsf/livereload", axum::routing::get(live_reload))
+        .fallback(handle)
+        .with_state(state);
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

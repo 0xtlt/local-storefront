@@ -276,7 +276,7 @@ Every command accepts `--theme <dir>` (default: the current folder) and `--data 
 |---|---|
 | `--port <port>`, `-p` | Port to listen on, and no other: the server does not start if it is taken. `0` picks a free one. Without the option: `9292`, or the next free port up to `9391`. |
 | `--host <address>` | Address to listen on. Default `127.0.0.1`. Use `0.0.0.0` in a container. |
-| `--live-reload` | Reloads the page when you edit the theme or the data. For development, not for tests. |
+| `--live-reload` | Reloads the page as soon as you edit the theme or the data. The page listens on a WebSocket, and asks the server every 700 ms where a socket cannot be opened. For development, not for tests. |
 | `--static` | Reads the files once. The fastest mode, for tests. |
 | `--strict` | Refuses to start if the data has errors. |
 | `--quiet`, `-q` | Does not log requests. |

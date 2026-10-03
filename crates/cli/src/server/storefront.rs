@@ -11,22 +11,9 @@ use lsf_core::{Request, Session, Site, Store};
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
-use super::{CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms};
-
-/// The script injected by `--live-reload`: it reloads the page when the theme or data change.
-const LIVE_RELOAD_SCRIPT: &str = r#"<script data-lsf-live-reload>
-(function () {
-  var token = null;
-  function poll() {
-    fetch('/__lsf/livereload').then(function (response) { return response.text(); }).then(function (next) {
-      if (token !== null && next !== token) { location.reload(); return; }
-      token = next;
-      setTimeout(poll, 700);
-    }).catch(function () { setTimeout(poll, 2000); });
-  }
-  poll();
-})();
-</script>"#;
+use super::{
+    CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms, live_reload,
+};
 
 /// A request being handled for a given visitor.
 pub struct Visit<'a> {
@@ -285,8 +272,8 @@ fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     let mut body = rendered.body;
     if visit.state.options.live_reload && *target == Target::Page {
         match body.rfind("</body>") {
-            Some(index) => body.insert_str(index, LIVE_RELOAD_SCRIPT),
-            None => body.push_str(LIVE_RELOAD_SCRIPT),
+            Some(index) => body.insert_str(index, live_reload::SCRIPT),
+            None => body.push_str(live_reload::SCRIPT),
         }
     }
     let mut reply = Reply::new(rendered.status, rendered.content_type, body.into_bytes())

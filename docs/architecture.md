@@ -68,6 +68,7 @@ downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference i
 | `account` | The page that stands in for the customer accounts Shopify hosts, and the B2B location switch. |
 | `cdn` | Theme assets, files, image transformations, bundles, fonts. |
 | `control` | The `/__lsf` API. |
+| `live_reload` | `--live-reload`: the WebSocket open pages listen on, and the task that looks at the theme and data directories while a page listens. The script it injects is `assets/live-reload.js`, tested with Node (`mise run test:js`). |
 
 Rendering is CPU-bound and synchronous; the async server hands each request to a blocking
 thread with a large stack, because deeply nested snippets and blocks recurse.

@@ -148,6 +148,7 @@ impl Theme {
             Revalidate::Never => true,
             Revalidate::Every(interval) => {
                 computed.elapsed() < interval.max(std::time::Duration::from_secs(1))
+                    && !self.files.expired_since(computed)
             }
         }
     }

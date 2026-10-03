@@ -26,7 +26,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     match (incoming.method.as_str(), segments.as_slice()) {
         ("GET", []) => dashboard(state, incoming),
         ("GET", ["status"]) => Reply::json(200, &status(state)),
-        ("GET", ["livereload"]) => Reply::text(200, state.change_token().to_string()),
+        ("GET", ["livereload"]) => Reply::text(200, state.observe_changes().to_string()),
         ("POST", ["reload"]) => {
             let loaded = state.reload();
             Reply::json(200, &diagnostics_json(&loaded.diagnostics))

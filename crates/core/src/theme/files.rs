@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -39,6 +40,10 @@ struct Version {
 pub struct ThemeFiles {
     root: PathBuf,
     revalidate: Revalidate,
+    /// When this was created: what `expired` counts from.
+    opened: Instant,
+    /// Nanoseconds after `opened` before which what was checked is not to be trusted.
+    expired: AtomicU64,
     cache: RwLock<HashMap<String, Entry>>,
     // Rendering a page asks for listings, existence and versions hundreds of times. Each one
     // is a system call, and the kernel serves those on one directory one at a time, so they
@@ -53,6 +58,8 @@ impl ThemeFiles {
         ThemeFiles {
             root: root.into(),
             revalidate,
+            opened: Instant::now(),
+            expired: AtomicU64::new(0),
             cache: RwLock::new(HashMap::new()),
             listings: RwLock::new(HashMap::new()),
             existence: RwLock::new(HashMap::new()),
@@ -80,8 +87,25 @@ impl ThemeFiles {
     fn is_fresh(&self, checked: Instant) -> bool {
         match self.revalidate {
             Revalidate::Never => true,
-            Revalidate::Every(interval) => checked.elapsed() < interval,
+            Revalidate::Every(interval) => {
+                checked.elapsed() < interval && !self.expired_since(checked)
+            }
         }
+    }
+
+    /// Says that the files changed: everything is checked against the file system on its next
+    /// use, without waiting for the interval. For whoever sees a change before the interval is
+    /// over, like live reload, which renders the page again at once. Files that are read only
+    /// once (`Revalidate::Never`) stay as they were read.
+    pub fn expire(&self) {
+        let now = self.opened.elapsed().as_nanos() as u64;
+        self.expired.fetch_max(now.max(1), Ordering::Relaxed);
+    }
+
+    /// Whether [`ThemeFiles::expire`] was called after `checked`.
+    pub fn expired_since(&self, checked: Instant) -> bool {
+        let checked = checked.saturating_duration_since(self.opened).as_nanos() as u64;
+        checked < self.expired.load(Ordering::Relaxed)
     }
 
     /// The cached answer for `key` while it is fresh, otherwise what `look` finds now.
@@ -241,6 +265,26 @@ mod tests {
         assert_eq!(*files.list("snippets"), ["a.liquid".to_string()]);
         assert!(!files.exists("snippets/b.liquid"));
         assert_eq!(files.version("snippets/a.liquid"), version);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn expired_files_are_looked_at_again_before_their_interval() {
+        let (root, files, version) =
+            changing_theme("expired", Revalidate::Every(Duration::from_secs(60)));
+        // Within the interval, the file system is not looked at.
+        assert!(!files.exists("snippets/b.liquid"));
+        assert_eq!(*files.list("snippets"), ["a.liquid".to_string()]);
+        assert_eq!(files.version("snippets/a.liquid"), version);
+
+        files.expire();
+        assert_eq!(files.read("snippets/b.liquid").as_deref(), Some("b"));
+        assert_eq!(
+            *files.list("snippets"),
+            ["a.liquid".to_string(), "b.liquid".to_string()]
+        );
+        assert!(files.exists("snippets/b.liquid"));
+        assert_ne!(files.version("snippets/a.liquid"), version);
         let _ = std::fs::remove_dir_all(root);
     }
 

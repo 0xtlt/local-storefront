@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use lsf_core::theme::Revalidate;
 use serde_json::{Value as Json, json};
@@ -1344,4 +1345,122 @@ fn a_session_brings_its_own_plans_and_locations() {
     assert!(!text(&get(&state, &pickup, "other")).contains("Pop-up store"));
     let mug = body_json(&get(&state, "/products/ceramic-mug.js", "other"));
     assert_eq!(mug["selling_plan_groups"], json!([]));
+}
+
+/// What a served theme is made of at the least, in a directory of its own.
+fn changing_theme(name: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for directory in ["layout", "templates", "src"] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    std::fs::write(
+        root.join("layout/theme.liquid"),
+        "<html><body>{{ content_for_layout }}</body></html>",
+    )
+    .unwrap();
+    std::fs::write(root.join("templates/index.liquid"), "<h1>before</h1>").unwrap();
+    root
+}
+
+/// One request on a connection of its own. Returns the response, headers included.
+async fn http_get(address: std::net::SocketAddr, path: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: shop.test\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response
+}
+
+/// The text of the next WebSocket frame the server sends. Server frames are not masked, and
+/// the tokens are short enough for the length to fit in the second byte.
+async fn next_frame(stream: &mut tokio::net::TcpStream) -> String {
+    use tokio::io::AsyncReadExt;
+    let frame = async {
+        let mut header = [0u8; 2];
+        stream.read_exact(&mut header).await.unwrap();
+        assert_eq!(header[0], 0x81, "a final text frame");
+        assert!(header[1] < 126, "a short, unmasked frame");
+        let mut payload = vec![0u8; usize::from(header[1])];
+        stream.read_exact(&mut payload).await.unwrap();
+        String::from_utf8(payload).unwrap()
+    };
+    tokio::time::timeout(Duration::from_secs(10), frame)
+        .await
+        .expect("the server says nothing")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_reload_tells_pages_about_changes_over_a_websocket() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let root = changing_theme("live-reload");
+    // Files are checked once a minute: a page reloaded at once only shows a change if live
+    // reload says that the files changed.
+    let app = App::open(&root, None, Revalidate::Every(Duration::from_secs(60))).unwrap();
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: true,
+            watch: true,
+            quiet: true,
+            throttle: Default::default(),
+            customer: None,
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(super::run(std::sync::Arc::new(state), listener));
+
+    // The page carries the script, which opens the socket.
+    let page = http_get(address, "/").await;
+    assert!(page.contains("<h1>before</h1>"), "{page}");
+    assert!(page.contains("<script data-lsf-live-reload>"), "{page}");
+    assert!(page.contains("new WebSocket("), "{page}");
+
+    // The handshake of RFC 6455, with the key and the answer of its example.
+    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    socket
+        .write_all(
+            b"GET /__lsf/livereload HTTP/1.1\r\nHost: shop.test\r\nConnection: Upgrade\r\n\
+              Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+              Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut handshake = Vec::new();
+    while !handshake.ends_with(b"\r\n\r\n") {
+        handshake.push(socket.read_u8().await.unwrap());
+    }
+    let handshake = String::from_utf8(handshake).unwrap().to_lowercase();
+    assert!(handshake.starts_with("http/1.1 101 "), "{handshake}");
+    assert!(
+        handshake.contains("sec-websocket-accept: s3pplmbitxaq9kygzzhzrbk+xoo="),
+        "{handshake}"
+    );
+
+    // First what the files are now. A page without a socket is told the same when it asks.
+    let before = next_frame(&mut socket).await;
+    let asked = http_get(address, "/__lsf/livereload").await;
+    assert!(asked.starts_with("HTTP/1.1 200 "), "{asked}");
+    assert_eq!(asked.rsplit("\r\n\r\n").next(), Some(before.as_str()));
+
+    // A file that is not part of the theme changes nothing.
+    std::fs::write(root.join("src/app.ts"), "export {};").unwrap();
+    let quiet = tokio::time::timeout(Duration::from_millis(400), next_frame(&mut socket)).await;
+    assert!(quiet.is_err(), "{quiet:?}");
+
+    // A template does, and the page rendered next is the new one.
+    std::fs::write(root.join("templates/index.liquid"), "<h1>after!</h1>").unwrap();
+    let after = next_frame(&mut socket).await;
+    assert_ne!(after, before);
+    let page = http_get(address, "/").await;
+    assert!(page.contains("<h1>after!</h1>"), "{page}");
+    let asked = http_get(address, "/__lsf/livereload").await;
+    assert_eq!(asked.rsplit("\r\n\r\n").next(), Some(after.as_str()));
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(root);
 }
