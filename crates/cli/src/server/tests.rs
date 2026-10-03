@@ -21,6 +21,7 @@ fn server() -> ServerState {
             live_reload: false,
             watch: false,
             quiet: true,
+            compress: true,
             throttle: Default::default(),
             customer: None,
         },
@@ -668,6 +669,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
             live_reload: false,
             watch: false,
             quiet: true,
+            compress: true,
             throttle: Throttle::parse([rules]).expect("valid rules"),
             customer: None,
         },
@@ -954,6 +956,7 @@ fn the_server_can_start_logged_in() {
             live_reload: false,
             watch: false,
             quiet: true,
+            compress: true,
             throttle: Default::default(),
             customer: Some("alex.morgan@example.com".to_string()),
         },
@@ -1406,6 +1409,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
             live_reload: true,
             watch: true,
             quiet: true,
+            compress: true,
             throttle: Default::default(),
             customer: None,
         },
@@ -1463,4 +1467,127 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
 
     server.abort();
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// One request with headers of its own. Returns the head of the response, in lowercase, and
+/// the bytes of its body.
+async fn http_request(
+    address: std::net::SocketAddr,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (String, Vec<u8>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    let mut request = format!("GET {path} HTTP/1.1\r\nHost: shop.test\r\nConnection: close\r\n");
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+    let end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("a complete response");
+    (
+        String::from_utf8_lossy(&response[..end]).to_lowercase(),
+        response[end + 4..].to_vec(),
+    )
+}
+
+/// The value of a header in the head of a response.
+fn head_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines()
+        .filter_map(|line| line.split_once(": "))
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value.trim())
+}
+
+async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress,
+            throttle: Default::default(),
+            customer: None,
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let _ = super::run(std::sync::Arc::new(state), listener).await;
+    });
+    (address, server)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn responses_are_compressed_for_the_clients_that_accept_it() {
+    use super::compress::{Encoding, decompress};
+
+    let (address, server) = serve_fixture(true).await;
+    let session = ("x-lsf-session", "compression");
+    let (head, plain) = http_request(address, "/", &[session]).await;
+    assert!(head.starts_with("http/1.1 200 "), "{head}");
+    assert_eq!(head_value(&head, "content-encoding"), None);
+    assert_eq!(head_value(&head, "vary"), Some("accept-encoding"));
+    assert!(plain.len() > 1024, "{}", plain.len());
+
+    // What a browser sends: Brotli, the same page, much smaller.
+    let browser = ("accept-encoding", "gzip, deflate, br, zstd");
+    let (head, body) = http_request(address, "/", &[session, browser]).await;
+    assert_eq!(head_value(&head, "content-encoding"), Some("br"));
+    assert_eq!(head_value(&head, "vary"), Some("accept-encoding"));
+    assert_eq!(
+        head_value(&head, "content-length"),
+        Some(body.len().to_string().as_str())
+    );
+    assert!(
+        body.len() < plain.len() / 2,
+        "{} of {}",
+        body.len(),
+        plain.len()
+    );
+    assert_eq!(decompress(Encoding::Brotli, &body), plain);
+
+    // A client that only knows gzip.
+    let (head, body) = http_request(address, "/", &[session, ("accept-encoding", "gzip")]).await;
+    assert_eq!(head_value(&head, "content-encoding"), Some("gzip"));
+    assert_eq!(decompress(Encoding::Gzip, &body), plain);
+
+    // Theme files and JSON are compressed too; images and small answers are not.
+    let (head, body) =
+        http_request(address, "/products/organic-cotton-t-shirt.js", &[browser]).await;
+    assert_eq!(head_value(&head, "content-encoding"), Some("br"));
+    let product: Json = serde_json::from_slice(&decompress(Encoding::Brotli, &body)).unwrap();
+    assert_eq!(product["handle"], "organic-cotton-t-shirt");
+    let (head, _) = http_request(
+        address,
+        "/cdn/shop/files/products/tee-white.jpg?width=200",
+        &[browser],
+    )
+    .await;
+    assert!(head.starts_with("http/1.1 200 "), "{head}");
+    assert_eq!(head_value(&head, "content-encoding"), None);
+    assert_eq!(head_value(&head, "vary"), None);
+    let (head, body) = http_request(address, "/cart.js", &[session, browser]).await;
+    assert_eq!(head_value(&head, "content-encoding"), None);
+    assert_eq!(
+        serde_json::from_slice::<Json>(&body).unwrap()["item_count"],
+        0
+    );
+    server.abort();
+
+    // With `--no-compression`, nothing is, whatever the client accepts.
+    let (address, server) = serve_fixture(false).await;
+    let (head, body) = http_request(address, "/", &[session, browser]).await;
+    assert_eq!(head_value(&head, "content-encoding"), None);
+    assert_eq!(head_value(&head, "vary"), None);
+    assert_eq!(body, plain);
+    server.abort();
 }

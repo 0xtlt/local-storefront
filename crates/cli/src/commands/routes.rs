@@ -14,6 +14,7 @@ pub fn run(theme: &Path, data: Option<&Path>) -> Result<ExitCode, String> {
             live_reload: false,
             watch: false,
             quiet: true,
+            compress: false,
             throttle: Default::default(),
             customer: None,
         },

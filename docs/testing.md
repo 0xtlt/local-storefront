@@ -22,6 +22,9 @@ lsf serve --theme path/to/theme --port 9292 --static --quiet --strict
 
 Leave `--live-reload` off: it injects a script into the pages.
 
+Responses are compressed, as a storefront's are, when the client accepts it. It costs about
+half a millisecond per page. `--no-compression` turns it off.
+
 With Playwright, let the runner start and stop the server:
 
 ```ts

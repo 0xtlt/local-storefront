@@ -3,6 +3,7 @@
 mod account;
 mod cart;
 mod cdn;
+mod compress;
 mod control;
 pub use control::routes;
 mod forms;
@@ -55,6 +56,8 @@ pub struct ServeOptions {
     pub watch: bool,
     /// Do not log requests.
     pub quiet: bool,
+    /// Compress responses for the clients that accept it.
+    pub compress: bool,
     /// How long each kind of request is held before it is answered.
     pub throttle: throttle::Throttle,
     /// Who new sessions are logged in as, instead of what the store data says: an email,
@@ -468,16 +471,24 @@ async fn handle(
 
     let log_line = format!("{} {}", incoming.method, parts.uri);
     let quiet = state.options.quiet;
+    let encoding = compress::negotiate(incoming.header("accept-encoding"));
     // Held here rather than on a render thread: waiting costs nothing.
     let delay = state.delay_for(&incoming);
     if !delay.is_zero() {
         tokio::time::sleep(delay).await;
     }
-    // Rendering is CPU-bound: keep it off the async workers.
+    // Rendering is CPU-bound, and so is compressing: keep them off the async workers.
     let worker_state = state.clone();
-    let reply = tokio::task::spawn_blocking(move || worker_state.dispatch(&incoming))
-        .await
-        .unwrap_or_else(|error| Reply::text(500, format!("internal error: {error}")));
+    let reply = tokio::task::spawn_blocking(move || {
+        let reply = worker_state.dispatch(&incoming);
+        if worker_state.options.compress {
+            compress::apply(reply, encoding)
+        } else {
+            reply
+        }
+    })
+    .await
+    .unwrap_or_else(|error| Reply::text(500, format!("internal error: {error}")));
 
     if !quiet
         && !parts.uri.path().starts_with("/cdn/")

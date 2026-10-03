@@ -138,6 +138,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |
 | Sitemaps | `/robots.txt` is rendered from `templates/robots.txt.liquid`, or with Shopify's default rules. `/sitemap.xml` links one sitemap per kind (products, pages, collections, blogs), in the primary language only and without paging. |
+| Compression | Pages, styles, scripts and JSON are compressed with Brotli or gzip for the clients that accept it, at fast levels: the sizes are close to a storefront's, not equal. `--no-compression` turns it off. |
 
 Found a difference that is not in this table? It is a bug: a Liquid snippet and the HTML
 Shopify renders for it are enough to reproduce it.

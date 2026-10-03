@@ -280,6 +280,7 @@ Every command accepts `--theme <dir>` (default: the current folder) and `--data 
 | `--static` | Reads the files once. The fastest mode, for tests. |
 | `--strict` | Refuses to start if the data has errors. |
 | `--quiet`, `-q` | Does not log requests. |
+| `--no-compression` | Sends responses as they are. Without it, pages, styles, scripts and JSON are compressed (Brotli or gzip) for the browsers and tools that accept it, as on Shopify. |
 | `--customer <email>` | Starts every visitor logged in as this customer. Also `default` (the first customer) or `none`. |
 | `--throttle <rules>` | Answers late, to test loading states. See below. |
 

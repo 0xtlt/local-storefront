@@ -35,6 +35,11 @@ pub struct Args {
     #[arg(long, short)]
     quiet: bool,
 
+    /// Send responses as they are. Without this option, pages, styles, scripts and JSON are
+    /// compressed with Brotli or gzip for the clients that accept it, as on Shopify.
+    #[arg(long)]
+    no_compression: bool,
+
     /// Refuse to start when the store data has errors.
     #[arg(long)]
     strict: bool,
@@ -101,6 +106,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
             live_reload: args.live_reload,
             watch: !args.static_files,
             quiet: args.quiet,
+            compress: !args.no_compression,
             throttle: throttle.clone(),
             customer: args.customer.clone(),
         },
