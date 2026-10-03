@@ -96,11 +96,160 @@ pub struct Metafield {
 
 pub type Metafields = IndexMap<String, IndexMap<String, Metafield>>;
 
+/// How an option value is shown instead of its name.
+#[derive(Clone, Debug)]
+pub struct Swatch {
+    /// A CSS color.
+    pub color: Option<String>,
+    pub image: Option<Image>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ProductOption {
     pub name: String,
     pub position: usize,
     pub values: Vec<String>,
+    /// The swatch of each value, in the order of `values`.
+    pub swatches: Vec<Option<Swatch>>,
+}
+
+impl ProductOption {
+    pub fn swatch(&self, value: &str) -> Option<&Swatch> {
+        let index = self.values.iter().position(|name| name == value)?;
+        self.swatches.get(index)?.as_ref()
+    }
+}
+
+/// A place the store stocks products at.
+#[derive(Clone, Debug)]
+pub struct Location {
+    pub id: u64,
+    pub name: String,
+    pub address: Address,
+    pub pick_up_enabled: bool,
+    pub pick_up_time: String,
+    pub physical_storefront: bool,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub metafields: Metafields,
+}
+
+/// How a selling plan changes a price.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adjustment {
+    /// Percent off.
+    Percentage(i64),
+    /// Cents off.
+    FixedAmount(i64),
+    /// The price, in cents.
+    Price(i64),
+}
+
+impl Adjustment {
+    /// The price of something that costs `price` without the plan.
+    pub fn apply(self, price: i64) -> i64 {
+        match self {
+            Adjustment::Percentage(percent) => (price * (100 - percent) + 50).div_euclid(100),
+            Adjustment::FixedAmount(amount) => (price - amount).max(0),
+            Adjustment::Price(amount) => amount,
+        }
+    }
+
+    /// `(value_type, value)` as Liquid and the product JSON have them.
+    pub fn describe(self) -> (&'static str, i64) {
+        match self {
+            Adjustment::Percentage(value) => ("percentage", value),
+            Adjustment::FixedAmount(value) => ("fixed_amount", value),
+            Adjustment::Price(value) => ("price", value),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PriceAdjustment {
+    pub adjustment: Adjustment,
+    /// The number of orders the adjustment applies to; every order when `None`.
+    pub order_count: Option<u32>,
+}
+
+/// What is due at checkout: a share of the price, or an amount.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckoutCharge {
+    Percentage(i64),
+    Price(i64),
+}
+
+#[derive(Clone, Debug)]
+pub struct SellingPlan {
+    pub id: u64,
+    pub name: String,
+    pub description: Option<String>,
+    /// One value per option of the group.
+    pub options: Vec<String>,
+    pub price_adjustments: Vec<PriceAdjustment>,
+    pub recurring_deliveries: bool,
+    pub checkout_charge: CheckoutCharge,
+}
+
+/// What a variant costs when bought with a selling plan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Allocation {
+    pub price: i64,
+    /// The price without the plan, when the plan lowers it; the variant's own compare-at
+    /// price otherwise.
+    pub compare_at_price: Option<i64>,
+    pub per_delivery_price: i64,
+    pub checkout_charge_amount: i64,
+    pub remaining_balance_charge_amount: i64,
+    pub unit_price: Option<i64>,
+    /// The price each price adjustment of the plan leads to, in order.
+    pub adjusted_prices: Vec<i64>,
+}
+
+impl SellingPlan {
+    pub fn allocation(&self, variant: &Variant) -> Allocation {
+        let adjusted_prices: Vec<i64> = self
+            .price_adjustments
+            .iter()
+            .map(|adjustment| adjustment.adjustment.apply(variant.price))
+            .collect();
+        let price = adjusted_prices.first().copied().unwrap_or(variant.price);
+        let checkout_charge_amount = match self.checkout_charge {
+            CheckoutCharge::Percentage(percent) => (price * percent + 50).div_euclid(100),
+            CheckoutCharge::Price(amount) => amount.min(price),
+        };
+        Allocation {
+            price,
+            compare_at_price: if price < variant.price {
+                Some(variant.price)
+            } else {
+                variant.compare_at_price
+            },
+            per_delivery_price: price,
+            checkout_charge_amount,
+            remaining_balance_charge_amount: price - checkout_charge_amount,
+            // The unit price follows the price: 10% off the variant is 10% off each unit.
+            unit_price: variant.unit_price.map(|unit_price| {
+                if variant.price > 0 {
+                    (unit_price * price + variant.price / 2).div_euclid(variant.price)
+                } else {
+                    unit_price
+                }
+            }),
+            adjusted_prices,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SellingPlanGroup {
+    /// A hexadecimal string, as on Shopify.
+    pub id: String,
+    pub name: String,
+    pub app_id: Option<String>,
+    /// The names of the options the plans differ by.
+    pub options: Vec<String>,
+    pub plans: Vec<SellingPlan>,
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +294,9 @@ pub struct Variant {
     pub quantity_rule: QuantityRule,
     /// `(minimum quantity, price in cents)`.
     pub quantity_price_breaks: Vec<(u32, i64)>,
+    /// The locations that stock the variant, as `(index into the store's locations, whether
+    /// it is in stock there)`.
+    pub store_availabilities: Vec<(usize, bool)>,
     pub metafields: Metafields,
 }
 
@@ -170,6 +322,9 @@ pub struct Product {
     pub collections: Vec<usize>,
     /// Indexes of the products recommended alongside this one.
     pub recommendations: Vec<usize>,
+    /// Indexes of the selling plan groups the product is sold with.
+    pub selling_plan_groups: Vec<usize>,
+    pub requires_selling_plan: bool,
 }
 
 impl Product {
@@ -586,6 +741,8 @@ pub struct CartLine {
     pub variant_id: u64,
     pub quantity: u32,
     pub properties: IndexMap<String, String>,
+    /// The id of the selling plan the line is bought with.
+    pub selling_plan: Option<u64>,
 }
 
 /// The state a session starts with.
@@ -610,6 +767,8 @@ pub struct Store {
     pub customers: Vec<Customer>,
     pub companies: Vec<Company>,
     pub gift_cards: Vec<GiftCard>,
+    pub locations: Vec<Location>,
+    pub selling_plan_groups: Vec<SellingPlanGroup>,
     pub metaobjects: Vec<Metaobject>,
     pub countries: Vec<Country>,
     pub languages: Vec<Language>,
@@ -665,6 +824,30 @@ impl Store {
             &self.products[product],
             &self.products[product].variants[variant],
         ))
+    }
+
+    /// `(group index, plan index)` of a selling plan id.
+    pub fn selling_plan_location(&self, id: u64) -> Option<(usize, usize)> {
+        self.selling_plan_groups
+            .iter()
+            .enumerate()
+            .find_map(|(group_index, group)| {
+                let plan = group.plans.iter().position(|plan| plan.id == id)?;
+                Some((group_index, plan))
+            })
+    }
+
+    /// The selling plan with this id, when the product is sold with it.
+    pub fn selling_plan_of(
+        &self,
+        product: &Product,
+        id: u64,
+    ) -> Option<(&SellingPlanGroup, &SellingPlan)> {
+        let (group, plan) = self.selling_plan_location(id)?;
+        product.selling_plan_groups.contains(&group).then(|| {
+            let group = &self.selling_plan_groups[group];
+            (group, &group.plans[plan])
+        })
     }
 
     pub fn collection_index(&self, handle: &str) -> Option<usize> {
@@ -813,6 +996,12 @@ impl Store {
                 .iter()
                 .filter_map(|media| media.preview.as_ref())
                 .for_each(&mut remember);
+            product
+                .options
+                .iter()
+                .flat_map(|option| option.swatches.iter().flatten())
+                .filter_map(|swatch| swatch.image.as_ref())
+                .for_each(&mut remember);
         }
         self.collections
             .iter()
@@ -836,5 +1025,107 @@ impl Store {
             .for_each(&mut remember);
         }
         self.image_sizes = sizes;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn variant(price: i64, compare_at_price: Option<i64>, unit_price: Option<i64>) -> Variant {
+        Variant {
+            id: 1,
+            title: "Default Title".to_string(),
+            options: vec!["Default Title".to_string()],
+            price,
+            compare_at_price,
+            sku: String::new(),
+            barcode: String::new(),
+            available: true,
+            inventory_quantity: 0,
+            inventory_tracked: false,
+            inventory_policy: InventoryPolicy::Deny,
+            weight: 0,
+            weight_unit: "kg".to_string(),
+            requires_shipping: true,
+            taxable: true,
+            media_index: None,
+            unit_price,
+            unit_price_measurement: None,
+            quantity_rule: QuantityRule {
+                min: 1,
+                max: None,
+                increment: 1,
+            },
+            quantity_price_breaks: Vec::new(),
+            store_availabilities: Vec::new(),
+            metafields: Metafields::new(),
+        }
+    }
+
+    fn plan(adjustments: &[Adjustment], checkout_charge: CheckoutCharge) -> SellingPlan {
+        SellingPlan {
+            id: 1,
+            name: "Plan".to_string(),
+            description: None,
+            options: Vec::new(),
+            price_adjustments: adjustments
+                .iter()
+                .map(|adjustment| PriceAdjustment {
+                    adjustment: *adjustment,
+                    order_count: None,
+                })
+                .collect(),
+            recurring_deliveries: true,
+            checkout_charge,
+        }
+    }
+
+    #[test]
+    fn selling_plans_adjust_the_price() {
+        let full = CheckoutCharge::Percentage(100);
+        // 10% off 19.99 is 17.991, rounded to the cent.
+        let allocation =
+            plan(&[Adjustment::Percentage(10)], full).allocation(&variant(1999, None, Some(400)));
+        assert_eq!(allocation.price, 1799);
+        assert_eq!(allocation.compare_at_price, Some(1999));
+        assert_eq!(allocation.per_delivery_price, 1799);
+        assert_eq!(allocation.checkout_charge_amount, 1799);
+        assert_eq!(allocation.remaining_balance_charge_amount, 0);
+        assert_eq!(allocation.unit_price, Some(360));
+        assert_eq!(allocation.adjusted_prices, vec![1799]);
+
+        // The first adjustment is the price; the second one is what later orders cost.
+        let allocation = plan(
+            &[Adjustment::FixedAmount(500), Adjustment::Price(1700)],
+            full,
+        )
+        .allocation(&variant(2000, None, None));
+        assert_eq!(allocation.price, 1500);
+        assert_eq!(allocation.adjusted_prices, vec![1500, 1700]);
+        // An amount off never goes below zero.
+        assert_eq!(
+            plan(&[Adjustment::FixedAmount(5000)], full)
+                .allocation(&variant(2000, None, None))
+                .price,
+            0
+        );
+    }
+
+    #[test]
+    fn a_plan_without_adjustment_keeps_the_price() {
+        let plan = plan(&[], CheckoutCharge::Percentage(25));
+        let allocation = plan.allocation(&variant(2000, Some(2500), None));
+        assert_eq!(allocation.price, 2000);
+        // Nothing is taken off: the compare-at price is the variant's own.
+        assert_eq!(allocation.compare_at_price, Some(2500));
+        assert!(allocation.adjusted_prices.is_empty());
+        // A deposit: a quarter now, the rest later.
+        assert_eq!(allocation.checkout_charge_amount, 500);
+        assert_eq!(allocation.remaining_balance_charge_amount, 1500);
+        assert_eq!(
+            plan.allocation(&variant(2000, None, None)).compare_at_price,
+            None
+        );
     }
 }

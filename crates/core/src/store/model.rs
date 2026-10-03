@@ -251,9 +251,60 @@ pub enum OptionInput {
 #[serde(deny_unknown_fields)]
 pub struct OptionDetail {
     pub name: String,
-    /// The values in display order. Defaults to the order they appear in the variants.
+    /// The values in display order. Defaults to the order they appear in the variants. A
+    /// value is its name (`"White"`), or its name with a swatch
+    /// (`{"name": "White", "swatch": "#ffffff"}`).
     #[serde(default)]
-    pub values: Vec<String>,
+    pub values: Vec<OptionValueInput>,
+}
+
+/// A value of a product option: its name, or its name with a swatch.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum OptionValueInput {
+    Name(String),
+    Detailed(OptionValueDetail),
+}
+
+/// A value of a product option with its swatch (`product_option_value.swatch`).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OptionValueDetail {
+    pub name: String,
+    /// The swatch of the value on this product. Defaults to the swatch the store's
+    /// `swatches` give to this name.
+    #[serde(default)]
+    pub swatch: Option<SwatchInput>,
+}
+
+impl OptionValueInput {
+    pub fn name(&self) -> &str {
+        match self {
+            OptionValueInput::Name(name) => name,
+            OptionValueInput::Detailed(detail) => &detail.name,
+        }
+    }
+}
+
+/// How an option value is shown instead of its name: a CSS color (`"#f4f1ea"`), or an object
+/// with a color, an image, or both.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SwatchInput {
+    Color(String),
+    Detailed(SwatchDetail),
+}
+
+/// A swatch with a color, an image, or both (`swatch.color`, `swatch.image`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SwatchDetail {
+    /// A CSS color: `"#f4f1ea"`, `"rgb(244, 241, 234)"`, ...
+    #[serde(default)]
+    pub color: Option<String>,
+    /// An image, for a pattern that a single color cannot show.
+    #[serde(default)]
+    pub image: Option<ImageInput>,
 }
 
 impl OptionInput {
@@ -374,6 +425,11 @@ pub struct VariantInput {
     pub quantity_rule: Option<QuantityRule>,
     #[serde(default)]
     pub quantity_price_breaks: Vec<QuantityPriceBreak>,
+    /// The locations (from `locations`, by name) that stock this variant, and whether it is in
+    /// stock there: `{"Portland": true, "Seattle": false}`. When omitted, every location stocks
+    /// the variant, and it is in stock there when the variant is available.
+    #[serde(default)]
+    pub store_availabilities: Option<IndexMap<String, bool>>,
     #[serde(default)]
     pub metafields: Metafields,
 }
@@ -450,6 +506,135 @@ pub struct ProductInput {
     /// Defaults to other products from the same collections.
     #[serde(default)]
     pub recommendations: Option<Vec<String>>,
+    /// Names of the selling plan groups (from `selling_plan_groups`) this product is sold
+    /// with, in addition to the groups that list it in their own `products`.
+    #[serde(default)]
+    pub selling_plan_groups: Vec<String>,
+    /// Whether the product can only be bought with a selling plan, like a product sold by
+    /// subscription only. Defaults to `false`.
+    #[serde(default)]
+    pub requires_selling_plan: bool,
+}
+
+/// How a price adjustment of a selling plan changes the price.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AdjustmentType {
+    /// `value` percent off the price of the variant.
+    Percentage,
+    /// `value` (an amount of money) off the price of the variant.
+    FixedAmount,
+    /// `value` (an amount of money) is the price.
+    Price,
+}
+
+/// A price adjustment of a selling plan (`selling_plan.price_adjustments`).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PriceAdjustmentInput {
+    pub value_type: AdjustmentType,
+    /// With `percentage`: the percentage, e.g. `10`. With `fixed_amount` and `price`: an
+    /// amount of money, e.g. `"2.00"` or `200`.
+    pub value: Money,
+    /// The number of orders the adjustment applies to. Every order when omitted.
+    #[serde(default)]
+    pub order_count: Option<u32>,
+}
+
+/// How the amount due at checkout is expressed.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckoutChargeType {
+    /// `value` percent of the price.
+    Percentage,
+    /// `value` (an amount of money).
+    Price,
+}
+
+/// What is paid at checkout, for plans that take a deposit (`selling_plan.checkout_charge`).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutChargeInput {
+    pub value_type: CheckoutChargeType,
+    /// With `percentage`: the percentage, e.g. `50`. With `price`: an amount of money.
+    pub value: Money,
+}
+
+/// A selling plan: one way of buying a product, such as "Deliver every month, 10% off".
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SellingPlanInput {
+    /// Generated from the names of the group and of the plan when omitted.
+    #[serde(default)]
+    pub id: Option<u64>,
+    /// The name shown to customers, e.g. `"Deliver every month, 10% off"`.
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// One value per option of the group, e.g. `["Every month"]`. Defaults to the plan's name.
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// How the plan changes the price: at most two adjustments, the first one applies to the
+    /// first orders. No adjustment means the price of the variant.
+    #[serde(default)]
+    pub price_adjustments: Vec<PriceAdjustmentInput>,
+    /// Whether the plan delivers more than once. Defaults to `true`.
+    #[serde(default)]
+    pub recurring_deliveries: Option<bool>,
+    /// What is paid at checkout. Defaults to the whole price (`percentage`, `100`).
+    #[serde(default)]
+    pub checkout_charge: Option<CheckoutChargeInput>,
+}
+
+/// A group of selling plans (`product.selling_plan_groups`): what a subscription app creates
+/// for "Subscribe and save". Products are sold with a group when the group lists them in
+/// `products`, or when they name the group in their own `selling_plan_groups`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SellingPlanGroupInput {
+    /// The name shown to customers, e.g. `"Subscribe and save"`. Products refer to the group
+    /// by this name.
+    pub name: String,
+    /// The id of the app that created the group (`selling_plan_group.app_id`).
+    #[serde(default)]
+    pub app_id: Option<String>,
+    /// The names of the options the plans differ by. Defaults to one option,
+    /// `"Delivery frequency"`.
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// The plans of the group. At least one.
+    pub selling_plans: Vec<SellingPlanInput>,
+    /// Handles of the products sold with these plans.
+    #[serde(default)]
+    pub products: Vec<String>,
+}
+
+/// A place the store stocks products at, where customers can pick up their orders
+/// (`variant.store_availabilities`, `store_availability.location`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LocationInput {
+    #[serde(default)]
+    pub id: Option<u64>,
+    /// The name of the location. Variants refer to it by this name.
+    pub name: String,
+    #[serde(default)]
+    pub address: Option<AddressInput>,
+    /// Whether orders can be picked up at the location. Defaults to `true`.
+    #[serde(default)]
+    pub pick_up_enabled: Option<bool>,
+    /// How long a pickup order takes to be ready. Defaults to `"Usually ready in 24 hours"`.
+    #[serde(default)]
+    pub pick_up_time: Option<String>,
+    /// Whether the location is a shop that sells in person. Defaults to `true`.
+    #[serde(default)]
+    pub physical_storefront: Option<bool>,
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
+    #[serde(default)]
+    pub metafields: Metafields,
 }
 
 /// How a collection orders its products by default.
@@ -1119,6 +1304,18 @@ pub struct CartLineInput {
     /// Line item properties, e.g. `{"Engraving": "Hello"}`.
     #[serde(default)]
     pub properties: IndexMap<String, String>,
+    /// The selling plan the line is bought with: its name or its id. The product of the
+    /// variant must be sold with it.
+    #[serde(default)]
+    pub selling_plan: Option<SellingPlanRef>,
+}
+
+/// A reference to a selling plan: its numeric id, or its name.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SellingPlanRef {
+    Id(u64),
+    Name(String),
 }
 
 /// The cart a session starts with.
@@ -1255,6 +1452,17 @@ pub struct StoreInput {
     /// The countries and languages of the store. At most one data file may define it.
     #[serde(default)]
     pub localization: Option<LocalizationInput>,
+    /// The swatches of product option values, by the name of the value:
+    /// `{"White": "#ffffff", "Floral": {"image": "swatches/floral.jpg"}}`. Every option value
+    /// with one of these names gets the swatch, on products and in collection filters.
+    #[serde(default)]
+    pub swatches: IndexMap<String, SwatchInput>,
+    /// The places the store stocks products at, for store pickup.
+    #[serde(default)]
+    pub locations: Vec<LocationInput>,
+    /// Groups of selling plans: subscriptions, pre-orders and other purchase options.
+    #[serde(default)]
+    pub selling_plan_groups: Vec<SellingPlanGroupInput>,
     /// Metadata for files in `files/`, by path.
     #[serde(default)]
     pub files: IndexMap<String, FileInput>,

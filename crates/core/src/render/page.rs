@@ -51,6 +51,9 @@ pub struct Page {
     pub canonical_path: String,
     /// The global `handle`.
     pub handle: Option<String>,
+    /// The variant `/variants/<id>` is about, as an index into the variants of the page's
+    /// product: the global `product_variant`.
+    pub product_variant: Option<usize>,
 }
 
 impl Page {
@@ -64,6 +67,7 @@ impl Page {
             description: String::new(),
             canonical_path: "/".to_string(),
             handle: None,
+            product_variant: None,
         }
     }
 }

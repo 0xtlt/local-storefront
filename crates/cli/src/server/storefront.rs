@@ -214,6 +214,7 @@ fn route(visit: &Visit<'_>) -> Reply {
             product_json(visit, name)
         }
         ["collections", handle, "products.json"] => products_json(visit, Some(handle)),
+        ["variants", id] if method == "GET" || method == "HEAD" => variant(visit, id),
         ["search", "suggest.json"] => suggest_json(visit),
         ["search", "suggest"] => special_section(visit, "search"),
         ["recommendations", "products.json"] => recommendations_json(visit),
@@ -348,6 +349,23 @@ fn special_section(visit: &Visit<'_>, template: &str) -> Reply {
             .renderer
             .render_page(&site, Page::new(template, resource), &target);
     reply_from(visit, rendered, &target)
+}
+
+/// `/variants/<id>` leads to the product of the variant, with the variant selected. With the
+/// Section Rendering API parameters it renders sections for the variant instead, which is how
+/// themes load pickup availability.
+fn variant(visit: &Visit<'_>, id: &str) -> Reply {
+    let product = id
+        .parse::<u64>()
+        .ok()
+        .and_then(|id| visit.store.variant(id))
+        .map(|(product, _)| product);
+    match product {
+        Some(product) if target(visit.incoming) == Target::Page => {
+            Reply::redirect(&visit.localized(&format!("/products/{}?variant={id}", product.handle)))
+        }
+        _ => page(visit),
+    }
 }
 
 fn product_json(visit: &Visit<'_>, name: &str) -> Reply {

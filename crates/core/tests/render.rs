@@ -58,6 +58,20 @@ impl Fixture {
     fn page(&self, path: &str) -> Rendered {
         self.render_with(request(path), Session::initial(&self.store), &Target::Page)
     }
+
+    /// Renders a piece of Liquid as if it were part of the page at `path`.
+    fn liquid(&self, path: &str, session: Session, source: &str) -> String {
+        let site = self
+            .renderer
+            .site(self.store.clone(), request(path), session);
+        let page = lsf_core::render::routes::resolve(&site);
+        let (output, errors) = self
+            .renderer
+            .render_liquid(&site, page, source, &[])
+            .expect("the template parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        output
+    }
 }
 
 /// Compares with (or, with `UPDATE_SNAPSHOTS=1`, writes) a snapshot file.
@@ -230,12 +244,14 @@ fn cart_reflects_the_session() {
             variant_id: tote.variants[0].id,
             quantity: 2,
             properties: Default::default(),
+            selling_plan: None,
         },
         // Six pairs reach the second quantity price break.
         CartLine {
             variant_id: socks.variants[0].id,
             quantity: 6,
             properties: Default::default(),
+            selling_plan: None,
         },
     ];
     let rendered = fixture.render_with(request("/cart"), session, &Target::Page);
@@ -386,5 +402,209 @@ fn gift_cards_have_a_page() {
     assert_eq!(
         fixture.page(&format!("/gift_cards/{shop}/unknown")).status,
         404
+    );
+}
+
+#[test]
+fn option_values_and_filter_values_have_swatches() {
+    let fixture = fixture();
+    let session = || Session::initial(&fixture.store);
+    let output = fixture.liquid(
+        "/products/organic-cotton-t-shirt",
+        session(),
+        "{% for option in product.options_with_values %}{{ option.name }}:\
+         {% for value in option.values %} {{ value }}={{ value.swatch.color }}/{{ value.swatch.color.rgb }}\
+         {% if value.swatch.image %}+image{% endif %}{% endfor %}\n{% endfor %}",
+    );
+    assert_eq!(
+        output,
+        "Color: White=#f4f1ea/244 241 234 Black=#1c1c1c/28 28 28 Sage=#9caf88/156 175 136\n\
+         Size: S=/ M=/ L=/ XL=/\n"
+    );
+
+    // A filter whose values have swatches is presented with them.
+    let output = fixture.liquid(
+        "/collections/all",
+        session(),
+        "{% for filter in collection.filters %}{% if filter.presentation == 'swatch' %}{{ filter.label }}:\
+         {% for value in filter.values %} {{ value.label }}={{ value.swatch.color }}{% endfor %}\n\
+         {% endif %}{% endfor %}\
+         {{ collection.filters | where: 'presentation', 'text' | map: 'label' | join: ', ' }}",
+    );
+    assert_eq!(
+        output,
+        "Color: White=#f4f1ea Black=#1c1c1c Sage=#9caf88 Navy=#1f2a44 Ochre=#c98a2b\n\
+         Glaze: Oat=#d9c7a7 Slate=#5b6770 Rust=#a4502f\n\
+         Availability, Price, Product type, Size, Denomination"
+    );
+}
+
+#[test]
+fn variants_can_be_picked_up_at_the_locations_that_stock_them() {
+    let fixture = fixture();
+    let mug = fixture.store.product_by_handle("ceramic-mug").unwrap();
+    let template = "{% assign variant = product.selected_or_first_available_variant %}\
+        {% for availability in variant.store_availabilities %}\
+        {{ availability.location.name }}|{{ availability.available }}|{{ availability.pick_up_enabled }}|\
+        {{ availability.pick_up_time }}|{{ availability.location.address.city }}|\
+        {{ availability.location.latitude }}\n{% endfor %}\
+        {% for variant in product.variants %}{{ variant.store_availabilities.size }}{% endfor %}";
+    // Every location stocks the first available variant. As on Shopify, the other variants
+    // have no store availabilities.
+    assert_eq!(
+        fixture.liquid(
+            "/products/ceramic-mug",
+            Session::initial(&fixture.store),
+            template
+        ),
+        "Ottawa flagship|true|true|Usually ready in 2 hours|Ottawa|45.4201\n\
+         Montreal studio|true|true|Usually ready in 24 hours|Montreal|\n\
+         200"
+    );
+    // The selected variant has them too. This one is out of stock in Montreal.
+    assert_eq!(
+        fixture.liquid(
+            &format!("/products/ceramic-mug?variant={}", mug.variants[1].id),
+            Session::initial(&fixture.store),
+            template
+        ),
+        "Ottawa flagship|true|true|Usually ready in 2 hours|Ottawa|45.4201\n\
+         Montreal studio|false|true|Usually ready in 24 hours|Montreal|\n\
+         220"
+    );
+}
+
+#[test]
+fn products_are_sold_with_selling_plans() {
+    let fixture = fixture();
+    let socks = fixture
+        .store
+        .product_by_handle("merino-crew-socks")
+        .unwrap();
+    let quarterly = fixture.store.selling_plan_groups[0].plans[1].id;
+    let template = "{{ product.requires_selling_plan }} {{ product.selling_plan_groups.size }} \
+        {{ product.selling_plan_groups.first.name }}|{{ product.selected_selling_plan.name }}|\
+        {{ product.selected_selling_plan_allocation.price }}|\
+        {{ product.selected_or_first_available_selling_plan_allocation.price }}|\
+        {{ product.selling_plan_groups.first.selling_plan_selected }}|\
+        {{ product.selling_plan_groups.first.options.first.selected_value }}\n\
+        {% for allocation in product.variants.last.selling_plan_allocations %}\
+        {{ allocation.selling_plan.name }}: {{ allocation.price | money }} instead of \
+        {{ allocation.compare_at_price | money }}\
+        {% if allocation.selling_plan.selected %} (selected){% endif %}\n{% endfor %}";
+    assert_eq!(
+        fixture.liquid(
+            "/products/merino-crew-socks",
+            Session::initial(&fixture.store),
+            template
+        ),
+        "false 1 Subscribe and save|||1440|false|\n\
+         Deliver every month, 10% off: $14.40 instead of $16.00\n\
+         Deliver every 3 months, 5% off: $15.20 instead of $16.00\n"
+    );
+    // `?selling_plan=` selects a plan; with `?variant=` it selects an allocation.
+    assert_eq!(
+        fixture.liquid(
+            &format!(
+                "/products/merino-crew-socks?selling_plan={quarterly}&variant={}",
+                socks.variants[1].id
+            ),
+            Session::initial(&fixture.store),
+            template
+        ),
+        "false 1 Subscribe and save|Deliver every 3 months, 5% off|1520|1520|true|Every 3 months\n\
+         Deliver every month, 10% off: $14.40 instead of $16.00\n\
+         Deliver every 3 months, 5% off: $15.20 instead of $16.00 (selected)\n"
+    );
+
+    // The `json` filter describes plans as `/products/<handle>.js` does.
+    let json: serde_json::Value = serde_json::from_str(&fixture.liquid(
+        "/products/merino-crew-socks",
+        Session::initial(&fixture.store),
+        "{{ product | json }}",
+    ))
+    .expect("JSON");
+    let group = &json["selling_plan_groups"][0];
+    assert_eq!(group["id"], fixture.store.selling_plan_groups[0].id);
+    assert_eq!(
+        group["options"],
+        serde_json::json!([{"name": "Delivery frequency", "position": 1, "values": ["Every month", "Every 3 months"]}])
+    );
+    assert_eq!(
+        group["selling_plans"][1],
+        serde_json::json!({
+            "id": quarterly,
+            "name": "Deliver every 3 months, 5% off",
+            "description": null,
+            "options": [{"name": "Delivery frequency", "position": 1, "value": "Every 3 months"}],
+            "recurring_deliveries": true,
+            "price_adjustments": [{"order_count": null, "position": 1, "value_type": "percentage", "value": 5}],
+            "checkout_charge": {"value_type": "percentage", "value": 100}
+        })
+    );
+    assert_eq!(
+        json["variants"][0]["selling_plan_allocations"][1],
+        serde_json::json!({
+            "price_adjustments": [{"position": 1, "price": 1520}],
+            "price": 1520,
+            "compare_at_price": 1600,
+            "per_delivery_price": 1520,
+            "selling_plan_id": quarterly,
+            "selling_plan_group_id": fixture.store.selling_plan_groups[0].id
+        })
+    );
+
+    // A product sold without selling plans.
+    assert_eq!(
+        fixture.liquid(
+            &format!("/products/ceramic-mug?selling_plan={quarterly}"),
+            Session::initial(&fixture.store),
+            "{{ product.selling_plan_groups.size }}|{{ product.selected_selling_plan }}|\
+             {{ product.selected_or_first_available_selling_plan_allocation }}|\
+             {{ product.variants.first.selling_plan_allocations.size }}"
+        ),
+        "0|||0"
+    );
+}
+
+#[test]
+fn cart_lines_are_priced_by_their_selling_plan() {
+    let fixture = fixture();
+    let socks = fixture
+        .store
+        .product_by_handle("merino-crew-socks")
+        .unwrap();
+    let monthly = fixture.store.selling_plan_groups[0].plans[0].id;
+    let mut session = Session::initial(&fixture.store);
+    session.cart_lines = vec![
+        // Quantity price breaks do not apply to a subscription: its plan sets the price.
+        CartLine {
+            variant_id: socks.variants[0].id,
+            quantity: 6,
+            properties: Default::default(),
+            selling_plan: Some(monthly),
+        },
+        CartLine {
+            variant_id: socks.variants[0].id,
+            quantity: 1,
+            properties: Default::default(),
+            selling_plan: None,
+        },
+    ];
+    assert_ne!(
+        lsf_core::drops::cart::line_key(&session.cart_lines[0]),
+        lsf_core::drops::cart::line_key(&session.cart_lines[1])
+    );
+    assert_eq!(
+        fixture.liquid(
+            "/cart",
+            session,
+            "{% for item in cart.items %}{{ item.quantity }} x {{ item.price }}/{{ item.original_price }} = \
+             {{ item.line_price }} [{{ item.selling_plan_allocation.selling_plan.name }}]\n{% endfor %}\
+             {{ cart.total_price }} {{ cart.total_discount }} {{ cart.checkout_charge_amount }}"
+        ),
+        "6 x 1440/1440 = 8640 [Deliver every month, 10% off]\n\
+         1 x 1600/1600 = 1600 []\n\
+         10240 0 10240"
     );
 }

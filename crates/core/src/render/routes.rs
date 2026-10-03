@@ -87,6 +87,36 @@ pub fn resolve(site: &Site) -> Page {
             page.handle = Some(data.handle.clone());
             page
         }
+        // The product of a variant, with that variant as `product_variant`: what themes ask
+        // the Section Rendering API for to show where a variant can be picked up.
+        ["variants", id] => {
+            let found = id
+                .parse::<u64>()
+                .ok()
+                .and_then(|id| store.variant_location(id));
+            let Some((product, variant)) = found else {
+                return not_found();
+            };
+            let data = &store.products[product];
+            let mut page = Page::new(
+                "product",
+                Resource::Product {
+                    product,
+                    collection: None,
+                },
+            );
+            page.template = with_suffix(
+                theme,
+                page.template,
+                view.or(data.template_suffix.as_deref()),
+            );
+            page.title = data.title.clone();
+            page.description = meta_description(&data.description);
+            page.canonical_path = format!("/products/{}", data.handle);
+            page.handle = Some(data.handle.clone());
+            page.product_variant = Some(variant);
+            page
+        }
         ["collections"] => {
             let mut page = Page::new("list-collections", Resource::ListCollections);
             page.title = "Collections".to_string();

@@ -9,8 +9,11 @@ use serde_json::{Value as Json, json};
 use super::localization::currency_value;
 use super::media::{ImageDrop, image_base_url};
 use super::product::{ProductDrop, VariantDrop, product_url};
+use super::selling_plan::{allocation_value, line_allocation_json};
 use super::{Memo, SiteRef, hash};
-use crate::store::{CartLine, MediaKind, Product, Variant};
+use crate::store::{
+    Allocation, CartLine, MediaKind, Product, SellingPlan, SellingPlanGroup, Variant,
+};
 use crate::util::short_hash;
 
 /// A cart line resolved against the store.
@@ -20,11 +23,29 @@ pub struct ResolvedLine<'a> {
     pub variant_index: usize,
     pub product: &'a Product,
     pub variant: &'a Variant,
+    /// The selling plan the line is bought with, when the product is still sold with it.
+    pub selling_plan: Option<(&'a SellingPlanGroup, &'a SellingPlan)>,
 }
 
 impl ResolvedLine<'_> {
+    /// What the variant costs with the line's selling plan.
+    pub fn allocation(&self) -> Option<Allocation> {
+        self.selling_plan
+            .map(|(_, plan)| plan.allocation(self.variant))
+    }
+
+    /// The unit price before discounts: the price of the variant, or the one its selling plan
+    /// sets. A selling plan changes the price itself; it is not a discount.
+    pub fn original_price(&self) -> i64 {
+        self.allocation()
+            .map_or(self.variant.price, |allocation| allocation.price)
+    }
+
     /// The unit price, taking quantity price breaks into account.
     pub fn unit_price(&self) -> i64 {
+        if let Some(allocation) = self.allocation() {
+            return allocation.price;
+        }
         self.variant
             .quantity_price_breaks
             .iter()
@@ -36,6 +57,19 @@ impl ResolvedLine<'_> {
 
     pub fn line_price(&self) -> i64 {
         self.unit_price() * i64::from(self.line.quantity)
+    }
+
+    pub fn original_line_price(&self) -> i64 {
+        self.original_price() * i64::from(self.line.quantity)
+    }
+
+    /// What is due at checkout for the line: less than its price when its selling plan takes
+    /// a deposit.
+    pub fn checkout_charge(&self) -> i64 {
+        match self.allocation() {
+            Some(allocation) => allocation.checkout_charge_amount * i64::from(self.line.quantity),
+            None => self.line_price(),
+        }
     }
 
     pub fn title(&self) -> String {
@@ -51,14 +85,17 @@ impl ResolvedLine<'_> {
     }
 }
 
-/// The key identifying a line: the variant plus a hash of the line's properties, as lines with
-/// different properties stay separate.
+/// The key identifying a line: the variant plus a hash of the line's properties and selling
+/// plan, as lines that differ by those stay separate.
 pub fn line_key(line: &CartLine) -> String {
-    let properties: Vec<String> = line
+    let mut properties: Vec<String> = line
         .properties
         .iter()
         .map(|(key, value)| format!("{key}={value}"))
         .collect();
+    if let Some(selling_plan) = line.selling_plan {
+        properties.push(format!("\u{0}selling_plan={selling_plan}"));
+    }
     format!(
         "{}:{}",
         line.variant_id,
@@ -80,6 +117,9 @@ pub fn resolve_lines(site: &SiteRef) -> Vec<ResolvedLine<'_>> {
                 variant_index,
                 product,
                 variant: &product.variants[variant_index],
+                selling_plan: line
+                    .selling_plan
+                    .and_then(|id| site.store.selling_plan_of(product, id)),
             })
         })
         .collect()
@@ -110,7 +150,7 @@ pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
         line.variant.id
     );
     let default_variant = line.product.has_only_default_variant();
-    json!({
+    let mut out = json!({
         "id": line.variant.id,
         "properties": line.line.properties,
         "quantity": line.line.quantity,
@@ -118,11 +158,11 @@ pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
         "key": line.key(),
         "title": line.title(),
         "price": line.unit_price(),
-        "original_price": line.variant.price,
+        "original_price": line.original_price(),
         "presentment_price": line.unit_price() as f64 / 100.0,
         "discounted_price": line.unit_price(),
         "line_price": line.line_price(),
-        "original_line_price": line.variant.price * i64::from(line.line.quantity),
+        "original_line_price": line.original_line_price(),
         "total_discount": 0,
         "discounts": [],
         "sku": line.variant.sku,
@@ -162,17 +202,19 @@ pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
             "increment": line.variant.quantity_rule.increment,
         },
         "has_components": false,
-    })
+    });
+    // Only the lines bought with a selling plan have the key.
+    if let Some((group, plan)) = line.selling_plan {
+        out["selling_plan_allocation"] = line_allocation_json(group, plan, line.variant);
+    }
+    out
 }
 
 /// The cart as `/cart.js` returns it.
 pub fn cart_json(site: &SiteRef) -> Json {
     let lines = resolve_lines(site);
     let total: i64 = lines.iter().map(ResolvedLine::line_price).sum();
-    let original_total: i64 = lines
-        .iter()
-        .map(|line| line.variant.price * i64::from(line.line.quantity))
-        .sum();
+    let original_total: i64 = lines.iter().map(ResolvedLine::original_line_price).sum();
     json!({
         "token": cart_token(site),
         "note": if site.session.cart_note.is_empty() { Json::Null } else { json!(site.session.cart_note) },
@@ -222,10 +264,7 @@ impl Object for CartDrop {
         let site = &self.site;
         let lines = resolve_lines(site);
         let total: i64 = lines.iter().map(ResolvedLine::line_price).sum();
-        let original_total: i64 = lines
-            .iter()
-            .map(|line| line.variant.price * i64::from(line.line.quantity))
-            .sum();
+        let original_total: i64 = lines.iter().map(ResolvedLine::original_line_price).sum();
         Some(match key {
             "items" => self.memo.get("items", || {
                 Value::array(
@@ -244,7 +283,10 @@ impl Object for CartDrop {
                 Value::Int(lines.iter().map(|line| i64::from(line.line.quantity)).sum())
             }
             "empty?" => Value::Bool(lines.is_empty()),
-            "total_price" | "items_subtotal_price" | "checkout_charge_amount" => Value::Int(total),
+            "total_price" | "items_subtotal_price" => Value::Int(total),
+            "checkout_charge_amount" => {
+                Value::Int(lines.iter().map(ResolvedLine::checkout_charge).sum())
+            }
             "original_total_price" => Value::Int(original_total),
             "total_discount" => Value::Int(original_total - total),
             "total_weight" => Value::Int(
@@ -315,11 +357,11 @@ impl Object for LineItemDrop {
             "quantity" => Value::Int(quantity),
             "title" => Value::from(line.title()),
             "price" | "final_price" => Value::Int(line.unit_price()),
-            "original_price" => Value::Int(line.variant.price),
+            "original_price" => Value::Int(line.original_price()),
             "line_price" | "final_line_price" => Value::Int(line.line_price()),
-            "original_line_price" => Value::Int(line.variant.price * quantity),
+            "original_line_price" => Value::Int(line.original_line_price()),
             "total_discount" | "line_level_total_discount" => {
-                Value::Int((line.variant.price - line.unit_price()) * quantity)
+                Value::Int((line.original_price() - line.unit_price()) * quantity)
             }
             "discount_allocations"
             | "line_level_discount_allocations"
@@ -364,7 +406,14 @@ impl Object for LineItemDrop {
                     })
                     .collect(),
             ),
-            "unit_price" => line.variant.unit_price.map_or(Value::Nil, Value::Int),
+            "unit_price" => match line.allocation() {
+                Some(allocation) => allocation.unit_price.map_or(Value::Nil, Value::Int),
+                None => line.variant.unit_price.map_or(Value::Nil, Value::Int),
+            },
+            "selling_plan_allocation" => match line.selling_plan {
+                Some((group, plan)) => allocation_value(site, group, plan, line.variant),
+                None => Value::Nil,
+            },
             "unit_price_measurement" => {
                 VariantDrop::value(site, line.product_index, line.variant_index)
                     .get("unit_price_measurement")
@@ -376,7 +425,6 @@ impl Object for LineItemDrop {
             "successfully_fulfilled_quantity" => Value::Int(0),
             "message"
             | "error_message"
-            | "selling_plan_allocation"
             | "parent_relationship"
             | "fulfillment"
             | "fulfillment_service" => Value::Nil,

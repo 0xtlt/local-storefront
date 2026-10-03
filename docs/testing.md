@@ -139,13 +139,37 @@ await page.goto('/products/sold-out-thing');
 ```
 
 - A product, collection, page or blog with the handle of an existing one **replaces** it; the
-  others are **added**. Customers are matched by email, menus by handle, gift cards by code.
+  others are **added**. Customers are matched by email, menus by handle, gift cards by code,
+  companies, locations and selling plan groups by name.
 - `shop` is merged field by field. `localization`, `session`, `now` replace what the files say.
-- `theme_settings` and `files` are merged key by key.
+- `theme_settings`, `files` and `swatches` are merged key by key.
 
 Other sessions keep seeing the data on disk. This is the way to test edge cases (an empty
 collection, a product with 100 variants, a sold-out state, a long title, another currency)
 without growing the shared fixtures.
+
+The same goes for a subscription, a pickup location or a swatch. This test sells a product of
+the demo store by subscription, and starts with one in the cart:
+
+```ts
+await setSession(page, {
+  data: {
+    selling_plan_groups: [
+      {
+        name: 'Coffee club',
+        selling_plans: [
+          { name: 'Every month', price_adjustments: [{ value_type: 'percentage', value: 15 }] },
+        ],
+        products: ['ceramic-mug'],
+      },
+    ],
+    locations: [{ name: 'Pop-up store', pick_up_time: 'Ready in 1 hour' }],
+    swatches: { Oat: '#e8dcc4' },
+  },
+  cart: { items: [{ variant: 'MUG-OAT', selling_plan: 'Every month' }] },
+});
+await page.goto('/cart');
+```
 
 `GET /__lsf/session` returns the current state, and `DELETE /__lsf/session` resets the
 session to what the data files define.

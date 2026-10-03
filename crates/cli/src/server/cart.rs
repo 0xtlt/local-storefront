@@ -49,6 +49,31 @@ fn properties(value: Option<&Json>) -> IndexMap<String, String> {
         .unwrap_or_default()
 }
 
+/// What a request says about the selling plan of a line.
+enum PlanParam {
+    /// Nothing: the parameter is not there.
+    Absent,
+    /// No plan: the parameter is empty.
+    Cleared,
+    Id(u64),
+    /// Something that is not the id of a plan.
+    Invalid,
+}
+
+fn selling_plan(params: &Json) -> PlanParam {
+    match params.get("selling_plan") {
+        None => PlanParam::Absent,
+        Some(Json::Null) => PlanParam::Cleared,
+        Some(Json::String(text)) if text.trim().is_empty() => PlanParam::Cleared,
+        Some(Json::Number(number)) => number.as_u64().map_or(PlanParam::Invalid, PlanParam::Id),
+        Some(Json::String(text)) => text
+            .trim()
+            .parse::<u64>()
+            .map_or(PlanParam::Invalid, PlanParam::Id),
+        Some(_) => PlanParam::Invalid,
+    }
+}
+
 /// Adds the bundled sections the request asked for to a JSON response.
 fn with_sections(visit: &Visit<'_>, params: &Json, mut body: Json) -> Json {
     let ids = section_ids(params.get("sections"));
@@ -102,10 +127,30 @@ fn add_item(visit: &Visit<'_>, item: &Json) -> Result<String, Reply> {
             ),
         ));
     }
+    let selling_plan = match selling_plan(item) {
+        PlanParam::Absent | PlanParam::Cleared => None,
+        PlanParam::Id(id) if store.selling_plan_of(product, id).is_some() => Some(id),
+        PlanParam::Id(_) | PlanParam::Invalid => {
+            return Err(error(
+                422,
+                format!(
+                    "The selling plan is not available for {}.",
+                    line_title(product, variant)
+                ),
+            ));
+        }
+    };
+    if selling_plan.is_none() && product.requires_selling_plan {
+        return Err(error(
+            422,
+            "Variant can only be purchased with a selling plan.",
+        ));
+    }
     let line = CartLine {
         variant_id,
         quantity,
         properties: properties(item.get("properties")),
+        selling_plan,
     };
     let key = line_key(&line);
     let in_cart: u32 = visit
@@ -247,9 +292,42 @@ pub fn change(visit: &Visit<'_>) -> Reply {
     let new_properties = params
         .get("properties")
         .map(|value| properties(Some(value)));
+    // `selling_plan` moves the line to another plan, or to none when it is empty.
+    let product = visit
+        .store
+        .variant(lines[index].variant_id)
+        .map(|(product, _)| product);
+    let new_plan = match (selling_plan(&params), product) {
+        (PlanParam::Absent, _) | (_, None) => Ok(None),
+        (PlanParam::Cleared, Some(product)) if product.requires_selling_plan => {
+            Err("Variant can only be purchased with a selling plan.")
+        }
+        (PlanParam::Cleared, _) => Ok(Some(None)),
+        (PlanParam::Id(id), Some(product))
+            if visit.store.selling_plan_of(product, id).is_some() =>
+        {
+            Ok(Some(Some(id)))
+        }
+        (PlanParam::Id(_) | PlanParam::Invalid, _) => {
+            Err("The selling plan is not available for this item.")
+        }
+    };
+    let new_plan = match new_plan {
+        Ok(plan) => plan,
+        Err(problem) => {
+            return if wants_json(visit) {
+                error(422, problem)
+            } else {
+                Reply::redirect(&visit.localized("/cart"))
+            };
+        }
+    };
     visit.update_session(|session| {
         if let Some(properties) = new_properties {
             session.cart_lines[index].properties = properties;
+        }
+        if let Some(plan) = new_plan {
+            session.cart_lines[index].selling_plan = plan;
         }
         match quantity {
             Some(quantity) if quantity <= 0 => {
@@ -335,6 +413,7 @@ fn apply_updates(visit: &Visit<'_>, params: &Json) {
                                     variant_id,
                                     quantity: quantity as u32,
                                     properties: IndexMap::new(),
+                                    selling_plan: None,
                                 });
                             }
                         }

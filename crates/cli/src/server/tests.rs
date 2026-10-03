@@ -1066,3 +1066,282 @@ fn robots_and_sitemaps_are_served() {
     );
     assert_eq!(get(&state, "/sitemap_orders_1.xml", "seo").status, 404);
 }
+
+#[test]
+fn the_cart_api_sells_with_selling_plans() {
+    let state = server();
+    let socks = variant_id(&state, "SOCK-S");
+    let mug = variant_id(&state, "MUG-OAT");
+    let plans: Vec<u64> = state.loaded().store.selling_plan_groups[0]
+        .plans
+        .iter()
+        .map(|plan| plan.id)
+        .collect();
+
+    // The product JSON lists the plans and what each variant costs with them.
+    let product = body_json(&get(&state, "/products/merino-crew-socks.js", "plans"));
+    assert_eq!(
+        product["selling_plan_groups"][0]["selling_plans"][0]["id"],
+        plans[0]
+    );
+    assert_eq!(
+        product["variants"][0]["selling_plan_allocations"][0]["price"],
+        1440
+    );
+
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": socks, "quantity": 2, "selling_plan": plans[0]}),
+        "plans",
+    );
+    assert_eq!(added.status, 200, "{}", text(&added));
+    let line = body_json(&added);
+    assert_eq!(line["price"], 1440);
+    assert_eq!(line["original_price"], 1440);
+    assert_eq!(line["line_price"], 2880);
+    assert_eq!(line["total_discount"], 0);
+    let allocation = &line["selling_plan_allocation"];
+    assert_eq!(allocation["price"], 1440);
+    assert_eq!(allocation["compare_at_price"], 1600);
+    assert_eq!(
+        allocation["selling_plan"]["name"],
+        "Deliver every month, 10% off"
+    );
+    assert_eq!(
+        allocation["price_adjustments"],
+        json!([{"position": 1, "price": 1440}])
+    );
+
+    // The same variant bought once is another line. A form sends its fields as text.
+    let once = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": socks.to_string(), "selling_plan": ""}),
+        "plans",
+    );
+    assert_eq!(once.status, 200, "{}", text(&once));
+    let cart = body_json(&get(&state, "/cart.js", "plans"));
+    assert_eq!(cart["items"].as_array().unwrap().len(), 2);
+    assert!(cart["items"][0].get("selling_plan_allocation").is_none());
+    assert_eq!(cart["total_price"], 1600 + 2880);
+    assert_eq!(cart["original_total_price"], 1600 + 2880);
+
+    // A product that is not sold with the plan refuses it.
+    let refused = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": mug, "selling_plan": plans[0]}),
+        "plans",
+    );
+    assert_eq!(refused.status, 422);
+    assert_eq!(
+        body_json(&refused)["description"],
+        "The selling plan is not available for Ceramic Mug - Oat."
+    );
+    // So does every product, for something that is not a plan.
+    let refused = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": socks, "selling_plan": "monthly"}),
+        "plans",
+    );
+    assert_eq!(refused.status, 422);
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", "plans"))["item_count"],
+        3
+    );
+
+    // `change.js` moves a line to another plan, or to none.
+    let key = cart["items"][1]["key"].as_str().unwrap().to_string();
+    let changed = body_json(&post(
+        &state,
+        "/cart/change.js",
+        json!({"id": key, "selling_plan": plans[1]}),
+        "plans",
+    ));
+    assert_eq!(changed["items"][1]["line_price"], 2 * 1520);
+    assert_eq!(
+        session_of(&state, "plans")["cart"]["items"][1]["selling_plan"],
+        plans[1]
+    );
+    let changed = body_json(&post(
+        &state,
+        "/cart/change.js",
+        json!({"line": 2, "selling_plan": null}),
+        "plans",
+    ));
+    assert_eq!(changed["items"][1]["line_price"], 2 * 1600);
+    assert!(changed["items"][1].get("selling_plan_allocation").is_none());
+    assert!(
+        session_of(&state, "plans")["cart"]["items"][1]
+            .get("selling_plan")
+            .is_none()
+    );
+
+    // A test starts with a subscription in the cart by naming the plan.
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [
+            {"variant": "SOCK-L", "selling_plan": "Deliver every 3 months, 5% off"}
+        ]}}),
+        "plans-2",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let cart = body_json(&get(&state, "/cart.js", "plans-2"));
+    assert_eq!(cart["items"][0]["selling_plan_allocation"]["price"], 1520);
+    let wrong = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "MUG-OAT", "selling_plan": "Monthly"}]}}),
+        "plans-2",
+    ));
+    assert_eq!(wrong.status, 422);
+    assert!(
+        text(&wrong).contains("is not sold with a selling plan named \\\"Monthly\\\""),
+        "{}",
+        text(&wrong)
+    );
+
+    // A product sold by subscription only.
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"products": [{
+            "title": "Coffee Club",
+            "price": 1800,
+            "variants": [{"sku": "COFFEE"}],
+            "selling_plan_groups": ["Subscribe and save"],
+            "requires_selling_plan": true
+        }]}}),
+        "plans-3",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let coffee = body_json(&get(&state, "/products/coffee-club.js", "plans-3"));
+    assert_eq!(coffee["requires_selling_plan"], true);
+    let coffee = coffee["variants"][0]["id"].as_u64().unwrap();
+    let refused = post(&state, "/cart/add.js", json!({"id": coffee}), "plans-3");
+    assert_eq!(refused.status, 422);
+    assert_eq!(
+        body_json(&refused)["description"],
+        "Variant can only be purchased with a selling plan."
+    );
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": coffee, "selling_plan": plans[0]}),
+        "plans-3",
+    );
+    assert_eq!(body_json(&added)["price"], 1620);
+    // Such a line cannot go back to a one-time purchase.
+    let refused = post(
+        &state,
+        "/cart/change.js",
+        json!({"line": 1, "selling_plan": ""}),
+        "plans-3",
+    );
+    assert_eq!(refused.status, 422);
+
+    // The checkout summary names the plan.
+    assert!(
+        text(&get(&state, "/checkout", "plans-3"))
+            .contains("Coffee Club<br><small>Deliver every month, 10% off</small>")
+    );
+}
+
+#[test]
+fn sections_are_rendered_for_a_variant() {
+    let state = server();
+    let slate = variant_id(&state, "MUG-SLT");
+
+    // What a theme fetches to show where a variant can be picked up.
+    let reply = get(
+        &state,
+        &format!("/variants/{slate}/?section_id=pickup-availability"),
+        "pickup",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let html = text(&reply);
+    assert!(
+        html.contains(&format!("<div class=\"pickup\" data-variant=\"{slate}\">")),
+        "{html}"
+    );
+    assert!(html.contains("<h2>Ceramic Mug - Slate</h2>"), "{html}");
+    assert!(
+        html.contains("<p>Ottawa flagship: Usually ready in 2 hours</p>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<p>Montreal studio: unavailable</p>"),
+        "{html}"
+    );
+
+    let bundle = body_json(&get(
+        &state,
+        &format!("/variants/{slate}?sections=pickup-availability"),
+        "pickup",
+    ));
+    assert!(
+        bundle["pickup-availability"]
+            .as_str()
+            .is_some_and(|html| html.contains("Ceramic Mug - Slate"))
+    );
+
+    // Elsewhere there is no `product_variant`.
+    let elsewhere = text(&get(
+        &state,
+        "/products/ceramic-mug?section_id=pickup-availability",
+        "pickup",
+    ));
+    assert!(elsewhere.contains("data-variant=\"\""), "{elsewhere}");
+
+    // Without a section, the URL leads to the product with the variant selected.
+    let reply = get(&state, &format!("/variants/{slate}"), "pickup");
+    assert_eq!(
+        header(&reply, "location"),
+        Some(format!("/products/ceramic-mug?variant={slate}").as_str())
+    );
+    assert_eq!(get(&state, "/variants/1", "pickup").status, 404);
+}
+
+#[test]
+fn a_session_brings_its_own_plans_and_locations() {
+    let state = server();
+    let oat = variant_id(&state, "MUG-OAT");
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "data": {
+                "selling_plan_groups": [{
+                    "name": "Coffee club",
+                    "selling_plans": [{
+                        "name": "Every month",
+                        "price_adjustments": [{"value_type": "percentage", "value": 15}]
+                    }],
+                    "products": ["ceramic-mug"]
+                }],
+                "locations": [{"name": "Pop-up store", "pick_up_time": "Ready in 1 hour"}],
+                "swatches": {"Oat": "#e8dcc4"}
+            },
+            "cart": {"items": [{"variant": "MUG-OAT", "selling_plan": "Every month"}]}
+        }),
+        "own",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+
+    let cart = body_json(&get(&state, "/cart.js", "own"));
+    assert_eq!(cart["items"][0]["price"], 1870);
+    assert_eq!(
+        cart["items"][0]["selling_plan_allocation"]["selling_plan"]["name"],
+        "Every month"
+    );
+    let pickup = format!("/variants/{oat}?section_id=pickup-availability");
+    assert!(text(&get(&state, &pickup, "own")).contains("<p>Pop-up store: Ready in 1 hour</p>"));
+
+    // The other sessions do not see any of it.
+    assert!(!text(&get(&state, &pickup, "other")).contains("Pop-up store"));
+    let mug = body_json(&get(&state, "/products/ceramic-mug.js", "other"));
+    assert_eq!(mug["selling_plan_groups"], json!([]));
+}

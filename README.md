@@ -53,8 +53,8 @@ store is plain JSON:
 ```
 
 You can describe products, collections, pages, blogs, menus, customers, companies (B2B), gift
-cards, metafields and metaobjects. Images do not have to exist: a missing image becomes a
-placeholder of the right size.
+cards, subscriptions, store locations, swatches, metafields and metaobjects. Images do not
+have to exist: a missing image becomes a placeholder of the right size.
 
 After editing, check your data:
 
@@ -160,6 +160,73 @@ prices (catalogs) are not simulated.
 A theme with `templates/customers` (legacy accounts) keeps its own login page. More in the
 [data guide](docs/data-format.md#logging-in).
 
+## Subscriptions
+
+A subscription is a selling plan. Describe a group of plans, and name the products sold with
+it:
+
+```json
+{
+  "selling_plan_groups": [
+    {
+      "name": "Subscribe and save",
+      "selling_plans": [
+        {
+          "name": "Deliver every month, 10% off",
+          "price_adjustments": [{ "value_type": "percentage", "value": 10 }]
+        }
+      ],
+      "products": ["blue-shirt"]
+    }
+  ]
+}
+```
+
+The product now has `product.selling_plan_groups`, and each variant has its
+`selling_plan_allocations` with the price of every plan. `?selling_plan=<id>` selects a plan.
+Adding to the cart with `selling_plan` gives the line the plan and its price.
+
+A product sold by subscription only has `"requires_selling_plan": true`.
+
+## Store pickup
+
+List the places that stock your products:
+
+```json
+{
+  "locations": [
+    {
+      "name": "Paris shop",
+      "address": { "address1": "12 rue de Rivoli", "city": "Paris", "country_code": "FR" },
+      "pick_up_time": "Usually ready in 2 hours"
+    }
+  ]
+}
+```
+
+Every variant is stocked there, and `variant.store_availabilities` says so. A variant can say
+where it is in stock:
+
+```json
+{ "options": ["M"], "store_availabilities": { "Paris shop": false } }
+```
+
+`/variants/<id>?section_id=<section>` renders a section for one variant, which is how themes
+load their pickup information.
+
+## Swatches
+
+Give a color or an image to option values, by name:
+
+```json
+{ "swatches": { "White": "#ffffff", "Floral": { "image": "swatches/floral.jpg" } } }
+```
+
+Every option value named `White` gets that swatch: `product_option_value.swatch` on products,
+and `filter_value.swatch` in collection filters.
+
+More on these three in the [data guide](docs/data-format.md#selling-plans).
+
 ## The password page
 
 Open <http://127.0.0.1:9292/password> to see your password page. The password is `password`.
@@ -177,8 +244,8 @@ The storefront is never locked: nothing redirects to that page.
   against Shopify's test suite of the language. Shopify's Horizon and Dawn themes render
   every page without an error.
 - **A working storefront.** Cart, section rendering, predictive search, recommendations,
-  collection filters, forms, languages, customer accounts, B2B companies, the password page,
-  `robots.txt` and sitemaps.
+  collection filters, forms, languages, customer accounts, B2B companies, subscriptions,
+  store pickup, swatches, the password page, `robots.txt` and sitemaps.
 - **Images served locally.** `image_url` and `image_tag` point to your machine, which resizes
   and crops like Shopify's CDN.
 - **Shopify's scripts.** Pages have the `Shopify` JavaScript object, `Shopify.actions`,
@@ -347,8 +414,8 @@ cargo install --path crates/cli
 
 ## What it does not do
 
-`lsf` renders themes. It does not simulate checkout, apps, discounts, selling plans, B2B
-catalogs, taxes or shipping rates. Customers can log in, but not register. The full list is in
+`lsf` renders themes. It does not simulate checkout, apps, discounts, B2B catalogs, taxes or
+shipping rates. Customers can log in, but not register. The full list is in
 [compatibility](docs/compatibility.md#known-differences).
 
 ## More documentation

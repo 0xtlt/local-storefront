@@ -195,11 +195,17 @@ fn session_json(state: &ServerState, id: &str) -> Json {
         "cart": {
             "note": session.cart_note,
             "attributes": session.cart_attributes,
-            "items": session.cart_lines.iter().map(|line| json!({
-                "variant": line.variant_id,
-                "quantity": line.quantity,
-                "properties": line.properties,
-            })).collect::<Vec<_>>(),
+            "items": session.cart_lines.iter().map(|line| {
+                let mut item = json!({
+                    "variant": line.variant_id,
+                    "quantity": line.quantity,
+                    "properties": line.properties,
+                });
+                if let Some(selling_plan) = line.selling_plan {
+                    item["selling_plan"] = json!(selling_plan);
+                }
+                item
+            }).collect::<Vec<_>>(),
         },
         "custom_data": state.with_session(id, |entry| entry.store.is_some()),
         "throttle": state.with_session(id, |entry| entry.throttle.as_ref().map(Throttle::to_json)),

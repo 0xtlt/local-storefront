@@ -1,0 +1,7 @@
+{%- assign pick_up_availabilities = product_variant.store_availabilities | where: 'pick_up_enabled', true -%}
+<div class="pickup" data-variant="{{ product_variant.id }}">
+  <h2>{{ product_variant.product.title }} - {{ product_variant.title }}</h2>
+  {%- for availability in pick_up_availabilities %}
+  <p>{{ availability.location.name }}: {% if availability.available %}{{ availability.pick_up_time }}{% else %}unavailable{% endif %}</p>
+  {%- endfor %}
+</div>

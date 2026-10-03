@@ -23,6 +23,9 @@ data directory is one of these, and they are merged, so you can split the data a
 | `gift_cards` | array of [GiftCard](#giftcard) | Issued gift cards, each with its own page. |
 | `metaobjects` | map of array of [Metaobject](#metaobject) | Metaobject entries by type. |
 | `localization` | [Localization](#localization) | The countries and languages of the store. At most one data file may define it. |
+| `swatches` | map of [Swatch](#swatch) | The swatches of product option values, by the name of the value: `{"White": "#ffffff", "Floral": {"image": "swatches/floral.jpg"}}`. Every option value with one of these names gets the swatch, on products and in collection filters. |
+| `locations` | array of [Location](#location) | The places the store stocks products at, for store pickup. |
+| `selling_plan_groups` | array of [SellingPlanGroup](#sellingplangroup) | Groups of selling plans: subscriptions, pre-orders and other purchase options. |
 | `files` | map of [File](#file) | Metadata for files in `files/`, by path. |
 | `session` | [Session](#session) | What every new browser session starts with: a logged-in customer, a filled cart... |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible. Defaults to the real time. |
@@ -208,6 +211,8 @@ default variant, like a product without options in the Shopify admin.
 | `updated_at` | string |  |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 | `recommendations` | array of string | Handles of the products returned by product recommendations for this product. Defaults to other products from the same collections. |
+| `selling_plan_groups` | array of string | Names of the selling plan groups (from `selling_plan_groups`) this product is sold with, in addition to the groups that list it in their own `products`. |
+| `requires_selling_plan` | boolean | Whether the product can only be bought with a selling plan, like a product sold by subscription only. Defaults to `false`. |
 
 ## Option
 
@@ -225,7 +230,44 @@ A product option with its values in a chosen order.
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | **Required.** |
-| `values` | array of string | The values in display order. Defaults to the order they appear in the variants. |
+| `values` | array of [OptionValue](#optionvalue) | The values in display order. Defaults to the order they appear in the variants. A value is its name (`"White"`), or its name with a swatch (`{"name": "White", "swatch": "#ffffff"}`). |
+
+## OptionValue
+
+A value of a product option: its name, or its name with a swatch.
+
+One of:
+
+- string
+- [OptionValueDetail](#optionvaluedetail)
+
+## OptionValueDetail
+
+A value of a product option with its swatch (`product_option_value.swatch`).
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | **Required.** |
+| `swatch` | [Swatch](#swatch) | The swatch of the value on this product. Defaults to the swatch the store's `swatches` give to this name. |
+
+## Swatch
+
+How an option value is shown instead of its name: a CSS color (`"#f4f1ea"`), or an object
+with a color, an image, or both.
+
+One of:
+
+- string
+- [SwatchDetail](#swatchdetail)
+
+## SwatchDetail
+
+A swatch with a color, an image, or both (`swatch.color`, `swatch.image`).
+
+| Field | Type | Description |
+|---|---|---|
+| `color` | string | A CSS color: `"#f4f1ea"`, `"rgb(244, 241, 234)"`, ... |
+| `image` | [Image](#image) | An image, for a pattern that a single color cannot show. |
 
 ## Variant
 
@@ -253,6 +295,7 @@ A product variant.
 | `unit_price_measurement` | [UnitPriceMeasurement](#unitpricemeasurement) |  |
 | `quantity_rule` | [QuantityRule](#quantityrule) |  |
 | `quantity_price_breaks` | array of [QuantityPriceBreak](#quantitypricebreak) |  |
+| `store_availabilities` | map of boolean | The locations (from `locations`, by name) that stock this variant, and whether it is in stock there: `{"Portland": true, "Seattle": false}`. When omitted, every location stocks the variant, and it is in stock there when the variant is available. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Money
@@ -662,6 +705,89 @@ A language the store is published in.
 | `name` | string | The language's name in English. Defaults to a built-in name. |
 | `endonym_name` | string | The language's name in that language. Defaults to a built-in name. |
 
+## Location
+
+A place the store stocks products at, where customers can pick up their orders
+(`variant.store_availabilities`, `store_availability.location`).
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | integer |  |
+| `name` | string | **Required.** The name of the location. Variants refer to it by this name. |
+| `address` | [Address](#address) |  |
+| `pick_up_enabled` | boolean | Whether orders can be picked up at the location. Defaults to `true`. |
+| `pick_up_time` | string | How long a pickup order takes to be ready. Defaults to `"Usually ready in 24 hours"`. |
+| `physical_storefront` | boolean | Whether the location is a shop that sells in person. Defaults to `true`. |
+| `latitude` | number |  |
+| `longitude` | number |  |
+| `metafields` | map of map of [Metafield](#metafield) |  |
+
+## SellingPlanGroup
+
+A group of selling plans (`product.selling_plan_groups`): what a subscription app creates
+for "Subscribe and save". Products are sold with a group when the group lists them in
+`products`, or when they name the group in their own `selling_plan_groups`.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | **Required.** The name shown to customers, e.g. `"Subscribe and save"`. Products refer to the group by this name. |
+| `app_id` | string | The id of the app that created the group (`selling_plan_group.app_id`). |
+| `options` | array of string | The names of the options the plans differ by. Defaults to one option, `"Delivery frequency"`. |
+| `selling_plans` | array of [SellingPlan](#sellingplan) | **Required.** The plans of the group. At least one. |
+| `products` | array of string | Handles of the products sold with these plans. |
+
+## SellingPlan
+
+A selling plan: one way of buying a product, such as "Deliver every month, 10% off".
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | integer | Generated from the names of the group and of the plan when omitted. |
+| `name` | string | **Required.** The name shown to customers, e.g. `"Deliver every month, 10% off"`. |
+| `description` | string |  |
+| `options` | array of string | One value per option of the group, e.g. `["Every month"]`. Defaults to the plan's name. |
+| `price_adjustments` | array of [PriceAdjustment](#priceadjustment) | How the plan changes the price: at most two adjustments, the first one applies to the first orders. No adjustment means the price of the variant. |
+| `recurring_deliveries` | boolean | Whether the plan delivers more than once. Defaults to `true`. |
+| `checkout_charge` | [CheckoutCharge](#checkoutcharge) | What is paid at checkout. Defaults to the whole price (`percentage`, `100`). |
+
+## PriceAdjustment
+
+A price adjustment of a selling plan (`selling_plan.price_adjustments`).
+
+| Field | Type | Description |
+|---|---|---|
+| `value_type` | [AdjustmentType](#adjustmenttype) | **Required.** |
+| `value` | [Money](#money) | **Required.** With `percentage`: the percentage, e.g. `10`. With `fixed_amount` and `price`: an amount of money, e.g. `"2.00"` or `200`. |
+| `order_count` | integer | The number of orders the adjustment applies to. Every order when omitted. |
+
+## AdjustmentType
+
+How a price adjustment of a selling plan changes the price.
+
+One of:
+
+- `"percentage"`: `value` percent off the price of the variant.
+- `"fixed_amount"`: `value` (an amount of money) off the price of the variant.
+- `"price"`: `value` (an amount of money) is the price.
+
+## CheckoutCharge
+
+What is paid at checkout, for plans that take a deposit (`selling_plan.checkout_charge`).
+
+| Field | Type | Description |
+|---|---|---|
+| `value_type` | [CheckoutChargeType](#checkoutchargetype) | **Required.** |
+| `value` | [Money](#money) | **Required.** With `percentage`: the percentage, e.g. `50`. With `price`: an amount of money. |
+
+## CheckoutChargeType
+
+How the amount due at checkout is expressed.
+
+One of:
+
+- `"percentage"`: `value` percent of the price.
+- `"price"`: `value` (an amount of money).
+
 ## File
 
 A file in `files/` that needs metadata. Files without an entry work too.
@@ -705,3 +831,13 @@ A line of the cart a session starts with.
 | `variant` | [VariantRef](#variantref) | **Required.** A variant, by id or SKU, or a product handle (its first variant is used). |
 | `quantity` | integer | Defaults to 1. |
 | `properties` | map of string | Line item properties, e.g. `{"Engraving": "Hello"}`. |
+| `selling_plan` | [SellingPlanRef](#sellingplanref) | The selling plan the line is bought with: its name or its id. The product of the variant must be sold with it. |
+
+## SellingPlanRef
+
+A reference to a selling plan: its numeric id, or its name.
+
+One of:
+
+- integer
+- string

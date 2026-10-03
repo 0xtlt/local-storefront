@@ -20,7 +20,13 @@
   ],
   "variants": [
     { "options": ["Oat"], "sku": "MUG-OAT", "inventory_quantity": 30, "image": "products/mug-oat.jpg" },
-    { "options": ["Slate"], "sku": "MUG-SLT", "inventory_quantity": 18, "image": "products/mug-slate.jpg" },
+    {
+      "options": ["Slate"],
+      "sku": "MUG-SLT",
+      "inventory_quantity": 18,
+      "image": "products/mug-slate.jpg",
+      "store_availabilities": { "Ottawa flagship": true, "Montreal studio": false }
+    },
     { "options": ["Rust"], "sku": "MUG-RST", "inventory_quantity": 0, "inventory_policy": "continue", "image": "products/mug-rust.jpg" }
   ]
 }

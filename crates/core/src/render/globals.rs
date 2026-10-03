@@ -18,7 +18,7 @@ use crate::drops::lists::{Kind, Lookup};
 use crate::drops::localization::LocalizationDrop;
 use crate::drops::metafield::MetaobjectsDrop;
 use crate::drops::navigation::LinkListsDrop;
-use crate::drops::product::ProductDrop;
+use crate::drops::product::{ProductDrop, VariantDrop};
 use crate::drops::request::{RequestDrop, RoutesDrop, TemplateDrop};
 use crate::drops::search::{predictive_search_value, recommendations_value, search_value};
 use crate::drops::shop::{ShopDrop, policy_value};
@@ -154,6 +154,13 @@ impl Globals {
             // The resource the page is about.
             "product" => match &page.resource {
                 Resource::Product { product, .. } => ProductDrop::value(site, *product),
+                _ => return None,
+            },
+            // Only where a section is rendered for a variant (`/variants/<id>?section_id=`).
+            "product_variant" => match (&page.resource, page.product_variant) {
+                (Resource::Product { product, .. }, Some(variant)) => {
+                    VariantDrop::value(site, *product, variant)
+                }
                 _ => return None,
             },
             "collection" => match &page.resource {

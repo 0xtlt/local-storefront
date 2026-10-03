@@ -1,4 +1,5 @@
-//! `product`, `variant`, `product_option` and `product_option_value`.
+//! `product`, `variant`, `product_option` and `product_option_value`, with the swatches of
+//! option values and the store availabilities of variants.
 
 use std::any::Any;
 use std::borrow::Cow;
@@ -6,10 +7,16 @@ use std::borrow::Cow;
 use lsf_liquid::{Object, Value};
 use serde_json::{Value as Json, json};
 
-use super::media::{MediaDrop, image_base_url, image_media_json};
+use super::color::{Color, ColorDrop};
+use super::media::{ImageDrop, MediaDrop, image_base_url, image_media_json};
 use super::metafield::MetafieldsDrop;
+use super::selling_plan::{
+    allocation_json, allocation_value, allocations_value, group_json, group_value, plan_value,
+    plans, selected_plan,
+};
+use super::shop::AddressDrop;
 use super::{Memo, SiteRef, hash, strings, time_value};
-use crate::store::{InventoryPolicy, MediaKind, Product, Variant};
+use crate::store::{InventoryPolicy, Location, MediaKind, Product, Swatch, Variant};
 use crate::util::stable_id;
 
 pub struct ProductDrop {
@@ -58,15 +65,17 @@ pub fn option_value_id(product: &Product, position: usize, value: &str) -> u64 {
     )
 }
 
-/// The variant the URL selects: `?variant=<id>`, or `?option_values=<id>,<id>` naming one
-/// value per option.
+/// The variant the URL selects: `?variant=<id>`, `/variants/<id>`, or
+/// `?option_values=<id>,<id>` naming one value per option.
 pub fn selected_variant(site: &SiteRef, product: usize) -> Option<usize> {
     let data = &site.store.products[product];
-    if let Some(id) = site
-        .request
-        .param("variant")
-        .and_then(|id| id.parse::<u64>().ok())
-    {
+    let named = site.request.param("variant").or_else(|| {
+        site.request
+            .path
+            .trim_matches('/')
+            .strip_prefix("variants/")
+    });
+    if let Some(id) = named.and_then(|id| id.parse::<u64>().ok()) {
         return data.variants.iter().position(|variant| variant.id == id);
     }
     let wanted: Vec<u64> = site
@@ -96,6 +105,59 @@ pub fn selected_or_first_available(site: &SiteRef, product: usize) -> usize {
                 .position(|variant| variant.available)
         })
         .unwrap_or(0)
+}
+
+/// Whether store availabilities are defined for a variant: for the selected one and for the
+/// first available one. Shopify leaves `variant.store_availabilities` empty for the others.
+fn has_store_availabilities(site: &SiteRef, product: usize, variant: usize) -> bool {
+    let first_available = site.store.products[product]
+        .variants
+        .iter()
+        .position(|variant| variant.available)
+        .unwrap_or(0);
+    variant == first_available || selected_variant(site, product) == Some(variant)
+}
+
+/// The `swatch` object, or nil for a value that has none.
+pub fn swatch_value(site: &SiteRef, swatch: Option<&Swatch>) -> Value {
+    let Some(swatch) = swatch else {
+        return Value::Nil;
+    };
+    hash([
+        (
+            "color",
+            swatch
+                .color
+                .as_deref()
+                .and_then(Color::parse)
+                .map_or(Value::Nil, ColorDrop::value),
+        ),
+        ("image", ImageDrop::optional(site, swatch.image.as_ref())),
+    ])
+}
+
+/// The `location` object of a store availability.
+pub fn location_value(site: &SiteRef, location: &Location) -> Value {
+    hash([
+        ("id", Value::Int(location.id as i64)),
+        ("name", Value::from(&location.name)),
+        (
+            "address",
+            AddressDrop::value(site, &location.address, false),
+        ),
+        (
+            "latitude",
+            location.latitude.map_or(Value::Nil, Value::Float),
+        ),
+        (
+            "longitude",
+            location.longitude.map_or(Value::Nil, Value::Float),
+        ),
+        (
+            "metafields",
+            MetafieldsDrop::value(site, &location.metafields),
+        ),
+    ])
 }
 
 /// The products as drops, for arrays of products.
@@ -263,12 +325,48 @@ impl Object for ProductDrop {
                     .iter()
                     .any(|variant| !variant.quantity_price_breaks.is_empty()),
             ),
-            "requires_selling_plan" => Value::Bool(false),
-            "selling_plan_groups" => Value::array(Vec::new()),
-            "selected_selling_plan"
-            | "selected_selling_plan_allocation"
-            | "selected_or_first_available_selling_plan_allocation"
-            | "category" => Value::Nil,
+            "requires_selling_plan" => Value::Bool(product.requires_selling_plan),
+            "selling_plan_groups" => self.memo.get("selling_plan_groups", || {
+                Value::array(
+                    product
+                        .selling_plan_groups
+                        .iter()
+                        .map(|group| group_value(site, &site.store.selling_plan_groups[*group]))
+                        .collect(),
+                )
+            }),
+            "selected_selling_plan" => match selected_plan(site, product) {
+                Some((group, plan)) => plan_value(site, group, plan),
+                None => Value::Nil,
+            },
+            // Both a variant and a selling plan have to be selected.
+            "selected_selling_plan_allocation" => {
+                match (self.selected_variant(), selected_plan(site, product)) {
+                    (Some(variant), Some((group, plan))) => {
+                        allocation_value(site, group, plan, &product.variants[variant])
+                    }
+                    _ => Value::Nil,
+                }
+            }
+            // The selected allocation, or else the first one of the first available variant
+            // (of the first variant when none is available).
+            "selected_or_first_available_selling_plan_allocation" => {
+                match (self.selected_variant(), selected_plan(site, product)) {
+                    (Some(selected), Some((group, plan))) => {
+                        allocation_value(site, group, plan, &product.variants[selected])
+                    }
+                    _ => match plans(&site.store, product).next() {
+                        Some((group, plan)) => {
+                            let variant = product
+                                .first_available_variant()
+                                .unwrap_or(&product.variants[0]);
+                            allocation_value(site, group, plan, variant)
+                        }
+                        None => Value::Nil,
+                    },
+                }
+            }
+            "category" => Value::Nil,
             _ => return None,
         })
     }
@@ -312,8 +410,12 @@ impl Object for ProductDrop {
             "featured_image": images.first().cloned().unwrap_or(Json::Null),
             "options": product.options.iter().map(|option| option.name.clone()).collect::<Vec<_>>(),
             "media": media,
-            "requires_selling_plan": false,
-            "selling_plan_groups": [],
+            "requires_selling_plan": product.requires_selling_plan,
+            "selling_plan_groups": product
+                .selling_plan_groups
+                .iter()
+                .map(|group| group_json(&site.store.selling_plan_groups[*group]))
+                .collect::<Vec<_>>(),
             "content": product.description,
         })
     }
@@ -388,8 +490,10 @@ pub fn variant_json(site: &SiteRef, product_index: usize, variant_index: usize) 
         "compare_at_price": variant.compare_at_price,
         "inventory_management": if variant.inventory_tracked { json!("shopify") } else { Json::Null },
         "barcode": if variant.barcode.is_empty() { Json::Null } else { json!(variant.barcode) },
-        "requires_selling_plan": false,
-        "selling_plan_allocations": [],
+        "requires_selling_plan": product.requires_selling_plan,
+        "selling_plan_allocations": plans(&site.store, product)
+            .map(|(group, plan)| allocation_json(group, plan, variant))
+            .collect::<Vec<_>>(),
         "quantity_rule": {
             "min": variant.quantity_rule.min,
             "max": variant.quantity_rule.max,
@@ -562,9 +666,40 @@ impl Object for VariantDrop {
             "metafields" => self.memo.get("metafields", || {
                 MetafieldsDrop::value(site, &variant.metafields)
             }),
-            "incoming" | "requires_selling_plan" => Value::Bool(false),
-            "next_incoming_date" | "selected_selling_plan_allocation" => Value::Nil,
-            "selling_plan_allocations" | "store_availabilities" => Value::array(Vec::new()),
+            "incoming" => Value::Bool(false),
+            "next_incoming_date" => Value::Nil,
+            "requires_selling_plan" => Value::Bool(product.requires_selling_plan),
+            "selected_selling_plan_allocation" => match selected_plan(site, product) {
+                Some((group, plan)) => allocation_value(site, group, plan, variant),
+                None => Value::Nil,
+            },
+            "selling_plan_allocations" => self.memo.get("selling_plan_allocations", || {
+                allocations_value(site, product, variant)
+            }),
+            "store_availabilities" => self.memo.get("store_availabilities", || {
+                if !has_store_availabilities(site, self.product, self.index) {
+                    return Value::array(Vec::new());
+                }
+                Value::array(
+                    variant
+                        .store_availabilities
+                        .iter()
+                        .map(|(location, available)| {
+                            let location = &site.store.locations[*location];
+                            hash([
+                                ("available", Value::Bool(*available)),
+                                ("location", location_value(site, location)),
+                                (
+                                    "physical_storefront",
+                                    Value::Bool(location.physical_storefront),
+                                ),
+                                ("pick_up_enabled", Value::Bool(location.pick_up_enabled)),
+                                ("pick_up_time", Value::from(&location.pick_up_time)),
+                            ])
+                        })
+                        .collect(),
+                )
+            }),
             _ => return None,
         })
     }
@@ -710,7 +845,11 @@ impl Object for ProductOptionValueDrop {
                 Some(variant) => VariantDrop::value(&self.site, self.product, variant),
                 None => Value::Nil,
             },
-            "swatch" | "product_url" => Value::Nil,
+            "swatch" => swatch_value(
+                &self.site,
+                product.options[self.position].swatch(&self.name),
+            ),
+            "product_url" => Value::Nil,
             _ => return None,
         })
     }

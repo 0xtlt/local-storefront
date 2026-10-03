@@ -281,8 +281,12 @@ pub fn checkout(visit: &Visit<'_>) -> Reply {
     let rows: String = lines
         .iter()
         .map(|line| {
+            // A line bought with a selling plan names it, as the checkout does.
+            let plan = line.selling_plan.map_or_else(String::new, |(_, plan)| {
+                format!("<br><small>{}</small>", escape_html(&plan.name))
+            });
             format!(
-                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td>{}{plan}</td><td>{}</td><td>{}</td></tr>",
                 escape_html(&line.title()),
                 line.line.quantity,
                 format_money(line.line_price(), format)

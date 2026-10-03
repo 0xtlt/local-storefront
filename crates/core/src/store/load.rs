@@ -5,7 +5,8 @@
 //! ```text
 //! shopify-local/
 //!   *.json            any number of files, each holding any of: shop, products, collections,
-//!                     pages, blogs, menus, customers, metaobjects, localization, files,
+//!                     pages, blogs, menus, customers, companies, gift_cards, locations,
+//!                     selling_plan_groups, swatches, metaobjects, localization, files,
 //!                     session, now, theme_settings. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
@@ -372,6 +373,22 @@ fn merge_store_file(
             origin: origin(format!("/gift_cards/{index}")),
         });
     }
+    for (index, value) in input.locations.into_iter().enumerate() {
+        merged.locations.push(Sourced {
+            value,
+            origin: origin(format!("/locations/{index}")),
+        });
+    }
+    for (index, value) in input.selling_plan_groups.into_iter().enumerate() {
+        merged.selling_plan_groups.push(Sourced {
+            value,
+            origin: origin(format!("/selling_plan_groups/{index}")),
+        });
+    }
+    for (name, value) in input.swatches {
+        let origin = origin(format!("/swatches/{name}"));
+        merged.swatches.insert(name, Sourced { value, origin });
+    }
     for (handle, value) in input.menus {
         if merged.menus.contains_key(&handle) {
             diagnostics.error(
@@ -496,6 +513,17 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
     upsert!(gift_cards, |card: &model::GiftCardInput| card
         .code
         .to_uppercase());
+    upsert!(locations, |location: &model::LocationInput| location
+        .name
+        .to_lowercase());
+    upsert!(
+        selling_plan_groups,
+        |group: &model::SellingPlanGroupInput| { group.name.to_lowercase() }
+    );
+    for (name, value) in input.swatches {
+        let origin = origin(format!("/swatches/{name}"));
+        merged.swatches.insert(name, Sourced { value, origin });
+    }
     for (handle, value) in input.menus {
         let origin = origin(format!("/menus/{handle}"));
         merged.menus.insert(handle, Sourced { value, origin });
@@ -622,6 +650,40 @@ mod tests {
         assert_eq!(store.customers[0].company, None);
         // The password page has a password.
         assert_eq!(store.shop.password, "password");
+        // Option values take the swatch the store gives to their name.
+        assert_eq!(
+            tee.options[0]
+                .swatch("Sage")
+                .and_then(|s| s.color.as_deref()),
+            Some("#9caf88")
+        );
+        assert!(tee.options[1].swatch("M").is_none());
+        // Every location stocks a variant unless the variant says which ones do.
+        assert_eq!(store.locations.len(), 2);
+        assert_eq!(
+            tee.variants[0].store_availabilities,
+            vec![(0, true), (1, true)]
+        );
+        assert_eq!(
+            tee.variants[3].store_availabilities,
+            vec![(0, false), (1, false)]
+        );
+        let mug = store.product_by_handle("ceramic-mug").expect("mug");
+        assert_eq!(
+            mug.variants[1].store_availabilities,
+            vec![(0, true), (1, false)]
+        );
+        // The socks are sold by subscription too.
+        let socks = store.product_by_handle("merino-crew-socks").expect("socks");
+        assert_eq!(socks.selling_plan_groups, vec![0]);
+        assert!(tee.selling_plan_groups.is_empty());
+        let group = &store.selling_plan_groups[0];
+        assert_eq!(group.options, vec!["Delivery frequency"]);
+        assert_eq!(group.id.len(), 40);
+        assert_eq!(group.plans[0].options, vec!["Every month"]);
+        assert_eq!(group.plans[0].allocation(&socks.variants[0]).price, 1440);
+        assert!(store.selling_plan_of(socks, group.plans[1].id).is_some());
+        assert!(store.selling_plan_of(tee, group.plans[1].id).is_none());
     }
 
     fn inline(data: serde_json::Value) -> (crate::store::Store, Diagnostics) {
@@ -692,6 +754,174 @@ mod tests {
             "did you mean \"Northwind Portland\"?",
             "lists company locations but names no company",
             "jane.doe@example.com does not buy for a company",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn swatches_locations_and_selling_plans_are_resolved() {
+        let (store, diagnostics) = inline(serde_json::json!({
+            "swatches": {"Sand": {"color": "rgb(216, 199, 168)", "image": "swatches/sand.jpg"}},
+            "locations": [{"name": "Pop-up", "pick_up_enabled": false}],
+            "selling_plan_groups": [{
+                "name": "Pre-order",
+                "options": ["Ships", "Payment"],
+                "selling_plans": [{
+                    "name": "Ships in March, deposit",
+                    "options": ["In March", "Deposit"],
+                    "recurring_deliveries": false,
+                    "checkout_charge": {"value_type": "percentage", "value": 50}
+                }]
+            }],
+            "products": [{
+                "title": "Sun Hat",
+                "price": 4000,
+                "options": [{"name": "Color", "values": [
+                    "sand",
+                    {"name": "Black", "swatch": "#000"},
+                    {"name": "Floral", "swatch": {"image": "swatches/floral.jpg"}},
+                    "Plain"
+                ]}],
+                "variants": [
+                    {"options": ["sand"], "store_availabilities": {"pop-up": true}},
+                    {"options": ["Black"], "store_availabilities": {}},
+                    {"options": ["Floral"]},
+                    {"options": ["Plain"]}
+                ],
+                "selling_plan_groups": ["pre-order"],
+                "requires_selling_plan": true
+            }],
+            "session": {"cart": {"items": [
+                {"variant": "sun-hat", "selling_plan": "ships in march, deposit"}
+            ]}}
+        }));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let hat = store.product_by_handle("sun-hat").expect("hat");
+        let color = &hat.options[0];
+        // The store's swatch, whatever the case of the name; then the value's own.
+        let sand = color.swatch("sand").expect("sand");
+        assert_eq!(sand.color.as_deref(), Some("rgb(216, 199, 168)"));
+        assert_eq!(sand.image.as_ref().expect("image").src, "swatches/sand.jpg");
+        assert_eq!(
+            color.swatch("Black").expect("black").color.as_deref(),
+            Some("#000")
+        );
+        let floral = color.swatch("Floral").expect("floral");
+        assert!(floral.color.is_none() && floral.image.is_some());
+        assert!(color.swatch("Plain").is_none());
+        assert_eq!(store.image_size("swatches/floral.jpg"), Some((1200, 1200)));
+
+        // The overlay's location comes after the two of the demo store.
+        assert_eq!(store.locations.len(), 3);
+        assert!(!store.locations[2].pick_up_enabled);
+        assert_eq!(hat.variants[0].store_availabilities, vec![(2, true)]);
+        assert!(hat.variants[1].store_availabilities.is_empty());
+        assert_eq!(hat.variants[2].store_availabilities.len(), 3);
+
+        assert!(hat.requires_selling_plan);
+        let (group, plan) = store
+            .selling_plan_of(
+                hat,
+                store.session_defaults.cart_lines[0]
+                    .selling_plan
+                    .expect("plan"),
+            )
+            .expect("the hat is sold with the plan");
+        assert_eq!(group.name, "Pre-order");
+        assert_eq!(plan.options, vec!["In March", "Deposit"]);
+        assert!(!plan.recurring_deliveries);
+        let allocation = plan.allocation(&hat.variants[0]);
+        assert_eq!(
+            (allocation.price, allocation.checkout_charge_amount),
+            (4000, 2000)
+        );
+    }
+
+    #[test]
+    fn swatch_location_and_selling_plan_mistakes_are_explained() {
+        let (_, diagnostics) = inline(serde_json::json!({
+            "swatches": {"Sand": "sandy", "Empty": {}},
+            "selling_plan_groups": [
+                {"name": "Empty group", "selling_plans": [], "products": ["merino-crew-sock"]},
+                {"name": "Odd", "options": ["Frequency", "Size"], "selling_plans": [
+                    {"name": "One", "id": 7, "options": ["Monthly"], "price_adjustments": [{"value_type": "percentage", "value": "10.5"}]},
+                    {"name": "one", "id": 7, "options": ["Monthly", "Big"], "price_adjustments": [
+                        {"value_type": "percentage", "value": 150},
+                        {"value_type": "price", "value": "12.00"},
+                        {"value_type": "fixed_amount", "value": 100}
+                    ]}
+                ]}
+            ],
+            "products": [
+                {"title": "Lamp", "price": 100, "variants": [{"store_availabilities": {"Otawa flagship": true}}]},
+                {"title": "Desk", "price": 100, "selling_plan_groups": ["Subscribe and saves"]},
+                {"title": "Chair", "price": 100, "requires_selling_plan": true}
+            ],
+            "session": {"cart": {"items": [
+                {"variant": "MUG-OAT", "selling_plan": "Deliver every month, 10% off"},
+                {"variant": "SOCK-S", "selling_plan": "Deliver every mnth, 10% off"},
+                {"variant": "chair"}
+            ]}}
+        }));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[invalid_color]: \"sandy\" is not a color",
+            "error[empty_swatch]: the swatch has neither a color nor an image",
+            "error[missing_selling_plan]: the selling plan group \"Empty group\" has no selling plan",
+            "there is no product with the handle \"merino-crew-sock\"",
+            "did you mean \"merino-crew-socks\"?",
+            "the selling plan gives 1 option value(s) but the group has 2 option(s): Frequency, Size",
+            "error[invalid_value]: \"10.5\" is not a percentage",
+            "error[invalid_value]: 150 is not a percentage",
+            "another selling plan of this group is already named \"one\"",
+            "the selling plan id 7 is already used by \"One\"",
+            "a selling plan can have at most 2 price adjustments, this one has 3",
+            "error[unknown_location]: there is no location named \"Otawa flagship\"",
+            "did you mean \"Ottawa flagship\"?",
+            "error[unknown_selling_plan]: there is no selling plan group named \"Subscribe and saves\"",
+            "did you mean \"Subscribe and save\"?",
+            "the product \"Chair\" requires a selling plan but is sold with none",
+            "the product \"ceramic-mug\" is not sold with a selling plan named \"Deliver every month, 10% off\"",
+            "\"ceramic-mug\" is sold without selling plans",
+            "did you mean \"Deliver every month, 10% off\"?",
+            "error[missing_selling_plan]: the product \"chair\" can only be bought with a selling plan",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn locations_and_selling_plan_groups_have_unique_names() {
+        let directory = std::env::temp_dir().join(format!("lsf-duplicates-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{
+                "products": [{"title": "Thing", "price": 100}],
+                "locations": [{"name": "Depot"}, {"name": "depot"}],
+                "selling_plan_groups": [
+                    {"name": "Monthly", "selling_plans": [{"name": "Every month"}]},
+                    {"name": "monthly", "selling_plans": [{"name": "Each month"}]}
+                ]
+            }"#,
+        )
+        .expect("store");
+        let (_, diagnostics) = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[duplicate_location]: another location is already named \"depot\"",
+            "error[duplicate_selling_plan]: another selling plan group is already named \"monthly\"",
         ] {
             assert!(
                 report.contains(expected),

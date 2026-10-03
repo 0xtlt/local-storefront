@@ -60,9 +60,10 @@ shopify-local/
 
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
-`metaobjects`, `localization`, `files`, `session`, `now` and `theme_settings`. Root files are
-merged, so the data can be split however is convenient. Lists add up; `shop`, `localization`,
-`session` and `now` may be defined in one file only.
+`selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
+`session`, `now` and `theme_settings`. Root files are merged, so the data can be split however
+is convenient. Lists add up; `shop`, `localization`, `session` and `now` may be defined in one
+file only.
 
 A file in `products/`, `collections/`, `pages/`, `blogs/` or `customers/` holds one entity, or
 an array of them. Files are read in alphabetical order, which is the order products matched by
@@ -138,6 +139,11 @@ product with options lists its variants; each gives one value per option:
   A variant without `inventory_quantity` is not tracked and always available. `available` forces
   the answer either way. Adding more than the stock to the cart fails as it does on Shopify.
 - `options` can spell out the order of the values: `{ "name": "Size", "values": ["S", "M", "L"] }`.
+  A value can carry a [swatch](#swatches).
+- `selling_plan_groups` and `requires_selling_plan` sell the product by subscription: see
+  [selling plans](#selling-plans).
+- A variant's `store_availabilities` says where it can be picked up: see
+  [store pickup](#store-pickup).
 - Use `media` instead of `images` to mix images with videos, external videos and 3D models.
 - `recommendations` lists the handles returned by product recommendations; by default they are
   other products of the same collections.
@@ -170,6 +176,134 @@ Storefront filtering (`collection.filters`, `?filter.v.availability=1`,
 `?filter.v.price.gte=10`, `?filter.p.vendor=...`, `?filter.v.option.color=...`), sorting
 (`?sort_by=`) and tag URLs (`/collections/<handle>/<tag>`) work from this data without any
 extra configuration.
+
+## Selling plans
+
+A selling plan is a way of buying a product other than once: a subscription, a pre-order.
+Plans come in groups, which is what a subscription app creates.
+
+```json
+{
+  "selling_plan_groups": [
+    {
+      "name": "Subscribe and save",
+      "options": ["Delivery frequency"],
+      "selling_plans": [
+        {
+          "name": "Deliver every month, 10% off",
+          "options": ["Every month"],
+          "price_adjustments": [{ "value_type": "percentage", "value": 10 }]
+        },
+        {
+          "name": "Deliver every 3 months",
+          "options": ["Every 3 months"]
+        }
+      ],
+      "products": ["organic-cotton-t-shirt"]
+    }
+  ]
+}
+```
+
+- A product is sold with a group when the group lists it in `products`, or when the product
+  names the group: `"selling_plan_groups": ["Subscribe and save"]`. The plans apply to every
+  variant of the product.
+- `"requires_selling_plan": true` on a product means it cannot be bought once.
+- A **price adjustment** has a `value_type`: `percentage` (`value` percent off), `fixed_amount`
+  (`value` off, an amount of money) or `price` (`value` is the price). A plan has at most two:
+  the first one gives the price, the second one is what later orders cost. Without any, the
+  plan costs what the variant costs.
+- `options` of the group are the names of what the plans differ by, and each plan gives one
+  value per option. They default to one option, `Delivery frequency`, whose value is the
+  plan's name.
+- `checkout_charge` is what is paid at checkout, for a deposit:
+  `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price.
+- `recurring_deliveries` defaults to `true`. Ids are generated and stable; set `id` on a plan
+  to reproduce a Shopify id.
+
+In Liquid, `product.selling_plan_groups`, `variant.selling_plan_allocations` and
+`product.selected_or_first_available_selling_plan_allocation` are filled. `?selling_plan=<id>`
+selects a plan (`product.selected_selling_plan`, `selling_plan.selected`), and with `?variant=`
+an allocation (`product.selected_selling_plan_allocation`). `/products/<handle>.js` and the
+`json` filter list the groups and the allocations as Shopify does.
+
+In the cart, `selling_plan` is accepted by `/cart/add.js` and `/cart/change.js`. The line then
+has the plan's price and its `selling_plan_allocation`, and stays separate from the same
+variant bought once. A product is refused with a plan it is not sold with, and without one
+when it requires one.
+
+## Store pickup
+
+`locations` are the places the store stocks its products at.
+
+```json
+{
+  "locations": [
+    {
+      "name": "Portland flagship",
+      "address": {
+        "address1": "12 Maple Street",
+        "city": "Portland",
+        "province_code": "OR",
+        "zip": "97204",
+        "country_code": "US",
+        "phone": "+1 503 555 0100"
+      },
+      "pick_up_time": "Usually ready in 2 hours",
+      "latitude": 45.5202,
+      "longitude": -122.6742
+    },
+    { "name": "Seattle warehouse", "pick_up_enabled": false }
+  ]
+}
+```
+
+- `pick_up_enabled` and `physical_storefront` default to `true`, `pick_up_time` to
+  `Usually ready in 24 hours`.
+- Every location stocks every variant, and a variant is in stock there when it is available.
+  A variant that lists `store_availabilities` is stocked by those locations only, each with
+  its own stock: `"store_availabilities": { "Portland flagship": true, "Seattle warehouse": false }`.
+
+In Liquid, `variant.store_availabilities` lists a `store_availability` per location, with its
+`location` (`name`, `address`, `latitude`, `longitude`, `metafields`). As on Shopify, only the
+selected variant and the first available one have them: the other variants of a product have
+an empty list.
+
+`/variants/<id>?section_id=<section>` renders a section for a variant, which the section reads
+as `product_variant`. Themes fetch that URL to show pickup availability. Without `section_id`,
+the URL leads to the product with the variant selected.
+
+## Swatches
+
+A swatch shows an option value as a color or an image instead of its name. `swatches` gives
+them by the name of the value, for the whole store:
+
+```json
+{
+  "swatches": {
+    "White": "#f4f1ea",
+    "Sage": "rgb(156, 175, 136)",
+    "Floral": { "image": "swatches/floral.jpg" },
+    "Sand": { "color": "#d8c7a8", "image": "swatches/sand.jpg" }
+  }
+}
+```
+
+Every option value with one of these names gets the swatch, whatever the product and the
+option. A product can give its own to a value, in the long form of `options`:
+
+```json
+{
+  "options": [
+    { "name": "Color", "values": ["White", { "name": "Sunset", "swatch": "#ff7a00" }] },
+    "Size"
+  ]
+}
+```
+
+In Liquid, `product_option_value.swatch` has a `color` and an `image`, and is `nil` for a
+value without a swatch. In collection filters, a filter whose values have swatches has the
+`swatch` presentation, and each `filter_value.swatch` is filled.
 
 ## Pages, blogs and articles
 
@@ -278,6 +412,9 @@ what is in the cart, which country is selected.
 `session` is what every new browser session starts with. Leave it out for an anonymous visitor
 with an empty cart. A variant is referenced by its SKU, by its id, or by a product handle
 (meaning the product's first variant).
+
+A cart item bought with a [selling plan](#selling-plans) names the plan, or gives its id:
+`{ "variant": "TEE-WHT-S", "selling_plan": "Deliver every month, 10% off" }`.
 
 `session.customer` is the email of a customer, `"default"` for the first customer of the data,
 or `"none"`. When the data has no customer at all, there is still one to log in as:
@@ -488,6 +625,8 @@ and read with `{{ metaobjects.designer.sam.name }}` or `{% for d in metaobjects.
 | `duplicate_section` | `shop`, `localization`, `session` or `now` defined in two files. |
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data. The hint suggests the closest match. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations without a company. |
+| `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
+| `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
 | `missing_price` | A product without a price on itself or on its variants. |
 | `missing_variants`, `missing_options`, `option_mismatch`, `too_many_options` | The options of a product and the option values of its variants do not line up. |
 | `media_conflict`, `missing_sources`, `missing_external_video` | Incomplete or contradictory product media. |

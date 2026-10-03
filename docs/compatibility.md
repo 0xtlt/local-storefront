@@ -23,7 +23,7 @@ page says how that is checked, what is covered, and where the local server knowi
   data), not on behaviour known to differ.
 - **Real themes.** Shopify's Horizon and Dawn themes render every page type without a Liquid
   error, and their JavaScript (variant pickers, cart drawer, predictive search, filters, section
-  rendering) runs against the local endpoints unchanged.
+  rendering, pickup availability) runs against the local endpoints unchanged.
 
 `lsf check` reports what a theme uses that is not implemented: Liquid that does not parse, and
 filters that do not exist here.
@@ -58,10 +58,11 @@ Global objects: `shop`, `cart`, `customer`, `request`, `routes`, `localization`,
 
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
-and sort options, links, addresses, orders and line items, comments, metafields of every type,
-metaobjects, countries, languages, currencies, markets, fonts, colors, color schemes, quantity
-rules and quantity price breaks, unit prices, companies, company locations and company
-addresses.
+(with swatches) and sort options, links, addresses, orders and line items, comments,
+metafields of every type, metaobjects, countries, languages, currencies, markets, fonts,
+colors, color schemes, quantity rules and quantity price breaks, unit prices, selling plan
+groups, selling plans and their allocations, store availabilities and locations, companies,
+company locations and company addresses.
 
 ## Theme architecture
 
@@ -121,13 +122,15 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Password page | `/password` always shows the theme's password page, and accepts `shop.password` (`password` by default). The storefront is never locked: nothing redirects to that page. On Shopify, a protected store redirects every page to it, and an open store redirects it to the home page. |
 | Discounts | Carts and orders have no discounts: discount arrays are empty and totals are undiscounted. `Shopify.actions.updateCart` reports every discount code as not applicable. |
 | Standard actions | A change the cart refuses (unknown variant, not enough stock) resolves with `userErrors` whose code is `INVALID`, and leaves that line untouched. The Storefront API would add what is in stock and return a warning. |
-| Selling plans | Products have no selling plans (`selling_plan_groups` is empty). |
+| Selling plans | Selling plan groups, plans and allocations are there, on products, variants, the cart and `/products/<handle>.js`. A group applies to every variant of a product, not to some of them. Prepaid plans are not modelled: `per_delivery_price` is the price. The line items of orders have no selling plan. The widget of a subscription app is an app block, which renders nothing: the theme's own purchase options do. |
+| Store pickup | `variant.store_availabilities` and `/variants/<id>?section_id=` are there. Locations come in the order of the data: Shopify sorts them by distance from the visitor. Choosing pickup happens at checkout, which is not part of a theme, so `order.pickup_in_store?` is always `false`. |
+| Swatches | A swatch is given to option values by name, or to one value of a product. On Shopify it comes from the category metafield the option is linked to. `filter_value.image` (the `image` presentation of a filter) is not generated. |
 | B2B | Companies, company locations, their addresses and metafields are there: `customer.b2b?`, `current_company`, `current_location`, `company_available_locations` and the link that changes location. Catalogs are not: a B2B customer sees the same products, prices and quantity rules as everyone. No payment terms, no store credit. |
 | Markets | One price list: every country sees the shop currency's prices. The selected country changes `localization.country`, not prices. |
 | Taxes and shipping | Not computed. |
 | Search | A simple search over titles, descriptions, vendors, types, tags and SKUs. Ranking is not Shopify's. |
 | Recommendations | Products of the same collections, or the product's explicit `recommendations`. |
-| Collection filters | Availability, price, vendor, product type, tag and variant options. Metafield filters are not generated. |
+| Collection filters | Availability, price, vendor, product type, tag and variant options, with the swatches of option values. Metafield filters are not generated. |
 | Placeholder artwork | `image`, `collection-2` and `lifestyle-2` are Shopify's illustrations: the three that are published under a free license. For the other names, `placeholder_svg_tag` draws generic artwork of the right proportions. |
 | Fonts | Shopify's font library is not bundled. `font_face` and `font_url` generate the same markup and URLs; the files are blank unless provided in `files/fonts/`. |
 | Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. |

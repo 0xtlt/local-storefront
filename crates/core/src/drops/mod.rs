@@ -19,6 +19,7 @@ pub mod navigation;
 pub mod product;
 pub mod request;
 pub mod search;
+pub mod selling_plan;
 pub mod shop;
 
 use std::sync::{Arc, Mutex};

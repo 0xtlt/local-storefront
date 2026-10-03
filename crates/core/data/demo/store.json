@@ -31,6 +31,62 @@
       }
     }
   },
+  "swatches": {
+    "White": "#f4f1ea",
+    "Black": "#1c1c1c",
+    "Sage": "#9caf88",
+    "Navy": "#1f2a44",
+    "Ochre": "#c98a2b",
+    "Oat": "#d9c7a7",
+    "Slate": "#5b6770",
+    "Rust": "#a4502f"
+  },
+  "locations": [
+    {
+      "name": "Ottawa flagship",
+      "address": {
+        "address1": "150 Elgin Street",
+        "city": "Ottawa",
+        "province": "Ontario",
+        "province_code": "ON",
+        "country_code": "CA",
+        "zip": "K2P 1L4",
+        "phone": "+1 613 555 0142"
+      },
+      "pick_up_time": "Usually ready in 2 hours",
+      "latitude": 45.4201,
+      "longitude": -75.6932
+    },
+    {
+      "name": "Montreal studio",
+      "address": {
+        "address1": "3700 Saint-Laurent Boulevard",
+        "city": "Montreal",
+        "province": "Quebec",
+        "province_code": "QC",
+        "country_code": "CA",
+        "zip": "H2X 2V4"
+      }
+    }
+  ],
+  "selling_plan_groups": [
+    {
+      "name": "Subscribe and save",
+      "selling_plans": [
+        {
+          "name": "Deliver every month, 10% off",
+          "options": ["Every month"],
+          "price_adjustments": [{ "value_type": "percentage", "value": 10 }]
+        },
+        {
+          "name": "Deliver every 3 months, 5% off",
+          "options": ["Every 3 months"],
+          "price_adjustments": [{ "value_type": "percentage", "value": 5 }]
+        }
+      ],
+      "products": ["merino-crew-socks"]
+    }
+  ],
   "localization": {
     "countries": [
       { "iso_code": "US", "popular": true },

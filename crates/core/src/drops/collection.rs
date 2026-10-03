@@ -8,10 +8,10 @@ use serde_json::{Value as Json, json};
 
 use super::media::ImageDrop;
 use super::metafield::MetafieldsDrop;
-use super::product::ProductDrop;
+use super::product::{ProductDrop, swatch_value};
 use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
 use crate::site::Request;
-use crate::store::{Collection, Product, SortOrder};
+use crate::store::{Collection, Product, SortOrder, Swatch};
 use crate::urls::encode_component;
 use crate::util::handleize;
 
@@ -313,8 +313,11 @@ impl CollectionDrop {
         let list_filter = |label: &str,
                            param: &str,
                            values: Vec<(String, String, Criterion)>,
+                           swatch_of: &dyn Fn(&str) -> Option<Swatch>,
                            same_filter: &dyn Fn(&Criterion) -> bool|
          -> Value {
+            // A filter whose values have swatches is presented with them.
+            let has_swatches = values.iter().any(|(value, ..)| swatch_of(value).is_some());
             let values: Vec<Value> = values
                 .into_iter()
                 .map(|(value, label, criterion)| {
@@ -330,7 +333,7 @@ impl CollectionDrop {
                             "url_to_remove",
                             Value::from(query_without(param, Some(&value))),
                         ),
-                        ("swatch", Value::Nil),
+                        ("swatch", swatch_value(site, swatch_of(&value).as_ref())),
                         ("image", Value::Nil),
                     ])
                 })
@@ -344,7 +347,10 @@ impl CollectionDrop {
                 ("label", Value::from(label)),
                 ("type", Value::str("list")),
                 ("operator", Value::str("OR")),
-                ("presentation", Value::str("text")),
+                (
+                    "presentation",
+                    Value::str(if has_swatches { "swatch" } else { "text" }),
+                ),
                 ("values", Value::array(values)),
                 ("active_values", Value::array(active_values)),
                 ("inactive_values", Value::array(inactive_values)),
@@ -368,6 +374,7 @@ impl CollectionDrop {
                     Criterion::Availability(false),
                 ),
             ],
+            &|_| None,
             &|c| matches!(c, Criterion::Availability(_)),
         ));
 
@@ -441,6 +448,7 @@ impl CollectionDrop {
                     .into_iter()
                     .map(|kind| (kind.clone(), kind.clone(), Criterion::ProductType(kind)))
                     .collect(),
+                &|_| None,
                 &|c| matches!(c, Criterion::ProductType(_)),
             ));
         }
@@ -454,6 +462,7 @@ impl CollectionDrop {
                     .into_iter()
                     .map(|vendor| (vendor.clone(), vendor.clone(), Criterion::Vendor(vendor)))
                     .collect(),
+                &|_| None,
                 &|c| matches!(c, Criterion::Vendor(_)),
             ));
         }
@@ -477,6 +486,17 @@ impl CollectionDrop {
                     .collect()
             });
             let same_handle = handle.clone();
+            // The swatch of a value: the one a product of the collection gives it.
+            let swatch_of = |value: &str| {
+                base.iter().find_map(|&index| {
+                    products[index]
+                        .options
+                        .iter()
+                        .filter(|option| option.name == name)
+                        .find_map(|option| option.swatch(value))
+                        .cloned()
+                })
+            };
             filters.push(list_filter(
                 &name,
                 &format!("filter.v.option.{handle}"),
@@ -484,6 +504,7 @@ impl CollectionDrop {
                     .into_iter()
                     .map(|value| (value.clone(), value.clone(), Criterion::VariantOption(handle.clone(), value)))
                     .collect(),
+                &swatch_of,
                 &move |c| matches!(c, Criterion::VariantOption(option, _) if *option == same_handle),
             ));
         }

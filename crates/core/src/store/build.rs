@@ -14,7 +14,7 @@ use super::model::{
 use super::reference;
 use super::*;
 use crate::diagnostics::Diagnostics;
-use crate::util::{closest_match, handleize, humanize, stable_id};
+use crate::util::{closest_match, handleize, humanize, short_hash, stable_id};
 
 /// Where a piece of data was written, for diagnostics.
 #[derive(Clone, Debug, Default)]
@@ -58,6 +58,9 @@ pub struct MergedInput {
     pub customers: Vec<Sourced<model::CustomerInput>>,
     pub companies: Vec<Sourced<model::CompanyInput>>,
     pub gift_cards: Vec<Sourced<model::GiftCardInput>>,
+    pub swatches: IndexMap<String, Sourced<model::SwatchInput>>,
+    pub locations: Vec<Sourced<model::LocationInput>>,
+    pub selling_plan_groups: Vec<Sourced<model::SellingPlanGroupInput>>,
     pub metaobjects: Vec<(String, Sourced<model::MetaobjectInput>)>,
     pub localization: Option<Sourced<model::LocalizationInput>>,
     pub files: IndexMap<String, model::FileInput>,
@@ -178,6 +181,45 @@ impl Builder<'_> {
                 )
             })
             .collect()
+    }
+
+    /// A swatch, or nothing when it has neither a valid color nor an image.
+    fn swatch(&mut self, input: &model::SwatchInput, origin: &Origin) -> Option<Swatch> {
+        let (color, color_origin, image) = match input {
+            model::SwatchInput::Color(color) => (Some(color.clone()), origin.clone(), None),
+            model::SwatchInput::Detailed(detail) => (
+                detail.color.clone(),
+                origin.child("color"),
+                detail.image.as_ref(),
+            ),
+        };
+        let color = color.filter(|color| {
+            let valid = crate::drops::color::Color::parse(color).is_some();
+            if !valid {
+                self.error(
+                    "invalid_color",
+                    &color_origin,
+                    format!("\"{color}\" is not a color"),
+                )
+                .hint(
+                    "use a CSS color: \"#f4f1ea\", \"rgb(244, 241, 234)\" or \"hsl(42, 31%, 94%)\"",
+                );
+            }
+            valid
+        });
+        let image = image.map(|image| self.image(image, "swatch"));
+        if color.is_none() && image.is_none() {
+            if matches!(input, model::SwatchInput::Detailed(detail) if detail.color.is_none()) {
+                self.error(
+                    "empty_swatch",
+                    origin,
+                    "the swatch has neither a color nor an image",
+                )
+                .hint("add \"color\" (a CSS color), \"image\" (a path inside files/), or both");
+            }
+            return None;
+        }
+        Some(Swatch { color, image })
     }
 
     fn handle(
@@ -326,7 +368,23 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     }
 
     let shop = build_shop(&mut builder, &shop_input);
-    let products = build_products(&mut builder, &input.products, shop_input.name.as_deref());
+    let locations = build_locations(&mut builder, &input.locations);
+    // The store's swatches, by the lowercase name of the option value they are for.
+    let swatches: HashMap<String, Swatch> = input
+        .swatches
+        .iter()
+        .filter_map(|(name, swatch)| {
+            let swatch = builder.swatch(&swatch.value, &swatch.origin)?;
+            Some((name.to_lowercase(), swatch))
+        })
+        .collect();
+    let products = build_products(
+        &mut builder,
+        &input.products,
+        shop_input.name.as_deref(),
+        &locations,
+        &swatches,
+    );
     let mut store = Store {
         shop,
         products,
@@ -337,6 +395,8 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         customers: Vec::new(),
         companies: Vec::new(),
         gift_cards: Vec::new(),
+        locations,
+        selling_plan_groups: Vec::new(),
         metaobjects: Vec::new(),
         countries: Vec::new(),
         languages: Vec::new(),
@@ -362,6 +422,12 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         &input.products,
     );
     build_recommendations(&mut builder, &mut store, &input.products);
+    build_selling_plans(
+        &mut builder,
+        &mut store,
+        &input.selling_plan_groups,
+        &input.products,
+    );
     build_pages(&mut builder, &mut store, &input.pages);
     build_blogs(&mut builder, &mut store, &input.blogs);
     store.index();
@@ -502,10 +568,98 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput) -> Shop {
     }
 }
 
+fn build_locations(
+    builder: &mut Builder<'_>,
+    inputs: &[Sourced<model::LocationInput>],
+) -> Vec<Location> {
+    let mut seen = HashSet::new();
+    inputs
+        .iter()
+        .map(
+            |Sourced {
+                 value: input,
+                 origin,
+             }| {
+                if !seen.insert(input.name.to_lowercase()) {
+                    builder.error(
+                        "duplicate_location",
+                        &origin.child("name"),
+                        format!("another location is already named \"{}\"", input.name),
+                    );
+                }
+                let id = input
+                    .id
+                    .unwrap_or_else(|| stable_id("location", &input.name.to_lowercase()));
+                Location {
+                    id,
+                    name: input.name.clone(),
+                    address: input
+                        .address
+                        .as_ref()
+                        .map(|a| address(a, &format!("location/{id}")))
+                        .unwrap_or_default(),
+                    pick_up_enabled: input.pick_up_enabled.unwrap_or(true),
+                    pick_up_time: input
+                        .pick_up_time
+                        .clone()
+                        .unwrap_or_else(|| "Usually ready in 24 hours".to_string()),
+                    physical_storefront: input.physical_storefront.unwrap_or(true),
+                    latitude: input.latitude,
+                    longitude: input.longitude,
+                    metafields: builder.metafields(&input.metafields),
+                }
+            },
+        )
+        .collect()
+}
+
+/// The locations that stock a variant: the ones it lists, or all of them.
+fn store_availabilities(
+    builder: &mut Builder<'_>,
+    input: &Option<IndexMap<String, bool>>,
+    available: bool,
+    locations: &[Location],
+    origin: &Origin,
+) -> Vec<(usize, bool)> {
+    let Some(listed) = input else {
+        return (0..locations.len())
+            .map(|index| (index, available))
+            .collect();
+    };
+    let mut stocked = Vec::new();
+    for (name, in_stock) in listed {
+        match locations
+            .iter()
+            .position(|location| location.name.eq_ignore_ascii_case(name))
+        {
+            Some(index) => stocked.push((index, *in_stock)),
+            None => {
+                let known: Vec<&str> = locations.iter().map(|l| l.name.as_str()).collect();
+                let diagnostic = builder.error(
+                    "unknown_location",
+                    &origin.child(name),
+                    format!("there is no location named \"{name}\""),
+                );
+                match closest_match(name, known.iter().copied()) {
+                    Some(suggestion) => diagnostic.hint(format!("did you mean \"{suggestion}\"?")),
+                    None => diagnostic.hint(
+                        "add the location to \"locations\" first, e.g. {\"name\": \"Main shop\"}",
+                    ),
+                };
+            }
+        }
+    }
+    // In the order of the store's locations, whatever order the variant lists them in.
+    stocked.sort_by_key(|(index, _)| *index);
+    stocked
+}
+
 fn build_products(
     builder: &mut Builder<'_>,
     inputs: &[Sourced<model::ProductInput>],
     shop_name: Option<&str>,
+    locations: &[Location],
+    swatches: &HashMap<String, Swatch>,
 ) -> Vec<Product> {
     let mut seen_handles = HashSet::new();
     let mut seen_variant_ids: HashMap<u64, String> = HashMap::new();
@@ -780,6 +934,13 @@ fn build_products(
                         )
                     })
                     .collect(),
+                store_availabilities: store_availabilities(
+                    builder,
+                    &variant.store_availabilities,
+                    available,
+                    locations,
+                    &variant_origin.child("store_availabilities"),
+                ),
                 metafields: builder.metafields(&variant.metafields),
             });
         }
@@ -789,10 +950,14 @@ fn build_products(
             .iter()
             .enumerate()
             .map(|(position, name)| {
-                let mut values: Vec<String> = match input.options.get(position) {
-                    Some(model::OptionInput::Detailed(detail)) => detail.values.clone(),
-                    _ => Vec::new(),
+                let declared: &[model::OptionValueInput] = match input.options.get(position) {
+                    Some(model::OptionInput::Detailed(detail)) => &detail.values,
+                    _ => &[],
                 };
+                let mut values: Vec<String> = declared
+                    .iter()
+                    .map(|value| value.name().to_string())
+                    .collect();
                 for variant in &variants {
                     if let Some(value) = variant.options.get(position)
                         && !values.contains(value)
@@ -800,10 +965,41 @@ fn build_products(
                         values.push(value.clone());
                     }
                 }
+                // A value's own swatch first, then the one the store gives to its name.
+                let swatches = values
+                    .iter()
+                    .map(|value| {
+                        let own =
+                            declared
+                                .iter()
+                                .enumerate()
+                                .find_map(|(at, declared)| match declared {
+                                    model::OptionValueInput::Detailed(detail)
+                                        if detail.name == *value =>
+                                    {
+                                        detail.swatch.as_ref().map(|swatch| (at, swatch))
+                                    }
+                                    _ => None,
+                                });
+                        match own {
+                            Some((at, swatch)) => builder.swatch(
+                                swatch,
+                                &origin
+                                    .child("options")
+                                    .child(position)
+                                    .child("values")
+                                    .child(at)
+                                    .child("swatch"),
+                            ),
+                            None => swatches.get(&value.to_lowercase()).cloned(),
+                        }
+                    })
+                    .collect();
                 ProductOption {
                     name: name.clone(),
                     position: position + 1,
                     values,
+                    swatches,
                 }
             })
             .collect();
@@ -846,6 +1042,8 @@ fn build_products(
             metafields: builder.metafields(&input.metafields),
             collections: Vec::new(),
             recommendations: Vec::new(),
+            selling_plan_groups: Vec::new(),
+            requires_selling_plan: input.requires_selling_plan,
             handle,
         });
     }
@@ -1220,6 +1418,278 @@ fn build_recommendations(
             }
         };
         store.products[index].recommendations = recommendations;
+    }
+}
+
+/// The id of a selling plan group: 40 hexadecimal characters, as on Shopify.
+fn selling_plan_group_id(name: &str) -> String {
+    let mut id: String = ["a", "b", "c"]
+        .iter()
+        .map(|salt| short_hash(&format!("selling_plan_group/{salt}/{name}")))
+        .collect();
+    id.truncate(40);
+    id
+}
+
+/// A percentage written in the data: a whole number from 0 to 100.
+fn percentage(builder: &mut Builder<'_>, value: &Money, origin: &Origin) -> i64 {
+    match value {
+        Money::Cents(percent) if (0..=100).contains(percent) => *percent,
+        _ => {
+            let written = match value {
+                Money::Cents(number) => number.to_string(),
+                Money::Decimal(text) => format!("\"{text}\""),
+            };
+            builder
+                .error(
+                    "invalid_value",
+                    origin,
+                    format!("{written} is not a percentage"),
+                )
+                .hint("with \"value_type\": \"percentage\", \"value\" is a whole number from 0 to 100, e.g. 10");
+            0
+        }
+    }
+}
+
+fn build_selling_plans(
+    builder: &mut Builder<'_>,
+    store: &mut Store,
+    inputs: &[Sourced<model::SellingPlanGroupInput>],
+    products: &[Sourced<model::ProductInput>],
+) {
+    let mut seen_groups = HashSet::new();
+    let mut seen_plan_ids: HashMap<u64, String> = HashMap::new();
+    for (
+        group_index,
+        Sourced {
+            value: input,
+            origin,
+        },
+    ) in inputs.iter().enumerate()
+    {
+        let key = input.name.to_lowercase();
+        if !seen_groups.insert(key.clone()) {
+            builder.error(
+                "duplicate_selling_plan",
+                &origin.child("name"),
+                format!(
+                    "another selling plan group is already named \"{}\"",
+                    input.name
+                ),
+            );
+        }
+        if input.selling_plans.is_empty() {
+            builder
+                .error(
+                    "missing_selling_plan",
+                    &origin.child("selling_plans"),
+                    format!("the selling plan group \"{}\" has no selling plan", input.name),
+                )
+                .hint("add at least one plan to \"selling_plans\", e.g. {\"name\": \"Deliver every month\"}");
+        }
+        let options = if input.options.is_empty() {
+            vec!["Delivery frequency".to_string()]
+        } else {
+            input.options.clone()
+        };
+        let mut seen_names = HashSet::new();
+        let mut plans = Vec::with_capacity(input.selling_plans.len());
+        for (position, plan) in input.selling_plans.iter().enumerate() {
+            let plan_origin = origin.child("selling_plans").child(position);
+            if !seen_names.insert(plan.name.to_lowercase()) {
+                builder.error(
+                    "duplicate_selling_plan",
+                    &plan_origin.child("name"),
+                    format!(
+                        "another selling plan of this group is already named \"{}\"",
+                        plan.name
+                    ),
+                );
+            }
+            let id = plan.id.unwrap_or_else(|| {
+                stable_id(
+                    "selling_plan",
+                    &format!("{key}/{}", plan.name.to_lowercase()),
+                )
+            });
+            // Generated ids only collide when names do, which is reported above.
+            if let Some(previous) = seen_plan_ids.insert(id, plan.name.clone())
+                && plan.id.is_some()
+            {
+                builder.error(
+                    "duplicate_id",
+                    &plan_origin.child("id"),
+                    format!("the selling plan id {id} is already used by \"{previous}\""),
+                );
+            }
+            let mut plan_options = plan.options.clone();
+            if plan_options.is_empty() && options.len() == 1 {
+                plan_options.push(plan.name.clone());
+            } else if plan_options.len() != options.len() {
+                builder
+                    .error(
+                        "option_mismatch",
+                        &plan_origin.child("options"),
+                        format!(
+                            "the selling plan gives {} option value(s) but the group has {} option(s): {}",
+                            plan_options.len(),
+                            options.len(),
+                            options.join(", ")
+                        ),
+                    )
+                    .hint("give exactly one value per option of the group, in the same order");
+                plan_options.resize(options.len(), String::new());
+            }
+            if plan.price_adjustments.len() > 2 {
+                builder.error(
+                    "invalid_value",
+                    &plan_origin.child("price_adjustments"),
+                    format!(
+                        "a selling plan can have at most 2 price adjustments, this one has {}",
+                        plan.price_adjustments.len()
+                    ),
+                );
+            }
+            let price_adjustments = plan
+                .price_adjustments
+                .iter()
+                .enumerate()
+                .map(|(index, adjustment)| {
+                    let value_origin = plan_origin
+                        .child("price_adjustments")
+                        .child(index)
+                        .child("value");
+                    PriceAdjustment {
+                        adjustment: match adjustment.value_type {
+                            model::AdjustmentType::Percentage => Adjustment::Percentage(
+                                percentage(builder, &adjustment.value, &value_origin),
+                            ),
+                            model::AdjustmentType::FixedAmount => Adjustment::FixedAmount(
+                                builder.money(&adjustment.value, &value_origin),
+                            ),
+                            model::AdjustmentType::Price => {
+                                Adjustment::Price(builder.money(&adjustment.value, &value_origin))
+                            }
+                        },
+                        order_count: adjustment.order_count,
+                    }
+                })
+                .collect();
+            let checkout_charge = match &plan.checkout_charge {
+                None => CheckoutCharge::Percentage(100),
+                Some(charge) => {
+                    let value_origin = plan_origin.child("checkout_charge").child("value");
+                    match charge.value_type {
+                        model::CheckoutChargeType::Percentage => CheckoutCharge::Percentage(
+                            percentage(builder, &charge.value, &value_origin),
+                        ),
+                        model::CheckoutChargeType::Price => {
+                            CheckoutCharge::Price(builder.money(&charge.value, &value_origin))
+                        }
+                    }
+                }
+            };
+            plans.push(SellingPlan {
+                id,
+                name: plan.name.clone(),
+                description: plan.description.clone(),
+                options: plan_options,
+                price_adjustments,
+                recurring_deliveries: plan.recurring_deliveries.unwrap_or(true),
+                checkout_charge,
+            });
+        }
+        for (position, handle) in input.products.iter().enumerate() {
+            match store.product_index(handle) {
+                Some(product) => {
+                    let groups = &mut store.products[product].selling_plan_groups;
+                    if !groups.contains(&group_index) {
+                        groups.push(group_index);
+                    }
+                }
+                None => {
+                    let known: Vec<&str> = store
+                        .products
+                        .iter()
+                        .map(|product| product.handle.as_str())
+                        .collect();
+                    let diagnostic = builder.error(
+                        "unknown_product",
+                        &origin.child("products").child(position),
+                        format!("there is no product with the handle \"{handle}\""),
+                    );
+                    if let Some(suggestion) = closest_match(handle, known.iter().copied()) {
+                        diagnostic.hint(format!("did you mean \"{suggestion}\"?"));
+                    }
+                }
+            }
+        }
+        store.selling_plan_groups.push(SellingPlanGroup {
+            id: selling_plan_group_id(&key),
+            name: input.name.clone(),
+            app_id: input.app_id.clone(),
+            options,
+            plans,
+        });
+    }
+
+    // The groups a product names itself.
+    for (
+        index,
+        Sourced {
+            value: input,
+            origin,
+        },
+    ) in products.iter().enumerate()
+    {
+        for (position, name) in input.selling_plan_groups.iter().enumerate() {
+            match store
+                .selling_plan_groups
+                .iter()
+                .position(|group| group.name.eq_ignore_ascii_case(name))
+            {
+                Some(group) => {
+                    let groups = &mut store.products[index].selling_plan_groups;
+                    if !groups.contains(&group) {
+                        groups.push(group);
+                    }
+                }
+                None => {
+                    let known: Vec<&str> = store
+                        .selling_plan_groups
+                        .iter()
+                        .map(|group| group.name.as_str())
+                        .collect();
+                    let diagnostic = builder.error(
+                        "unknown_selling_plan",
+                        &origin.child("selling_plan_groups").child(position),
+                        format!("there is no selling plan group named \"{name}\""),
+                    );
+                    match closest_match(name, known.iter().copied()) {
+                        Some(suggestion) => {
+                            diagnostic.hint(format!("did you mean \"{suggestion}\"?"))
+                        }
+                        None => diagnostic
+                            .hint("add the group to \"selling_plan_groups\" in a data file first"),
+                    };
+                }
+            }
+        }
+        let product = &mut store.products[index];
+        product.selling_plan_groups.sort_unstable();
+        if product.requires_selling_plan && product.selling_plan_groups.is_empty() {
+            builder
+                .error(
+                    "missing_selling_plan",
+                    &origin.child("requires_selling_plan"),
+                    format!(
+                        "the product \"{}\" requires a selling plan but is sold with none",
+                        product.title
+                    ),
+                )
+                .hint("name a group in the product's \"selling_plan_groups\", or list the product in the \"products\" of a group");
+        }
     }
 }
 
@@ -1642,6 +2112,76 @@ fn resolve_variant(store: &Store, reference: &VariantRef) -> Option<(usize, usiz
                     .product_index(text)
                     .map(|product_index| (product_index, 0))
             }),
+    }
+}
+
+/// The id of the selling plan a cart line names, or what to say when the product of the line
+/// is not sold with it (or needs one): the message and a hint.
+fn resolve_selling_plan(
+    store: &Store,
+    product: usize,
+    reference: Option<&model::SellingPlanRef>,
+) -> std::result::Result<Option<u64>, (&'static str, String, String)> {
+    let product = &store.products[product];
+    let plans: Vec<&SellingPlan> = product
+        .selling_plan_groups
+        .iter()
+        .flat_map(|group| store.selling_plan_groups[*group].plans.iter())
+        .collect();
+    let names: Vec<&str> = plans.iter().map(|plan| plan.name.as_str()).collect();
+    let sold_with = if names.is_empty() {
+        format!(
+            "\"{}\" is sold without selling plans: list it in the \"products\" of a group in \"selling_plan_groups\"",
+            product.handle
+        )
+    } else {
+        format!("\"{}\" is sold with: {}", product.handle, names.join(", "))
+    };
+    let Some(reference) = reference else {
+        return if product.requires_selling_plan {
+            Err((
+                "missing_selling_plan",
+                format!(
+                    "the product \"{}\" can only be bought with a selling plan",
+                    product.handle
+                ),
+                format!("add \"selling_plan\" to the line. {sold_with}"),
+            ))
+        } else {
+            Ok(None)
+        };
+    };
+    let (found, described) = match reference {
+        model::SellingPlanRef::Id(id) => (
+            plans.iter().find(|plan| plan.id == *id),
+            format!("with the id {id}"),
+        ),
+        model::SellingPlanRef::Name(name) => (
+            plans
+                .iter()
+                .find(|plan| plan.name.eq_ignore_ascii_case(name)),
+            format!("named \"{name}\""),
+        ),
+    };
+    match found {
+        Some(plan) => Ok(Some(plan.id)),
+        None => {
+            let suggestion = match reference {
+                model::SellingPlanRef::Name(name) => closest_match(name, names.iter().copied()),
+                model::SellingPlanRef::Id(_) => None,
+            };
+            Err((
+                "unknown_selling_plan",
+                format!(
+                    "the product \"{}\" is not sold with a selling plan {described}",
+                    product.handle
+                ),
+                match suggestion {
+                    Some(suggestion) => format!("did you mean \"{suggestion}\"?"),
+                    None => sold_with,
+                },
+            ))
+        }
     }
 }
 
@@ -2283,22 +2823,29 @@ fn build_session(
         defaults.cart_note = cart.note.clone().unwrap_or_default();
         defaults.cart_attributes = cart.attributes.clone();
         for (position, line) in cart.items.iter().enumerate() {
+            let line_origin = origin.child("cart").child("items").child(position);
             match resolve_variant(store, &line.variant) {
-                Some((product, variant)) => defaults.cart_lines.push(CartLine {
-                    variant_id: store.products[product].variants[variant].id,
-                    quantity: line.quantity,
-                    properties: line.properties.clone(),
-                }),
-                None => unknown_variant(
-                    builder,
-                    store,
-                    &line.variant,
-                    &origin
-                        .child("cart")
-                        .child("items")
-                        .child(position)
-                        .child("variant"),
-                ),
+                Some((product, variant)) => {
+                    let selling_plan =
+                        match resolve_selling_plan(store, product, line.selling_plan.as_ref()) {
+                            Ok(selling_plan) => selling_plan,
+                            Err((code, message, hint)) => {
+                                builder
+                                    .error(code, &line_origin.child("selling_plan"), message)
+                                    .hint(hint);
+                                None
+                            }
+                        };
+                    defaults.cart_lines.push(CartLine {
+                        variant_id: store.products[product].variants[variant].id,
+                        quantity: line.quantity,
+                        properties: line.properties.clone(),
+                        selling_plan,
+                    });
+                }
+                None => {
+                    unknown_variant(builder, store, &line.variant, &line_origin.child("variant"))
+                }
             }
         }
     }
@@ -2318,11 +2865,29 @@ pub fn resolve_cart(
         .enumerate()
         .filter_map(
             |(position, line)| match resolve_variant(store, &line.variant) {
-                Some((product, variant)) => Some(CartLine {
-                    variant_id: store.products[product].variants[variant].id,
-                    quantity: line.quantity,
-                    properties: line.properties.clone(),
-                }),
+                Some((product, variant)) => {
+                    let selling_plan =
+                        match resolve_selling_plan(store, product, line.selling_plan.as_ref()) {
+                            Ok(selling_plan) => selling_plan,
+                            Err((code, message, hint)) => {
+                                diagnostics
+                                    .error(
+                                        code,
+                                        file,
+                                        &format!("/cart/items/{position}/selling_plan"),
+                                        message,
+                                    )
+                                    .hint(hint);
+                                return None;
+                            }
+                        };
+                    Some(CartLine {
+                        variant_id: store.products[product].variants[variant].id,
+                        quantity: line.quantity,
+                        properties: line.properties.clone(),
+                        selling_plan,
+                    })
+                }
                 None => {
                     let (message, hint) = describe_unknown_variant(store, &line.variant);
                     diagnostics
