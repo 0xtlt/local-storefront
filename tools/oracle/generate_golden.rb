@@ -8,6 +8,7 @@
 #   ## a comment
 #   #! data {"json": "object"}        variables for the following templates
 #   #! partial name template source   a snippet available to render/include
+#   #! parse {"option": true}         parse options for the following templates
 #   {{ template }} with \n and \t escapes
 #
 # Run with `mise run oracle:golden`.
@@ -37,8 +38,8 @@ def unescape(text)
   text.gsub(/\\[nt\\]/) { |match| { "\\n" => "\n", "\\t" => "\t", "\\\\" => "\\" }[match] }
 end
 
-def render(source, data, partials, error_mode)
-  template = Liquid::Template.parse(source, line_numbers: true, error_mode: error_mode)
+def render(source, data, partials, error_mode, options)
+  template = Liquid::Template.parse(source, line_numbers: true, error_mode: error_mode, **options)
   template.render(
     JSON.parse(JSON.generate(data)),
     registers: { file_system: MemoryFileSystem.new(partials) },
@@ -52,12 +53,17 @@ end
 Dir.glob(File.join(CASES, "*.txt")).sort.each do |path|
   data = {}
   partials = {}
+  options = {}
   cases = []
   File.readlines(path, chomp: true).each_with_index do |line, index|
     next if line.strip.empty? || line.start_with?("##")
 
     if line.start_with?("#! data ")
       data = JSON.parse(line.delete_prefix("#! data "))
+      next
+    end
+    if line.start_with?("#! parse ")
+      options = JSON.parse(line.delete_prefix("#! parse "), symbolize_names: true)
       next
     end
     if line.start_with?("#! partial ")
@@ -69,7 +75,7 @@ Dir.glob(File.join(CASES, "*.txt")).sort.each do |path|
     source = unescape(line)
     # `:warn` is the mode Shopify runs themes in: parse strictly, and fall back to the lax
     # parser (recording a warning) when that fails.
-    expected = render(source, data, partials, :warn)
+    expected = render(source, data, partials, :warn, options)
     entry = {
       "line" => index + 1,
       "template" => source,
@@ -77,7 +83,8 @@ Dir.glob(File.join(CASES, "*.txt")).sort.each do |path|
       "partials" => partials.dup,
       "expected" => expected,
     }
-    lax = render(source, data, partials, :lax)
+    entry["parse"] = options unless options.empty?
+    lax = render(source, data, partials, :lax, options)
     entry["lax"] = lax if lax != expected
     cases << entry
   end

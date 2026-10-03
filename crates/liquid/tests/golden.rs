@@ -57,9 +57,25 @@ fn render(env: &Arc<Environment>, case: &serde_json::Value) -> String {
     template.render(&mut ctx)
 }
 
+/// The environment a case is rendered with: the standard one, or the one with the parse
+/// options the case was rendered with by the reference implementation.
+fn environment(case: &serde_json::Value) -> Environment {
+    let mut env = Environment::standard();
+    if let Some(options) = case["parse"].as_object() {
+        for (name, value) in options {
+            match name.as_str() {
+                "bug_compatible_whitespace_trimming" => {
+                    env.set_bug_compatible_whitespace_trimming(value.as_bool().unwrap_or(false));
+                }
+                other => panic!("unknown parse option {other}"),
+            }
+        }
+    }
+    env
+}
+
 #[test]
 fn matches_the_reference_implementation() {
-    let env = Arc::new(Environment::standard());
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     let mut files: Vec<_> = std::fs::read_dir(&dir)
         .expect("golden directory")
@@ -85,7 +101,7 @@ fn matches_the_reference_implementation() {
         for case in golden["cases"].as_array().unwrap() {
             total += 1;
             let expected = case["expected"].as_str().unwrap();
-            let actual = render(&env, case);
+            let actual = render(&Arc::new(environment(case)), case);
             if actual != expected {
                 failures.push(format!(
                     "{name}.txt:{}\n  template: {:?}\n  expected: {:?}\n  actual:   {:?}",

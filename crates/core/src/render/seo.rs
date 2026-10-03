@@ -13,7 +13,9 @@ use crate::site::Site;
 use crate::urls;
 
 /// A line of `robots.txt`: `rule`, `user_agent` and `sitemap` are all a directive and a value,
-/// and print as that line.
+/// and print as that line, without a line break. The line breaks of a `robots.txt` are those
+/// of its template, which the way storefronts trim whitespace leaves in place
+/// (`Environment::set_bug_compatible_whitespace_trimming`).
 struct Directive {
     kind: &'static str,
     directive: &'static str,
@@ -27,7 +29,7 @@ impl Directive {
         Value::object(Directive {
             kind,
             directive,
-            line: format!("{directive}: {value}\n"),
+            line: format!("{directive}: {value}"),
             value,
         })
     }

@@ -270,7 +270,13 @@ impl<'e, 's> Parser<'e, 's> {
             && let Some(Node::Text(previous)) = body.nodes.last_mut()
         {
             let trimmed = lax::rstrip(previous);
-            if trimmed.len() != previous.len() {
+            if trimmed.is_empty() && self.env.bug_compatible_whitespace_trimming() {
+                // Text that was nothing but whitespace keeps its first character.
+                let kept = previous.chars().next().map_or(0, char::len_utf8);
+                if kept != previous.len() {
+                    *previous = previous[..kept].into();
+                }
+            } else if trimmed.len() != previous.len() {
                 *previous = trimmed.into();
             }
         }

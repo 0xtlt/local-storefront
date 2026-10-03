@@ -1046,6 +1046,44 @@ fn robots_and_sitemaps_are_served() {
     assert!(body.contains("Disallow: /cart\n"));
     assert!(body.contains("Sitemap: http://shop.test/sitemap.xml\n"));
     assert!(body.contains("User-agent: AhrefsBot\nCrawl-delay: 10\n"));
+    // The fixture theme writes its own rules in `templates/robots.txt.liquid`.
+    assert!(
+        body.contains("Disallow: /*?q=*\nDisallow: /*?view=\n"),
+        "{body}"
+    );
+
+    // A theme without that template gets what Shopify serves by default.
+    let root = changing_theme("robots");
+    let app = App::open(&root, None, Revalidate::Never).unwrap();
+    let (plain, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            throttle: Default::default(),
+            customer: None,
+        },
+    );
+    let body = text(&get(&plain, "/robots.txt", "seo"));
+    let _ = std::fs::remove_dir_all(root);
+    assert!(
+        body.starts_with(
+            "# we use Shopify as our ecommerce platform\n\nUser-agent: *\nDisallow: /a/downloads/-/*\n"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains(
+            "\n\n# Google adsbot ignores robots.txt unless specifically named!\nUser-agent: adsbot-google\nDisallow: /checkouts/\n"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains("Sitemap: http://shop.test/sitemap.xml\n"),
+        "{body}"
+    );
 
     let index = get(&state, "/sitemap.xml", "seo");
     assert_eq!(

@@ -1,0 +1,299 @@
+{
+  "liquid": "5.14.0",
+  "cases": [
+    {
+      "line": 4,
+      "template": "a {{- 'b' -}} c",
+      "data": {},
+      "partials": {},
+      "expected": "abc",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 5,
+      "template": "a   {{- 'b' }}   c",
+      "data": {},
+      "partials": {},
+      "expected": "ab   c",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 6,
+      "template": "a \n {{- 'b' -}} \n c",
+      "data": {},
+      "partials": {},
+      "expected": "abc",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 7,
+      "template": "{% if true %}\n  {{- 'b' }}\n{% endif %}",
+      "data": {},
+      "partials": {},
+      "expected": "\nb\n",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 8,
+      "template": "{% if true %}  \n{{- 'b' }}{% endif %}",
+      "data": {},
+      "partials": {},
+      "expected": " b",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 9,
+      "template": "{% if true %}\t\n {{- 'b' }}{% endif %}",
+      "data": {},
+      "partials": {},
+      "expected": "\tb",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 10,
+      "template": "{% if true %}\n\n\t{%- assign x = 1 %}{{ x }}{% endif %}",
+      "data": {},
+      "partials": {},
+      "expected": "\n1",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 11,
+      "template": "{{ 'a' }}\n    {{- 'b' }}\n    {{- 'c' }}",
+      "data": {},
+      "partials": {},
+      "expected": "a\nb\nc",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 12,
+      "template": "{{ 'a' -}}\n    {{- 'b' }}",
+      "data": {},
+      "partials": {},
+      "expected": "ab",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 13,
+      "template": "{{ 'a' }}\n{%- if true -%}\n b \n{%- endif -%}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "a\nbc",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 14,
+      "template": "\n{{- 'a' }}",
+      "data": {},
+      "partials": {},
+      "expected": "\na",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 15,
+      "template": " \n {%- assign x = 1 -%} {{- x }}",
+      "data": {},
+      "partials": {},
+      "expected": " 1",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 16,
+      "template": "{% if true %}\n  {%- assign x = 1 -%}\n{% endif %}[{{ x }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[1]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 17,
+      "template": "{% if true %}\n  {%- comment %}hidden{% endcomment -%}\n{% endif %}c",
+      "data": {},
+      "partials": {},
+      "expected": "c",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 18,
+      "template": "{% for i in (1..3) %}\n  {{- i }}\n{% endfor %}",
+      "data": {},
+      "partials": {},
+      "expected": "\n1\n\n2\n\n3\n",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 19,
+      "template": "{% for i in (1..3) -%}\n  {{- i }}\n{%- endfor %}",
+      "data": {},
+      "partials": {},
+      "expected": "1\n2\n3\n",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 20,
+      "template": "{%- liquid\n  assign x = 1\n-%}\n{{- x }}",
+      "data": {},
+      "partials": {},
+      "expected": "1",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 21,
+      "template": "{% liquid\n  assign x = 1\n%}\n{{- x }}",
+      "data": {},
+      "partials": {},
+      "expected": "\n1",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 22,
+      "template": "{% raw %}a{% endraw %}\n{%- raw %}b{% endraw %}",
+      "data": {},
+      "partials": {},
+      "expected": "a\nb",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 23,
+      "template": "a\n{%- comment -%} b {%- endcomment -%}\nc",
+      "data": {},
+      "partials": {},
+      "expected": "ac",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 24,
+      "template": "{{-'a'-}}\n{{-'b'-}}",
+      "data": {},
+      "partials": {},
+      "expected": "ab",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 25,
+      "template": "{{ 'a' }}\n{%- # a comment -%}\n{{ 'b' }}",
+      "data": {},
+      "partials": {},
+      "expected": "a\nb",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 26,
+      "template": "{% capture x %}\n  {{- 'in' }}\n{% endcapture %}[{{ x }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[\nin\n]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 27,
+      "template": "{% case 1 %}\n  {%- when 1 %}\n  {{- 'one' }}\n{% endcase %}",
+      "data": {},
+      "partials": {},
+      "expected": "\none\n",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 30,
+      "template": "# robots\n{% for group in groups %}\n  {{- group.agent }}\n  {%- for rule in group.rules -%}\n    {{- rule }}\n  {%- endfor -%}\n\n  {%- if group.agent == 'User-agent: *' -%}\n    {{ ' ' }}\n    {{- 'Disallow: /x' }}\n    {{- 'Disallow: /y' }}\n  {%- endif -%}\n\n  {%- if group.sitemap != blank -%}\n    {{- group.sitemap }}\n  {% endif %}\n{%- endfor -%}\n",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "# robots\n\nUser-agent: *\nDisallow: /a\nDisallow: /b\n \nDisallow: /x\nDisallow: /y\nSitemap: /sitemap.xml\n  \n\nUser-agent: bot\nDisallow: /\n\n",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 31,
+      "template": "# robots\n{%- comment -%}\n# Caution\n{% endcomment %}\n{% for group in groups %}\n  {{- group.agent -}}\n\n  {% for rule in group.rules %}\n    {{- rule -}}\n  {% endfor %}\n\n  {%- if group.sitemap != blank -%}\n    {{ group.sitemap }}\n  {%- endif -%}\n{% endfor %}\n",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "# robots\n\nUser-agent: *\nDisallow: /a\nDisallow: /b\nSitemap: /sitemap.xml\n\nUser-agent: bot\nDisallow: /\n\n",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    }
+  ]
+}

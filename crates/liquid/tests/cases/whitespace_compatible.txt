@@ -1,0 +1,31 @@
+## Whitespace trimmed the way Shopify's storefronts do: text that is nothing but whitespace
+## keeps its first character when the tag after it trims it.
+#! parse {"bug_compatible_whitespace_trimming": true}
+a {{- 'b' -}} c
+a   {{- 'b' }}   c
+a \n {{- 'b' -}} \n c
+{% if true %}\n  {{- 'b' }}\n{% endif %}
+{% if true %}  \n{{- 'b' }}{% endif %}
+{% if true %}\t\n {{- 'b' }}{% endif %}
+{% if true %}\n\n\t{%- assign x = 1 %}{{ x }}{% endif %}
+{{ 'a' }}\n    {{- 'b' }}\n    {{- 'c' }}
+{{ 'a' -}}\n    {{- 'b' }}
+{{ 'a' }}\n{%- if true -%}\n b \n{%- endif -%}\nc
+\n{{- 'a' }}
+ \n {%- assign x = 1 -%} {{- x }}
+{% if true %}\n  {%- assign x = 1 -%}\n{% endif %}[{{ x }}]
+{% if true %}\n  {%- comment %}hidden{% endcomment -%}\n{% endif %}c
+{% for i in (1..3) %}\n  {{- i }}\n{% endfor %}
+{% for i in (1..3) -%}\n  {{- i }}\n{%- endfor %}
+{%- liquid\n  assign x = 1\n-%}\n{{- x }}
+{% liquid\n  assign x = 1\n%}\n{{- x }}
+{% raw %}a{% endraw %}\n{%- raw %}b{% endraw %}
+a\n{%- comment -%} b {%- endcomment -%}\nc
+{{-'a'-}}\n{{-'b'-}}
+{{ 'a' }}\n{%- # a comment -%}\n{{ 'b' }}
+{% capture x %}\n  {{- 'in' }}\n{% endcapture %}[{{ x }}]
+{% case 1 %}\n  {%- when 1 %}\n  {{- 'one' }}\n{% endcase %}
+## A robots.txt template, as themes write them.
+#! data {"groups": [{"agent": "User-agent: *", "rules": ["Disallow: /a", "Disallow: /b"], "sitemap": "Sitemap: /sitemap.xml"}, {"agent": "User-agent: bot", "rules": ["Disallow: /"]}]}
+# robots\n{% for group in groups %}\n  {{- group.agent }}\n  {%- for rule in group.rules -%}\n    {{- rule }}\n  {%- endfor -%}\n\n  {%- if group.agent == 'User-agent: *' -%}\n    {{ ' ' }}\n    {{- 'Disallow: /x' }}\n    {{- 'Disallow: /y' }}\n  {%- endif -%}\n\n  {%- if group.sitemap != blank -%}\n    {{- group.sitemap }}\n  {% endif %}\n{%- endfor -%}\n
+# robots\n{%- comment -%}\n# Caution\n{% endcomment %}\n{% for group in groups %}\n  {{- group.agent -}}\n\n  {% for rule in group.rules %}\n    {{- rule -}}\n  {% endfor %}\n\n  {%- if group.sitemap != blank -%}\n    {{ group.sitemap }}\n  {%- endif -%}\n{% endfor %}\n

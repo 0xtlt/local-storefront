@@ -1,0 +1,20 @@
+# we use Shopify as our ecommerce platform
+{% for group in robots.default_groups %}
+  {{- group.user_agent }}
+
+  {%- for rule in group.rules -%}
+    {%- unless rule.directive == 'Disallow' and rule.value == '/policies/' -%}
+      {{ rule }}
+    {%- endunless -%}
+  {%- endfor -%}
+
+  {%- if group.user_agent.value == '*' -%}
+    {{ 'Disallow: /*?q=*' }}
+    {{- 'Disallow: /*?view=' }}
+    {{- 'Disallow: /*?pr_' }}
+  {%- endif -%}
+
+  {%- if group.sitemap != blank -%}
+    {{ group.sitemap }}
+  {%- endif -%}
+{% endfor %}

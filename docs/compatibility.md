@@ -7,9 +7,22 @@ page says how that is checked, what is covered, and where the local server knowi
 
 - **Liquid itself** is a port of Shopify's reference implementation (the `liquid` Ruby gem,
   version 5.14), including its lax parsing mode, whitespace control, number and string
-  coercions, and error messages. 590 templates covering every tag and filter are rendered by
+  coercions, and error messages. 616 templates covering every tag and filter are rendered by
   both implementations and must produce the same output (`mise run oracle:golden` regenerates
   the expectations from the gem).
+- **Whitespace is trimmed the way storefronts trim it**, which is not quite what the language
+  says. `{{-` and `{%-` remove the whitespace before them. When the text before one is nothing
+  but whitespace, a storefront keeps its first character:
+
+  ```liquid
+  {{ 'a' }}
+    {{- 'b' }}
+  ```
+
+  prints `a` and `b` on two lines on Shopify, and `ab` in the language. The gem has this
+  behaviour as a parse option (`bug_compatible_whitespace_trimming`), and themes are rendered
+  with it. It is what gives a `robots.txt.liquid` its line breaks: the `robots.txt` of a
+  store, rendered from its own template, is reproduced byte for byte.
 - **Shopify's test suite of the language**, [liquid-spec](https://github.com/Shopify/liquid-spec),
   is replayed against the engine (`mise run liquid-spec:fetch` downloads it). 4,630 of its
   7,369 language specs apply here, and 4,608 of them pass. The others expect a strict parser

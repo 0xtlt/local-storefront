@@ -26,9 +26,10 @@ use crate::theme::{Layout, SectionInstance, TemplateJson, Theme};
 use crate::util::stable_id;
 
 /// The Liquid environment themes are parsed with: standard Liquid plus Shopify's tags and
-/// filters.
+/// filters, trimming whitespace the way storefronts do.
 pub fn environment() -> Environment {
     let mut env = Environment::standard();
+    env.set_bug_compatible_whitespace_trimming(true);
     crate::tags::register(&mut env);
     crate::filters::register(&mut env);
     env

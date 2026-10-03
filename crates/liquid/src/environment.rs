@@ -19,6 +19,7 @@ pub type TagParser = fn(&mut Parser<'_, '_>, &TagToken<'_>) -> Result<Box<dyn Ta
 pub struct Environment {
     tags: HashMap<String, TagParser>,
     filters: HashMap<String, FilterFn>,
+    bug_compatible_whitespace_trimming: bool,
 }
 
 impl Environment {
@@ -33,6 +34,21 @@ impl Environment {
         crate::tags::register(&mut env);
         crate::filters::register(&mut env);
         env
+    }
+
+    /// Trims whitespace as Shopify's storefronts do rather than as the language says, like
+    /// the reference implementation's parse option of the same name.
+    ///
+    /// `{{-` and `{%-` remove the whitespace before them. When the text before one is nothing
+    /// but whitespace, a storefront keeps its first character: in `{% if a %}\n  {{- b }}`
+    /// the line break stays. This started as a bug of the renderer Shopify ran themes with,
+    /// and themes came to rely on it, a `robots.txt.liquid` for the line breaks of its rules.
+    pub fn set_bug_compatible_whitespace_trimming(&mut self, enabled: bool) {
+        self.bug_compatible_whitespace_trimming = enabled;
+    }
+
+    pub fn bug_compatible_whitespace_trimming(&self) -> bool {
+        self.bug_compatible_whitespace_trimming
     }
 
     pub fn register_tag(&mut self, name: &str, parser: TagParser) {

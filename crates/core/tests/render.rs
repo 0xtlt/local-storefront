@@ -608,3 +608,60 @@ fn cart_lines_are_priced_by_their_selling_plan() {
          10240 0 10240"
     );
 }
+
+#[test]
+fn robots_txt_keeps_the_line_breaks_of_its_template() {
+    let fixture = fixture();
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/robots.txt"),
+        Session::initial(&fixture.store),
+    );
+    let rendered = fixture.renderer.render_robots(&site);
+    assert_clean(&rendered);
+    let body = rendered.body;
+
+    // The objects print without a line break, as on Shopify. The lines are those of the
+    // template: where `{{-` and `{%-` trim text that is only whitespace, a storefront keeps
+    // its first character, here the line break.
+    assert!(
+        body.starts_with(
+            "# we use Shopify as our ecommerce platform\n\n\
+             User-agent: *\nDisallow: /a/downloads/-/*\nDisallow: /admin\n"
+        ),
+        "{body}"
+    );
+    // The rules the template adds, written with and without `-`, then the next group.
+    assert!(
+        body.contains(
+            "-remote\nDisallow: /*?q=*\nDisallow: /*?view=\nDisallow: /*?pr_\n\
+             Sitemap: http://shop.test/sitemap.xml\n\n\
+             User-agent: adsbot-google\nDisallow: /checkouts/\n"
+        ),
+        "{body}"
+    );
+    // A group without a sitemap.
+    assert!(
+        body.contains(
+            "Disallow: /services/login_with_shop\n\n\
+             User-agent: Nutch\nDisallow: /\n\n\
+             User-agent: AhrefsBot\nCrawl-delay: 10\nDisallow: /a/downloads/-/*\n"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.ends_with("User-agent: Pinterest\nCrawl-delay: 1\n\n"),
+        "{body}"
+    );
+    // The rule the template leaves out.
+    assert!(!body.contains("Disallow: /policies/\n"), "{body}");
+    assert!(body.contains("Disallow: /*/policies/\n"), "{body}");
+    // Never two rules on a line.
+    for line in body.lines() {
+        let directives: usize = ["User-agent: ", "Disallow: ", "Crawl-delay: ", "Sitemap: "]
+            .iter()
+            .map(|directive| line.matches(directive).count())
+            .sum();
+        assert!(directives <= 1, "{line}");
+    }
+}
