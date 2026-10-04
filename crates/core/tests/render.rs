@@ -665,3 +665,45 @@ fn robots_txt_keeps_the_line_breaks_of_its_template() {
         assert!(directives <= 1, "{line}");
     }
 }
+
+#[test]
+fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
+    let fixture = fixture();
+    let url = |store: Arc<Store>| {
+        let site = fixture
+            .renderer
+            .site(store.clone(), request("/"), Session::initial(&store));
+        let (output, errors) = fixture
+            .renderer
+            .render_liquid(
+                &site,
+                Page::new("index", Resource::Index),
+                "{{ 'colors.css' | asset_url }} {{ 'base.css' | asset_url }}",
+                &[],
+            )
+            .expect("the template parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        let (colors, base) = output.split_once(' ').expect("two URLs");
+        (colors.to_string(), base.to_string())
+    };
+    let (colors, base) = url(fixture.store.clone());
+    assert!(
+        colors.starts_with("//shop.test/cdn/shop/t/1/assets/colors.css?v="),
+        "{colors}"
+    );
+
+    // `assets/colors.css.liquid` is rendered with the settings: the same settings, the same
+    // URL; other settings, another URL, so that the file can be kept for a year.
+    assert_eq!(url(fixture.store.clone()).0, colors);
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+    };
+    let overlay = serde_json::json!({"theme_settings": {"page_size": 3}});
+    let (other, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let (other_colors, other_base) = url(Arc::new(other));
+    assert_ne!(other_colors, colors);
+    // A plain file only follows its own content.
+    assert_eq!(other_base, base);
+}

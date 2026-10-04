@@ -6,6 +6,8 @@
 //! server. Scripts that only talk to Shopify's own services (analytics collection, Shop Pay,
 //! bot protection) have no local counterpart and are left out.
 
+use std::sync::OnceLock;
+
 use chrono::Offset;
 use serde_json::{Value as Json, json};
 
@@ -16,29 +18,47 @@ use crate::theme::Theme;
 use crate::urls;
 use crate::util::short_hash;
 
-/// The scripts the pages load from the local CDN, as `(path under /cdn/, content)`.
-pub const ASSETS: [(&str, &str); 2] = [
-    (
-        LOAD_FEATURES_PATH,
-        include_str!("../../assets/platform/load-features.js"),
-    ),
-    (
-        STANDARD_ACTIONS_PATH,
-        include_str!("../../assets/platform/standard-actions.js"),
-    ),
-];
+const LOAD_FEATURES: &str = include_str!("../../assets/platform/load-features.js");
+const STANDARD_ACTIONS: &str = include_str!("../../assets/platform/standard-actions.js");
 
-/// Where Shopify serves its feature loader from, without the content hash of the real file.
-const LOAD_FEATURES_PATH: &str = "shopifycloud/storefront/assets/storefront/load_feature.js";
-/// `https://cdn.shopify.com/storefront/standard-actions.js` on Shopify.
+/// `https://cdn.shopify.com/storefront/standard-actions.js` on Shopify: a fixed URL.
 const STANDARD_ACTIONS_PATH: &str = "storefront/standard-actions.js";
 
+/// Where the feature loader is served from, under `/cdn/`: Shopify's path, with a hash of the
+/// content in the name as the real file has (`load_feature-1bd60354.js`). The URL changes
+/// when the script does, which is what lets a browser keep it for a year.
+pub fn load_features_path() -> &'static str {
+    static PATH: OnceLock<String> = OnceLock::new();
+    PATH.get_or_init(|| {
+        format!(
+            "shopifycloud/storefront/assets/storefront/load_feature-{}.js",
+            &short_hash(LOAD_FEATURES)[..8]
+        )
+    })
+}
+
+/// A script of the platform, served from the local CDN.
+pub struct PlatformAsset {
+    pub content: &'static str,
+    /// Whether the URL carries a hash of the content, and so never serves anything else.
+    pub versioned: bool,
+}
+
 /// The script of a platform asset, by its path under `/cdn/`.
-pub fn asset(path: &str) -> Option<&'static str> {
-    ASSETS
-        .iter()
-        .find(|(candidate, _)| *candidate == path)
-        .map(|(_, content)| *content)
+pub fn asset(path: &str) -> Option<PlatformAsset> {
+    if path == load_features_path() {
+        Some(PlatformAsset {
+            content: LOAD_FEATURES,
+            versioned: true,
+        })
+    } else if path == STANDARD_ACTIONS_PATH {
+        Some(PlatformAsset {
+            content: STANDARD_ACTIONS,
+            versioned: false,
+        })
+    } else {
+        None
+    }
 }
 
 /// `theme_name` and `theme_version` of `config/settings_schema.json`.
@@ -298,7 +318,8 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
     ));
 
     out.push(format!(
-        "<script data-source-attribution=\"shopify.loadfeatures\" defer=\"defer\" src=\"{cdn}/cdn/{LOAD_FEATURES_PATH}\" crossorigin=\"anonymous\"></script>"
+        "<script data-source-attribution=\"shopify.loadfeatures\" defer=\"defer\" src=\"{cdn}/cdn/{}\" crossorigin=\"anonymous\"></script>",
+        load_features_path()
     ));
     // Dynamic checkout buttons are drawn by Shopify's own script: `init` has nothing to load.
     out.push(script(

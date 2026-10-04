@@ -123,6 +123,29 @@ A theme that imports Shopify's standard events library from
 `https://cdn.shopify.com/storefront/standard-events.js`, as Horizon does, loads it from
 Shopify's CDN: it is a static file, but it does need network access.
 
+## Caching
+
+Responses say how long they can be kept with the `Cache-Control` Shopify sends for the same
+kind of response. The values were read from Shopify's own demo stores of Dawn and Horizon in
+October 2026.
+
+| Response | `Cache-Control` |
+|---|---|
+| Pages, sections, product, search and recommendation JSON, `robots.txt`, sitemaps | `private, max-age=0, must-revalidate` |
+| What is not found, redirects | `private, no-store` |
+| `/cart.js` | none |
+| What changes the cart (`/cart/add.js`, `/cart/change.js`, ...) | `no-cache, no-store` |
+| Theme assets, the compiled scripts, images, files | `public, max-age=31557600` |
+| The compiled stylesheet, fonts | `public, max-age=31536000, immutable` |
+| Shopify's feature loader, payment icons | `public, max-age=31536000` |
+| `standard-actions.js` | `public, max-age=600, must-revalidate` |
+| A theme asset that does not exist | `public, max-age=60` |
+
+What the storefront answers itself also says `Vary: Accept`, and images too. A file that is
+kept for a year has a URL that changes with its content: the `?v=` of a theme asset, which
+for a `.liquid` asset follows the theme settings too, and the hash in the name of the
+feature loader.
+
 ## Known differences
 
 These are deliberate or not done yet. None of them raises a Liquid error.
@@ -152,6 +175,9 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |
 | Sitemaps | `/robots.txt` is rendered from `templates/robots.txt.liquid`, or with Shopify's default rules. `/sitemap.xml` links one sitemap per kind (products, pages, collections, blogs), in the primary language only and without paging. |
 | Compression | Pages, styles, scripts and JSON are compressed with Brotli or gzip for the clients that accept it, at fast levels: the sizes are close to a storefront's, not equal. `--no-compression` turns it off. |
+| Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; `lsf` always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. Images say `Vary: Accept` but their format is the one of the URL. |
+| Minification | Shopify minifies the CSS and the JavaScript of a theme with esbuild: whitespace and syntax, names are kept. It also rewrites CSS for older browsers: nesting is flattened, `inset` becomes `top`, `right`, `bottom` and `left`. This applies to the assets, `.liquid` ones included, and to the compiled bundles. Each file ends with a link to a source map that Shopify serves. A file is left as written when its name ends with `.min.js` or `.min.css`, or when the result would not be smaller. `lsf` serves every file as it is written. |
+| Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. `lsf` runs them all on every page. |
 
 Found a difference that is not in this table? It is a bug: a Liquid snippet and the HTML
 Shopify renders for it are enough to reproduce it.

@@ -2,6 +2,28 @@
 
 use serde_json::Value as Json;
 
+/// The `Cache-Control` of each kind of response, as Shopify sends it: read from what its own
+/// demo stores of Dawn and Horizon answered in October 2026.
+pub mod cache {
+    /// Theme assets, the compiled scripts, images and files: a year of 365.25 days.
+    pub const ASSET: &str = "public, max-age=31557600";
+    /// Fonts and the compiled stylesheet.
+    pub const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+    /// Shopify's own files whose URL carries a hash: its scripts, the payment icons.
+    pub const PLATFORM: &str = "public, max-age=31536000";
+    /// Shopify's scripts at a URL that never changes (`standard-actions.js`).
+    pub const PLATFORM_FIXED: &str = "public, max-age=600, must-revalidate";
+    /// A theme asset that does not exist.
+    pub const MISSING_ASSET: &str = "public, max-age=60";
+    /// What the storefront renders: pages, sections, product and search JSON. Shopify sends
+    /// this when the response does not come out of its page cache.
+    pub const RENDERED: &str = "private, max-age=0, must-revalidate";
+    /// Pages that are not found, and redirects.
+    pub const PRIVATE: &str = "private, no-store";
+    /// What changes the cart.
+    pub const CART_WRITE: &str = "no-cache, no-store";
+}
+
 pub struct Reply {
     pub status: u16,
     pub headers: Vec<(String, String)>,
@@ -54,9 +76,15 @@ impl Reply {
         self
     }
 
-    /// Lets browsers keep a response forever: the URL changes when the content does.
-    pub fn immutable(self) -> Reply {
-        self.header("cache-control", "public, max-age=31536000, immutable")
+    /// Says how long the response can be kept: one of the policies of [`cache`].
+    pub fn cached(self, policy: &str) -> Reply {
+        self.header("cache-control", policy)
+    }
+
+    pub fn has_header(&self, name: &str) -> bool {
+        self.headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case(name))
     }
 }
 

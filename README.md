@@ -248,6 +248,9 @@ The storefront is never locked: nothing redirects to that page.
   store pickup, swatches, the password page, `robots.txt` and sitemaps.
 - **Images served locally.** `image_url` and `image_tag` point to your machine, which resizes
   and crops like Shopify's CDN.
+- **Shopify's compression and caching.** Responses are compressed, and say how long to keep
+  them with the same `Cache-Control` as Shopify, so that an audit of your theme sees what it
+  would see on the store.
 - **Shopify's scripts.** Pages have the `Shopify` JavaScript object, `Shopify.actions`,
   `Shopify.loadFeatures`, the Customer Privacy API and `ShopifyAnalytics.meta`.
 - **Clear errors.** Wrong data is refused with a message a person or an LLM can act on.

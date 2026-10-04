@@ -647,11 +647,18 @@ fn pages_carry_the_scripts_shopify_injects() {
         Some("text/javascript; charset=utf-8")
     );
     assert!(text(&actions).contains("Object.defineProperty(window.Shopify, 'actions'"));
-    let loader = get(
-        &state,
-        "/cdn/shopifycloud/storefront/assets/storefront/load_feature.js",
-        "platform",
+    // The feature loader is where the page says, at a URL that carries a hash of its content.
+    let loader_path = format!("/cdn/{}", lsf_core::render::platform::load_features_path());
+    assert!(
+        loader_path.starts_with("/cdn/shopifycloud/storefront/assets/storefront/load_feature-")
+            && loader_path.ends_with(".js"),
+        "{loader_path}"
     );
+    assert!(
+        head.contains(&format!("src=\"//shop.test{loader_path}\"")),
+        "{head}"
+    );
+    let loader = get(&state, &loader_path, "platform");
     assert!(text(&loader).contains("Shopify.loadFeatures = loadFeatures;"));
 
     // A section on its own is not a page: nothing is added to it.
@@ -1573,14 +1580,14 @@ async fn responses_are_compressed_for_the_clients_that_accept_it() {
     let (head, plain) = http_request(address, "/", &[session]).await;
     assert!(head.starts_with("http/1.1 200 "), "{head}");
     assert_eq!(head_value(&head, "content-encoding"), None);
-    assert_eq!(head_value(&head, "vary"), Some("accept-encoding"));
+    assert_eq!(head_value(&head, "vary"), Some("accept-encoding, accept"));
     assert!(plain.len() > 1024, "{}", plain.len());
 
     // What a browser sends: Brotli, the same page, much smaller.
     let browser = ("accept-encoding", "gzip, deflate, br, zstd");
     let (head, body) = http_request(address, "/", &[session, browser]).await;
     assert_eq!(head_value(&head, "content-encoding"), Some("br"));
-    assert_eq!(head_value(&head, "vary"), Some("accept-encoding"));
+    assert_eq!(head_value(&head, "vary"), Some("accept-encoding, accept"));
     assert_eq!(
         head_value(&head, "content-length"),
         Some(body.len().to_string().as_str())
@@ -1612,7 +1619,7 @@ async fn responses_are_compressed_for_the_clients_that_accept_it() {
     .await;
     assert!(head.starts_with("http/1.1 200 "), "{head}");
     assert_eq!(head_value(&head, "content-encoding"), None);
-    assert_eq!(head_value(&head, "vary"), None);
+    assert_eq!(head_value(&head, "vary"), Some("accept"));
     let (head, body) = http_request(address, "/cart.js", &[session, browser]).await;
     assert_eq!(head_value(&head, "content-encoding"), None);
     assert_eq!(
@@ -1625,7 +1632,139 @@ async fn responses_are_compressed_for_the_clients_that_accept_it() {
     let (address, server) = serve_fixture(false).await;
     let (head, body) = http_request(address, "/", &[session, browser]).await;
     assert_eq!(head_value(&head, "content-encoding"), None);
-    assert_eq!(head_value(&head, "vary"), None);
+    assert_eq!(head_value(&head, "vary"), Some("accept"));
     assert_eq!(body, plain);
     server.abort();
+}
+
+#[test]
+fn responses_say_how_long_to_keep_them_as_shopify_does() {
+    let state = server();
+    let mug = variant_id(&state, "MUG-OAT");
+    let headers = |reply: &Reply| {
+        (
+            header(reply, "cache-control").map(str::to_string),
+            header(reply, "vary").map(str::to_string),
+        )
+    };
+    let of = |path: &str| headers(&get(&state, path, "cache"));
+    let policy = |path: &str| of(path).0;
+
+    // What the storefront renders is checked again every time.
+    for path in [
+        "/",
+        "/products/ceramic-mug",
+        "/collections/all",
+        "/cart",
+        "/search?q=mug",
+        "/?section_id=footer",
+        "/?sections=footer",
+        "/products/ceramic-mug.js",
+        "/collections/all/products.json",
+        "/search/suggest.json?q=mug",
+        "/robots.txt",
+        "/sitemap.xml",
+    ] {
+        assert_eq!(
+            of(path),
+            (
+                Some("private, max-age=0, must-revalidate".to_string()),
+                Some("Accept".to_string())
+            ),
+            "{path}"
+        );
+    }
+    // What is not found and redirects are not kept.
+    for path in ["/pages/nope", "/products/nope", "/products/nope.js"] {
+        assert_eq!(policy(path).as_deref(), Some("private, no-store"), "{path}");
+    }
+    let redirect = get(&state, &format!("/variants/{mug}"), "cache");
+    assert_eq!(redirect.status, 302);
+    assert_eq!(
+        headers(&redirect),
+        (
+            Some("private, no-store".to_string()),
+            Some("Accept".to_string())
+        )
+    );
+    // Reading the cart says nothing; changing it is never kept, whatever the outcome.
+    assert_eq!(of("/cart.js"), (None, Some("Accept".to_string())));
+    let added = post(&state, "/cart/add.js", json!({"id": mug}), "cache");
+    assert_eq!(added.status, 200);
+    assert_eq!(
+        headers(&added),
+        (
+            Some("no-cache, no-store".to_string()),
+            Some("Accept".to_string())
+        )
+    );
+    let refused = post(&state, "/cart/add.js", json!({"id": 1}), "cache");
+    assert_eq!(refused.status, 404);
+    assert_eq!(
+        header(&refused, "cache-control"),
+        Some("no-cache, no-store")
+    );
+    for (path, body) in [
+        ("/cart/change.js", json!({"line": 1, "quantity": 2})),
+        ("/cart/update.js", json!({"note": "x"})),
+        ("/cart/clear.js", json!({})),
+        ("/cart", json!({"updates": [1]})),
+    ] {
+        assert_eq!(
+            header(&post(&state, path, body, "cache"), "cache-control"),
+            Some("no-cache, no-store"),
+            "{path}"
+        );
+    }
+
+    // Files are kept for a year. The values are Shopify's, kind by kind.
+    let year = Some("public, max-age=31557600".to_string());
+    let immutable = Some("public, max-age=31536000, immutable".to_string());
+    assert_eq!(of("/cdn/shop/t/1/assets/base.css"), (year.clone(), None));
+    assert_eq!(policy("/cdn/shop/t/1/assets/icon.svg"), year);
+    // A `.liquid` asset is rendered with the settings, which its URL follows.
+    let rendered = get(&state, "/cdn/shop/t/1/assets/colors.css", "cache");
+    assert!(
+        text(&rendered).starts_with(":root { --page-size: "),
+        "{}",
+        text(&rendered)
+    );
+    assert_eq!(headers(&rendered).0, year);
+    assert_eq!(policy("/cdn/shop/t/1/compiled_assets/scripts.js"), year);
+    assert_eq!(
+        policy("/cdn/shop/t/1/compiled_assets/styles.css"),
+        immutable
+    );
+    assert_eq!(policy("/cdn/fonts/work_sans/work_sans_n4.woff2"), immutable);
+    // An image also says that its format depends on what the browser accepts.
+    assert_eq!(
+        of("/cdn/shop/files/products/tee-white.jpg?width=200"),
+        (year.clone(), Some("Accept".to_string()))
+    );
+    // Shopify's own files: a year at a URL with a hash, ten minutes at one that never changes.
+    assert_eq!(
+        policy(&format!(
+            "/cdn/{}",
+            lsf_core::render::platform::load_features_path()
+        ))
+        .as_deref(),
+        Some("public, max-age=31536000")
+    );
+    assert_eq!(
+        policy("/cdn/shopifycloud/storefront/assets/payment_icons/visa.svg").as_deref(),
+        Some("public, max-age=31536000")
+    );
+    assert_eq!(
+        policy("/cdn/storefront/standard-actions.js").as_deref(),
+        Some("public, max-age=600, must-revalidate")
+    );
+    // A theme asset that does not exist.
+    let missing = get(&state, "/cdn/shop/t/1/assets/nope.css", "cache");
+    assert_eq!(missing.status, 404);
+    assert_eq!(
+        header(&missing, "cache-control"),
+        Some("public, max-age=60")
+    );
+    // The control API is not Shopify's: it says nothing.
+    assert_eq!(policy("/__lsf/status"), None);
 }

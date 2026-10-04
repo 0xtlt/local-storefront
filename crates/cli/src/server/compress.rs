@@ -133,9 +133,17 @@ pub fn apply(mut reply: Reply, encoding: Option<Encoding>) -> Reply {
     {
         return reply;
     }
-    reply
+    // One header, as a storefront sends it: `Vary: Accept-Encoding, Accept` for a page.
+    match reply
         .headers
-        .push(("vary".to_string(), "Accept-Encoding".to_string()));
+        .iter_mut()
+        .find(|(name, _)| name.eq_ignore_ascii_case("vary"))
+    {
+        Some((_, value)) => *value = format!("Accept-Encoding, {value}"),
+        None => reply
+            .headers
+            .push(("vary".to_string(), "Accept-Encoding".to_string())),
+    }
     let Some(encoding) = encoding else {
         return reply;
     };

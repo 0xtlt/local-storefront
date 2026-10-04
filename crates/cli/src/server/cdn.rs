@@ -6,7 +6,7 @@ use std::sync::Arc;
 use lsf_core::filters::html_payment_icon;
 use lsf_core::images::{Transform, placeholder, transform_file};
 
-use super::reply::{Reply, content_type};
+use super::reply::{Reply, cache, content_type};
 use super::{Incoming, ServerState};
 
 /// Images are cached in memory, up to this many variants.
@@ -25,7 +25,13 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     let path = incoming.path.as_str();
     // The scripts of the platform: the local counterparts of what Shopify's CDN serves.
     if let Some(script) = lsf_core::render::platform::asset(path.trim_start_matches("/cdn/")) {
-        return Reply::new(200, "text/javascript; charset=utf-8", script);
+        return Reply::new(200, "text/javascript; charset=utf-8", script.content).cached(
+            if script.versioned {
+                cache::PLATFORM
+            } else {
+                cache::PLATFORM_FIXED
+            },
+        );
     }
     let segments: Vec<&str> = path.trim_start_matches("/cdn/").split('/').collect();
     match segments.as_slice() {
@@ -35,13 +41,13 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             "text/css; charset=utf-8",
             state.app.renderer.compiled_stylesheet(),
         )
-        .immutable(),
+        .cached(cache::IMMUTABLE),
         ["shop", "t", _, "compiled_assets", "scripts.js"] => Reply::new(
             200,
             "text/javascript; charset=utf-8",
             state.app.renderer.compiled_javascript(),
         )
-        .immutable(),
+        .cached(cache::ASSET),
         [
             "shop",
             "files" | "products" | "collections" | "articles",
@@ -70,7 +76,8 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             name,
         ] => {
             let handle = name.trim_end_matches(".svg");
-            Reply::new(200, "image/svg+xml", html_payment_icon(handle, None)).immutable()
+            Reply::new(200, "image/svg+xml", html_payment_icon(handle, None))
+                .cached(cache::PLATFORM)
         }
         // Shopify's shared images (the gift card illustration, ...) are not available offline:
         // a neutral drawing keeps the layout without a broken image.
@@ -106,9 +113,9 @@ fn font(state: &ServerState, name: &str) -> Reply {
         .map(|directory| directory.join("files/fonts").join(name))
         .and_then(|path| std::fs::read(path).ok());
     match local {
-        Some(bytes) => Reply::new(200, content_type(name), bytes).immutable(),
+        Some(bytes) => Reply::new(200, content_type(name), bytes).cached(cache::IMMUTABLE),
         None => Reply::new(200, "font/ttf", lsf_core::fonts::blank_font())
-            .immutable()
+            .cached(cache::IMMUTABLE)
             .header("x-lsf-placeholder", "1"),
     }
 }
@@ -116,11 +123,12 @@ fn font(state: &ServerState, name: &str) -> Reply {
 fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
     let theme = &state.app.theme;
     let files = theme.files();
+    let missing = || Reply::not_found().cached(cache::MISSING_ASSET);
     let Some(path) = files.resolve(&format!("assets/{name}")) else {
-        return Reply::not_found();
+        return missing();
     };
     if let Ok(bytes) = std::fs::read(&path) {
-        return Reply::new(200, content_type(name), bytes).immutable();
+        return Reply::new(200, content_type(name), bytes).cached(cache::ASSET);
     }
     // `theme.css.liquid` is requested as `theme.css` and rendered with the theme settings.
     if let Some(source) = files.read(&format!("assets/{name}.liquid")) {
@@ -132,7 +140,8 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
             &source,
             &format!("assets/{name}"),
         );
-        return Reply::new(200, content_type(name), rendered);
+        // Its URL changes with the file and with the settings it is rendered with.
+        return Reply::new(200, content_type(name), rendered).cached(cache::ASSET);
     }
     // `asset_img_url` asks for a resized variant: `logo_small.png`.
     let mut transform = Transform::default();
@@ -142,11 +151,17 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
             .filter(|path| path.is_file())
     {
         return match transform_file(&path, &transform) {
-            Ok((bytes, kind)) => Reply::new(200, kind, bytes).immutable(),
+            Ok((bytes, kind)) => image(Reply::new(200, kind, bytes)),
             Err(error) => Reply::text(500, error),
         };
     }
-    Reply::not_found()
+    missing()
+}
+
+/// An image as Shopify's CDN sends it. There, the format follows what the browser accepts,
+/// which the response says; here the format is the one of the URL.
+fn image(reply: Reply) -> Reply {
+    reply.cached(cache::ASSET).header("vary", "Accept")
 }
 
 /// Serves a file of the data directory's `files/`, transformed when it is an image and the URL
@@ -190,7 +205,7 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
     // Anything that is not a raster image is served as it is.
     if !is_raster {
         return match path.and_then(|path| std::fs::read(path).ok()) {
-            Some(bytes) => Reply::new(200, content_type(&src), bytes).immutable(),
+            Some(bytes) => Reply::new(200, content_type(&src), bytes).cached(cache::ASSET),
             None => Reply::not_found(),
         };
     }
@@ -198,7 +213,7 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
         && transform == Transform::default()
     {
         return match std::fs::read(path) {
-            Ok(bytes) => Reply::new(200, content_type(&src), bytes).immutable(),
+            Ok(bytes) => image(Reply::new(200, content_type(&src), bytes)),
             Err(_) => Reply::not_found(),
         };
     }
@@ -211,7 +226,7 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
         .get(&cache_key)
         .cloned()
     {
-        return Reply::new(200, cached.1, cached.0.clone()).immutable();
+        return image(Reply::new(200, cached.1, cached.0.clone()));
     }
     let result = match &path {
         Some(path) => transform_file(path, &transform),
@@ -232,7 +247,7 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
                 cache.clear();
             }
             cache.insert(cache_key, entry.clone());
-            let reply = Reply::new(200, entry.1, entry.0.clone()).immutable();
+            let reply = image(Reply::new(200, entry.1, entry.0.clone()));
             if path.is_none() {
                 reply.header("x-lsf-placeholder", "1")
             } else {

@@ -39,18 +39,32 @@ pub fn version_of(key: &str) -> u64 {
     1_600_000_000 + hash % 100_000_000
 }
 
+/// The version of `assets/<name>.liquid`, which is requested as `<name>` and rendered with
+/// the theme settings: it changes with the file and with the settings, as the URL of the
+/// compiled file does on Shopify.
+fn liquid_asset_version(site: &Site, name: &str) -> Option<u64> {
+    let files = site.theme.files();
+    let source = files.version(&format!("assets/{name}.liquid"));
+    if source == 0 {
+        return None;
+    }
+    let overrides = serde_json::to_string(&site.store.theme_settings).unwrap_or_default();
+    Some(version_of(&format!(
+        "{source}/{}/{overrides}",
+        files.version("config/settings_data.json")
+    )))
+}
+
 /// The URL of a theme asset: `//host/cdn/shop/t/1/assets/base.css?v=123`.
 pub fn asset_url(site: &Site, name: &str) -> String {
-    let version = site.theme.files().version(&format!("assets/{name}"));
+    let version = match site.theme.files().version(&format!("assets/{name}")) {
+        0 => liquid_asset_version(site, name).unwrap_or_else(|| version_of(name)),
+        version => version,
+    };
     format!(
-        "{}/cdn/shop/t/{THEME_ID}/assets/{}?v={}",
+        "{}/cdn/shop/t/{THEME_ID}/assets/{}?v={version}",
         cdn_origin(site),
         encode_path(name),
-        if version == 0 {
-            version_of(name)
-        } else {
-            version
-        }
     )
 }
 

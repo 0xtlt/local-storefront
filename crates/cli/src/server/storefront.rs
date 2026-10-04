@@ -10,7 +10,7 @@ use lsf_core::render::{Rendered, Target, seo};
 use lsf_core::{Request, Session, Site, Store};
 use serde_json::{Value as Json, json};
 
-use super::reply::Reply;
+use super::reply::{Reply, cache};
 use super::{
     CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms, live_reload,
 };
@@ -117,7 +117,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         store,
         request,
     };
-    let reply = with_cart_cookie(&visit, route(&visit));
+    let reply = with_cache_policy(&visit, with_cart_cookie(&visit, route(&visit)));
     if is_new {
         reply.header(
             "set-cookie",
@@ -129,6 +129,27 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     } else {
         reply
     }
+}
+
+/// Says how long the response can be kept, as a storefront does: what it renders is checked
+/// again every time, what is not found and redirects are not kept at all, and neither is what
+/// changes the cart. Reading the cart says nothing. Every answer depends on what the client
+/// accepts, since the same URL can answer with a page or with JSON.
+fn with_cache_policy(visit: &Visit<'_>, reply: Reply) -> Reply {
+    let reply = reply.header("vary", "Accept");
+    if reply.has_header("cache-control") {
+        return reply;
+    }
+    let path = visit.request.path.trim_matches('/');
+    let policy = match (path, reply.status) {
+        ("cart.js" | "cart.json", _) => return reply,
+        ("cart", _) if visit.incoming.method == "POST" => cache::CART_WRITE,
+        (path, _) if path.starts_with("cart/") => cache::CART_WRITE,
+        (_, 404 | 300..=399) => cache::PRIVATE,
+        (_, 200) => cache::RENDERED,
+        _ => return reply,
+    };
+    reply.cached(policy)
 }
 
 /// Whether the request changes the cart, which creates it if it did not exist.
