@@ -1,6 +1,7 @@
 //! The rendering pipeline: request → page → template sections → layout.
 
 pub mod globals;
+pub mod hints;
 pub mod page;
 pub mod platform;
 pub mod routes;
@@ -80,7 +81,7 @@ pub struct Rendered {
     pub status: u16,
     pub content_type: &'static str,
     pub body: String,
-    /// `Link` headers requested by `preload_tag` and friends.
+    /// The entries of the `Link` header requested by `preload_tag` and friends.
     pub preloads: Vec<String>,
     /// The Liquid errors printed into the page.
     pub errors: Vec<lsf_liquid::Error>,
@@ -200,12 +201,21 @@ impl Renderer {
     /// a resource of their own (product recommendations, predictive search).
     pub fn render_page(&self, site: &Arc<Site>, page: Page, target: &Target) -> Rendered {
         let (mut ctx, state, globals) = self.context(site, &page);
+        // What Shopify preloads on its own comes first, then what the theme asks for.
+        let mut preloads = Vec::new();
         let (status, content_type, body) = match target {
             Target::Page => {
                 let (content, layout) = self.render_template(&ctx, &page);
                 globals.set("content_for_layout", Value::from(content.clone()));
                 let layout = state.layout_override().unwrap_or(layout);
                 let html = self.render_layout(&mut ctx, &layout, &page, content);
+                preloads = hints::of_head(&html, &site.request.host);
+                // Shopify preloads the stylesheet it adds to the page itself.
+                if let Some(url) = platform::compiled_stylesheet_url(site)
+                    && html.contains(&url)
+                {
+                    state.add_preload(&url, &[("as", Some("style")), ("rel", Some("preload"))]);
+                }
                 (
                     page.status,
                     "text/html; charset=utf-8",
@@ -238,7 +248,14 @@ impl Renderer {
             status,
             content_type,
             body,
-            preloads: state.preloads(),
+            preloads: {
+                for hint in state.preloads() {
+                    if !preloads.contains(&hint) {
+                        preloads.push(hint);
+                    }
+                }
+                preloads
+            },
             errors: ctx.errors(),
             warnings: ctx.warnings(),
             template: page.template.full(),

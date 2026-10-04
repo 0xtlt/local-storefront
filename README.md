@@ -248,7 +248,8 @@ The storefront is never locked: nothing redirects to that page.
   store pickup, swatches, the password page, `robots.txt` and sitemaps.
 - **Images served locally.** `image_url` and `image_tag` point to your machine, which resizes
   and crops like Shopify's CDN, and sends each browser the lightest format it reads: AVIF,
-  WebP, or the one of the file.
+  WebP, or the one of the file. An image with `preload: true` is preloaded through the `Link`
+  header, as on Shopify.
 - **Shopify's compression and caching.** Responses are compressed, and say how long to keep
   them with the same `Cache-Control` as Shopify, so that an audit of your theme sees what it
   would see on the store.

@@ -1542,6 +1542,175 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn preloads_are_one_link_header_written_as_shopify_writes_it() {
+    let root = changing_theme("preloads");
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    std::fs::write(root.join("assets/base.css"), "body { margin: 0 }").unwrap();
+    // A head with what blocks rendering, and what does not.
+    std::fs::write(
+        root.join("layout/theme.liquid"),
+        "<html><head>\n\
+         <link rel=\"stylesheet\" href=\"https://fonts.example/css2?family=Inter&amp;display=swap\">\n\
+         {{ 'theme.css' | asset_url | stylesheet_tag }}\n\
+         <link rel=\"stylesheet\" href=\"{{ 'late.css' | asset_url }}\" media=\"print\">\n\
+         <script src=\"{{ 'blocking.js' | asset_url }}\"></script>\n\
+         <script src=\"{{ 'late.js' | asset_url }}\" defer></script>\n\
+         </head><body>{{ content_for_layout }}</body></html>",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("templates/index.liquid"),
+        "{{ 'body.woff2' | asset_url | preload_tag: as: 'font', type: 'font/woff2', \
+            fetchpriority: 'low' }}\n\
+         {{ 'base.css' | asset_url | stylesheet_tag: preload: true }}\n\
+         {% assign image = collections.all.products.first.featured_image %}\n\
+         {{ image | image_url: width: 600 | image_tag: preload: true, widths: '200, 400', \
+            sizes: '(min-width: 750px) 50vw, 100vw' }}\n\
+         {{ image | image_url: width: 100 | image_tag: preload: true, srcset: nil }}\n\
+         {{ 'base.css' | asset_url | stylesheet_tag: preload: true }}\n\
+         {{ 'cart.js' | asset_url | preload_tag: as: 'script' }}\n\
+         {{ 'title.woff2' | asset_url | preload_tag: as: 'font', crossorigin: 'anonymous' }}",
+    )
+    .unwrap();
+    let app = App::open(&root, None, Revalidate::Never).unwrap();
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            throttle: Default::default(),
+            customer: None,
+        },
+    );
+    let page = get(&state, "/", "preloads");
+    assert_eq!(page.status, 200);
+    let html = text(&page);
+    // An image does not say that it is preloaded.
+    assert!(
+        html.contains("<img src=") && !html.contains("preload=\"true\""),
+        "{html}"
+    );
+    // The attributes of the tag that preloads a file of the theme.
+    let tag = |name: &str| {
+        let start = html.find(&format!("/assets/{name}?v=")).expect(name);
+        let (_, attributes) = html[start..].split_once("\" ").expect(name);
+        attributes[..attributes.find('>').expect(name)].to_string()
+    };
+    // A font is asked for without credentials, whether the theme says so or not: a browser
+    // would not use the preloaded file otherwise.
+    assert_eq!(
+        tag("body.woff2"),
+        "as=\"font\" type=\"font/woff2\" fetchpriority=\"low\" crossorigin=\"anonymous\" \
+         rel=\"preload\""
+    );
+    assert_eq!(
+        tag("title.woff2"),
+        "as=\"font\" crossorigin=\"anonymous\" rel=\"preload\""
+    );
+    assert_eq!(tag("cart.js"), "as=\"script\" rel=\"preload\"");
+
+    let links: Vec<&str> = page
+        .headers
+        .iter()
+        .filter(|(name, _)| name == "link")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    let [link] = links.as_slice() else {
+        panic!("one Link header is expected: {links:?}");
+    };
+    // The entries are separated by commas, like the sizes of an image: these are quoted.
+    let entries: Vec<&str> = link.split(", <").collect();
+    // What blocks rendering in the head comes first, without being asked, after the other
+    // origin it comes from. Then what the theme asks for, each file once, stylesheets first.
+    let [
+        origin,
+        fonts,
+        theme,
+        blocking,
+        stylesheet,
+        body_font,
+        image,
+        small,
+        script,
+        title_font,
+    ] = entries.as_slice()
+    else {
+        panic!("an origin and nine files are expected: {link}");
+    };
+    assert_eq!(*origin, "<https://fonts.example>; rel=\"preconnect\"");
+    assert_eq!(
+        *fonts,
+        "https://fonts.example/css2?family=Inter&display=swap>; as=\"style\"; rel=\"preload\""
+    );
+    // What an entry says of a file of the theme.
+    let hint = |entry: &str, name: &str| {
+        let (url, hint) = entry.split_once(">; ").expect(name);
+        assert!(
+            url.trim_start_matches('<')
+                .starts_with(&format!("//shop.test/cdn/shop/t/1/assets/{name}?v=")),
+            "{entry}"
+        );
+        hint.to_string()
+    };
+    assert_eq!(hint(theme, "theme.css"), "as=\"style\"; rel=\"preload\"");
+    assert_eq!(
+        hint(blocking, "blocking.js"),
+        "as=\"script\"; rel=\"preload\""
+    );
+    assert_eq!(
+        hint(stylesheet, "base.css"),
+        "as=\"style\"; rel=\"preload\""
+    );
+    // `preload_tag` repeats the attributes of its tag.
+    assert_eq!(
+        hint(body_font, "body.woff2"),
+        "as=\"font\"; type=\"font/woff2\"; fetchpriority=\"low\"; crossorigin; rel=\"preload\""
+    );
+    assert_eq!(
+        hint(title_font, "title.woff2"),
+        "as=\"font\"; crossorigin; rel=\"preload\""
+    );
+    assert_eq!(hint(script, "cart.js"), "as=\"script\"; rel=\"preload\"");
+    let (url, sized) = image.split_once(">; ").unwrap();
+    assert!(url.starts_with("//shop.test/cdn/shop/files/") && url.ends_with("&width=600"));
+    let (start, sizes) = sized.split_once("; imagesizes=").unwrap();
+    assert_eq!(sizes, "\"(min-width: 750px) 50vw, 100vw\"");
+    let srcset = start
+        .strip_prefix("as=\"image\"; rel=\"preload\"; imagesrcset=\"")
+        .and_then(|srcset| srcset.strip_suffix('"'))
+        .unwrap_or_else(|| panic!("{start}"));
+    let candidates: Vec<&str> = srcset.split(", ").collect();
+    assert_eq!(candidates.len(), 2, "{srcset}");
+    assert!(candidates[0].ends_with("&width=200 200w"), "{srcset}");
+    assert!(candidates[1].ends_with("&width=400 400w"), "{srcset}");
+    // An image without sizes to choose from only names its URL.
+    assert!(
+        small.ends_with("&width=100>; as=\"image\"; rel=\"preload\""),
+        "{small}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    // The stylesheet built from the `{% stylesheet %}` tags is preloaded too, after the one
+    // of the theme.
+    let home = get(&server(), "/", "preloads");
+    let link = header(&home, "link").unwrap_or_default();
+    let entries: Vec<&str> = link.split(", <").collect();
+    let [base, compiled] = entries.as_slice() else {
+        panic!("two stylesheets are expected: {link}");
+    };
+    assert_eq!(hint(base, "base.css"), "as=\"style\"; rel=\"preload\"");
+    let (url, compiled) = compiled.split_once(">; ").unwrap_or_default();
+    assert!(
+        url.starts_with("//shop.test/cdn/shop/t/1/compiled_assets/styles.css?v="),
+        "{link}"
+    );
+    assert!(text(&home).contains(url));
+    assert_eq!(compiled, "as=\"style\"; rel=\"preload\"");
+}
+
 /// What a served theme is made of at the least, in a directory of its own.
 fn changing_theme(name: &str) -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));

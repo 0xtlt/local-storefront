@@ -303,8 +303,8 @@ fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     if !rendered.errors.is_empty() {
         reply = reply.header("x-lsf-liquid-errors", rendered.errors.len().to_string());
     }
-    for preload in rendered.preloads {
-        reply = reply.header("link", preload);
+    if !rendered.preloads.is_empty() {
+        reply = reply.header("link", rendered.preloads.join(", "));
     }
     reply
 }

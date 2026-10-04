@@ -196,6 +196,18 @@ fn bundles(theme: &Theme) -> Bundles {
     }
 }
 
+/// The URL of the stylesheet built from the `{% stylesheet %}` tags, when the theme has some.
+pub fn compiled_stylesheet_url(site: &Site) -> Option<String> {
+    bundles(&site.theme).stylesheet.then(|| {
+        format!(
+            "{}/cdn/shop/t/{}/compiled_assets/styles.css?v={}",
+            urls::cdn_origin(site),
+            urls::THEME_ID,
+            super::compiled_version(&site.theme)
+        )
+    })
+}
+
 /// `{{ content_for_header }}`.
 pub fn content_for_header(site: &Site, page: &Page) -> String {
     let request = &site.request;
@@ -330,9 +342,9 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
     let bundles = bundles(&site.theme);
     let compiled = format!("{cdn}/cdn/shop/t/{}/compiled_assets", urls::THEME_ID);
     let version = super::compiled_version(&site.theme);
-    if bundles.stylesheet {
+    if let Some(stylesheet) = compiled_stylesheet_url(site) {
         out.push(format!(
-            "<link rel=\"stylesheet\" media=\"screen\" href=\"{compiled}/styles.css?v={version}\">"
+            "<link rel=\"stylesheet\" media=\"screen\" href=\"{stylesheet}\">"
         ));
     }
     if bundles.javascript {

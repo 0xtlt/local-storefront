@@ -12,7 +12,7 @@ use crate::tags::FormDrop;
 fn stylesheet_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let url = input.to_str();
     if args.named("preload").is_some_and(Value::is_truthy) {
-        RenderState::of(ctx)?.add_preload(format!("<{url}>; rel=preload; as=style"));
+        RenderState::of(ctx)?.add_preload(&url, &[("as", Some("style")), ("rel", Some("preload"))]);
     }
     let media = args
         .named("media")
@@ -41,15 +41,36 @@ fn script_tag(input: &Value, args: &FilterArgs, _ctx: &Context) -> Result<Value>
 
 fn preload_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let url = input.to_str();
-    let kind = args
-        .named("as")
-        .map(|kind| kind.to_str().into_owned())
-        .unwrap_or_default();
-    RenderState::of(ctx)?.add_preload(format!("<{url}>; rel=preload; as={kind}"));
+    let mut attributes = args.named.clone();
+    // A browser only uses a preloaded font that was asked for without credentials: Shopify
+    // says so when the theme does not.
+    if args.named("as").is_some_and(|kind| kind.to_str() == "font")
+        && args.named("crossorigin").is_none()
+    {
+        attributes.push(("crossorigin".to_string(), Value::str("anonymous")));
+    }
+    // The `Link` header repeats the attributes of the tag.
+    let values: Vec<(&str, Option<String>)> = attributes
+        .iter()
+        .filter_map(|(name, value)| match value {
+            Value::Nil | Value::Bool(false) => None,
+            Value::Bool(true) => Some((name.as_str(), None)),
+            value if name == "crossorigin" && value.to_str() == "anonymous" => {
+                Some((name.as_str(), None))
+            }
+            value => Some((name.as_str(), Some(value.to_str().into_owned()))),
+        })
+        .collect();
+    let mut parameters: Vec<(&str, Option<&str>)> = values
+        .iter()
+        .map(|(name, value)| (*name, value.as_deref()))
+        .collect();
+    parameters.push(("rel", Some("preload")));
+    RenderState::of(ctx)?.add_preload(&url, &parameters);
     Ok(Value::from(format!(
         "<link href=\"{}\"{} rel=\"preload\">",
         escape_html(&url),
-        html_attributes(&args.named, &[])
+        html_attributes(&attributes, &[])
     )))
 }
 

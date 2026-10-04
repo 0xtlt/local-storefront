@@ -172,6 +172,37 @@ and chooses the format the way Shopify's CDN was seen to in October 2026:
 Encoding an image takes a moment the first time it is asked for in a format: about a tenth
 of a second for a product image as AVIF. It is then kept in memory until the file changes.
 
+## Preloading
+
+`stylesheet_tag: preload: true`, `image_tag: preload: true` and `preload_tag` ask the
+browser to load a file before it finds it in the page. As on Shopify, the tag itself does
+not change: the page is answered with one `Link` header, written as Shopify writes it.
+
+```
+Link: <//shop/cdn/shop/t/1/assets/base.css?v=1>; as="style"; rel="preload", <//shop/cdn/shop/files/hero.jpg?v=1&width=1600>; as="image"; rel="preload"; imagesrcset="//shop/cdn/shop/files/hero.jpg?v=1&width=800 800w, ..."; imagesizes="100vw"
+```
+
+An image names the `srcset` and the `sizes` of its tag, so that the browser preloads the
+size it is going to show. `preload_tag` repeats the attributes of its tag.
+
+A font is asked for without credentials, whether the theme says so or not: a browser does
+not use a preloaded font otherwise. `preload_tag: as: 'font'` writes `crossorigin="anonymous"`
+in its tag and `crossorigin` in the header, as Shopify was seen to on stores that run
+Horizon 4.
+
+Shopify also reads the `<head>` it rendered and adds hints of its own, and so does `lsf`:
+the stylesheets and the scripts that block rendering are preloaded, and the other origins
+they come from are connected to. A stylesheet for print, a script with `async`, `defer` or
+`type="module"`, and what is inside `<noscript>` do not block rendering.
+
+The header names, in this order, as on the stores it was read from in October 2026:
+
+1. the other origins to connect to;
+2. what blocks rendering in the `<head>`, in the order of the document;
+3. the stylesheets the theme asks to preload;
+4. the stylesheet built from the `{% stylesheet %}` tags;
+5. the fonts, the images and the other files the theme asks to preload.
+
 ## Known differences
 
 These are deliberate or not done yet. None of them raises a Liquid error.
@@ -203,6 +234,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Compression | Pages, styles, scripts and JSON are compressed with Brotli or gzip for the clients that accept it, at fast levels: the sizes are close to a storefront's, not equal. `--no-compression` turns it off. |
 | Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; `lsf` always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
 | Image formats | The format of an image is chosen by Shopify's rule, with other encoders: the files weigh about what Shopify's do, not the same, so an image can come as AVIF where Shopify sends WebP, or the reverse. A GIF is never converted. The color profile and the metadata of a file are not kept when it is encoded. |
+| Preloading | Shopify sends the `Link` header ahead of the page, as `103 Early Hints`, and with the pages it answers from its own cache. `lsf` sends it with every page. Shopify's header also asks to connect to its CDN (`cdn.shopify.com`), which serves nothing locally, and has a limit on its number of entries, which `lsf` does not have. |
 | Minification | Shopify minifies the CSS and the JavaScript of a theme with esbuild: whitespace and syntax, names are kept. It also rewrites CSS for older browsers: nesting is flattened, `inset` becomes `top`, `right`, `bottom` and `left`. This applies to the assets, `.liquid` ones included, and to the compiled bundles. Each file ends with a link to a source map that Shopify serves. A file is left as written when its name ends with `.min.js` or `.min.css`, or when the result would not be smaller. `lsf` serves every file as it is written. |
 | Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. `lsf` runs them all on every page. |
 

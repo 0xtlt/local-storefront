@@ -12,8 +12,9 @@ use crate::theme::Layout;
 struct Inner {
     /// Set by `{% layout %}` in a Liquid template.
     layout_override: Option<Layout>,
-    /// `Link` headers requested by `preload_tag` and `image_tag: preload: true`.
-    preloads: Vec<String>,
+    /// The entries of the `Link` header requested by `preload_tag` and the filters that take
+    /// `preload: true`, with whether each one is a stylesheet.
+    preloads: Vec<(bool, String)>,
     /// How many sections have been rendered for the current location (`section.index`).
     section_counts: Vec<(String, usize)>,
     /// Nesting of `content_for`, to stop runaway recursion.
@@ -56,15 +57,41 @@ impl RenderState {
         self.inner().layout_override.clone()
     }
 
-    pub fn add_preload(&self, header: String) {
+    /// Asks the browser to load a resource before it finds it in the page: an entry of the
+    /// `Link` header, written as Shopify writes it. The `parameters` come in the order they
+    /// are given in; one without a value is only named (`crossorigin`).
+    pub fn add_preload(&self, url: &str, parameters: &[(&str, Option<&str>)]) {
+        let mut hint = format!("<{url}>");
+        for (name, value) in parameters {
+            match value {
+                // Values are quoted: the sizes of an image are separated by commas, as the
+                // entries are.
+                Some(value) => hint.push_str(&format!(
+                    "; {name}=\"{}\"",
+                    value.replace('\\', "\\\\").replace('"', "\\\"")
+                )),
+                None => hint.push_str(&format!("; {name}")),
+            }
+        }
+        let stylesheet = parameters.contains(&("as", Some("style")));
         let mut inner = self.inner();
-        if !inner.preloads.contains(&header) {
-            inner.preloads.push(header);
+        if !inner.preloads.iter().any(|(_, known)| *known == hint) {
+            inner.preloads.push((stylesheet, hint));
         }
     }
 
+    /// The entries of the `Link` header the theme asks for. Shopify names the stylesheets
+    /// first.
     pub fn preloads(&self) -> Vec<String> {
-        self.inner().preloads.clone()
+        let inner = self.inner();
+        let of_kind = |wanted: bool| {
+            inner
+                .preloads
+                .iter()
+                .filter(move |(stylesheet, _)| *stylesheet == wanted)
+                .map(|(_, hint)| hint.clone())
+        };
+        of_kind(true).chain(of_kind(false)).collect()
     }
 
     /// The 1-based index of the next section rendered in a location (`template`, `header`, ...).

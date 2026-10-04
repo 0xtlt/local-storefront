@@ -355,14 +355,16 @@ fn image_tag(input: &Value, args: &FilterArgs, ctx: &Context) -> Result<Value> {
 
     let preload = args.named("preload").is_some_and(Value::is_truthy);
     if preload {
-        let mut header = format!("<{}>; rel=preload; as=image", url.url);
+        // The browser preloads the size it is going to show.
+        let sizes = args.named("sizes").map(|sizes| sizes.to_str().into_owned());
+        let mut parameters = vec![("as", Some("image")), ("rel", Some("preload"))];
         if let Some(srcset_value) = &srcset_value {
-            header.push_str(&format!("; imagesrcset={srcset_value}"));
+            parameters.push(("imagesrcset", Some(srcset_value.as_str())));
         }
-        if let Some(sizes) = args.named("sizes") {
-            header.push_str(&format!("; imagesizes={}", sizes.to_str()));
+        if let Some(sizes) = &sizes {
+            parameters.push(("imagesizes", Some(sizes.as_str())));
         }
-        RenderState::of(ctx)?.add_preload(header);
+        RenderState::of(ctx)?.add_preload(&url.url, &parameters);
     } else if args.named("loading").is_none() {
         // Images in sections further down the page are lazy-loaded by default.
         let below_the_fold =
