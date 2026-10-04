@@ -30,3 +30,5 @@ indexmap.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util"] }
+# Draws the images of the tests.
+image = { version = "0.25", default-features = false, features = ["png"] }

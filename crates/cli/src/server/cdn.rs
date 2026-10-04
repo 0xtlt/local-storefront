@@ -1,10 +1,11 @@
 //! Everything Shopify would serve from its CDN: theme assets, the bundles built from
 //! `{% stylesheet %}` and `{% javascript %}` tags, images and other files.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use lsf_core::filters::html_payment_icon;
-use lsf_core::images::{Transform, placeholder, transform_file};
+use lsf_core::images::{Accepted, Transform, placeholder, served_as_is, transform_file};
 
 use super::reply::{Reply, cache, content_type};
 use super::{Incoming, ServerState};
@@ -127,6 +128,19 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
     let Some(path) = files.resolve(&format!("assets/{name}")) else {
         return missing();
     };
+    // An image of the theme goes through Shopify's image CDN like any other.
+    if RASTER_EXTENSIONS.contains(&extension(name).as_str()) && path.is_file() {
+        let transform = Transform::from_query(query_of(incoming));
+        let version = files.version(&format!("assets/{name}"));
+        return picture(
+            state,
+            incoming,
+            &format!("assets/{name}@{version}?{transform:?}"),
+            Some(&path),
+            &transform,
+            |accepted| transform_file(&path, &transform, accepted),
+        );
+    }
     if let Ok(bytes) = std::fs::read(&path) {
         return Reply::new(200, content_type(name), bytes).cached(cache::ASSET);
     }
@@ -150,18 +164,78 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
             .resolve(&format!("assets/{original}"))
             .filter(|path| path.is_file())
     {
-        return match transform_file(&path, &transform) {
-            Ok((bytes, kind)) => image(Reply::new(200, kind, bytes)),
-            Err(error) => Reply::text(500, error),
-        };
+        let version = files.version(&format!("assets/{original}"));
+        return picture(
+            state,
+            incoming,
+            &format!("assets/{original}@{version}?{transform:?}"),
+            Some(&path),
+            &transform,
+            |accepted| transform_file(&path, &transform, accepted),
+        );
     }
     missing()
 }
 
-/// An image as Shopify's CDN sends it. There, the format follows what the browser accepts,
-/// which the response says; here the format is the one of the URL.
+fn query_of(incoming: &Incoming) -> impl Iterator<Item = (&str, &str)> {
+    incoming
+        .query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+}
+
+/// An image as Shopify's CDN sends it: its format follows what the client accepts, which the
+/// response says.
 fn image(reply: Reply) -> Reply {
     reply.cached(cache::ASSET).header("vary", "Accept")
+}
+
+/// Serves an image in the lightest format the client reads. A file of which nothing is asked
+/// is sent as it is; the other variants are encoded once and kept in memory, under `key`.
+fn picture(
+    state: &ServerState,
+    incoming: &Incoming,
+    key: &str,
+    path: Option<&Path>,
+    transform: &Transform,
+    encode: impl FnOnce(Accepted) -> Result<(Vec<u8>, &'static str), String>,
+) -> Reply {
+    let accepted = Accepted::from_header(incoming.header("accept"));
+    if let Some(path) = path
+        && served_as_is(&extension(&path.to_string_lossy()), transform, accepted)
+    {
+        return match std::fs::read(path) {
+            Ok(bytes) => image(Reply::new(
+                200,
+                content_type(&path.to_string_lossy()),
+                bytes,
+            )),
+            Err(_) => Reply::not_found(),
+        };
+    }
+    let key = format!("{key} {accepted:?}");
+    let cached = state
+        .image_cache
+        .lock()
+        .expect("image cache poisoned")
+        .get(&key)
+        .cloned();
+    let entry = match cached {
+        Some(entry) => entry,
+        None => match encode(accepted) {
+            Ok(encoded) => {
+                let entry = Arc::new(encoded);
+                let mut cache = state.image_cache.lock().expect("image cache poisoned");
+                if cache.len() >= IMAGE_CACHE_LIMIT {
+                    cache.clear();
+                }
+                cache.insert(key, entry.clone());
+                entry
+            }
+            Err(error) => return Reply::text(500, error),
+        },
+    };
+    image(Reply::new(200, entry.1, entry.0.clone()))
 }
 
 /// Serves a file of the data directory's `files/`, transformed when it is an image and the URL
@@ -170,11 +244,7 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
     if src.split('/').any(|segment| segment == "..") {
         return Reply::not_found();
     }
-    let query = incoming
-        .query
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()));
-    let mut transform = Transform::from_query(query);
+    let mut transform = Transform::from_query(query_of(incoming));
     let directory = state
         .app
         .data_dir()
@@ -209,51 +279,32 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
             None => Reply::not_found(),
         };
     }
-    if let Some(path) = &path
-        && transform == Transform::default()
-    {
-        return match std::fs::read(path) {
-            Ok(bytes) => image(Reply::new(200, content_type(&src), bytes)),
-            Err(_) => Reply::not_found(),
-        };
-    }
-
-    let cache_key = format!("{src}?{transform:?}");
-    if let Some(cached) = state
-        .image_cache
-        .lock()
-        .expect("image cache poisoned")
-        .get(&cache_key)
-        .cloned()
-    {
-        return image(Reply::new(200, cached.1, cached.0.clone()));
-    }
-    let result = match &path {
-        Some(path) => transform_file(path, &transform),
-        None => {
-            let declared = state
-                .loaded()
-                .store
-                .image_size(&src)
-                .unwrap_or((1200, 1200));
-            placeholder(&src, declared, &transform)
-        }
+    // What a variant is made from: the file as it is now, or the size the data declares.
+    let declared = || {
+        state
+            .loaded()
+            .store
+            .image_size(&src)
+            .unwrap_or((1200, 1200))
     };
-    match result {
-        Ok((bytes, kind)) => {
-            let entry = Arc::new((bytes, kind));
-            let mut cache = state.image_cache.lock().expect("image cache poisoned");
-            if cache.len() >= IMAGE_CACHE_LIMIT {
-                cache.clear();
-            }
-            cache.insert(cache_key, entry.clone());
-            let reply = image(Reply::new(200, entry.1, entry.0.clone()));
-            if path.is_none() {
-                reply.header("x-lsf-placeholder", "1")
-            } else {
-                reply
-            }
-        }
-        Err(error) => Reply::text(500, error),
+    let source = match path.as_ref().map(std::fs::metadata) {
+        Some(Ok(file)) => format!("{:?} {}", file.modified().ok(), file.len()),
+        _ => format!("{:?}", declared()),
+    };
+    let reply = picture(
+        state,
+        incoming,
+        &format!("{src}@{source}?{transform:?}"),
+        path.as_deref(),
+        &transform,
+        |accepted| match &path {
+            Some(path) => transform_file(path, &transform, accepted),
+            None => placeholder(&src, declared(), &transform, accepted),
+        },
+    );
+    if path.is_none() && reply.status == 200 {
+        reply.header("x-lsf-placeholder", "1")
+    } else {
+        reply
     }
 }

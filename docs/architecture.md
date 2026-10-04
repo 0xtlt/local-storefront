@@ -45,7 +45,7 @@ suite, and fails when fewer pass than its recorded baselines.
 | `filters/`, `tags/` | Shopify's filters and tags (`section`, `sections`, `content_for`, `form`, `paginate`, `render` with blocks, ...). |
 | `render/` | URL → template (`routes`), settings resolution, sections and blocks, layouts, the Section Rendering API, the compiled stylesheet and script bundles, and what Shopify injects into pages (`platform`). |
 | `assets/platform/` | The JavaScript counterparts of Shopify's own scripts (`Shopify.actions`, `Shopify.loadFeatures`), embedded in the binary and served from the local CDN. Tested with Node's test runner (`mise run test:js`). |
-| `images`, `fonts`, `urls` | Image transformations and placeholders, the blank fallback font, local CDN URLs. |
+| `images`, `fonts`, `urls` | Image transformations, the format an image is sent in (JPEG, PNG, WebP or AVIF, by what the client accepts) and placeholders, the blank fallback font, local CDN URLs. |
 | `site` | What one render sees: theme, store, request, session, clock. |
 
 A render is a pure function of `(theme, store, request, session, now)`: `Renderer::render`
@@ -66,7 +66,7 @@ downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference i
 | `storefront` | Pages, the Section Rendering API, product, search and recommendation JSON. |
 | `cart`, `forms` | The Cart Ajax API and form submissions. |
 | `account` | The page that stands in for the customer accounts Shopify hosts, and the B2B location switch. |
-| `cdn` | Theme assets, files, image transformations, bundles, fonts. |
+| `cdn` | Theme assets, files, images and the variants of them kept in memory, bundles, fonts. |
 | `compress` | Brotli or gzip for the responses that gain from it, by what the client accepts. |
 | `control` | The `/__lsf` API. |
 | `live_reload` | `--live-reload`: the WebSocket open pages listen on, and the task that looks at the theme and data directories while a page listens. The script it injects is `assets/live-reload.js`, tested with Node (`mise run test:js`). |

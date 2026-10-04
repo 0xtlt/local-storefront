@@ -86,6 +86,8 @@ pub struct ServerState {
     loaded: RwLock<Arc<Loaded>>,
     last_check: Mutex<Instant>,
     sessions: Mutex<HashMap<String, SessionEntry>>,
+    /// The variants of the images that were encoded, by what they were made from: encoding
+    /// one costs too much to do it again while the image has not changed.
     pub(crate) image_cache: Mutex<HashMap<String, CachedImage>>,
     session_counter: AtomicU64,
     started: Instant,
@@ -213,10 +215,6 @@ impl ServerState {
                 .map_or(0, |directory| fingerprint(directory)),
         });
         *self.loaded.write().expect("store lock poisoned") = loaded.clone();
-        self.image_cache
-            .lock()
-            .expect("image cache poisoned")
-            .clear();
         loaded
     }
 

@@ -15,7 +15,10 @@ serde.workspace = true
 serde_json.workspace = true
 schemars = { version = "1", features = ["indexmap2"] }
 jsonschema = { version = "0.58", default-features = false }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+# `avif` encodes with rav1e, in Rust; `rayon` lets it use every core.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "avif", "rayon"] }
+# The encoder of lossy WebP: `image` only writes lossless WebP. It builds libwebp from its sources.
+libwebp-sys = "0.14"
 md-5 = "0.11"
 sha1 = "0.11"
 sha2 = "0.11"

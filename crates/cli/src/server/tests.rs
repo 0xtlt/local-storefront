@@ -55,6 +55,15 @@ fn get(state: &ServerState, path: &str, session: &str) -> Reply {
     state.dispatch(&request("GET", path, json!({}), session))
 }
 
+/// A `GET` from a client that accepts `accept`.
+fn get_accepting(state: &ServerState, path: &str, accept: &str) -> Reply {
+    let mut incoming = request("GET", path, json!({}), "accept");
+    incoming
+        .headers
+        .insert("accept".to_string(), accept.to_string());
+    state.dispatch(&incoming)
+}
+
 fn post(state: &ServerState, path: &str, body: Json, session: &str) -> Reply {
     state.dispatch(&request("POST", path, body, session))
 }
@@ -1393,6 +1402,144 @@ fn a_session_brings_its_own_plans_and_locations() {
     assert!(!text(&get(&state, &pickup, "other")).contains("Pop-up store"));
     let mug = body_json(&get(&state, "/products/ceramic-mug.js", "other"));
     assert_eq!(mug["selling_plan_groups"], json!([]));
+}
+
+/// What a browser asks an image with.
+const IMAGE_ACCEPT: &str = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
+
+#[test]
+fn images_come_in_the_lightest_format_the_client_reads() {
+    let state = server();
+    let image = |path: &str, accept: &str| {
+        let reply = get_accepting(&state, path, accept);
+        assert_eq!(reply.status, 200, "{path}");
+        assert_eq!(header(&reply, "vary"), Some("Accept"), "{path}");
+        assert_eq!(
+            header(&reply, "cache-control"),
+            Some("public, max-age=31557600"),
+            "{path}"
+        );
+        reply
+    };
+    let kind = |reply: &Reply| header(reply, "content-type").map(str::to_string);
+
+    // A placeholder is a JPEG for the clients that read nothing lighter, as its name says.
+    let placeholder = "/cdn/shop/files/products/tee-white.jpg?width=200";
+    let jpeg = image(placeholder, "*/*");
+    assert_eq!(kind(&jpeg).as_deref(), Some("image/jpeg"));
+    let webp = image(placeholder, "image/webp,*/*");
+    assert_eq!(kind(&webp).as_deref(), Some("image/webp"));
+    assert_eq!(&webp.body[..4], b"RIFF");
+    assert!(webp.body.len() < jpeg.body.len());
+    // Each client gets its own variant, the second time too.
+    for _ in 0..2 {
+        let again = image(placeholder, "*/*");
+        assert_eq!(again.body, jpeg.body);
+        assert_eq!(header(&again, "x-lsf-placeholder"), Some("1"));
+        let again = image(placeholder, IMAGE_ACCEPT);
+        assert_ne!(kind(&again).as_deref(), Some("image/jpeg"));
+        assert!(again.body.len() <= webp.body.len());
+        assert_eq!(header(&again, "x-lsf-placeholder"), Some("1"));
+    }
+    // `format: 'pjpg'` asks for a JPEG, whatever the client reads.
+    let progressive = image(&format!("{placeholder}&format=pjpg"), IMAGE_ACCEPT);
+    assert_eq!(kind(&progressive).as_deref(), Some("image/jpeg"));
+}
+
+#[test]
+fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
+    let root = changing_theme("images");
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    std::fs::create_dir_all(root.join("shopify-local/files")).unwrap();
+    // A picture with grain, which AVIF keeps for less than WebP does.
+    let picture = image::RgbImage::from_fn(480, 360, |x, y| {
+        let speck = (x.wrapping_mul(2654435761) ^ y.wrapping_mul(40503)).wrapping_mul(2246822519);
+        let grain = (speck >> 24) as f64 / 255.0 * 20.0;
+        image::Rgb([
+            (f64::from(x) / 480.0 * 180.0 + grain + 40.0) as u8,
+            (f64::from(y) / 360.0 * 150.0 + grain + 40.0) as u8,
+            (f64::from(x + y) / 840.0 * 140.0 + grain + 40.0) as u8,
+        ])
+    });
+    picture.save(root.join("assets/hero.png")).unwrap();
+    picture
+        .save(root.join("shopify-local/files/hero.png"))
+        .unwrap();
+    let file = std::fs::read(root.join("assets/hero.png")).unwrap();
+
+    let app = App::open(&root, None, Revalidate::Every(Duration::ZERO)).unwrap();
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            throttle: Default::default(),
+            customer: None,
+        },
+    );
+    let image = |path: &str, accept: &str| {
+        let reply = get_accepting(&state, path, accept);
+        assert_eq!(reply.status, 200, "{path}");
+        assert_eq!(header(&reply, "vary"), Some("Accept"), "{path}");
+        assert_eq!(
+            header(&reply, "cache-control"),
+            Some("public, max-age=31557600"),
+            "{path}"
+        );
+        let kind = header(&reply, "content-type")
+            .unwrap_or_default()
+            .to_string();
+        (kind, reply.body)
+    };
+    // The width a PNG stores in its header.
+    let width = |png: &[u8]| u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+
+    // The file as it is for the clients that read nothing lighter, and resized on demand.
+    let hero = "/cdn/shop/t/1/assets/hero.png";
+    assert_eq!(image(hero, "*/*"), ("image/png".to_string(), file.clone()));
+    let (kind, small) = image(&format!("{hero}?v=1&width=240"), "*/*");
+    assert_eq!(kind, "image/png");
+    assert_eq!(width(&small), 240);
+    // `asset_img_url` names the size in the file name.
+    let (kind, legacy) = image("/cdn/shop/t/1/assets/hero_120x.png", "*/*");
+    assert_eq!(kind, "image/png");
+    assert_eq!(width(&legacy), 120);
+
+    // A lighter format for the clients that read one.
+    let (kind, webp) = image(&format!("{hero}?v=1&width=240"), "image/webp");
+    assert_eq!(kind, "image/webp");
+    let (kind, avif) = image(&format!("{hero}?v=1&width=240"), IMAGE_ACCEPT);
+    assert_eq!(kind, "image/avif");
+    assert!(avif.len() < webp.len() && webp.len() < small.len());
+    let (kind, whole) = image(hero, IMAGE_ACCEPT);
+    assert_eq!(kind, "image/avif");
+    assert!(whole.len() < file.len());
+
+    // An image of the store is served the same way.
+    let stored = "/cdn/shop/files/hero.png";
+    assert_eq!(
+        image(stored, "*/*"),
+        ("image/png".to_string(), file.clone())
+    );
+    assert_eq!(
+        image(stored, IMAGE_ACCEPT),
+        ("image/avif".to_string(), whole.clone())
+    );
+
+    // A variant is kept, until the file changes.
+    let plain = image::RgbImage::from_pixel(480, 360, image::Rgb([200, 30, 30]));
+    for (path, url) in [
+        ("assets/hero.png", hero),
+        ("shopify-local/files/hero.png", stored),
+    ] {
+        assert_eq!(image(url, IMAGE_ACCEPT).1, whole);
+        plain.save(root.join(path)).unwrap();
+        assert!(image(url, IMAGE_ACCEPT).1.len() < whole.len(), "{url}");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// What a served theme is made of at the least, in a directory of its own.

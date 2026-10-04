@@ -146,6 +146,32 @@ kept for a year has a URL that changes with its content: the `?v=` of a theme as
 for a `.liquid` asset follows the theme settings too, and the hash in the name of the
 feature loader.
 
+## Images
+
+The images of the store (`/cdn/shop/files/...`) and the ones among the theme's assets go
+through a local stand-in for Shopify's image CDN. It resizes, crops and pads as the URL asks,
+and chooses the format the way Shopify's CDN was seen to in October 2026:
+
+- A client that names `image/webp` in its `Accept` header can get WebP, and one that names
+  `image/avif` as well can get AVIF. The weights (`;q=`) do not count. Browsers ask for
+  images that way; `fetch()`, `curl` and most HTTP clients do not, and get the format of the
+  file.
+- The image is encoded in each format the client reads, and the lightest one is sent. This
+  is why a browser gets AVIF for one image and WebP for the next. The response says
+  `Vary: Accept`.
+- An image of which nothing is asked (no size, no crop) is the file itself, unless a lighter
+  format can be sent.
+- `format: 'pjpg'` gives a JPEG to every client. `format: 'jpg'` and `format: 'png'` name the
+  format for the clients that read neither WebP nor AVIF. An image with transparency does
+  not become a JPEG.
+- `quality` is the quality of every format. Without it, the qualities are the ones with
+  which the files weigh about what Shopify's do: 85 for JPEG and AVIF, 90 for WebP.
+- A WebP file is a JPEG for the clients that do not read WebP, or a PNG when it has
+  transparency.
+
+Encoding an image takes a moment the first time it is asked for in a format: about a tenth
+of a second for a product image as AVIF. It is then kept in memory until the file changes.
+
 ## Known differences
 
 These are deliberate or not done yet. None of them raises a Liquid error.
@@ -175,7 +201,8 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |
 | Sitemaps | `/robots.txt` is rendered from `templates/robots.txt.liquid`, or with Shopify's default rules. `/sitemap.xml` links one sitemap per kind (products, pages, collections, blogs), in the primary language only and without paging. |
 | Compression | Pages, styles, scripts and JSON are compressed with Brotli or gzip for the clients that accept it, at fast levels: the sizes are close to a storefront's, not equal. `--no-compression` turns it off. |
-| Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; `lsf` always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. Images say `Vary: Accept` but their format is the one of the URL. |
+| Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; `lsf` always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
+| Image formats | The format of an image is chosen by Shopify's rule, with other encoders: the files weigh about what Shopify's do, not the same, so an image can come as AVIF where Shopify sends WebP, or the reverse. A GIF is never converted. The color profile and the metadata of a file are not kept when it is encoded. |
 | Minification | Shopify minifies the CSS and the JavaScript of a theme with esbuild: whitespace and syntax, names are kept. It also rewrites CSS for older browsers: nesting is flattened, `inset` becomes `top`, `right`, `bottom` and `left`. This applies to the assets, `.liquid` ones included, and to the compiled bundles. Each file ends with a link to a source map that Shopify serves. A file is left as written when its name ends with `.min.js` or `.min.css`, or when the result would not be smaller. `lsf` serves every file as it is written. |
 | Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. `lsf` runs them all on every page. |
 

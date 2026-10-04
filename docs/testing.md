@@ -233,7 +233,9 @@ The control API is never delayed, and a delayed response carries the header
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.
 - **Images.** A response with `x-lsf-placeholder: 1` is a generated placeholder: the data
   references a file that is not in `files/`. Placeholders have the declared size, so layout
-  assertions hold; put real files in `files/` for visual regression tests.
+  assertions hold; put real files in `files/` for visual regression tests. A browser gets
+  images as AVIF or WebP, as on Shopify; a request that does not say it accepts them
+  (`fetch`, `curl`, the HTTP client of a test) gets the format of the file.
 
 ## What the server answers
 

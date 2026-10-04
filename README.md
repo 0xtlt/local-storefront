@@ -247,7 +247,8 @@ The storefront is never locked: nothing redirects to that page.
   collection filters, forms, languages, customer accounts, B2B companies, subscriptions,
   store pickup, swatches, the password page, `robots.txt` and sitemaps.
 - **Images served locally.** `image_url` and `image_tag` point to your machine, which resizes
-  and crops like Shopify's CDN.
+  and crops like Shopify's CDN, and sends each browser the lightest format it reads: AVIF,
+  WebP, or the one of the file.
 - **Shopify's compression and caching.** Responses are compressed, and say how long to keep
   them with the same `Cache-Control` as Shopify, so that an audit of your theme sees what it
   would see on the store.
