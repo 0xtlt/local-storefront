@@ -40,6 +40,11 @@ pub struct Args {
     #[arg(long)]
     no_compression: bool,
 
+    /// Serve the stylesheets and the scripts of the theme as they are written. Without this
+    /// option they are minified, with a source map, as on Shopify.
+    #[arg(long)]
+    no_minify: bool,
+
     /// Refuse to start when the store data has errors.
     #[arg(long)]
     strict: bool,
@@ -107,6 +112,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
             watch: !args.static_files,
             quiet: args.quiet,
             compress: !args.no_compression,
+            minify: !args.no_minify,
             throttle: throttle.clone(),
             customer: args.customer.clone(),
         },

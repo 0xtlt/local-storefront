@@ -22,6 +22,7 @@ fn server() -> ServerState {
             watch: false,
             quiet: true,
             compress: true,
+            minify: true,
             throttle: Default::default(),
             customer: None,
         },
@@ -686,6 +687,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
             watch: false,
             quiet: true,
             compress: true,
+            minify: true,
             throttle: Throttle::parse([rules]).expect("valid rules"),
             customer: None,
         },
@@ -973,6 +975,7 @@ fn the_server_can_start_logged_in() {
             watch: false,
             quiet: true,
             compress: true,
+            minify: true,
             throttle: Default::default(),
             customer: Some("alex.morgan@example.com".to_string()),
         },
@@ -1078,6 +1081,7 @@ fn robots_and_sitemaps_are_served() {
             watch: false,
             quiet: true,
             compress: true,
+            minify: true,
             throttle: Default::default(),
             customer: None,
         },
@@ -1475,6 +1479,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
             watch: false,
             quiet: true,
             compress: true,
+            minify: true,
             throttle: Default::default(),
             customer: None,
         },
@@ -1581,6 +1586,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
             watch: false,
             quiet: true,
             compress: true,
+            minify: true,
             throttle: Default::default(),
             customer: None,
         },
@@ -1711,6 +1717,145 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
     assert_eq!(compiled, "as=\"style\"; rel=\"preload\"");
 }
 
+#[test]
+fn stylesheets_and_scripts_are_minified_as_on_shopify() {
+    let root = changing_theme("minified");
+    for directory in ["assets", "sections"] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    let stylesheet =
+        ".card {\n  /* A card. */\n  color: #ff0000;\n  margin: 0px 0px 0px 0px;\n\n  \
+        &:hover {\n    opacity: 0.5;\n  }\n}\n\n\
+        .card__title {\n  font-weight: normal;\n  text-decoration: none;\n}\n"
+            .repeat(2);
+    let script = "function debounce(callback, wait) {\n  let timer;\n\n  \
+        return (...args) => {\n    clearTimeout(timer);\n    \
+          timer = setTimeout(() => callback.apply(this, args), wait);\n  };\n}\n\n\
+        // Tells whether a value is missing.\n\
+        function isMissing(value) {\n  return value === undefined;\n}\n";
+    let write = |name: &str, content: &str| std::fs::write(root.join(name), content).unwrap();
+    write("assets/theme.css", &stylesheet);
+    write("assets/global.js", script);
+    write("assets/vendor.min.js", script);
+    write("assets/small.css", "body { margin: 0 }\n");
+    write(
+        "assets/colors.css.liquid",
+        &format!("{stylesheet}\n.shop::after {{\n  content: '{{{{ shop.name }}}}';\n}}\n"),
+    );
+    write(
+        "sections/hero.liquid",
+        &format!(
+            "<div class=\"hero\"></div>\n{{% stylesheet %}}\n{stylesheet}{{% endstylesheet %}}\n"
+        ),
+    );
+    let serve = |minify: bool| {
+        let app = App::open(&root, None, Revalidate::Never).unwrap();
+        let (state, _) = ServerState::new(
+            app,
+            ServeOptions {
+                live_reload: false,
+                watch: false,
+                quiet: true,
+                compress: true,
+                minify,
+                throttle: Default::default(),
+                customer: None,
+            },
+        );
+        state
+    };
+    let state = serve(true);
+    let file = |name: &str| get(&state, &format!("/cdn/shop/t/1/{name}"), "minified");
+    let year = Some("public, max-age=31557600");
+
+    // A stylesheet: one line, rewritten for older browsers, then the link to its source map.
+    let theme = file("assets/theme.css?v=1");
+    assert_eq!(theme.status, 200);
+    assert_eq!(
+        header(&theme, "content-type"),
+        Some("text/css; charset=utf-8")
+    );
+    assert_eq!(header(&theme, "cache-control"), year);
+    let served = text(&theme);
+    let (code, link) = served.split_once('\n').unwrap();
+    assert!(
+        code.starts_with(".card{color:red;margin:0}.card:hover{opacity:.5}"),
+        "{code}"
+    );
+    assert_eq!(
+        link,
+        "/*# sourceMappingURL=/cdn/shop/t/1/assets/theme.css.map */\n"
+    );
+    assert!(served.len() < stylesheet.len());
+    // The map leads back to the file as it is written.
+    let map = file("assets/theme.css.map");
+    assert_eq!(map.status, 200);
+    assert_eq!(header(&map, "cache-control"), year);
+    let map = body_json(&map);
+    assert_eq!(map["sources"], json!(["/cdn/shop/t/1/assets/theme.css"]));
+    assert_eq!(map["sourcesContent"], json!([stylesheet]));
+
+    // A script: its names are kept.
+    let global = text(&file("assets/global.js"));
+    assert_eq!(
+        global,
+        "function debounce(callback,wait){let timer;return(...args)=>{clearTimeout(timer),\
+         timer=setTimeout(()=>callback.apply(this,args),wait)}}\
+         function isMissing(value){return value===void 0}\n\
+         //# sourceMappingURL=/cdn/shop/t/1/assets/global.js.map\n"
+    );
+    assert_eq!(
+        body_json(&file("assets/global.js.map"))["sourcesContent"],
+        json!([script])
+    );
+
+    // A `.liquid` file is minified once it is rendered.
+    let colors = text(&file("assets/colors.css"));
+    assert!(colors.starts_with(".card{color:red;margin:0}"), "{colors}");
+    assert!(
+        colors.contains(".shop:after{content:\"Local Supply Co.\"}"),
+        "{colors}"
+    );
+    assert!(colors.ends_with("/*# sourceMappingURL=/cdn/shop/t/1/assets/colors.css.map */\n"));
+    assert_eq!(file("assets/colors.css.map").status, 200);
+
+    // So is the stylesheet built from the `{% stylesheet %}` tags.
+    let compiled = file("compiled_assets/styles.css?v=1");
+    assert_eq!(
+        header(&compiled, "cache-control"),
+        Some("public, max-age=31536000, immutable")
+    );
+    let compiled = text(&compiled);
+    assert!(
+        compiled.starts_with(".card{color:red;margin:0}"),
+        "{compiled}"
+    );
+    assert!(
+        compiled
+            .ends_with("/*# sourceMappingURL=/cdn/shop/t/1/compiled_assets/styles.css.map */\n"),
+        "{compiled}"
+    );
+    assert_eq!(file("compiled_assets/styles.css.map").status, 200);
+
+    // A file that says it is minified, and one that would not get lighter, are served as
+    // written, and have no map.
+    assert_eq!(text(&file("assets/vendor.min.js")), script);
+    assert_eq!(file("assets/vendor.min.js.map").status, 404);
+    assert_eq!(text(&file("assets/small.css")), "body { margin: 0 }\n");
+    assert_eq!(file("assets/small.css.map").status, 404);
+    assert_eq!(file("assets/missing.css.map").status, 404);
+
+    // With `--no-minify`, every file is.
+    let state = serve(false);
+    let file = |name: &str| get(&state, &format!("/cdn/shop/t/1/{name}"), "minified");
+    assert_eq!(text(&file("assets/theme.css")), stylesheet);
+    assert_eq!(text(&file("assets/global.js")), script);
+    assert_eq!(file("assets/theme.css.map").status, 404);
+    assert!(text(&file("compiled_assets/styles.css")).contains("  color: #ff0000;"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// What a served theme is made of at the least, in a directory of its own.
 fn changing_theme(name: &str) -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
@@ -1771,6 +1916,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
             watch: true,
             quiet: true,
             compress: true,
+            minify: true,
             throttle: Default::default(),
             customer: None,
         },
@@ -1875,6 +2021,7 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
             watch: false,
             quiet: true,
             compress,
+            minify: true,
             throttle: Default::default(),
             customer: None,
         },

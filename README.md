@@ -250,6 +250,8 @@ The storefront is never locked: nothing redirects to that page.
   and crops like Shopify's CDN, and sends each browser the lightest format it reads: AVIF,
   WebP, or the one of the file. An image with `preload: true` is preloaded through the `Link`
   header, as on Shopify.
+- **Minified styles and scripts.** The CSS and the JavaScript of the theme are minified, with
+  a source map, as Shopify minifies them before it serves them.
 - **Shopify's compression and caching.** Responses are compressed, and say how long to keep
   them with the same `Cache-Control` as Shopify, so that an audit of your theme sees what it
   would see on the store.
@@ -285,6 +287,7 @@ Every command accepts `--theme <dir>` (default: the current folder) and `--data 
 | `--static` | Reads the files once. The fastest mode, for tests. |
 | `--strict` | Refuses to start if the data has errors. |
 | `--quiet`, `-q` | Does not log requests. |
+| `--no-minify` | Serves the stylesheets and the scripts of the theme as they are written. Without it they are minified, with a source map, as on Shopify. |
 | `--no-compression` | Sends responses as they are. Without it, pages, styles, scripts and JSON are compressed (Brotli or gzip) for the browsers and tools that accept it, as on Shopify. |
 | `--customer <email>` | Starts every visitor logged in as this customer. Also `default` (the first customer) or `none`. |
 | `--throttle <rules>` | Answers late, to test loading states. See below. |

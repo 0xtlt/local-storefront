@@ -146,6 +146,27 @@ kept for a year has a URL that changes with its content: the `?v=` of a theme as
 for a `.liquid` asset follows the theme settings too, and the hash in the name of the
 feature loader.
 
+## Minification
+
+Shopify minifies the stylesheets and the scripts of a theme before it serves them, and so
+does `lsf`. The rules are the ones read from Shopify's answers in October 2026, where the 97
+stylesheets and scripts of Dawn come out of esbuild to the byte.
+
+- Whitespace and syntax are minified. Names are kept: a function or a variable is called the
+  same in the minified file.
+- Stylesheets are also rewritten for older browsers, of the level of Safari 14: nesting is
+  flattened, the range syntax of media queries becomes `min-width` and `max-width`, recent
+  color functions get a fallback, and vendor prefixes are added.
+- This applies to the assets, `.liquid` ones included once they are rendered, and to the
+  bundles built from the `{% stylesheet %}` and `{% javascript %}` tags.
+- A minified file ends with a link to its source map, which is served at the path of the
+  file followed by `.map`: the tools of a browser show the file as it is written.
+- A file is served as written when its name ends with `.min.js` or `.min.css`, when the
+  minified file would not be lighter, or when it cannot be read as CSS or JavaScript. In a
+  stylesheet, a rule that cannot be read is kept as written and the rest is minified.
+
+`--no-minify` serves every file as it is written.
+
 ## Images
 
 The images of the store (`/cdn/shop/files/...`) and the ones among the theme's assets go
@@ -235,7 +256,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; `lsf` always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
 | Image formats | The format of an image is chosen by Shopify's rule, with other encoders: the files weigh about what Shopify's do, not the same, so an image can come as AVIF where Shopify sends WebP, or the reverse. A GIF is never converted. The color profile and the metadata of a file are not kept when it is encoded. |
 | Preloading | Shopify sends the `Link` header ahead of the page, as `103 Early Hints`, and with the pages it answers from its own cache. `lsf` sends it with every page. Shopify's header also asks to connect to its CDN (`cdn.shopify.com`), which serves nothing locally, and has a limit on its number of entries, which `lsf` does not have. |
-| Minification | Shopify minifies the CSS and the JavaScript of a theme with esbuild: whitespace and syntax, names are kept. It also rewrites CSS for older browsers: nesting is flattened, `inset` becomes `top`, `right`, `bottom` and `left`. This applies to the assets, `.liquid` ones included, and to the compiled bundles. Each file ends with a link to a source map that Shopify serves. A file is left as written when its name ends with `.min.js` or `.min.css`, or when the result would not be smaller. `lsf` serves every file as it is written. |
+| Minification | Shopify minifies with esbuild, `lsf` with other libraries (oxc for scripts, Lightning CSS for stylesheets): a file weighs about what it does on Shopify, without being the same to the byte. In a stylesheet, declarations can come in another order within a rule. `inset` is not replaced with `top`, `right`, `bottom` and `left`. |
 | Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. `lsf` runs them all on every page. |
 
 Found a difference that is not in this table? It is a bug: a Liquid snippet and the HTML

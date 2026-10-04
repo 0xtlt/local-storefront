@@ -7,11 +7,15 @@ use std::sync::Arc;
 use lsf_core::filters::html_payment_icon;
 use lsf_core::images::{Accepted, Transform, placeholder, served_as_is, transform_file};
 
+use super::minify::{self, Minified};
 use super::reply::{Reply, cache, content_type};
 use super::{Incoming, ServerState};
 
 /// Images are cached in memory, up to this many variants.
 const IMAGE_CACHE_LIMIT: usize = 800;
+
+/// Minified files are kept in memory, up to this many.
+const MINIFIED_LIMIT: usize = 2000;
 
 const RASTER_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
 
@@ -37,18 +41,7 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     let segments: Vec<&str> = path.trim_start_matches("/cdn/").split('/').collect();
     match segments.as_slice() {
         ["shop", "t", _, "assets", rest @ ..] => asset(state, incoming, &rest.join("/")),
-        ["shop", "t", _, "compiled_assets", "styles.css"] => Reply::new(
-            200,
-            "text/css; charset=utf-8",
-            state.app.renderer.compiled_stylesheet(),
-        )
-        .cached(cache::IMMUTABLE),
-        ["shop", "t", _, "compiled_assets", "scripts.js"] => Reply::new(
-            200,
-            "text/javascript; charset=utf-8",
-            state.app.renderer.compiled_javascript(),
-        )
-        .cached(cache::ASSET),
+        ["shop", "t", _, "compiled_assets", name] => compiled(state, incoming, name),
         [
             "shop",
             "files" | "products" | "collections" | "articles",
@@ -121,6 +114,105 @@ fn font(state: &ServerState, name: &str) -> Reply {
     }
 }
 
+/// The bundles built from the `{% stylesheet %}` and `{% javascript %}` tags, and their source
+/// maps.
+fn compiled(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
+    let (file, wants_map) = match name.strip_suffix(".map") {
+        Some(file) => (file, true),
+        None => (name, false),
+    };
+    let (kind, policy, content) = match file {
+        "styles.css" => (
+            "text/css; charset=utf-8",
+            cache::IMMUTABLE,
+            state.app.renderer.compiled_stylesheet(),
+        ),
+        "scripts.js" => (
+            "text/javascript; charset=utf-8",
+            cache::ASSET,
+            state.app.renderer.compiled_javascript(),
+        ),
+        _ => return Reply::not_found(),
+    };
+    if wants_map {
+        return source_map(state, incoming, content.as_bytes());
+    }
+    theme_file(state, incoming, kind, content.into_bytes()).cached(policy)
+}
+
+/// A stylesheet or a script as Shopify serves it: minified, with a link to its source map.
+/// `None` when it is served as written: minification is off, the name of the file says that it
+/// is minified already, or nothing would be gained.
+fn minified(state: &ServerState, path: &str, content: &[u8]) -> Option<Arc<Minified>> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    if !state.options.minify || !minify::applies(path) {
+        return None;
+    }
+    let source = std::str::from_utf8(content).ok()?;
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    let key = format!("{path}@{:x}", hasher.finish());
+    let known = state
+        .minified
+        .lock()
+        .expect("minified files poisoned")
+        .get(&key)
+        .cloned();
+    if let Some(known) = known {
+        return known;
+    }
+    let result = minify::minify(path, source).map(Arc::new);
+    let mut kept = state.minified.lock().expect("minified files poisoned");
+    if kept.len() >= MINIFIED_LIMIT {
+        kept.clear();
+    }
+    kept.insert(key, result.clone());
+    result
+}
+
+/// A file of the theme, minified when Shopify would minify it.
+fn theme_file(state: &ServerState, incoming: &Incoming, kind: &str, content: Vec<u8>) -> Reply {
+    match minified(state, &incoming.path, &content) {
+        Some(minified) => Reply::new(200, kind, minified.code.clone()),
+        None => Reply::new(200, kind, content),
+    }
+}
+
+/// The source map of a minified file, which is asked for at the path of the file followed by
+/// `.map`.
+fn source_map(state: &ServerState, incoming: &Incoming, content: &[u8]) -> Reply {
+    let path = incoming.path.trim_end_matches(".map");
+    match minified(state, path, content) {
+        Some(minified) => {
+            Reply::new(200, content_type(&incoming.path), minified.map.clone()).cached(cache::ASSET)
+        }
+        None => Reply::not_found().cached(cache::MISSING_ASSET),
+    }
+}
+
+/// The content of a file of the theme that is not an image: as it is written, or rendered from
+/// its `.liquid` file.
+fn asset_content(state: &ServerState, incoming: &Incoming, name: &str) -> Option<Vec<u8>> {
+    let files = state.app.theme.files();
+    let path = files.resolve(&format!("assets/{name}"))?;
+    if let Ok(bytes) = std::fs::read(&path) {
+        return Some(bytes);
+    }
+    // `theme.css.liquid` is requested as `theme.css` and rendered with the theme settings. Its
+    // URL changes with the file and with the settings it is rendered with.
+    let source = files.read(&format!("assets/{name}.liquid"))?;
+    let loaded = state.loaded();
+    let request = state.storefront_request(&loaded.store, incoming, "/", Vec::new());
+    let rendered = state.app.renderer.render_asset(
+        loaded.store.clone(),
+        request,
+        &source,
+        &format!("assets/{name}"),
+    );
+    Some(rendered.into_bytes())
+}
+
 fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
     let theme = &state.app.theme;
     let files = theme.files();
@@ -141,21 +233,14 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
             |accepted| transform_file(&path, &transform, accepted),
         );
     }
-    if let Ok(bytes) = std::fs::read(&path) {
-        return Reply::new(200, content_type(name), bytes).cached(cache::ASSET);
+    if let Some(content) = asset_content(state, incoming, name) {
+        return theme_file(state, incoming, content_type(name), content).cached(cache::ASSET);
     }
-    // `theme.css.liquid` is requested as `theme.css` and rendered with the theme settings.
-    if let Some(source) = files.read(&format!("assets/{name}.liquid")) {
-        let loaded = state.loaded();
-        let request = state.storefront_request(&loaded.store, incoming, "/", Vec::new());
-        let rendered = state.app.renderer.render_asset(
-            loaded.store.clone(),
-            request,
-            &source,
-            &format!("assets/{name}"),
-        );
-        // Its URL changes with the file and with the settings it is rendered with.
-        return Reply::new(200, content_type(name), rendered).cached(cache::ASSET);
+    // The source map of a stylesheet or of a script that is served minified.
+    if let Some(original) = name.strip_suffix(".map")
+        && let Some(content) = asset_content(state, incoming, original)
+    {
+        return source_map(state, incoming, &content);
     }
     // `asset_img_url` asks for a resized variant: `logo_small.png`.
     let mut transform = Transform::default();

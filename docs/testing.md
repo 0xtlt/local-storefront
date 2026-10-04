@@ -25,6 +25,10 @@ Leave `--live-reload` off: it injects a script into the pages.
 Responses are compressed, as a storefront's are, when the client accepts it. It costs about
 half a millisecond per page. `--no-compression` turns it off.
 
+The stylesheets and the scripts of the theme are minified, as a storefront's are, and come
+with a source map: a stack trace or a coverage report still names the lines of your files.
+`--no-minify` serves them as they are written.
+
 With Playwright, let the runner start and stop the server:
 
 ```ts

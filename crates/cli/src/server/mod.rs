@@ -8,6 +8,7 @@ mod control;
 pub use control::routes;
 mod forms;
 mod live_reload;
+mod minify;
 pub mod params;
 pub mod reply;
 mod storefront;
@@ -58,6 +59,8 @@ pub struct ServeOptions {
     pub quiet: bool,
     /// Compress responses for the clients that accept it.
     pub compress: bool,
+    /// Minify the stylesheets and the scripts of the theme.
+    pub minify: bool,
     /// How long each kind of request is held before it is answered.
     pub throttle: throttle::Throttle,
     /// Who new sessions are logged in as, instead of what the store data says: an email,
@@ -89,6 +92,9 @@ pub struct ServerState {
     /// The variants of the images that were encoded, by what they were made from: encoding
     /// one costs too much to do it again while the image has not changed.
     pub(crate) image_cache: Mutex<HashMap<String, CachedImage>>,
+    /// The stylesheets and the scripts that were minified, by their path and their content.
+    /// `None` for the ones that are served as written.
+    pub(crate) minified: Mutex<HashMap<String, Option<Arc<minify::Minified>>>>,
     session_counter: AtomicU64,
     started: Instant,
     /// The token of the files when live reload last looked at them.
@@ -191,6 +197,7 @@ impl ServerState {
             last_check: Mutex::new(Instant::now()),
             sessions: Mutex::new(HashMap::new()),
             image_cache: Mutex::new(HashMap::new()),
+            minified: Mutex::new(HashMap::new()),
             session_counter: AtomicU64::new(0),
             started: Instant::now(),
             last_token: AtomicU64::new(0),
