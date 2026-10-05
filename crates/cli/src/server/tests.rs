@@ -24,6 +24,7 @@ fn server() -> ServerState {
             compress: true,
             minify: true,
             throttle: Default::default(),
+            timings: false,
             customer: None,
         },
     );
@@ -689,6 +690,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
             compress: true,
             minify: true,
             throttle: Throttle::parse([rules]).expect("valid rules"),
+            timings: false,
             customer: None,
         },
     );
@@ -977,6 +979,7 @@ fn the_server_can_start_logged_in() {
             compress: true,
             minify: true,
             throttle: Default::default(),
+            timings: false,
             customer: Some("alex.morgan@example.com".to_string()),
         },
     );
@@ -1083,6 +1086,7 @@ fn robots_and_sitemaps_are_served() {
             compress: true,
             minify: true,
             throttle: Default::default(),
+            timings: false,
             customer: None,
         },
     );
@@ -1481,6 +1485,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
             compress: true,
             minify: true,
             throttle: Default::default(),
+            timings: false,
             customer: None,
         },
     );
@@ -1588,6 +1593,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
             compress: true,
             minify: true,
             throttle: Default::default(),
+            timings: false,
             customer: None,
         },
     );
@@ -1759,6 +1765,7 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
                 compress: true,
                 minify,
                 throttle: Default::default(),
+                timings: false,
                 customer: None,
             },
         );
@@ -1918,6 +1925,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
             compress: true,
             minify: true,
             throttle: Default::default(),
+            timings: false,
             customer: None,
         },
     );
@@ -2023,6 +2031,7 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
             compress,
             minify: true,
             throttle: Default::default(),
+            timings: false,
             customer: None,
         },
     );
@@ -2230,4 +2239,461 @@ fn responses_say_how_long_to_keep_them_as_shopify_does() {
     );
     // The control API is not Shopify's: it says nothing.
     assert_eq!(policy("/__lsf/status"), None);
+}
+
+/// The entries of the `Server-Timing` header of a reply: their name, followed by their
+/// description when they have one.
+fn timing_entries(value: &str) -> Vec<String> {
+    value
+        .split(", ")
+        .map(|entry| {
+            let (name, rest) = entry.split_once(";dur=").expect(entry);
+            let (duration, description) = rest.split_once(";desc=").unwrap_or((rest, ""));
+            assert!(duration.parse::<f64>().is_ok(), "{entry}");
+            format!("{name}{}", description.replace('"', " ").trim_end())
+        })
+        .collect()
+}
+
+#[test]
+fn what_is_rendered_says_how_long_it_took() {
+    let state = server();
+    let entries = |state: &ServerState, path: &str| {
+        let reply = get(state, path, "timing");
+        timing_entries(header(&reply, "server-timing").expect(path))
+    };
+    // A page: the render, and the two parts of it.
+    assert_eq!(entries(&state, "/"), ["render", "template", "layout"]);
+    // Sections that are asked for alone have neither.
+    assert_eq!(entries(&state, "/?section_id=footer"), ["render"]);
+    assert_eq!(entries(&state, "/?sections=footer"), ["render"]);
+    assert_eq!(entries(&state, "/robots.txt"), ["render"]);
+    // What is not rendered says nothing of a render.
+    let cart = get(&state, "/cart.js", "timing");
+    assert_eq!(header(&cart, "server-timing"), None);
+
+    // With `--timings`, every section in the order they were rendered: the template's, then
+    // the layout's. Each one by its type and its id on the page, and followed by its theme
+    // blocks: a dash for each level, the type, then the key when it is another word.
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let (naming, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: true,
+            customer: None,
+        },
+    );
+    let of_template = |key: &str| lsf_core::render::template_section_id("index", key);
+    let of_group = lsf_core::tags::group_id_prefix("header-group");
+    assert_eq!(
+        entries(&naming, "/"),
+        [
+            "render".to_string(),
+            "template".to_string(),
+            "layout".to_string(),
+            format!("section hero {}", of_template("hero")),
+            "block - _title title".to_string(),
+            "block - text intro".to_string(),
+            "block - group".to_string(),
+            "block - - text nested".to_string(),
+            format!("section announcement {}", of_template("second")),
+            format!("section announcement {of_group}announcement"),
+            "section footer".to_string(),
+        ]
+    );
+    assert_eq!(
+        entries(&naming, "/?section_id=footer"),
+        ["render", "section footer"]
+    );
+}
+
+#[test]
+fn the_control_api_adds_up_what_was_rendered() {
+    let state = server();
+    let report = || body_json(&get(&state, "/__lsf/timings", "timing"));
+    let nothing = json!({ "templates": [], "sections": [], "blocks": [] });
+    assert_eq!(report(), nothing);
+
+    get(&state, "/", "timing");
+    get(&state, "/", "timing");
+    get(&state, "/products/ceramic-mug", "timing");
+    get(&state, "/?section_id=footer", "timing");
+    // The sections a cart response brings along count as well.
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": variant_id(&state, "TOTE-NAT"), "sections": "footer", "sections_url": "/"}),
+        "timing",
+    );
+    assert_eq!(added.status, 200, "{}", text(&added));
+
+    let report = report();
+    let entries = |list: &str| report[list].as_array().expect("a list").clone();
+    let find = |list: &str, key: &str, value: &str| {
+        entries(list)
+            .into_iter()
+            .find(|entry| entry[key] == value)
+            .unwrap_or_else(|| panic!("no {value} in {report}"))
+    };
+    // Pages by template: sections asked for alone are not pages.
+    assert_eq!(find("templates", "template", "index")["count"], 2);
+    assert_eq!(find("templates", "template", "product")["count"], 1);
+    assert_eq!(entries("templates").len(), 2);
+    // Sections by id, with their type.
+    let hero = find(
+        "sections",
+        "id",
+        &lsf_core::render::template_section_id("index", "hero"),
+    );
+    assert_eq!((&hero["type"], &hero["count"]), (&json!("hero"), &json!(2)));
+    assert_eq!(find("sections", "id", "footer")["count"], 5);
+    // Theme blocks by id, with their type and their section.
+    let title = find("blocks", "type", "_title");
+    assert_eq!(
+        (&title["section"], &title["count"]),
+        (&hero["id"], &json!(2))
+    );
+    assert!(
+        title["id"].as_str().unwrap().ends_with("__title"),
+        "{title}"
+    );
+    assert_eq!(entries("blocks").len(), 4);
+
+    // Milliseconds that hold together, and what took the most time first.
+    for list in ["templates", "sections", "blocks"] {
+        let figure = |entry: &Json, name: &str| entry[name].as_f64().expect(name);
+        for entry in entries(list) {
+            let of = |name: &str| figure(&entry, name);
+            assert!(of("min") >= 0.0 && of("total") > 0.0, "{entry}");
+            assert!(of("min") <= of("p50") && of("p50") <= of("p95"), "{entry}");
+            assert!(
+                of("p95") <= of("max") && of("max") <= of("total"),
+                "{entry}"
+            );
+            assert!(
+                of("min") <= of("mean") && of("mean") <= of("max"),
+                "{entry}"
+            );
+        }
+        let totals: Vec<f64> = entries(list)
+            .iter()
+            .map(|entry| figure(entry, "total"))
+            .collect();
+        assert!(totals.is_sorted_by(|a, b| a >= b), "{totals:?}");
+    }
+
+    // Forgotten on demand, to measure from a known point.
+    let cleared = state.dispatch(&request("DELETE", "/__lsf/timings", json!({}), "timing"));
+    assert_eq!(body_json(&cleared), json!({ "ok": true }));
+    assert_eq!(body_json(&get(&state, "/__lsf/timings", "timing")), nothing);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_response_says_how_long_the_server_took() {
+    let (address, server) = serve_fixture(true).await;
+    let entries = |head: &str| timing_entries(head_value(head, "server-timing").expect(head));
+
+    let (head, _) = http_request(address, "/", &[]).await;
+    assert_eq!(
+        entries(&head),
+        ["processing", "render", "template", "layout"]
+    );
+    // Compressing is named when it was done.
+    let (head, _) = http_request(address, "/", &[("accept-encoding", "br")]).await;
+    assert_eq!(
+        entries(&head),
+        ["processing", "render", "template", "layout", "compress"]
+    );
+    // What is not rendered only says the whole.
+    for path in ["/cdn/shop/t/1/assets/base.css", "/cart.js", "/__lsf/status"] {
+        let (head, _) = http_request(address, path, &[]).await;
+        assert_eq!(entries(&head), ["processing"], "{path}");
+    }
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_throttle_is_named_and_is_not_time_the_server_took() {
+    use axum::extract::State;
+
+    let state = std::sync::Arc::new(server_with_throttle("page=200ms"));
+    let request = axum::http::Request::builder()
+        .uri("/")
+        .header("host", "shop.test")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = super::handle(State(state), request).await;
+    let header = |name: &str| response.headers()[name].to_str().unwrap().to_string();
+    assert_eq!(header("x-lsf-throttle"), "200ms");
+    let timing = header("server-timing");
+    assert_eq!(
+        timing_entries(&timing),
+        ["processing", "render", "template", "layout", "throttle"]
+    );
+    assert!(timing.ends_with(", throttle;dur=200"), "{timing}");
+    let processing: f64 = timing
+        .strip_prefix("processing;dur=")
+        .and_then(|rest| rest.split(',').next())
+        .and_then(|duration| duration.parse().ok())
+        .expect("a duration");
+    assert!(processing < 200.0, "{timing}");
+}
+
+#[test]
+fn the_control_api_profiles_a_page() {
+    let state = server();
+    let profile = |query: &str| get(&state, &format!("/__lsf/profile{query}"), "profiling");
+
+    // Text for a person: what was measured, then the tree, then the slowest frames.
+    let reply = profile("?path=/&runs=3");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        header(&reply, "content-type"),
+        Some("text/plain; charset=utf-8")
+    );
+    let report = text(&reply);
+    let mut lines = report.lines();
+    let first = lines.next().unwrap();
+    assert!(
+        first.starts_with("/ \u{b7} template index \u{b7} "),
+        "{report}"
+    );
+    assert!(
+        lines
+            .next()
+            .unwrap()
+            .starts_with("The render in the middle of 3, "),
+        "{report}"
+    );
+    let names: Vec<&str> = report
+        .lines()
+        .skip_while(|line| !line.starts_with("   total"))
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .map(|line| line.split_at(26).1)
+        .collect();
+    let hero = lsf_core::render::template_section_id("index", "hero");
+    // The slowest first under each row: the template or the layout, whichever took longer.
+    assert_eq!(names[0], "render", "{report}");
+    assert!(names.contains(&"  templates/index.json"), "{report}");
+    assert!(
+        names.contains(&format!("    section {hero}").as_str()),
+        "{report}"
+    );
+    assert!(names.contains(&"      sections/hero"), "{report}");
+    assert!(names.contains(&"  layout/theme"), "{report}");
+    assert!(report.contains("\nSlowest on their own:\n"), "{report}");
+
+    // Every row and every line, on demand.
+    let detailed = text(&profile("?path=/&runs=1&all=1&lines=1"));
+    assert!(detailed.contains("blocks/text"), "{detailed}");
+    assert!(detailed.contains(" sections/hero:2\n"), "{detailed}");
+    assert!(detailed.contains("Timing every line"), "{detailed}");
+    assert!(!report.contains("Timing every line"), "{report}");
+
+    // The file of a flame graph, which the page of speedscope may fetch.
+    let reply = profile("?path=/products/ceramic-mug&format=speedscope&runs=1");
+    assert_eq!(header(&reply, "access-control-allow-origin"), Some("*"));
+    let exported = body_json(&reply);
+    assert_eq!(
+        exported["profiles"][0]["name"],
+        "/products/ceramic-mug (time)"
+    );
+    assert_eq!(exported["activeProfileIndex"], 0);
+    assert_eq!(exported["shared"]["frames"][0]["name"], "render");
+    let frames = exported["shared"]["frames"].as_array().unwrap();
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame["file"] == "sections/main-product.liquid"),
+        "{frames:?}"
+    );
+    let events = exported["profiles"][0]["events"].as_array().unwrap();
+    assert_eq!(events.len() % 2, 0);
+    assert!(events.len() >= 2 * frames.len());
+
+    // One section alone, and what a profile needs to be told.
+    let footer = text(&profile("?path=/&section_id=footer&runs=1&all=1"));
+    assert!(footer.contains("  section footer\n"), "{footer}");
+    assert!(!footer.contains("layout/theme"), "{footer}");
+    let missing = profile("");
+    assert_eq!(missing.status, 400);
+    assert!(
+        text(&missing).contains("/__lsf/profile?path="),
+        "{}",
+        text(&missing)
+    );
+
+    // The status page leads to the profiles of every page.
+    let dashboard = text(&get(&state, "/__lsf", "profiling"));
+    for link in [
+        "\">time</a>",
+        "&amp;points=1\">points</a>",
+        "&amp;html=1\">flame graph</a>",
+    ] {
+        let href = format!("href=\"/__lsf/profile?path=%2Fproducts%2Fceramic%2Dmug{link}");
+        assert!(dashboard.contains(&href), "{href}\n{dashboard}");
+    }
+}
+
+#[test]
+fn a_profile_is_also_read_in_points() {
+    let state = server();
+    let profile = |query: &str| get(&state, &format!("/__lsf/profile{query}"), "points");
+    // The row of a kind in what the points are made of: points, count, each.
+    let row = |report: &str, kind: &str| -> Vec<u64> {
+        let made_of = report
+            .split("What the points are made of:")
+            .nth(1)
+            .expect(report);
+        let line = made_of
+            .lines()
+            .find(|line| line.split_whitespace().nth(3) == Some(kind))
+            .unwrap_or_else(|| panic!("no {kind} in {report}"));
+        line.split_whitespace()
+            .take(3)
+            .map(|figure| figure.parse().unwrap())
+            .collect()
+    };
+
+    let report = text(&profile("?path=/collections/all&points=1&runs=1"));
+    let first = report.lines().next().unwrap();
+    assert!(
+        first.starts_with("/collections/all \u{b7} template collection \u{b7} ")
+            && first.ends_with(" points"),
+        "{report}"
+    );
+    let total: u64 = first.split(' ').rev().nth(1).unwrap().parse().unwrap();
+    assert!(report.contains("\nCostliest on their own:\n"), "{report}");
+    assert_eq!(row(&report, "product"), [800, 8, 100]);
+    assert_eq!(row(&report, "collection"), [100, 1, 100]);
+    let liquid = row(&report, "liquid");
+    assert_eq!(liquid[0] + 900, total, "{report}");
+    // The tree is in points too: the render as a whole first.
+    let tree = report.split("   total      own  calls\n").nth(1).unwrap();
+    assert!(
+        tree.starts_with(&format!("{total:>8} "))
+            && tree.lines().next().unwrap().ends_with("  render"),
+        "{report}"
+    );
+    // The same at every render, unlike the time.
+    assert_eq!(
+        text(&profile("?path=/collections/all&points=1&runs=3")),
+        report
+    );
+    // Without `points`, nothing of them.
+    let time = text(&profile("?path=/collections/all&runs=1"));
+    assert!(!time.contains("points"), "{time}");
+
+    // Other costs for the kinds that are named.
+    let cheap = text(&profile(
+        "?path=/collections/all&points=1&runs=1&cost=product=5,liquid=0",
+    ));
+    assert_eq!(row(&cheap, "product"), [40, 8, 5]);
+    assert_eq!(row(&cheap, "liquid"), [0, liquid[1], 0]);
+    assert!(
+        cheap.starts_with("/collections/all \u{b7} template collection \u{b7} 140 points\n"),
+        "{cheap}"
+    );
+    let wrong = profile("?path=/&points=1&cost=products=5");
+    assert_eq!(wrong.status, 400);
+    assert!(
+        text(&wrong)
+            .starts_with("cost: \"products\" is not a kind of cost. Kinds: liquid, product, "),
+        "{}",
+        text(&wrong)
+    );
+
+    // The file of the flame graph holds both, and shows the one that is asked for.
+    let exported = body_json(&profile(
+        "?path=/collections/all&points=1&format=speedscope&runs=1",
+    ));
+    assert_eq!(exported["activeProfileIndex"], 1);
+    let points = &exported["profiles"][1];
+    assert_eq!(points["name"], "/collections/all (points)");
+    assert_eq!(points["unit"], "none");
+    assert_eq!(points["endValue"], total);
+}
+
+#[test]
+fn a_profile_is_drawn_as_a_flame_graph() {
+    let state = server();
+    // `html=1` answers with the page of the viewer, at the address that was asked for: its
+    // parameters can be changed in place. The page tells the viewer where to fetch the
+    // profile: the same request, in the format of the viewer.
+    let reply = get(
+        &state,
+        "/__lsf/profile?path=/collections/all&points=1&cost=product=5&html=1",
+        "flame",
+    );
+    assert_eq!(reply.status, 200);
+    assert_eq!(header(&reply, "location"), None);
+    assert_eq!(
+        header(&reply, "content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    let html = text(&reply);
+    let profile_url =
+        "/__lsf/profile?path=%2Fcollections%2Fall&points=1&cost=product%3D5&format=speedscope";
+    assert!(
+        html.contains(&format!("encodeURIComponent(\"{profile_url}\")")),
+        "{html}"
+    );
+    let exported = body_json(&get(&state, profile_url, "flame"));
+    assert_eq!(exported["activeProfileIndex"], 1);
+    assert_eq!(exported["profiles"].as_array().unwrap().len(), 2);
+
+    // The viewer is served from the binary: every file the page names.
+    let named: Vec<&str> = html
+        .split('"')
+        .filter(|part| part.starts_with("/__lsf/speedscope/"))
+        .collect();
+    assert_eq!(named.len(), 5, "{html}");
+    for file in named {
+        let reply = get(&state, file, "flame");
+        assert_eq!(reply.status, 200, "{file}");
+        assert!(!reply.body.is_empty(), "{file}");
+        assert_eq!(
+            header(&reply, "cache-control"),
+            Some("public, max-age=31536000"),
+            "{file}"
+        );
+    }
+    let script = get(&state, "/__lsf/speedscope/speedscope.6f107512.js", "flame");
+    assert_eq!(
+        header(&script, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    // What the script loads when it reads a profile, and its font.
+    for file in [
+        "import.bcbb2033.js",
+        "SourceCodePro-Regular.ttf.f546cbe0.woff2",
+    ] {
+        let reply = get(&state, &format!("/__lsf/speedscope/{file}"), "flame");
+        assert_eq!(reply.status, 200, "{file}");
+    }
+    // Its licenses go where it goes.
+    for file in ["LICENSE", "source-code-pro.LICENSE.md"] {
+        let reply = get(&state, &format!("/__lsf/speedscope/{file}"), "flame");
+        assert_eq!(reply.status, 200, "{file}");
+        assert_eq!(
+            header(&reply, "content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+    }
+    assert!(
+        text(&get(&state, "/__lsf/speedscope/LICENSE", "flame")).contains("Jamie Wong"),
+        "the license of speedscope"
+    );
+    assert_eq!(
+        get(&state, "/__lsf/speedscope/nope.js", "flame").status,
+        404
+    );
 }

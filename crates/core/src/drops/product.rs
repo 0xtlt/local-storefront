@@ -16,6 +16,7 @@ use super::selling_plan::{
 };
 use super::shop::AddressDrop;
 use super::{Memo, SiteRef, hash, strings, time_value};
+use crate::render::cost;
 use crate::store::{InventoryPolicy, Location, MediaKind, Product, Swatch, Variant};
 use crate::util::stable_id;
 
@@ -27,6 +28,7 @@ pub struct ProductDrop {
 
 impl ProductDrop {
     pub fn value(site: &SiteRef, index: usize) -> Value {
+        cost::loaded(cost::PRODUCT, index);
         Value::object(ProductDrop {
             site: site.clone(),
             index,
@@ -527,6 +529,7 @@ pub struct VariantDrop {
 
 impl VariantDrop {
     pub fn value(site: &SiteRef, product: usize, index: usize) -> Value {
+        cost::loaded(cost::VARIANT, (product, index));
         Value::object(VariantDrop {
             site: site.clone(),
             product,

@@ -6,6 +6,7 @@ use super::collection::{CollectionDrop, sort_options};
 use super::content::{ArticleDrop, PageDrop};
 use super::product::ProductDrop;
 use super::{PaginatedList, SiteRef, hash, strings};
+use crate::render::cost;
 
 /// The resource types a search covers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,6 +88,7 @@ fn matches(clauses: &[Clause], document: &Document) -> bool {
 
 /// Runs a search and returns the matching resources as drops, grouped by type.
 pub fn run(site: &SiteRef, query: &str, types: &[SearchType]) -> Vec<(SearchType, Vec<Value>)> {
+    cost::asked(cost::SEARCH);
     let clauses = clauses(query);
     let store = &site.store;
     let mut out = Vec::new();
@@ -325,6 +327,7 @@ pub fn predictive_search_value(site: &SiteRef) -> Value {
 
 /// The `recommendations` object, for `/recommendations/products?product_id=...`.
 pub fn recommendations_value(site: &SiteRef) -> Value {
+    cost::asked(cost::SEARCH);
     let product = site
         .request
         .param("product_id")

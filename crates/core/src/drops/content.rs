@@ -9,6 +9,7 @@ use super::media::ImageDrop;
 use super::metafield::MetafieldsDrop;
 use super::product::iso;
 use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
+use crate::render::cost;
 use crate::store::{Article, Blog, Page};
 use crate::util::handleize;
 
@@ -19,6 +20,7 @@ pub struct PageDrop {
 
 impl PageDrop {
     pub fn value(site: &SiteRef, index: usize) -> Value {
+        cost::loaded(cost::PAGE, index);
         Value::object(PageDrop {
             site: site.clone(),
             index,
@@ -98,6 +100,7 @@ impl BlogDrop {
     }
 
     pub fn tagged(site: &SiteRef, index: usize, tags: Vec<String>) -> Value {
+        cost::loaded(cost::BLOG, index);
         Value::object(BlogDrop {
             site: site.clone(),
             index,
@@ -201,6 +204,7 @@ pub struct ArticleDrop {
 
 impl ArticleDrop {
     pub fn value(site: &SiteRef, blog: usize, index: usize) -> Value {
+        cost::loaded(cost::ARTICLE, (blog, index));
         Value::object(ArticleDrop {
             site: site.clone(),
             blog,

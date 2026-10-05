@@ -6,8 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lsf_core::render::Target;
+use lsf_core::render::cost::Costs;
 use lsf_core::render::page::{Page, Resource};
+use lsf_core::render::{ProfileOptions, Target};
 use lsf_core::store::load::{DataSource, LoadOptions, load};
 use lsf_core::store::{CartLine, Store};
 use lsf_core::theme::Revalidate;
@@ -706,4 +707,380 @@ fn a_liquid_asset_gets_a_new_url_when_the_settings_change() {
     assert_ne!(other_colors, colors);
     // A plain file only follows its own content.
     assert_eq!(other_base, base);
+}
+
+#[test]
+fn a_render_says_how_long_its_parts_took() {
+    let fixture = fixture();
+    let kinds = |rendered: &Rendered| -> Vec<String> {
+        let sections = &rendered.timings.sections;
+        sections
+            .iter()
+            .map(|section| section.kind.clone())
+            .collect()
+    };
+
+    // A page: its template, then its layout, and the sections of both as they come.
+    let page = fixture.page("/");
+    let timings = &page.timings;
+    assert_eq!(
+        kinds(&page),
+        ["hero", "announcement", "announcement", "footer"]
+    );
+    assert_eq!(
+        timings.sections[0].id,
+        lsf_core::render::template_section_id("index", "hero")
+    );
+    assert_eq!(timings.sections[3].id, "footer");
+    let (template, layout) = (timings.template.unwrap(), timings.layout.unwrap());
+    assert!(template + layout <= timings.total, "{timings:?}");
+    // The sections are part of the template or of the layout.
+    let of = |range: std::ops::Range<usize>| -> std::time::Duration {
+        timings.sections[range]
+            .iter()
+            .map(|section| section.duration)
+            .sum()
+    };
+    assert!(of(0..2) <= template && of(2..4) <= layout, "{timings:?}");
+    assert!(
+        timings
+            .sections
+            .iter()
+            .all(|section| !section.duration.is_zero())
+    );
+
+    // The theme blocks of a section, each one before the blocks it holds. An app block and
+    // a disabled one are not rendered.
+    let hero = &timings.sections[0];
+    let blocks: Vec<(&str, &str, usize)> = hero
+        .blocks
+        .iter()
+        .map(|block| (block.kind.as_str(), block.key.as_str(), block.depth))
+        .collect();
+    assert_eq!(
+        blocks,
+        [
+            ("_title", "title", 1),
+            ("text", "intro", 1),
+            ("group", "group", 1),
+            ("text", "nested", 2)
+        ]
+    );
+    // The id is the one the page gives the block.
+    let group = &hero.blocks[2];
+    assert!(
+        page.body
+            .contains(&format!("id=\"shopify-block-{}\"", group.id)),
+        "{group:?}"
+    );
+    let took = |index: usize| -> std::time::Duration {
+        let block = &hero.blocks[index];
+        assert_eq!(block.durations.len(), 1, "{block:?}");
+        block.durations[0]
+    };
+    // A block is part of the one it is in, and the blocks of a section are part of it.
+    assert!(took(3) <= took(2), "{hero:?}");
+    assert!(took(0) + took(1) + took(2) <= hero.duration, "{hero:?}");
+    assert!(
+        timings.sections[1..]
+            .iter()
+            .all(|section| section.blocks.is_empty())
+    );
+
+    // Sections asked for alone: no template, no layout.
+    let footer = fixture.render_with(
+        request("/"),
+        Session::initial(&fixture.store),
+        &Target::Section("footer".to_string()),
+    );
+    assert_eq!(kinds(&footer), ["footer"]);
+    assert!(footer.timings.template.is_none() && footer.timings.layout.is_none());
+    assert!(footer.timings.sections[0].duration <= footer.timings.total);
+}
+
+/// The frames of a profile as they nest: `a(b c(d))`. Checks that they close in order.
+fn profile_shape(profile: &lsf_liquid::Profile) -> String {
+    let mut shape = String::new();
+    let mut open = Vec::new();
+    for event in &profile.events {
+        if event.open {
+            if !shape.is_empty() && !shape.ends_with('(') {
+                shape.push(' ');
+            }
+            let frame = &profile.frames[event.frame];
+            shape.push_str(&frame.name);
+            if let Some(line) = frame.line {
+                shape.push_str(&format!(":{line}"));
+            }
+            shape.push('(');
+            open.push(event.frame);
+        } else {
+            assert_eq!(open.pop(), Some(event.frame), "{shape}");
+            shape.push(')');
+        }
+    }
+    assert!(open.is_empty(), "{shape}");
+    shape.replace("()", "")
+}
+
+#[test]
+fn a_profile_records_what_rendered_what() {
+    let fixture = fixture();
+    let site = fixture.renderer.site(
+        fixture.store.clone(),
+        request("/"),
+        Session::initial(&fixture.store),
+    );
+    let page = || lsf_core::render::routes::resolve(&site);
+    let plain = fixture.renderer.render_page(&site, page(), &Target::Page);
+    let (rendered, profile) =
+        fixture
+            .renderer
+            .profile_page(&site, page(), &Target::Page, &ProfileOptions::default());
+    // Profiling changes nothing of what is rendered.
+    assert_eq!(rendered.body, plain.body);
+    assert!(rendered.errors.is_empty(), "{:?}", rendered.errors);
+
+    let hero = lsf_core::render::template_section_id("index", "hero");
+    let second = lsf_core::render::template_section_id("index", "second");
+    let group = lsf_core::tags::group_id_prefix("header-group");
+    // The template, then the layout: under each one its sections, under a section its file,
+    // and under a file the blocks and the snippets it renders.
+    assert_eq!(
+        profile_shape(&profile),
+        format!(
+            "render(\
+               templates/index.json(\
+                 section {hero}(sections/hero(\
+                   block title(blocks/_title) \
+                   block intro(blocks/text(snippets/meta)) \
+                   block group(blocks/group(block nested(blocks/text(snippets/meta)))) \
+                   snippets/meta)) \
+                 section {second}(sections/announcement)) \
+               layout/theme(\
+                 section {group}announcement(sections/announcement) \
+                 section footer(sections/footer)))"
+        )
+    );
+    assert!(profile.frames.iter().all(|frame| frame.line.is_none()));
+
+    // With lines, the tags and the outputs of each file, under the file.
+    let with_lines_options = ProfileOptions {
+        lines: true,
+        ..ProfileOptions::default()
+    };
+    let (with_lines, lines) =
+        fixture
+            .renderer
+            .profile_page(&site, page(), &Target::Page, &with_lines_options);
+    assert_eq!(with_lines.body, plain.body);
+    let shape = profile_shape(&lines);
+    assert!(
+        shape.contains("section footer(sections/footer(sections/footer:1"),
+        "{shape}"
+    );
+    assert!(shape.contains("layout/theme(layout/theme:2 "), "{shape}");
+
+    // A section asked for alone.
+    let (_, footer) = fixture.renderer.profile_page(
+        &site,
+        page(),
+        &Target::Section("footer".to_string()),
+        &ProfileOptions::default(),
+    );
+    assert_eq!(
+        profile_shape(&footer),
+        "render(section footer(sections/footer))"
+    );
+}
+
+/// How many things of each kind a profile was charged for, without the kinds that were not.
+fn charged(profile: &lsf_liquid::Profile) -> Vec<(&str, u64)> {
+    let total: u64 = profile
+        .charges
+        .iter()
+        .map(|charge| charge.count * charge.each)
+        .sum();
+    assert_eq!(profile.points, total, "{:?}", profile.charges);
+    profile
+        .charges
+        .iter()
+        .filter(|charge| charge.count > 0)
+        .map(|charge| (charge.kind.as_str(), charge.count))
+        .collect()
+}
+
+#[test]
+fn a_profile_counts_what_a_page_loads() {
+    let fixture = fixture();
+    let profile_with = |path: &str, options: &ProfileOptions| {
+        let site = fixture.renderer.site(
+            fixture.store.clone(),
+            request(path),
+            Session::initial(&fixture.store),
+        );
+        let page = lsf_core::render::routes::resolve(&site);
+        let (_, profile) = fixture
+            .renderer
+            .profile_page(&site, page, &Target::Page, options);
+        profile
+    };
+    let profile = |path: &str| profile_with(path, &ProfileOptions::default());
+    // What was loaded, without the tags and the outputs, which every page has.
+    let loaded = |profile: &lsf_liquid::Profile| -> Vec<(String, u64)> {
+        let charges = charged(profile);
+        assert_eq!(charges[0].0, "liquid");
+        assert!(charges[0].1 > 10, "{charges:?}");
+        charges[1..]
+            .iter()
+            .map(|(kind, count)| (kind.to_string(), *count))
+            .collect()
+    };
+    let of = |pairs: &[(&str, u64)]| -> Vec<(String, u64)> {
+        pairs
+            .iter()
+            .map(|(kind, count)| (kind.to_string(), *count))
+            .collect()
+    };
+
+    // The home page: the product of a section setting, and the one of a block setting.
+    let home = profile("/");
+    assert_eq!(loaded(&home), of(&[("product", 2)]));
+    // A product page reads the variants of its product.
+    assert_eq!(
+        loaded(&profile("/products/ceramic-mug")),
+        of(&[("product", 1), ("variant", 3)])
+    );
+    // A collection page: the collection and the products of the page.
+    assert_eq!(
+        loaded(&profile("/collections/all")),
+        of(&[("product", 8), ("collection", 1)])
+    );
+    assert_eq!(loaded(&profile("/pages/about")), of(&[("page", 1)]));
+
+    // The same render is charged the same every time.
+    let again = profile("/");
+    assert_eq!(again.points, home.points);
+    assert_eq!(again.charges, home.charges);
+    // The points of a frame are what was charged while it was open: the two products of
+    // the home page are inside the section that asks for them.
+    let hero = format!(
+        "section {}",
+        lsf_core::render::template_section_id("index", "hero")
+    );
+    let frame = home
+        .frames
+        .iter()
+        .position(|frame| frame.name == hero)
+        .unwrap();
+    let at: Vec<u64> = home
+        .events
+        .iter()
+        .filter(|event| event.frame == frame)
+        .map(|event| event.points)
+        .collect();
+    assert!(at[1] - at[0] >= 200, "{at:?}");
+    assert!(at[1] - at[0] < home.points, "{at:?}");
+
+    // Other costs, other points for the same things.
+    let cheap = Costs::default().with("product=1,liquid=0").unwrap();
+    let options = ProfileOptions {
+        costs: cheap,
+        ..ProfileOptions::default()
+    };
+    let cheaper = profile_with("/", &options);
+    assert_eq!(cheaper.points, 2);
+    assert_eq!(charged(&cheaper), charged(&home));
+}
+
+#[test]
+fn what_is_loaded_is_charged_once() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "designer": [
+                { "handle": "sam", "fields": { "name": "Sam" } },
+                { "handle": "kim", "fields": { "name": "Kim" } }
+            ]
+        }
+    });
+    let options = LoadOptions {
+        theme_locales: vec!["en".to_string(), "fr".to_string()],
+    };
+    let (store, diagnostics) =
+        lsf_core::store::load::load_with_overlay(&DataSource::Demo, &options, Some(&overlay));
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    // What a piece of Liquid is charged for, on a page.
+    let charges = |path: &str, source: &str| -> Vec<(String, u64)> {
+        let profiler = lsf_liquid::Profiler::with_costs(false, Costs::default().pairs());
+        {
+            let _active = profiler.activate();
+            fixture.liquid(path, Session::initial(&fixture.store), source);
+        }
+        charged(&profiler.finish())
+            .into_iter()
+            .map(|(kind, count)| (kind.to_string(), count))
+            .collect()
+    };
+    let of = |pairs: &[(&str, u64)]| -> Vec<(String, u64)> {
+        pairs
+            .iter()
+            .map(|(kind, count)| (kind.to_string(), *count))
+            .collect()
+    };
+    let tee = "/products/organic-cotton-t-shirt";
+
+    // A metafield is read once, however many times the template prints it. One that is not
+    // there is looked for all the same, in a namespace that exists or not.
+    assert_eq!(
+        charges(
+            tee,
+            "{{ product.metafields.custom.care }}{{ product.metafields.custom.care }}\
+             {{ product.metafields.reviews.rating_count }}\
+             {{ product.metafields.custom.nothing }}{{ product.metafields.nowhere.nothing }}\
+             {{ product.metafields.nowhere.nothing }}"
+        ),
+        of(&[("product", 1), ("metafield", 4)])
+    );
+    // The same metafield of another product is another one.
+    assert_eq!(
+        charges(
+            "/collections/all",
+            "{% for product in collection.products %}{{ product.metafields.custom.care }}{% endfor %}"
+        ),
+        of(&[("product", 8), ("collection", 1), ("metafield", 8)])
+    );
+    // A product named by its handle, twice.
+    assert_eq!(
+        charges(
+            "/",
+            "{{ all_products['ceramic-mug'].title }}{{ all_products['ceramic-mug'].price }}"
+        ),
+        of(&[("product", 1)])
+    );
+    // Metaobjects: each one once, and their fields are not metafields to load.
+    assert_eq!(
+        charges(
+            "/",
+            "{{ metaobjects.designer.sam.name }}\
+             {% for designer in metaobjects.designer.values %}{{ designer.name }}{% endfor %}"
+        ),
+        of(&[("metaobject", 2)])
+    );
+    assert_eq!(
+        charges(
+            "/",
+            "{{ linklists.main-menu.title }}{{ linklists['main-menu'].links.size }}"
+        ),
+        of(&[("menu", 1)])
+    );
+    // A search is charged, and so is each thing it finds.
+    let search = charges("/search?q=mug", "{{ search.results_count }}");
+    assert_eq!(search[search.len() - 1], ("search".to_string(), 1));
+    assert!(search.contains(&("product".to_string(), 1)), "{search:?}");
+    // What a template does not ask for costs nothing.
+    assert_eq!(charges("/search?q=mug", "{{ shop.name }}"), of(&[]));
 }

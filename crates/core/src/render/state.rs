@@ -1,10 +1,12 @@
 //! Per-render state shared by tags and filters through the Liquid context's registers.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use lsf_liquid::{Context, Error, Result, Value};
 
 use super::page::Page;
+use super::{BlockTiming, SectionTiming};
 use crate::site::Site;
 use crate::theme::Layout;
 
@@ -19,6 +21,10 @@ struct Inner {
     section_counts: Vec<(String, usize)>,
     /// Nesting of `content_for`, to stop runaway recursion.
     block_depth: usize,
+    /// How long each section took, in the order they were rendered.
+    sections: Vec<SectionTiming>,
+    /// The theme blocks of the sections being rendered, until their section takes them.
+    blocks: Vec<BlockTiming>,
 }
 
 pub struct RenderState {
@@ -113,19 +119,61 @@ impl RenderState {
         }
     }
 
-    /// Enters a nested block render; fails when blocks nest unreasonably deep.
-    pub fn enter_block(&self) -> Result<()> {
+    /// How many blocks are noted when a section starts: what `record_section` needs to tell
+    /// which ones are its own.
+    pub fn blocks_so_far(&self) -> usize {
+        self.inner().blocks.len()
+    }
+
+    /// Notes how long a section took to render. The blocks noted since `blocks_before` are
+    /// its own.
+    pub fn record_section(&self, id: &str, kind: &str, duration: Duration, blocks_before: usize) {
+        let mut inner = self.inner();
+        let at = blocks_before.min(inner.blocks.len());
+        let blocks = inner.blocks.split_off(at);
+        inner.sections.push(SectionTiming {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            duration,
+            blocks,
+        });
+    }
+
+    /// How long each section took, in the order they were rendered.
+    pub fn section_timings(&self) -> Vec<SectionTiming> {
+        self.inner().sections.clone()
+    }
+
+    /// Enters a nested block render; fails when blocks nest unreasonably deep. Returns what
+    /// `leave_block` needs to note how long the block took.
+    pub fn enter_block(&self, id: &str, key: &str, kind: &str) -> Result<usize> {
         let mut inner = self.inner();
         if inner.block_depth >= MAX_BLOCK_DEPTH {
             return Err(Error::standard("blocks are nested too deeply"));
         }
         inner.block_depth += 1;
-        Ok(())
+        // A block rendered again, as in a loop, is noted where it first was: before the
+        // blocks it holds.
+        if let Some(index) = inner.blocks.iter().position(|block| block.id == id) {
+            return Ok(index);
+        }
+        let depth = inner.block_depth;
+        inner.blocks.push(BlockTiming {
+            id: id.to_string(),
+            key: key.to_string(),
+            kind: kind.to_string(),
+            depth,
+            durations: Vec::new(),
+        });
+        Ok(inner.blocks.len() - 1)
     }
 
-    pub fn leave_block(&self) {
+    pub fn leave_block(&self, entered: usize, duration: Duration) {
         let mut inner = self.inner();
         inner.block_depth = inner.block_depth.saturating_sub(1);
+        if let Some(block) = inner.blocks.get_mut(entered) {
+            block.durations.push(duration);
+        }
     }
 }
 

@@ -21,6 +21,7 @@ it is specific to a storefront.
 | `value`, `number`, `time` | The value model and Ruby's arithmetic, string conversion and `strftime`. |
 | `context` | Scopes, counters, registers, the globals object, and the partial loader `render`/`include` use. |
 | `environment` | The registry of tags and filters. Embedders add their own. |
+| `profiler` | What a render spends its time in, when it is asked to record it: every named template as a frame inside the one that rendered it, and on demand every tag and output by line. Each event also carries the points charged so far: one kind for a tag or an output, the others charged by the host through the profiler of the thread, since the objects that load things do not see the context. A render without a profiler pays one test per block body. |
 | `filters/` | The standard filters. |
 
 Values that are not plain data implement the `Object` trait (`get`, `index`, `items`, `size`,
@@ -70,6 +71,9 @@ downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference i
 | `minify` | The stylesheets and the scripts of the theme, minified with a source map. |
 | `compress` | Brotli or gzip for the responses that gain from it, by what the client accepts. |
 | `control` | The `/__lsf` API. |
+| `../profile` | Shared by `lsf profile` and `/__lsf/profile`: renders a page several times with the profiler, keeps the render in the middle, and writes it as a tree of text or in the format of speedscope, in time or in points. `lsf-core` adds the frames Liquid does not know (`render`, a JSON template, `section <id>`, `block <key>`) and the costs (`render/cost`): the objects charge for what they load where they are created. |
+| `speedscope` | The viewer of flame graphs, served from the binary for `/__lsf/profile?...&html=1`. Its files are in `assets/speedscope/`, with their licenses. |
+| `timing` | The `Server-Timing` header of each response, and the render times `/__lsf/timings` adds up: a histogram per template, per section and per theme block, so that they take the same room after a million pages. |
 | `live_reload` | `--live-reload`: the WebSocket open pages listen on, and the task that looks at the theme and data directories while a page listens. The script it injects is `assets/live-reload.js`, tested with Node (`mise run test:js`). |
 
 Rendering is CPU-bound and synchronous; the async server hands each request to a blocking

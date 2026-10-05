@@ -235,6 +235,17 @@ The control API is never delayed, and a delayed response carries the header
 - **The template.** `x-lsf-template` names the template that rendered the page (`product`,
   `product.alternate`, `404`, ...).
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.
+- **Render time.** Every response carries `Server-Timing`, as on Shopify: `processing` for the
+  whole request, `render` for the Liquid, and with `--timings` one entry per section and per
+  theme block. `GET /__lsf/timings` adds up every page, section and block rendered since the
+  server started, or since `DELETE /__lsf/timings`. These are the times of `lsf` on the machine that
+  runs the tests: compare them with each other rather than with a fixed number, which a busy
+  CI machine would miss. The entries are listed in the
+  [README](../README.md#render-times). To find what makes a page slow, `lsf profile <path>`
+  shows every section, block and snippet it renders, in time or in points: what the page
+  would cost Shopify, where a product or a metafield has to be fetched. Points are the same
+  at every render, so a test can compare them
+  ([README](../README.md#profile-a-page)).
 - **Images.** A response with `x-lsf-placeholder: 1` is a generated placeholder: the data
   references a file that is not in `files/`. Placeholders have the declared size, so layout
   assertions hold; put real files in `files/` for visual regression tests. A browser gets
@@ -256,7 +267,7 @@ Everything a theme talks to on a storefront:
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
 | Forms | Contact, newsletter (`customer`), blog comment, customer login and logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
-| Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`. |
+| Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`, `GET` and `DELETE /__lsf/timings`, `/__lsf/profile?path=<path>`. |
 
 Not simulated: checkout (`/checkout` shows a summary of the cart and nothing else), customer
 registration, password reset and address editing (the forms answer with an error saying so),

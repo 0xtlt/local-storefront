@@ -6,6 +6,7 @@ use std::sync::Arc;
 use lsf_liquid::{Object, Value};
 
 use super::SiteRef;
+use crate::render::cost;
 use crate::store::{Link, LinkTarget, Menu};
 
 /// The global `linklists`: menus by handle.
@@ -48,6 +49,7 @@ pub struct LinkListDrop {
 
 impl LinkListDrop {
     pub fn value(site: &SiteRef, menu: &Menu) -> Value {
+        cost::loaded(cost::MENU, &menu.handle);
         Value::object(LinkListDrop {
             site: site.clone(),
             menu: menu.clone(),

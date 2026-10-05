@@ -11,6 +11,7 @@ use serde_json::Value as Json;
 
 use super::media::ImageDrop;
 use super::{SiteRef, hash};
+use crate::render::cost;
 use crate::store::{Image, Metafield, Metafields, Metaobject};
 use crate::util::stable_id;
 
@@ -18,6 +19,9 @@ use crate::util::stable_id;
 pub struct MetafieldsDrop {
     site: SiteRef,
     metafields: Metafields,
+    /// Tells the resource from the others, for what a profile charges: where its
+    /// metafields are in the store.
+    owner: usize,
 }
 
 impl MetafieldsDrop {
@@ -25,6 +29,7 @@ impl MetafieldsDrop {
         Value::object(MetafieldsDrop {
             site: site.clone(),
             metafields: metafields.clone(),
+            owner: std::ptr::from_ref(metafields) as usize,
         })
     }
 }
@@ -35,11 +40,17 @@ impl Object for MetafieldsDrop {
     }
 
     fn get(&self, key: &str) -> Option<Value> {
-        self.metafields.get(key).map(|fields| {
+        let fields = self.metafields.get(key);
+        if fields.is_none() {
+            // Asking for a metafield that is not there is a lookup all the same.
+            cost::loaded(cost::METAFIELD, (self.owner, key, ""));
+        }
+        fields.map(|fields| {
             Value::object(FieldsDrop {
                 site: self.site.clone(),
                 fields: fields.clone(),
                 kind: "metafield_namespace",
+                namespace: Some((self.owner, key.to_string())),
             })
         })
     }
@@ -54,6 +65,17 @@ struct FieldsDrop {
     site: SiteRef,
     fields: IndexMap<String, Metafield>,
     kind: &'static str,
+    /// For a namespace of metafields: the resource it belongs to and its name. Each of its
+    /// metafields is loaded when it is read, unlike the fields of a metaobject.
+    namespace: Option<(usize, String)>,
+}
+
+impl FieldsDrop {
+    fn read(&self, key: &str) {
+        if let Some((owner, namespace)) = &self.namespace {
+            cost::loaded(cost::METAFIELD, (owner, namespace, key));
+        }
+    }
 }
 
 impl Object for FieldsDrop {
@@ -62,6 +84,8 @@ impl Object for FieldsDrop {
     }
 
     fn get(&self, key: &str) -> Option<Value> {
+        // Whether the metafield is there or not: it is looked for.
+        self.read(key);
         self.fields
             .get(key)
             .map(|field| MetafieldDrop::value(&self.site, field))
@@ -73,6 +97,7 @@ impl Object for FieldsDrop {
             self.fields
                 .iter()
                 .map(|(key, field)| {
+                    self.read(key);
                     Value::array(vec![
                         Value::from(key),
                         MetafieldDrop::value(&self.site, field),
@@ -302,6 +327,7 @@ pub struct MetaobjectDrop {
 
 impl MetaobjectDrop {
     pub fn value(site: &SiteRef, entry: &Metaobject) -> Value {
+        cost::loaded(cost::METAOBJECT, (&entry.kind, &entry.handle));
         Value::object(MetaobjectDrop {
             site: site.clone(),
             entry: entry.clone(),

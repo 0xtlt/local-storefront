@@ -11,6 +11,7 @@ use chrono_tz::Tz;
 
 use crate::environment::Environment;
 use crate::error::{Error, ErrorKind, Result};
+use crate::profiler::Profiler;
 use crate::template::Template;
 use crate::value::{Object, Value};
 use crate::variable::FilterArgs;
@@ -116,6 +117,8 @@ pub struct Shared {
     pub now: DateTime<Utc>,
     /// The time zone dates are displayed in.
     pub time_zone: Tz,
+    /// Records what the render spends its time in, when it is asked to.
+    profiler: Option<Arc<Profiler>>,
 }
 
 pub struct ContextBuilder {
@@ -127,6 +130,7 @@ pub struct ContextBuilder {
     now: Option<DateTime<Utc>>,
     time_zone: Tz,
     template_name: Option<Arc<str>>,
+    profiler: Option<Arc<Profiler>>,
 }
 
 impl ContextBuilder {
@@ -168,6 +172,12 @@ impl ContextBuilder {
         self
     }
 
+    /// Records what the render spends its time in.
+    pub fn profiler(mut self, profiler: Arc<Profiler>) -> Self {
+        self.profiler = Some(profiler);
+        self
+    }
+
     pub fn build(self) -> Context {
         Context {
             shared: Arc::new(Shared {
@@ -179,6 +189,7 @@ impl ContextBuilder {
                 warnings: Mutex::new(Vec::new()),
                 now: self.now.unwrap_or_else(Utc::now),
                 time_zone: self.time_zone,
+                profiler: self.profiler,
             }),
             scopes: vec![HashMap::new()],
             environment: self.assigns,
@@ -229,11 +240,17 @@ impl Context {
             now: None,
             time_zone: Tz::UTC,
             template_name: None,
+            profiler: None,
         }
     }
 
     pub fn shared(&self) -> &Shared {
         &self.shared
+    }
+
+    /// What records this render, when it is profiled.
+    pub fn profiler(&self) -> Option<&Arc<Profiler>> {
+        self.shared.profiler.as_ref()
     }
 
     /// A value registered with [`ContextBuilder::register`].

@@ -1,5 +1,6 @@
 //! The rendering pipeline: request → page → template sections → layout.
 
+pub mod cost;
 pub mod globals;
 pub mod hints;
 pub mod page;
@@ -12,11 +13,13 @@ pub mod state;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use lsf_liquid::filters::escape_html;
-use lsf_liquid::{Context, Environment, PartialLoader, Template, Value};
+use lsf_liquid::{Context, Environment, PartialLoader, Profile, Profiler, Template, Value};
 
+use self::cost::Costs;
 use self::globals::Globals;
 use self::page::{Page, Resource};
 use self::section::{Placement, render_section};
@@ -65,6 +68,19 @@ impl PartialLoader for ThemePartials {
     }
 }
 
+/// The frame of a profile that holds every other: the render as a whole.
+pub const PROFILE_ROOT: &str = "render";
+
+/// How a page is profiled.
+#[derive(Clone, Debug, Default)]
+pub struct ProfileOptions {
+    /// Record every tag and every output of the templates too, which makes the render
+    /// slower than it is.
+    pub lines: bool,
+    /// What each kind of thing costs, in points.
+    pub costs: Costs,
+}
+
 /// What to render for a request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -89,6 +105,52 @@ pub struct Rendered {
     pub warnings: Vec<String>,
     /// The template that rendered the page, e.g. `product.alternate`.
     pub template: String,
+    /// How long it took.
+    pub timings: Timings,
+}
+
+/// How long a render took, and the parts of it.
+#[derive(Clone, Debug, Default)]
+pub struct Timings {
+    /// The whole render.
+    pub total: Duration,
+    /// The template: what goes into `content_for_layout`. Only when a page was rendered.
+    pub template: Option<Duration>,
+    /// The layout around it. Only when a page was rendered.
+    pub layout: Option<Duration>,
+    /// Every section, in the order they were rendered. Their time is part of the template's
+    /// or of the layout's, whichever they are in.
+    pub sections: Vec<SectionTiming>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SectionTiming {
+    /// The id of the section on the page: the one of `#shopify-section-<id>`.
+    pub id: String,
+    /// The type of the section: the name of its file in `sections/`.
+    pub kind: String,
+    pub duration: Duration,
+    /// Its theme blocks, each one before the blocks it holds. Their time is part of the
+    /// section's. The blocks a section writes itself, from `section.blocks`, are not apart
+    /// from it: nothing tells where one ends.
+    pub blocks: Vec<BlockTiming>,
+}
+
+/// A theme block of a section: a file of `blocks/`, rendered by `content_for`.
+#[derive(Clone, Debug)]
+pub struct BlockTiming {
+    /// The id of the block on the page: the one of `#shopify-block-<id>`.
+    pub id: String,
+    /// Its name in the section: the key it has in the JSON template, or the `id` a static
+    /// block is given.
+    pub key: String,
+    /// The type of the block: the name of its file in `blocks/`.
+    pub kind: String,
+    /// 1 for a block of the section, 2 for a block of such a block, and so on.
+    pub depth: usize,
+    /// Every time it was rendered: a block in a loop is rendered once per turn. The time of
+    /// the blocks it holds is part of its own.
+    pub durations: Vec<Duration>,
 }
 
 pub struct Renderer {
@@ -167,10 +229,15 @@ impl Renderer {
         Arc::new(Site::new(self.theme.clone(), store, request, session, now))
     }
 
-    fn context(&self, site: &Arc<Site>, page: &Page) -> (Context, Arc<RenderState>, Arc<Globals>) {
+    fn context(
+        &self,
+        site: &Arc<Site>,
+        page: &Page,
+        profiler: Option<Arc<Profiler>>,
+    ) -> (Context, Arc<RenderState>, Arc<Globals>) {
         let state = Arc::new(RenderState::new(site.clone(), page.clone()));
         let globals = Arc::new(Globals::new(site.clone(), page.clone()));
-        let ctx = Context::builder(self.env.clone())
+        let mut builder = Context::builder(self.env.clone())
             .globals(globals.clone())
             .partials(Arc::new(ThemePartials {
                 theme: self.theme.clone(),
@@ -178,8 +245,11 @@ impl Renderer {
             }))
             .register(state.clone())
             .now(site.now)
-            .time_zone(site.store.shop.timezone)
-            .build();
+            .time_zone(site.store.shop.timezone);
+        if let Some(profiler) = profiler {
+            builder = builder.profiler(profiler);
+        }
+        let ctx = builder.build();
         globals.set("settings", settings::theme_settings(&state, &ctx));
         (ctx, state, globals)
     }
@@ -192,23 +262,63 @@ impl Renderer {
         session: Session,
         target: &Target,
     ) -> Rendered {
+        let started = Instant::now();
         let site = self.site(store, request, session);
         let page = routes::resolve(&site);
-        self.render_page(&site, page, target)
+        let mut rendered = self.render_page(&site, page, target);
+        rendered.timings.total = started.elapsed();
+        rendered
     }
 
     /// Renders an already resolved page. Used for the endpoints that render a section against
     /// a resource of their own (product recommendations, predictive search).
     pub fn render_page(&self, site: &Arc<Site>, page: Page, target: &Target) -> Rendered {
-        let (mut ctx, state, globals) = self.context(site, &page);
+        self.render_page_with(site, page, target, None)
+    }
+
+    /// Renders a page as [`Renderer::render_page`] does, and records what the render spends
+    /// its time in: the template and the layout, every section and every theme block, and
+    /// every snippet, each one inside what rendered it. Next to the time, the profile counts
+    /// what the render would cost a storefront, in the points of [`cost`].
+    pub fn profile_page(
+        &self,
+        site: &Arc<Site>,
+        page: Page,
+        target: &Target,
+        options: &ProfileOptions,
+    ) -> (Rendered, Profile) {
+        let profiler = Profiler::with_costs(options.lines, options.costs.pairs());
+        let rendered = {
+            // What the objects of the page load is charged to the profiler of the thread.
+            let _active = profiler.activate();
+            let _span = profiler.span(PROFILE_ROOT, None);
+            self.render_page_with(site, page, target, Some(profiler.clone()))
+        };
+        (rendered, profiler.finish())
+    }
+
+    fn render_page_with(
+        &self,
+        site: &Arc<Site>,
+        page: Page,
+        target: &Target,
+        profiler: Option<Arc<Profiler>>,
+    ) -> Rendered {
+        let started = Instant::now();
+        let (mut ctx, state, globals) = self.context(site, &page, profiler);
         // What Shopify preloads on its own comes first, then what the theme asks for.
         let mut preloads = Vec::new();
+        let mut timings = Timings::default();
         let (status, content_type, body) = match target {
             Target::Page => {
+                let template_started = Instant::now();
                 let (content, layout) = self.render_template(&ctx, &page);
+                timings.template = Some(template_started.elapsed());
                 globals.set("content_for_layout", Value::from(content.clone()));
                 let layout = state.layout_override().unwrap_or(layout);
+                let layout_started = Instant::now();
                 let html = self.render_layout(&mut ctx, &layout, &page, content);
+                timings.layout = Some(layout_started.elapsed());
                 preloads = hints::of_head(&html, &site.request.host);
                 // Shopify preloads the stylesheet it adds to the page itself.
                 if let Some(url) = platform::compiled_stylesheet_url(site)
@@ -259,6 +369,11 @@ impl Renderer {
             errors: ctx.errors(),
             warnings: ctx.warnings(),
             template: page.template.full(),
+            timings: Timings {
+                total: started.elapsed(),
+                sections: state.section_timings(),
+                ..timings
+            },
         }
     }
 
@@ -281,6 +396,10 @@ impl Renderer {
         // A JSON template lists sections.
         match self.theme.template_json(&format!("templates/{name}.json")) {
             Ok(Some(template)) => {
+                // A JSON template is no Liquid file: in a profile it is named as one.
+                let _span = ctx
+                    .profiler()
+                    .map(|profiler| profiler.span(&format!("templates/{name}.json"), None));
                 let mut content = String::new();
                 for key in &template.order {
                     let Some(instance) = template
@@ -476,7 +595,7 @@ impl Renderer {
         variables: &[(String, Value)],
     ) -> std::result::Result<(String, Vec<lsf_liquid::Error>), lsf_liquid::Error> {
         let template = Template::parse(&self.env, source)?;
-        let (ctx, _, _) = self.context(site, &page);
+        let (ctx, _, _) = self.context(site, &page, None);
         let mut inner = ctx.isolated()?;
         for (name, value) in variables {
             inner.set(name.clone(), value.clone());
@@ -488,8 +607,9 @@ impl Renderer {
     /// Renders `/robots.txt`: `templates/robots.txt.liquid` when the theme has one, Shopify's
     /// default otherwise. Either way it is plain text, without a layout.
     pub fn render_robots(&self, site: &Arc<Site>) -> Rendered {
+        let started = Instant::now();
         let page = Page::new("robots.txt", Resource::Index);
-        let (mut ctx, _, _) = self.context(site, &page);
+        let (mut ctx, _, _) = self.context(site, &page, None);
         let body = match self.theme.liquid("templates/robots.txt.liquid") {
             Ok(Some(file)) => file.template.render(&mut ctx),
             Ok(None) => seo::default_robots(site),
@@ -503,6 +623,10 @@ impl Renderer {
             errors: ctx.errors(),
             warnings: ctx.warnings(),
             template: page.template.full(),
+            timings: Timings {
+                total: started.elapsed(),
+                ..Timings::default()
+            },
         }
     }
 
@@ -516,7 +640,7 @@ impl Renderer {
     ) -> String {
         let site = self.site(store, request, Session::default());
         let page = Page::new("index", Resource::Index);
-        let (mut ctx, _, _) = self.context(&site, &page);
+        let (mut ctx, _, _) = self.context(&site, &page, None);
         match Template::parse_named(&self.env, source, Some(name)) {
             Ok(template) => template.render(&mut ctx),
             Err(error) => format!("/* {error} */"),

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use lsf_core::render::Target;
 use lsf_core::theme::Revalidate;
-use lsf_core::{Request, Session};
+use lsf_core::{Request, Session, Store};
 
 use crate::app::App;
 use crate::output::print_diagnostics;
@@ -28,14 +28,12 @@ pub struct Args {
     strict: bool,
 }
 
-pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, String> {
-    let app = App::open(theme, data, Revalidate::Never)?;
-    let (store, diagnostics) = app.load_store();
-    print_diagnostics(&diagnostics);
-    let store = Arc::new(store);
-
-    let (path, query) = args.path.split_once('?').unwrap_or((&args.path, ""));
-    let mut request = Request::new(args.host, path);
+/// The request for a path given on the command line, with its query string.
+pub(super) fn request_for(store: &Store, host: String, path_and_query: &str) -> Request {
+    let (path, query) = path_and_query
+        .split_once('?')
+        .unwrap_or((path_and_query, ""));
+    let mut request = Request::new(host, path);
     request.query = form_urlencoded::parse(query.as_bytes())
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect();
@@ -63,6 +61,15 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
             rest.to_string()
         };
     }
+    request
+}
+
+pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, String> {
+    let app = App::open(theme, data, Revalidate::Never)?;
+    let (store, diagnostics) = app.load_store();
+    print_diagnostics(&diagnostics);
+    let store = Arc::new(store);
+    let request = request_for(&store, args.host, &args.path);
 
     let target = match args.section_id {
         Some(id) => Target::Section(id),

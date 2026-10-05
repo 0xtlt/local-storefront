@@ -3,6 +3,7 @@
 mod app;
 mod commands;
 mod output;
+mod profile;
 mod server;
 
 use std::path::PathBuf;
@@ -45,6 +46,8 @@ enum Command {
     Serve(commands::serve::Args),
     /// Render one URL and print the HTML.
     Render(commands::render::Args),
+    /// Render one URL and print what the render spent its time in: sections, blocks, snippets.
+    Profile(commands::profile::Args),
     /// Check the store data and explain every problem found.
     Validate(commands::validate::Args),
     /// Create the data directory: a demo store, JSON Schemas for editors, and a guide.
@@ -64,6 +67,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Serve(args) => commands::serve::run(&cli.theme, cli.data.as_deref(), args),
         Command::Render(args) => commands::render::run(&cli.theme, cli.data.as_deref(), args),
+        Command::Profile(args) => commands::profile::run(&cli.theme, cli.data.as_deref(), args),
         Command::Validate(args) => commands::validate::run(&cli.theme, cli.data.as_deref(), args),
         Command::Init(args) => commands::init::run(&cli.theme, cli.data.as_deref(), args),
         Command::Schema(args) => commands::schema::run(args),

@@ -12,7 +12,7 @@ use serde_json::{Value as Json, json};
 
 use super::reply::{Reply, cache};
 use super::{
-    CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms, live_reload,
+    CART_COOKIE, Incoming, SESSION_COOKIE, ServerState, account, cart, forms, live_reload, timing,
 };
 
 /// A request being handled for a given visitor.
@@ -78,11 +78,9 @@ impl Visit<'_> {
             ),
         };
         let page = lsf_core::render::routes::resolve(&site);
-        let rendered =
-            self.state
-                .app
-                .renderer
-                .render_page(&site, page, &Target::Sections(ids.to_vec()));
+        let target = Target::Sections(ids.to_vec());
+        let rendered = self.state.app.renderer.render_page(&site, page, &target);
+        self.state.timings.add(&rendered, &target);
         serde_json::from_str(&rendered.body).unwrap_or(Json::Null)
     }
 }
@@ -290,6 +288,8 @@ fn log_problems(state: &ServerState, rendered: &Rendered) {
 
 fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     log_problems(visit.state, &rendered);
+    visit.state.timings.add(&rendered, target);
+    let timings = timing::of_render(&rendered.timings, visit.state.options.timings);
     let mut body = rendered.body;
     if visit.state.options.live_reload && *target == Target::Page {
         match body.rfind("</body>") {
@@ -299,6 +299,7 @@ fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     }
     let mut reply = Reply::new(rendered.status, rendered.content_type, body.into_bytes())
         .header("x-lsf-template", rendered.template)
+        .header("server-timing", timings)
         .header("content-language", visit.request.locale.clone());
     if !rendered.errors.is_empty() {
         reply = reply.header("x-lsf-liquid-errors", rendered.errors.len().to_string());

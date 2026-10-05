@@ -59,12 +59,27 @@ impl BlockBody {
     }
 
     pub fn render(&self, ctx: &mut Context, out: &mut String) {
+        let profiler = ctx.profiler().cloned();
         for node in &self.nodes {
-            match node {
+            let line = match node {
                 Node::Text(text) => {
                     out.push_str(text);
                     continue;
                 }
+                Node::Output { line, .. } | Node::Tag { line, .. } => *line,
+            };
+            // A profile counts every tag and every output, and when it is one of lines it
+            // names each by its template and its line.
+            let _span = profiler.as_ref().and_then(|profiler| {
+                let span = profiler.lines().then(|| {
+                    let template = ctx.template_name.as_deref().unwrap_or("(template)");
+                    profiler.span(template, Some(line))
+                });
+                profiler.node();
+                span
+            });
+            match node {
+                Node::Text(_) => {}
                 Node::Output { variable, line } => match variable.evaluate(ctx) {
                     Ok(value) => value.render_to(out),
                     Err(error) => out.push_str(&ctx.handle_error(error, *line)),
@@ -121,7 +136,13 @@ impl Template {
     /// afterwards.
     pub fn render_to(&self, ctx: &mut Context, out: &mut String) {
         let previous = std::mem::replace(&mut ctx.template_name, self.name.clone());
+        // A template that has a name is a frame of the profile, when there is one.
+        let span = match (ctx.profiler(), &self.name) {
+            (Some(profiler), Some(name)) => Some(profiler.span(name, None)),
+            _ => None,
+        };
         self.root.render(ctx, out);
+        drop(span);
         ctx.template_name = previous;
     }
 }

@@ -3,6 +3,7 @@
 
 use std::any::Any;
 use std::sync::Arc;
+use std::time::Instant;
 
 use indexmap::IndexMap;
 use lsf_liquid::{Context, Error, Hash, Object, Result, Value};
@@ -222,7 +223,13 @@ pub fn render_section(
     placement: &Placement<'_>,
     instance: &SectionInstance,
 ) -> Result<String> {
+    let started = Instant::now();
+    // In a profile, the section as it is placed on the page, around the file of its type.
+    let _span = ctx
+        .profiler()
+        .map(|profiler| profiler.span(&format!("section {}", placement.id), None));
     let state = RenderState::of(ctx)?;
+    let blocks_before = state.blocks_so_far();
     let theme = &state.site.theme;
     let path = format!("sections/{}.liquid", instance.kind);
     let file = theme.liquid(&path)?.ok_or_else(|| {
@@ -257,6 +264,12 @@ pub fn render_section(
         }),
     );
     let content = file.template.render(&mut inner);
+    state.record_section(
+        &placement.id,
+        &instance.kind,
+        started.elapsed(),
+        blocks_before,
+    );
 
     let tag = match &schema.wrapper {
         Wrapper::Tag(tag) => tag.as_str(),
@@ -289,6 +302,10 @@ pub fn render_block(
     if is_app_block(&instance.kind) {
         return Ok(String::new());
     }
+    let started = Instant::now();
+    let _span = ctx
+        .profiler()
+        .map(|profiler| profiler.span(&format!("block {key}"), None));
     let state = RenderState::of(ctx)?;
     let path = format!("blocks/{}.liquid", instance.kind);
     let file = state
@@ -314,7 +331,7 @@ pub fn render_block(
         ),
     });
 
-    state.enter_block()?;
+    let entered = state.enter_block(&id, key, &instance.kind)?;
     let rendered = (|| -> Result<String> {
         let mut inner = ctx.isolated()?;
         inner.set_inherited("section", container.section.clone());
@@ -335,7 +352,7 @@ pub fn render_block(
         );
         Ok(file.template.render(&mut inner))
     })();
-    state.leave_block();
+    state.leave_block(entered, started.elapsed());
     let content = rendered?;
 
     Ok(match &schema.wrapper {

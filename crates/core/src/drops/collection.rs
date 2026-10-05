@@ -10,6 +10,7 @@ use super::media::ImageDrop;
 use super::metafield::MetafieldsDrop;
 use super::product::{ProductDrop, swatch_value};
 use super::{Memo, PaginatedList, SiteRef, hash, strings, time_value};
+use crate::render::cost;
 use crate::site::Request;
 use crate::store::{Collection, Product, SortOrder, Swatch};
 use crate::urls::encode_component;
@@ -172,6 +173,7 @@ pub struct CollectionDrop {
 
 impl CollectionDrop {
     pub fn value(site: &SiteRef, index: usize) -> Value {
+        cost::loaded(cost::COLLECTION, index);
         Value::object(CollectionDrop {
             site: site.clone(),
             index,
@@ -181,6 +183,7 @@ impl CollectionDrop {
     }
 
     pub fn for_page(site: &SiteRef, index: usize, scope: CollectionScope) -> Value {
+        cost::loaded(cost::COLLECTION, index);
         Value::object(CollectionDrop {
             site: site.clone(),
             index,

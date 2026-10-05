@@ -59,6 +59,13 @@ pub struct Args {
     #[arg(long, env = "LSF_THROTTLE", value_name = "RULES")]
     throttle: Vec<String>,
 
+    /// Name every section and every theme block in the `Server-Timing` header of the pages,
+    /// with how long it took to render. Without this option the header says how long the
+    /// page, its template and its layout took. Either way `GET /__lsf/timings` adds up what
+    /// was rendered so far.
+    #[arg(long)]
+    timings: bool,
+
     /// Who visitors are logged in as when they arrive: the email of a customer of the data,
     /// `default` for the first one, or `none`. Without it, the store data decides
     /// (`session.customer`).
@@ -114,6 +121,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
             compress: !args.no_compression,
             minify: !args.no_minify,
             throttle: throttle.clone(),
+            timings: args.timings,
             customer: args.customer.clone(),
         },
     );

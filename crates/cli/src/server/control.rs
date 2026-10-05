@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use lsf_core::Session;
 use lsf_core::diagnostics::Diagnostics;
+use lsf_core::render::cost::Costs;
+use lsf_core::render::{ProfileOptions, Target};
 use lsf_core::store::build::{resolve_cart, resolve_company_location};
 use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
 use lsf_core::store::model::SessionInput;
@@ -13,8 +15,10 @@ use lsf_liquid::filters::escape_html;
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
+use super::storefront::Visit;
 use super::throttle::Throttle;
-use super::{Incoming, SESSION_COOKIE, ServerState};
+use super::{Incoming, SESSION_COOKIE, ServerState, speedscope};
+use crate::profile::Unit;
 
 pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     let path = incoming.path.trim_start_matches("/__lsf").trim_matches('/');
@@ -27,6 +31,13 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
         ("GET", []) => dashboard(state, incoming),
         ("GET", ["status"]) => Reply::json(200, &status(state)),
         ("GET", ["livereload"]) => Reply::text(200, state.observe_changes().to_string()),
+        ("GET", ["profile"]) => profile(state, incoming),
+        ("GET", ["speedscope", file]) => speedscope::file(file),
+        ("GET", ["timings"]) => Reply::json(200, &state.timings.to_json()),
+        ("DELETE", ["timings"]) => {
+            state.timings.clear();
+            Reply::json(200, &json!({ "ok": true }))
+        }
         ("POST", ["reload"]) => {
             let loaded = state.reload();
             Reply::json(200, &diagnostics_json(&loaded.diagnostics))
@@ -144,6 +155,85 @@ pub fn routes(state: &ServerState) -> Vec<String> {
             .map(|policy| format!("/policies/{}", policy.handle)),
     );
     routes
+}
+
+/// `GET /__lsf/profile?path=<path>`: what the render of a page spends its time in, for the
+/// session that asks, or with `points=1` what it would cost a storefront. Text for a person,
+/// a flame graph with `html=1`, and with `format=speedscope` the file the flame graph is
+/// drawn from, which any page may fetch.
+fn profile(state: &ServerState, incoming: &Incoming) -> Reply {
+    let Some(path) = incoming
+        .query_param("path")
+        .filter(|path| path.starts_with('/'))
+    else {
+        return Reply::text(
+            400,
+            "say which page: /__lsf/profile?path=/collections/all\n\
+             also: html=1 (a flame graph), points=1 (what the page costs a storefront, not the \
+             time it takes here), cost=product=50,metafield=5 (the points of a kind), lines=1 \
+             (every tag and output), all=1 (every row), runs=<n>, section_id=<id>, \
+             format=speedscope\n",
+        );
+    };
+    let flag = |name: &str| incoming.query_param(name).is_some_and(|value| value != "0");
+    // A flame graph is drawn by the viewer, which fetches this profile in its own format.
+    // The page of the viewer is served here: the address stays one whose parameters can be
+    // changed.
+    if flag("html") {
+        let mut query = form_urlencoded::Serializer::new(String::new());
+        for (name, value) in &incoming.query {
+            if name != "html" && name != "format" {
+                query.append_pair(name, value);
+            }
+        }
+        query.append_pair("format", "speedscope");
+        let profile_url = format!("/__lsf/profile?{}", query.finish());
+        return speedscope::page(&profile_url);
+    }
+    let costs = match Costs::default().with(incoming.query_param("cost").unwrap_or_default()) {
+        Ok(costs) => costs,
+        Err(problem) => return Reply::text(400, format!("cost: {problem}\n")),
+    };
+    let options = ProfileOptions {
+        lines: flag("lines"),
+        costs,
+    };
+    let unit = if flag("points") {
+        Unit::Points
+    } else {
+        Unit::Time
+    };
+    let runs = incoming
+        .query_param("runs")
+        .and_then(|runs| runs.parse().ok())
+        .unwrap_or(crate::profile::DEFAULT_RUNS);
+    let target = match incoming.query_param("section_id") {
+        Some(id) => Target::Section(id.to_string()),
+        None => Target::Page,
+    };
+    let (session_id, _) = state.session_id(incoming);
+    let (_, store) = state.snapshot(&session_id);
+    let request = state.storefront_request(&store, incoming, path, Vec::new());
+    let visit = Visit {
+        state,
+        incoming,
+        session_id,
+        store,
+        request,
+    };
+    let site = visit.site_for(path);
+    let measured = crate::profile::measure(&state.app.renderer, &site, &target, &options, runs);
+    match incoming.query_param("format") {
+        Some("speedscope" | "json") => Reply::json(
+            200,
+            &crate::profile::speedscope(&measured.profile, path, unit),
+        )
+        .header("access-control-allow-origin", "*"),
+        _ => Reply::text(
+            200,
+            crate::profile::text(path, &measured, unit, flag("all")),
+        ),
+    }
 }
 
 /// `GET /__lsf/login?customer=<email|default|none>&return_to=<path>`: logs the browser in as
@@ -373,7 +463,17 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
     };
     let links: String = routes(state)
         .iter()
-        .map(|route| format!("<li><a href=\"{0}\">{0}</a></li>", escape_html(route)))
+        .map(|route| {
+            let path =
+                percent_encoding::utf8_percent_encode(route, percent_encoding::NON_ALPHANUMERIC);
+            format!(
+                "<li><a href=\"{0}\">{0}</a> <span class=\"muted\">profile: \
+                 <a href=\"/__lsf/profile?path={path}\">time</a>, \
+                 <a href=\"/__lsf/profile?path={path}&amp;points=1\">points</a>, \
+                 <a href=\"/__lsf/profile?path={path}&amp;html=1\">flame graph</a></span></li>",
+                escape_html(route),
+            )
+        })
         .collect();
     Reply::html(
         200,
@@ -395,6 +495,8 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
              <li><code>GET|PUT|DELETE /__lsf/session</code>: read, set or reset the session (cart, customer, per-session data)</li>\
              <li><code>GET /__lsf/login?customer=&lt;email|default|none&gt;</code>: log this browser in as a customer</li>\
              <li><code>GET /__lsf/schema/store</code>: JSON Schema of the data format</li>\
+             <li><code>GET /__lsf/profile?path=&lt;path&gt;</code>: what the render of a page spends its time in: sections, blocks, snippets. With <code>points=1</code>, what it would cost a storefront. With <code>html=1</code>, a flame graph</li>\
+             <li><code>GET|DELETE /__lsf/timings</code>: how long the templates, the sections and the blocks took to render so far, or forget it</li>\
              <li><code>POST /__lsf/reload</code>: reload the data files</li></ul>\
              </body></html>",
             escape_html(&state.app.theme.files().root().display().to_string()),

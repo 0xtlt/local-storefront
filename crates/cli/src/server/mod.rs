@@ -11,10 +11,12 @@ mod live_reload;
 mod minify;
 pub mod params;
 pub mod reply;
+mod speedscope;
 mod storefront;
 #[cfg(test)]
 mod tests;
 pub mod throttle;
+mod timing;
 
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
@@ -63,6 +65,9 @@ pub struct ServeOptions {
     pub minify: bool,
     /// How long each kind of request is held before it is answered.
     pub throttle: throttle::Throttle,
+    /// Name every section and every theme block in the `Server-Timing` header of what is
+    /// rendered.
+    pub timings: bool,
     /// Who new sessions are logged in as, instead of what the store data says: an email,
     /// `default` or `none`.
     pub customer: Option<String>,
@@ -100,6 +105,8 @@ pub struct ServerState {
     /// The token of the files when live reload last looked at them.
     last_token: AtomicU64,
     changes: live_reload::Changes,
+    /// How long the templates, the sections and the blocks took so far, for `/__lsf/timings`.
+    pub(crate) timings: timing::Totals,
 }
 
 /// One HTTP request, decoded.
@@ -202,6 +209,7 @@ impl ServerState {
             started: Instant::now(),
             last_token: AtomicU64::new(0),
             changes: live_reload::Changes::new(),
+            timings: timing::Totals::default(),
         };
         (state, diagnostics)
     }
@@ -479,21 +487,27 @@ async fn handle(
     let encoding = compress::negotiate(incoming.header("accept-encoding"));
     // Held here rather than on a render thread: waiting costs nothing.
     let delay = state.delay_for(&incoming);
+    let mut waited = Duration::ZERO;
     if !delay.is_zero() {
+        let waiting = Instant::now();
         tokio::time::sleep(delay).await;
+        waited = waiting.elapsed();
     }
     // Rendering is CPU-bound, and so is compressing: keep them off the async workers.
     let worker_state = state.clone();
-    let reply = tokio::task::spawn_blocking(move || {
+    let (reply, compressing) = tokio::task::spawn_blocking(move || {
         let reply = worker_state.dispatch(&incoming);
-        if worker_state.options.compress {
-            compress::apply(reply, encoding)
-        } else {
-            reply
+        if !worker_state.options.compress {
+            return (reply, None);
         }
+        let compressing = Instant::now();
+        let encoded = reply.has_header("content-encoding");
+        let reply = compress::apply(reply, encoding);
+        let compressed = !encoded && reply.has_header("content-encoding");
+        (reply, compressed.then(|| compressing.elapsed()))
     })
     .await
-    .unwrap_or_else(|error| Reply::text(500, format!("internal error: {error}")));
+    .unwrap_or_else(|error| (Reply::text(500, format!("internal error: {error}")), None));
 
     if !quiet
         && !parts.uri.path().starts_with("/cdn/")
@@ -517,6 +531,9 @@ async fn handle(
     } else {
         reply.header("x-lsf-throttle", format!("{}ms", delay.as_millis()))
     };
+    // The time a throttle made the request wait is not time the server took.
+    let processing = started.elapsed().saturating_sub(waited);
+    let reply = timing::complete(reply, processing, compressing, delay);
     let mut response =
         Response::builder().status(StatusCode::from_u16(reply.status).unwrap_or(StatusCode::OK));
     for (name, value) in &reply.headers {
