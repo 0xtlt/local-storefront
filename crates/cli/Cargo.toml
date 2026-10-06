@@ -18,7 +18,10 @@ serde.workspace = true
 serde_json.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
-mimalloc = "0.1"
+# `v2`: version 3, the crate's default, renders as fast but gives little of the memory that
+# encoding images took back to the system: 1.7 GB are left against 320 MB, once the images of a
+# theme whose data weighs 14 MB were served.
+mimalloc = { version = "0.1", features = ["v2"] }
 brotli = { version = "8", default-features = false, features = ["std"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # The minifiers of scripts and of stylesheets.
