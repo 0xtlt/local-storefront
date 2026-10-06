@@ -24,6 +24,10 @@ run = "npm/first-publish.sh"
 # npm asks for two-factor authentication: it needs the terminal.
 raw = true
 
+[tasks."release:notes"]
+description = "Print what the GitHub release of a version will say: its section of CHANGELOG.md"
+run = "tools/release/notes.sh"
+
 [tasks.test]
 description = "Run the whole test suite"
 depends = ["test:js"]

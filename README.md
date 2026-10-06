@@ -688,3 +688,4 @@ shipping rates. Customers can log in, but not register. The full list is in
 - [Testing guide](docs/testing.md): sessions, per-test data, CI.
 - [Compatibility](docs/compatibility.md): what is covered, and what differs from Shopify.
 - [Architecture](docs/architecture.md): how the code is organised, and how to release.
+- [Changelog](CHANGELOG.md): what changed in each version.

@@ -93,8 +93,8 @@ mise run liquid-spec:fetch # download Shopify's liquid-spec suite, which the eng
 
 ## Releasing
 
-Set the version in `Cargo.toml` (`workspace.package.version`), commit, then push a tag with
-the same version:
+Set the version in `Cargo.toml` (`workspace.package.version`), add a section for it at the top
+of `CHANGELOG.md` (`## 0.2.0 - 2026-10-06`), commit, then push a tag with the same version:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
@@ -102,8 +102,18 @@ git tag v0.2.0 && git push origin v0.2.0
 
 `.github/workflows/release.yml` runs the tests, builds `lsf` for macOS, Linux (glibc and
 static musl) and Windows on x86-64 and ARM64, and publishes a GitHub release with one archive
-per platform and a `SHA256SUMS` file. A tag that does not match the version of the crate fails
-before anything is built. Tags with a suffix (`v0.2.0-rc.1`) are published as prereleases.
+per platform and a `SHA256SUMS` file. A tag that does not match the version of the crate, or
+that `CHANGELOG.md` has no section for, fails before anything is built. Tags with a suffix
+(`v0.2.0-rc.1`) are published as prereleases.
+
+The release says what the changelog says of the version. Write that section for someone who
+uses `lsf`: what they can do now, what behaves differently, what was wrong. Links are
+absolute, as a release does not resolve them from the repository. To read it as the release
+will show it:
+
+```bash
+mise run release:notes 0.2.0
+```
 
 To try the builds without releasing, run the workflow by hand from the Actions tab: the
 archives are then attached to the run instead of a release.

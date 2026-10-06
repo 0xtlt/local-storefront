@@ -1,7 +1,8 @@
 name: Release
 
 # Pushing a tag `vX.Y.Z` tests the code, builds `lsf` for every platform and publishes a GitHub
-# release with one archive per platform and their checksums.
+# release with one archive per platform and their checksums. The release says what
+# CHANGELOG.md says of that version.
 #
 # When the repository variable NPM_PUBLISH is `true`, the tag then starts npm.yml, which
 # publishes the npm packages of the new release (`local-storefront` and one per platform).
@@ -44,6 +45,15 @@ jobs:
             | jq -r '.packages[] | select(.name == "lsf") | .version')
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error file=Cargo.toml::the tag $GITHUB_REF_NAME does not match the version $version"
+            exit 1
+          fi
+
+      # Before anything is built: its section is what the release will say.
+      - name: Check that the changelog has the version
+        if: github.ref_type == 'tag'
+        run: |
+          if ! tools/release/notes.sh "$GITHUB_REF_NAME"; then
+            echo "::error file=CHANGELOG.md::the changelog has no section for $GITHUB_REF_NAME"
             exit 1
           fi
 
@@ -152,6 +162,8 @@ jobs:
       # To start npm.yml.
       actions: write
     steps:
+      # For the changelog.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
@@ -178,7 +190,14 @@ jobs:
           # `v1.2.0-rc.1` and the like are prereleases.
           flags=()
           case "$TAG" in *-*) flags+=(--prerelease) ;; esac
-          gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG" "${flags[@]}"
+          # What the changelog says of the version, then the link to the commits that GitHub
+          # writes. Without pull requests, that link is all GitHub has to say.
+          {
+            tools/release/notes.sh "$TAG"
+            echo
+            gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" dist/* --verify-tag --notes-file "$RUNNER_TEMP/notes.md" --title "$TAG" "${flags[@]}"
 
       # npm.yml is the one workflow npm trusts to publish, so it is started rather than called.
       - name: Publish the npm packages
