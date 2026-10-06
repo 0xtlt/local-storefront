@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "lsf"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "axum",
  "brotli",
@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-core"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "blake3",
  "chrono",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-liquid"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "base64",
  "chrono",
