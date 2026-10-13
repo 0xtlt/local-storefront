@@ -1,0 +1,72 @@
+[
+  {
+    "name": "the schema is formatted as JSON",
+    "options": {},
+    "source": "{% schema %}\n{\"name\":\"Section\",\"settings\":[{\"type\":\"text\",\"id\":\"title\",\"label\":\"Title\"},{\"type\":\"range\",\"id\":\"n\",\"min\":0,\"max\":10,\"step\":1,\"default\":5}],\n \"presets\":[{\"name\":\"Section\"}],\"blocks\":[],\"max_blocks\":3,\n\n \"limits\":[1,2,3],\"enabled_on\":{\"templates\":[\"product\"]}}\n{% endschema %}\n",
+    "expected": "{% schema %}\n{\n  \"name\": \"Section\",\n  \"settings\": [\n    { \"type\": \"text\", \"id\": \"title\", \"label\": \"Title\" },\n    { \"type\": \"range\", \"id\": \"n\", \"min\": 0, \"max\": 10, \"step\": 1, \"default\": 5 }\n  ],\n  \"presets\": [{ \"name\": \"Section\" }],\n  \"blocks\": [],\n  \"max_blocks\": 3,\n\n  \"limits\": [1, 2, 3],\n  \"enabled_on\": { \"templates\": [\"product\"] }\n}\n{% endschema %}\n",
+    "again": "{% schema %}\n{\n  \"name\": \"Section\",\n  \"settings\": [\n    { \"type\": \"text\", \"id\": \"title\", \"label\": \"Title\" },\n    { \"type\": \"range\", \"id\": \"n\", \"min\": 0, \"max\": 10, \"step\": 1, \"default\": 5 }\n  ],\n  \"presets\": [{ \"name\": \"Section\" }],\n  \"blocks\": [],\n  \"max_blocks\": 3,\n\n  \"limits\": [1, 2, 3],\n  \"enabled_on\": { \"templates\": [\"product\"] }\n}\n{% endschema %}\n"
+  },
+  {
+    "name": "a schema that is not JSON is left alone",
+    "options": {},
+    "source": "{% schema %}\n  { \"name\": {{ nope }} }\n{% endschema %}\n",
+    "expected": "{% schema %}\n{ \"name\": {{ nope }} }\n{% endschema %}\n",
+    "again": "{% schema %}\n{ \"name\": {{ nope }} }\n{% endschema %}\n"
+  },
+  {
+    "name": "the stylesheet tag is formatted as CSS",
+    "options": {},
+    "source": "{% stylesheet %}\n.card{COLOR:red;margin:0 AUTO!important;transition:opacity .3s ease,transform .3s ease;background:URL(a.png)}\n.card:HOVER,.card>.title+p{width:calc(100% - 2*var(--gap,10px))}\n\n\n@media (min-width:750px) and (max-width:990px){.card{display:none}}\n/* a comment */\n.a{&:hover{color:#FFF}}\n{% endstylesheet %}\n",
+    "expected": "{% stylesheet %}\n  .card {\n    color: red;\n    margin: 0 AUTO !important;\n    transition:\n      opacity 0.3s ease,\n      transform 0.3s ease;\n    background: URL(a.png);\n  }\n  .card:hover,\n  .card > .title + p {\n    width: calc(100% - 2 * var(--gap, 10px));\n  }\n\n  @media (min-width: 750px) and (max-width: 990px) {\n    .card {\n      display: none;\n    }\n  }\n  /* a comment */\n  .a {\n    &:hover {\n      color: #fff;\n    }\n  }\n{% endstylesheet %}\n",
+    "again": "{% stylesheet %}\n  .card {\n    color: red;\n    margin: 0 AUTO !important;\n    transition:\n      opacity 0.3s ease,\n      transform 0.3s ease;\n    background: URL(a.png);\n  }\n  .card:hover,\n  .card > .title + p {\n    width: calc(100% - 2 * var(--gap, 10px));\n  }\n\n  @media (min-width: 750px) and (max-width: 990px) {\n    .card {\n      display: none;\n    }\n  }\n  /* a comment */\n  .a {\n    &:hover {\n      color: #fff;\n    }\n  }\n{% endstylesheet %}\n"
+  },
+  {
+    "name": "the style tag, with and without liquid",
+    "options": {},
+    "source": "{% style %}\n.a{color:red}\n{% endstyle %}\n{% style %}\n  .section-{{ section.id }}-padding{padding-top:{{ section.settings.padding_top }}px;\n      color:red}\n{% endstyle %}\n",
+    "expected": "{% style %}\n  .a {\n    color: red;\n  }\n{% endstyle %}\n{% style %}\n  .section-{{ section.id }}-padding{padding-top:{{ section.settings.padding_top }}px;\n      color:red}\n{% endstyle %}\n",
+    "again": "{% style %}\n  .a {\n    color: red;\n  }\n{% endstyle %}\n{% style %}\n  .section-{{ section.id }}-padding{padding-top:{{ section.settings.padding_top }}px;\n      color:red}\n{% endstyle %}\n"
+  },
+  {
+    "name": "the style element",
+    "options": {},
+    "source": "<style>\n:root{--font:\"Helvetica Neue\",Arial,sans-serif;--x:  1px}\n@font-face{font-family:\"A\";src:url(a.woff2) format(\"woff2\"),url(a.woff) format(\"woff\")}\n</style>\n<style>.a{color:{{ color }}}</style>\n",
+    "expected": "<style>\n  :root {\n    --font: 'Helvetica Neue', Arial, sans-serif;\n    --x: 1px;\n  }\n  @font-face {\n    font-family: 'A';\n    src:\n      url(a.woff2) format('woff2'),\n      url(a.woff) format('woff');\n  }\n</style>\n<style>\n  .a{color:{{ color }}}\n</style>\n",
+    "again": "<style>\n  :root {\n    --font: 'Helvetica Neue', Arial, sans-serif;\n    --x: 1px;\n  }\n  @font-face {\n    font-family: 'A';\n    src:\n      url(a.woff2) format('woff2'),\n      url(a.woff) format('woff');\n  }\n</style>\n<style>\n  .a{color:{{ color }}}\n</style>\n"
+  },
+  {
+    "name": "a script that is formatted comes out unchanged",
+    "options": {},
+    "source": "<script>\n  document.addEventListener('DOMContentLoaded', () => {\n    const template = `one\n  two ${three}`;\n    /**\n     * A comment.\n     */\n    console.log(template);\n  });\n</script>\n",
+    "expected": "<script>\n  document.addEventListener('DOMContentLoaded', () => {\n    const template = `one\n  two ${three}`;\n    /**\n     * A comment.\n     */\n    console.log(template);\n  });\n</script>\n",
+    "again": "<script>\n  document.addEventListener('DOMContentLoaded', () => {\n    const template = `one\n  two ${three}`;\n    /**\n     * A comment.\n     */\n    console.log(template);\n  });\n</script>\n"
+  },
+  {
+    "name": "a script that holds liquid is indented again",
+    "options": {},
+    "source": "<script>\n      window.theme = {\n          money: {{ shop.money_format | json }},\n      };\n</script>\n",
+    "expected": "<script>\n  window.theme = {\n      money: {{ shop.money_format | json }},\n  };\n</script>\n",
+    "again": "<script>\n  window.theme = {\n      money: {{ shop.money_format | json }},\n  };\n</script>\n"
+  },
+  {
+    "name": "the javascript tag",
+    "options": {},
+    "source": "{% javascript %}\n    class A extends HTMLElement {\n      connectedCallback() {\n        this.hidden = false;\n      }\n    }\n{% endjavascript %}\n",
+    "expected": "{% javascript %}\n  class A extends HTMLElement {\n    connectedCallback() {\n      this.hidden = false;\n    }\n  }\n{% endjavascript %}\n",
+    "again": "{% javascript %}\n  class A extends HTMLElement {\n    connectedCallback() {\n      this.hidden = false;\n    }\n  }\n{% endjavascript %}\n"
+  },
+  {
+    "name": "a script of JSON",
+    "options": {},
+    "source": "<script type=\"application/json\">{\"a\":[1,2,3],\"b\":{\"c\":null}}</script>\n<script type=\"application/ld+json\">\n  {\"@context\": \"https://schema.org\",\n    \"@type\": \"Product\"}\n</script>\n",
+    "expected": "<script type=\"application/json\">\n  { \"a\": [1, 2, 3], \"b\": { \"c\": null } }\n</script>\n<script type=\"application/ld+json\">\n  { \"@context\": \"https://schema.org\", \"@type\": \"Product\" }\n</script>\n",
+    "again": "<script type=\"application/json\">\n  { \"a\": [1, 2, 3], \"b\": { \"c\": null } }\n</script>\n<script type=\"application/ld+json\">\n  { \"@context\": \"https://schema.org\", \"@type\": \"Product\" }\n</script>\n"
+  },
+  {
+    "name": "a script loaded from a file",
+    "options": {},
+    "source": "<script src=\"{{ 'a.js' | asset_url }}\" defer></script>\n<script type=\"module\" src=\"{{ 'b.js' | asset_url }}\" async data-something-long=\"a value that is long enough to break\"></script>\n",
+    "expected": "<script src=\"{{ 'a.js' | asset_url }}\" defer></script>\n<script\n  type=\"module\"\n  src=\"{{ 'b.js' | asset_url }}\"\n  async\n  data-something-long=\"a value that is long enough to break\"\n></script>\n",
+    "again": "<script src=\"{{ 'a.js' | asset_url }}\" defer></script>\n<script\n  type=\"module\"\n  src=\"{{ 'b.js' | asset_url }}\"\n  async\n  data-something-long=\"a value that is long enough to break\"\n></script>\n"
+  }
+]

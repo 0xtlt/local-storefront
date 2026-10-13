@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 lsf-core.workspace = true
+lsf-fmt.workspace = true
 lsf-liquid.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 serde.workspace = true

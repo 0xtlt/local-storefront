@@ -3,6 +3,23 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **`lsf fmt`** formats the Liquid files of a theme the way Prettier does with Shopify's
+  Liquid plugin, without Node: Liquid, HTML, the JSON of `{% schema %}` and the CSS of
+  `<style>`, `{% style %}` and `{% stylesheet %}`. `lsf fmt --check` lists the files that are
+  not formatted and fails if there are any, for CI. The 283 files of Shopify's Horizon theme
+  are checked in 0.08 s, where Prettier takes 1.6 s.
+- `lsf fmt` reads the configuration Prettier reads: `.prettierrc`, `.editorconfig` and
+  `.prettierignore`. `--option printWidth=100` sets an option from the command line, and
+  `--stdin` formats what an editor sends.
+
+JavaScript is not reformatted: a script keeps its lines as they are written, so a file whose
+scripts Prettier has formatted comes out unchanged. See
+[what differs from Prettier](https://github.com/0xtlt/local-storefront/blob/main/docs/compatibility.md#formatting-lsf-fmt).
+
 ## 0.1.14 - 2026-10-06
 
 ### Fixed

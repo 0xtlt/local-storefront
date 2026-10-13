@@ -58,6 +58,8 @@ enum Command {
     Routes,
     /// Parse every Liquid file of the theme and report what would not render on Shopify.
     Check,
+    /// Format the Liquid files of the theme, as Prettier does with Shopify's Liquid plugin.
+    Fmt(commands::fmt::Args),
     /// Print the reference of the store data format.
     Docs(commands::docs::Args),
 }
@@ -73,6 +75,7 @@ fn main() -> ExitCode {
         Command::Schema(args) => commands::schema::run(args),
         Command::Routes => commands::routes::run(&cli.theme, cli.data.as_deref()),
         Command::Check => commands::check::run(&cli.theme),
+        Command::Fmt(args) => commands::fmt::run(&cli.theme, args),
         Command::Docs(args) => commands::docs::run(args),
     };
     match result {

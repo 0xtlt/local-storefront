@@ -238,6 +238,30 @@ A wrong password stays on the page with the error. To change the password:
 
 The storefront is never locked: nothing redirects to that page.
 
+## Format your theme
+
+```bash
+lsf fmt
+```
+
+Formats every `.liquid` file of the theme, the way [Prettier](https://prettier.io) does with
+Shopify's Liquid plugin (`@shopify/prettier-plugin-liquid`). Neither is needed: `lsf` does it
+itself, and the 283 files of Shopify's Horizon theme take less than a tenth of a second.
+
+```bash
+lsf fmt --check
+```
+
+Writes nothing. It lists the files that are not formatted and fails if there are any: this is
+the one for CI.
+
+Your Prettier configuration applies: `.prettierrc`, `.editorconfig` and `.prettierignore` are
+read. A theme that Prettier has formatted comes out of `lsf fmt` unchanged.
+
+Liquid, HTML, the JSON of `{% schema %}` and CSS are formatted as Prettier formats them.
+JavaScript is not reformatted: a script keeps its lines as you wrote them. The options and the
+details are in [Options of `lsf fmt`](#options-of-lsf-fmt).
+
 ## What you get
 
 - **The same HTML as Shopify.** The Liquid engine is checked against Shopify's own, and
@@ -272,6 +296,7 @@ Details and known differences: [compatibility](docs/compatibility.md).
 | `lsf init` | Creates `shopify-local/` with a demo store to edit. |
 | `lsf validate` | Checks your data. Add `--format json` for a report a tool can read. |
 | `lsf check` | Checks that every Liquid file of the theme is understood. |
+| `lsf fmt [paths]` | Formats the Liquid files of the theme as Prettier does with Shopify's Liquid plugin. See [Format your theme](#format-your-theme). |
 | `lsf render <path>` | Prints the HTML of one page, without a server. |
 | `lsf profile <path>` | Shows what the render of one page spends its time in, or what it would cost Shopify: sections, blocks, snippets. See [Profile a page](#profile-a-page). |
 | `lsf routes` | Lists the pages your data creates. |
@@ -296,6 +321,46 @@ Every command accepts `--theme <dir>` (default: the current folder) and `--data 
 | `--customer <email>` | Starts every visitor logged in as this customer. Also `default` (the first customer) or `none`. |
 | `--throttle <rules>` | Answers late, to test loading states. See below. |
 | `--timings` | Names every section and every theme block in the `Server-Timing` header, with how long it took to render. See [Render times](#render-times). |
+
+### Options of `lsf fmt`
+
+| Option | What it does |
+|---|---|
+| `[paths]` | The files and the folders to format. Without any: the theme folder. In a folder, `node_modules`, `.git` and what `.prettierignore` names are left out. |
+| `--check` | Writes nothing. Lists the files that are not formatted, and fails (exit code 1) if there are any. |
+| `--stdin` | Reads a Liquid source from the standard input and prints it formatted. For an editor. |
+| `--option <name>=<value>`, `-o` | Sets one of the options below, under the name Prettier gives it: `-o printWidth=100`. It wins over the configuration files. |
+| `--no-config` | Does not read `.prettierrc`, `.editorconfig` nor `.prettierignore`. |
+
+The configuration is looked for as Prettier looks for it: from the folder of each file, up.
+These files are read: `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.prettierrc.yaml`,
+`.prettierrc.yml`, the `prettier` key of `package.json`, with their `overrides`, and
+`.editorconfig`. A configuration written in JavaScript (`prettier.config.js`) cannot be read:
+`lsf fmt` says so and goes on without it.
+
+| Prettier option | Default | What it changes |
+|---|---|---|
+| `printWidth` | `120` | The width lines are kept under. |
+| `tabWidth` | `2` | Spaces per level of indentation. |
+| `useTabs` | `false` | Indents with tabs. |
+| `endOfLine` | `lf` | `lf`, `crlf`, `cr`, or `auto` for what the file uses. |
+| `singleQuote` | `false` | Single quotes around HTML attributes. |
+| `liquidSingleQuote` | `true` | Single quotes around the strings of Liquid. |
+| `embeddedSingleQuote` | `true` | Single quotes in the CSS of `<style>`, `{% style %}` and `{% stylesheet %}`. |
+| `bracketSameLine` | `false` | Puts the `>` of a tag at the end of its last attribute. |
+| `singleAttributePerLine` | `false` | One attribute per line as soon as a tag has two. |
+| `htmlWhitespaceSensitivity` | `css` | Where whitespace may be added or removed: `css`, `strict`, `ignore`. |
+| `captureWhitespaceSensitivity` | `strict` | `ignore` formats what a `{% capture %}` holds. |
+| `singleLineLinkTags` | `false` | Keeps `<link>` tags on one line. |
+| `indentSchema` | `false` | Indents the JSON of `{% schema %}`. |
+| `liquidDocParamDash` | `true` | A dash between a `@param` of `{% doc %}` and its description. |
+| `embeddedLanguageFormatting` | `auto` | `off` leaves JSON and CSS as they are written. |
+
+The other options of Prettier (`semi`, `trailingComma`, ...) are for JavaScript, which is not
+reformatted. They are ignored in a configuration file.
+
+What differs from Prettier is listed in
+[compatibility](docs/compatibility.md#formatting-lsf-fmt).
 
 ## Throttling
 

@@ -1,0 +1,71 @@
+## a narrow width
+#! {"printWidth": 40}
+<div class="a" id="b"><p>{{ product.title | upcase | append: '!' }}</p>{% render 'card', product: product, lazy: true %}</div>
+
+## double quotes in liquid, single quotes in HTML
+#! {"liquidSingleQuote": false, "singleQuote": true}
+<a href="/x" title='it"s'>{{ 'a' | append: "b" }}</a>
+
+## tabs
+#! {"useTabs": true}
+<div>{% if a %}<p>b</p>{% endif %}</div>
+
+## four spaces
+#! {"tabWidth": 4}
+<div>{% if a %}<p>b</p>{% endif %}</div>
+
+## the bracket on the line of the last attribute
+#! {"bracketSameLine": true, "printWidth": 40}
+<div class="a-long-class-name" id="a-long-id" data-a="b">x</div>
+<img class="a-long-class-name" id="a-long-id" src="a.png">
+
+## one attribute per line
+#! {"singleAttributePerLine": true}
+<div class="a" id="b">x</div><p class="c">y</p>
+
+## whitespace that never matters
+#! {"htmlWhitespaceSensitivity": "ignore", "printWidth": 40}
+<span>a</span><span>b</span><a href="/a/long/url/to/somewhere">link</a>text
+
+## whitespace that always matters
+#! {"htmlWhitespaceSensitivity": "strict", "printWidth": 40}
+<div>a</div><div>b</div><div class="a-long-class-name">text</div>
+
+## the schema indented
+#! {"indentSchema": true}
+{% schema %}
+{"name":"a"}
+{% endschema %}
+
+## a capture formatted as the rest
+#! {"captureWhitespaceSensitivity": "ignore"}
+{% capture a %}<div><p>b</p></div>{% endcapture %}
+
+## link elements on one line
+#! {"singleLineLinkTags": true, "printWidth": 40}
+<link rel="stylesheet" href="{{ 'base.css' | asset_url }}" media="print">
+
+## params without a dash
+#! {"liquidDocParamDash": false}
+{% doc %}
+  @param {string} a - The description
+{% enddoc %}
+
+## embedded languages left alone
+#! {"embeddedLanguageFormatting": "off"}
+{% schema %}
+      {"name":"a"}
+{% endschema %}
+<style>
+      .a{color:red}
+</style>
+
+## double quotes in embedded CSS
+#! {"embeddedSingleQuote": false}
+<style>
+.a{content:'x';font-family:'A'}
+</style>
+
+## windows line endings
+#! {"endOfLine": "crlf"}
+<div>{% if a %}<p>b</p>{% endif %}</div>

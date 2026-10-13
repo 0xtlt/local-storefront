@@ -1,0 +1,128 @@
+[
+  {
+    "name": "block elements go on their own lines, inline ones stay in the text",
+    "options": {},
+    "source": "<div><p>Some <b>bold</b> and <a href=\"/x\">linked</a> text, long enough that it has to wrap at some point because it does not fit.</p><ul><li>one</li><li>two</li></ul></div>\n",
+    "expected": "<div>\n  <p>\n    Some <b>bold</b> and <a href=\"/x\">linked</a> text, long enough that it has to wrap at some point because it does not\n    fit.\n  </p>\n  <ul>\n    <li>one</li>\n    <li>two</li>\n  </ul>\n</div>\n",
+    "again": "<div>\n  <p>\n    Some <b>bold</b> and <a href=\"/x\">linked</a> text, long enough that it has to wrap at some point because it does not\n    fit.\n  </p>\n  <ul>\n    <li>one</li>\n    <li>two</li>\n  </ul>\n</div>\n"
+  },
+  {
+    "name": "attributes break one per line when they do not fit",
+    "options": {},
+    "source": "<img src=\"{{ image | image_url: width: 400 }}\" alt=\"{{ image.alt | escape }}\" width=\"400\" height=\"300\" loading=\"lazy\" class=\"card__image\">\n<a   class=\"a\"   href=\"/x\" >x</a>\n<input type=\"checkbox\" checked disabled>\n<br/><hr><custom-element some-attribute></custom-element>\n",
+    "expected": "<img\n  src=\"{{ image | image_url: width: 400 }}\"\n  alt=\"{{ image.alt | escape }}\"\n  width=\"400\"\n  height=\"300\"\n  loading=\"lazy\"\n  class=\"card__image\"\n>\n<a class=\"a\" href=\"/x\">x</a>\n<input type=\"checkbox\" checked disabled>\n<br />\n<hr>\n<custom-element some-attribute></custom-element>\n",
+    "again": "<img\n  src=\"{{ image | image_url: width: 400 }}\"\n  alt=\"{{ image.alt | escape }}\"\n  width=\"400\"\n  height=\"300\"\n  loading=\"lazy\"\n  class=\"card__image\"\n>\n<a class=\"a\" href=\"/x\">x</a>\n<input type=\"checkbox\" checked disabled>\n<br />\n<hr>\n<custom-element some-attribute></custom-element>\n"
+  },
+  {
+    "name": "attributes that were on several lines stay on several lines",
+    "options": {},
+    "source": "<div\n  class=\"a\" id=\"b\">x</div>\n",
+    "expected": "<div\n  class=\"a\"\n  id=\"b\"\n>\n  x\n</div>\n",
+    "again": "<div\n  class=\"a\"\n  id=\"b\"\n>\n  x\n</div>\n"
+  },
+  {
+    "name": "the value of an attribute is kept as written",
+    "options": {},
+    "source": "<div class=\"a  {{ b }}   c\" data-x='{\"a\": 1}' style=\"color: red;margin:0\" data-y=unquoted {{ block.shopify_attributes }}></div>\n<div class=\"\n      a\n   b\n      {% if c %}d{% endif %}\n\"></div>\n",
+    "expected": "<div\n  class=\"a  {{ b }}   c\"\n  data-x='{\"a\": 1}'\n  style=\"color: red;margin:0\"\n  data-y=\"unquoted\"\n  {{ block.shopify_attributes }}\n></div>\n<div\n  class=\"\n       a\n    b\n       {% if c %}d{% endif %}\n  \"\n></div>\n",
+    "again": "<div\n  class=\"a  {{ b }}   c\"\n  data-x='{\"a\": 1}'\n  style=\"color: red;margin:0\"\n  data-y=\"unquoted\"\n  {{ block.shopify_attributes }}\n></div>\n<div\n  class=\"\n       a\n    b\n       {% if c %}d{% endif %}\n  \"\n></div>\n"
+  },
+  {
+    "name": "liquid among attributes",
+    "options": {},
+    "source": "<div {% if a %}class=\"b\"{% endif %} id=\"c\"></div>\n<option value=\"1\"{% if selected %} selected{% endif %}>x</option>\n",
+    "expected": "<div\n  {% if a %}\n    class=\"b\"\n  {% endif %}\n  id=\"c\"\n></div>\n<option\n  value=\"1\"\n  {% if selected %}\n    selected\n  {% endif %}\n>\n  x\n</option>\n",
+    "again": "<div\n  {% if a %}\n    class=\"b\"\n  {% endif %}\n  id=\"c\"\n></div>\n<option\n  value=\"1\"\n  {% if selected %}\n    selected\n  {% endif %}\n>\n  x\n</option>\n"
+  },
+  {
+    "name": "whitespace that shows in the page is kept",
+    "options": {},
+    "source": "<span>a</span><span>b</span> <span>c</span>\n<p>text<b>bold</b>text {{ a }}{{ b }} {{ c }}</p>\n<button>   Click   </button><label>Name<input></label>\n",
+    "expected": "<span>a</span><span>b</span> <span>c</span>\n<p>\n  text<b>bold</b>text {{ a -}}\n  {{- b }}\n  {{ c }}\n</p>\n<button>Click</button><label>Name<input></label>\n",
+    "again": "<span>a</span><span>b</span> <span>c</span>\n<p>\n  text<b>bold</b>text {{ a -}}\n  {{- b }}\n  {{ c }}\n</p>\n<button>Click</button><label>Name<input></label>\n"
+  },
+  {
+    "name": "a long line of inline elements borrows the brackets of its tags",
+    "options": {},
+    "source": "<p>A paragraph with <a href=\"https://example.com/a/very/long/url/that/goes/on/and/on\">a link whose text is long</a><b>and bold right after it</b><i>then italic, with no space between them anywhere</i>.</p>\n",
+    "expected": "<p>\n  A paragraph with <a href=\"https://example.com/a/very/long/url/that/goes/on/and/on\">a link whose text is long</a\n  ><b>and bold right after it</b><i>then italic, with no space between them anywhere</i>.\n</p>\n",
+    "again": "<p>\n  A paragraph with <a href=\"https://example.com/a/very/long/url/that/goes/on/and/on\">a link whose text is long</a\n  ><b>and bold right after it</b><i>then italic, with no space between them anywhere</i>.\n</p>\n"
+  },
+  {
+    "name": "pre and textarea are left alone",
+    "options": {},
+    "source": "<pre>\n  kept   as\n      written\n</pre>\n<textarea>\n  also   kept\n</textarea>\n",
+    "expected": "<pre>\n  kept   as\n      written\n</pre>\n<textarea>\n  also   kept\n</textarea>\n",
+    "again": "<pre>\n  kept   as\n      written\n</pre>\n<textarea>\n  also   kept\n</textarea>\n"
+  },
+  {
+    "name": "comments",
+    "options": {},
+    "source": "<!--   a comment   -->\n<!--\n    on several\n  lines\n-->\n<!--[if lt IE 9]><p>old</p><![endif]-->\n",
+    "expected": "<!-- a comment -->\n<!--\n  on several\n  lines\n-->\n<!--[if lt IE 9]> <p>old</p> <![endif]-->\n",
+    "again": "<!-- a comment -->\n<!--\n  on several\n  lines\n-->\n<!--[if lt IE 9]> <p>old</p> <![endif]-->\n"
+  },
+  {
+    "name": "prettier-ignore",
+    "options": {},
+    "source": "<!-- prettier-ignore -->\n<div   class=\"kept\"   >   as   written   </div>\n{% # prettier-ignore %}\n{{ kept|as:written }}\n<!-- prettier-ignore-attribute -->\n<div   class=\"a\"   id=\"b\">formatted   inside</div>\n",
+    "expected": "<!-- prettier-ignore -->\n<div   class=\"kept\"   >   as   written   </div>\n{% # prettier-ignore %}\n{{ kept|as:written }}\n<!-- prettier-ignore-attribute -->\n<div class=\"a\"   id=\"b\">formatted inside</div>\n",
+    "again": "<!-- prettier-ignore -->\n<div   class=\"kept\"   >   as   written   </div>\n{% # prettier-ignore %}\n{{ kept|as:written }}\n<!-- prettier-ignore-attribute -->\n<div class=\"a\"   id=\"b\">formatted inside</div>\n"
+  },
+  {
+    "name": "what a comment says of the next element",
+    "options": {},
+    "source": "<!-- display: inline -->\n<div>a</div><!-- display: block -->\n<span>b</span>\n<!-- white-space: pre -->\n<div>  kept  </div>\n",
+    "expected": "<!-- display: inline -->\n<div>a</div>\n<!-- display: block -->\n<span>b</span>\n<!-- white-space: pre -->\n<div>  kept  </div>\n",
+    "again": "<!-- display: inline -->\n<div>a</div>\n<!-- display: block -->\n<span>b</span>\n<!-- white-space: pre -->\n<div>  kept  </div>\n"
+  },
+  {
+    "name": "the doctype, html, head and body",
+    "options": {},
+    "source": "<!DOCTYPE html><html lang=\"{{ request.locale.iso_code }}\"><head><meta charset=\"utf-8\"><title>{{ page_title }}</title>{{ content_for_header }}</head><body class=\"a\">{{ content_for_layout }}</body></html>\n",
+    "expected": "<!doctype html>\n<html lang=\"{{ request.locale.iso_code }}\">\n  <head>\n    <meta charset=\"utf-8\">\n    <title>{{ page_title }}</title>\n    {{ content_for_header }}\n  </head>\n  <body class=\"a\">\n    {{ content_for_layout }}\n  </body>\n</html>\n",
+    "again": "<!doctype html>\n<html lang=\"{{ request.locale.iso_code }}\">\n  <head>\n    <meta charset=\"utf-8\">\n    <title>{{ page_title }}</title>\n    {{ content_for_header }}\n  </head>\n  <body class=\"a\">\n    {{ content_for_layout }}\n  </body>\n</html>\n"
+  },
+  {
+    "name": "tables, lists and selects break their children",
+    "options": {},
+    "source": "<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>b</td><td>c</td></tr></tbody></table>\n<select name=\"a\"><option value=\"1\">one</option><option value=\"2\" selected>two</option></select>\n",
+    "expected": "<table>\n  <thead>\n    <tr>\n      <th>a</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>b</td>\n      <td>c</td>\n    </tr>\n  </tbody>\n</table>\n<select name=\"a\">\n  <option value=\"1\">one</option>\n  <option value=\"2\" selected>two</option>\n</select>\n",
+    "again": "<table>\n  <thead>\n    <tr>\n      <th>a</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>b</td>\n      <td>c</td>\n    </tr>\n  </tbody>\n</table>\n<select name=\"a\">\n  <option value=\"1\">one</option>\n  <option value=\"2\" selected>two</option>\n</select>\n"
+  },
+  {
+    "name": "an element opened in one branch and closed in another",
+    "options": {},
+    "source": "{% if a %}<div class=\"a\">{% else %}<div class=\"b\">{% endif %}\ncontent\n</div>\n",
+    "expected": "{% if a %}<div class=\"a\">{% else %}<div class=\"b\">{% endif %}\ncontent\n</div>\n",
+    "again": "{% if a %}<div class=\"a\">{% else %}<div class=\"b\">{% endif %}\ncontent\n</div>\n"
+  },
+  {
+    "name": "an element named with liquid",
+    "options": {},
+    "source": "<{{ tag }} class=\"a\">x</{{ tag }}>\n<h{{ level }}>title</h{{ level }}>\n",
+    "expected": "<{{ tag }} class=\"a\">x</{{ tag }}>\n<h{{ level }}>title</h{{ level }}>\n",
+    "again": "<{{ tag }} class=\"a\">x</{{ tag }}>\n<h{{ level }}>title</h{{ level }}>\n"
+  },
+  {
+    "name": "svg is left alone",
+    "options": {},
+    "source": "<svg viewBox=\"0 0 10 10\"   width=\"10\"><path   d=\"M0 0L10 10\"/>\n  <circle r=\"1\"/></svg>\n",
+    "expected": "<svg viewBox=\"0 0 10 10\" width=\"10\">\n  <path   d=\"M0 0L10 10\"/>\n  <circle r=\"1\"/>\n</svg>\n",
+    "again": "<svg viewBox=\"0 0 10 10\" width=\"10\">\n  <path   d=\"M0 0L10 10\"/>\n  <circle r=\"1\"/>\n</svg>\n"
+  },
+  {
+    "name": "text is filled to the width",
+    "options": {},
+    "source": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam.\n\nA second paragraph.\n",
+    "expected": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna\naliqua. Ut enim ad minim veniam.\n\nA second paragraph.\n",
+    "again": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna\naliqua. Ut enim ad minim veniam.\n\nA second paragraph.\n"
+  },
+  {
+    "name": "front matter",
+    "options": {},
+    "source": "---\ntitle: x\n---\n<p>a</p>\n",
+    "expected": "---\ntitle: x\n---\n<p>a</p>\n",
+    "again": "---\ntitle: x\n---\n<p>a</p>\n"
+  }
+]

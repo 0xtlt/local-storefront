@@ -224,6 +224,52 @@ The header names, in this order, as on the stores it was read from in October 20
 4. the stylesheet built from the `{% stylesheet %}` tags;
 5. the fonts, the images and the other files the theme asks to preload.
 
+## Formatting (`lsf fmt`)
+
+`lsf fmt` is a port of Prettier with Shopify's Liquid plugin, and the goal is the output they
+give, byte for byte. The reference is Prettier 3.9.10 with `@shopify/prettier-plugin-liquid`
+1.11.2 (`tools/prettier/package.json`; `mise run prettier:install` installs them).
+
+How it is checked:
+
+- **Liquid and HTML.** The 371 Liquid files of Shopify's Dawn and Horizon themes are formatted
+  by both, with what `<script>`, `<style>` and `{% schema %}` hold left alone
+  (`embeddedLanguageFormatting: off`), under four sets of options: widths of 120, 80, 40 and
+  20 columns, tabs, both kinds of quotes, `bracketSameLine`, `singleAttributePerLine`, the
+  three values of `htmlWhitespaceSensitivity`. The 1,484 outputs are identical.
+- **The tests of the plugin.** Its 444 cases are replayed
+  (`mise run prettier:fixtures`): 438 give what Prettier gives. The other six hold JavaScript
+  that Prettier reformats.
+- **CSS.** The 68 style sheets of the two themes are formatted by both at 120, 80 and 40
+  columns: identical. Of the 157 files Prettier tests its own CSS printer with, which are edge
+  cases, 144 are identical through `{% stylesheet %}`.
+- **60 cases** written for this project, one per feature and per option, are formatted by
+  Prettier into `crates/fmt/tests/golden` and compared on every test run
+  (`mise run prettier:golden` regenerates them).
+
+To compare on your own theme, without writing to it:
+
+```bash
+mise run prettier:compare -- path/to/theme
+```
+
+What differs:
+
+- **JavaScript is not reformatted.** What `<script>` and `{% javascript %}` hold keeps its
+  lines as they are written, indented with the rest. A script Prettier has formatted comes
+  out unchanged, template literals and comments included; one it has not stays as it is,
+  where Prettier would rewrite it. With the two themes at their default options, 4 files of
+  371 differ for this reason.
+- **JSON with comments** is left as written. Prettier formats it.
+- **CSS that is more than CSS.** The selectors of `@nest`, `@custom-selector` and `@extend`,
+  the control rules of SCSS (`@if`, `@each`), the names CSS Modules export, a comment inside a
+  selector or inside the block of a custom property, a `//` comment in a value: these are
+  printed as written, or not as Prettier prints them.
+- **Markdown** in `<script type="text/markdown">` is left as written.
+- **Configuration written in JavaScript** (`prettier.config.js`, `.prettierrc.js`) is not
+  read, nor are TOML and JSON5 files. Other Prettier plugins do not apply.
+- `requirePragma`, `insertPragma` and formatting a range of a file are not supported.
+
 ## Known differences
 
 These are deliberate or not done yet. None of them raises a Liquid error.

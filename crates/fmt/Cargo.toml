@@ -1,0 +1,15 @@
+[package]
+name = "lsf-fmt"
+description = "Formats Liquid theme files the way Prettier does with Shopify's Liquid plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# The parser of JavaScript, which says where a script's template literals are.
+oxc = { version = "0.110", features = ["ast_visit"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1719,6 +1719,7 @@ dependencies = [
  "indexmap",
  "lightningcss",
  "lsf-core",
+ "lsf-fmt",
  "lsf-liquid",
  "mimalloc",
  "multer",
@@ -1750,6 +1751,14 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "sha2",
+]
+
+[[package]]
+name = "lsf-fmt"
+version = "0.1.14"
+dependencies = [
+ "oxc",
+ "serde_json",
 ]
 
 [[package]]
@@ -2052,6 +2061,7 @@ checksum = "771fb7ab16506c9d7979a21cf0c8750bfb34b7ee3f787310ba06aaa8eea3602f"
 dependencies = [
  "oxc_allocator",
  "oxc_ast",
+ "oxc_ast_visit",
  "oxc_codegen",
  "oxc_diagnostics",
  "oxc_mangler",
