@@ -14,6 +14,15 @@ use crate::drops::media::{ImageDrop, MediaDrop, image_base_url};
 use crate::drops::metafield::{MetafieldDrop, MoneyDrop, is_measurement};
 use crate::site::Site;
 
+/// The number of a measurement as Shopify prints it: two decimals at most, without trailing
+/// zeros.
+fn measure(value: &Value) -> String {
+    match value {
+        Value::Float(f) => compact(&Value::Float((f * 100.0).round() / 100.0)),
+        other => compact(other),
+    }
+}
+
 fn compact(value: &Value) -> String {
     match value {
         Value::Float(f) => {
@@ -45,7 +54,7 @@ fn text_of(
         ),
         kind if is_measurement(kind) => format!(
             "{} {}",
-            compact(&value.get("value")),
+            measure(&value.get("value")),
             value.get("unit").to_str()
         ),
         "date" | "date_time" => {
@@ -223,7 +232,7 @@ fn single_tag(
         "rich_text_field" => format!("<div class=\"{class}\">{}</div>", rich_text_html(raw)),
         kind if is_measurement(kind) => format!(
             "<{element} class=\"{class}\"><span class=\"{class}_value\">{} </span><span class=\"{class}_unit\">{}</span></{element}>",
-            escape_html(&compact(&value.get("value"))),
+            escape_html(&measure(&value.get("value"))),
             escape_html(&value.get("unit").to_str())
         ),
         "file_reference" => {

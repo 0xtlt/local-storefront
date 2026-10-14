@@ -17,11 +17,21 @@ pub fn currency_value(code: &str) -> Value {
 
 /// `rtl` for the languages written right to left, `ltr` for the others.
 fn direction(iso_code: &str) -> &'static str {
-    let language = iso_code.split(['-', '_']).next().unwrap_or_default();
-    match language.to_ascii_lowercase().as_str() {
-        "ar" | "arc" | "ckb" | "dv" | "fa" | "he" | "ku" | "ps" | "sd" | "ug" | "ur" | "yi" => {
-            "rtl"
-        }
+    let mut subtags = iso_code.split(['-', '_']);
+    let language = subtags.next().unwrap_or_default().to_ascii_lowercase();
+    // A script subtag decides when there is one: `sd-Deva` is written left to right, and
+    // `pa-Arab` right to left.
+    if let Some(script) = subtags.find(|subtag| subtag.len() == 4) {
+        return match script.to_ascii_lowercase().as_str() {
+            "adlm" | "arab" | "hebr" | "mand" | "nkoo" | "rohg" | "samr" | "syrc" | "thaa" => "rtl",
+            _ => "ltr",
+        };
+    }
+    // Otherwise the usual script of the language. Kurdish (`ku`, Kurmanji) is written in Latin
+    // letters; Sorani (`ckb`) in Arabic ones.
+    match language.as_str() {
+        "ar" | "arc" | "ckb" | "dv" | "fa" | "he" | "iw" | "ks" | "ps" | "sd" | "ug" | "ur"
+        | "yi" => "rtl",
         _ => "ltr",
     }
 }
@@ -117,5 +127,10 @@ mod tests {
         assert_eq!(direction("fa-IR"), "rtl");
         assert_eq!(direction("en"), "ltr");
         assert_eq!(direction("pt-BR"), "ltr");
+        assert_eq!(direction("ku"), "ltr");
+        assert_eq!(direction("ks"), "rtl");
+        assert_eq!(direction("sd-Deva"), "ltr");
+        assert_eq!(direction("pa-Arab"), "rtl");
+        assert_eq!(direction("uz-Arab-AF"), "rtl");
     }
 }

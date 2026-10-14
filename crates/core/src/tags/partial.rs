@@ -17,8 +17,12 @@ struct Partial {
 impl Tag for Partial {
     fn render(&self, ctx: &mut Context, out: &mut String) -> Result<()> {
         let name = self.name.evaluate(ctx)?.to_str().into_owned();
-        // A comment cannot hold `--`, and the name is read back between double quotes.
-        let name = name.replace("--", "- -").replace('"', "&quot;");
+        // A comment cannot hold `--`, and the name is read back between double quotes: the
+        // runtime turns these entities back into the name.
+        let name = name
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace("--", "-&#45;");
         out.push_str(&format!("<!--{START_MARKER} name=\"{name}\"-->"));
         self.body.render(ctx, out);
         out.push_str(&format!("<!--{END_MARKER}-->"));

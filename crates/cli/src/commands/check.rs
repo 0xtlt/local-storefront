@@ -110,6 +110,35 @@ fn preview_hint(error: &str) -> String {
     }
 }
 
+/// The line of the first `{% block %}` call of a file, outside `doc`, `comment` and `raw`,
+/// where examples of calls are written.
+fn block_call_line(source: &str) -> Option<usize> {
+    let mut quiet: Option<&str> = None;
+    let mut rest = source;
+    let mut offset = 0;
+    while let Some(open) = rest.find("{%") {
+        let tag_start = offset + open;
+        let after = &source[tag_start + 2..];
+        let close = after.find("%}")?;
+        let markup = after[..close].trim_start_matches('-').trim();
+        let name = markup.split_whitespace().next().unwrap_or_default();
+        match quiet {
+            Some(end) if name == end => quiet = None,
+            Some(_) => {}
+            None => match name {
+                "doc" => quiet = Some("enddoc"),
+                "comment" => quiet = Some("endcomment"),
+                "raw" => quiet = Some("endraw"),
+                "block" => return Some(source[..tag_start].matches('\n').count() + 1),
+                _ => {}
+            },
+        }
+        offset = tag_start + 2 + close + 2;
+        rest = &source[offset..];
+    }
+    None
+}
+
 pub fn run(theme_dir: &Path, previews: &[lsf_core::Preview]) -> Result<ExitCode, String> {
     let env = Arc::new(lsf_core::environment_with(previews));
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
@@ -136,6 +165,15 @@ pub fn run(theme_dir: &Path, previews: &[lsf_core::Preview]) -> Result<ExitCode,
                 continue;
             }
             let source = theme.files().read(&path).unwrap_or_default();
+            if env.tag("block").is_some()
+                && !matches!(directory, "layout" | "templates" | "templates/customers")
+                && let Some(line) = block_call_line(&source)
+            {
+                println!(
+                    "{path}:{line}: the block tag can only be used in layout/ and templates/ files"
+                );
+                problems += 1;
+            }
             let mut reported = Vec::new();
             for (filter, line) in filters_used(&source) {
                 if env.filter(&filter).is_none() && !reported.contains(&filter) {
@@ -171,7 +209,30 @@ pub fn run(theme_dir: &Path, previews: &[lsf_core::Preview]) -> Result<ExitCode,
 
 #[cfg(test)]
 mod tests {
-    use super::filters_used;
+    use super::{block_call_line, filters_used, preview_hint};
+
+    #[test]
+    fn block_calls_are_found_outside_documentation() {
+        assert_eq!(
+            block_call_line("{% doc %}\n{% block 'a' %}{% endblock %}\n{% enddoc %}<p>"),
+            None
+        );
+        assert_eq!(
+            block_call_line("{% comment %}{% block 'a' %}{% endcomment %}\n\n{%- block 'b' -%}"),
+            Some(3)
+        );
+        assert_eq!(block_call_line("{% render 'block' %}"), None);
+    }
+
+    #[test]
+    fn a_tag_of_a_preview_names_the_preview() {
+        assert_eq!(
+            preview_hint("Liquid syntax error (templates/index line 1): Unknown tag 'block'"),
+            " (`block` is part of Shopify's \"Liquid July '26 changes\" feature preview: run with `--preview liquid-july-26`)"
+        );
+        assert_eq!(preview_hint("Liquid syntax error: Unknown tag 'nope'"), "");
+        assert_eq!(preview_hint("Liquid syntax error: something else"), "");
+    }
 
     fn names(source: &str) -> Vec<(String, usize)> {
         filters_used(source)

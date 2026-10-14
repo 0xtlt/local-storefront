@@ -195,12 +195,13 @@ pub fn video_from_src(site: &SiteRef, src: &str) -> Media {
     let width = meta.and_then(|meta| meta.width).unwrap_or(1920);
     let height = meta.and_then(|meta| meta.height).unwrap_or(1080);
     let (stem, extension) = src.rsplit_once('.').unwrap_or((src, "mp4"));
-    let extension = extension.to_lowercase();
-    let mime_type = match extension.as_str() {
-        "mov" => "video/quicktime".to_string(),
-        "m4v" => "video/mp4".to_string(),
-        other => format!("video/{other}"),
+    // Shopify turns every uploaded video into an MP4, and says so in `<source type>`: a
+    // `.mov` labelled `video/quicktime` would not play in Chrome or Firefox.
+    let extension = match extension.to_lowercase().as_str() {
+        "mov" | "m4v" => "mp4".to_string(),
+        other => other.to_string(),
     };
+    let mime_type = format!("video/{extension}");
     Media {
         id: stable_id("video", src),
         position: 1,
@@ -264,15 +265,22 @@ pub fn is_measurement(kind: &str) -> bool {
     MEASUREMENTS.contains(&kind)
 }
 
-/// An article named `blog/article`, or by its handle alone when one blog has it.
+/// An article named `blog/article`, or by its handle alone when only one blog has it: a
+/// handle that several blogs have names none of them.
 fn article_value(site: &SiteRef, reference: &str) -> Value {
     let store = &site.store;
     let found = match reference.split_once('/') {
         Some((blog, article)) => store
             .blog_index(blog)
             .and_then(|blog| Some((blog, store.article_index(blog, article)?))),
-        None => (0..store.blogs.len())
-            .find_map(|blog| Some((blog, store.article_index(blog, reference)?))),
+        None => {
+            let mut matches = (0..store.blogs.len())
+                .filter_map(|blog| Some((blog, store.article_index(blog, reference)?)));
+            match (matches.next(), matches.next()) {
+                (Some(found), None) => Some(found),
+                _ => None,
+            }
+        }
     };
     found.map_or(Value::Nil, |(blog, article)| {
         super::content::ArticleDrop::value(site, blog, article)
@@ -352,10 +360,13 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                         _ => None,
                     })
                     .unwrap_or(0);
-                Value::object(MoneyDrop {
-                    cents,
-                    currency: site.currency().to_string(),
-                })
+                // The currency written with the amount, else the shop's.
+                let currency = map
+                    .get("currency_code")
+                    .and_then(Json::as_str)
+                    .filter(|code| !code.is_empty())
+                    .map_or_else(|| site.currency().to_string(), str::to_uppercase);
+                Value::object(MoneyDrop { cents, currency })
             }
             other => Value::from(other),
         },

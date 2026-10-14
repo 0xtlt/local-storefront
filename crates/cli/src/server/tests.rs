@@ -1602,6 +1602,67 @@ fn a_video_is_served_in_the_parts_the_browser_asks_for() {
     assert_eq!(beyond.status, 416);
     assert_eq!(header(&beyond, "content-range"), Some("bytes */256"));
 
+    // An `.m4v` is an MP4 by another name.
+    std::fs::write(root.join("shopify-local/files/clip.m4v"), &video).unwrap();
+    let m4v = get(&state, "/cdn/shop/files/clip.m4v", "video");
+    assert_eq!(header(&m4v, "content-type"), Some("video/mp4"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
+    let root = changing_theme("partials");
+    std::fs::write(
+        root.join("layout/theme.liquid"),
+        "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("templates/index.liquid"),
+        "{% partial 'count' %}<p>1</p>{% endpartial %}",
+    )
+    .unwrap();
+    let serve = |previews: &[lsf_core::Preview]| {
+        let app = App::open(&root, None, Revalidate::Never, previews).unwrap();
+        ServerState::new(
+            app,
+            ServeOptions {
+                live_reload: false,
+                watch: false,
+                quiet: true,
+                compress: false,
+                minify: false,
+                throttle: Default::default(),
+                timings: false,
+                customer: None,
+            },
+        )
+        .0
+    };
+
+    // As on a live store: the tag is unknown, and nothing is added.
+    let live = text(&get(&serve(&[]), "/", "partials"));
+    assert!(live.contains("Unknown tag 'partial'"), "{live}");
+    assert!(!live.contains("importmap"), "{live}");
+
+    let state = serve(&[lsf_core::Preview::LiquidJuly26]);
+    let page = text(&get(&state, "/", "partials"));
+    let module = page
+        .split("\"@shopify/partial-rendering\":\"//")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("an import map for the runtime");
+    let path = &module[module.find('/').unwrap()..];
+    let script = get(&state, path, "partials");
+    assert_eq!(script.status, 200, "{path}");
+    assert_eq!(
+        header(&script, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert!(text(&script).contains("export const partials"));
+    assert!(page.contains("<!--shopify-partial name=\"count\"--><p>1</p><!--/shopify-partial-->"));
+
     let _ = std::fs::remove_dir_all(&root);
 }
 

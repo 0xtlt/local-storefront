@@ -1049,7 +1049,9 @@ fn metafield_values_are_the_objects_shopify_gives() {
                     "story": { "type": "article_reference", "value": "journal/how-to-care-for-linen" },
                     "same_story": { "type": "article_reference", "value": "how-to-care-for-linen" },
                     "length": { "type": "distance", "value": { "value": "2.5", "unit": "m" } },
-                    "price": { "type": "money", "value": { "amount": "17.96", "currency_code": "USD" } }
+                    "price": { "type": "money", "value": { "amount": "17.96", "currency_code": "USD" } },
+                    "price_eur": { "type": "money", "value": { "amount": "5", "currency_code": "eur" } },
+                    "width": { "type": "dimension", "value": { "value": "2.555", "unit": "cm" } }
                 }
             }]
         }
@@ -1095,6 +1097,20 @@ fn metafield_values_are_the_objects_shopify_gives() {
              {{% if tent.price.value > 1000 %}}more{{% endif %}}|{{{{ tent.price.value.currency.iso_code }}}}"
         )),
         "1796|$17.96|1800|more|USD"
+    );
+    // A money keeps the currency it is written in.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.price_eur.value }}}} {{{{ tent.price_eur.value.currency.iso_code }}}}"
+        )),
+        "500 EUR"
+    );
+    // A measurement is printed with two decimals at most.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.width | metafield_text }}}}|{{{{ tent.width | metafield_tag }}}}"
+        )),
+        "2.56 cm|<span class=\"metafield-dimension\"><span class=\"metafield-dimension_value\">2.56 </span><span class=\"metafield-dimension_unit\">cm</span></span>"
     );
 }
 
@@ -1316,4 +1332,152 @@ fn without_their_preview_block_and_partial_fail_as_on_a_live_store() {
         rendered.body
     );
     assert!(!rendered.body.contains("importmap"));
+}
+
+#[test]
+fn a_video_setting_is_the_video_of_its_file() {
+    let fixture = theme_of(
+        "video-setting",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"hero": {"type": "hero", "settings": {"clip": "shopify://files/videos/Clip.MOV"}}}, "order": ["hero"]}"#,
+            ),
+            (
+                "sections/hero.liquid",
+                "{% assign clip = section.settings.clip %}\
+                 {{ clip.media_type }}|{{ clip.sources.first.mime_type }}|{{ clip.sources.first.format }}|\
+                 {{ clip.preview_image.src }}|{{ clip.aspect_ratio }}\
+                 {% schema %}{\"name\": \"Hero\", \"settings\": [{\"type\": \"video\", \"id\": \"clip\", \"label\": \"Clip\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    // A `.mov` is announced as the MP4 Shopify makes of it; its poster is the `.jpg` of the
+    // same name, whatever the case of the extension.
+    assert!(
+        rendered
+            .body
+            .contains("video|video/mp4|mp4|files/videos/Clip.jpg|1.7777777777777777"),
+        "{}",
+        rendered.body
+    );
+}
+
+#[test]
+fn a_called_block_takes_its_parameters_when_the_tag_opens() {
+    let liquid_july = [lsf_core::Preview::LiquidJuly26];
+    let layout = (
+        "layout/theme.liquid",
+        "<html><body>{{ content_for_layout }}</body></html>",
+    );
+    // A setting called `content` keeps its default: only parameters set settings, and the
+    // body is not one. The parameters are read before the body runs.
+    let text = (
+        "blocks/text.liquid",
+        "[{{ block.settings.content }}|{{ n }}|{{ items | join: ',' }}|{{ content }}|{% content_for 'blocks' %}]\
+         {% schema %}{\"name\": \"Text\", \"settings\": [{\"type\": \"text\", \"id\": \"content\", \"label\": \"Content\", \"default\": \"Hello\"}]}{% endschema %}",
+    );
+    let fixture = theme_of(
+        "called-block",
+        &liquid_july,
+        &[
+            layout,
+            text,
+            (
+                "templates/index.liquid",
+                "{% assign n = 1 %}{% block 'text', n: n, items: [['a', 'b'], 'c'] %}{% assign n = 2 %}{{ n }}{% endblock %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains("<body>[Hello|1|a,b,c|2|]"),
+        "{}",
+        rendered.body
+    );
+
+    // A block nested in the body of another is part of it in a profile.
+    let nested = theme_of(
+        "called-block-profile",
+        &liquid_july,
+        &[
+            layout,
+            text,
+            (
+                "templates/index.liquid",
+                "{% block 'text' %}{% block 'text' %}{% endblock %}{% endblock %}",
+            ),
+        ],
+    );
+    let site = nested.renderer.site(
+        nested.store.clone(),
+        request("/"),
+        Session::initial(&nested.store),
+    );
+    let (_, profile) = nested.renderer.profile_page(
+        &site,
+        lsf_core::render::routes::resolve(&site),
+        &Target::Page,
+        &ProfileOptions::default(),
+    );
+    assert_eq!(
+        profile_shape(&profile),
+        "render(templates/index(block text(block text(blocks/text) blocks/text)) layout/theme)"
+    );
+}
+
+#[test]
+fn a_called_block_is_refused_where_shopify_refuses_it() {
+    let liquid_july = [lsf_core::Preview::LiquidJuly26];
+    let fixture = theme_of(
+        "called-block-errors",
+        &liquid_july,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% block 'outer' %}{% endblock %}|{% block 'missing' %}{% endblock %}",
+            ),
+            ("blocks/outer.liquid", "{% block 'inner' %}{% endblock %}"),
+            ("blocks/inner.liquid", "inner"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    // Only layouts and templates may call a block; and the block has to exist.
+    assert!(
+        rendered.body.contains(
+            "Liquid error (blocks/outer line 1): the block tag can only be used in layout/ and templates/ files"
+        ),
+        "{}",
+        rendered.body
+    );
+    assert!(
+        rendered.body.contains(
+            "Liquid error (templates/index line 1): Could not find asset blocks/missing.liquid"
+        ),
+        "{}",
+        rendered.body
+    );
+    // An array written in place is a value, not the start of a lookup.
+    let env = Arc::new(lsf_core::environment_with(&liquid_july));
+    let Err(error) =
+        lsf_liquid::Template::parse(&env, "{% block 'x', a: ['b'].first %}{% endblock %}")
+    else {
+        panic!("an array followed by a lookup parses");
+    };
+    assert!(
+        error.to_string().contains("cannot be followed by"),
+        "{error}"
+    );
 }

@@ -9,9 +9,15 @@
 const START = /^shopify-partial name="(.*)"$/s;
 const END = '/shopify-partial';
 
-const unescapeName = (name) => name.replaceAll('&quot;', '"');
+// The server writes `&`, `"` and the `-` of a `--` (which a comment cannot hold) as entities.
+const unescapeName = (name) =>
+  name.replaceAll('&#45;', '-').replaceAll('&quot;', '"').replaceAll('&amp;', '&');
 
-/** Every partial under `scope`, outermost first: `{ name, start, end }` (the two comments). */
+/**
+ * Every partial under `scope`, in the order of the page (outermost first): `{ name, start,
+ * end }`, the two comments. They can have different parents: an HTML parser moves the end of a
+ * region of table rows into the `<tbody>` it adds.
+ */
 function regions(scope) {
   const root = scope ?? document;
   const owner = root.ownerDocument ?? root;
@@ -28,11 +34,11 @@ function regions(scope) {
       open.pop().end = node;
     }
   }
-  return found.filter((region) => region.end && region.start.parentNode === region.end.parentNode);
+  return found.filter((region) => region.end);
 }
 
 const rangeOf = (region) => {
-  const range = document.createRange();
+  const range = (region.start.ownerDocument ?? document).createRange();
   range.setStartAfter(region.start);
   range.setEndBefore(region.end);
   return range;
@@ -75,38 +81,38 @@ async function fetchPartials(...args) {
   const html = await response.text();
   const fresh = new DOMParser().parseFromString(html, 'text/html');
   const wanted = names.length > 0 ? new Set(names) : null;
+  // Every region of a wanted name, in the order of the page: a partial rendered in a loop is
+  // there once per turn.
   const partials = [];
-  const seen = new Set();
   for (const region of regions(fresh)) {
-    if ((wanted && !wanted.has(region.name)) || seen.has(region.name)) continue;
-    seen.add(region.name);
-    const range = fresh.createRange();
-    range.setStartAfter(region.start);
-    range.setEndBefore(region.end);
+    if (wanted && !wanted.has(region.name)) continue;
     const holder = fresh.createElement('template');
-    holder.content.append(range.cloneContents());
+    holder.content.append(rangeOf(region).cloneContents());
     partials.push({ name: region.name, html: holder.innerHTML });
   }
   return { url: response.url, partials };
 }
 
-/** The nodes of a region, between its two comments. */
-function nodesBetween(region) {
-  const nodes = [];
-  for (let node = region.start.nextSibling; node && node !== region.end; node = node.nextSibling) {
-    nodes.push(node);
-  }
-  return nodes;
-}
-
 /**
- * The form controls among `nodes` and their descendants, by a key that finds a control again
- * after a swap: its id, else its name and its position among the controls of that name.
+ * The form controls of a region (a range of the page) or of a fragment, by a key that finds a
+ * control again after a swap: its id, else its name and its position among the controls of
+ * that name.
  */
-function controlsIn(nodes) {
+function controlsIn(where) {
+  const selector = 'input, textarea, select';
+  let candidates;
+  if (where instanceof Range) {
+    const ancestor = where.commonAncestorContainer;
+    const root = ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentNode;
+    candidates = [...(root?.querySelectorAll(selector) ?? [])].filter((control) =>
+      where.intersectsNode(control),
+    );
+  } else {
+    candidates = [...where.querySelectorAll(selector)];
+  }
   const keys = new Map();
   const counts = new Map();
-  const visit = (control) => {
+  for (const control of candidates) {
     let key = control.id ? `#${control.id}` : null;
     if (!key && control.name) {
       const index = counts.get(control.name) ?? 0;
@@ -114,12 +120,6 @@ function controlsIn(nodes) {
       key = `${control.name}[${index}]`;
     }
     if (key && !keys.has(key)) keys.set(key, control);
-  };
-  const selector = 'input, textarea, select';
-  for (const node of nodes) {
-    if (node.nodeType !== Node.ELEMENT_NODE) continue;
-    if (node.matches(selector)) visit(node);
-    node.querySelectorAll(selector).forEach(visit);
   }
   return keys;
 }
@@ -128,11 +128,17 @@ function controlsIn(nodes) {
 function apply(update, scope) {
   const scrollX = window.scrollX;
   const scrollY = window.scrollY;
+  // The n-th partial of a name in the update replaces the n-th one of that name on the page.
+  const occurrences = new Map();
   for (const partial of update?.partials ?? []) {
-    const region = regions(scope).find((candidate) => candidate.name === partial.name);
+    const occurrence = occurrences.get(partial.name) ?? 0;
+    occurrences.set(partial.name, occurrence + 1);
+    const region = regions(scope).filter((candidate) => candidate.name === partial.name)[
+      occurrence
+    ];
     if (!region) continue;
-    const old = nodesBetween(region);
-    const before = controlsIn(old);
+    const range = rangeOf(region);
+    const before = controlsIn(range);
     const active = document.activeElement;
     const focused = [...before].find(([, control]) => control === active)?.[0];
     const selection =
@@ -143,21 +149,26 @@ function apply(update, scope) {
     const holder = document.createElement('template');
     holder.innerHTML = partial.html;
     const fresh = holder.content;
-    const after = controlsIn([...fresh.childNodes]);
+    const after = controlsIn(fresh);
     for (const [key, control] of before) {
       const replacement = after.get(key);
+      // What the visitor typed or chose is kept; what the page itself holds (a hidden input,
+      // such as the id of the variant) comes from the server.
       if (!replacement || replacement.type !== control.type) continue;
+      if (control.type === 'hidden' || control.type === 'file') continue;
       if (control.type === 'checkbox' || control.type === 'radio') {
         replacement.checked = control.checked;
-      } else if (control.type !== 'file') {
+      } else {
         replacement.value = control.value;
       }
     }
-    for (const node of old) node.remove();
-    region.end.before(fresh);
+    // Inserted where the region starts: when the end of a region of table rows sits in a
+    // `<tbody>`, the new rows come in their own `<tbody>` beside it, not inside it.
+    range.deleteContents();
+    range.insertNode(fresh);
 
     if (focused) {
-      const replacement = controlsIn(nodesBetween(region)).get(focused);
+      const replacement = controlsIn(rangeOf(region)).get(focused);
       replacement?.focus({ preventScroll: true });
       if (replacement && selection) {
         try {

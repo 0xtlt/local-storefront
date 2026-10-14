@@ -359,8 +359,8 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
 
     // Anything that is not a raster image is served as it is.
     if !is_raster {
-        return match path.and_then(|path| std::fs::read(path).ok()) {
-            Some(bytes) => whole_or_part(incoming, &src, bytes),
+        return match path {
+            Some(path) => whole_or_part(incoming, &src, &path),
             None => Reply::not_found(),
         };
     }
@@ -395,15 +395,38 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
 }
 
 /// A file served as it is, or the part a `Range` header asks for: browsers ask for parts to
-/// play a video and to seek in it, and Safari plays none that comes whole.
-fn whole_or_part(incoming: &Incoming, src: &str, bytes: Vec<u8>) -> Reply {
+/// play a video and to seek in it, and Safari plays none that comes whole. Only the part is
+/// read: a player asks for many parts of a large file.
+fn whole_or_part(incoming: &Incoming, src: &str, path: &Path) -> Reply {
+    use std::io::{Read, Seek, SeekFrom};
+
     let kind = content_type(src);
-    let len = bytes.len();
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Reply::not_found();
+    };
+    let len = file
+        .metadata()
+        .map_or(0, |metadata| metadata.len() as usize);
+    let read_part = |file: &mut std::fs::File, start: usize, end: usize| -> Option<Vec<u8>> {
+        let mut part = vec![0; end + 1 - start];
+        file.seek(SeekFrom::Start(start as u64)).ok()?;
+        file.read_exact(&mut part).ok()?;
+        Some(part)
+    };
     let reply = match incoming.header("range").map(|range| byte_range(range, len)) {
-        None | Some(ByteRange::Whole) => Reply::new(200, kind, bytes).cached(cache::ASSET),
-        Some(ByteRange::Part(start, end)) => Reply::new(206, kind, bytes[start..=end].to_vec())
-            .cached(cache::ASSET)
-            .header("content-range", format!("bytes {start}-{end}/{len}")),
+        None | Some(ByteRange::Whole) => {
+            let mut bytes = Vec::with_capacity(len);
+            if file.read_to_end(&mut bytes).is_err() {
+                return Reply::not_found();
+            }
+            Reply::new(200, kind, bytes).cached(cache::ASSET)
+        }
+        Some(ByteRange::Part(start, end)) => match read_part(&mut file, start, end) {
+            Some(part) => Reply::new(206, kind, part)
+                .cached(cache::ASSET)
+                .header("content-range", format!("bytes {start}-{end}/{len}")),
+            None => return Reply::not_found(),
+        },
         Some(ByteRange::Unsatisfiable) => {
             Reply::new(416, kind, Vec::new()).header("content-range", format!("bytes */{len}"))
         }
