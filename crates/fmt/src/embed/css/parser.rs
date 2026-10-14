@@ -28,7 +28,9 @@ pub(super) enum Kind {
         /// The colon, and what PostCSS keeps with it.
         between: String,
         value: Range,
-        important: bool,
+        /// `!important`, and what PostCSS keeps after it as it is: the comments and the
+        /// whitespace that come before the semicolon.
+        important: Option<String>,
         /// The rules of a custom property whose value is a block: `--a: { b: c }`.
         block: Option<Vec<Node>>,
     },
@@ -338,14 +340,24 @@ impl<'s> Parser<'s> {
             value_start = colon + 1;
         }
 
-        let mut important = false;
+        let mut important = None;
         if !custom_property || !text[value_start..].trim_start().starts_with('{') {
-            let trimmed = text[value_start..value_end].trim_end();
-            let lower = trimmed.to_ascii_lowercase();
+            // PostCSS looks for `!important` from the end, past whitespace and comments.
+            let mut words_end = value_end;
+            loop {
+                let trimmed = text[value_start..words_end]
+                    .trim_end_matches(|c: char| c.is_ascii() && is_space(c as u8));
+                words_end = value_start + trimmed.len();
+                match trimmed.strip_suffix("*/").and_then(|rest| rest.rfind("/*")) {
+                    Some(comment_start) => words_end = value_start + comment_start,
+                    None => break,
+                }
+            }
+            let lower = text[value_start..words_end].to_ascii_lowercase();
             if let Some(before) = lower.strip_suffix("important")
                 && let Some(before) = before.trim_end().strip_suffix('!')
             {
-                important = true;
+                important = Some(text[words_end..value_end].to_string());
                 value_end = value_start + before.len();
             }
         }
@@ -453,7 +465,7 @@ mod tests {
                 } => format!(
                     "{prop}={}{}",
                     &source[value.start..value.end],
-                    if *important { "!" } else { "" }
+                    if important.is_some() { "!" } else { "" }
                 ),
             })
             .collect()

@@ -21,6 +21,13 @@
     "again": "{% stylesheet %}\n  .card {\n    color: red;\n    margin: 0 AUTO !important;\n    transition:\n      opacity 0.3s ease,\n      transform 0.3s ease;\n    background: URL(a.png);\n  }\n  .card:hover,\n  .card > .title + p {\n    width: calc(100% - 2 * var(--gap, 10px));\n  }\n\n  @media (min-width: 750px) and (max-width: 990px) {\n    .card {\n      display: none;\n    }\n  }\n  /* a comment */\n  .a {\n    &:hover {\n      color: #fff;\n    }\n  }\n{% endstylesheet %}\n"
   },
   {
+    "name": "what follows !important is kept up to the semicolon",
+    "options": {},
+    "source": "{% stylesheet %}\na{color:red !important /* why */ ;margin:0 !IMPORTANT ;padding:0!important}\nb{color:red /* not important */ ;}\n{% endstylesheet %}\n",
+    "expected": "{% stylesheet %}\n  a {\n    color: red !important /* why */ ;\n    margin: 0 !important ;\n    padding: 0 !important;\n  }\n  b {\n    color: red /* not important */;\n  }\n{% endstylesheet %}\n",
+    "again": "{% stylesheet %}\n  a {\n    color: red !important /* why */ ;\n    margin: 0 !important ;\n    padding: 0 !important;\n  }\n  b {\n    color: red /* not important */;\n  }\n{% endstylesheet %}\n"
+  },
+  {
     "name": "the style tag, with and without liquid",
     "options": {},
     "source": "{% style %}\n.a{color:red}\n{% endstyle %}\n{% style %}\n  .section-{{ section.id }}-padding{padding-top:{{ section.settings.padding_top }}px;\n      color:red}\n{% endstyle %}\n",

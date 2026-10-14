@@ -247,8 +247,8 @@ How it is checked:
   (`mise run prettier:fixtures`): 443 give what Prettier gives. The other one is Markdown.
 - **CSS.** The 68 style sheets of the two themes are formatted by both at 120, 80 and 40
   columns: identical. Of the 157 files Prettier tests its own CSS printer with, which are edge
-  cases, 144 are identical through `{% stylesheet %}`.
-- **65 cases** written for this project, one per feature and per option, are formatted by
+  cases, 145 are identical through `{% stylesheet %}`.
+- **66 cases** written for this project, one per feature and per option, are formatted by
   Prettier into `crates/fmt/tests/golden` and compared on every test run
   (`mise run prettier:golden` regenerates them).
 

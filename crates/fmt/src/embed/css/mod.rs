@@ -10,7 +10,7 @@ mod parser;
 mod selector;
 mod value;
 
-use crate::doc::{Doc, concat, group, hardline, indent, softline, text};
+use crate::doc::{Doc, concat, group, hardline, indent, nothing, softline, text};
 use crate::options::Options;
 
 use misc::{is_next_line_empty, maybe_to_lower_case};
@@ -115,7 +115,7 @@ impl Printer<'_> {
                 prop,
                 between,
                 *value,
-                *important,
+                important.as_deref(),
                 block.as_deref(),
                 at_rule,
             ),
@@ -134,7 +134,7 @@ impl Printer<'_> {
         prop: &str,
         between: &str,
         value: Range,
-        important: bool,
+        important: Option<&str>,
         block: Option<&[Node]>,
         at_rule: Option<&str>,
     ) -> Doc {
@@ -163,7 +163,10 @@ impl Printer<'_> {
             text(trimmed_between),
             text(if is_value_all_space { "" } else { " " }),
             printed_value,
-            text(if important { " !important" } else { "" }),
+            match important {
+                Some(after) => text(format!(" !important{after}")),
+                None => nothing(),
+            },
             text(";"),
         ])
     }

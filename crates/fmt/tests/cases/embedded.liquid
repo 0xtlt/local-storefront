@@ -22,6 +22,12 @@
 .a{&:hover{color:#FFF}}
 {% endstylesheet %}
 
+## what follows !important is kept up to the semicolon
+{% stylesheet %}
+a{color:red !important /* why */ ;margin:0 !IMPORTANT ;padding:0!important}
+b{color:red /* not important */ ;}
+{% endstylesheet %}
+
 ## the style tag, with and without liquid
 {% style %}
 .a{color:red}
