@@ -1,17 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/liquid", "crates/core", "crates/cli"]
+members = ["crates/liquid", "crates/core", "crates/fmt", "crates/cli"]
 
 [workspace.package]
 version = "0.1.14"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.97"
 license = "MIT"
 repository = "https://github.com/0xtlt/local-storefront"
 
 [workspace.dependencies]
 lsf-liquid = { path = "crates/liquid" }
 lsf-core = { path = "crates/core" }
+lsf-fmt = { path = "crates/fmt" }
 
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -22,6 +23,12 @@ rust_decimal = { version = "1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: without it a number such as 1234.3838300038383 is read one bit off.
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+# Oxc's formatter of JavaScript is not published on crates.io: the crates come from one tag of
+# its repository, so that the minifier and the formatter share one parser.
+oxc = { git = "https://github.com/oxc-project/oxc", tag = "oxfmt_v0.73.0" }
+oxc_compat = { git = "https://github.com/oxc-project/oxc", tag = "oxfmt_v0.73.0" }
+oxc_formatter = { git = "https://github.com/oxc-project/oxc", tag = "oxfmt_v0.73.0" }
+oxc_formatter_core = { git = "https://github.com/oxc-project/oxc", tag = "oxfmt_v0.73.0" }
 
 [profile.dev]
 opt-level = 1

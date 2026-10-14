@@ -1,0 +1,9 @@
+{
+  "name": "lsf-prettier-oracle",
+  "private": true,
+  "description": "The Prettier and the plugin `lsf fmt` is compared with. Installed into .oracle/prettier by `mise run prettier:install`.",
+  "dependencies": {
+    "@shopify/prettier-plugin-liquid": "1.11.2",
+    "prettier": "3.9.10"
+  }
+}

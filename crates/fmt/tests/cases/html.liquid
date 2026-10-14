@@ -1,0 +1,95 @@
+## block elements go on their own lines, inline ones stay in the text
+<div><p>Some <b>bold</b> and <a href="/x">linked</a> text, long enough that it has to wrap at some point because it does not fit.</p><ul><li>one</li><li>two</li></ul></div>
+
+## attributes break one per line when they do not fit
+<img src="{{ image | image_url: width: 400 }}" alt="{{ image.alt | escape }}" width="400" height="300" loading="lazy" class="card__image">
+<a   class="a"   href="/x" >x</a>
+<input type="checkbox" checked disabled>
+<br/><hr><custom-element some-attribute></custom-element>
+
+## attributes that were on several lines stay on several lines
+<div
+  class="a" id="b">x</div>
+
+## the value of an attribute is kept as written
+<div class="a  {{ b }}   c" data-x='{"a": 1}' style="color: red;margin:0" data-y=unquoted {{ block.shopify_attributes }}></div>
+<div class="
+      a
+   b
+      {% if c %}d{% endif %}
+"></div>
+
+## liquid among attributes
+<div {% if a %}class="b"{% endif %} id="c"></div>
+<option value="1"{% if selected %} selected{% endif %}>x</option>
+
+## whitespace that shows in the page is kept
+<span>a</span><span>b</span> <span>c</span>
+<p>text<b>bold</b>text {{ a }}{{ b }} {{ c }}</p>
+<button>   Click   </button><label>Name<input></label>
+
+## a long line of inline elements borrows the brackets of its tags
+<p>A paragraph with <a href="https://example.com/a/very/long/url/that/goes/on/and/on">a link whose text is long</a><b>and bold right after it</b><i>then italic, with no space between them anywhere</i>.</p>
+
+## pre and textarea are left alone
+<pre>
+  kept   as
+      written
+</pre>
+<textarea>
+  also   kept
+</textarea>
+
+## comments
+<!--   a comment   -->
+<!--
+    on several
+  lines
+-->
+<!--[if lt IE 9]><p>old</p><![endif]-->
+
+## prettier-ignore
+<!-- prettier-ignore -->
+<div   class="kept"   >   as   written   </div>
+{% # prettier-ignore %}
+{{ kept|as:written }}
+<!-- prettier-ignore-attribute -->
+<div   class="a"   id="b">formatted   inside</div>
+
+## what a comment says of the next element
+<!-- display: inline -->
+<div>a</div><!-- display: block -->
+<span>b</span>
+<!-- white-space: pre -->
+<div>  kept  </div>
+
+## the doctype, html, head and body
+<!DOCTYPE html><html lang="{{ request.locale.iso_code }}"><head><meta charset="utf-8"><title>{{ page_title }}</title>{{ content_for_header }}</head><body class="a">{{ content_for_layout }}</body></html>
+
+## tables, lists and selects break their children
+<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>b</td><td>c</td></tr></tbody></table>
+<select name="a"><option value="1">one</option><option value="2" selected>two</option></select>
+
+## an element opened in one branch and closed in another
+{% if a %}<div class="a">{% else %}<div class="b">{% endif %}
+content
+</div>
+
+## an element named with liquid
+<{{ tag }} class="a">x</{{ tag }}>
+<h{{ level }}>title</h{{ level }}>
+
+## svg is left alone
+<svg viewBox="0 0 10 10"   width="10"><path   d="M0 0L10 10"/>
+  <circle r="1"/></svg>
+
+## text is filled to the width
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam.
+
+A second paragraph.
+
+## front matter
+---
+title: x
+---
+<p>a</p>
