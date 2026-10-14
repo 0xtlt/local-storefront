@@ -257,9 +257,10 @@ The storefront is never locked: nothing redirects to that page.
   would see on the store.
 - **Shopify's scripts.** Pages have the `Shopify` JavaScript object, `Shopify.actions`,
   `Shopify.loadFeatures`, the Customer Privacy API and `ShopifyAnalytics.meta`.
-- **Block-first themes.** `{% block %}` and `{% partial %}` work, with
-  `@shopify/partial-rendering` to refresh a partial: Shopify's Skeleton theme renders, and
-  its partial refreshes.
+- **Shopify's feature previews, when you ask for them.** By default a page renders as on a live
+  store. `--preview liquid-july-26` adds what a development store with that preview has:
+  `{% block %}`, `{% partial %}` and `@shopify/partial-rendering`. See
+  [Feature previews](#feature-previews).
 - **Render times and costs.** Every response says how long the server took. `lsf profile`
   shows which section, block or snippet took the longest, and what the page would cost
   Shopify, where loading a product or a metafield is not free.
@@ -281,8 +282,29 @@ Details and known differences: [compatibility](docs/compatibility.md).
 | `lsf schema [kind]` | Prints the JSON Schema of the data format. |
 | `lsf docs` | Prints the data guide. |
 
-Every command accepts `--theme <dir>` (default: the current folder) and `--data <dir>`
-(default: `<theme>/shopify-local`).
+Every command accepts `--theme <dir>` (default: the current folder), `--data <dir>`
+(default: `<theme>/shopify-local`) and `--preview <name>` (see
+[Feature previews](#feature-previews)).
+
+## Feature previews
+
+Shopify tries changes on development stores before it ships them: a store turns them on in its
+list of feature previews. `lsf` renders what a live store renders, so a theme that uses a
+preview fails as it would there, and `lsf` says which preview to turn on:
+
+```bash
+lsf serve --preview liquid-july-26
+```
+
+`--preview` can be repeated, takes several names separated by commas, and is also read from
+`LSF_PREVIEW`.
+
+| Preview | Shopify's name | What it adds |
+|---|---|---|
+| `liquid-july-26` | Liquid July '26 changes | `{% block 'name' %}...{% endblock %}`, to call a theme block from a template or a layout; `{% partial 'name' %}...{% endpartial %}`, and `@shopify/partial-rendering` to refresh it. Shopify's [Skeleton theme](https://github.com/Shopify/skeleton-theme) needs it. |
+
+A preview can still change on Shopify's side; [compatibility](docs/compatibility.md) says
+what `lsf` does where Shopify has not said yet.
 
 ### Options of `lsf serve`
 

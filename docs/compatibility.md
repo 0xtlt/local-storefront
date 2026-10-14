@@ -43,10 +43,13 @@ filters that do not exist here.
 
 ## Liquid tags
 
-`assign`, `block`, `break`, `capture`, `case`, `comment`, `content_for`, `continue`, `cycle`,
+`assign`, `break`, `capture`, `case`, `comment`, `content_for`, `continue`, `cycle`,
 `decrement`, `doc`, `echo`, `for`, `form`, `if`, `ifchanged`, `include`, `increment`, `#`,
-`javascript`, `layout`, `liquid`, `paginate`, `partial`, `raw`, `render`, `schema`, `section`,
+`javascript`, `layout`, `liquid`, `paginate`, `raw`, `render`, `schema`, `section`,
 `sections`, `style`, `stylesheet`, `tablerow`, `unless`.
+
+With `--preview liquid-july-26`: `block` and `partial`. Without it they are unknown tags, as
+on a live store.
 
 ## Liquid filters
 
@@ -86,7 +89,8 @@ company locations and company addresses.
   defaults from the schema, `disabled` sections and blocks.
 - Theme blocks (`blocks/*.liquid`), nested blocks, static blocks, `{% content_for 'blocks' %}`
   and `{% content_for 'block' %}`, `closest.<resource>`.
-- Blocks called from a template or a layout, as in Shopify's Skeleton theme:
+- With `--preview liquid-july-26`, blocks called from a template or a layout, as in Shopify's
+  Skeleton theme:
   `{% block 'name', parameter: value %}content{% endblock %}`. The block sees its parameters
   and its body, as `content` (the Liquid reference) or `block.content` (the developer preview's
   guide), not the caller's variables; a parameter named after a setting of its schema
@@ -94,7 +98,8 @@ company locations and company addresses.
   output is not wrapped in a `shopify-block` element.
 - Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
   turn it on, and may still change.
-- Partials, `{% partial 'name' %}...{% endpartial %}`, and `@shopify/partial-rendering`
+- With `--preview liquid-july-26`, partials, `{% partial 'name' %}...{% endpartial %}`, and
+  `@shopify/partial-rendering`
   (`fetch`, `apply`, `refresh`, `get`, `getAll`). Shopify has not published the markup and the
   requests of its own runtime yet, so `lsf` uses its own: the region sits between
   `<!--shopify-partial name="..."-->` and `<!--/shopify-partial-->`, and the runtime fetches
@@ -124,7 +129,7 @@ modelled on what a Shopify storefront serves, with every URL pointing at the loc
 | `shopify-features` JSON, `__st`, `shopify-digital-wallet` meta, `hreflang` alternates | `content_for_header` | Same shape. The Storefront API token is a placeholder. |
 | `Shopify.loadFeatures`, `Shopify.autoloadFeatures` | `content_for_header` | `consent-tracking-api` installs a local `Shopify.customerPrivacy`. Features hosted by Shopify (`model-viewer-ui`, `shopify-xr`, ...) report an error to `onLoad`, which themes handle. |
 | `Shopify.customerPrivacy` | after `loadFeatures` | Consent is kept in the browser. It has to be collected in the EEA, the United Kingdom and Switzerland (by `Shopify.country`): there, nothing is allowed and `shouldShowBanner()` is true until `setTrackingConsent` is called. A real store decides this in its privacy settings. |
-| Import map for `@shopify/partial-rendering` | first in `content_for_header` | Only when a Liquid file of the theme has a `{% partial %}`. The module is served by `lsf`, see [Theme architecture](#theme-architecture). |
+| Import map for `@shopify/partial-rendering` | first in `content_for_header` | Only with `--preview liquid-july-26`, when a Liquid file of the theme has a `{% partial %}`. The module is served by `lsf`, see [Theme architecture](#theme-architecture). |
 | `Shopify.PaymentButton` | `content_for_header` | Present; `init()` does nothing, since dynamic checkout buttons are drawn by Shopify. |
 | `ShopifyAnalytics.meta` (`currency`, `page`, `product`), `trekkie` | before `</head>` | Same shape. Nothing is sent anywhere. |
 | `Shopify.analytics.publish` | before `</head>` | Calls are kept in `Shopify.analytics.replayQueue`, which a test can read. |

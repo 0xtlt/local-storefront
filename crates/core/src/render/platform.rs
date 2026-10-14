@@ -51,8 +51,12 @@ pub fn partial_rendering_path() -> &'static str {
     })
 }
 
-/// Whether a Liquid file of the theme has a `{% partial %}` region.
+/// Whether a Liquid file of the theme has a `{% partial %}` region, and the preview that has
+/// the tag is on.
 fn uses_partials(theme: &Theme) -> bool {
+    if theme.environment().tag("partial").is_none() {
+        return false;
+    }
     theme.cached_version("uses_partials", || {
         let files = theme.files();
         let found = ["layout", "templates", "sections", "blocks", "snippets"]

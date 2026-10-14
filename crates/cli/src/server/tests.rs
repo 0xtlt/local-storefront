@@ -14,7 +14,7 @@ use crate::app::App;
 
 fn server() -> ServerState {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
@@ -680,7 +680,7 @@ fn pages_carry_the_scripts_shopify_injects() {
 /// A server whose options were given on the command line.
 fn server_with_throttle(rules: &str) -> ServerState {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -969,7 +969,7 @@ fn b2b_customers_buy_for_a_company_location() {
 #[test]
 fn the_server_can_start_logged_in() {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1076,7 +1076,7 @@ fn robots_and_sitemaps_are_served() {
 
     // A theme without that template gets what Shopify serves by default.
     let root = changing_theme("robots");
-    let app = App::open(&root, None, Revalidate::Never).unwrap();
+    let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
     let (plain, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1475,7 +1475,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
         .unwrap();
     let file = std::fs::read(root.join("assets/hero.png")).unwrap();
 
-    let app = App::open(&root, None, Revalidate::Every(Duration::ZERO)).unwrap();
+    let app = App::open(&root, None, Revalidate::Every(Duration::ZERO), &[]).unwrap();
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1583,7 +1583,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
          {{ 'title.woff2' | asset_url | preload_tag: as: 'font', crossorigin: 'anonymous' }}",
     )
     .unwrap();
-    let app = App::open(&root, None, Revalidate::Never).unwrap();
+    let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1755,7 +1755,7 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         ),
     );
     let serve = |minify: bool| {
-        let app = App::open(&root, None, Revalidate::Never).unwrap();
+        let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
         let (state, _) = ServerState::new(
             app,
             ServeOptions {
@@ -1915,7 +1915,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
     let root = changing_theme("live-reload");
     // Files are checked once a minute: a page reloaded at once only shows a change if live
     // reload says that the files changed.
-    let app = App::open(&root, None, Revalidate::Every(Duration::from_secs(60))).unwrap();
+    let app = App::open(&root, None, Revalidate::Every(Duration::from_secs(60)), &[]).unwrap();
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -2021,7 +2021,7 @@ fn head_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 
 async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -2276,7 +2276,7 @@ fn what_is_rendered_says_how_long_it_took() {
     // the layout's. Each one by its type and its id on the page, and followed by its theme
     // blocks: a dash for each level, the type, then the key when it is another word.
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (naming, _) = ServerState::new(
         app,
         ServeOptions {
