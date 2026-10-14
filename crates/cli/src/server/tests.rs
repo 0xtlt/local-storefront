@@ -2158,6 +2158,47 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compression() {
+    let root = changing_theme("ranged-compressed");
+    std::fs::create_dir_all(root.join("shopify-local/files")).unwrap();
+    let data = format!("[{}]", vec!["\"compressible\""; 400].join(","));
+    std::fs::write(root.join("shopify-local/files/data.json"), &data).unwrap();
+    let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let _ = super::run(std::sync::Arc::new(state), listener).await;
+    });
+    let browser = ("accept-encoding", "gzip, deflate, br, zstd");
+    let path = "/cdn/shop/files/data.json";
+
+    let (head, body) = http_request(address, path, &[browser, ("range", "bytes=0-99")]).await;
+    assert!(head.starts_with("http/1.1 206 "), "{head}");
+    assert_eq!(head_value(&head, "content-encoding"), None);
+    assert_eq!(body, data.as_bytes()[..100]);
+    // The whole file is compressed, and then offers no parts.
+    let (head, _) = http_request(address, path, &[browser]).await;
+    assert_eq!(head_value(&head, "content-encoding"), Some("br"));
+    assert_eq!(head_value(&head, "accept-ranges"), None);
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn responses_are_compressed_for_the_clients_that_accept_it() {
     use super::compress::{Encoding, decompress};
 

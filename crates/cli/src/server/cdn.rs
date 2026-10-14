@@ -425,7 +425,12 @@ fn whole_or_part(incoming: &Incoming, src: &str, path: &Path) -> Reply {
             Some(part) => Reply::new(206, kind, part)
                 .cached(cache::ASSET)
                 .header("content-range", format!("bytes {start}-{end}/{len}")),
-            None => return Reply::not_found(),
+            // The file got shorter since its length was read (it is being written): the part
+            // is no longer there, which the browser asks again for.
+            None => {
+                let len = file.metadata().map_or(0, |metadata| metadata.len());
+                Reply::new(416, kind, Vec::new()).header("content-range", format!("bytes */{len}"))
+            }
         },
         Some(ByteRange::Unsatisfiable) => {
             Reply::new(416, kind, Vec::new()).header("content-range", format!("bytes */{len}"))

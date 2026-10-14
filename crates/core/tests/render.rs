@@ -1103,9 +1103,10 @@ fn metafield_values_are_the_objects_shopify_gives() {
         render(&format!(
             "{tent}{{{{ tent.price_eur.value }}}} {{{{ tent.price_eur.value.currency.iso_code }}}}|\
              {{{{ tent.price_eur | metafield_text }}}}|{{{{ tent.price_eur.value | money }}}}|\
+             {{{{ tent.price_eur.value | money_without_trailing_zeros }}}}|\
              {{{{ tent.price.value | money_with_currency }}}}"
         )),
-        "500 EUR|€5,00 EUR|€5,00|$17.96 USD"
+        "500 EUR|€5,00 EUR|€5,00|€5|$17.96 USD"
     );
     // A measurement is printed with two decimals at most.
     assert_eq!(
@@ -1482,4 +1483,44 @@ fn a_called_block_is_refused_where_shopify_refuses_it() {
         error.to_string().contains("cannot be followed by"),
         "{error}"
     );
+}
+
+#[test]
+fn an_article_handle_that_two_blogs_have_names_neither() {
+    let overlay = serde_json::json!({
+        "blogs": [{
+            "title": "News",
+            "articles": [{
+                "title": "How to care for linen",
+                "author": "Sam",
+                "published_at": "2024-01-10T09:00:00Z",
+                "content": "<p>Again.</p>"
+            }]
+        }],
+        "metaobjects": {
+            "note": [{
+                "handle": "n",
+                "fields": {
+                    "loose": { "type": "article_reference", "value": "how-to-care-for-linen" },
+                    "exact": { "type": "article_reference", "value": "news/how-to-care-for-linen" }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% assign n = metaobjects.note.n %}[{{ n.loose.value.title }}]{{ n.exact.value.url }}",
+    );
+    assert_eq!(output, "[]/blogs/news/how-to-care-for-linen");
 }

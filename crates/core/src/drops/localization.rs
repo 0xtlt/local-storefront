@@ -19,9 +19,12 @@ pub fn currency_value(code: &str) -> Value {
 fn direction(iso_code: &str) -> &'static str {
     let mut subtags = iso_code.split(['-', '_']);
     let language = subtags.next().unwrap_or_default().to_ascii_lowercase();
-    // A script subtag decides when there is one: `sd-Deva` is written left to right, and
-    // `pa-Arab` right to left.
-    if let Some(script) = subtags.find(|subtag| subtag.len() == 4) {
+    // A script subtag, which comes right after the language, decides when there is one:
+    // `sd-Deva` is written left to right, and `pa-Arab` right to left.
+    if let Some(script) = subtags
+        .next()
+        .filter(|subtag| subtag.len() == 4 && subtag.chars().all(|c| c.is_ascii_alphabetic()))
+    {
         return match script.to_ascii_lowercase().as_str() {
             "adlm" | "arab" | "hebr" | "mand" | "nkoo" | "rohg" | "samr" | "syrc" | "thaa" => "rtl",
             _ => "ltr",
@@ -132,5 +135,7 @@ mod tests {
         assert_eq!(direction("sd-Deva"), "ltr");
         assert_eq!(direction("pa-Arab"), "rtl");
         assert_eq!(direction("uz-Arab-AF"), "rtl");
+        assert_eq!(direction("ar-u-nu-latn"), "rtl");
+        assert_eq!(direction("en-u-nu-arab"), "ltr");
     }
 }

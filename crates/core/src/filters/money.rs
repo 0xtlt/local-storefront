@@ -103,6 +103,14 @@ pub fn money_formats(shop: &Shop, currency: Option<&str>) -> (String, String) {
     }
 }
 
+/// The formats of [`money_formats`] for a value: a money metafield brings its currency.
+fn formats_of(input: &Value, ctx: &Context) -> Result<(String, String)> {
+    let currency = input
+        .downcast::<MoneyDrop>()
+        .map(|money| money.currency.as_str());
+    Ok(money_formats(&site(ctx)?.store.shop, currency))
+}
+
 fn with_format(
     input: &Value,
     ctx: &Context,
@@ -111,10 +119,7 @@ fn with_format(
     let Some(cents) = cents(input) else {
         return Ok(Value::empty_string());
     };
-    let currency = input
-        .downcast::<MoneyDrop>()
-        .map(|money| money.currency.as_str());
-    let format = pick(money_formats(&site(ctx)?.store.shop, currency));
+    let format = pick(formats_of(input, ctx)?);
     Ok(Value::from(format_money(cents, &format)))
 }
 
@@ -142,7 +147,8 @@ fn money_without_trailing_zeros(input: &Value, _args: &FilterArgs, ctx: &Context
     let Some(cents) = cents(input) else {
         return Ok(Value::empty_string());
     };
-    let format = &site(ctx)?.store.shop.money_format;
+    let (format, _) = formats_of(input, ctx)?;
+    let format = &format;
     let formatted = format_money(cents, format);
     if cents % 100 != 0 {
         return Ok(Value::from(formatted));
