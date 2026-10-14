@@ -77,6 +77,13 @@ run = "GEM_HOME=$PWD/.oracle/gems ruby tools/oracle/generate_golden.rb"
 description = "Download Shopify's Liquid reference (objects/filters/tags + example outputs) into .cache/"
 run = "tools/docs/fetch.sh"
 
+[tasks."docs:coverage"]
+description = "Check lsf against Shopify's Liquid reference: fails on a missing filter or tag, lists object properties to look at (run docs:fetch first)"
+run = [
+  "cargo test -q -p lsf-core --test conformance every_documented_filter_and_tag_exists",
+  "ruby tools/docs/coverage.rb",
+]
+
 [tasks."liquid-spec:fetch"]
 description = "Download Shopify's liquid-spec test suite into .cache/ (run by the lsf-liquid tests when present)"
 run = "tools/liquid-spec/fetch.sh"
