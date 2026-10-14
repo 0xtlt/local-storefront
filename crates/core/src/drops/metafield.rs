@@ -290,7 +290,7 @@ fn article_value(site: &SiteRef, reference: &str) -> Value {
 /// A `money` metafield: prints and computes as cents, as on Shopify, and has a currency.
 pub struct MoneyDrop {
     pub cents: i64,
-    currency: String,
+    pub currency: String,
 }
 
 impl Object for MoneyDrop {

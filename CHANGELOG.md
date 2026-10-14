@@ -53,7 +53,8 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   or by the handle of an article that only one blog has. Every measurement type (`distance`,
   `temperature`, `duration`...) has a `type`, a `value` and a `unit`, and `metafield_tag`
   prints it with two decimals at most, where only `weight`, `volume` and `dimension` were
-  printed. A `money` has the `currency` it is written in.
+  printed. A `money` has the `currency` it is written in, and is formatted in it: `€5,00 EUR`
+  in a store that sells in dollars.
 - `request.locale.direction` (and that of every locale) is `rtl` for Arabic, Hebrew, Persian
   and the other languages written right to left, and follows the script when the locale names
   one (`pa-Arab`). Horizon sets `dir` on `<html>` from it.

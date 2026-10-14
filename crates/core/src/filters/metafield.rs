@@ -8,7 +8,7 @@ use serde_json::Value as Json;
 
 use super::media::video_html;
 use super::misc::to_script_safe_json;
-use super::money::format_money;
+use super::money::{format_money, money_formats};
 use super::site;
 use crate::drops::media::{ImageDrop, MediaDrop, image_base_url};
 use crate::drops::metafield::{MetafieldDrop, MoneyDrop, is_measurement};
@@ -44,7 +44,10 @@ fn text_of(
 ) -> String {
     match kind {
         "money" => match value.downcast::<MoneyDrop>() {
-            Some(money) => format_money(money.cents, &site.store.shop.money_with_currency_format),
+            Some(money) => format_money(
+                money.cents,
+                &money_formats(&site.store.shop, Some(&money.currency)).1,
+            ),
             None => value.to_str().into_owned(),
         },
         "rating" => format!(

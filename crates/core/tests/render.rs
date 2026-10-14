@@ -1098,12 +1098,14 @@ fn metafield_values_are_the_objects_shopify_gives() {
         )),
         "1796|$17.96|1800|more|USD"
     );
-    // A money keeps the currency it is written in.
+    // A money keeps the currency it is written in, and is printed in it.
     assert_eq!(
         render(&format!(
-            "{tent}{{{{ tent.price_eur.value }}}} {{{{ tent.price_eur.value.currency.iso_code }}}}"
+            "{tent}{{{{ tent.price_eur.value }}}} {{{{ tent.price_eur.value.currency.iso_code }}}}|\
+             {{{{ tent.price_eur | metafield_text }}}}|{{{{ tent.price_eur.value | money }}}}|\
+             {{{{ tent.price.value | money_with_currency }}}}"
         )),
-        "500 EUR"
+        "500 EUR|€5,00 EUR|€5,00|$17.96 USD"
     );
     // A measurement is printed with two decimals at most.
     assert_eq!(
