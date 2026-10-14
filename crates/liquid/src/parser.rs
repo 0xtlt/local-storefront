@@ -6,6 +6,7 @@
 use crate::environment::Environment;
 use crate::error::{Error, Result};
 use crate::lax;
+use crate::strict2::{self, Finding, Style};
 use crate::template::{BlockBody, Node};
 use crate::tokenizer::Tokenizer;
 use crate::variable::Variable;
@@ -22,14 +23,19 @@ pub struct TagToken<'a> {
 pub struct EndTag {
     pub name: String,
     pub markup: String,
+    /// Where the markup is in the source, when it is a tag's markup.
+    pub span: Option<std::ops::Range<usize>>,
 }
 
 pub struct Parser<'e, 's> {
     env: &'e Environment,
+    source: &'s str,
     tokenizer: Tokenizer<'s>,
     line_number: u32,
     trim_whitespace: bool,
     depth: usize,
+    /// What Shopify's strict parser would not read as it is read here, when auditing.
+    findings: Option<Vec<Finding>>,
 }
 
 const MAX_PARSE_DEPTH: usize = 100;
@@ -117,10 +123,68 @@ impl<'e, 's> Parser<'e, 's> {
     pub fn new(env: &'e Environment, source: &'s str) -> Self {
         Parser {
             env,
+            source,
             tokenizer: Tokenizer::new(source),
             line_number: 1,
             trim_whitespace: false,
             depth: 0,
+            findings: None,
+        }
+    }
+
+    /// Checks every tag and output parsed from now on against Shopify's strict parser.
+    pub(crate) fn start_audit(&mut self) {
+        self.findings = Some(Vec::new());
+    }
+
+    pub(crate) fn take_findings(&mut self) -> Vec<Finding> {
+        self.findings.take().unwrap_or_default()
+    }
+
+    /// Where a slice of the source starts and ends in it.
+    fn span_of(&self, markup: &str) -> Option<std::ops::Range<usize>> {
+        // The markup is a slice of the source: its offset is where it starts in memory.
+        let start = (markup.as_ptr() as usize).checked_sub(self.source.as_ptr() as usize)?;
+        (start + markup.len() <= self.source.len()).then(|| start..start + markup.len())
+    }
+
+    /// Checks the markup of a delimiter its block accepts (`elsif`, `when`) against the strict
+    /// parser.
+    pub fn audit_delimiter(&mut self, end: &EndTag) {
+        if let Some(span) = &end.span {
+            let source = self.source;
+            self.audit(Some(&end.name), &source[span.clone()]);
+        }
+    }
+
+    /// Checks the markup of a tag (`Some(name)`) or of an output against the strict parser.
+    /// The markup of a delimiter is checked by the block that accepts it.
+    fn audit(&mut self, tag: Option<&str>, markup: &str) {
+        if self.findings.is_none() {
+            return;
+        }
+        let check = match tag {
+            None => strict2::check_output,
+            Some(name) => match self.env.syntax(name) {
+                Some(check) => check,
+                None => return,
+            },
+        };
+        let Some(span) = self.span_of(markup) else {
+            return;
+        };
+        let trimmed = lax::strip(markup);
+        let start = span.start + (lax::lstrip(markup).as_ptr() as usize - markup.as_ptr() as usize);
+        let style = Style::of(trimmed, self.tokenizer.is_for_liquid_tag());
+        if let Some(issue) = check(trimmed, &style)
+            && let Some(findings) = &mut self.findings
+        {
+            findings.push(Finding {
+                line: self.line_number,
+                span: start..start + trimmed.len(),
+                tag: tag.map(str::to_string),
+                issue,
+            });
         }
     }
 
@@ -173,6 +237,7 @@ impl<'e, 's> Parser<'e, 's> {
                         return Ok(Some(EndTag {
                             name: token.to_string(),
                             markup: token.to_string(),
+                            span: None,
                         }));
                     }
                     return Err(Error::syntax(format!(
@@ -180,6 +245,9 @@ impl<'e, 's> Parser<'e, 's> {
                     )));
                 };
                 self.line_number += full.newlines_before_markup;
+                if self.findings.is_some() && self.env.tag(full.name).is_some() {
+                    self.audit(Some(full.name), full.markup);
+                }
                 if full.name == "liquid" {
                     self.parse_liquid_tag(full.markup, body)?;
                     continue;
@@ -188,6 +256,7 @@ impl<'e, 's> Parser<'e, 's> {
                     return Ok(Some(EndTag {
                         name: full.name.to_string(),
                         markup: full.markup.to_string(),
+                        span: self.span_of(full.markup),
                     }));
                 };
                 let line = self.line_number;
@@ -230,8 +299,12 @@ impl<'e, 's> Parser<'e, 's> {
                     return Ok(Some(EndTag {
                         name: token.to_string(),
                         markup: token.to_string(),
+                        span: None,
                     }));
                 };
+                if self.findings.is_some() && self.env.tag(name).is_some() {
+                    self.audit(Some(name), markup);
+                }
                 if name == "liquid" {
                     self.line_number = self.line_number.saturating_sub(1);
                     self.parse_liquid_tag(markup, body)?;
@@ -241,6 +314,7 @@ impl<'e, 's> Parser<'e, 's> {
                     return Ok(Some(EndTag {
                         name: name.to_string(),
                         markup: markup.to_string(),
+                        span: self.span_of(markup),
                     }));
                 };
                 let line = self.line_number;
@@ -283,7 +357,7 @@ impl<'e, 's> Parser<'e, 's> {
         self.trim_whitespace = trims_right(token);
     }
 
-    fn create_variable(&self, token: &str) -> Result<Variable> {
+    fn create_variable(&mut self, token: &'s str) -> Result<Variable> {
         let Some(inner) = token.strip_prefix("{{").and_then(|t| t.strip_suffix("}}")) else {
             return Err(Error::syntax(format!(
                 "Variable '{token}' was not properly terminated with regexp: /\\}}\\}}/"
@@ -291,6 +365,7 @@ impl<'e, 's> Parser<'e, 's> {
         };
         let inner = inner.strip_prefix('-').unwrap_or(inner);
         let inner = inner.strip_suffix('-').unwrap_or(inner);
+        self.audit(None, inner);
         Ok(Variable::parse(inner))
     }
 

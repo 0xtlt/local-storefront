@@ -3,7 +3,9 @@
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::lax;
+use crate::lexer::{MarkupParser, TokenKind};
 use crate::parser::{Parser, TagToken};
+use crate::strict2::{self, Issue, Style};
 use crate::template::{BlockBody, Tag};
 use crate::value::Value;
 use crate::variable::Variable;
@@ -59,25 +61,61 @@ impl Tag for Assign {
     }
 }
 
-/// `Syntax = /(#{VariableSignature}+)\s*=\s*(.*)\s*/om`.
-pub(super) fn parse_assign(
-    _parser: &mut Parser<'_, '_>,
-    token: &TagToken<'_>,
-) -> Result<Box<dyn Tag>> {
-    let markup = token.markup;
+/// The variable and the value of `assign`: `Syntax = /(#{VariableSignature}+)\s*=\s*(.*)\s*/om`.
+fn assign_parts(markup: &str) -> Result<(&str, &str)> {
     for (eq, _) in markup.match_indices('=') {
         let before = markup[..eq].trim_end_matches(crate::number::is_ruby_space);
         if let Some(start) = signature_start(before) {
-            let rest = &markup[lax::skip_space(markup, eq + 1)..];
-            return Ok(Box::new(Assign {
-                to: before[start..].to_string(),
-                from: Variable::parse(rest),
-            }));
+            return Ok((&before[start..], &markup[lax::skip_space(markup, eq + 1)..]));
         }
     }
     Err(Error::syntax(
         "Syntax Error in 'assign' - Valid syntax: assign [var] = [source]",
     ))
+}
+
+pub(super) fn parse_assign(
+    _parser: &mut Parser<'_, '_>,
+    token: &TagToken<'_>,
+) -> Result<Box<dyn Tag>> {
+    let (to, from) = assign_parts(token.markup)?;
+    Ok(Box::new(Assign {
+        to: to.to_string(),
+        from: Variable::parse(from),
+    }))
+}
+
+/// A variable name alone, as the strict parser reads `capture`, `increment` and the left of
+/// `assign`.
+fn strict2_name(markup: &str) -> Result<String> {
+    let mut parser = MarkupParser::strict2(lax::strip(markup))?;
+    let name = parser.consume(TokenKind::Id)?.to_string();
+    parser.consume(TokenKind::EndOfString)?;
+    Ok(name)
+}
+
+pub(super) fn check_assign(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| {
+            let (to, from) = assign_parts(markup).ok()?;
+            Some((to.to_string(), Variable::parse(from)))
+        },
+        |markup| {
+            let (to, from) = assign_parts(markup)?;
+            Ok((strict2_name(to)?, Variable::strict2_parse(from)?))
+        },
+        |(to, from), style| {
+            Ok(format!(
+                "{} = {}",
+                strict2::identifier(to)?,
+                strict2::variable(from, style)?
+            ))
+        },
+        // The value is parsed like an output: the lax parser reads it today.
+        true,
+    )
 }
 
 struct Capture {
@@ -97,11 +135,8 @@ impl Tag for Capture {
     }
 }
 
-pub(super) fn parse_capture(
-    parser: &mut Parser<'_, '_>,
-    token: &TagToken<'_>,
-) -> Result<Box<dyn Tag>> {
-    let markup = token.markup;
+/// `Syntax = /(#{VariableSignature}+)/`: the first run of signature characters.
+fn capture_target(markup: &str) -> Result<&str> {
     let start = markup
         .char_indices()
         .find(|(_, c)| is_signature_char(*c))
@@ -111,9 +146,39 @@ pub(super) fn parse_capture(
         .char_indices()
         .find(|(_, c)| !is_signature_char(*c))
         .map_or(markup.len() - start, |(i, _)| i);
-    let to = markup[start..start + len].to_string();
+    Ok(&markup[start..start + len])
+}
+
+pub(super) fn parse_capture(
+    parser: &mut Parser<'_, '_>,
+    token: &TagToken<'_>,
+) -> Result<Box<dyn Tag>> {
+    let to = capture_target(token.markup)?.to_string();
     let body = parser.parse_block("capture")?;
     Ok(Box::new(Capture { to, body }))
+}
+
+pub(super) fn check_capture(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| capture_target(markup).ok().map(str::to_string),
+        strict2_name,
+        |to, _| strict2::identifier(to),
+        false,
+    )
+}
+
+/// `increment` and `decrement` count in the variable named by their whole markup.
+pub(super) fn check_counter(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| Some(lax::strip(markup).to_string()),
+        strict2_name,
+        |name, _| strict2::identifier(name),
+        false,
+    )
 }
 
 struct Counter {

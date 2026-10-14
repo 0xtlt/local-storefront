@@ -3,6 +3,20 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **`lsf check` finds what Shopify's strict Liquid parser rejects, and `lsf check --fix`
+  rewrites it.** Shopify is moving every store to a strict parser, and a file it rejects can no
+  longer be uploaded (`Expected end_of_string but found pipe`). `lsf check` reports each tag and
+  output it rejects, with Shopify's message, in `.liquid` files and in the `liquid` settings of
+  JSON templates, section groups and `config/settings_data.json`. `--fix` replaces the markup
+  with markup the strict parser accepts and that renders what the file renders today, as
+  Shopify's own migration does, but without the comment it leaves in the file. A fix keeps the
+  layout of the markup and is checked before it is written; markup without a safe fix is
+  reported with the reason.
+
 ## 0.1.15 - 2026-10-14
 
 ### Added

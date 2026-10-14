@@ -28,7 +28,8 @@ page says how that is checked, what is covered, and where the local server knowi
   7,369 language specs apply here, and 4,608 of them pass. The others expect a strict parser
   to reject a template that Shopify accepts in a theme (1,923), or need what the engine has
   no equivalent for: Ruby objects, byte strings, render limits (816). The 22 that differ are
-  [listed below](#differences-with-liquid-spec).
+  [listed below](#differences-with-liquid-spec). What the strict parser rejects is checked
+  by `lsf check`: see [Shopify's strict Liquid parser](#shopifys-strict-liquid-parser).
 - **Shopify's objects, filters and tags** are checked against the examples of
   [shopify.dev](https://shopify.dev/docs/api/liquid): each example's code and data are replayed
   and compared with the documented output. 196 of 313 examples match. The others depend on the
@@ -306,6 +307,51 @@ What differs:
 - **Configuration written in JavaScript** (`prettier.config.js`, `.prettierrc.js`) is not
   read, nor are TOML and JSON5 files. Other Prettier plugins do not apply.
 - `requirePragma`, `insertPragma` and formatting a range of a file are not supported.
+
+## Shopify's strict Liquid parser
+
+Shopify is moving every store from its lenient Liquid parser to a strict one. `lsf check`
+reports the markup the strict parser rejects, and `lsf check --fix` rewrites it into markup
+that the strict parser accepts and that renders what the file renders today.
+
+The rules are those of Shopify's reference implementation, the `liquid` gem 5.14, in
+`error_mode: :strict2`: the `strict2_parse` of each tag and of outputs, ported tag by tag
+(`crates/liquid/src/strict2`). Today, Shopify parses a tag with that parser first and falls
+back on the lenient one when it fails; outputs and `{% when %}` go to the lenient parser
+directly when they are not strictly valid. A fix is printed from what the engine parses
+today, and is kept only when the strict parser accepts it and both parsers read it the same as
+the original.
+
+How it is checked:
+
+- **liquid-spec runs most of its specs in `strict2` mode.** For the 6,314 that apply here,
+  `lsf check` finds a rejection exactly when the spec expects one, with the gem's message, and
+  every fix leaves nothing to reject (`crates/liquid/tests/strict2_spec.rs`). Two recordings
+  of Shopify's production expect a template that the gem rejects in `strict2` mode
+  (`{% if !name.first %}`): they are left out.
+- **Fixes render the same with the gem.** 1,548 of those templates get a fix. The gem renders
+  each original in `:warn` mode, the mode Shopify renders themes in today, and each fix in
+  `:strict2` mode, with the data of the spec and again with data where every variable prints
+  its own path. The outputs are identical (`mise run oracle:strict2-fixes`).
+- **Real themes.** Horizon and Dawn have nothing the strict parser rejects.
+
+What to know:
+
+- **Shopify's own tags** (`section`, `sections`, `layout`, `form`, `paginate`,
+  `content_for`, and `render` of an object, as in `{% render block %}`) are not in the gem.
+  Shopify has not published how its strict parser reads them: lsf reads them with the rules of
+  the standard tags, an expression without bare brackets, and a quoted name for `section`.
+  `{% block %}` and `{% partial %}` (behind `--preview liquid-july-26`) are not checked.
+- **A fix writes the markup it replaces in the strict parser's own form:** a fixed tag gets
+  single spaces between its parts, `a . b` becomes `a.b`, and strings keep the quote the tag
+  used. Arguments written one per line stay one per line, and the rest of the file is left as
+  it is.
+- **`[name]` becomes `self[name]`.** The strict parser refuses a lookup that starts with a
+  bracket, and `self` is the variable it suggests instead. This reads the same unless the
+  theme assigns a variable named `self`.
+- **Some markup has no fix:** what renders an error today (`{% if a = b %}`, where `=` is an
+  unknown operator), or what the strict parser has no way to write (an assigned variable named
+  `a.b`, a string that holds both kinds of quotes).
 
 ## Known differences
 

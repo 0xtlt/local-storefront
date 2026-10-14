@@ -24,6 +24,23 @@ pub struct Condition {
     pub child: Option<(Relation, Box<Condition>)>,
 }
 
+/// Conditions are equal when they read the same: a comparison with nothing on its right
+/// compares with `nil`.
+impl PartialEq for Condition {
+    fn eq(&self, other: &Condition) -> bool {
+        let right = |condition: &Condition| {
+            condition
+                .operator
+                .as_ref()
+                .map(|_| condition.right.clone().unwrap_or(Expr::Literal(Value::Nil)))
+        };
+        self.left == other.left
+            && self.operator == other.operator
+            && right(self) == right(other)
+            && self.child == other.child
+    }
+}
+
 impl Condition {
     pub fn new(left: Expr, operator: Option<String>, right: Option<Expr>) -> Condition {
         Condition {
@@ -39,8 +56,17 @@ impl Condition {
         Self::strict_parse(markup).or_else(|_| Self::lax_parse(markup))
     }
 
+    /// Parses the markup as Shopify's strict parser does: the strict grammar, without bare
+    /// brackets.
+    pub fn strict2_parse(markup: &str) -> Result<Condition> {
+        Self::parse_with(MarkupParser::strict2(markup)?)
+    }
+
     fn strict_parse(markup: &str) -> Result<Condition> {
-        let mut parser = MarkupParser::new(markup)?;
+        Self::parse_with(MarkupParser::new(markup)?)
+    }
+
+    fn parse_with(mut parser: MarkupParser<'_>) -> Result<Condition> {
         let mut conditions = vec![Self::parse_comparison(&mut parser)?];
         let mut relations = Vec::new();
         loop {

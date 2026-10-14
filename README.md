@@ -261,6 +261,43 @@ read. A theme that Prettier has formatted comes out of `lsf fmt` unchanged.
 Liquid, HTML, the JSON of `{% schema %}`, CSS and JavaScript are formatted as Prettier formats
 them. The options and the details are in [Options of `lsf fmt`](#options-of-lsf-fmt).
 
+## Move to Shopify's strict Liquid parser
+
+```bash
+lsf check
+```
+
+Shopify is moving every store to a strict Liquid parser. A file with markup it rejects can no
+longer be uploaded, with an error such as `Expected end_of_string but found pipe`, and Shopify
+rewrites the files of the stores it migrates. `lsf check` lists that markup, with the message
+Shopify gives:
+
+```text
+snippets/card.liquid:12: Shopify's strict Liquid parser rejects this {% render %}: Expected colon but found id
+  was: … on_sale: product.compare_at_price and settings.show_sale, title: …
+  fix: … on_sale: product.compare_at_price, title: …
+```
+
+```bash
+lsf check --fix
+```
+
+Writes the fixes. A fix renders exactly what the file renders today. Here, the lenient parser
+stopped reading the argument at `and`: `settings.show_sale` never had an effect, and the fix
+drops it. If that is not what you meant, the code now says what it does, and you can change
+it.
+
+- **Every tag and output is checked**, in `.liquid` files and in the `liquid` settings stored
+  in JSON (a "Custom Liquid" section of a template, for example).
+- **A fix is checked before it is written:** the strict parser accepts it, and both parsers read
+  it the way the original is read today. Nothing else in the file changes: arguments written on
+  several lines stay on several lines.
+- **Some markup has no fix**, and is reported with the reason: `{% if a = b %}`, for example,
+  which already fails when it renders.
+
+Shopify's rules come from its reference Liquid implementation (`error_mode: :strict2`). See
+[how they are checked](docs/compatibility.md#shopifys-strict-liquid-parser).
+
 ## What you get
 
 - **The same HTML as Shopify.** The Liquid engine is checked against Shopify's own, and
@@ -304,7 +341,7 @@ Details and known differences: [compatibility](docs/compatibility.md).
 | `lsf serve` | Serves the theme. |
 | `lsf init` | Creates `shopify-local/` with a demo store to edit. |
 | `lsf validate` | Checks your data. Add `--format json` for a report a tool can read. |
-| `lsf check` | Checks that every Liquid file of the theme is understood. |
+| `lsf check` | Checks that every Liquid file of the theme is understood, and lists what Shopify's strict Liquid parser rejects. `--fix` rewrites it. See [Move to Shopify's strict Liquid parser](#move-to-shopifys-strict-liquid-parser). |
 | `lsf fmt [paths]` | Formats the Liquid files of the theme as Prettier does with Shopify's Liquid plugin. See [Format your theme](#format-your-theme). |
 | `lsf render <path>` | Prints the HTML of one page, without a server. |
 | `lsf profile <path>` | Shows what the render of one page spends its time in, or what it would cost Shopify: sections, blocks, snippets. See [Profile a page](#profile-a-page). |

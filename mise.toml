@@ -74,6 +74,14 @@ run = "GEM_HOME=$PWD/.oracle/gems gem install liquid --no-document"
 description = "Regenerate crates/liquid/tests/golden/*.json from the reference liquid gem"
 run = "GEM_HOME=$PWD/.oracle/gems ruby tools/oracle/generate_golden.rb"
 
+[tasks."oracle:strict2-fixes"]
+description = "Check with the reference liquid gem that the fixes `lsf check --fix` makes for liquid-spec's templates render what the originals render today"
+run = """
+fixes="$(mktemp)"
+STRICT2_SPEC_FIXES="$fixes" cargo test -q -p lsf-liquid --test strict2_spec
+GEM_HOME=$PWD/.oracle/gems ruby tools/oracle/check_strict2_fixes.rb "$fixes"
+"""
+
 [tasks."prettier:install"]
 description = "Install Prettier and Shopify's Liquid plugin locally (the reference `lsf fmt` is compared with)"
 run = """

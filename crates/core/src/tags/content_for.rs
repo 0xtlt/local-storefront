@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use lsf_liquid::lexer::{MarkupParser, TokenKind};
+use lsf_liquid::strict2::{self, Issue, Style};
 use lsf_liquid::{Context, Error, Expr, Hash, Parser, Result, Tag, TagToken, Value};
 
 use crate::render::section::{CONTAINER_VARIABLE, Container, render_block};
@@ -93,8 +94,46 @@ impl Tag for ContentFor {
     }
 }
 
+#[derive(PartialEq)]
+struct ContentForMarkup {
+    target: String,
+    arguments: Vec<(String, Expr)>,
+}
+
+pub(super) fn check(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| content_for_markup(MarkupParser::new(markup).ok()?).ok(),
+        |markup| content_for_markup(MarkupParser::strict2(markup)?),
+        |content_for, style| {
+            let mut out = strict2::string(&content_for.target, style)?;
+            for (key, value) in &content_for.arguments {
+                // `closest.product`: each part is a name.
+                for part in key.split('.') {
+                    strict2::identifier(part)?;
+                }
+                out.push_str(&format!(
+                    "{}{key}: {}",
+                    style.separator,
+                    strict2::expr(value, style)?
+                ));
+            }
+            Ok(out)
+        },
+        false,
+    )
+}
+
 pub(super) fn parse(_parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
-    let mut markup = MarkupParser::new(token.markup)?;
+    let markup = content_for_markup(MarkupParser::new(token.markup)?)?;
+    Ok(Box::new(ContentFor {
+        target: markup.target,
+        arguments: markup.arguments,
+    }))
+}
+
+fn content_for_markup(mut markup: MarkupParser<'_>) -> Result<ContentForMarkup> {
     let target = Expr::parse(markup.consume(TokenKind::String)?)
         .as_literal_str()
         .unwrap_or_default()
@@ -114,5 +153,5 @@ pub(super) fn parse(_parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Resul
         arguments.push((key, Expr::parse(&markup.expression()?)));
     }
     markup.consume(TokenKind::EndOfString)?;
-    Ok(Box::new(ContentFor { target, arguments }))
+    Ok(ContentForMarkup { target, arguments })
 }

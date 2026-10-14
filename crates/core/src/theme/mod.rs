@@ -2,6 +2,7 @@
 //! cached until the files change.
 
 mod files;
+pub mod liquid_settings;
 pub mod locales;
 pub mod schema;
 pub mod template_json;

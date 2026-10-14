@@ -5,7 +5,9 @@ use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::expr::Expr;
 use crate::lax;
+use crate::lexer::{MarkupParser, TokenKind};
 use crate::parser::{Parser, TagToken};
+use crate::strict2::{self, Issue, Style};
 use crate::template::{BlockBody, Tag};
 
 struct Branch {
@@ -67,10 +69,13 @@ fn parse_conditional(
         match end {
             None => return Err(Parser::tag_never_closed(block_name)),
             Some(end) if end.name == delimiter => break,
-            Some(end) if end.name == "elsif" => branches.push(Branch {
-                condition: Some(Condition::parse(&end.markup)?),
-                body: BlockBody::new(),
-            }),
+            Some(end) if end.name == "elsif" => {
+                parser.audit_delimiter(&end);
+                branches.push(Branch {
+                    condition: Some(Condition::parse(&end.markup)?),
+                    body: BlockBody::new(),
+                })
+            }
             Some(end) if end.name == "else" => branches.push(Branch {
                 condition: None,
                 body: BlockBody::new(),
@@ -88,6 +93,18 @@ fn parse_conditional(
         negate_first,
         blank,
     }))
+}
+
+/// The markup of `if`, `elsif` and `unless`.
+pub(super) fn check_condition(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| Condition::parse(markup).ok(),
+        Condition::strict2_parse,
+        strict2::condition,
+        false,
+    )
 }
 
 pub(super) fn parse_if(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
@@ -143,6 +160,38 @@ impl Tag for Case {
     }
 }
 
+/// `when a, b or c` as the strict parser reads it (`parse_strict2_when`).
+fn strict2_when(markup: &str) -> Result<Vec<Expr>> {
+    let mut parser = MarkupParser::strict2(markup)?;
+    let mut values = Vec::new();
+    loop {
+        values.push(Expr::parse_condition_operand(&parser.expression()?));
+        if !(parser.id("or") || parser.consume_if(TokenKind::Comma).is_some()) {
+            break;
+        }
+    }
+    parser.consume(TokenKind::EndOfString)?;
+    Ok(values)
+}
+
+pub(super) fn check_when(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| parse_when(markup).ok(),
+        strict2_when,
+        |values, style| {
+            let printed = values
+                .iter()
+                .map(|value| strict2::condition_operand(value, style))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(printed.join(if style.uses_or { " or " } else { ", " }))
+        },
+        // Shopify reads `when` with the lax parser today.
+        true,
+    )
+}
+
 /// `WhenSyntax = /(QuotedFragment)(?:(?:\s+or\s+|\s*\,\s*)(QuotedFragment.*))?/om`.
 fn parse_when(markup: &str) -> Result<Vec<Expr>> {
     let invalid = || {
@@ -173,13 +222,34 @@ fn parse_when(markup: &str) -> Result<Vec<Expr>> {
     Ok(values)
 }
 
+/// `Syntax = /(#{QuotedFragment})/`: what `case` compares.
+fn case_subject(markup: &str) -> Result<Expr> {
+    let (start, end) = lax::find_quoted_fragment(markup, 0)
+        .ok_or_else(|| Error::syntax("Syntax Error in 'case' - Valid syntax: case [condition]"))?;
+    Ok(Expr::parse(&markup[start..end]))
+}
+
+pub(super) fn check_case(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| case_subject(markup).ok(),
+        |markup| {
+            let mut parser = MarkupParser::strict2(markup)?;
+            let subject = Expr::parse(&parser.expression()?);
+            parser.consume(TokenKind::EndOfString)?;
+            Ok(subject)
+        },
+        strict2::expr,
+        false,
+    )
+}
+
 pub(super) fn parse_case(
     parser: &mut Parser<'_, '_>,
     token: &TagToken<'_>,
 ) -> Result<Box<dyn Tag>> {
-    let (start, end) = lax::find_quoted_fragment(token.markup, 0)
-        .ok_or_else(|| Error::syntax("Syntax Error in 'case' - Valid syntax: case [condition]"))?;
-    let left = Expr::parse(&token.markup[start..end]);
+    let left = case_subject(token.markup)?;
     let mut branches: Vec<CaseBranch> = Vec::new();
     // Whatever sits between `case` and the first `when` is parsed but never rendered.
     let mut preamble = BlockBody::new();
@@ -194,10 +264,13 @@ pub(super) fn parse_case(
         match end {
             None => return Err(Parser::tag_never_closed("case")),
             Some(end) if end.name == "endcase" => break,
-            Some(end) if end.name == "when" => branches.push(CaseBranch::When {
-                values: parse_when(&end.markup)?,
-                body: BlockBody::new(),
-            }),
+            Some(end) if end.name == "when" => {
+                parser.audit_delimiter(&end);
+                branches.push(CaseBranch::When {
+                    values: parse_when(&end.markup)?,
+                    body: BlockBody::new(),
+                })
+            }
             Some(end) if end.name == "else" => {
                 if !lax::is_blank(&end.markup) {
                     return Err(Error::syntax(

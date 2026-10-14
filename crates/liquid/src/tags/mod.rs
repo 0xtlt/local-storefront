@@ -7,7 +7,10 @@ mod partial;
 mod raw;
 
 pub use iteration::{ForLoop, collection_items};
-pub use partial::{PartialCall, parse_partial_call, parse_render};
+pub use partial::{
+    PartialCall, check_render, parse_partial_call, parse_render, print_partial_call,
+    strict2_partial_call,
+};
 
 use crate::environment::Environment;
 
@@ -36,4 +39,21 @@ pub(crate) fn register(env: &mut Environment) {
     env.register_tag("comment", raw::parse_comment);
     env.register_tag("doc", raw::parse_doc);
     env.register_tag("#", raw::parse_inline_comment);
+
+    // How Shopify's strict parser reads each tag's markup (see `crate::strict2`).
+    env.register_syntax("assign", assign::check_assign);
+    env.register_syntax("capture", assign::check_capture);
+    env.register_syntax("increment", assign::check_counter);
+    env.register_syntax("decrement", assign::check_counter);
+    env.register_syntax("echo", crate::strict2::check_output);
+    env.register_syntax("if", control::check_condition);
+    env.register_syntax("elsif", control::check_condition);
+    env.register_syntax("unless", control::check_condition);
+    env.register_syntax("case", control::check_case);
+    env.register_syntax("when", control::check_when);
+    env.register_syntax("for", iteration::check_for);
+    env.register_syntax("cycle", iteration::check_cycle);
+    env.register_syntax("tablerow", iteration::check_tablerow);
+    env.register_syntax("render", partial::check_render);
+    env.register_syntax("include", partial::check_include);
 }

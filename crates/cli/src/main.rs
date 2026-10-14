@@ -69,8 +69,9 @@ enum Command {
     Schema(commands::schema::Args),
     /// List the URLs the store data gives a page to.
     Routes,
-    /// Parse every Liquid file of the theme and report what would not render on Shopify.
-    Check,
+    /// Parse every Liquid file of the theme and report what would not render on Shopify,
+    /// including what Shopify's strict Liquid parser rejects. `--fix` rewrites that markup.
+    Check(commands::check::Args),
     /// Format the Liquid files of the theme, as Prettier does with Shopify's Liquid plugin.
     Fmt(commands::fmt::Args),
     /// Print the reference of the store data format.
@@ -106,7 +107,7 @@ fn main() -> ExitCode {
         Command::Init(args) => commands::init::run(&cli.theme, cli.data.as_deref(), args),
         Command::Schema(args) => commands::schema::run(args),
         Command::Routes => commands::routes::run(&cli.theme, cli.data.as_deref(), previews),
-        Command::Check => commands::check::run(&cli.theme, previews),
+        Command::Check(args) => commands::check::run(&cli.theme, previews, args),
         Command::Fmt(args) => commands::fmt::run(&cli.theme, args),
         Command::Docs(args) => commands::docs::run(args),
     };

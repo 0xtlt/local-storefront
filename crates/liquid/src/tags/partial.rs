@@ -6,13 +6,16 @@ use crate::context::Context;
 use crate::error::{Error, ErrorKind, Result};
 use crate::expr::Expr;
 use crate::lax;
+use crate::lexer::{MarkupParser, TokenKind};
 use crate::parser::{Parser, TagToken};
+use crate::strict2::{self, Issue, Style};
 use crate::tags::iteration::ForLoop;
 use crate::template::Tag;
 use crate::value::Value;
 
 /// The parsed markup shared by `render` and `include`:
 /// `'name' (with|for) expr as alias, key: value, ...`.
+#[derive(PartialEq)]
 pub struct PartialCall {
     pub template_name: Expr,
     pub variable: Option<Expr>,
@@ -74,6 +77,88 @@ pub fn parse_partial_call(markup: &str, quoted_name_only: bool) -> Option<Partia
         }
     }
     Some(call)
+}
+
+/// The markup of `render` (`quoted_name_only`) or `include` as Shopify's strict parser reads
+/// it: `name [(with|for) expr] [as alias] [,] (key: value [,])*`.
+pub fn strict2_partial_call(markup: &str, quoted_name_only: bool) -> Result<PartialCall> {
+    let mut parser = MarkupParser::strict2(markup)?;
+    let template_name = if quoted_name_only {
+        Expr::parse(parser.consume(TokenKind::String)?)
+    } else {
+        Expr::parse(&parser.expression()?)
+    };
+    let is_for_loop = parser.id("for");
+    let variable = if is_for_loop || parser.id("with") {
+        Some(Expr::parse(&parser.expression()?))
+    } else {
+        None
+    };
+    let alias = if parser.id("as") {
+        Some(parser.consume(TokenKind::Id)?.to_string())
+    } else {
+        None
+    };
+    parser.consume_if(TokenKind::Comma);
+    let mut attributes: Vec<(String, Expr)> = Vec::new();
+    while parser.look(TokenKind::Id) {
+        let key = parser.consume_any();
+        parser.consume(TokenKind::Colon)?;
+        let value = Expr::parse(&parser.expression()?);
+        match attributes.iter_mut().find(|(existing, _)| existing == key) {
+            Some(slot) => slot.1 = value,
+            None => attributes.push((key.to_string(), value)),
+        }
+        parser.consume_if(TokenKind::Comma);
+    }
+    parser.consume(TokenKind::EndOfString)?;
+    Ok(PartialCall {
+        template_name,
+        variable,
+        alias,
+        is_for_loop,
+        attributes,
+    })
+}
+
+/// The markup of a partial call, written for the strict parser.
+pub fn print_partial_call(call: &PartialCall, style: &Style) -> strict2::Printed {
+    let mut out = strict2::expr(&call.template_name, style)?;
+    if let Some(variable) = &call.variable {
+        out.push_str(if call.is_for_loop { " for " } else { " with " });
+        out.push_str(&strict2::expr(variable, style)?);
+    }
+    if let Some(alias) = &call.alias {
+        out.push_str(" as ");
+        out.push_str(&strict2::identifier(alias)?);
+    }
+    out.push_str(&strict2::arguments(&call.attributes, style)?);
+    Ok(out)
+}
+
+pub fn check_render(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| {
+            parse_partial_call(markup, true)
+                .filter(|call| call.template_name.as_literal_str().is_some())
+        },
+        |markup| strict2_partial_call(markup, true),
+        print_partial_call,
+        false,
+    )
+}
+
+pub(super) fn check_include(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| parse_partial_call(markup, false),
+        |markup| strict2_partial_call(markup, false),
+        print_partial_call,
+        false,
+    )
 }
 
 fn find_template_name(markup: &str, quoted_only: bool) -> Option<(usize, usize)> {

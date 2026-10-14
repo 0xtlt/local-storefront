@@ -4,6 +4,7 @@ use std::any::Any;
 
 use lsf_liquid::filters::escape_html;
 use lsf_liquid::lexer::{MarkupParser, TokenKind};
+use lsf_liquid::strict2::{self, Issue, Style};
 use lsf_liquid::{
     BlockBody, Context, Error, Expr, Hash, Object, Parser, Result, Tag, TagToken, Value,
 };
@@ -357,8 +358,14 @@ impl Tag for Form {
     }
 }
 
-pub(super) fn parse(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
-    let mut markup = MarkupParser::new(token.markup)?;
+#[derive(PartialEq)]
+struct FormMarkup {
+    form_type: Expr,
+    object: Option<Expr>,
+    attributes: Vec<(String, Expr)>,
+}
+
+fn form_markup(mut markup: MarkupParser<'_>) -> Result<FormMarkup> {
     let form_type = Expr::parse(&markup.expression()?);
     let mut object = None;
     let mut attributes = Vec::new();
@@ -372,10 +379,38 @@ pub(super) fn parse(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result
         }
     }
     markup.consume(TokenKind::EndOfString)?;
-    Ok(Box::new(Form {
+    Ok(FormMarkup {
         form_type,
         object,
         attributes,
+    })
+}
+
+pub(super) fn check(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| form_markup(MarkupParser::new(markup).ok()?).ok(),
+        |markup| form_markup(MarkupParser::strict2(markup)?),
+        |form, style| {
+            let mut out = strict2::expr(&form.form_type, style)?;
+            if let Some(object) = &form.object {
+                out.push_str(&style.separator);
+                out.push_str(&strict2::expr(object, style)?);
+            }
+            out.push_str(&strict2::arguments(&form.attributes, style)?);
+            Ok(out)
+        },
+        false,
+    )
+}
+
+pub(super) fn parse(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
+    let markup = form_markup(MarkupParser::new(token.markup)?)?;
+    Ok(Box::new(Form {
+        form_type: markup.form_type,
+        object: markup.object,
+        attributes: markup.attributes,
         body: parser.parse_block("form")?,
     }))
 }
