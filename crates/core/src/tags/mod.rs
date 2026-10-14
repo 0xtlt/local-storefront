@@ -1,19 +1,24 @@
 //! Shopify's theme tags: `section`, `sections`, `schema`, `style`, `stylesheet`, `javascript`,
-//! `layout`, `content_for`, `form` and `paginate`.
+//! `layout`, `content_for`, `form` and `paginate`; `block` and `partial` with the Liquid July '26
+//! preview.
 
+mod block;
 mod content_for;
 mod form;
 mod paginate;
+mod partial;
 mod section;
 mod simple;
 
 use lsf_liquid::Environment;
 
+use crate::Preview;
+
 pub use form::FormDrop;
 pub use paginate::paginate_url;
 pub use section::{group_id_prefix, static_instance};
 
-pub fn register(env: &mut Environment) {
+pub fn register(env: &mut Environment, previews: &[Preview]) {
     env.register_tag("section", section::parse_section);
     env.register_tag("sections", section::parse_sections);
     env.register_tag("schema", simple::parse_schema);
@@ -25,4 +30,8 @@ pub fn register(env: &mut Environment) {
     env.register_tag("content_for", content_for::parse);
     env.register_tag("form", form::parse);
     env.register_tag("paginate", paginate::parse);
+    if previews.contains(&Preview::LiquidJuly26) {
+        env.register_tag("block", block::parse);
+        env.register_tag("partial", partial::parse);
+    }
 }

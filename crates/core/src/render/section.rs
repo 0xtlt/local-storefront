@@ -77,6 +77,9 @@ pub struct BlockDrop {
     pub id: String,
     pub kind: String,
     pub settings: Value,
+    /// The body of a `{% block %}` call. The Liquid reference reads it as `content`, the
+    /// developer preview's guide as `block.content`: both work.
+    pub content: Option<Value>,
 }
 
 impl Object for BlockDrop {
@@ -89,6 +92,7 @@ impl Object for BlockDrop {
             "id" => Value::from(&self.id),
             "type" => Value::from(&self.kind),
             "settings" => self.settings.clone(),
+            "content" => self.content.clone()?,
             // Only the theme editor needs these attributes; the storefront gets none.
             "shopify_attributes" => Value::empty_string(),
             _ => return None,
@@ -201,6 +205,7 @@ fn section_blocks(
                     &block.settings,
                     &[("closest", closest_value.clone())],
                 ),
+                content: None,
             })
         })
         .collect();
@@ -329,6 +334,7 @@ pub fn render_block(
                 ("section", container.section.clone()),
             ],
         ),
+        content: None,
     });
 
     let entered = state.enter_block(&id, key, &instance.kind)?;
@@ -365,4 +371,89 @@ pub fn render_block(
             format!("<{tag} id=\"shopify-block-{id}\" class=\"{class}\">{content}</{tag}>")
         }
     })
+}
+
+/// Renders a theme block called by name from a template or a layout:
+/// `{% block 'name', parameter: value %}content{% endblock %}`.
+///
+/// It is rendered like `{% render %}` renders a snippet: it sees its parameters and the
+/// globals, not the caller's variables, and its output is not wrapped in a
+/// `<div class="shopify-block">` (Skeleton's CSS relies on that: a block in a container is a
+/// direct child of the container's element). A parameter named after a setting of its schema
+/// also sets `block.settings`; the other settings have their defaults.
+pub fn render_called_block(
+    ctx: &Context,
+    kind: &str,
+    parameters: &[(String, Value)],
+) -> Result<String> {
+    let started = Instant::now();
+    let _span = ctx
+        .profiler()
+        .map(|profiler| profiler.span(&format!("block {kind}"), None));
+    let state = RenderState::of(ctx)?;
+    let path = format!("blocks/{kind}.liquid");
+    let file = state
+        .site
+        .theme
+        .liquid(&path)?
+        .ok_or_else(|| Error::standard(format!("Could not find asset {path}")))?;
+    let schema = &file.schema;
+    // Each call is a block of its own, numbered in the order the page renders them.
+    let key = format!("{kind}-{}", state.blocks_so_far() + 1);
+    let id = theme_block_id("block", &key);
+    let section = ctx.find_variable("section");
+    let closest = page_closest(ctx);
+    let closest_value = Value::object(ClosestDrop(closest.clone()));
+    let mut settings = match settings::resolve(
+        state,
+        ctx,
+        &schema.settings,
+        &serde_json::Map::new(),
+        &[
+            ("closest", closest_value.clone()),
+            ("section", section.clone()),
+        ],
+    ) {
+        Value::Hash(settings) => (*settings).clone(),
+        _ => Hash::new(),
+    };
+    for (name, value) in parameters {
+        if let Some(setting) = settings.get_mut(name) {
+            *setting = value.clone();
+        }
+    }
+    let block = Value::object(BlockDrop {
+        id: id.clone(),
+        kind: kind.to_string(),
+        settings: Value::hash(settings),
+        content: parameters
+            .iter()
+            .find(|(name, _)| name == "content")
+            .map(|(_, value)| value.clone()),
+    });
+
+    let entered = state.enter_block(&id, &key, kind)?;
+    let rendered = (|| -> Result<String> {
+        let mut inner = ctx.isolated()?;
+        inner.set_inherited("section", section.clone());
+        inner.set_inherited("block", block);
+        inner.set_inherited("closest", closest_value);
+        for (name, value) in parameters {
+            inner.set(name.clone(), value.clone());
+        }
+        // A called block has no blocks of its own for `content_for 'blocks'` to render.
+        inner.set(
+            CONTAINER_VARIABLE,
+            Value::object(Container {
+                section_id: id.clone(),
+                section: section.clone(),
+                blocks: IndexMap::new(),
+                block_order: Vec::new(),
+                closest: closest.clone(),
+            }),
+        );
+        Ok(file.template.render(&mut inner))
+    })();
+    state.leave_block(entered, started.elapsed());
+    rendered
 }

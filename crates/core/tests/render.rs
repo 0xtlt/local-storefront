@@ -1189,3 +1189,131 @@ fn what_is_loaded_is_charged_once() {
     // What a template does not ask for costs nothing.
     assert_eq!(charges("/search?q=mug", "{{ shop.name }}"), of(&[]));
 }
+
+/// A fixture of a theme written in a temporary directory, `files` being `(path, content)`,
+/// rendered with the given feature previews.
+fn theme_of(name: &str, previews: &[lsf_core::Preview], files: &[(&str, &str)]) -> Fixture {
+    let directory = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    for (path, content) in files {
+        let path = directory.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let env = Arc::new(lsf_core::environment_with(previews));
+    let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("theme"));
+    Fixture {
+        renderer: Renderer::new(theme),
+        ..fixture()
+    }
+}
+
+#[test]
+fn a_template_composes_its_page_from_blocks() {
+    let fixture = theme_of(
+        "block-tag",
+        &[lsf_core::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>\
+                 {% block 'box', tag: 'header' %}<b>{{ shop.name }}</b>{% endblock %}\
+                 {{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% assign greeting = 'hi' %}\
+                 {% block 'box', alignment: 'center', items: ['a', 'b', shop.name] %}\
+                 {{ greeting }}{% block 'box' %}inner{% endblock %}\
+                 {% endblock %}",
+            ),
+            (
+                "blocks/box.liquid",
+                "{% assign tag = tag | default: 'section' %}\
+                 <{{ tag }} data-align=\"{{ block.settings.alignment }}\" data-also=\"{{ alignment }}\" \
+                 data-items=\"{{ items | join: '+' }}\" data-greeting=\"{{ greeting }}\">{{ content }}</{{ tag }}>\
+                 {% if block.content != content %}block.content differs{% endif %}\
+                 {% schema %}{\"name\": \"Box\", \"settings\": [{\"type\": \"select\", \"id\": \"alignment\", \
+                 \"label\": \"Alignment\", \"options\": [{\"value\": \"left\", \"label\": \"Left\"}, \
+                 {\"value\": \"center\", \"label\": \"Center\"}], \"default\": \"left\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    // The page's body, before what the platform adds at its end.
+    let body = rendered.body.split("<body>").nth(1).unwrap();
+    let body = body.split("<script src=").next().unwrap();
+    // No wrapper: the block's own element is the outermost. A parameter named after a setting
+    // sets it, the others have their default; an array can be written in place; the body is
+    // rendered where it is written, and the block does not see the caller's variables.
+    assert_eq!(
+        body,
+        "<header data-align=\"left\" data-also=\"\" data-items=\"\" data-greeting=\"\"><b>Local Supply Co.</b></header>\
+         <section data-align=\"center\" data-also=\"center\" data-items=\"a+b+Local Supply Co.\" data-greeting=\"\">\
+         hi<section data-align=\"left\" data-also=\"\" data-items=\"\" data-greeting=\"\">inner</section>\
+         </section>"
+    );
+    // Without a partial, the page gets no import map.
+    assert!(!rendered.body.contains("importmap"));
+}
+
+#[test]
+fn a_partial_marks_a_region_and_brings_its_runtime() {
+    let fixture = theme_of(
+        "partial-tag",
+        &[lsf_core::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% partial 'count' %}<p>{{ shop.name }}</p>{% endpartial %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains(
+            "<body><!--shopify-partial name=\"count\"--><p>Local Supply Co.</p><!--/shopify-partial-->"
+        ),
+        "{}",
+        rendered.body
+    );
+    // The import map comes first, so that every module of the page can use it.
+    let head = rendered.body.split("<head>").nth(1).unwrap();
+    assert!(
+        head.starts_with("<script type=\"importmap\">{\"imports\":{\"@shopify/partial-rendering\":\"//shop.test/cdn/shopifycloud/storefront/assets/partial-rendering-"),
+        "{head}"
+    );
+    let path = lsf_core::render::platform::partial_rendering_path();
+    let script = lsf_core::render::platform::asset(path).expect("the runtime is served");
+    assert!(script.content.contains("export const partials"));
+}
+
+#[test]
+fn without_their_preview_block_and_partial_fail_as_on_a_live_store() {
+    let files = [
+        (
+            "layout/theme.liquid",
+            "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+        ),
+        (
+            "templates/index.liquid",
+            "{% partial 'count' %}{% block 'box' %}{% endblock %}{% endpartial %}",
+        ),
+        ("blocks/box.liquid", "<div>{{ content }}</div>"),
+    ];
+    let rendered = theme_of("no-preview", &[], &files).page("/");
+    assert!(
+        rendered
+            .body
+            .contains("Liquid syntax error (templates/index line 1): Unknown tag 'partial'"),
+        "{}",
+        rendered.body
+    );
+    assert!(!rendered.body.contains("importmap"));
+}

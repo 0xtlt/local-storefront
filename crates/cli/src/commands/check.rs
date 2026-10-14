@@ -91,8 +91,27 @@ fn filters_used(source: &str) -> Vec<(String, usize)> {
     found
 }
 
-pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
-    let env = Arc::new(lsf_core::environment());
+/// For an unknown tag that a feature preview has, how to turn the preview on.
+fn preview_hint(error: &str) -> String {
+    let Some(tag) = error
+        .split("Unknown tag '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+    else {
+        return String::new();
+    };
+    match lsf_core::Preview::of_tag(tag) {
+        Some(preview) => format!(
+            " (`{tag}` is part of Shopify's \"{}\" feature preview: run with `--preview {}`)",
+            preview.title(),
+            preview.name()
+        ),
+        None => String::new(),
+    }
+}
+
+pub fn run(theme_dir: &Path, previews: &[lsf_core::Preview]) -> Result<ExitCode, String> {
+    let env = Arc::new(lsf_core::environment_with(previews));
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
         .map_err(|error| error.to_string())?;
     let mut files = 0;
@@ -112,7 +131,7 @@ pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
             files += 1;
             let path = format!("{directory}/{name}");
             if let Err(error) = theme.liquid(&path) {
-                println!("{path}: {error}");
+                println!("{path}: {error}{}", preview_hint(&error.to_string()));
                 problems += 1;
                 continue;
             }

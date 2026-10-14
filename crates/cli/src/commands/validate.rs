@@ -21,8 +21,13 @@ pub struct Args {
     format: Format,
 }
 
-pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, String> {
-    let app = App::open(theme, data, Revalidate::Never)?;
+pub fn run(
+    theme: &Path,
+    data: Option<&Path>,
+    previews: &[lsf_core::Preview],
+    args: Args,
+) -> Result<ExitCode, String> {
+    let app = App::open(theme, data, Revalidate::Never, previews)?;
     let (store, diagnostics) = app.load_store();
     match args.format {
         Format::Json => {

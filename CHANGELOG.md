@@ -5,6 +5,22 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ## Unreleased
 
+### Added
+
+- **Feature previews.** `--preview <name>` (or `LSF_PREVIEW`) turns on a feature preview of
+  Shopify, as a development store can. Without it, a page renders as on a live store: a theme
+  that uses a preview gets the error a live store gives, and `lsf` names the preview to turn
+  on. The first one is `liquid-july-26`, Shopify's "Liquid July '26 changes":
+  - **`{% block 'name', parameter: value %}content{% endblock %}`** renders
+    `blocks/name.liquid` from a template or a layout. The block sees its parameters and its
+    body, as `content` or `block.content`; a parameter named after a setting of its schema
+    sets `block.settings`; arrays can be written in place. With it, Shopify's Skeleton theme
+    renders.
+  - **`{% partial 'name' %}`** and **`@shopify/partial-rendering`**: a theme that uses
+    partials gets an import map for the module, and `partials.refresh('name')` swaps in the
+    region from the server, keeping focus, form values and scroll. Shopify has not published
+    its own markup yet: lsf marks a partial with HTML comments.
+
 ### Fixed
 
 - A `file_reference` metafield or metaobject field that points to a video (`.mp4`, `.mov`,

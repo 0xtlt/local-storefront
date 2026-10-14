@@ -102,7 +102,12 @@ async fn listen(
     Err(failure)
 }
 
-pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, String> {
+pub fn run(
+    theme: &Path,
+    data: Option<&Path>,
+    previews: &[lsf_core::Preview],
+    args: Args,
+) -> Result<ExitCode, String> {
     let revalidate = if args.static_files {
         Revalidate::Never
     } else {
@@ -110,7 +115,8 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
     };
     let throttle = Throttle::parse(args.throttle.iter().map(String::as_str))
         .map_err(|problem| format!("--throttle: {problem}"))?;
-    let app = App::open(theme, data, revalidate)?;
+    let app = App::open(theme, data, revalidate, previews)?;
+    crate::app::note_missing_previews(&app.theme, previews);
     let source = app.describe_source();
     let (state, diagnostics) = ServerState::new(
         app,

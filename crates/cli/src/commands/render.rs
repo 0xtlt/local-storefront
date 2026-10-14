@@ -64,8 +64,14 @@ pub(super) fn request_for(store: &Store, host: String, path_and_query: &str) -> 
     request
 }
 
-pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, String> {
-    let app = App::open(theme, data, Revalidate::Never)?;
+pub fn run(
+    theme: &Path,
+    data: Option<&Path>,
+    previews: &[lsf_core::Preview],
+    args: Args,
+) -> Result<ExitCode, String> {
+    let app = App::open(theme, data, Revalidate::Never, previews)?;
+    crate::app::note_missing_previews(&app.theme, previews);
     let (store, diagnostics) = app.load_store();
     print_diagnostics(&diagnostics);
     let store = Arc::new(store);
