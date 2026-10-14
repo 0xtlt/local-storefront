@@ -11,6 +11,7 @@ use crate::lax;
 use crate::lexer::{MarkupParser, TokenKind};
 use crate::number::{string_to_i, to_integer};
 use crate::parser::{Parser, TagToken};
+use crate::strict2::{self, Issue, Style};
 use crate::template::{BlockBody, Tag};
 use crate::value::{Object, Value};
 
@@ -109,6 +110,7 @@ pub fn collection_items(collection: &Value, from: i64, to: Option<i64>) -> Vec<V
     }
 }
 
+#[derive(PartialEq)]
 enum Offset {
     None,
     Continue,
@@ -190,6 +192,7 @@ impl Tag for For {
     }
 }
 
+#[derive(PartialEq)]
 struct ForMarkup {
     variable_name: String,
     collection_markup: String,
@@ -206,8 +209,7 @@ fn parse_offset(markup: &str) -> Offset {
     }
 }
 
-fn strict_parse_for(markup: &str) -> Result<ForMarkup> {
-    let mut parser = MarkupParser::new(markup)?;
+fn strict_parse_for(mut parser: MarkupParser<'_>) -> Result<ForMarkup> {
     let variable_name = parser.consume(TokenKind::Id)?.to_string();
     if !parser.id("in") {
         return Err(Error::syntax("For loops require an 'in' clause"));
@@ -280,8 +282,53 @@ fn lax_parse_for(markup: &str) -> Result<ForMarkup> {
     })
 }
 
+fn for_markup(markup: &str) -> Result<ForMarkup> {
+    MarkupParser::new(markup)
+        .and_then(strict_parse_for)
+        .or_else(|_| lax_parse_for(markup))
+}
+
+pub(super) fn check_for(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| for_markup(markup).ok(),
+        |markup| strict_parse_for(MarkupParser::strict2(markup)?),
+        |markup, style| {
+            // The loop is named after the markup of its collection (`offset: continue` resumes
+            // by that name): keep it when the strict parser reads it as it is.
+            let collection = match MarkupParser::strict2(&markup.collection_markup)
+                .and_then(|mut parser| Ok((parser.expression()?, parser.at_end())))
+            {
+                Ok((normalized, true)) if normalized == markup.collection_markup => normalized,
+                _ => strict2::expr(&Expr::parse(&markup.collection_markup), style)?,
+            };
+            let mut out = format!(
+                "{} in {collection}",
+                strict2::identifier(&markup.variable_name)?
+            );
+            if markup.reversed {
+                out.push_str(" reversed");
+            }
+            if let Some(limit) = &markup.limit {
+                out.push_str(&format!(" limit: {}", strict2::expr(limit, style)?));
+            }
+            match &markup.offset {
+                Offset::None => {}
+                Offset::Continue => out.push_str(" offset: continue"),
+                Offset::Expr(offset) => {
+                    out.push_str(&format!(" offset: {}", strict2::expr(offset, style)?))
+                }
+            }
+            Ok(out)
+        },
+        false,
+    )
+    .map(|issue| issue.with_intent(strict2::intent::for_loop(markup)))
+}
+
 pub(super) fn parse_for(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
-    let markup = strict_parse_for(token.markup).or_else(|_| lax_parse_for(token.markup))?;
+    let markup = for_markup(token.markup)?;
     let mut body = BlockBody::new();
     let mut else_body: Option<BlockBody> = None;
     let mut blank = true;
@@ -397,56 +444,105 @@ fn cycle_variables(markup: &str) -> Vec<Expr> {
         .collect()
 }
 
+fn cycle_syntax_error() -> Error {
+    Error::syntax("Syntax Error in 'cycle' - Valid syntax: cycle [name :] var [, var2, var3 ...]")
+}
+
+/// The name of a cycle, when it has one, and its values.
+fn cycle_markup(markup: &str) -> Result<(Option<Expr>, Vec<Expr>)> {
+    let fragment_end = lax::quoted_fragment(markup, 0).ok_or_else(cycle_syntax_error)?;
+    // NamedSyntax = /\A(QuotedFragment)\s*\:\s*(.*)/om, where the fragment may give back a
+    // trailing colon it matched greedily.
+    let candidates = [fragment_end, fragment_end.saturating_sub(1)];
+    for end in candidates {
+        if end == 0 || !markup.is_char_boundary(end) {
+            continue;
+        }
+        if end != fragment_end && !markup[end..].starts_with(':') {
+            continue;
+        }
+        let colon = lax::skip_space(markup, end);
+        if markup[colon..].starts_with(':') {
+            return Ok((
+                Some(Expr::parse(&markup[..end])),
+                cycle_variables(&markup[lax::skip_space(markup, colon + 1)..]),
+            ));
+        }
+    }
+    Ok((None, cycle_variables(markup)))
+}
+
+fn strict2_cycle(markup: &str) -> Result<(Option<Expr>, Vec<Expr>)> {
+    let mut parser = MarkupParser::strict2(markup)?;
+    if parser.at_end() {
+        return Err(cycle_syntax_error());
+    }
+    let first = Expr::parse(&parser.expression()?);
+    let (name, mut variables) = if parser.consume_if(TokenKind::Colon).is_some() {
+        (Some(first), vec![Expr::parse(&parser.expression()?)])
+    } else {
+        (None, vec![first])
+    };
+    while parser.consume_if(TokenKind::Comma).is_some() {
+        if parser.at_end() {
+            break;
+        }
+        variables.push(Expr::parse(&parser.expression()?));
+    }
+    parser.consume(TokenKind::EndOfString)?;
+    Ok((name, variables))
+}
+
+pub(super) fn check_cycle(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| cycle_markup(markup).ok(),
+        strict2_cycle,
+        |(name, variables), style| {
+            let values = variables
+                .iter()
+                .map(|value| strict2::expr(value, style))
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .join(", ");
+            Ok(match name {
+                Some(name) => format!("{}: {values}", strict2::expr(name, style)?),
+                None => values,
+            })
+        },
+        false,
+    )
+}
+
 pub(super) fn parse_cycle(
     _parser: &mut Parser<'_, '_>,
     token: &TagToken<'_>,
 ) -> Result<Box<dyn Tag>> {
-    let markup = token.markup;
-    let syntax_error = || {
-        Error::syntax(
-            "Syntax Error in 'cycle' - Valid syntax: cycle [name :] var [, var2, var3 ...]",
-        )
-    };
-    // NamedSyntax = /\A(QuotedFragment)\s*\:\s*(.*)/om, where the fragment may give back a
-    // trailing colon it matched greedily.
-    if let Some(fragment_end) = lax::quoted_fragment(markup, 0) {
-        let candidates = [fragment_end, fragment_end.saturating_sub(1)];
-        for end in candidates {
-            if end == 0 || !markup.is_char_boundary(end) {
-                continue;
-            }
-            if end != fragment_end && !markup[end..].starts_with(':') {
-                continue;
-            }
-            let colon = lax::skip_space(markup, end);
-            if markup[colon..].starts_with(':') {
-                return Ok(Box::new(Cycle {
-                    name: CycleName::Expr(Expr::parse(&markup[..end])),
-                    variables: cycle_variables(&markup[lax::skip_space(markup, colon + 1)..]),
-                }));
-            }
-        }
-        let variables = cycle_variables(markup);
-        // Two unnamed cycles share their position only when they list the same literals.
-        let all_literals = variables.iter().all(|v| matches!(v, Expr::Literal(_)));
-        let key = if all_literals {
-            let values: Vec<Value> = variables
-                .iter()
-                .map(|v| match v {
-                    Expr::Literal(value) => value.clone(),
-                    _ => Value::Nil,
-                })
-                .collect();
-            Value::array(values).inspect()
-        } else {
-            format!("cycle:{}", CYCLE_IDS.fetch_add(1, Ordering::Relaxed))
-        };
+    let (name, variables) = cycle_markup(token.markup)?;
+    if let Some(name) = name {
         return Ok(Box::new(Cycle {
-            name: CycleName::Key(key),
+            name: CycleName::Expr(name),
             variables,
         }));
     }
-    Err(syntax_error())
+    // Two unnamed cycles share their position only when they list the same literals.
+    let all_literals = variables.iter().all(|v| matches!(v, Expr::Literal(_)));
+    let key = if all_literals {
+        let values: Vec<Value> = variables
+            .iter()
+            .map(|v| match v {
+                Expr::Literal(value) => value.clone(),
+                _ => Value::Nil,
+            })
+            .collect();
+        Value::array(values).inspect()
+    } else {
+        format!("cycle:{}", CYCLE_IDS.fetch_add(1, Ordering::Relaxed))
+    };
+    Ok(Box::new(Cycle {
+        name: CycleName::Key(key),
+        variables,
+    }))
 }
 
 /// The `tablerowloop` object.
@@ -583,11 +679,17 @@ impl Tag for TableRow {
 }
 
 /// `Syntax = /(\w+)\s+in\s+(QuotedFragment+)/`, searched anywhere in the markup.
-pub(super) fn parse_tablerow(
-    parser: &mut Parser<'_, '_>,
-    token: &TagToken<'_>,
-) -> Result<Box<dyn Tag>> {
-    let markup = token.markup;
+#[derive(PartialEq)]
+struct TableRowMarkup {
+    variable_name: String,
+    collection: Expr,
+    cols: Option<Expr>,
+    limit: Option<Expr>,
+    offset: Option<Expr>,
+}
+
+/// `Syntax = /(\w+)\s+in\s+(#{QuotedFragment}+)/o` and the attributes found anywhere.
+fn tablerow_markup(markup: &str) -> Result<TableRowMarkup> {
     let syntax_error = || {
         Error::syntax(
             "Syntax Error in 'table_row loop' - Valid syntax: table_row [item] in [collection] cols=3",
@@ -623,13 +725,12 @@ pub(super) fn parse_tablerow(
         }
     }
     let (variable_name, collection_markup) = found.ok_or_else(syntax_error)?;
-    let mut tag = TableRow {
+    let mut tag = TableRowMarkup {
         variable_name: variable_name.to_string(),
         collection: Expr::parse(collection_markup),
         cols: None,
         limit: None,
         offset: None,
-        body: BlockBody::new(),
     };
     for (key, value) in lax::scan_tag_attributes(markup) {
         match key {
@@ -639,6 +740,86 @@ pub(super) fn parse_tablerow(
             _ => {}
         }
     }
-    tag.body = parser.parse_block("tablerow")?;
-    Ok(Box::new(tag))
+    Ok(tag)
+}
+
+fn strict2_tablerow(markup: &str) -> Result<TableRowMarkup> {
+    let mut parser = MarkupParser::strict2(markup)?;
+    let variable_name = parser.consume(TokenKind::Id)?.to_string();
+    if !parser.id("in") {
+        return Err(Error::syntax("For loops require an 'in' clause"));
+    }
+    let mut tag = TableRowMarkup {
+        variable_name,
+        collection: Expr::parse(&parser.expression()?),
+        cols: None,
+        limit: None,
+        offset: None,
+    };
+    parser.consume_if(TokenKind::Comma);
+    while parser.look(TokenKind::Id) {
+        let key = parser.consume_any();
+        let slot = match key {
+            "cols" => Some(&mut tag.cols),
+            "limit" => Some(&mut tag.limit),
+            "offset" => Some(&mut tag.offset),
+            // Accepted, and not used.
+            "range" => None,
+            _ => {
+                return Err(Error::syntax(format!(
+                    "Invalid attribute '{key}' in tablerow loop. Valid attributes are cols, limit, offset, and range"
+                )));
+            }
+        };
+        parser.consume(TokenKind::Colon)?;
+        let value = Expr::parse(&parser.expression()?);
+        if let Some(slot) = slot {
+            *slot = Some(value);
+        }
+        parser.consume_if(TokenKind::Comma);
+    }
+    parser.consume(TokenKind::EndOfString)?;
+    Ok(tag)
+}
+
+pub(super) fn check_tablerow(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| tablerow_markup(markup).ok(),
+        strict2_tablerow,
+        |tag, style| {
+            let mut out = format!(
+                "{} in {}",
+                strict2::identifier(&tag.variable_name)?,
+                strict2::expr(&tag.collection, style)?
+            );
+            for (key, value) in [
+                ("cols", &tag.cols),
+                ("limit", &tag.limit),
+                ("offset", &tag.offset),
+            ] {
+                if let Some(value) = value {
+                    out.push_str(&format!(" {key}: {}", strict2::expr(value, style)?));
+                }
+            }
+            Ok(out)
+        },
+        false,
+    )
+}
+
+pub(super) fn parse_tablerow(
+    parser: &mut Parser<'_, '_>,
+    token: &TagToken<'_>,
+) -> Result<Box<dyn Tag>> {
+    let markup = tablerow_markup(token.markup)?;
+    Ok(Box::new(TableRow {
+        variable_name: markup.variable_name,
+        collection: markup.collection,
+        cols: markup.cols,
+        limit: markup.limit,
+        offset: markup.offset,
+        body: parser.parse_block("tablerow")?,
+    }))
 }

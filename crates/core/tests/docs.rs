@@ -7,7 +7,8 @@ use std::path::Path;
 
 const HEADER: &str = "# Store data reference\n\n\
     Every type of the store data format. This file is generated from the JSON Schema the\n\
-    validator uses (`lsf docs --reference`); the guide is in [data-format.md](data-format.md).\n\n";
+    validator uses (`npx local-storefront docs --reference`); the guide is in\n\
+    [data-format.md](data-format.md).\n\n";
 
 #[test]
 fn the_reference_is_up_to_date() {

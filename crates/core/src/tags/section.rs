@@ -1,5 +1,7 @@
 //! `{% section 'name' %}` and `{% sections 'group' %}`.
 
+use lsf_liquid::lexer::{MarkupParser, TokenKind};
+use lsf_liquid::strict2::{self, Issue, Style};
 use lsf_liquid::{Context, Error, Expr, Parser, Result, Tag, TagToken};
 use serde_json::Value as Json;
 
@@ -19,6 +21,29 @@ fn quoted_name(token: &TagToken<'_>) -> Result<String> {
                 token.name, token.name
             ))
         })
+}
+
+/// The markup of `section` and `sections`: one quoted name, which the strict parser reads as a
+/// string token.
+pub(super) fn check(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| {
+            Expr::parse(markup)
+                .as_literal_str()
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        },
+        |markup| {
+            let mut parser = MarkupParser::strict2(markup)?;
+            let name = Expr::parse(parser.consume(TokenKind::String)?);
+            parser.consume(TokenKind::EndOfString)?;
+            Ok(name.as_literal_str().unwrap_or_default().to_string())
+        },
+        |name, style| strict2::string(name, style),
+        false,
+    )
 }
 
 struct StaticSection {

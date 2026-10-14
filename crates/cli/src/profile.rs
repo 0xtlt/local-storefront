@@ -617,13 +617,17 @@ Costliest on their own:
         assert_eq!(profiles[0]["events"].as_array().unwrap().len(), 18);
     }
 
-    /// The README gives the cost of each kind of thing: it must say what the code does.
+    /// The performance guide gives the cost of each kind of thing: it must say what the code
+    /// does.
     #[test]
-    fn the_readme_lists_the_costs() {
-        let readme = include_str!("../../../README.md");
+    fn the_docs_list_the_costs() {
+        let readme = include_str!("../../../docs/performance.md");
         for (kind, points, what) in cost::KINDS {
             let row = format!("| `{kind}` | {points} | {what} |");
-            assert!(readme.contains(&row), "the README has no row:\n{row}");
+            assert!(
+                readme.contains(&row),
+                "docs/performance.md has no row:\n{row}"
+            );
         }
     }
 }

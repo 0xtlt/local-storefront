@@ -3,6 +3,45 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **`npx local-storefront check` finds what Shopify's strict Liquid parser rejects, and
+  `npx local-storefront check --fix` rewrites it.** Shopify is moving every store to a strict
+  parser, and a file it rejects can no longer be uploaded
+  (`Expected end_of_string but found pipe`). `npx local-storefront check` reports each tag and
+  output it rejects, with Shopify's message and the fix, in `.liquid` files and in the `liquid`
+  settings of JSON templates, section groups and `config/settings_data.json`.
+  - Where what the code meant is clear, `--fix` does it, and the report says how the output
+    changes: a filter in a `render` argument is computed into a variable on the line above, an
+    `and` in an argument is evaluated, `('X' | downcase)` is the string and not the variable
+    `X`, `reversed` after `limit` reverses, `=` in a condition compares, and the body of
+    `{% when 'x' and y %}` goes in `{% if y %}` (a `case` with an `else` becomes
+    `if`/`elsif`/`else`).
+  - Elsewhere it keeps today's output, as Shopify's own migration does, without the comment it
+    leaves in the file.
+  - A fix keeps the layout of the markup and is checked before it is written. Markup without a
+    fix is reported with the reason.
+
+  - `--format json` prints one JSON document, for tools and AI agents: each problem with its
+    code, file, line, markup and fix.
+
+  See [strict
+  Liquid](https://github.com/0xtlt/local-storefront/blob/main/docs/strict-liquid.md).
+
+### Changed
+
+- **The documentation is organised by task.** The README is short: what local-storefront does,
+  how to start, and a link per task. Each task has its guide in `docs/` (data, testing, strict
+  Liquid, formatting, performance, storefront), next to two references: the
+  [CLI](https://github.com/0xtlt/local-storefront/blob/main/docs/cli.md), with every option,
+  exit code and output format, and the [control
+  API](https://github.com/0xtlt/local-storefront/blob/main/docs/control-api.md).
+  [docs/agents.md](https://github.com/0xtlt/local-storefront/blob/main/docs/agents.md) tells an
+  AI agent how to drive local-storefront, and `llms.txt` lists the documentation for language
+  models.
+
 ## 0.1.15 - 2026-10-14
 
 ### Added

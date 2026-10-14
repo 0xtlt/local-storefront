@@ -2,6 +2,7 @@
 
 use lsf_liquid::lexer::{MarkupParser, TokenKind};
 use lsf_liquid::number::to_integer;
+use lsf_liquid::strict2::{self, Issue, Style};
 use lsf_liquid::{BlockBody, Context, Error, Expr, Hash, Parser, Result, Tag, TagToken, Value};
 
 use crate::drops::PaginatedList;
@@ -147,13 +148,19 @@ impl Tag for Paginate {
     }
 }
 
-pub(super) fn parse(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
+#[derive(PartialEq)]
+struct PaginateMarkup {
+    collection_markup: String,
+    page_size: Expr,
+    window_size: Option<Expr>,
+}
+
+fn paginate_markup(mut markup: MarkupParser<'_>) -> Result<PaginateMarkup> {
     let syntax_error = || {
         Error::syntax(
             "Syntax error in tag 'paginate' - Valid syntax: paginate [collection] by number",
         )
     };
-    let mut markup = MarkupParser::new(token.markup)?;
     let collection_markup = markup.expression()?;
     if !markup.id("by") {
         return Err(syntax_error());
@@ -169,12 +176,45 @@ pub(super) fn parse(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result
         }
     }
     markup.consume(TokenKind::EndOfString)?;
-    let is_plain_variable = !collection_markup.contains(['.', '[']);
-    Ok(Box::new(Paginate {
-        collection: Expr::parse(&collection_markup),
-        variable: is_plain_variable.then_some(collection_markup),
+    Ok(PaginateMarkup {
+        collection_markup,
         page_size,
         window_size,
+    })
+}
+
+pub(super) fn check(markup: &str, style: &Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| paginate_markup(MarkupParser::new(markup).ok()?).ok(),
+        |markup| paginate_markup(MarkupParser::strict2(markup)?),
+        |paginate, style| {
+            let mut out = format!(
+                "{} by {}",
+                strict2::expr(&Expr::parse(&paginate.collection_markup), style)?,
+                strict2::expr(&paginate.page_size, style)?
+            );
+            if let Some(window_size) = &paginate.window_size {
+                out.push_str(&format!(
+                    ", window_size: {}",
+                    strict2::expr(window_size, style)?
+                ));
+            }
+            Ok(out)
+        },
+        false,
+    )
+}
+
+pub(super) fn parse(parser: &mut Parser<'_, '_>, token: &TagToken<'_>) -> Result<Box<dyn Tag>> {
+    let markup = paginate_markup(MarkupParser::new(token.markup)?)?;
+    let is_plain_variable = !markup.collection_markup.contains(['.', '[']);
+    Ok(Box::new(Paginate {
+        collection: Expr::parse(&markup.collection_markup),
+        variable: is_plain_variable.then_some(markup.collection_markup),
+        page_size: markup.page_size,
+        window_size: markup.window_size,
         body: parser.parse_block("paginate")?,
     }))
 }

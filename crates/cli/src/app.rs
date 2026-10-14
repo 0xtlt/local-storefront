@@ -33,7 +33,7 @@ impl App {
             Some(directory) => {
                 if !directory.is_dir() {
                     return Err(format!(
-                        "the data directory {} does not exist. Run `lsf init --data {}` to create it.",
+                        "the data directory {} does not exist. The `init` command creates it: `init --data {}`.",
                         directory.display(),
                         directory.display()
                     ));
@@ -85,7 +85,7 @@ impl App {
         match &self.source {
             DataSource::Directory(directory) => directory.display().to_string(),
             DataSource::Demo => {
-                "built-in demo store (run `lsf init` to get an editable copy)".to_string()
+                "built-in demo store (the `init` command writes an editable copy)".to_string()
             }
         }
     }

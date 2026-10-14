@@ -7,14 +7,14 @@ use crate::lax;
 use crate::lexer::{MarkupParser, TokenKind};
 use crate::value::Value;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Variable {
     /// `None` when the markup is empty, which evaluates to `nil`.
     pub expr: Option<Expr>,
     pub filters: Vec<FilterCall>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FilterCall {
     pub name: String,
     pub args: Vec<Expr>,
@@ -54,6 +54,37 @@ impl Variable {
                 name,
                 args.iter().map(String::as_str),
             ));
+        }
+        parser.consume(TokenKind::EndOfString)?;
+        Ok(variable)
+    }
+
+    /// Parses output markup as Shopify's strict parser does (`strict2_parse`), with no
+    /// fallback: trailing commas and empty argument lists are allowed, bare brackets are not.
+    pub fn strict2_parse(markup: &str) -> Result<Variable> {
+        let mut parser = MarkupParser::strict2(markup)?;
+        let mut variable = Variable::default();
+        if parser.at_end() {
+            return Ok(variable);
+        }
+        variable.expr = Some(Expr::parse(&parser.expression()?));
+        while parser.consume_if(TokenKind::Pipe).is_some() {
+            let mut call = FilterCall {
+                name: parser.consume(TokenKind::Id)?.to_string(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            };
+            let end_of_arguments =
+                |parser: &MarkupParser<'_>| parser.look(TokenKind::Pipe) || parser.at_end();
+            if parser.consume_if(TokenKind::Colon).is_some() {
+                if !end_of_arguments(&parser) {
+                    call.strict2_argument(&mut parser)?;
+                }
+                while parser.consume_if(TokenKind::Comma).is_some() && !end_of_arguments(&parser) {
+                    call.strict2_argument(&mut parser)?;
+                }
+            }
+            variable.filters.push(call);
         }
         parser.consume(TokenKind::EndOfString)?;
         Ok(variable)
@@ -102,6 +133,23 @@ impl Variable {
 }
 
 impl FilterCall {
+    /// `positional_argument | keyword_argument`, where a keyword given twice keeps its first
+    /// place and its last value, as a Ruby hash does.
+    fn strict2_argument(&mut self, parser: &mut MarkupParser<'_>) -> Result<()> {
+        if parser.look(TokenKind::Id) && parser.look_ahead(TokenKind::Colon, 1) {
+            let key = parser.consume(TokenKind::Id)?;
+            parser.consume(TokenKind::Colon)?;
+            let value = Expr::parse(&parser.expression()?);
+            match self.kwargs.iter_mut().find(|(existing, _)| existing == key) {
+                Some(slot) => slot.1 = value,
+                None => self.kwargs.push((key.to_string(), value)),
+            }
+        } else {
+            self.args.push(Expr::parse(&parser.expression()?));
+        }
+        Ok(())
+    }
+
     fn from_markup<'a>(name: &str, unparsed_args: impl Iterator<Item = &'a str>) -> FilterCall {
         let mut call = FilterCall {
             name: name.to_string(),

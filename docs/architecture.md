@@ -24,6 +24,7 @@ it is specific to a storefront.
 | `environment` | The registry of tags and filters. Embedders add their own. |
 | `profiler` | What a render spends its time in, when it is asked to record it: every named template as a frame inside the one that rendered it, and on demand every tag and output by line. Each event also carries the points charged so far: one kind for a tag or an output, the others charged by the host through the profiler of the thread, since the objects that load things do not see the context. A render without a profiler pays one test per block body. |
 | `filters/` | The standard filters. |
+| `strict2` | Shopify's strict parser (`error_mode: :strict2`): the rules each tag registers with `Environment::register_syntax`, an audit the parser runs as it parses (`audit`), and the fixes of `lsf check --fix` (`apply`, `apply_intents`, `intent`). A fix that keeps the output is printed from what the engine parses and kept only when both parsers read it back the same. |
 
 Values that are not plain data implement the `Object` trait (`get`, `index`, `items`, `size`,
 `render`, `to_json`, ...): this is how the Shopify layer exposes lazy objects ("drops").
@@ -33,7 +34,9 @@ which `tools/oracle/generate_golden.rb` produces by running the same templates t
 real gem. `tests/liquid_spec.rs` replays Shopify's
 [liquid-spec](https://github.com/Shopify/liquid-spec) suite, downloaded by
 `mise run liquid-spec:fetch`: it reports the specs that pass, differ and do not apply for each
-suite, and fails when fewer pass than its recorded baselines.
+suite, and fails when fewer pass than its recorded baselines. `tests/strict2_spec.rs` checks
+the strict parser against the liquid-spec specs that run in `strict2` mode, and
+`mise run oracle:strict2-fixes` renders the fixes with the gem.
 
 ## `lsf-core`: Shopify
 
@@ -123,7 +126,14 @@ mise run prettier:install  # install Prettier and Shopify's Liquid plugin, to co
 mise run prettier:golden   # regenerate the golden expectations of the formatter from them
 mise run prettier:fixtures # download the tests of the plugin, which the formatter's tests replay
 mise run prettier:compare -- path/to/theme   # list the files `lsf fmt` and Prettier disagree on
+mise run oracle:strict2-fixes                # check the fixes of `lsf check --fix` with the gem
 ```
+
+Documentation: user-facing changes go into the guide of their task in `docs/` and into
+`CHANGELOG.md`; the README only lists the tasks. Tables that repeat values of the code are
+checked by tests (`throttle.rs` reads `docs/testing.md`, `fmt` reads `docs/formatting.md`,
+`profile.rs` reads `docs/performance.md`), and `docs/data-format.md` is embedded in the binary
+by `lsf docs` and `lsf init`.
 
 ## Releasing
 
