@@ -3,7 +3,7 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.1.16 - 2026-10-14
 
 ### Added
 
@@ -23,7 +23,6 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
     leaves in the file.
   - A fix keeps the layout of the markup and is checked before it is written. Markup without a
     fix is reported with the reason.
-
   - `--format json` prints one JSON document, for tools and AI agents: each problem with its
     code, file, line, markup and fix.
 
@@ -41,6 +40,8 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   [docs/agents.md](https://github.com/0xtlt/local-storefront/blob/main/docs/agents.md) tells an
   AI agent how to drive local-storefront, and `llms.txt` lists the documentation for language
   models.
+- Messages name the subcommand to run (`the init command`, `run again with --fix`) rather
+  than `lsf`, which is only the command of the installs that are not from npm.
 
 ## 0.1.15 - 2026-10-14
 
