@@ -994,6 +994,66 @@ fn a_profile_counts_what_a_page_loads() {
 }
 
 #[test]
+fn metafield_values_are_the_objects_shopify_gives() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "spec": [{
+                "handle": "tent",
+                "fields": {
+                    "shade": { "type": "color", "value": "#ff8000" },
+                    "story": { "type": "article_reference", "value": "journal/how-to-care-for-linen" },
+                    "same_story": { "type": "article_reference", "value": "how-to-care-for-linen" },
+                    "length": { "type": "distance", "value": { "value": "2.5", "unit": "m" } },
+                    "price": { "type": "money", "value": { "amount": "17.96", "currency_code": "USD" } }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| fixture.liquid("/", Session::initial(&fixture.store), source);
+    let tent = "{% assign tent = metaobjects.spec.tent %}";
+
+    // A color, with its channels.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.shade.value }}}} {{{{ tent.shade.value.red }}}} {{{{ tent.shade.value.rgb }}}}"
+        )),
+        "#ff8000 255 255 128 0"
+    );
+    // An article, by blog and handle or by its handle alone.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.story.value.title }}}}|{{{{ tent.same_story.value.title }}}}|{{{{ tent.story | metafield_text }}}}"
+        )),
+        "How to care for linen|How to care for linen|How to care for linen"
+    );
+    // Every measurement type, not only weight, volume and dimension.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.length.value.type }}}} {{{{ tent.length.value.value }}}} {{{{ tent.length.value.unit }}}}|{{{{ tent.length | metafield_text }}}}"
+        )),
+        "distance 2.5 m|2.5 m"
+    );
+    // Money prints and computes as cents, and has the currency.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.price.value }}}}|{{{{ tent.price.value | money }}}}|{{{{ tent.price.value | plus: 4 }}}}|\
+             {{% if tent.price.value > 1000 %}}more{{% endif %}}|{{{{ tent.price.value.currency.iso_code }}}}"
+        )),
+        "1796|$17.96|1800|more|USD"
+    );
+}
+
+#[test]
 fn what_is_loaded_is_charged_once() {
     let overlay = serde_json::json!({
         "metaobjects": {

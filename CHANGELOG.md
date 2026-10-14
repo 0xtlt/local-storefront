@@ -3,6 +3,16 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Fixed
+
+- Metafield values are the objects Shopify gives for four more types. A `color` is a color
+  (`.red`, `.rgb`...), not text. An `article_reference` is the article, named `blog/article`
+  or by its handle alone. Every measurement type (`distance`, `temperature`, `duration`...)
+  has a `type`, a `value` and a `unit`, and `metafield_tag` prints it, where only `weight`,
+  `volume` and `dimension` did. A `money` has its `currency`.
+
 ## 0.1.14 - 2026-10-06
 
 ### Fixed
