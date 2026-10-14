@@ -9,10 +9,10 @@ use lsf_liquid::time::Time;
 use lsf_liquid::{Object, Value};
 use serde_json::Value as Json;
 
-use super::media::ImageDrop;
+use super::media::{ImageDrop, MediaDrop};
 use super::{SiteRef, hash};
 use crate::render::cost;
-use crate::store::{Image, Metafield, Metafields, Metaobject};
+use crate::store::{Image, Media, MediaKind, MediaSource, Metafield, Metafields, Metaobject};
 use crate::util::stable_id;
 
 /// `resource.metafields`: namespaces of metafields.
@@ -152,7 +152,7 @@ impl MetafieldDrop {
     }
 }
 
-/// A file reference: an image when the extension says so.
+/// A file reference: an image or a video when the extension says so.
 fn file_value(site: &SiteRef, src: &str) -> Value {
     let extension = src.rsplit('.').next().unwrap_or_default().to_lowercase();
     if matches!(
@@ -160,6 +160,9 @@ fn file_value(site: &SiteRef, src: &str) -> Value {
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "svg" | "bmp"
     ) {
         return ImageDrop::value(site, &image_from_src(site, src));
+    }
+    if matches!(extension.as_str(), "mp4" | "mov" | "webm" | "m4v") {
+        return MediaDrop::value(site, &video_from_src(site, src), None);
     }
     hash([
         ("url", Value::from(crate::urls::file_url(site, src))),
@@ -180,6 +183,42 @@ pub fn image_from_src(site: &SiteRef, src: &str) -> Image {
         width: meta.and_then(|meta| meta.width).unwrap_or(1200),
         height: meta.and_then(|meta| meta.height).unwrap_or(1200),
         focal_point: meta.and_then(|meta| meta.focal_point),
+    }
+}
+
+/// A video known only by its path in `files/`. Its poster is the `.jpg` of the same name, and
+/// its size the one declared for that file (1920×1080 otherwise).
+pub fn video_from_src(site: &SiteRef, src: &str) -> Media {
+    let meta = site.store.files.get(src);
+    let width = meta.and_then(|meta| meta.width).unwrap_or(1920);
+    let height = meta.and_then(|meta| meta.height).unwrap_or(1080);
+    let (stem, extension) = src.rsplit_once('.').unwrap_or((src, "mp4"));
+    let extension = extension.to_lowercase();
+    let mime_type = match extension.as_str() {
+        "mov" => "video/quicktime".to_string(),
+        "m4v" => "video/mp4".to_string(),
+        other => format!("video/{other}"),
+    };
+    Media {
+        id: stable_id("video", src),
+        position: 1,
+        alt: meta.map(|meta| meta.alt.clone()).unwrap_or_default(),
+        preview: Some(image_from_src(site, &format!("{stem}.jpg"))),
+        kind: MediaKind::Video {
+            sources: vec![MediaSource {
+                url: src.to_string(),
+                mime_type,
+                format: extension,
+                width,
+                height,
+            }],
+            duration: 0,
+        },
+        aspect_ratio: if height == 0 {
+            16.0 / 9.0
+        } else {
+            f64::from(width) / f64::from(height)
+        },
     }
 }
 

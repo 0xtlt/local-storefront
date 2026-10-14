@@ -994,6 +994,43 @@ fn a_profile_counts_what_a_page_loads() {
 }
 
 #[test]
+fn a_video_file_in_a_metaobject_is_a_video() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "look": [{
+                "handle": "summer",
+                "fields": {
+                    "clip": { "type": "file_reference", "value": "looks/summer.mp4" },
+                    "clips": { "type": "list.file_reference", "value": ["looks/summer.mp4"] }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% assign clip = metaobjects.look.summer.clip.value %}\
+         {{ clip.media_type }}|{{ clip.sources.size }}|{{ clip.sources.first.mime_type }}|\
+         {{ clip.preview_image.src }}|{{ metaobjects.look.summer.clips.value.first.media_type }}|\
+         {{ clip | video_tag }}",
+    );
+    let (fields, tag) = output.rsplit_once('|').unwrap();
+    assert_eq!(fields, "video|1|video/mp4|files/looks/summer.jpg|video");
+    assert!(tag.starts_with("<video"), "{tag}");
+    assert!(tag.contains("/cdn/shop/files/looks/summer.mp4"), "{tag}");
+}
+
+#[test]
 fn what_is_loaded_is_charged_once() {
     let overlay = serde_json::json!({
         "metaobjects": {
