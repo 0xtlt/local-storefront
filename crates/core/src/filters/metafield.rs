@@ -11,7 +11,7 @@ use super::misc::to_script_safe_json;
 use super::money::format_money;
 use super::site;
 use crate::drops::media::{ImageDrop, MediaDrop, image_base_url};
-use crate::drops::metafield::MetafieldDrop;
+use crate::drops::metafield::{MetafieldDrop, MoneyDrop, is_measurement};
 use crate::site::Site;
 
 fn compact(value: &Value) -> String {
@@ -34,16 +34,16 @@ fn text_of(
     ctx: &Context,
 ) -> String {
     match kind {
-        "money" => match value {
-            Value::Int(cents) => format_money(*cents, &site.store.shop.money_with_currency_format),
-            other => other.to_str().into_owned(),
+        "money" => match value.downcast::<MoneyDrop>() {
+            Some(money) => format_money(money.cents, &site.store.shop.money_with_currency_format),
+            None => value.to_str().into_owned(),
         },
         "rating" => format!(
             "{} / {}",
             float_to_s(number(&value.get("rating"))),
             float_to_s(number(&value.get("scale_max")))
         ),
-        "weight" | "volume" | "dimension" => format!(
+        kind if is_measurement(kind) => format!(
             "{} {}",
             compact(&value.get("value")),
             value.get("unit").to_str()
@@ -59,9 +59,11 @@ fn text_of(
                 .unwrap_or_else(|| value.to_str().into_owned())
         }
         "json" => to_script_safe_json(raw),
-        "product_reference" | "collection_reference" | "page_reference" | "variant_reference" => {
-            value.get("title").to_str().into_owned()
-        }
+        "product_reference"
+        | "collection_reference"
+        | "page_reference"
+        | "variant_reference"
+        | "article_reference" => value.get("title").to_str().into_owned(),
         "metaobject_reference" | "mixed_reference" => {
             let field = args.named("field").map(|field| field.to_str().into_owned());
             match field {
@@ -219,7 +221,7 @@ fn single_tag(
             text().replace('\n', "<br />\n")
         ),
         "rich_text_field" => format!("<div class=\"{class}\">{}</div>", rich_text_html(raw)),
-        "weight" | "volume" | "dimension" => format!(
+        kind if is_measurement(kind) => format!(
             "<{element} class=\"{class}\"><span class=\"{class}_value\">{} </span><span class=\"{class}_unit\">{}</span></{element}>",
             escape_html(&compact(&value.get("value"))),
             escape_html(&value.get("unit").to_str())

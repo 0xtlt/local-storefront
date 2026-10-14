@@ -13,6 +13,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   a `url`, so themes rendered it empty. The poster is the `.jpg` of the same name.
 - Files of `files/` are served in parts when the browser asks with a `Range` header. Safari
   played no video without it, and no browser could seek in one.
+- Metafield values are the objects Shopify gives for four more types. A `color` is a color
+  (`.red`, `.rgb`...), not text. An `article_reference` is the article, named `blog/article`
+  or by its handle alone. Every measurement type (`distance`, `temperature`, `duration`...)
+  has a `type`, a `value` and a `unit`, and `metafield_tag` prints it, where only `weight`,
+  `volume` and `dimension` did. A `money` has its `currency`.
+- `request.locale.direction` (and that of every locale) is `rtl` for Arabic, Hebrew, Persian
+  and the other languages written right to left. Horizon sets `dir` on `<html>` from it.
+- The `applicable_disclosures` filter keeps every disclosure, as Shopify does when it cannot
+  tell the buyer's country. It was an unknown filter that printed a warning.
 
 ## 0.1.14 - 2026-10-06
 

@@ -9,6 +9,8 @@ use lsf_liquid::time::Time;
 use lsf_liquid::{Object, Value};
 use serde_json::Value as Json;
 
+use super::color::{Color, ColorDrop};
+use super::localization::currency_value;
 use super::media::{ImageDrop, MediaDrop};
 use super::{SiteRef, hash};
 use crate::render::cost;
@@ -222,6 +224,96 @@ pub fn video_from_src(site: &SiteRef, src: &str) -> Media {
     }
 }
 
+/// The metafield types whose value is a measurement: a number and its unit.
+const MEASUREMENTS: [&str; 32] = [
+    "antenna_gain",
+    "area",
+    "battery_charge_capacity",
+    "battery_energy_capacity",
+    "capacitance",
+    "concentration",
+    "data_storage_capacity",
+    "data_transfer_rate",
+    "dimension",
+    "display_density",
+    "distance",
+    "duration",
+    "electric_current",
+    "electrical_resistance",
+    "energy",
+    "frequency",
+    "illuminance",
+    "inductance",
+    "luminous_flux",
+    "mass_flow_rate",
+    "power",
+    "pressure",
+    "resolution",
+    "rotational_speed",
+    "sound_level",
+    "speed",
+    "temperature",
+    "thermal_power",
+    "voltage",
+    "volume",
+    "volumetric_flow_rate",
+    "weight",
+];
+
+pub fn is_measurement(kind: &str) -> bool {
+    MEASUREMENTS.contains(&kind)
+}
+
+/// An article named `blog/article`, or by its handle alone when one blog has it.
+fn article_value(site: &SiteRef, reference: &str) -> Value {
+    let store = &site.store;
+    let found = match reference.split_once('/') {
+        Some((blog, article)) => store
+            .blog_index(blog)
+            .and_then(|blog| Some((blog, store.article_index(blog, article)?))),
+        None => (0..store.blogs.len())
+            .find_map(|blog| Some((blog, store.article_index(blog, reference)?))),
+    };
+    found.map_or(Value::Nil, |(blog, article)| {
+        super::content::ArticleDrop::value(site, blog, article)
+    })
+}
+
+/// A `money` metafield: prints and computes as cents, as on Shopify, and has a currency.
+pub struct MoneyDrop {
+    pub cents: i64,
+    currency: String,
+}
+
+impl Object for MoneyDrop {
+    fn type_name(&self) -> &str {
+        "money"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        match key {
+            "currency" => Some(currency_value(&self.currency)),
+            _ => None,
+        }
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        Some(Value::Int(self.cents))
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Owned(self.cents.to_string())
+    }
+
+    fn to_json(&self) -> Json {
+        Json::from(self.cents)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
     let text = || value.as_str().unwrap_or_default();
     match kind {
@@ -260,16 +352,20 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                         _ => None,
                     })
                     .unwrap_or(0);
-                Value::Int(cents)
+                Value::object(MoneyDrop {
+                    cents,
+                    currency: site.currency().to_string(),
+                })
             }
             other => Value::from(other),
         },
+        "color" => Color::parse(text()).map_or_else(|| Value::from(value), ColorDrop::value),
         "rating" => hash([
             ("rating", decimal(value.get("value"))),
             ("scale_min", decimal(value.get("scale_min"))),
             ("scale_max", decimal(value.get("scale_max"))),
         ]),
-        "weight" | "volume" | "dimension" => hash([
+        kind if is_measurement(kind) => hash([
             ("type", Value::str(kind)),
             ("value", decimal(value.get("value"))),
             (
@@ -292,6 +388,7 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         "page_reference" => site.store.page_index(text()).map_or(Value::Nil, |index| {
             super::content::PageDrop::value(site, index)
         }),
+        "article_reference" => article_value(site, text()),
         "variant_reference" => {
             let location =
                 match value {

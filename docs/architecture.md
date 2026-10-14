@@ -55,7 +55,8 @@ reading theme files, which is what makes it fast and reproducible.
 
 Tests: unit tests next to the code, `tests/render.rs` (a fixture theme rendered against the
 demo store, with HTML snapshots), `tests/conformance.rs` (the examples of shopify.dev,
-downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference is current).
+downloaded by `mise run docs:fetch`; it also fails when Shopify documents a filter or a tag lsf
+lacks), `tests/docs.rs` (the generated reference is current).
 
 ## `lsf`: commands and server
 
@@ -88,6 +89,7 @@ mise run horizon:serve     # clone Shopify's Horizon theme and serve it
 mise run oracle:install    # install the reference liquid gem
 mise run oracle:golden     # regenerate the golden expectations from it
 mise run docs:fetch        # download shopify.dev's Liquid reference for the conformance test
+mise run docs:coverage     # what Shopify documents and lsf lacks: filters, tags, object properties
 mise run liquid-spec:fetch # download Shopify's liquid-spec suite, which the engine's tests replay
 ```
 
