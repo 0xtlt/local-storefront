@@ -1,0 +1,105 @@
+## the schema is formatted as JSON
+{% schema %}
+{"name":"Section","settings":[{"type":"text","id":"title","label":"Title"},{"type":"range","id":"n","min":0,"max":10,"step":1,"default":5}],
+ "presets":[{"name":"Section"}],"blocks":[],"max_blocks":3,
+
+ "limits":[1,2,3],"enabled_on":{"templates":["product"]}}
+{% endschema %}
+
+## a schema that is not JSON is left alone
+{% schema %}
+  { "name": {{ nope }} }
+{% endschema %}
+
+## the stylesheet tag is formatted as CSS
+{% stylesheet %}
+.card{COLOR:red;margin:0 AUTO!important;transition:opacity .3s ease,transform .3s ease;background:URL(a.png)}
+.card:HOVER,.card>.title+p{width:calc(100% - 2*var(--gap,10px))}
+
+
+@media (min-width:750px) and (max-width:990px){.card{display:none}}
+/* a comment */
+.a{&:hover{color:#FFF}}
+{% endstylesheet %}
+
+## what follows !important is kept up to the semicolon
+{% stylesheet %}
+a{color:red !important /* why */ ;margin:0 !IMPORTANT ;padding:0!important}
+b{color:red /* not important */ ;}
+{% endstylesheet %}
+
+## the style tag, with and without liquid
+{% style %}
+.a{color:red}
+{% endstyle %}
+{% style %}
+  .section-{{ section.id }}-padding{padding-top:{{ section.settings.padding_top }}px;
+      color:red}
+{% endstyle %}
+
+## the style element
+<style>
+:root{--font:"Helvetica Neue",Arial,sans-serif;--x:  1px}
+@font-face{font-family:"A";src:url(a.woff2) format("woff2"),url(a.woff) format("woff")}
+</style>
+<style>.a{color:{{ color }}}</style>
+
+## a script that is formatted comes out unchanged
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const template = `one
+  two ${three}`;
+    /**
+     * A comment.
+     */
+    console.log(template);
+  });
+</script>
+
+## a script is formatted as JavaScript
+<script>
+var a = {b:1,"c-d":[1,2,3]}
+function f(x){return x?"yes":'no'}
+document.querySelectorAll('[data-a]').forEach(el=>{el.addEventListener('click',function(event){event.preventDefault();f(el.dataset.a,el.dataset.b,el.dataset.c)})})
+</script>
+
+## a script nested in elements breaks in the columns left
+<div><section><div class="wrapper"><script>
+      fetch(window.Shopify.routes.root + 'cart/add.js', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(formData)}).then(response => response.json())
+</script></div></section></div>
+
+## a module script, with jsx and a template literal
+<script type="module">
+import {a} from './a.js'
+const html = `<div>
+    ${a}
+</div>`
+export default () => <div className="a">{html}</div>
+</script>
+
+## a script that holds liquid is indented again
+<script>
+      window.theme = {
+          money: {{ shop.money_format | json }},
+      };
+</script>
+
+## the javascript tag
+{% javascript %}
+    class A extends HTMLElement {
+      connectedCallback() {
+        this.hidden = false
+      }
+    }
+{% endjavascript %}
+
+## a script of JSON
+<script type="application/json">{"a":[1,2,3],"b":{"c":null}}</script>
+<script type="application/ld+json">
+  {"@context": "https://schema.org",
+    "@type": "Product"}
+</script>
+
+## a script loaded from a file
+<script src="{{ 'a.js' | asset_url }}" defer></script>
+<script type="module" src="{{ 'b.js' | asset_url }}" async data-something-long="a value that is long enough to break"></script>

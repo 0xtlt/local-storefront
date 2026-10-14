@@ -490,7 +490,7 @@ fn poster_url(site: &std::sync::Arc<Site>, media: &MediaDrop, args: &FilterArgs)
     Some(urls::with_size_suffix(&image_base_url(site, image), &size))
 }
 
-fn video_html(
+pub(crate) fn video_html(
     site: &std::sync::Arc<Site>,
     media: &MediaDrop,
     args: &FilterArgs,

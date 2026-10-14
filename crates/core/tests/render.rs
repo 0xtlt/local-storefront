@@ -994,6 +994,130 @@ fn a_profile_counts_what_a_page_loads() {
 }
 
 #[test]
+fn a_video_file_in_a_metaobject_is_a_video() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "look": [{
+                "handle": "summer",
+                "fields": {
+                    "clip": { "type": "file_reference", "value": "looks/summer.mp4" },
+                    "clips": { "type": "list.file_reference", "value": ["looks/summer.mp4"] }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% assign clip = metaobjects.look.summer.clip.value %}\
+         {{ clip.media_type }}|{{ clip.sources.size }}|{{ clip.sources.first.mime_type }}|\
+         {{ clip.preview_image.src }}|{{ metaobjects.look.summer.clips.value.first.media_type }}|\
+         {{ clip | video_tag }}",
+    );
+    let (fields, tag) = output.rsplit_once('|').unwrap();
+    assert_eq!(fields, "video|1|video/mp4|files/looks/summer.jpg|video");
+    assert!(tag.starts_with("<video"), "{tag}");
+    assert!(tag.contains("/cdn/shop/files/looks/summer.mp4"), "{tag}");
+    // `metafield_tag` prints the same video, as Shopify does.
+    let tag = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ metaobjects.look.summer.clip | metafield_tag }}",
+    );
+    assert!(tag.starts_with("<video playsinline"), "{tag}");
+    assert!(tag.contains("type=\"video/mp4\""), "{tag}");
+}
+
+#[test]
+fn metafield_values_are_the_objects_shopify_gives() {
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "spec": [{
+                "handle": "tent",
+                "fields": {
+                    "shade": { "type": "color", "value": "#ff8000" },
+                    "story": { "type": "article_reference", "value": "journal/how-to-care-for-linen" },
+                    "same_story": { "type": "article_reference", "value": "how-to-care-for-linen" },
+                    "length": { "type": "distance", "value": { "value": "2.5", "unit": "m" } },
+                    "price": { "type": "money", "value": { "amount": "17.96", "currency_code": "USD" } },
+                    "price_eur": { "type": "money", "value": { "amount": "5", "currency_code": "eur" } },
+                    "width": { "type": "dimension", "value": { "value": "2.555", "unit": "cm" } }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let render = |source: &str| fixture.liquid("/", Session::initial(&fixture.store), source);
+    let tent = "{% assign tent = metaobjects.spec.tent %}";
+
+    // A color, with its channels.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.shade.value }}}} {{{{ tent.shade.value.red }}}} {{{{ tent.shade.value.rgb }}}}"
+        )),
+        "#ff8000 255 255 128 0"
+    );
+    // An article, by blog and handle or by its handle alone.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.story.value.title }}}}|{{{{ tent.same_story.value.title }}}}|{{{{ tent.story | metafield_text }}}}"
+        )),
+        "How to care for linen|How to care for linen|How to care for linen"
+    );
+    // Every measurement type, not only weight, volume and dimension.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.length.value.type }}}} {{{{ tent.length.value.value }}}} {{{{ tent.length.value.unit }}}}|{{{{ tent.length | metafield_text }}}}"
+        )),
+        "distance 2.5 m|2.5 m"
+    );
+    // Money prints and computes as cents, and has the currency.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.price.value }}}}|{{{{ tent.price.value | money }}}}|{{{{ tent.price.value | plus: 4 }}}}|\
+             {{% if tent.price.value > 1000 %}}more{{% endif %}}|{{{{ tent.price.value.currency.iso_code }}}}"
+        )),
+        "1796|$17.96|1800|more|USD"
+    );
+    // A money keeps the currency it is written in, and is printed in it.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.price_eur.value }}}} {{{{ tent.price_eur.value.currency.iso_code }}}}|\
+             {{{{ tent.price_eur | metafield_text }}}}|{{{{ tent.price_eur.value | money }}}}|\
+             {{{{ tent.price_eur.value | money_without_trailing_zeros }}}}|\
+             {{{{ tent.price.value | money_with_currency }}}}"
+        )),
+        "500 EUR|€5,00 EUR|€5,00|€5|$17.96 USD"
+    );
+    // A measurement is printed with two decimals at most.
+    assert_eq!(
+        render(&format!(
+            "{tent}{{{{ tent.width | metafield_text }}}}|{{{{ tent.width | metafield_tag }}}}"
+        )),
+        "2.56 cm|<span class=\"metafield-dimension\"><span class=\"metafield-dimension_value\">2.56 </span><span class=\"metafield-dimension_unit\">cm</span></span>"
+    );
+}
+
+#[test]
 fn what_is_loaded_is_charged_once() {
     let overlay = serde_json::json!({
         "metaobjects": {
@@ -1083,4 +1207,356 @@ fn what_is_loaded_is_charged_once() {
     assert!(search.contains(&("product".to_string(), 1)), "{search:?}");
     // What a template does not ask for costs nothing.
     assert_eq!(charges("/search?q=mug", "{{ shop.name }}"), of(&[]));
+}
+
+/// A fixture of a theme written in a temporary directory, `files` being `(path, content)`,
+/// rendered with the given feature previews.
+fn theme_of(name: &str, previews: &[lsf_core::Preview], files: &[(&str, &str)]) -> Fixture {
+    let directory = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    for (path, content) in files {
+        let path = directory.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let env = Arc::new(lsf_core::environment_with(previews));
+    let theme = Arc::new(Theme::open(&directory, env, Revalidate::Never).expect("theme"));
+    Fixture {
+        renderer: Renderer::new(theme),
+        ..fixture()
+    }
+}
+
+#[test]
+fn a_template_composes_its_page_from_blocks() {
+    let fixture = theme_of(
+        "block-tag",
+        &[lsf_core::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>\
+                 {% block 'box', tag: 'header' %}<b>{{ shop.name }}</b>{% endblock %}\
+                 {{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% assign greeting = 'hi' %}\
+                 {% block 'box', alignment: 'center', items: ['a', 'b', shop.name] %}\
+                 {{ greeting }}{% block 'box' %}inner{% endblock %}\
+                 {% endblock %}",
+            ),
+            (
+                "blocks/box.liquid",
+                "{% assign tag = tag | default: 'section' %}\
+                 <{{ tag }} data-align=\"{{ block.settings.alignment }}\" data-also=\"{{ alignment }}\" \
+                 data-items=\"{{ items | join: '+' }}\" data-greeting=\"{{ greeting }}\">{{ content }}</{{ tag }}>\
+                 {% if block.content != content %}block.content differs{% endif %}\
+                 {% schema %}{\"name\": \"Box\", \"settings\": [{\"type\": \"select\", \"id\": \"alignment\", \
+                 \"label\": \"Alignment\", \"options\": [{\"value\": \"left\", \"label\": \"Left\"}, \
+                 {\"value\": \"center\", \"label\": \"Center\"}], \"default\": \"left\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    // The page's body, before what the platform adds at its end.
+    let body = rendered.body.split("<body>").nth(1).unwrap();
+    let body = body.split("<script src=").next().unwrap();
+    // No wrapper: the block's own element is the outermost. A parameter named after a setting
+    // sets it, the others have their default; an array can be written in place; the body is
+    // rendered where it is written, and the block does not see the caller's variables.
+    assert_eq!(
+        body,
+        "<header data-align=\"left\" data-also=\"\" data-items=\"\" data-greeting=\"\"><b>Local Supply Co.</b></header>\
+         <section data-align=\"center\" data-also=\"center\" data-items=\"a+b+Local Supply Co.\" data-greeting=\"\">\
+         hi<section data-align=\"left\" data-also=\"\" data-items=\"\" data-greeting=\"\">inner</section>\
+         </section>"
+    );
+    // Without a partial, the page gets no import map.
+    assert!(!rendered.body.contains("importmap"));
+}
+
+#[test]
+fn a_partial_marks_a_region_and_brings_its_runtime() {
+    let fixture = theme_of(
+        "partial-tag",
+        &[lsf_core::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% partial 'count' %}<p>{{ shop.name }}</p>{% endpartial %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains(
+            "<body><!--shopify-partial name=\"count\"--><p>Local Supply Co.</p><!--/shopify-partial-->"
+        ),
+        "{}",
+        rendered.body
+    );
+    // The import map comes first, so that every module of the page can use it.
+    let head = rendered.body.split("<head>").nth(1).unwrap();
+    assert!(
+        head.starts_with("<script type=\"importmap\">{\"imports\":{\"@shopify/partial-rendering\":\"//shop.test/cdn/shopifycloud/storefront/assets/partial-rendering-"),
+        "{head}"
+    );
+    let path = lsf_core::render::platform::partial_rendering_path();
+    let script = lsf_core::render::platform::asset(path).expect("the runtime is served");
+    assert!(script.content.contains("export const partials"));
+}
+
+#[test]
+fn without_their_preview_block_and_partial_fail_as_on_a_live_store() {
+    let files = [
+        (
+            "layout/theme.liquid",
+            "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+        ),
+        (
+            "templates/index.liquid",
+            "{% partial 'count' %}{% block 'box' %}{% endblock %}{% endpartial %}",
+        ),
+        ("blocks/box.liquid", "<div>{{ content }}</div>"),
+    ];
+    let rendered = theme_of("no-preview", &[], &files).page("/");
+    assert!(
+        rendered
+            .body
+            .contains("Liquid syntax error (templates/index line 1): Unknown tag 'partial'"),
+        "{}",
+        rendered.body
+    );
+    assert!(!rendered.body.contains("importmap"));
+}
+
+#[test]
+fn a_video_setting_is_the_video_of_its_file() {
+    let fixture = theme_of(
+        "video-setting",
+        &[],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"hero": {"type": "hero", "settings": {"clip": "shopify://files/videos/Clip.MOV"}}}, "order": ["hero"]}"#,
+            ),
+            (
+                "sections/hero.liquid",
+                "{% assign clip = section.settings.clip %}\
+                 {{ clip.media_type }}|{{ clip.sources.first.mime_type }}|{{ clip.sources.first.format }}|\
+                 {{ clip.preview_image.src }}|{{ clip.aspect_ratio }}\
+                 {% schema %}{\"name\": \"Hero\", \"settings\": [{\"type\": \"video\", \"id\": \"clip\", \"label\": \"Clip\"}]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    // A `.mov` is announced as the MP4 Shopify makes of it; its poster is the `.jpg` of the
+    // same name, whatever the case of the extension.
+    assert!(
+        rendered
+            .body
+            .contains("video|video/mp4|mp4|files/videos/Clip.jpg|1.7777777777777777"),
+        "{}",
+        rendered.body
+    );
+}
+
+#[test]
+fn a_called_block_takes_its_parameters_when_the_tag_opens() {
+    let liquid_july = [lsf_core::Preview::LiquidJuly26];
+    let layout = (
+        "layout/theme.liquid",
+        "<html><body>{{ content_for_layout }}</body></html>",
+    );
+    // A setting called `content` keeps its default: only parameters set settings, and the
+    // body is not one. The parameters are read before the body runs.
+    let text = (
+        "blocks/text.liquid",
+        "[{{ block.settings.content }}|{{ n }}|{{ items | join: ',' }}|{{ content }}|{% content_for 'blocks' %}]\
+         {% schema %}{\"name\": \"Text\", \"settings\": [{\"type\": \"text\", \"id\": \"content\", \"label\": \"Content\", \"default\": \"Hello\"}]}{% endschema %}",
+    );
+    let fixture = theme_of(
+        "called-block",
+        &liquid_july,
+        &[
+            layout,
+            text,
+            (
+                "templates/index.liquid",
+                "{% assign n = 1 %}{% block 'text', n: n, items: [['a', 'b'], 'c'] %}{% assign n = 2 %}{{ n }}{% endblock %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    assert!(
+        rendered.body.contains("<body>[Hello|1|a,b,c|2|]"),
+        "{}",
+        rendered.body
+    );
+
+    // A block nested in the body of another is part of it in a profile.
+    let nested = theme_of(
+        "called-block-profile",
+        &liquid_july,
+        &[
+            layout,
+            text,
+            (
+                "templates/index.liquid",
+                "{% block 'text' %}{% block 'text' %}{% endblock %}{% endblock %}",
+            ),
+        ],
+    );
+    let site = nested.renderer.site(
+        nested.store.clone(),
+        request("/"),
+        Session::initial(&nested.store),
+    );
+    let (_, profile) = nested.renderer.profile_page(
+        &site,
+        lsf_core::render::routes::resolve(&site),
+        &Target::Page,
+        &ProfileOptions::default(),
+    );
+    assert_eq!(
+        profile_shape(&profile),
+        "render(templates/index(block text(block text(blocks/text) blocks/text)) layout/theme)"
+    );
+}
+
+#[test]
+fn a_called_block_is_refused_where_shopify_refuses_it() {
+    let liquid_july = [lsf_core::Preview::LiquidJuly26];
+    let fixture = theme_of(
+        "called-block-errors",
+        &liquid_july,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.liquid",
+                "{% block 'outer' %}{% endblock %}|{% block 'missing' %}{% endblock %}",
+            ),
+            ("blocks/outer.liquid", "{% block 'inner' %}{% endblock %}"),
+            ("blocks/inner.liquid", "inner"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    // Only layouts and templates may call a block; and the block has to exist.
+    assert!(
+        rendered.body.contains(
+            "Liquid error (blocks/outer line 1): the block tag can only be used in layout/ and templates/ files"
+        ),
+        "{}",
+        rendered.body
+    );
+    assert!(
+        rendered.body.contains(
+            "Liquid error (templates/index line 1): Could not find asset blocks/missing.liquid"
+        ),
+        "{}",
+        rendered.body
+    );
+    // An array written in place is a value, not the start of a lookup.
+    let env = Arc::new(lsf_core::environment_with(&liquid_july));
+    let Err(error) =
+        lsf_liquid::Template::parse(&env, "{% block 'x', a: ['b'].first %}{% endblock %}")
+    else {
+        panic!("an array followed by a lookup parses");
+    };
+    assert!(
+        error.to_string().contains("cannot be followed by"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_article_handle_that_two_blogs_have_names_neither() {
+    let overlay = serde_json::json!({
+        "blogs": [{
+            "title": "News",
+            "articles": [{
+                "title": "How to care for linen",
+                "author": "Sam",
+                "published_at": "2024-01-10T09:00:00Z",
+                "content": "<p>Again.</p>"
+            }]
+        }],
+        "metaobjects": {
+            "note": [{
+                "handle": "n",
+                "fields": {
+                    "loose": { "type": "article_reference", "value": "how-to-care-for-linen" },
+                    "exact": { "type": "article_reference", "value": "news/how-to-care-for-linen" }
+                }
+            }]
+        }
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    let fixture = Fixture {
+        store: Arc::new(store),
+        ..fixture()
+    };
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{% assign n = metaobjects.note.n %}[{{ n.loose.value.title }}]{{ n.exact.value.url }}",
+    );
+    assert_eq!(output, "[]/blogs/news/how-to-care-for-linen");
+}
+
+#[test]
+fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
+    let fixture = theme_of(
+        "called-block-setting",
+        &[lsf_core::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"c": {"type": "custom", "settings": {"code": "{% block 'b' %}{% endblock %}"}}}, "order": ["c"]}"#,
+            ),
+            (
+                "sections/custom.liquid",
+                "{{ section.settings.code }}{% schema %}{\"name\": \"Custom\", \"settings\": [{\"type\": \"liquid\", \"id\": \"code\", \"label\": \"Code\"}]}{% endschema %}",
+            ),
+            ("blocks/b.liquid", "<b>called</b>"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert!(
+        !rendered.body.contains("<b>called</b>"),
+        "{}",
+        rendered.body
+    );
+    assert!(
+        rendered
+            .body
+            .contains("the block tag can only be used in layout/ and templates/ files"),
+        "{}",
+        rendered.body
+    );
 }

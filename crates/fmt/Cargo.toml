@@ -1,0 +1,17 @@
+[package]
+name = "lsf-fmt"
+description = "Formats Liquid theme files the way Prettier does with Shopify's Liquid plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# The formatter of JavaScript, a port of Prettier's, and the parser it reads.
+oxc = { workspace = true, features = ["ast_visit"] }
+oxc_formatter.workspace = true
+oxc_formatter_core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

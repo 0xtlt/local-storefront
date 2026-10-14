@@ -247,7 +247,7 @@ fn script(path: &str, source: &str) -> Option<(String, String)> {
     let allocator = Allocator::default();
     // A script is a module when it imports or exports, as browsers and Shopify see it.
     let parsed = Parser::new(&allocator, source, SourceType::unambiguous()).parse();
-    if parsed.panicked || !parsed.errors.is_empty() {
+    if parsed.fatal_error || !parsed.diagnostics.is_empty() {
         return None;
     }
     let mut program = parsed.program;
@@ -260,6 +260,7 @@ fn script(path: &str, source: &str) -> Option<(String, String)> {
     };
     let minified = Minifier::new(MinifierOptions {
         mangle: None,
+        mangle_properties: None,
         compress: Some(compress),
     })
     .minify(&allocator, &mut program);

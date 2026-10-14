@@ -1,11 +1,12 @@
 # Architecture
 
-Three crates, each depending only on the one before it.
+Three crates, each depending only on the one before it, and one that stands alone.
 
 ```text
 crates/liquid   lsf-liquid   the Liquid language: no knowledge of Shopify
 crates/core     lsf-core     Shopify on top of it: store data, objects, filters, tags, rendering
 crates/cli      lsf          the command line and the HTTP server
+crates/fmt      lsf-fmt      the formatter of `lsf fmt`: a source in, a source out
 ```
 
 ## `lsf-liquid`: the language
@@ -55,7 +56,35 @@ reading theme files, which is what makes it fast and reproducible.
 
 Tests: unit tests next to the code, `tests/render.rs` (a fixture theme rendered against the
 demo store, with HTML snapshots), `tests/conformance.rs` (the examples of shopify.dev,
-downloaded by `mise run docs:fetch`), `tests/docs.rs` (the generated reference is current).
+downloaded by `mise run docs:fetch`; it also fails when Shopify documents a filter or a tag lsf
+lacks), `tests/docs.rs` (the generated reference is current).
+
+## `lsf-fmt`: the formatter
+
+A port of Prettier with Shopify's Liquid plugin (`@shopify/prettier-plugin-liquid`), step for
+step, so that the same source gives the same output. It shares nothing with `lsf-liquid`: a
+formatter needs a tree that keeps HTML, comments and where everything was written, which a
+renderer does not.
+
+| Module | Role |
+|---|---|
+| `tokenizer`, `parser`, `markup`, `liquid_doc` | Source → tree: Shopify's `liquid-html-parser`, in the tolerant mode the plugin runs it in. Liquid and HTML are one tree; what cannot be parsed is printed as Prettier prints it (an unclosed `{% for %}` gets its `{% endfor %}`), so a source is never refused. |
+| `ast` | The tree, in an arena, with what the plugin adds to each node before printing. |
+| `preprocess` | Parents and siblings, the CSS `display` of each node, and whether the whitespace around it may change without changing the page. |
+| `printer/` | Tree → document: the printer of the plugin. `children` decides what separates two nodes, `tag` and `element` print HTML, `liquid` and `expression` print Liquid. |
+| `doc` | The document (groups, lines that break or not, indentation) and the algorithm that lays it out in a width: Prettier's `printDocToString`. |
+| `embed/json` | The JSON of `{% schema %}` and of JSON scripts, as Prettier's `json` parser prints it. |
+| `embed/css` | CSS, as Prettier's PostCSS printer prints it: `parser` cuts a style sheet the way PostCSS does, `value`, `selector` and `media` are ports of the three parsers Prettier reads values, selectors and media queries with. |
+| `embed/js` | JavaScript, formatted by Oxc's formatter (`oxc_formatter`, a port of Prettier's printer) from the indentation the script is printed at, which `doc` gives it through `Doc::AtIndent`. |
+
+`crates/cli/src/commands/fmt/` finds the files and reads the configuration Prettier reads
+(`.prettierrc`, its `overrides`, `.editorconfig`, `.prettierignore`).
+
+Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
+`tests/cases/*.liquid` and compares with `tests/golden/*.json`, which
+`tools/prettier/generate_golden.mjs` produces by running the same cases through Prettier.
+`tests/plugin_fixtures.rs` replays the tests of the plugin itself, downloaded by
+`mise run prettier:fixtures`, and fails when fewer pass than its recorded baseline.
 
 ## `lsf`: commands and server
 
@@ -88,7 +117,12 @@ mise run horizon:serve     # clone Shopify's Horizon theme and serve it
 mise run oracle:install    # install the reference liquid gem
 mise run oracle:golden     # regenerate the golden expectations from it
 mise run docs:fetch        # download shopify.dev's Liquid reference for the conformance test
+mise run docs:coverage     # what Shopify documents and lsf lacks: filters, tags, object properties
 mise run liquid-spec:fetch # download Shopify's liquid-spec suite, which the engine's tests replay
+mise run prettier:install  # install Prettier and Shopify's Liquid plugin, to compare `lsf fmt` with
+mise run prettier:golden   # regenerate the golden expectations of the formatter from them
+mise run prettier:fixtures # download the tests of the plugin, which the formatter's tests replay
+mise run prettier:compare -- path/to/theme   # list the files `lsf fmt` and Prettier disagree on
 ```
 
 ## Releasing

@@ -12,6 +12,7 @@ pub mod filters;
 pub mod fonts;
 pub mod images;
 pub mod json;
+pub mod previews;
 pub mod render;
 pub mod site;
 pub mod store;
@@ -21,7 +22,8 @@ pub mod urls;
 pub mod util;
 
 pub use error::{Error, Result};
-pub use render::{Rendered, Renderer, Target, environment};
+pub use previews::Preview;
+pub use render::{Rendered, Renderer, Target, environment, environment_with};
 pub use site::{FormResult, Request, Session, Site};
 pub use store::Store;
 pub use theme::Theme;

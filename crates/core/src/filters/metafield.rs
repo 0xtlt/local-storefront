@@ -6,12 +6,22 @@ use lsf_liquid::time::strftime;
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 use serde_json::Value as Json;
 
+use super::media::video_html;
 use super::misc::to_script_safe_json;
-use super::money::format_money;
+use super::money::{format_money, money_formats};
 use super::site;
-use crate::drops::media::{ImageDrop, image_base_url};
-use crate::drops::metafield::MetafieldDrop;
+use crate::drops::media::{ImageDrop, MediaDrop, image_base_url};
+use crate::drops::metafield::{MetafieldDrop, MoneyDrop, is_measurement};
 use crate::site::Site;
+
+/// The number of a measurement as Shopify prints it: two decimals at most, without trailing
+/// zeros.
+fn measure(value: &Value) -> String {
+    match value {
+        Value::Float(f) => compact(&Value::Float((f * 100.0).round() / 100.0)),
+        other => compact(other),
+    }
+}
 
 fn compact(value: &Value) -> String {
     match value {
@@ -33,18 +43,21 @@ fn text_of(
     ctx: &Context,
 ) -> String {
     match kind {
-        "money" => match value {
-            Value::Int(cents) => format_money(*cents, &site.store.shop.money_with_currency_format),
-            other => other.to_str().into_owned(),
+        "money" => match value.downcast::<MoneyDrop>() {
+            Some(money) => format_money(
+                money.cents,
+                &money_formats(&site.store.shop, Some(&money.currency)).1,
+            ),
+            None => value.to_str().into_owned(),
         },
         "rating" => format!(
             "{} / {}",
             float_to_s(number(&value.get("rating"))),
             float_to_s(number(&value.get("scale_max")))
         ),
-        "weight" | "volume" | "dimension" => format!(
+        kind if is_measurement(kind) => format!(
             "{} {}",
-            compact(&value.get("value")),
+            measure(&value.get("value")),
             value.get("unit").to_str()
         ),
         "date" | "date_time" => {
@@ -58,9 +71,11 @@ fn text_of(
                 .unwrap_or_else(|| value.to_str().into_owned())
         }
         "json" => to_script_safe_json(raw),
-        "product_reference" | "collection_reference" | "page_reference" | "variant_reference" => {
-            value.get("title").to_str().into_owned()
-        }
+        "product_reference"
+        | "collection_reference"
+        | "page_reference"
+        | "variant_reference"
+        | "article_reference" => value.get("title").to_str().into_owned(),
         "metaobject_reference" | "mixed_reference" => {
             let field = args.named("field").map(|field| field.to_str().into_owned());
             match field {
@@ -218,22 +233,28 @@ fn single_tag(
             text().replace('\n', "<br />\n")
         ),
         "rich_text_field" => format!("<div class=\"{class}\">{}</div>", rich_text_html(raw)),
-        "weight" | "volume" | "dimension" => format!(
+        kind if is_measurement(kind) => format!(
             "<{element} class=\"{class}\"><span class=\"{class}_value\">{} </span><span class=\"{class}_unit\">{}</span></{element}>",
-            escape_html(&compact(&value.get("value"))),
+            escape_html(&measure(&value.get("value"))),
             escape_html(&value.get("unit").to_str())
         ),
-        "file_reference" => match value.downcast::<ImageDrop>() {
-            Some(image) => format!(
-                "<img src=\"{}\" loading=\"lazy\" class=\"{class}\">",
-                escape_html(&image_base_url(site, &image.image))
-            ),
-            None => format!(
-                "<a href=\"{}\" class=\"{class}\">{}</a>",
-                escape_html(&value.get("url").to_str()),
-                escape_html(&value.get("url").to_str())
-            ),
-        },
+        "file_reference" => {
+            if let Some(image) = value.downcast::<ImageDrop>() {
+                format!(
+                    "<img src=\"{}\" loading=\"lazy\" class=\"{class}\">",
+                    escape_html(&image_base_url(site, &image.image))
+                )
+            } else if let Some(media) = value.downcast::<MediaDrop>() {
+                // As `video_tag` prints it, without the class.
+                video_html(site, media, &FilterArgs::default(), false)
+            } else {
+                format!(
+                    "<a href=\"{}\" class=\"{class}\">{}</a>",
+                    escape_html(&value.get("url").to_str()),
+                    escape_html(&value.get("url").to_str())
+                )
+            }
+        }
         _ => format!("<{element} class=\"{class}\">{}</{element}>", text()),
     }
 }

@@ -3,6 +3,64 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **`lsf fmt`** formats the Liquid files of a theme the way Prettier does with Shopify's
+  Liquid plugin, without Node: Liquid, HTML, the JSON of `{% schema %}`, the CSS of
+  `<style>`, `{% style %}` and `{% stylesheet %}`, and the JavaScript of `<script>` and
+  `{% javascript %}`. `lsf fmt --check` lists the files that are not formatted and fails if
+  there are any, for CI. The 283 files of Shopify's Horizon theme are checked in 0.08 s, where
+  Prettier takes 1.6 s.
+  - It reads the configuration Prettier reads: `.prettierrc`, `.editorconfig` and
+    `.prettierignore`. `--option printWidth=100` sets an option from the command line, and
+    `--stdin` (with `--stdin-filepath`) formats what an editor sends. Prettier's options for
+    JavaScript (`semi`, `trailingComma`, `arrowParens`, ...) apply too.
+  - Files named one by one, as a commit hook names them, are formatted when they are `.liquid`
+    files that `.prettierignore` does not name. A file is replaced in one step, with its
+    permissions. A file that cannot be formatted is reported, and the others are formatted
+    all the same.
+
+  See [what differs from Prettier](https://github.com/0xtlt/local-storefront/blob/main/docs/compatibility.md#formatting-lsf-fmt).
+- **Feature previews.** `--preview <name>` (or `LSF_PREVIEW`) turns on a feature preview of
+  Shopify, as a development store can. Without it, a page renders as on a live store: a theme
+  that uses a preview gets the error a live store gives, and `lsf` names the preview to turn
+  on. The first one is `liquid-july-26`, Shopify's "Liquid July '26 changes":
+  - **`{% block 'name', parameter: value %}content{% endblock %}`** renders
+    `blocks/name.liquid` from a template or a layout. The block sees its parameters and its
+    body, as `content` or `block.content`; a parameter named after a setting of its schema
+    sets `block.settings`; arrays can be written in place. With it, Shopify's Skeleton theme
+    renders.
+  - **`{% partial 'name' %}`** and **`@shopify/partial-rendering`**: a theme that uses
+    partials gets an import map for the module, and `partials.refresh('name')` swaps in the
+    region from the server, keeping focus, form values and scroll, in loops and table rows
+    too. Shopify has not published its own markup yet: lsf marks a partial with HTML comments.
+
+### Fixed
+
+- A `file_reference` metafield or metaobject field that points to a video (`.mp4`, `.mov`,
+  `.webm`, `.m4v`) is a video, as on Shopify: `sources`, `preview_image` and `video_tag`
+  work, and `metafield_tag` prints a `<video>` as Shopify does. It was a plain file with only
+  a `url`, so themes rendered it empty. The poster is the `.jpg` of the same name. A `.mov` is
+  announced as `video/mp4`, as Shopify announces the MP4 it makes of it, so that Chrome and
+  Firefox play it; the `video` setting does the same.
+- Files of `files/` are served in parts when the browser asks with a `Range` header. Safari
+  played no video without it, and no browser could seek in one. Only the part asked for is
+  read, and a part is never compressed. `.m4v` files are served as `video/mp4`.
+- Metafield values are the objects Shopify gives for four more types. A `color` is a color
+  (`.red`, `.rgb`...), not text. An `article_reference` is the article, named `blog/article`
+  or by the handle of an article that only one blog has. Every measurement type (`distance`,
+  `temperature`, `duration`...) has a `type`, a `value` and a `unit`, and `metafield_tag`
+  prints it with two decimals at most, where only `weight`, `volume` and `dimension` were
+  printed. A `money` has the `currency` it is written in, and is formatted in it: `€5,00 EUR`
+  in a store that sells in dollars.
+- `request.locale.direction` (and that of every locale) is `rtl` for Arabic, Hebrew, Persian
+  and the other languages written right to left, and follows the script when the locale names
+  one (`pa-Arab`). Horizon sets `dir` on `<html>` from it.
+- The `applicable_disclosures` filter keeps every disclosure, as Shopify does when it cannot
+  tell the buyer's country. It was an unknown filter that printed a warning.
+
 ## 0.1.14 - 2026-10-06
 
 ### Fixed

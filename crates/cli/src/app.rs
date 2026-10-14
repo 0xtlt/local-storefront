@@ -6,7 +6,7 @@ use std::sync::Arc;
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::load::{DataSource, LoadOptions, load};
 use lsf_core::theme::Revalidate;
-use lsf_core::{Renderer, Store, Theme};
+use lsf_core::{Preview, Renderer, Store, Theme};
 
 /// The data directory looked for inside the theme when `--data` is not given.
 pub const DEFAULT_DATA_DIRECTORY: &str = "shopify-local";
@@ -18,12 +18,15 @@ pub struct App {
 }
 
 impl App {
+    /// Opens a theme with the feature previews of Shopify that `--preview` turned on: none
+    /// renders it as a live store does.
     pub fn open(
         theme_dir: &Path,
         data_dir: Option<&Path>,
         revalidate: Revalidate,
+        previews: &[Preview],
     ) -> Result<App, String> {
-        let env = Arc::new(lsf_core::environment());
+        let env = Arc::new(lsf_core::environment_with(previews));
         let theme =
             Arc::new(Theme::open(theme_dir, env, revalidate).map_err(|error| error.to_string())?);
         let source = match data_dir {
@@ -84,6 +87,23 @@ impl App {
             DataSource::Demo => {
                 "built-in demo store (run `lsf init` to get an editable copy)".to_string()
             }
+        }
+    }
+}
+
+/// Says which feature previews the theme uses without `--preview` turning them on: its pages
+/// then fail as they would on a live store, and this tells why.
+pub fn note_missing_previews(theme: &Theme, previews: &[Preview]) {
+    for preview in Preview::used_by(theme) {
+        if !previews.contains(&preview) {
+            eprintln!(
+                "note: this theme uses {}, from Shopify's \"{}\" feature preview. A live store does \
+                 not have them, and neither does lsf by default: run with `--preview {}` to render \
+                 it as a development store with that preview does.",
+                preview.summary(),
+                preview.title(),
+                preview.name()
+            );
         }
     }
 }

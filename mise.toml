@@ -1,7 +1,8 @@
 # Toolchain + tasks for local-storefront. Run `mise install` once, then `mise run <task>`.
 [tools]
 rust = { version = "1.98.1", components = "clippy,rustfmt" }
-# For the npm packaging (`npm/`) and the tests of the injected scripts.
+# For the npm packaging (`npm/`), the tests of the injected scripts, and `mise run prettier:*`
+# (differential tests of `lsf fmt` against Prettier with Shopify's Liquid plugin).
 node = "26"
 # Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem)
 # and for the tasks that download test material (`docs:fetch`, `liquid-spec:fetch`).
@@ -73,9 +74,37 @@ run = "GEM_HOME=$PWD/.oracle/gems gem install liquid --no-document"
 description = "Regenerate crates/liquid/tests/golden/*.json from the reference liquid gem"
 run = "GEM_HOME=$PWD/.oracle/gems ruby tools/oracle/generate_golden.rb"
 
+[tasks."prettier:install"]
+description = "Install Prettier and Shopify's Liquid plugin locally (the reference `lsf fmt` is compared with)"
+run = """
+mkdir -p .oracle/prettier
+cp tools/prettier/package.json .oracle/prettier/
+npm install --prefix .oracle/prettier --no-audit --no-fund
+"""
+
+[tasks."prettier:golden"]
+description = "Regenerate crates/fmt/tests/golden/*.json from Prettier with the Liquid plugin"
+run = "node tools/prettier/generate_golden.mjs"
+
+[tasks."prettier:fixtures"]
+description = "Download the tests of Shopify's Prettier plugin into .cache/ and have Prettier format them (run by the lsf-fmt tests when present)"
+run = "tools/prettier/fetch_fixtures.sh"
+
+[tasks."prettier:compare"]
+description = "Compare `lsf fmt` with Prettier on the Liquid files of a directory, without writing to it: mise run prettier:compare -- <directory> [options as JSON]"
+depends = ["build"]
+run = "node tools/prettier/compare.mjs"
+
 [tasks."docs:fetch"]
 description = "Download Shopify's Liquid reference (objects/filters/tags + example outputs) into .cache/"
 run = "tools/docs/fetch.sh"
+
+[tasks."docs:coverage"]
+description = "Check lsf against Shopify's Liquid reference: fails on a missing filter or tag, lists object properties to look at (run docs:fetch first)"
+run = [
+  "cargo test -q -p lsf-core --test conformance every_documented_filter_and_tag_exists",
+  "ruby tools/docs/coverage.rb",
+]
 
 [tasks."liquid-spec:fetch"]
 description = "Download Shopify's liquid-spec test suite into .cache/ (run by the lsf-liquid tests when present)"

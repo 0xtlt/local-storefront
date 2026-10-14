@@ -1,0 +1,170 @@
+[
+  {
+    "name": "a narrow width",
+    "options": {
+      "printWidth": 40
+    },
+    "source": "<div class=\"a\" id=\"b\"><p>{{ product.title | upcase | append: '!' }}</p>{% render 'card', product: product, lazy: true %}</div>\n",
+    "expected": "<div class=\"a\" id=\"b\">\n  <p>\n    {{\n      product.title\n      | upcase\n      | append: '!'\n    }}\n  </p>\n  {% render 'card',\n    product: product,\n    lazy: true\n  %}\n</div>\n",
+    "again": "<div class=\"a\" id=\"b\">\n  <p>\n    {{\n      product.title\n      | upcase\n      | append: '!'\n    }}\n  </p>\n  {% render 'card',\n    product: product,\n    lazy: true\n  %}\n</div>\n"
+  },
+  {
+    "name": "double quotes in liquid, single quotes in HTML",
+    "options": {
+      "liquidSingleQuote": false,
+      "singleQuote": true
+    },
+    "source": "<a href=\"/x\" title='it\"s'>{{ 'a' | append: \"b\" }}</a>\n",
+    "expected": "<a href='/x' title='it\"s'>{{ \"a\" | append: \"b\" }}</a>\n",
+    "again": "<a href='/x' title='it\"s'>{{ \"a\" | append: \"b\" }}</a>\n"
+  },
+  {
+    "name": "tabs",
+    "options": {
+      "useTabs": true
+    },
+    "source": "<div>{% if a %}<p>b</p>{% endif %}</div>\n",
+    "expected": "<div>\n\t{% if a %}\n\t\t<p>b</p>\n\t{% endif %}\n</div>\n",
+    "again": "<div>\n\t{% if a %}\n\t\t<p>b</p>\n\t{% endif %}\n</div>\n"
+  },
+  {
+    "name": "four spaces",
+    "options": {
+      "tabWidth": 4
+    },
+    "source": "<div>{% if a %}<p>b</p>{% endif %}</div>\n",
+    "expected": "<div>\n    {% if a %}\n        <p>b</p>\n    {% endif %}\n</div>\n",
+    "again": "<div>\n    {% if a %}\n        <p>b</p>\n    {% endif %}\n</div>\n"
+  },
+  {
+    "name": "the bracket on the line of the last attribute",
+    "options": {
+      "bracketSameLine": true,
+      "printWidth": 40
+    },
+    "source": "<div class=\"a-long-class-name\" id=\"a-long-id\" data-a=\"b\">x</div>\n<img class=\"a-long-class-name\" id=\"a-long-id\" src=\"a.png\">\n",
+    "expected": "<div\n  class=\"a-long-class-name\"\n  id=\"a-long-id\"\n  data-a=\"b\">\n  x\n</div>\n<img\n  class=\"a-long-class-name\"\n  id=\"a-long-id\"\n  src=\"a.png\">\n",
+    "again": "<div\n  class=\"a-long-class-name\"\n  id=\"a-long-id\"\n  data-a=\"b\">\n  x\n</div>\n<img\n  class=\"a-long-class-name\"\n  id=\"a-long-id\"\n  src=\"a.png\">\n"
+  },
+  {
+    "name": "one attribute per line",
+    "options": {
+      "singleAttributePerLine": true
+    },
+    "source": "<div class=\"a\" id=\"b\">x</div><p class=\"c\">y</p>\n",
+    "expected": "<div\n  class=\"a\"\n  id=\"b\"\n>\n  x\n</div>\n<p class=\"c\">y</p>\n",
+    "again": "<div\n  class=\"a\"\n  id=\"b\"\n>\n  x\n</div>\n<p class=\"c\">y</p>\n"
+  },
+  {
+    "name": "whitespace that never matters",
+    "options": {
+      "htmlWhitespaceSensitivity": "ignore",
+      "printWidth": 40
+    },
+    "source": "<span>a</span><span>b</span><a href=\"/a/long/url/to/somewhere\">link</a>text\n",
+    "expected": "<span>a</span>\n<span>b</span>\n<a href=\"/a/long/url/to/somewhere\">\n  link\n</a>\ntext\n",
+    "again": "<span>a</span>\n<span>b</span>\n<a href=\"/a/long/url/to/somewhere\">\n  link\n</a>\ntext\n"
+  },
+  {
+    "name": "whitespace that always matters",
+    "options": {
+      "htmlWhitespaceSensitivity": "strict",
+      "printWidth": 40
+    },
+    "source": "<div>a</div><div>b</div><div class=\"a-long-class-name\">text</div>\n",
+    "expected": "<div>a</div><div>b</div\n><div class=\"a-long-class-name\"\n  >text</div\n>\n",
+    "again": "<div>a</div><div>b</div\n><div class=\"a-long-class-name\"\n  >text</div\n>\n"
+  },
+  {
+    "name": "the schema indented",
+    "options": {
+      "indentSchema": true
+    },
+    "source": "{% schema %}\n{\"name\":\"a\"}\n{% endschema %}\n",
+    "expected": "{% schema %}\n  { \"name\": \"a\" }\n{% endschema %}\n",
+    "again": "{% schema %}\n  { \"name\": \"a\" }\n{% endschema %}\n"
+  },
+  {
+    "name": "a capture formatted as the rest",
+    "options": {
+      "captureWhitespaceSensitivity": "ignore"
+    },
+    "source": "{% capture a %}<div><p>b</p></div>{% endcapture %}\n",
+    "expected": "{% capture a %}\n  <div><p>b</p></div>\n{% endcapture %}\n",
+    "again": "{% capture a %}\n  <div><p>b</p></div>\n{% endcapture %}\n"
+  },
+  {
+    "name": "link elements on one line",
+    "options": {
+      "singleLineLinkTags": true,
+      "printWidth": 40
+    },
+    "source": "<link rel=\"stylesheet\" href=\"{{ 'base.css' | asset_url }}\" media=\"print\">\n",
+    "expected": "<link rel=\"stylesheet\" href=\"{{ 'base.css' | asset_url }}\" media=\"print\">\n",
+    "again": "<link rel=\"stylesheet\" href=\"{{ 'base.css' | asset_url }}\" media=\"print\">\n"
+  },
+  {
+    "name": "params without a dash",
+    "options": {
+      "liquidDocParamDash": false
+    },
+    "source": "{% doc %}\n  @param {string} a - The description\n{% enddoc %}\n",
+    "expected": "{% doc %}\n  @param {string} a The description\n{% enddoc %}\n",
+    "again": "{% doc %}\n  @param {string} a The description\n{% enddoc %}\n"
+  },
+  {
+    "name": "embedded languages left alone",
+    "options": {
+      "embeddedLanguageFormatting": "off"
+    },
+    "source": "{% schema %}\n      {\"name\":\"a\"}\n{% endschema %}\n<style>\n      .a{color:red}\n</style>\n",
+    "expected": "{% schema %}\n{\"name\":\"a\"}\n{% endschema %}\n<style>\n  .a{color:red}\n</style>\n",
+    "again": "{% schema %}\n{\"name\":\"a\"}\n{% endschema %}\n<style>\n  .a{color:red}\n</style>\n"
+  },
+  {
+    "name": "double quotes in embedded CSS",
+    "options": {
+      "embeddedSingleQuote": false
+    },
+    "source": "<style>\n.a{content:'x';font-family:'A'}\n</style>\n",
+    "expected": "<style>\n  .a {\n    content: \"x\";\n    font-family: \"A\";\n  }\n</style>\n",
+    "again": "<style>\n  .a {\n    content: \"x\";\n    font-family: \"A\";\n  }\n</style>\n"
+  },
+  {
+    "name": "the options of javascript",
+    "options": {
+      "semi": false,
+      "trailingComma": "none",
+      "arrowParens": "avoid",
+      "bracketSpacing": false,
+      "quoteProps": "consistent",
+      "embeddedSingleQuote": false,
+      "printWidth": 60
+    },
+    "source": "<script>\nconst options = {a: 1, 'b-c': (x) => x * 2, items: ['one', 'two', 'three', 'four', 'five']};\n</script>\n",
+    "expected": "<script>\n  const options = {\n    \"a\": 1,\n    \"b-c\": x => x * 2,\n    \"items\": [\"one\", \"two\", \"three\", \"four\", \"five\"]\n  }\n</script>\n",
+    "again": "<script>\n  const options = {\n    \"a\": 1,\n    \"b-c\": x => x * 2,\n    \"items\": [\"one\", \"two\", \"three\", \"four\", \"five\"]\n  }\n</script>\n"
+  },
+  {
+    "name": "javascript indented with tabs, objects collapsed",
+    "options": {
+      "useTabs": true,
+      "objectWrap": "collapse",
+      "jsxSingleQuote": true,
+      "experimentalOperatorPosition": "start",
+      "printWidth": 50
+    },
+    "source": "<div><script>\nconst a = {\n  b: 1 };\nconst element = <div className=\"x\" />;\nconst total = firstValue + secondValue + thirdValue + fourthValue;\n</script></div>\n",
+    "expected": "<div>\n\t<script>\n\t\tconst a = { b: 1 };\n\t\tconst element = <div className='x' />;\n\t\tconst total =\n\t\t\tfirstValue\n\t\t\t+ secondValue\n\t\t\t+ thirdValue\n\t\t\t+ fourthValue;\n\t</script>\n</div>\n",
+    "again": "<div>\n\t<script>\n\t\tconst a = { b: 1 };\n\t\tconst element = <div className='x' />;\n\t\tconst total =\n\t\t\tfirstValue\n\t\t\t+ secondValue\n\t\t\t+ thirdValue\n\t\t\t+ fourthValue;\n\t</script>\n</div>\n"
+  },
+  {
+    "name": "windows line endings",
+    "options": {
+      "endOfLine": "crlf"
+    },
+    "source": "<div>{% if a %}<p>b</p>{% endif %}</div>\n",
+    "expected": "<div>\r\n  {% if a %}\r\n    <p>b</p>\r\n  {% endif %}\r\n</div>\r\n",
+    "again": "<div>\r\n  {% if a %}\r\n    <p>b</p>\r\n  {% endif %}\r\n</div>\r\n"
+  }
+]

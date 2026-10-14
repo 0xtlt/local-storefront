@@ -238,6 +238,29 @@ A wrong password stays on the page with the error. To change the password:
 
 The storefront is never locked: nothing redirects to that page.
 
+## Format your theme
+
+```bash
+lsf fmt
+```
+
+Formats every `.liquid` file of the theme, the way [Prettier](https://prettier.io) does with
+Shopify's Liquid plugin (`@shopify/prettier-plugin-liquid`). Neither is needed: `lsf` does it
+itself, and the 283 files of Shopify's Horizon theme take less than a tenth of a second.
+
+```bash
+lsf fmt --check
+```
+
+Writes nothing. It lists the files that are not formatted and fails if there are any: this is
+the one for CI.
+
+Your Prettier configuration applies: `.prettierrc`, `.editorconfig` and `.prettierignore` are
+read. A theme that Prettier has formatted comes out of `lsf fmt` unchanged.
+
+Liquid, HTML, the JSON of `{% schema %}`, CSS and JavaScript are formatted as Prettier formats
+them. The options and the details are in [Options of `lsf fmt`](#options-of-lsf-fmt).
+
 ## What you get
 
 - **The same HTML as Shopify.** The Liquid engine is checked against Shopify's own, and
@@ -250,6 +273,12 @@ The storefront is never locked: nothing redirects to that page.
   and crops like Shopify's CDN, and sends each browser the lightest format it reads: AVIF,
   WebP, or the one of the file. An image with `preload: true` is preloaded through the `Link`
   header, as on Shopify.
+- **Videos served locally.** A video of `files/` (a `video` setting, or a metafield or a
+  metaobject field that points to an `.mp4`) is a video object, with its sources and its
+  poster, the `.jpg` of the same name. Files are served in the parts a browser asks for, so a
+  video plays in Safari and can be sought in.
+- **Metafields as Shopify gives them.** Every type is the object Shopify gives: colors,
+  measurements, money, references to products, pages, articles, files and metaobjects.
 - **Minified styles and scripts.** The CSS and the JavaScript of the theme are minified, with
   a source map, as Shopify minifies them before it serves them.
 - **Shopify's compression and caching.** Responses are compressed, and say how long to keep
@@ -257,6 +286,10 @@ The storefront is never locked: nothing redirects to that page.
   would see on the store.
 - **Shopify's scripts.** Pages have the `Shopify` JavaScript object, `Shopify.actions`,
   `Shopify.loadFeatures`, the Customer Privacy API and `ShopifyAnalytics.meta`.
+- **Shopify's feature previews, when you ask for them.** By default a page renders as on a live
+  store. `--preview liquid-july-26` adds what a development store with that preview has:
+  `{% block %}`, `{% partial %}` and `@shopify/partial-rendering`. See
+  [Feature previews](#feature-previews).
 - **Render times and costs.** Every response says how long the server took. `lsf profile`
   shows which section, block or snippet took the longest, and what the page would cost
   Shopify, where loading a product or a metafield is not free.
@@ -272,14 +305,36 @@ Details and known differences: [compatibility](docs/compatibility.md).
 | `lsf init` | Creates `shopify-local/` with a demo store to edit. |
 | `lsf validate` | Checks your data. Add `--format json` for a report a tool can read. |
 | `lsf check` | Checks that every Liquid file of the theme is understood. |
+| `lsf fmt [paths]` | Formats the Liquid files of the theme as Prettier does with Shopify's Liquid plugin. See [Format your theme](#format-your-theme). |
 | `lsf render <path>` | Prints the HTML of one page, without a server. |
 | `lsf profile <path>` | Shows what the render of one page spends its time in, or what it would cost Shopify: sections, blocks, snippets. See [Profile a page](#profile-a-page). |
 | `lsf routes` | Lists the pages your data creates. |
 | `lsf schema [kind]` | Prints the JSON Schema of the data format. |
 | `lsf docs` | Prints the data guide. |
 
-Every command accepts `--theme <dir>` (default: the current folder) and `--data <dir>`
-(default: `<theme>/shopify-local`).
+Every command accepts `--theme <dir>` (default: the current folder), `--data <dir>`
+(default: `<theme>/shopify-local`) and `--preview <name>` (see
+[Feature previews](#feature-previews)).
+
+## Feature previews
+
+Shopify tries changes on development stores before it ships them: a store turns them on in its
+list of feature previews. `lsf` renders what a live store renders, so a theme that uses a
+preview fails as it would there, and `lsf` says which preview to turn on:
+
+```bash
+lsf serve --preview liquid-july-26
+```
+
+`--preview` can be repeated, takes several names separated by commas, and is also read from
+`LSF_PREVIEW`.
+
+| Preview | Shopify's name | What it adds |
+|---|---|---|
+| `liquid-july-26` | Liquid July '26 changes | `{% block 'name' %}...{% endblock %}`, to call a theme block from a template or a layout; `{% partial 'name' %}...{% endpartial %}`, and `@shopify/partial-rendering` to refresh it. Shopify's [Skeleton theme](https://github.com/Shopify/skeleton-theme) needs it. |
+
+A preview can still change on Shopify's side; [compatibility](docs/compatibility.md) says
+what `lsf` does where Shopify has not said yet.
 
 ### Options of `lsf serve`
 
@@ -296,6 +351,60 @@ Every command accepts `--theme <dir>` (default: the current folder) and `--data 
 | `--customer <email>` | Starts every visitor logged in as this customer. Also `default` (the first customer) or `none`. |
 | `--throttle <rules>` | Answers late, to test loading states. See below. |
 | `--timings` | Names every section and every theme block in the `Server-Timing` header, with how long it took to render. See [Render times](#render-times). |
+
+### Options of `lsf fmt`
+
+| Option | What it does |
+|---|---|
+| `[paths]` | The files and the folders to format, from the current folder, else from the theme folder. Without any: the theme folder. In a folder, `node_modules`, `.git`, links to folders and what `.prettierignore` names are left out. A file named on its own is formatted if it is a `.liquid` file that `.prettierignore` does not name, as Prettier does: `lsf fmt $(git diff --name-only)` leaves the other files alone. The `.prettierignore` read is the nearest from the theme folder up, for every path. |
+| `--check` | Writes nothing. Lists the files that are not formatted, and fails (exit code 1) if there are any. |
+| `--stdin` | Reads a Liquid source from the standard input and prints it formatted. For an editor. It cannot go with `--check` or with paths. |
+| `--stdin-filepath <path>` | With `--stdin`: the file the source comes from, so that its configuration, its `overrides` and `.prettierignore` apply (an ignored file is printed as it is). |
+| `--option <name>=<value>`, `-o` | Sets one of the options below, under the name Prettier gives it: `-o printWidth=100`. It wins over the configuration files. |
+| `--no-config` | Does not read `.prettierrc`, `.editorconfig` nor `.prettierignore`. |
+
+The configuration is looked for as Prettier looks for it: from the folder of each file, up.
+These files are read: `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.prettierrc.yaml`,
+`.prettierrc.yml`, the `prettier` key of `package.json`, with their `overrides`, and
+`.editorconfig`. A configuration written in JavaScript (`prettier.config.js`) cannot be read:
+`lsf fmt` says so, and the files of its folder get the default options, as the search for a
+configuration stops there for Prettier too.
+
+A file is replaced in one step, with its permissions: an interrupted run leaves no half-written
+template, and a read-only file is not replaced. A file or a folder that cannot be read,
+written or formatted is reported, the others are formatted all the same, and the command
+then fails with exit code 2.
+
+| Prettier option | Default | What it changes |
+|---|---|---|
+| `printWidth` | `120` | The width lines are kept under. |
+| `tabWidth` | `2` | Spaces per level of indentation. |
+| `useTabs` | `false` | Indents with tabs. |
+| `endOfLine` | `lf` | `lf`, `crlf`, `cr`, or `auto` for what the file uses. |
+| `singleQuote` | `false` | Single quotes around HTML attributes. |
+| `liquidSingleQuote` | `true` | Single quotes around the strings of Liquid. |
+| `embeddedSingleQuote` | `true` | Single quotes in the CSS and the JavaScript of `<style>`, `<script>` and the `{% style %}`, `{% stylesheet %}` and `{% javascript %}` tags. |
+| `bracketSameLine` | `false` | Puts the `>` of a tag at the end of its last attribute. |
+| `singleAttributePerLine` | `false` | One attribute per line as soon as a tag has two. |
+| `htmlWhitespaceSensitivity` | `css` | Where whitespace may be added or removed: `css`, `strict`, `ignore`. |
+| `captureWhitespaceSensitivity` | `strict` | `ignore` formats what a `{% capture %}` holds. |
+| `singleLineLinkTags` | `false` | Keeps `<link>` tags on one line. |
+| `indentSchema` | `false` | Indents the JSON of `{% schema %}`. |
+| `liquidDocParamDash` | `true` | A dash between a `@param` of `{% doc %}` and its description. |
+| `embeddedLanguageFormatting` | `auto` | `off` leaves JSON, CSS and JavaScript as they are written. |
+| `semi` | `true` | A semicolon at the end of each statement of JavaScript. |
+| `jsxSingleQuote` | `false` | Single quotes around the attributes of JSX. |
+| `quoteProps` | `as-needed` | Quotes around the keys of objects: `as-needed`, `consistent`, `preserve`. |
+| `trailingComma` | `all` | A comma after the last item of a list on several lines: `all`, `es5`, `none`. |
+| `bracketSpacing` | `true` | Spaces inside the braces of an object, in JavaScript and JSON. |
+| `objectWrap` | `preserve` | `collapse` puts an object on one line when it fits, even if it started on several. |
+| `arrowParens` | `always` | Parentheses around the only parameter of an arrow function: `always`, `avoid`. |
+| `experimentalOperatorPosition` | `end` | `start` begins a broken line with its operator. |
+
+Other options of Prettier are ignored in a configuration file.
+
+What differs from Prettier is listed in
+[compatibility](docs/compatibility.md#formatting-lsf-fmt).
 
 ## Throttling
 

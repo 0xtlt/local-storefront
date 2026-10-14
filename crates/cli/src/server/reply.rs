@@ -113,7 +113,7 @@ pub fn content_type(path: &str) -> &'static str {
         "ttf" => "font/ttf",
         "otf" => "font/otf",
         "eot" => "application/vnd.ms-fontobject",
-        "mp4" => "video/mp4",
+        "mp4" | "m4v" => "video/mp4",
         "webm" => "video/webm",
         "mov" => "video/quicktime",
         "m3u8" => "application/x-mpegURL",

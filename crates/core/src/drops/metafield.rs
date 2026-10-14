@@ -9,10 +9,12 @@ use lsf_liquid::time::Time;
 use lsf_liquid::{Object, Value};
 use serde_json::Value as Json;
 
-use super::media::ImageDrop;
+use super::color::{Color, ColorDrop};
+use super::localization::currency_value;
+use super::media::{ImageDrop, MediaDrop};
 use super::{SiteRef, hash};
 use crate::render::cost;
-use crate::store::{Image, Metafield, Metafields, Metaobject};
+use crate::store::{Image, Media, MediaKind, MediaSource, Metafield, Metafields, Metaobject};
 use crate::util::stable_id;
 
 /// `resource.metafields`: namespaces of metafields.
@@ -152,7 +154,7 @@ impl MetafieldDrop {
     }
 }
 
-/// A file reference: an image when the extension says so.
+/// A file reference: an image or a video when the extension says so.
 fn file_value(site: &SiteRef, src: &str) -> Value {
     let extension = src.rsplit('.').next().unwrap_or_default().to_lowercase();
     if matches!(
@@ -160,6 +162,9 @@ fn file_value(site: &SiteRef, src: &str) -> Value {
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "svg" | "bmp"
     ) {
         return ImageDrop::value(site, &image_from_src(site, src));
+    }
+    if matches!(extension.as_str(), "mp4" | "mov" | "webm" | "m4v") {
+        return MediaDrop::value(site, &video_from_src(site, src), None);
     }
     hash([
         ("url", Value::from(crate::urls::file_url(site, src))),
@@ -180,6 +185,140 @@ pub fn image_from_src(site: &SiteRef, src: &str) -> Image {
         width: meta.and_then(|meta| meta.width).unwrap_or(1200),
         height: meta.and_then(|meta| meta.height).unwrap_or(1200),
         focal_point: meta.and_then(|meta| meta.focal_point),
+    }
+}
+
+/// A video known only by its path in `files/`. Its poster is the `.jpg` of the same name, and
+/// its size the one declared for that file (1920×1080 otherwise).
+pub fn video_from_src(site: &SiteRef, src: &str) -> Media {
+    let meta = site.store.files.get(src);
+    let width = meta.and_then(|meta| meta.width).unwrap_or(1920);
+    let height = meta.and_then(|meta| meta.height).unwrap_or(1080);
+    let (stem, extension) = src.rsplit_once('.').unwrap_or((src, "mp4"));
+    // Shopify turns every uploaded video into an MP4, and says so in `<source type>`: a
+    // `.mov` labelled `video/quicktime` would not play in Chrome or Firefox.
+    let extension = match extension.to_lowercase().as_str() {
+        "mov" | "m4v" => "mp4".to_string(),
+        other => other.to_string(),
+    };
+    let mime_type = format!("video/{extension}");
+    Media {
+        id: stable_id("video", src),
+        position: 1,
+        alt: meta.map(|meta| meta.alt.clone()).unwrap_or_default(),
+        preview: Some(image_from_src(site, &format!("{stem}.jpg"))),
+        kind: MediaKind::Video {
+            sources: vec![MediaSource {
+                url: src.to_string(),
+                mime_type,
+                format: extension,
+                width,
+                height,
+            }],
+            duration: 0,
+        },
+        aspect_ratio: if height == 0 {
+            16.0 / 9.0
+        } else {
+            f64::from(width) / f64::from(height)
+        },
+    }
+}
+
+/// The metafield types whose value is a measurement: a number and its unit.
+const MEASUREMENTS: [&str; 32] = [
+    "antenna_gain",
+    "area",
+    "battery_charge_capacity",
+    "battery_energy_capacity",
+    "capacitance",
+    "concentration",
+    "data_storage_capacity",
+    "data_transfer_rate",
+    "dimension",
+    "display_density",
+    "distance",
+    "duration",
+    "electric_current",
+    "electrical_resistance",
+    "energy",
+    "frequency",
+    "illuminance",
+    "inductance",
+    "luminous_flux",
+    "mass_flow_rate",
+    "power",
+    "pressure",
+    "resolution",
+    "rotational_speed",
+    "sound_level",
+    "speed",
+    "temperature",
+    "thermal_power",
+    "voltage",
+    "volume",
+    "volumetric_flow_rate",
+    "weight",
+];
+
+pub fn is_measurement(kind: &str) -> bool {
+    MEASUREMENTS.contains(&kind)
+}
+
+/// An article named `blog/article`, or by its handle alone when only one blog has it: a
+/// handle that several blogs have names none of them.
+fn article_value(site: &SiteRef, reference: &str) -> Value {
+    let store = &site.store;
+    let found = match reference.split_once('/') {
+        Some((blog, article)) => store
+            .blog_index(blog)
+            .and_then(|blog| Some((blog, store.article_index(blog, article)?))),
+        None => {
+            let mut matches = (0..store.blogs.len())
+                .filter_map(|blog| Some((blog, store.article_index(blog, reference)?)));
+            match (matches.next(), matches.next()) {
+                (Some(found), None) => Some(found),
+                _ => None,
+            }
+        }
+    };
+    found.map_or(Value::Nil, |(blog, article)| {
+        super::content::ArticleDrop::value(site, blog, article)
+    })
+}
+
+/// A `money` metafield: prints and computes as cents, as on Shopify, and has a currency.
+pub struct MoneyDrop {
+    pub cents: i64,
+    pub currency: String,
+}
+
+impl Object for MoneyDrop {
+    fn type_name(&self) -> &str {
+        "money"
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        match key {
+            "currency" => Some(currency_value(&self.currency)),
+            _ => None,
+        }
+    }
+
+    fn to_value(&self) -> Option<Value> {
+        Some(Value::Int(self.cents))
+    }
+
+    fn render(&self) -> Cow<'_, str> {
+        Cow::Owned(self.cents.to_string())
+    }
+
+    fn to_json(&self) -> Json {
+        Json::from(self.cents)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -221,16 +360,23 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
                         _ => None,
                     })
                     .unwrap_or(0);
-                Value::Int(cents)
+                // The currency written with the amount, else the shop's.
+                let currency = map
+                    .get("currency_code")
+                    .and_then(Json::as_str)
+                    .filter(|code| !code.is_empty())
+                    .map_or_else(|| site.currency().to_string(), str::to_uppercase);
+                Value::object(MoneyDrop { cents, currency })
             }
             other => Value::from(other),
         },
+        "color" => Color::parse(text()).map_or_else(|| Value::from(value), ColorDrop::value),
         "rating" => hash([
             ("rating", decimal(value.get("value"))),
             ("scale_min", decimal(value.get("scale_min"))),
             ("scale_max", decimal(value.get("scale_max"))),
         ]),
-        "weight" | "volume" | "dimension" => hash([
+        kind if is_measurement(kind) => hash([
             ("type", Value::str(kind)),
             ("value", decimal(value.get("value"))),
             (
@@ -253,6 +399,7 @@ fn typed(site: &SiteRef, kind: &str, value: &Json) -> Value {
         "page_reference" => site.store.page_index(text()).map_or(Value::Nil, |index| {
             super::content::PageDrop::value(site, index)
         }),
+        "article_reference" => article_value(site, text()),
         "variant_reference" => {
             let location =
                 match value {

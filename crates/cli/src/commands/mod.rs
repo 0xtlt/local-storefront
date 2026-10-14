@@ -1,5 +1,6 @@
 pub mod check;
 pub mod docs;
+pub mod fmt;
 pub mod init;
 pub mod profile;
 pub mod render;

@@ -48,10 +48,15 @@ filters that do not exist here.
 `javascript`, `layout`, `liquid`, `paginate`, `raw`, `render`, `schema`, `section`,
 `sections`, `style`, `stylesheet`, `tablerow`, `unless`.
 
+With `--preview liquid-july-26`: `block` and `partial`. Without it they are unknown tags, as
+on a live store.
+
 ## Liquid filters
 
-Every filter of Shopify's reference: array, string, math, date, money, color, font, media,
-HTML, URL, cart, customer, metafield and translation filters, 159 in total. Among them
+Every one of the 154 filters of Shopify's reference: array, string, math, date, money, color,
+font, media, HTML, URL, cart, customer, metafield and translation filters.
+`applicable_disclosures` keeps every disclosure, as Shopify does when it cannot tell the
+buyer's country. Among them
 `image_url` and `image_tag` (with `srcset`, `sizes`, `preload`, focal points), the legacy
 `img_url` family, `money` and its variants with every `money_format` placeholder, `t` with
 pluralization and interpolation, `date` with locale formats, `json`, `structured_data`,
@@ -72,7 +77,12 @@ Global objects: `shop`, `cart`, `customer`, `request`, `routes`, `localization`,
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
 (with swatches) and sort options, links, addresses, orders and line items, comments,
-metafields of every type, metaobjects, countries, languages, currencies, markets, fonts,
+metafields of every type (a `color` is a color, a measurement has `type`, `value` and
+`unit`, a `money` prints as cents, has the `currency` it is written in, and the money filters and
+`metafield_text` format it in that currency, an
+`article_reference` is `blog/article` or the handle of an article that only one blog has, a
+`file_reference` is an image, a video or a file by its extension), metaobjects, countries,
+languages (with `direction`, from the script of the language), currencies, markets, fonts,
 colors, color schemes, quantity rules and quantity price breaks, unit prices, selling plan
 groups, selling plans and their allocations, store availabilities and locations, companies,
 company locations and company addresses.
@@ -86,6 +96,29 @@ company locations and company addresses.
   defaults from the schema, `disabled` sections and blocks.
 - Theme blocks (`blocks/*.liquid`), nested blocks, static blocks, `{% content_for 'blocks' %}`
   and `{% content_for 'block' %}`, `closest.<resource>`.
+- With `--preview liquid-july-26`, blocks called from a template or a layout, as in Shopify's
+  Skeleton theme: `{% block 'name', parameter: value %}content{% endblock %}`. The parameters
+  are read when the tag opens. The block sees them and its body, as `content` (the Liquid
+  reference) or `block.content` (the developer preview's guide), not the caller's variables;
+  a parameter named after a setting of its schema also sets `block.settings`, the body does
+  not. Arrays can be written in place and nested (`items: ['a', ['b', c]]`), not followed by a
+  lookup (`['a'].first` is a syntax error). The output is not wrapped in a `shopify-block`
+  element. A call from a section, a snippet, a block or the Liquid of a setting is an error,
+  as the reference says, and `lsf check` reports it (in `{% liquid %}` too).
+- With `--preview liquid-july-26`, partials, `{% partial 'name' %}...{% endpartial %}`, and
+  `@shopify/partial-rendering` (`fetch`, `apply`, `refresh`, `get`, `getAll`). Shopify has not
+  published the markup and the requests of its own runtime yet, so `lsf` uses its own: the
+  region sits between `<!--shopify-partial name="..."-->` and `<!--/shopify-partial-->`, and
+  the runtime fetches the whole page and takes the regions out of it. A theme that only uses
+  the documented JavaScript API works the same; one that reads the markup does not. A partial
+  rendered several times (in a loop) is updated everywhere, the n-th of the response replacing
+  the n-th of the page (counted over the whole page, also when `refresh(element)` updates only
+  those inside an element); regions the response has fewer of are emptied; one around table
+  rows works too. `apply()` keeps focus, selection, the values of form controls (hidden ones
+  included, as Shopify documents: a theme updates what the server changed) and scroll;
+  scripts inside a region do not run again.
+- Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
+  turn it on, and may still change.
 - Settings resolved to the objects Liquid expects: `image_picker`, `video`, `video_url`,
   `product`, `collection`, `page`, `blog`, `article`, `product_list`, `collection_list`,
   `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
@@ -109,6 +142,7 @@ modelled on what a Shopify storefront serves, with every URL pointing at the loc
 | `shopify-features` JSON, `__st`, `shopify-digital-wallet` meta, `hreflang` alternates | `content_for_header` | Same shape. The Storefront API token is a placeholder. |
 | `Shopify.loadFeatures`, `Shopify.autoloadFeatures` | `content_for_header` | `consent-tracking-api` installs a local `Shopify.customerPrivacy`. Features hosted by Shopify (`model-viewer-ui`, `shopify-xr`, ...) report an error to `onLoad`, which themes handle. |
 | `Shopify.customerPrivacy` | after `loadFeatures` | Consent is kept in the browser. It has to be collected in the EEA, the United Kingdom and Switzerland (by `Shopify.country`): there, nothing is allowed and `shouldShowBanner()` is true until `setTrackingConsent` is called. A real store decides this in its privacy settings. |
+| Import map for `@shopify/partial-rendering` | first in `content_for_header` | Only with `--preview liquid-july-26`, when a Liquid file of the theme has a `{% partial %}`. The module is served by `lsf`, see [Theme architecture](#theme-architecture). |
 | `Shopify.PaymentButton` | `content_for_header` | Present; `init()` does nothing, since dynamic checkout buttons are drawn by Shopify. |
 | `ShopifyAnalytics.meta` (`currency`, `page`, `product`), `trekkie` | before `</head>` | Same shape. Nothing is sent anywhere. |
 | `Shopify.analytics.publish` | before `</head>` | Calls are kept in `Shopify.analytics.replayQueue`, which a test can read. |
@@ -223,6 +257,55 @@ The header names, in this order, as on the stores it was read from in October 20
 3. the stylesheets the theme asks to preload;
 4. the stylesheet built from the `{% stylesheet %}` tags;
 5. the fonts, the images and the other files the theme asks to preload.
+
+## Formatting (`lsf fmt`)
+
+`lsf fmt` is a port of Prettier with Shopify's Liquid plugin, and the goal is the output they
+give, byte for byte. JavaScript is formatted by [Oxc](https://oxc.rs)'s formatter, itself a
+port of Prettier's. The reference is Prettier 3.9.10 with `@shopify/prettier-plugin-liquid`
+1.11.2 (`tools/prettier/package.json`; `mise run prettier:install` installs them).
+
+How it is checked:
+
+- **Liquid and HTML.** The 371 Liquid files of Shopify's Dawn and Horizon themes are formatted
+  by both, with what `<script>`, `<style>` and `{% schema %}` hold left alone
+  (`embeddedLanguageFormatting: off`), under four sets of options: widths of 120, 80, 40 and
+  20 columns, tabs, both kinds of quotes, `bracketSameLine`, `singleAttributePerLine`, the
+  three values of `htmlWhitespaceSensitivity`. The 1,484 outputs are identical.
+- **Everything at once.** The same 371 files, with CSS, JSON and JavaScript formatted too,
+  under six sets of options that include those of JavaScript (`semi`, `trailingComma`,
+  `arrowParens`, `quoteProps`, `objectWrap`, `bracketSpacing`, tabs, widths of 120, 80 and
+  60): the 2,226 outputs are identical. Formatted again, they stay identical to what Prettier
+  gives.
+- **The tests of the plugin.** Its 444 cases are replayed
+  (`mise run prettier:fixtures`): 443 give what Prettier gives. The other one is Markdown.
+- **CSS.** The 68 style sheets of the two themes are formatted by both at 120, 80 and 40
+  columns: identical. Of the 157 files Prettier tests its own CSS printer with, which are edge
+  cases, 145 are identical through `{% stylesheet %}`.
+- **66 cases** written for this project, one per feature and per option, are formatted by
+  Prettier into `crates/fmt/tests/golden` and compared on every test run
+  (`mise run prettier:golden` regenerates them).
+
+To compare on your own theme, without writing to it:
+
+```bash
+mise run prettier:compare -- path/to/theme
+```
+
+What differs:
+
+- **CSS inside JavaScript** (a template literal tagged `css`) is left as written. Prettier
+  formats it.
+- **`experimentalTernaries`** is not supported.
+- **JSON with comments** is left as written. Prettier formats it.
+- **CSS that is more than CSS.** The selectors of `@nest`, `@custom-selector` and `@extend`,
+  the control rules of SCSS (`@if`, `@each`), the names CSS Modules export, a comment inside a
+  selector or inside the block of a custom property, a `//` comment in a value: these are
+  printed as written, or not as Prettier prints them.
+- **Markdown** in `<script type="text/markdown">` is left as written.
+- **Configuration written in JavaScript** (`prettier.config.js`, `.prettierrc.js`) is not
+  read, nor are TOML and JSON5 files. Other Prettier plugins do not apply.
+- `requirePragma`, `insertPragma` and formatting a range of a file are not supported.
 
 ## Known differences
 

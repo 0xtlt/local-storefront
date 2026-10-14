@@ -1,0 +1,114 @@
+## an output gets spaces and single quotes
+{{product.title|append:"!"|upcase}}{{- x -}}{{ 'it''s' }}{{ "it's" }}{{ nil }}{{ a['b'] }}{{ a["b-c"] }}{{ (1..5.0) }}
+
+## a long chain of filters goes one filter per line
+{{ product.featured_image | image_url: width: 1200, height: 800, crop: 'center' | image_tag: loading: 'lazy', class: 'product__image', sizes: '(min-width: 750px) 50vw, 100vw' }}
+
+## an output that is not understood is kept as written
+{{ a b c }}{{ !x }}{{ 'unclosed }}
+
+## assign, echo and capture
+{%assign x=product.title|upcase%}
+{% assign long_variable_name = product.selected_or_first_available_variant.featured_media | default: product.featured_media | image_url: width: 600 %}
+{%-capture y-%}  kept   as
+  written {%- endcapture -%}
+{% echo x | append: y %}
+
+## if, elsif and else
+{%if a==b and c or d contains 'e'%}one{%elsif f>1%}two{%else%}three{%endif%}
+{% unless product.available %}<p>Sold out</p>{% endunless %}
+{% if a %}{% endif %}{% if a %} {% endif %}{% if a %}x{% endif %}
+
+## a long condition breaks before its operators
+{% if product.available and product.selected_or_first_available_variant.inventory_quantity > 0 and settings.show_inventory or customer.tags contains 'vip' %}yes{% endif %}
+
+## for and case always go on several lines
+{% for item in collection.products reversed limit:4 offset:2 %}{{ item.title }}{% else %}none{% endfor %}
+{% case product.type %}{% when 'a','b' or 'c' %}x{% when 'd' %}y{% else %}z{% endcase %}
+{% tablerow item in items cols:2 %}{{ item }}{% endtablerow %}
+
+## render, include, section and friends
+{% render 'card', product: product, show_vendor: true %}
+{% render "card" with product as item %}
+{% render 'card' for products as item, lazy: true, a_long_argument_name: 'a long value', another_long_argument: 'another long value' %}
+{% include 'legacy' %}{% section 'header' %}{% sections 'footer-group' %}{% layout none %}{% layout 'checkout' %}
+{% content_for 'blocks' %}{% content_for "block", type: 'text', id: 'heading' %}
+{% cycle 'a', 'b' %}{% cycle group: 'a', 'b' %}{% increment i %}{% decrement i %}{% break %}{% continue %}
+{% paginate collection.products by 12 %}{{ paginate | default_pagination }}{% endpaginate %}
+{% form 'product', product, class: 'form', id: form_id %}<input name="id">{% endform %}
+
+## a tag that is not known, and one that is not understood
+{% custom_tag  some   args %}
+{% assign = 3 %}
+{% if a = b %}x{% endif %}
+{% for %}x{% endfor %}
+
+## the liquid tag
+{% liquid
+assign a = 1
+    if a == 1
+echo 'one'
+  elsif a
+    echo 'two'
+        endif
+
+  # a comment
+  for i in (1..3)
+    render 'x', i: i
+  endfor
+  case a
+    when 1
+      echo 'x'
+  endcase
+%}
+
+## comments
+{% comment %}
+    kept
+  as written
+{% endcomment %}
+{% # an inline comment %}
+{%- # another
+    # on two lines -%}
+{% comment %}short{% endcomment %}
+
+## raw is left alone
+{% raw %}{{ not   liquid }}
+   {% endraw %}
+
+## whitespace control is kept
+{%- if a -%}
+  {{- b -}}
+{%- else -%}
+  c
+{%- endif -%}
+
+## the doc tag
+{% doc %}
+  Renders a card.
+
+      @param {product} product   -   The product
+  @param [show_vendor] Whether the vendor is shown
+  @param {string} [size]
+  @example
+     {% render 'card', product: product %}
+  @description Something longer
+{% enddoc %}
+
+## a blank line between two nodes is kept, several become one
+{% assign a = 1 %}
+
+
+{% assign b = 2 %}
+<p>a</p>
+
+
+
+<p>b</p>
+
+## a tag that is never closed
+{% if a %}
+<p>open
+
+## a source that cannot be parsed is left alone where it cannot
+<a></b> {% endif %} {{ still | formatted:1 }}

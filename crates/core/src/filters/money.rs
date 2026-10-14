@@ -4,6 +4,8 @@ use lsf_liquid::number::{Number, to_number};
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 
 use super::site;
+use crate::drops::metafield::MoneyDrop;
+use crate::store::{Shop, reference};
 
 /// Formats a whole number with a thousands separator.
 fn group(units: i64, separator: &str) -> String {
@@ -78,24 +80,55 @@ fn cents(input: &Value) -> Option<i64> {
     }
 }
 
+/// The formats an amount is printed with, without and with its currency: the shop's, or
+/// Shopify's defaults for the currency of a money metafield written in another one.
+pub fn money_formats(shop: &Shop, currency: Option<&str>) -> (String, String) {
+    match currency.filter(|code| !code.eq_ignore_ascii_case(&shop.currency)) {
+        Some(code) => reference::currency(code).map_or_else(
+            || {
+                let format = format!("{{{{amount}}}} {}", code.to_uppercase());
+                (format.clone(), format)
+            },
+            |currency| {
+                (
+                    currency.money_format.to_string(),
+                    currency.money_with_currency_format.to_string(),
+                )
+            },
+        ),
+        None => (
+            shop.money_format.clone(),
+            shop.money_with_currency_format.clone(),
+        ),
+    }
+}
+
+/// The formats of [`money_formats`] for a value: a money metafield brings its currency.
+fn formats_of(input: &Value, ctx: &Context) -> Result<(String, String)> {
+    let currency = input
+        .downcast::<MoneyDrop>()
+        .map(|money| money.currency.as_str());
+    Ok(money_formats(&site(ctx)?.store.shop, currency))
+}
+
 fn with_format(
     input: &Value,
     ctx: &Context,
-    pick: impl Fn(&crate::store::Shop) -> String,
+    pick: impl Fn((String, String)) -> String,
 ) -> Result<Value> {
     let Some(cents) = cents(input) else {
         return Ok(Value::empty_string());
     };
-    let format = pick(&site(ctx)?.store.shop);
+    let format = pick(formats_of(input, ctx)?);
     Ok(Value::from(format_money(cents, &format)))
 }
 
 fn money(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    with_format(input, ctx, |shop| shop.money_format.clone())
+    with_format(input, ctx, |(plain, _)| plain)
 }
 
 fn money_with_currency(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    with_format(input, ctx, |shop| shop.money_with_currency_format.clone())
+    with_format(input, ctx, |(_, with_currency)| with_currency)
 }
 
 /// The first `{{ ... }}` placeholder of a money format, i.e. the format minus its symbols.
@@ -107,14 +140,15 @@ fn amount_placeholder(format: &str) -> String {
 }
 
 fn money_without_currency(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
-    with_format(input, ctx, |shop| amount_placeholder(&shop.money_format))
+    with_format(input, ctx, |(plain, _)| amount_placeholder(&plain))
 }
 
 fn money_without_trailing_zeros(input: &Value, _args: &FilterArgs, ctx: &Context) -> Result<Value> {
     let Some(cents) = cents(input) else {
         return Ok(Value::empty_string());
     };
-    let format = &site(ctx)?.store.shop.money_format;
+    let (format, _) = formats_of(input, ctx)?;
+    let format = &format;
     let formatted = format_money(cents, format);
     if cents % 100 != 0 {
         return Ok(Value::from(formatted));

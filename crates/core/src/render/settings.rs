@@ -15,13 +15,11 @@ use crate::drops::color::{Color, ColorDrop};
 use crate::drops::content::{ArticleDrop, BlogDrop, PageDrop};
 use crate::drops::font::{Font, FontDrop};
 use crate::drops::media::{ImageDrop, MediaDrop};
-use crate::drops::metafield::image_from_src;
+use crate::drops::metafield::{image_from_src, video_from_src};
 use crate::drops::navigation::LinkListDrop;
 use crate::drops::product::ProductDrop;
 use crate::site::Site;
-use crate::store::{Media, MediaKind, MediaSource};
 use crate::theme::SettingDef;
-use crate::util::stable_id;
 
 /// Evaluates dynamic sources against a context that sees the given variables.
 struct Dynamic<'a> {
@@ -88,27 +86,7 @@ fn file_reference(raw: &str) -> &str {
 }
 
 fn video_value(site: &Arc<Site>, raw: &str) -> Value {
-    let src = file_reference(raw);
-    let extension = src.rsplit('.').next().unwrap_or("mp4").to_lowercase();
-    let poster = format!("{}.jpg", src.trim_end_matches(&format!(".{extension}")));
-    let media = Media {
-        id: stable_id("video", src),
-        position: 1,
-        alt: String::new(),
-        preview: Some(image_from_src(site, &poster)),
-        kind: MediaKind::Video {
-            sources: vec![MediaSource {
-                url: src.to_string(),
-                mime_type: format!("video/{extension}"),
-                format: extension,
-                width: 1920,
-                height: 1080,
-            }],
-            duration: 0,
-        },
-        aspect_ratio: 16.0 / 9.0,
-    };
-    MediaDrop::value(site, &media, None)
+    MediaDrop::value(site, &video_from_src(site, file_reference(raw)), None)
 }
 
 /// A `video_url` setting: prints as the URL and exposes the host's `id` and `type`.

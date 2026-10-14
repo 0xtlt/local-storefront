@@ -91,8 +91,81 @@ fn filters_used(source: &str) -> Vec<(String, usize)> {
     found
 }
 
-pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
-    let env = Arc::new(lsf_core::environment());
+/// For an unknown tag that a feature preview has, how to turn the preview on.
+fn preview_hint(error: &str) -> String {
+    let Some(tag) = error
+        .split("Unknown tag '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+    else {
+        return String::new();
+    };
+    match lsf_core::Preview::of_tag(tag) {
+        Some(preview) => format!(
+            " (`{tag}` is part of Shopify's \"{}\" feature preview: run with `--preview {}`)",
+            preview.title(),
+            preview.name()
+        ),
+        None => String::new(),
+    }
+}
+
+/// The line of the first `{% block %}` call of a file, outside `doc`, `comment` and `raw`,
+/// where examples of calls are written. The statements of `{% liquid %}` count too; what is
+/// inside `{{ }}` does not.
+fn block_call_line(source: &str) -> Option<usize> {
+    let line_at = |index: usize| source[..index].matches('\n').count() + 1;
+    let mut quiet: Option<&str> = None;
+    // Whether a statement opens a call, given the name of its tag; updates `quiet`.
+    let calls = |name: &str, quiet: &mut Option<&str>| -> bool {
+        match *quiet {
+            Some(end) if name == end => *quiet = None,
+            Some(_) => {}
+            None => match name {
+                "doc" => *quiet = Some("enddoc"),
+                "comment" => *quiet = Some("endcomment"),
+                "raw" => *quiet = Some("endraw"),
+                "block" => return true,
+                _ => {}
+            },
+        }
+        false
+    };
+    let mut position = 0;
+    while let Some(open) = source[position..].find('{') {
+        let start = position + open;
+        let after = &source[start + 1..];
+        if after.starts_with('{') && quiet.is_none() {
+            // An output: skipped whole, strings and all.
+            position = start + 2 + after[1..].find("}}").map_or(after.len() - 1, |end| end + 2);
+            continue;
+        }
+        if !after.starts_with('%') {
+            position = start + 1;
+            continue;
+        }
+        let close = after.find("%}")?;
+        let markup = after[1..close].trim_matches('-').trim();
+        let name = markup.split_whitespace().next().unwrap_or_default();
+        if name == "liquid" && quiet.is_none() {
+            let body_start = start + 2 + after[1..].find("liquid").unwrap_or(0) + "liquid".len();
+            for (offset, statement) in source[body_start..start + 1 + close].lines().enumerate() {
+                let word = statement.split_whitespace().next().unwrap_or_default();
+                if calls(word, &mut quiet) {
+                    return Some(line_at(body_start) + offset);
+                }
+            }
+            quiet = None;
+        } else if calls(name, &mut quiet) {
+            return Some(line_at(start));
+        }
+        position = start + 1 + close + 2;
+    }
+    None
+}
+
+pub fn run(theme_dir: &Path, previews: &[lsf_core::Preview]) -> Result<ExitCode, String> {
+    let env = Arc::new(lsf_core::environment_with(previews));
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
         .map_err(|error| error.to_string())?;
     let mut files = 0;
@@ -112,11 +185,20 @@ pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
             files += 1;
             let path = format!("{directory}/{name}");
             if let Err(error) = theme.liquid(&path) {
-                println!("{path}: {error}");
+                println!("{path}: {error}{}", preview_hint(&error.to_string()));
                 problems += 1;
                 continue;
             }
             let source = theme.files().read(&path).unwrap_or_default();
+            if env.tag("block").is_some()
+                && !matches!(directory, "layout" | "templates" | "templates/customers")
+                && let Some(line) = block_call_line(&source)
+            {
+                println!(
+                    "{path}:{line}: the block tag can only be used in layout/ and templates/ files"
+                );
+                problems += 1;
+            }
             let mut reported = Vec::new();
             for (filter, line) in filters_used(&source) {
                 if env.filter(&filter).is_none() && !reported.contains(&filter) {
@@ -152,7 +234,44 @@ pub fn run(theme_dir: &Path) -> Result<ExitCode, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::filters_used;
+    use super::{block_call_line, filters_used, preview_hint};
+
+    #[test]
+    fn block_calls_are_found_outside_documentation() {
+        assert_eq!(
+            block_call_line("{% doc %}\n{% block 'a' %}{% endblock %}\n{% enddoc %}<p>"),
+            None
+        );
+        assert_eq!(
+            block_call_line("{% comment %}{% block 'a' %}{% endcomment %}\n\n{%- block 'b' -%}"),
+            Some(3)
+        );
+        assert_eq!(block_call_line("{% render 'block' %}"), None);
+        // An output that holds `{%` is not a tag.
+        assert_eq!(
+            block_call_line("{{ \"{% block 'x' %}\" }}\n{% comment %}{% endcomment %}"),
+            None
+        );
+        // A statement of `{% liquid %}`.
+        assert_eq!(
+            block_call_line("<p>\n{% liquid\n  assign a = 1\n  block 'a'\n  endblock\n%}"),
+            Some(4)
+        );
+        assert_eq!(
+            block_call_line("{% liquid\n  comment\n  block 'a'\n  endcomment\n%}"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_tag_of_a_preview_names_the_preview() {
+        assert_eq!(
+            preview_hint("Liquid syntax error (templates/index line 1): Unknown tag 'block'"),
+            " (`block` is part of Shopify's \"Liquid July '26 changes\" feature preview: run with `--preview liquid-july-26`)"
+        );
+        assert_eq!(preview_hint("Liquid syntax error: Unknown tag 'nope'"), "");
+        assert_eq!(preview_hint("Liquid syntax error: something else"), "");
+    }
 
     fn names(source: &str) -> Vec<(String, usize)> {
         filters_used(source)

@@ -127,9 +127,12 @@ fn header<'a>(reply: &'a Reply, name: &str) -> Option<&'a str> {
 /// replies without a body and small ones. A reply that could be compressed says that it
 /// depends on `Accept-Encoding`, whether this one was or not.
 pub fn apply(mut reply: Reply, encoding: Option<Encoding>) -> Reply {
+    // A part of a file (206) is counted in bytes of the file as it is: compressing it would
+    // make its `Content-Range` wrong.
     if !compressible(header(&reply, "content-type").unwrap_or_default())
         || header(&reply, "content-encoding").is_some()
         || reply.body.is_empty()
+        || reply.status == 206
     {
         return reply;
     }
@@ -153,6 +156,10 @@ pub fn apply(mut reply: Reply, encoding: Option<Encoding>) -> Reply {
     match encoding.compress(&reply.body) {
         Ok(compressed) if compressed.len() < reply.body.len() => {
             reply.body = compressed;
+            // Parts are asked of the file as it is, which this response no longer is.
+            reply
+                .headers
+                .retain(|(name, _)| !name.eq_ignore_ascii_case("accept-ranges"));
             reply.header("content-encoding", encoding.name())
         }
         _ => reply,
@@ -289,5 +296,18 @@ mod tests {
         );
         assert_eq!(header(&encoded, "content-encoding"), Some("gzip"));
         assert_eq!(encoded.body, page());
+        // A part of a file: its `Content-Range` counts the bytes of the file as it is.
+        let part = Reply::new(206, "application/json; charset=utf-8", page())
+            .header("content-range", "bytes 0-9/99999");
+        untouched(part);
+    }
+
+    #[test]
+    fn a_compressed_reply_no_longer_offers_parts() {
+        let whole = Reply::new(200, "application/json; charset=utf-8", page())
+            .header("accept-ranges", "bytes");
+        let reply = apply(whole, Some(Encoding::Brotli));
+        assert_eq!(header(&reply, "content-encoding"), Some("br"));
+        assert_eq!(header(&reply, "accept-ranges"), None);
     }
 }

@@ -14,7 +14,7 @@ use crate::app::App;
 
 fn server() -> ServerState {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
@@ -680,7 +680,7 @@ fn pages_carry_the_scripts_shopify_injects() {
 /// A server whose options were given on the command line.
 fn server_with_throttle(rules: &str) -> ServerState {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -969,7 +969,7 @@ fn b2b_customers_buy_for_a_company_location() {
 #[test]
 fn the_server_can_start_logged_in() {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1076,7 +1076,7 @@ fn robots_and_sitemaps_are_served() {
 
     // A theme without that template gets what Shopify serves by default.
     let root = changing_theme("robots");
-    let app = App::open(&root, None, Revalidate::Never).unwrap();
+    let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
     let (plain, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1475,7 +1475,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
         .unwrap();
     let file = std::fs::read(root.join("assets/hero.png")).unwrap();
 
-    let app = App::open(&root, None, Revalidate::Every(Duration::ZERO)).unwrap();
+    let app = App::open(&root, None, Revalidate::Every(Duration::ZERO), &[]).unwrap();
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1553,6 +1553,120 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
 }
 
 #[test]
+fn a_video_is_served_in_the_parts_the_browser_asks_for() {
+    let root = changing_theme("video");
+    std::fs::create_dir_all(root.join("shopify-local/files")).unwrap();
+    let video: Vec<u8> = (0..=255).collect();
+    std::fs::write(root.join("shopify-local/files/clip.mp4"), &video).unwrap();
+    let app = App::open(&root, None, Revalidate::Every(Duration::ZERO), &[]).unwrap();
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+        },
+    );
+    let path = "/cdn/shop/files/clip.mp4";
+    let ranged = |range: &str| {
+        let mut incoming = request("GET", path, json!({}), "video");
+        incoming
+            .headers
+            .insert("range".to_string(), range.to_string());
+        state.dispatch(&incoming)
+    };
+
+    let whole = get(&state, path, "video");
+    assert_eq!(whole.status, 200);
+    assert_eq!(whole.body, video);
+    assert_eq!(header(&whole, "accept-ranges"), Some("bytes"));
+    assert_eq!(header(&whole, "content-type"), Some("video/mp4"));
+
+    let part = ranged("bytes=0-1");
+    assert_eq!(part.status, 206);
+    assert_eq!(part.body, vec![0, 1]);
+    assert_eq!(header(&part, "content-range"), Some("bytes 0-1/256"));
+    assert_eq!(header(&part, "content-type"), Some("video/mp4"));
+
+    let rest = ranged("bytes=250-");
+    assert_eq!(rest.status, 206);
+    assert_eq!(rest.body, video[250..]);
+    assert_eq!(header(&rest, "content-range"), Some("bytes 250-255/256"));
+
+    let beyond = ranged("bytes=300-");
+    assert_eq!(beyond.status, 416);
+    assert_eq!(header(&beyond, "content-range"), Some("bytes */256"));
+
+    // An `.m4v` is an MP4 by another name.
+    std::fs::write(root.join("shopify-local/files/clip.m4v"), &video).unwrap();
+    let m4v = get(&state, "/cdn/shop/files/clip.m4v", "video");
+    assert_eq!(header(&m4v, "content-type"), Some("video/mp4"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
+    let root = changing_theme("partials");
+    std::fs::write(
+        root.join("layout/theme.liquid"),
+        "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("templates/index.liquid"),
+        "{% partial 'count' %}<p>1</p>{% endpartial %}",
+    )
+    .unwrap();
+    let serve = |previews: &[lsf_core::Preview]| {
+        let app = App::open(&root, None, Revalidate::Never, previews).unwrap();
+        ServerState::new(
+            app,
+            ServeOptions {
+                live_reload: false,
+                watch: false,
+                quiet: true,
+                compress: false,
+                minify: false,
+                throttle: Default::default(),
+                timings: false,
+                customer: None,
+            },
+        )
+        .0
+    };
+
+    // As on a live store: the tag is unknown, and nothing is added.
+    let live = text(&get(&serve(&[]), "/", "partials"));
+    assert!(live.contains("Unknown tag 'partial'"), "{live}");
+    assert!(!live.contains("importmap"), "{live}");
+
+    let state = serve(&[lsf_core::Preview::LiquidJuly26]);
+    let page = text(&get(&state, "/", "partials"));
+    let module = page
+        .split("\"@shopify/partial-rendering\":\"//")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("an import map for the runtime");
+    let path = &module[module.find('/').unwrap()..];
+    let script = get(&state, path, "partials");
+    assert_eq!(script.status, 200, "{path}");
+    assert_eq!(
+        header(&script, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert!(text(&script).contains("export const partials"));
+    assert!(page.contains("<!--shopify-partial name=\"count\"--><p>1</p><!--/shopify-partial-->"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn preloads_are_one_link_header_written_as_shopify_writes_it() {
     let root = changing_theme("preloads");
     std::fs::create_dir_all(root.join("assets")).unwrap();
@@ -1583,7 +1697,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
          {{ 'title.woff2' | asset_url | preload_tag: as: 'font', crossorigin: 'anonymous' }}",
     )
     .unwrap();
-    let app = App::open(&root, None, Revalidate::Never).unwrap();
+    let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -1755,7 +1869,7 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         ),
     );
     let serve = |minify: bool| {
-        let app = App::open(&root, None, Revalidate::Never).unwrap();
+        let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
         let (state, _) = ServerState::new(
             app,
             ServeOptions {
@@ -1915,7 +2029,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
     let root = changing_theme("live-reload");
     // Files are checked once a minute: a page reloaded at once only shows a change if live
     // reload says that the files changed.
-    let app = App::open(&root, None, Revalidate::Every(Duration::from_secs(60))).unwrap();
+    let app = App::open(&root, None, Revalidate::Every(Duration::from_secs(60)), &[]).unwrap();
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -2021,7 +2135,7 @@ fn head_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 
 async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
@@ -2041,6 +2155,47 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
         let _ = super::run(std::sync::Arc::new(state), listener).await;
     });
     (address, server)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compression() {
+    let root = changing_theme("ranged-compressed");
+    std::fs::create_dir_all(root.join("shopify-local/files")).unwrap();
+    let data = format!("[{}]", vec!["\"compressible\""; 400].join(","));
+    std::fs::write(root.join("shopify-local/files/data.json"), &data).unwrap();
+    let app = App::open(&root, None, Revalidate::Never, &[]).unwrap();
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let _ = super::run(std::sync::Arc::new(state), listener).await;
+    });
+    let browser = ("accept-encoding", "gzip, deflate, br, zstd");
+    let path = "/cdn/shop/files/data.json";
+
+    let (head, body) = http_request(address, path, &[browser, ("range", "bytes=0-99")]).await;
+    assert!(head.starts_with("http/1.1 206 "), "{head}");
+    assert_eq!(head_value(&head, "content-encoding"), None);
+    assert_eq!(body, data.as_bytes()[..100]);
+    // The whole file is compressed, and then offers no parts.
+    let (head, _) = http_request(address, path, &[browser]).await;
+    assert_eq!(head_value(&head, "content-encoding"), Some("br"));
+    assert_eq!(head_value(&head, "accept-ranges"), None);
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2276,7 +2431,7 @@ fn what_is_rendered_says_how_long_it_took() {
     // the layout's. Each one by its type and its id on the page, and followed by its theme
     // blocks: a dash for each level, the type, then the key when it is another word.
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-    let app = App::open(&theme, None, Revalidate::Never).expect("fixture theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
     let (naming, _) = ServerState::new(
         app,
         ServeOptions {

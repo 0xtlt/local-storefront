@@ -15,10 +15,35 @@ pub fn currency_value(code: &str) -> Value {
     ])
 }
 
+/// `rtl` for the languages written right to left, `ltr` for the others.
+fn direction(iso_code: &str) -> &'static str {
+    let mut subtags = iso_code.split(['-', '_']);
+    let language = subtags.next().unwrap_or_default().to_ascii_lowercase();
+    // A script subtag, which comes right after the language, decides when there is one:
+    // `sd-Deva` is written left to right, and `pa-Arab` right to left.
+    if let Some(script) = subtags
+        .next()
+        .filter(|subtag| subtag.len() == 4 && subtag.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        return match script.to_ascii_lowercase().as_str() {
+            "adlm" | "arab" | "hebr" | "mand" | "nkoo" | "rohg" | "samr" | "syrc" | "thaa" => "rtl",
+            _ => "ltr",
+        };
+    }
+    // Otherwise the usual script of the language. Kurdish (`ku`, Kurmanji) is written in Latin
+    // letters; Sorani (`ckb`) in Arabic ones.
+    match language.as_str() {
+        "ar" | "arc" | "ckb" | "dv" | "fa" | "he" | "iw" | "ks" | "ps" | "sd" | "ug" | "ur"
+        | "yi" => "rtl",
+        _ => "ltr",
+    }
+}
+
 pub fn language_value(site: &SiteRef, language: &Language) -> Value {
     let _ = site;
     hash([
         ("iso_code", Value::from(&language.iso_code)),
+        ("direction", Value::str(direction(&language.iso_code))),
         ("name", Value::from(&language.name)),
         ("endonym_name", Value::from(&language.endonym_name)),
         ("primary", Value::Bool(language.primary)),
@@ -91,5 +116,26 @@ impl Object for LocalizationDrop {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::direction;
+
+    #[test]
+    fn languages_written_right_to_left_say_so() {
+        assert_eq!(direction("ar"), "rtl");
+        assert_eq!(direction("he"), "rtl");
+        assert_eq!(direction("fa-IR"), "rtl");
+        assert_eq!(direction("en"), "ltr");
+        assert_eq!(direction("pt-BR"), "ltr");
+        assert_eq!(direction("ku"), "ltr");
+        assert_eq!(direction("ks"), "rtl");
+        assert_eq!(direction("sd-Deva"), "ltr");
+        assert_eq!(direction("pa-Arab"), "rtl");
+        assert_eq!(direction("uz-Arab-AF"), "rtl");
+        assert_eq!(direction("ar-u-nu-latn"), "rtl");
+        assert_eq!(direction("en-u-nu-arab"), "ltr");
     }
 }

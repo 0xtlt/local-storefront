@@ -36,6 +36,19 @@ struct Cli {
     #[arg(long, global = true, env = "LSF_DATA")]
     data: Option<PathBuf>,
 
+    /// Turns on a feature preview of Shopify, as a development store can: `liquid-july-26`
+    /// ({% block %}, {% partial %} and @shopify/partial-rendering). Without it, lsf renders
+    /// what a live store renders. Repeat it, or separate names with commas.
+    #[arg(
+        long = "preview",
+        global = true,
+        env = "LSF_PREVIEW",
+        value_delimiter = ',',
+        value_name = "NAME",
+        value_parser = parse_preview
+    )]
+    previews: Vec<lsf_core::Preview>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -58,21 +71,43 @@ enum Command {
     Routes,
     /// Parse every Liquid file of the theme and report what would not render on Shopify.
     Check,
+    /// Format the Liquid files of the theme, as Prettier does with Shopify's Liquid plugin.
+    Fmt(commands::fmt::Args),
     /// Print the reference of the store data format.
     Docs(commands::docs::Args),
 }
 
+fn parse_preview(name: &str) -> Result<lsf_core::Preview, String> {
+    lsf_core::Preview::from_name(name).ok_or_else(|| {
+        let known: Vec<&str> = lsf_core::Preview::ALL
+            .iter()
+            .map(|preview| preview.name())
+            .collect();
+        format!("no preview is called `{name}`; known: {}", known.join(", "))
+    })
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let previews = cli.previews.as_slice();
     let result = match cli.command {
-        Command::Serve(args) => commands::serve::run(&cli.theme, cli.data.as_deref(), args),
-        Command::Render(args) => commands::render::run(&cli.theme, cli.data.as_deref(), args),
-        Command::Profile(args) => commands::profile::run(&cli.theme, cli.data.as_deref(), args),
-        Command::Validate(args) => commands::validate::run(&cli.theme, cli.data.as_deref(), args),
+        Command::Serve(args) => {
+            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args)
+        }
+        Command::Render(args) => {
+            commands::render::run(&cli.theme, cli.data.as_deref(), previews, args)
+        }
+        Command::Profile(args) => {
+            commands::profile::run(&cli.theme, cli.data.as_deref(), previews, args)
+        }
+        Command::Validate(args) => {
+            commands::validate::run(&cli.theme, cli.data.as_deref(), previews, args)
+        }
         Command::Init(args) => commands::init::run(&cli.theme, cli.data.as_deref(), args),
         Command::Schema(args) => commands::schema::run(args),
-        Command::Routes => commands::routes::run(&cli.theme, cli.data.as_deref()),
-        Command::Check => commands::check::run(&cli.theme),
+        Command::Routes => commands::routes::run(&cli.theme, cli.data.as_deref(), previews),
+        Command::Check => commands::check::run(&cli.theme, previews),
+        Command::Fmt(args) => commands::fmt::run(&cli.theme, args),
         Command::Docs(args) => commands::docs::run(args),
     };
     match result {
