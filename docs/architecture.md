@@ -68,7 +68,7 @@ renderer does not.
 
 | Module | Role |
 |---|---|
-| `tokenizer`, `parser`, `markup`, `liquid_doc` | Source → tree: Shopify's `liquid-html-parser`, in the tolerant mode the plugin runs it in. Liquid and HTML are one tree; what cannot be parsed becomes a node that is printed as written, so a source is never refused. |
+| `tokenizer`, `parser`, `markup`, `liquid_doc` | Source → tree: Shopify's `liquid-html-parser`, in the tolerant mode the plugin runs it in. Liquid and HTML are one tree; what cannot be parsed is printed as Prettier prints it (an unclosed `{% for %}` gets its `{% endfor %}`), so a source is never refused. |
 | `ast` | The tree, in an arena, with what the plugin adds to each node before printing. |
 | `preprocess` | Parents and siblings, the CSS `display` of each node, and whether the whitespace around it may change without changing the page. |
 | `printer/` | Tree → document: the printer of the plugin. `children` decides what separates two nodes, `tag` and `element` print HTML, `liquid` and `expression` print Liquid. |

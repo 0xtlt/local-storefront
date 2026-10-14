@@ -19,8 +19,13 @@ pub struct Args {
     check: bool,
 
     /// Reads a Liquid source from the standard input and prints it formatted.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["check", "paths"])]
     stdin: bool,
+
+    /// With `--stdin`: the file the source comes from, for its configuration and
+    /// `.prettierignore`. An ignored file is printed as it is.
+    #[arg(long, value_name = "PATH", requires = "stdin")]
+    stdin_filepath: Option<PathBuf>,
 
     /// Sets one of Prettier's options, under the name Prettier gives it: `--option
     /// printWidth=100`. It wins over the configuration files.
@@ -42,21 +47,25 @@ fn parse_option(option: &str) -> Result<(&str, serde_json::Value), String> {
     Ok((name, value))
 }
 
-/// The Liquid files under `directory`, in the order of their names.
+/// The Liquid files under `directory`, in the order of their names. Links to directories are
+/// not followed, as Prettier does not follow them.
 fn liquid_files(
     directory: &Path,
     ignore: Option<&IgnoreFile>,
     found: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
-    let mut entries: Vec<PathBuf> = fs::read_dir(directory)
+    let mut entries: Vec<(PathBuf, fs::FileType)> = fs::read_dir(directory)
         .map_err(|error| format!("{}: {error}", directory.display()))?
         .flatten()
-        .map(|entry| entry.path())
+        .filter_map(|entry| Some((entry.path(), entry.file_type().ok()?)))
         .collect();
-    entries.sort();
-    for path in entries {
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, kind) in entries {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let is_directory = path.is_dir();
+        let is_directory = kind.is_dir();
+        if kind.is_symlink() && path.is_dir() {
+            continue;
+        }
         if ignore.is_some_and(|ignore| ignore.ignores(&path, is_directory)) {
             continue;
         }
@@ -69,6 +78,23 @@ fn liquid_files(
         }
     }
     Ok(())
+}
+
+/// Replaces a file without a moment where it is half written: the new content goes to a file
+/// beside it, which then takes its place with its permissions. A link is followed, so that the
+/// file it points to is the one replaced.
+fn write_atomically(path: &Path, content: &str) -> std::io::Result<()> {
+    let target = fs::canonicalize(path)?;
+    let directory = target.parent().unwrap_or(Path::new("."));
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    let temporary = directory.join(format!(".{name}.lsf-fmt-{}", std::process::id()));
+    let written = fs::write(&temporary, content)
+        .and_then(|()| fs::set_permissions(&temporary, fs::metadata(&target)?.permissions()))
+        .and_then(|()| fs::rename(&temporary, &target));
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written
 }
 
 struct Formatter {
@@ -95,7 +121,22 @@ impl Formatter {
     }
 }
 
+/// How deep the stack of the formatter may go: a file nested thousands of elements deep is
+/// formatted rather than ending the process.
+const STACK_SIZE: usize = 512 * 1024 * 1024;
+
 pub fn run(theme: &Path, args: Args) -> Result<ExitCode, String> {
+    let theme = theme.to_path_buf();
+    std::thread::Builder::new()
+        .name("lsf fmt".to_string())
+        .stack_size(STACK_SIZE)
+        .spawn(move || format_files(&theme, args))
+        .map_err(|error| format!("cannot start the formatter: {error}"))?
+        .join()
+        .unwrap_or_else(|_| Err("the formatter stopped on an error of its own".to_string()))
+}
+
+fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
     let overrides = args
         .options
         .iter()
@@ -109,13 +150,31 @@ pub fn run(theme: &Path, args: Args) -> Result<ExitCode, String> {
     // Configuration files are looked for from where a file is, whatever the path it was named
     // with.
     let absolute = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    // Whether `.prettierignore` leaves a file out.
+    let ignored = |formatter: &Formatter, file: &Path| {
+        formatter.read_config
+            && file
+                .parent()
+                .and_then(IgnoreFile::find)
+                .is_some_and(|ignore| ignore.ignores_file(file))
+    };
 
     if args.stdin {
         let mut source = String::new();
         std::io::stdin()
             .read_to_string(&mut source)
             .map_err(|error| format!("cannot read the standard input: {error}"))?;
-        let options = formatter.options_for(&absolute(&theme.join("stdin.liquid")))?;
+        let file = absolute(
+            &args
+                .stdin_filepath
+                .clone()
+                .unwrap_or_else(|| theme.join("stdin.liquid")),
+        );
+        if ignored(&formatter, &file) {
+            print!("{source}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        let options = formatter.options_for(&file)?;
         print!("{}", lsf_fmt::format(&source, &options));
         return Ok(ExitCode::SUCCESS);
     }
@@ -127,61 +186,95 @@ pub fn run(theme: &Path, args: Args) -> Result<ExitCode, String> {
     };
     let mut files = Vec::new();
     for root in &roots {
-        if root.is_dir() {
+        // A path is read from the current directory, else from the theme's.
+        let path = if root.exists() || root.is_absolute() {
+            root.clone()
+        } else {
+            theme.join(root)
+        };
+        if path.is_dir() {
             let ignore = formatter
                 .read_config
-                .then(|| IgnoreFile::find(&absolute(root)))
+                .then(|| IgnoreFile::find(&absolute(&path)))
                 .flatten();
             let mut found = Vec::new();
-            liquid_files(&absolute(root), ignore.as_ref(), &mut found)?;
+            liquid_files(&absolute(&path), ignore.as_ref(), &mut found)?;
             // Named as they were asked for: relative to the directory given.
-            let base = absolute(root);
-            files.extend(found.into_iter().map(|path| {
-                let shown = path
+            let base = absolute(&path);
+            files.extend(found.into_iter().map(|file| {
+                let shown = file
                     .strip_prefix(&base)
-                    .map_or_else(|_| path.clone(), |relative| root.join(relative));
-                (path, shown)
+                    .map_or_else(|_| file.clone(), |relative| root.join(relative));
+                (file, shown)
             }));
-        } else if root.is_file() {
-            files.push((absolute(root), root.clone()));
+        } else if path.is_file() {
+            let file = absolute(&path);
+            // Named one by one, as a commit hook does: only Liquid files are formatted, and
+            // what `.prettierignore` names is left alone, as Prettier leaves it.
+            if !root.to_string_lossy().ends_with(".liquid") {
+                eprintln!("{}: skipped, not a Liquid file", root.display());
+            } else if !ignored(&formatter, &file) {
+                files.push((file, root.clone()));
+            }
         } else {
             return Err(format!("{}: no such file or directory", root.display()));
         }
     }
 
+    // A file that cannot be read or written is reported, and the others are formatted all the
+    // same.
     let mut changed = 0;
+    let mut failed = 0;
     for (path, shown) in &files {
-        let source =
-            fs::read_to_string(path).map_err(|error| format!("{}: {error}", shown.display()))?;
-        let options = formatter.options_for(path)?;
-        let formatted = lsf_fmt::format(&source, &options);
-        if formatted == source {
-            continue;
-        }
-        changed += 1;
-        println!("{}", shown.display());
-        if !args.check {
-            fs::write(path, formatted).map_err(|error| format!("{}: {error}", shown.display()))?;
+        let result = (|| -> Result<bool, String> {
+            let source = fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let options = formatter.options_for(path)?;
+            let formatted = lsf_fmt::format(&source, &options);
+            if formatted == source {
+                return Ok(false);
+            }
+            if !args.check {
+                write_atomically(path, &formatted).map_err(|error| error.to_string())?;
+            }
+            Ok(true)
+        })();
+        match result {
+            Ok(true) => {
+                changed += 1;
+                println!("{}", shown.display());
+            }
+            Ok(false) => {}
+            Err(error) => {
+                failed += 1;
+                eprintln!("error: {}: {error}", shown.display());
+            }
         }
     }
 
     for path in &formatter.configs.unreadable {
         eprintln!(
-            "warning: {} is not read: only `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.prettierrc.yaml`, the `prettier` key of `package.json` and `.editorconfig` are",
+            "warning: {} is not read: only `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.prettierrc.yaml`, the `prettier` key of `package.json` and `.editorconfig` are; the files of its folder get the default options",
             path.display()
         );
     }
-    let unchanged = files.len() - changed;
+    let unchanged = files.len() - changed - failed;
+    let failures = if failed > 0 {
+        format!(", {failed} failed")
+    } else {
+        String::new()
+    };
     if args.check {
-        eprintln!("{changed} file(s) to format, {unchanged} already formatted");
-        return Ok(if changed == 0 {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        });
+        eprintln!("{changed} file(s) to format, {unchanged} already formatted{failures}");
+    } else {
+        eprintln!("{changed} file(s) formatted, {unchanged} unchanged{failures}");
     }
-    eprintln!("{changed} file(s) formatted, {unchanged} unchanged");
-    Ok(ExitCode::SUCCESS)
+    Ok(if failed > 0 {
+        ExitCode::from(2)
+    } else if args.check && changed > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 #[cfg(test)]
@@ -221,6 +314,7 @@ mod tests {
             paths: Vec::new(),
             check,
             stdin: false,
+            stdin_filepath: None,
             options: options.iter().map(|option| option.to_string()).collect(),
             no_config: false,
         }
@@ -332,11 +426,116 @@ mod tests {
     fn refuses_what_it_does_not_understand() {
         let theme = Scratch::new("errors");
         theme.write("a.liquid", "{{ a }}\n");
-        assert!(run(&theme.0, args(false, &["printWidth"])).is_err());
-        assert!(run(&theme.0, args(false, &["experimentalTernaries=true"])).is_err());
-        assert!(run(&theme.0, args(false, &["semi=1"])).is_err());
-        assert!(run(&theme.0, args(false, &["printWidth=wide"])).is_err());
+        // Refused before anything is read, or reported for each file (exit code 2).
+        let refused = |result: Result<ExitCode, String>| {
+            result.map_or(true, |code| code == ExitCode::from(2))
+        };
+        assert!(refused(run(&theme.0, args(false, &["printWidth"]))));
+        assert!(refused(run(
+            &theme.0,
+            args(false, &["experimentalTernaries=true"])
+        )));
+        assert!(refused(run(&theme.0, args(false, &["semi=1"]))));
+        assert!(refused(run(&theme.0, args(false, &["printWidth=wide"]))));
         theme.write(".prettierrc", "{ not json");
-        assert!(run(&theme.0, args(false, &[])).is_err());
+        assert!(refused(run(&theme.0, args(false, &[]))));
+    }
+
+    fn args_for(paths: &[PathBuf]) -> Args {
+        Args {
+            paths: paths.to_vec(),
+            ..args(false, &[])
+        }
+    }
+
+    #[test]
+    fn files_named_one_by_one_are_formatted_as_prettier_would() {
+        let theme = Scratch::new("named");
+        theme.write(".prettierignore", "vendor/\n");
+        theme.write("sections/a.liquid", "{{a}}");
+        theme.write("vendor/b.liquid", "{{b}}");
+        theme.write("assets/c.js", "const a = 1;\nconst b = 2;\n");
+        let path = |name: &str| theme.0.join(name);
+        let code = run(
+            &theme.0,
+            args_for(&[
+                path("sections/a.liquid"),
+                path("vendor/b.liquid"),
+                path("assets/c.js"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(theme.read("sections/a.liquid"), "{{ a }}\n");
+        // Ignored, and not Liquid: left as they are.
+        assert_eq!(theme.read("vendor/b.liquid"), "{{b}}");
+        assert_eq!(theme.read("assets/c.js"), "const a = 1;\nconst b = 2;\n");
+        // A path is also looked for in the theme.
+        theme.write("sections/a.liquid", "{{a}}");
+        run(&theme.0, args_for(&[PathBuf::from("sections")])).unwrap();
+        assert_eq!(theme.read("sections/a.liquid"), "{{ a }}\n");
+    }
+
+    #[test]
+    fn a_file_that_fails_does_not_stop_the_others() {
+        let theme = Scratch::new("failing");
+        theme.write("a.liquid", "{{a}}");
+        fs::write(theme.0.join("b.liquid"), [0xff, 0xfe, 0x00]).unwrap();
+        theme.write("c.liquid", "{{c}}");
+        assert_eq!(run(&theme.0, args(false, &[])).unwrap(), ExitCode::from(2));
+        assert_eq!(theme.read("a.liquid"), "{{ a }}\n");
+        assert_eq!(theme.read("c.liquid"), "{{ c }}\n");
+        // Deep nesting is formatted rather than ending the process: 8,000 elements overflow
+        // the 8 MB of a main thread.
+        theme.write("b.liquid", &"<div>".repeat(8_000));
+        assert_eq!(run(&theme.0, args(false, &[])).unwrap(), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn options_that_cannot_go_together_are_refused() {
+        #[derive(clap::Parser)]
+        struct Command {
+            #[command(flatten)]
+            args: Args,
+        }
+        use clap::Parser;
+        let parses = |line: &[&str]| Command::try_parse_from(line).is_ok();
+        assert!(parses(&[
+            "fmt",
+            "--stdin",
+            "--stdin-filepath",
+            "snippets/a.liquid"
+        ]));
+        assert!(!parses(&["fmt", "--stdin", "--check"]));
+        assert!(!parses(&["fmt", "--stdin", "sections"]));
+        assert!(!parses(&["fmt", "--stdin-filepath", "a.liquid"]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_is_replaced_whole_with_its_permissions_and_links_are_not_followed() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let theme = Scratch::new("atomic");
+        theme.write("sections/a.liquid", "{{a}}");
+        fs::set_permissions(
+            theme.0.join("sections/a.liquid"),
+            fs::Permissions::from_mode(0o640),
+        )
+        .unwrap();
+        // A link to a folder above would make the walk go round.
+        symlink(&theme.0, theme.0.join("sections/loop")).unwrap();
+        assert_eq!(run(&theme.0, args(false, &[])).unwrap(), ExitCode::SUCCESS);
+        assert_eq!(theme.read("sections/a.liquid"), "{{ a }}\n");
+        let mode = fs::metadata(theme.0.join("sections/a.liquid"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o640);
+        let leftovers: Vec<_> = fs::read_dir(theme.0.join("sections"))
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains("lsf-fmt"))
+            .collect();
+        assert!(leftovers.is_empty());
     }
 }

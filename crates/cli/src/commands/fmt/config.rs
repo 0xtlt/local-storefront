@@ -204,6 +204,18 @@ impl IgnoreFile {
         })
     }
 
+    /// Whether a file named on its own is left out: by a rule that names it, or one that names a
+    /// directory it is in.
+    pub fn ignores_file(&self, file: &Path) -> bool {
+        self.ignores(file, false)
+            || file
+                .ancestors()
+                .skip(1)
+                .take_while(|directory| directory.starts_with(&self.directory))
+                .filter(|directory| *directory != self.directory)
+                .any(|directory| self.ignores(directory, true))
+    }
+
     /// Whether the file or the directory at `path` is left out. The last rule that names it
     /// decides.
     pub fn ignores(&self, path: &Path, is_directory: bool) -> bool {
@@ -606,14 +618,21 @@ impl Configs {
         if let Some(config) = self.by_directory.get(directory) {
             return Ok(config.clone());
         }
+        let mut unreadable_here = false;
         for name in UNREADABLE_CONFIG_FILES {
             let path = directory.join(name);
-            if path.is_file() && !self.unreadable.contains(&path) {
-                self.unreadable.push(path);
+            if path.is_file() {
+                unreadable_here = true;
+                if !self.unreadable.contains(&path) {
+                    self.unreadable.push(path);
+                }
             }
         }
+        // Prettier stops at the nearest configuration: one it cannot read here stops the search
+        // too, rather than a parent's applying instead.
         let config = match Config::read(directory)? {
             Some(config) => Some(Rc::new(config)),
+            None if unreadable_here => None,
             None => match directory.parent() {
                 Some(parent) => self.config_of(parent)?,
                 None => None,
@@ -779,5 +798,21 @@ mod tests {
             options_for("/theme/assets/a.css"),
             serde_json::json!({ "useTabs": true, "tabWidth": 8, "printWidth": 100 })
         );
+    }
+
+    #[test]
+    fn a_configuration_in_javascript_stops_the_search_for_one() {
+        let root = std::env::temp_dir().join(format!("lsf-fmt-js-config-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("theme/sections")).unwrap();
+        fs::write(root.join(".prettierrc"), r#"{ "printWidth": 40 }"#).unwrap();
+        fs::write(root.join("theme/prettier.config.js"), "export default {};").unwrap();
+        let mut configs = Configs::default();
+        let options = configs
+            .options_for(&root.join("theme/sections/a.liquid"))
+            .unwrap();
+        assert_eq!(options, Options::default());
+        assert_eq!(configs.unreadable, [root.join("theme/prettier.config.js")]);
+        let _ = fs::remove_dir_all(&root);
     }
 }

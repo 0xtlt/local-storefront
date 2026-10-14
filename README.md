@@ -273,6 +273,12 @@ them. The options and the details are in [Options of `lsf fmt`](#options-of-lsf-
   and crops like Shopify's CDN, and sends each browser the lightest format it reads: AVIF,
   WebP, or the one of the file. An image with `preload: true` is preloaded through the `Link`
   header, as on Shopify.
+- **Videos served locally.** A video of `files/` (a `video` setting, or a metafield or a
+  metaobject field that points to an `.mp4`) is a video object, with its sources and its
+  poster, the `.jpg` of the same name. Files are served in the parts a browser asks for, so a
+  video plays in Safari and can be sought in.
+- **Metafields as Shopify gives them.** Every type is the object Shopify gives: colors,
+  measurements, money, references to products, pages, articles, files and metaobjects.
 - **Minified styles and scripts.** The CSS and the JavaScript of the theme are minified, with
   a source map, as Shopify minifies them before it serves them.
 - **Shopify's compression and caching.** Responses are compressed, and say how long to keep
@@ -350,9 +356,10 @@ what `lsf` does where Shopify has not said yet.
 
 | Option | What it does |
 |---|---|
-| `[paths]` | The files and the folders to format. Without any: the theme folder. In a folder, `node_modules`, `.git` and what `.prettierignore` names are left out. |
+| `[paths]` | The files and the folders to format, from the current folder, else from the theme folder. Without any: the theme folder. In a folder, `node_modules`, `.git`, links to folders and what `.prettierignore` names are left out. A file named on its own is formatted if it is a `.liquid` file that `.prettierignore` does not name, as Prettier does: `lsf fmt $(git diff --name-only)` leaves the other files alone. |
 | `--check` | Writes nothing. Lists the files that are not formatted, and fails (exit code 1) if there are any. |
-| `--stdin` | Reads a Liquid source from the standard input and prints it formatted. For an editor. |
+| `--stdin` | Reads a Liquid source from the standard input and prints it formatted. For an editor. It cannot go with `--check` or with paths. |
+| `--stdin-filepath <path>` | With `--stdin`: the file the source comes from, so that its configuration, its `overrides` and `.prettierignore` apply (an ignored file is printed as it is). |
 | `--option <name>=<value>`, `-o` | Sets one of the options below, under the name Prettier gives it: `-o printWidth=100`. It wins over the configuration files. |
 | `--no-config` | Does not read `.prettierrc`, `.editorconfig` nor `.prettierignore`. |
 
@@ -360,7 +367,12 @@ The configuration is looked for as Prettier looks for it: from the folder of eac
 These files are read: `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.prettierrc.yaml`,
 `.prettierrc.yml`, the `prettier` key of `package.json`, with their `overrides`, and
 `.editorconfig`. A configuration written in JavaScript (`prettier.config.js`) cannot be read:
-`lsf fmt` says so and goes on without it.
+`lsf fmt` says so, and the files of its folder get the default options, as the search for a
+configuration stops there for Prettier too.
+
+A file is replaced in one step, with its permissions: an interrupted run leaves no half-written
+template. A file that cannot be read or formatted is reported, the others are formatted all
+the same, and the command then fails with exit code 2.
 
 | Prettier option | Default | What it changes |
 |---|---|---|

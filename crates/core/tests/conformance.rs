@@ -133,9 +133,6 @@ fn documented_names(kind: &str) -> Option<Vec<String>> {
     Some(names)
 }
 
-/// Tags Shopify documents that lsf does not have yet. Remove a name when it is implemented.
-const TAGS_NOT_YET: [&str; 2] = ["block", "partial"];
-
 #[test]
 fn every_documented_filter_and_tag_exists() {
     let (Some(filters), Some(tags)) = (documented_names("filters"), documented_names("tags"))
@@ -143,7 +140,9 @@ fn every_documented_filter_and_tag_exists() {
         eprintln!("skipped: run `mise run docs:fetch` to download Shopify's reference");
         return;
     };
-    let env = lsf_core::environment();
+    // What a live store has, and what Shopify's feature previews add: the reference documents
+    // both.
+    let env = lsf_core::environment_with(&lsf_core::Preview::ALL);
     let missing_filters: Vec<&String> = filters
         .iter()
         .filter(|name| env.filter(name).is_none())
@@ -153,18 +152,11 @@ fn every_documented_filter_and_tag_exists() {
     let missing_tags: Vec<&String> = tags
         .iter()
         .filter(|name| !matches!(name.as_str(), "else" | "liquid") && env.tag(name).is_none())
-        .filter(|name| !TAGS_NOT_YET.contains(&name.as_str()))
         .collect();
     assert!(
         missing_filters.is_empty() && missing_tags.is_empty(),
         "Shopify documents filters {missing_filters:?} and tags {missing_tags:?} that lsf lacks"
     );
-    for name in TAGS_NOT_YET {
-        assert!(
-            env.tag(name).is_none(),
-            "`{name}` is implemented: remove it from TAGS_NOT_YET"
-        );
-    }
 }
 
 #[test]

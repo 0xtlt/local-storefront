@@ -53,8 +53,10 @@ on a live store.
 
 ## Liquid filters
 
-Every filter of Shopify's reference: array, string, math, date, money, color, font, media,
-HTML, URL, cart, customer, metafield and translation filters, 159 in total. Among them
+Every one of the 154 filters of Shopify's reference: array, string, math, date, money, color,
+font, media, HTML, URL, cart, customer, metafield and translation filters.
+`applicable_disclosures` keeps every disclosure, as Shopify does when it cannot tell the
+buyer's country. Among them
 `image_url` and `image_tag` (with `srcset`, `sizes`, `preload`, focal points), the legacy
 `img_url` family, `money` and its variants with every `money_format` placeholder, `t` with
 pluralization and interpolation, `date` with locale formats, `json`, `structured_data`,
@@ -75,7 +77,11 @@ Global objects: `shop`, `cart`, `customer`, `request`, `routes`, `localization`,
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
 (with swatches) and sort options, links, addresses, orders and line items, comments,
-metafields of every type, metaobjects, countries, languages, currencies, markets, fonts,
+metafields of every type (a `color` is a color, a measurement has `type`, `value` and
+`unit`, a `money` prints as cents and has the `currency` it is written in, an
+`article_reference` is `blog/article` or the handle of an article that only one blog has, a
+`file_reference` is an image, a video or a file by its extension), metaobjects, countries,
+languages (with `direction`, from the script of the language), currencies, markets, fonts,
 colors, color schemes, quantity rules and quantity price breaks, unit prices, selling plan
 groups, selling plans and their allocations, store availabilities and locations, companies,
 company locations and company addresses.
@@ -90,22 +96,26 @@ company locations and company addresses.
 - Theme blocks (`blocks/*.liquid`), nested blocks, static blocks, `{% content_for 'blocks' %}`
   and `{% content_for 'block' %}`, `closest.<resource>`.
 - With `--preview liquid-july-26`, blocks called from a template or a layout, as in Shopify's
-  Skeleton theme:
-  `{% block 'name', parameter: value %}content{% endblock %}`. The block sees its parameters
-  and its body, as `content` (the Liquid reference) or `block.content` (the developer preview's
-  guide), not the caller's variables; a parameter named after a setting of its schema
-  also sets `block.settings`; arrays can be written in place (`items: ['a', 'b']`). Its
-  output is not wrapped in a `shopify-block` element.
+  Skeleton theme: `{% block 'name', parameter: value %}content{% endblock %}`. The parameters
+  are read when the tag opens. The block sees them and its body, as `content` (the Liquid
+  reference) or `block.content` (the developer preview's guide), not the caller's variables;
+  a parameter named after a setting of its schema also sets `block.settings`, the body does
+  not. Arrays can be written in place and nested (`items: ['a', ['b', c]]`), not followed by a
+  lookup (`['a'].first` is a syntax error). The output is not wrapped in a `shopify-block`
+  element. A call from a section, a snippet or a block is an error, as the reference says, and
+  `lsf check` reports it.
+- With `--preview liquid-july-26`, partials, `{% partial 'name' %}...{% endpartial %}`, and
+  `@shopify/partial-rendering` (`fetch`, `apply`, `refresh`, `get`, `getAll`). Shopify has not
+  published the markup and the requests of its own runtime yet, so `lsf` uses its own: the
+  region sits between `<!--shopify-partial name="..."-->` and `<!--/shopify-partial-->`, and
+  the runtime fetches the whole page and takes the regions out of it. A theme that only uses
+  the documented JavaScript API works the same; one that reads the markup does not. A partial
+  rendered several times (in a loop) is updated everywhere, the n-th of the response replacing
+  the n-th of the page; one around table rows works too. `apply()` keeps focus, selection,
+  the values typed or chosen in forms, and scroll; hidden inputs take the server's value;
+  scripts inside a region do not run again.
 - Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
   turn it on, and may still change.
-- With `--preview liquid-july-26`, partials, `{% partial 'name' %}...{% endpartial %}`, and
-  `@shopify/partial-rendering`
-  (`fetch`, `apply`, `refresh`, `get`, `getAll`). Shopify has not published the markup and the
-  requests of its own runtime yet, so `lsf` uses its own: the region sits between
-  `<!--shopify-partial name="..."-->` and `<!--/shopify-partial-->`, and the runtime fetches
-  the whole page and takes the regions out of it. A theme that only uses the documented
-  JavaScript API works the same; one that reads the markup does not. `apply()` keeps focus,
-  selection, form values and scroll; scripts inside a region do not run again.
 - Settings resolved to the objects Liquid expects: `image_picker`, `video`, `video_url`,
   `product`, `collection`, `page`, `blog`, `article`, `product_list`, `collection_list`,
   `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
