@@ -1028,6 +1028,14 @@ fn a_video_file_in_a_metaobject_is_a_video() {
     assert_eq!(fields, "video|1|video/mp4|files/looks/summer.jpg|video");
     assert!(tag.starts_with("<video"), "{tag}");
     assert!(tag.contains("/cdn/shop/files/looks/summer.mp4"), "{tag}");
+    // `metafield_tag` prints the same video, as Shopify does.
+    let tag = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "{{ metaobjects.look.summer.clip | metafield_tag }}",
+    );
+    assert!(tag.starts_with("<video playsinline"), "{tag}");
+    assert!(tag.contains("type=\"video/mp4\""), "{tag}");
 }
 
 #[test]

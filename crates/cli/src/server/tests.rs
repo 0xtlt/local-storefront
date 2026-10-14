@@ -1553,6 +1553,59 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
 }
 
 #[test]
+fn a_video_is_served_in_the_parts_the_browser_asks_for() {
+    let root = changing_theme("video");
+    std::fs::create_dir_all(root.join("shopify-local/files")).unwrap();
+    let video: Vec<u8> = (0..=255).collect();
+    std::fs::write(root.join("shopify-local/files/clip.mp4"), &video).unwrap();
+    let app = App::open(&root, None, Revalidate::Every(Duration::ZERO)).unwrap();
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+        },
+    );
+    let path = "/cdn/shop/files/clip.mp4";
+    let ranged = |range: &str| {
+        let mut incoming = request("GET", path, json!({}), "video");
+        incoming
+            .headers
+            .insert("range".to_string(), range.to_string());
+        state.dispatch(&incoming)
+    };
+
+    let whole = get(&state, path, "video");
+    assert_eq!(whole.status, 200);
+    assert_eq!(whole.body, video);
+    assert_eq!(header(&whole, "accept-ranges"), Some("bytes"));
+    assert_eq!(header(&whole, "content-type"), Some("video/mp4"));
+
+    let part = ranged("bytes=0-1");
+    assert_eq!(part.status, 206);
+    assert_eq!(part.body, vec![0, 1]);
+    assert_eq!(header(&part, "content-range"), Some("bytes 0-1/256"));
+    assert_eq!(header(&part, "content-type"), Some("video/mp4"));
+
+    let rest = ranged("bytes=250-");
+    assert_eq!(rest.status, 206);
+    assert_eq!(rest.body, video[250..]);
+    assert_eq!(header(&rest, "content-range"), Some("bytes 250-255/256"));
+
+    let beyond = ranged("bytes=300-");
+    assert_eq!(beyond.status, 416);
+    assert_eq!(header(&beyond, "content-range"), Some("bytes */256"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn preloads_are_one_link_header_written_as_shopify_writes_it() {
     let root = changing_theme("preloads");
     std::fs::create_dir_all(root.join("assets")).unwrap();

@@ -592,7 +592,8 @@ inside `files/`.
 then behave as on Shopify, including `metafield_tag` and `metafield_text`.
 
 A `file_reference` is an image when its extension is one (`.jpg`, `.png`, `.webp`...) and a
-video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image` and `video_tag` work.
+video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image`, `video_tag` and
+`metafield_tag` work.
 A video's poster is the `.jpg` of the same name (`looks/summer.jpg` for `looks/summer.mp4`),
 and its size the one declared in `files` (1920×1080 otherwise). Any other file has a `url`.
 

@@ -9,8 +9,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 - A `file_reference` metafield or metaobject field that points to a video (`.mp4`, `.mov`,
   `.webm`, `.m4v`) is a video, as on Shopify: `sources`, `preview_image` and `video_tag`
-  work. It was a plain file with only a `url`, so themes rendered it empty. The poster is
-  the `.jpg` of the same name.
+  work, and `metafield_tag` prints a `<video>` as Shopify does. It was a plain file with only
+  a `url`, so themes rendered it empty. The poster is the `.jpg` of the same name.
+- Files of `files/` are served in parts when the browser asks with a `Range` header. Safari
+  played no video without it, and no browser could seek in one.
 
 ## 0.1.14 - 2026-10-06
 

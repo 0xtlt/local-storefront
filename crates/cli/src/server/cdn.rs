@@ -360,7 +360,7 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
     // Anything that is not a raster image is served as it is.
     if !is_raster {
         return match path.and_then(|path| std::fs::read(path).ok()) {
-            Some(bytes) => Reply::new(200, content_type(&src), bytes).cached(cache::ASSET),
+            Some(bytes) => whole_or_part(incoming, &src, bytes),
             None => Reply::not_found(),
         };
     }
@@ -391,5 +391,92 @@ fn file(state: &ServerState, incoming: &Incoming, src: &str) -> Reply {
         reply.header("x-lsf-placeholder", "1")
     } else {
         reply
+    }
+}
+
+/// A file served as it is, or the part a `Range` header asks for: browsers ask for parts to
+/// play a video and to seek in it, and Safari plays none that comes whole.
+fn whole_or_part(incoming: &Incoming, src: &str, bytes: Vec<u8>) -> Reply {
+    let kind = content_type(src);
+    let len = bytes.len();
+    let reply = match incoming.header("range").map(|range| byte_range(range, len)) {
+        None | Some(ByteRange::Whole) => Reply::new(200, kind, bytes).cached(cache::ASSET),
+        Some(ByteRange::Part(start, end)) => Reply::new(206, kind, bytes[start..=end].to_vec())
+            .cached(cache::ASSET)
+            .header("content-range", format!("bytes {start}-{end}/{len}")),
+        Some(ByteRange::Unsatisfiable) => {
+            Reply::new(416, kind, Vec::new()).header("content-range", format!("bytes */{len}"))
+        }
+    };
+    reply.header("accept-ranges", "bytes")
+}
+
+#[derive(Debug, PartialEq)]
+enum ByteRange {
+    /// No range this server answers: the whole file is sent.
+    Whole,
+    /// The first and last byte, included.
+    Part(usize, usize),
+    /// A range that starts after the end of the file.
+    Unsatisfiable,
+}
+
+/// What a `Range` header asks of a file of `len` bytes: `bytes=0-1023`, `bytes=1024-` or the
+/// last bytes, `bytes=-500`. Several ranges at once get the whole file, which HTTP allows.
+fn byte_range(header: &str, len: usize) -> ByteRange {
+    let Some((first, last)) = header
+        .trim()
+        .strip_prefix("bytes=")
+        .filter(|spec| !spec.contains(','))
+        .and_then(|spec| spec.split_once('-'))
+    else {
+        return ByteRange::Whole;
+    };
+    let (first, last) = (first.trim(), last.trim());
+    if first.is_empty() {
+        return match last.parse::<usize>() {
+            Ok(0) => ByteRange::Unsatisfiable,
+            Ok(_) if len == 0 => ByteRange::Unsatisfiable,
+            Ok(suffix) => ByteRange::Part(len.saturating_sub(suffix), len - 1),
+            Err(_) => ByteRange::Whole,
+        };
+    }
+    let Ok(start) = first.parse::<usize>() else {
+        return ByteRange::Whole;
+    };
+    let end = if last.is_empty() {
+        len.saturating_sub(1)
+    } else {
+        match last.parse::<usize>() {
+            Ok(end) if end >= start => end.min(len.saturating_sub(1)),
+            _ => return ByteRange::Whole,
+        }
+    };
+    if start >= len {
+        ByteRange::Unsatisfiable
+    } else {
+        ByteRange::Part(start, end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ByteRange, byte_range};
+
+    #[test]
+    fn a_range_header_names_the_bytes_to_send() {
+        assert_eq!(byte_range("bytes=0-1", 10), ByteRange::Part(0, 1));
+        assert_eq!(byte_range("bytes=4-", 10), ByteRange::Part(4, 9));
+        assert_eq!(byte_range("bytes=-3", 10), ByteRange::Part(7, 9));
+        assert_eq!(byte_range("bytes=-30", 10), ByteRange::Part(0, 9));
+        assert_eq!(byte_range("bytes=8-100", 10), ByteRange::Part(8, 9));
+        assert_eq!(byte_range("bytes=10-", 10), ByteRange::Unsatisfiable);
+        assert_eq!(byte_range("bytes=0-", 0), ByteRange::Unsatisfiable);
+        assert_eq!(byte_range("bytes=-0", 10), ByteRange::Unsatisfiable);
+        // What the server does not answer gets the whole file.
+        assert_eq!(byte_range("bytes=0-1,4-5", 10), ByteRange::Whole);
+        assert_eq!(byte_range("bytes=5-2", 10), ByteRange::Whole);
+        assert_eq!(byte_range("items=0-1", 10), ByteRange::Whole);
+        assert_eq!(byte_range("bytes=a-", 10), ByteRange::Whole);
     }
 }

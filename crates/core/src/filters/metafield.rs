@@ -6,10 +6,11 @@ use lsf_liquid::time::strftime;
 use lsf_liquid::{Context, Environment, FilterArgs, Result, Value};
 use serde_json::Value as Json;
 
+use super::media::video_html;
 use super::misc::to_script_safe_json;
 use super::money::format_money;
 use super::site;
-use crate::drops::media::{ImageDrop, image_base_url};
+use crate::drops::media::{ImageDrop, MediaDrop, image_base_url};
 use crate::drops::metafield::MetafieldDrop;
 use crate::site::Site;
 
@@ -223,17 +224,23 @@ fn single_tag(
             escape_html(&compact(&value.get("value"))),
             escape_html(&value.get("unit").to_str())
         ),
-        "file_reference" => match value.downcast::<ImageDrop>() {
-            Some(image) => format!(
-                "<img src=\"{}\" loading=\"lazy\" class=\"{class}\">",
-                escape_html(&image_base_url(site, &image.image))
-            ),
-            None => format!(
-                "<a href=\"{}\" class=\"{class}\">{}</a>",
-                escape_html(&value.get("url").to_str()),
-                escape_html(&value.get("url").to_str())
-            ),
-        },
+        "file_reference" => {
+            if let Some(image) = value.downcast::<ImageDrop>() {
+                format!(
+                    "<img src=\"{}\" loading=\"lazy\" class=\"{class}\">",
+                    escape_html(&image_base_url(site, &image.image))
+                )
+            } else if let Some(media) = value.downcast::<MediaDrop>() {
+                // As `video_tag` prints it, without the class.
+                video_html(site, media, &FilterArgs::default(), false)
+            } else {
+                format!(
+                    "<a href=\"{}\" class=\"{class}\">{}</a>",
+                    escape_html(&value.get("url").to_str()),
+                    escape_html(&value.get("url").to_str())
+                )
+            }
+        }
         _ => format!("<{element} class=\"{class}\">{}</{element}>", text()),
     }
 }
