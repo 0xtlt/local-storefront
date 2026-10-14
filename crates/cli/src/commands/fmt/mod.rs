@@ -138,7 +138,7 @@ impl Formatter {
         for (name, value) in &self.overrides {
             if !options.set(name, value)? {
                 return Err(format!(
-                    "`--option {name}`: not an option of `lsf fmt`. See the README for the list"
+                    "`--option {name}`: not an option of the formatter. See docs/formatting.md for the list"
                 ));
             }
         }
@@ -427,10 +427,10 @@ mod tests {
         assert_eq!(theme.read("sections/a.liquid"), source);
     }
 
-    /// The table of options of the README names every option, with its default.
+    /// The table of options of the formatting guide names every option, with its default.
     #[test]
-    fn the_readme_lists_the_options_and_their_defaults() {
-        let readme = include_str!("../../../../../README.md");
+    fn the_docs_list_the_options_and_their_defaults() {
+        let readme = include_str!("../../../../../docs/formatting.md");
         let table = readme
             .split("| Prettier option | Default | What it changes |")
             .nth(1)

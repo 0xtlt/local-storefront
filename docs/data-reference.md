@@ -1,7 +1,8 @@
 # Store data reference
 
 Every type of the store data format. This file is generated from the JSON Schema the
-validator uses (`lsf docs --reference`); the guide is in [data-format.md](data-format.md).
+validator uses (`npx local-storefront docs --reference`); the guide is in
+[data-format.md](data-format.md).
 
 ## Data file
 
@@ -53,7 +54,7 @@ General store information (the `shop` object). Every field has a sensible defaul
 | `enabled_payment_types` | array of string | Payment icons to show, e.g. `["visa", "master", "american_express", "paypal"]`. |
 | `customer_accounts_enabled` | boolean | Whether customer accounts exist at all. Defaults to `true`. |
 | `customer_accounts_optional` | boolean | Whether checking out as a guest is possible. Defaults to `true`. |
-| `customer_accounts` | [CustomerAccounts](#customeraccounts) | Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and `/account` is a page of lsf where you choose who is logged in. `legacy`: the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has those templates, and to `new` otherwise. |
+| `customer_accounts` | [CustomerAccounts](#customeraccounts) | Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and `/account` is a page of local-storefront where you choose who is logged in. `legacy`: the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has those templates, and to `new` otherwise. |
 | `taxes_included` | boolean | Whether prices include taxes. Defaults to `false`. |
 | `password_message` | string | The message shown on the password page. |
 | `password` | string | The password the `/password` page accepts. Defaults to `"password"`. The storefront is never locked: the page is there to be worked on, and nothing leads to it. |
@@ -633,7 +634,7 @@ A place a company buys for (`customer.current_location`): a branch, a shop, a wa
 
 ## GiftCard
 
-An issued gift card, shown by `templates/gift_card.liquid` at the URL `lsf routes` lists
+An issued gift card, shown by `templates/gift_card.liquid` at the URL the `routes` command lists
 (`/gift_cards/<shop id>/<token>`).
 
 | Field | Type | Description |

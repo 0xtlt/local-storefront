@@ -1,13 +1,13 @@
-# End-to-end testing against `lsf`
+# End-to-end testing against local-storefront
 
-`lsf serve` gives a theme a storefront that needs no network, has no rate limit and renders a
-page in a few milliseconds. This guide shows how to drive it from a test runner. The examples
-use Playwright; nothing is specific to it.
+`npx local-storefront serve` gives a theme a storefront that needs no network, has no rate limit
+and renders a page in a few milliseconds. This guide shows how to drive it from a test runner.
+The examples use Playwright; nothing is specific to it.
 
 ## Starting the server
 
 ```bash
-lsf serve --theme path/to/theme --port 9292 --static --quiet --strict
+npx local-storefront serve --theme path/to/theme --port 9292 --static --quiet --strict
 ```
 
 | Flag | Why in tests |
@@ -19,6 +19,8 @@ lsf serve --theme path/to/theme --port 9292 --static --quiet --strict
 | `--port 0` | Picks a free port; the chosen address is printed as `ready:  http://127.0.0.1:<port>/`. |
 | `--host 0.0.0.0` | Listens on every interface, e.g. inside a container. |
 | `--throttle <rules>` | Answers requests late: a preset (`simulated`, `slow`) or rules by kind. See [Simulating a slow network](#simulating-a-slow-network). |
+
+Every option: [CLI reference](cli.md#serve).
 
 Leave `--live-reload` off: it injects a script into the pages.
 
@@ -63,7 +65,7 @@ curl -H 'x-lsf-session: my-test' http://127.0.0.1:9292/cart.js
 ## Putting a session in a known state
 
 `PUT /__lsf/session` replaces the state of the caller's session. The body is a
-[session](data-reference.md#session):
+[session](data-reference.md#session); every endpoint is in the [control API](control-api.md):
 
 ```ts
 import { test, expect } from '@playwright/test';
@@ -84,8 +86,9 @@ test('a logged-in customer sees their cart', async ({ page }) => {
 });
 ```
 
-Variants are referenced by SKU, by id, or by a product handle (its first variant). When the
-body is wrong the answer is `422` with the same diagnostics as `lsf validate --format json`:
+Variants are referenced by SKU, by id, or by a product handle (its first variant). When the body
+is wrong the answer is `422` with the same diagnostics as
+`npx local-storefront validate --format json`:
 
 ```json
 {
@@ -184,9 +187,35 @@ session to what the data files define.
 ## Simulating a slow network
 
 A local server answers in milliseconds, so loading states flash by before a test can see
-them. `lsf serve --throttle simulated` answers each kind of request as late as a real Shopify
-storefront does; `--throttle cart-add=1s` delays one kind. The presets, the kinds of requests
-and the syntax of the rules are in the [README](../README.md#throttling).
+them. `--throttle` makes it answer late.
+
+Like a real Shopify store:
+
+```bash
+npx local-storefront serve --throttle simulated
+```
+
+Like a real store on a slow phone:
+
+```bash
+npx local-storefront serve --throttle slow
+```
+
+Your own delay, for everything or for one kind of request:
+
+```bash
+npx local-storefront serve --throttle 300ms
+```
+
+```bash
+npx local-storefront serve --throttle cart-add=1s
+```
+
+A preset with a change:
+
+```bash
+npx local-storefront serve --throttle simulated,cart-add=2s
+```
 
 A throttle on the command line slows the whole suite. To slow one test, give its session a
 throttle of its own, which replaces the server's for that session:
@@ -207,6 +236,44 @@ test('the button shows a spinner while the item is added', async ({ page }) => {
 (`{ "preset": "slow", "image": 0 }`). `"none"` lifts the server's throttle for the session.
 The control API is never delayed, and a delayed response carries the header
 `x-lsf-throttle: 1000ms`.
+
+### Kinds of requests and presets
+
+Delays are in milliseconds.
+
+| Kind | Requests | `simulated` | `slow` |
+|---|---|---|---|
+| `page` | Pages | 80 | 800 |
+| `section` | Section Rendering API | 80 | 600 |
+| `cart-read` | Reading the cart (`/cart.js`) | 150 | 700 |
+| `cart-add` | Adding to the cart | 300 | 1200 |
+| `cart-change` | Changing a quantity | 300 | 1200 |
+| `cart-update` | Updating the cart | 300 | 1200 |
+| `cart-clear` | Emptying the cart | 300 | 1200 |
+| `search` | Predictive search | 250 | 1000 |
+| `recommendations` | Product recommendations | 250 | 1000 |
+| `product` | Product data (`/products/<handle>.js`) | 200 | 800 |
+| `form` | Forms: contact, login, language | 400 | 1500 |
+| `asset` | Theme files (CSS, JavaScript, fonts) | 30 | 300 |
+| `image` | Images | 40 | 500 |
+
+Two more names group several kinds: `cart` (the five cart kinds) and `all` (everything).
+
+| Preset | Meaning |
+|---|---|
+| `simulated` | A Shopify store on a good connection. |
+| `slow` | The same store on a slow mobile connection. |
+| `none` | No delay. |
+
+The reads of `simulated` were timed on Shopify's Horizon demo store in October 2026. The
+writes (cart changes, forms) are estimates. `slow` is not measured.
+
+### Rules
+
+- Write durations as `300ms`, `1.5s`, or a number of milliseconds.
+- The most precise rule wins: `cart-add`, then `cart`, then `all`.
+- Rules apply in order. A rule after a preset changes that preset.
+- `0` removes the delay for a kind: `--throttle 300ms,image=0`.
 
 ## What to assert on
 
@@ -238,14 +305,14 @@ The control API is never delayed, and a delayed response carries the header
 - **Render time.** Every response carries `Server-Timing`, as on Shopify: `processing` for the
   whole request, `render` for the Liquid, and with `--timings` one entry per section and per
   theme block. `GET /__lsf/timings` adds up every page, section and block rendered since the
-  server started, or since `DELETE /__lsf/timings`. These are the times of `lsf` on the machine that
-  runs the tests: compare them with each other rather than with a fixed number, which a busy
-  CI machine would miss. The entries are listed in the
-  [README](../README.md#render-times). To find what makes a page slow, `lsf profile <path>`
-  shows every section, block and snippet it renders, in time or in points: what the page
-  would cost Shopify, where a product or a metafield has to be fetched. Points are the same
-  at every render, so a test can compare them
-  ([README](../README.md#profile-a-page)).
+  server started, or since `DELETE /__lsf/timings`. These are the times of local-storefront on
+  the machine that runs the tests: compare them with each other rather than with a fixed number,
+  which a busy CI machine would miss. The entries are listed in
+  [performance](performance.md#entries-of-server-timing). To find what makes a page slow,
+  `npx local-storefront profile <path>` shows every section, block and snippet it renders, in
+  time or in points: what the page would cost Shopify, where a product or a metafield has to be
+  fetched. Points are the same at every render, so a test can compare them
+  ([performance](performance.md#what-the-page-would-cost-shopify)).
 - **Images.** A response with `x-lsf-placeholder: 1` is a generated placeholder: the data
   references a file that is not in `files/`. Placeholders have the declared size, so layout
   assertions hold; put real files in `files/` for visual regression tests. A browser gets
@@ -259,7 +326,7 @@ Everything a theme talks to on a storefront:
 | Area | Endpoints |
 |---|---|
 | Pages | `/`, `/products/<handle>`, `/collections`, `/collections/<handle>`, `/collections/<handle>/<tag>`, `/collections/<handle>/products/<handle>`, `/pages/<handle>`, `/blogs/<handle>`, `/blogs/<handle>/tagged/<tag>`, `/blogs/<blog>/<article>`, `/cart`, `/search`, `/policies/<handle>`, `/gift_cards/<shop id>/<token>`, `/password`, `/account` and, with legacy customer accounts, `/account/login`, `/account/register`, `/account/addresses`, `/account/orders/<id>`. A 404 for the rest. Each also under a locale prefix (`/fr/...`). |
-| Customer accounts | With new customer accounts, `/account` is a page of `lsf` where the visitor chooses who is logged in; `/account/login`, `/customer_authentication/login` and the other account URLs redirect to it. `/company_location/update?location_id=<id>&return_to=<path>` changes the location of a B2B customer. |
+| Customer accounts | With new customer accounts, `/account` is a page of local-storefront where the visitor chooses who is logged in; `/account/login`, `/customer_authentication/login` and the other account URLs redirect to it. `/company_location/update?location_id=<id>&return_to=<path>` changes the location of a B2B customer. |
 | Robots and sitemaps | `/robots.txt` (from `templates/robots.txt.liquid`, or Shopify's default rules), `/sitemap.xml` and `/sitemap_<products|pages|collections|blogs>_1.xml`. |
 | Alternate templates | `?view=<suffix>` and the `template_suffix` of the resource. |
 | Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. |
@@ -279,25 +346,26 @@ Renders are deterministic: ids, handles, asset versions (`?v=`, derived from fil
 default dates do not depend on the machine or the run. The one moving part is the clock. Set
 `"now"` in the data when the theme shows relative dates, countdowns or "new" badges.
 
-`lsf render /products/ceramic-mug` prints the HTML of a page without starting a server, which
-is handy for snapshot tests of the markup:
+`npx local-storefront render /products/ceramic-mug` prints the HTML of a page without starting a
+server, which is handy for snapshot tests of the markup:
 
 ```bash
-lsf render '/collections/all?sort_by=price-ascending' --strict > collection.html
+npx local-storefront render '/collections/all?sort_by=price-ascending' --strict > collection.html
 ```
 
 `--strict` makes it exit with an error when the page has Liquid errors.
 
 ## In CI
 
-With `local-storefront` in the dev dependencies of the theme, `npm ci` installs `lsf`:
+With `local-storefront` in the dev dependencies of the theme, `npm ci` installs
+local-storefront:
 
 ```yaml
 - run: npm ci
-- run: npx local-storefront validate   # fail fast on bad fixtures
-- run: npx local-storefront check      # every Liquid file parses, every filter exists
+- run: npx local-storefront validate      # fail fast on bad fixtures
+- run: npx local-storefront check         # every Liquid file parses, Shopify's strict parser accepts it
+- run: npx local-storefront fmt --check   # every Liquid file is formatted
 - run: npx playwright test
 ```
 
-`lsf validate` and `lsf check` take a fraction of a second, so they are worth running before
-the browser tests.
+These take a fraction of a second, so they are worth running before the browser tests.

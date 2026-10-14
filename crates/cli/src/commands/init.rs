@@ -52,6 +52,8 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
         "{}: wrote {written} file(s), kept {skipped} existing one(s), refreshed schema/",
         directory.display()
     );
-    eprintln!("next: `lsf serve` to see the theme, `lsf validate` after editing the data");
+    eprintln!(
+        "next: the `serve` command shows the theme, and `validate` checks the data after you edit it"
+    );
     Ok(ExitCode::SUCCESS)
 }

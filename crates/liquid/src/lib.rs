@@ -23,6 +23,7 @@ pub mod lexer;
 pub mod number;
 pub mod parser;
 pub mod profiler;
+pub mod strict2;
 pub mod tags;
 pub mod template;
 pub mod time;

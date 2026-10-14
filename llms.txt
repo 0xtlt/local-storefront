@@ -1,0 +1,30 @@
+# local-storefront
+
+> local-storefront runs a Shopify theme locally, rendered from JSON store data instead of the Shopify API, with the HTML Shopify renders. It serves the storefront for end-to-end tests, validates store data, finds and fixes what Shopify's strict Liquid parser rejects, formats Liquid as Prettier does, and profiles pages. Install with `npm install --save-dev local-storefront`; run it as `npx local-storefront <command>` (never `npx lsf`, another package).
+
+Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fix, 2 the command could not run. `npx local-storefront validate --format json` and `npx local-storefront check --format json` print machine-readable diagnostics.
+
+## Start here
+
+- [Agents](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/agents.md): how a tool or an AI agent drives local-storefront, task by task
+- [CLI reference](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/cli.md): every command, option, exit code and output format
+
+## Guides
+
+- [Data format](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/data-format.md): how to write the store data
+- [Testing](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/testing.md): end-to-end tests, sessions, per-test data, slow networks, CI
+- [Strict Liquid](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/strict-liquid.md): `npx local-storefront check` and `npx local-storefront check --fix`
+- [Formatting](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/formatting.md): `npx local-storefront fmt` and its options
+- [Performance](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/performance.md): `npx local-storefront profile`, points, Server-Timing
+- [Storefront](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/storefront.md): accounts, password page, images, feature previews
+
+## Reference
+
+- [Control API](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/control-api.md): `/__lsf` endpoints, sessions, response headers
+- [Field reference](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/data-reference.md): every field of the store data
+- [Compatibility](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/compatibility.md): what matches Shopify, and the known differences
+
+## Optional
+
+- [Architecture](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/architecture.md): how the code is organised, for contributors
+- [Changelog](https://raw.githubusercontent.com/0xtlt/local-storefront/main/CHANGELOG.md): what changed in each version

@@ -1,5 +1,7 @@
 //! `schema`, `stylesheet`, `javascript`, `style` and `layout`.
 
+use lsf_liquid::lexer::{MarkupParser, TokenKind};
+use lsf_liquid::strict2::{self, Issue};
 use lsf_liquid::{BlockBody, Context, Error, Expr, Parser, Result, Tag, TagToken};
 
 use crate::render::state::RenderState;
@@ -92,19 +94,43 @@ impl Tag for LayoutTag {
     }
 }
 
-pub(super) fn parse_layout(
-    _parser: &mut Parser<'_, '_>,
-    token: &TagToken<'_>,
-) -> Result<Box<dyn Tag>> {
-    let markup = token.markup.trim();
+/// The layout a `layout` tag names: `None` for `layout none`.
+fn layout_name(markup: &str) -> Result<Option<Expr>> {
+    let markup = markup.trim();
     if markup.is_empty() {
         return Err(Error::syntax(
             "Syntax error in tag 'layout' - Valid syntax: layout 'name' or layout none",
         ));
     }
+    Ok((markup != "none").then(|| Expr::parse(markup)))
+}
+
+pub(super) fn parse_layout(
+    _parser: &mut Parser<'_, '_>,
+    token: &TagToken<'_>,
+) -> Result<Box<dyn Tag>> {
     Ok(Box::new(LayoutTag {
-        name: (markup != "none").then(|| Expr::parse(markup)),
+        name: layout_name(token.markup)?,
     }))
+}
+
+pub(super) fn check_layout(markup: &str, style: &strict2::Style) -> Option<Issue> {
+    strict2::check(
+        markup,
+        style,
+        |markup| layout_name(markup).ok(),
+        |markup| {
+            let mut parser = MarkupParser::strict2(markup)?;
+            let name = parser.expression()?;
+            parser.consume(TokenKind::EndOfString)?;
+            Ok((name != "none").then(|| Expr::parse(&name)))
+        },
+        |name, style| match name {
+            None => Ok("none".to_string()),
+            Some(name) => strict2::expr(name, style),
+        },
+        false,
+    )
 }
 
 /// `{% render block %}`: Shopify's form for rendering an app block held in a variable. App
@@ -121,19 +147,33 @@ impl Tag for RenderObject {
 }
 
 /// `render`, extended with the variable form standard Liquid rejects.
-pub(super) fn parse_render(
-    parser: &mut Parser<'_, '_>,
-    token: &TagToken<'_>,
-) -> Result<Box<dyn Tag>> {
-    let markup = lsf_liquid::markup::strip(token.markup);
+/// Whether `render` names an object (`{% render block %}` for an app block) rather than a
+/// snippet.
+fn renders_object(markup: &str) -> bool {
+    let markup = lsf_liquid::markup::strip(markup);
     let starts_with_name = markup
         .chars()
         .next()
         .is_some_and(|c| c.is_alphabetic() || c == '_');
-    if starts_with_name && lsf_liquid::markup::quoted_fragment(markup, 0) == Some(markup.len()) {
+    starts_with_name && lsf_liquid::markup::quoted_fragment(markup, 0) == Some(markup.len())
+}
+
+pub(super) fn parse_render(
+    parser: &mut Parser<'_, '_>,
+    token: &TagToken<'_>,
+) -> Result<Box<dyn Tag>> {
+    if renders_object(token.markup) {
         return Ok(Box::new(RenderObject {
-            object: Expr::parse(markup),
+            object: Expr::parse(lsf_liquid::markup::strip(token.markup)),
         }));
     }
     lsf_liquid::tags::parse_render(parser, token)
+}
+
+/// Shopify's own `render` takes an object as well as a snippet name.
+pub(super) fn check_render(markup: &str, style: &strict2::Style) -> Option<Issue> {
+    if renders_object(markup) {
+        return None;
+    }
+    lsf_liquid::tags::check_render(markup, style)
 }

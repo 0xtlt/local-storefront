@@ -1,12 +1,12 @@
 # Store data format
 
-`lsf` renders a Shopify theme from JSON files instead of the Shopify API. This document
-describes those files. It is printed by `lsf docs`, and `lsf init` writes it next to the data
-as `README.md`.
+local-storefront renders a Shopify theme from JSON files instead of the Shopify API. This
+document describes those files. It is printed by `npx local-storefront docs`, and
+`npx local-storefront init` writes it next to the data as `README.md`.
 
 The format is strict on purpose: unknown fields, wrong types and broken references are errors.
-Run `lsf validate` after every change. Each problem is reported with a code, the file, a JSON
-pointer to the value, and usually a hint:
+Run `npx local-storefront validate` after every change. Each problem is reported with a code,
+the file, a JSON pointer to the value, and usually a hint:
 
 ```text
 error[unknown_field]: unknown field "titel"
@@ -14,7 +14,8 @@ error[unknown_field]: unknown field "titel"
   hint: did you mean "title"?
 ```
 
-`lsf validate --format json` prints the same report as JSON, for tools and LLMs:
+`npx local-storefront validate --format json` prints the same report as JSON, for tools and
+LLMs:
 
 ```json
 {
@@ -40,7 +41,7 @@ The exit status is `0` when the data is valid and `1` when it has errors. Warnin
 
 By default the data is read from `shopify-local/` inside the theme. Pass `--data <dir>` (or
 set `LSF_DATA`) to use another directory. Without any data directory, a built-in demo store is
-used; `lsf init` writes that demo store to disk as a starting point.
+used; `npx local-storefront init` writes that demo store to disk as a starting point.
 
 ```text
 shopify-local/
@@ -54,7 +55,7 @@ shopify-local/
   customers/            customers,
   menus/                and menus (the file name is the menu handle)
   files/                images, videos, fonts: served under /cdn/shop/files/
-  schema/               JSON Schemas for editors, written by `lsf init` (not read back)
+  schema/               JSON Schemas for editors, written by `init` (not read back)
   README.md             this document
 ```
 
@@ -79,9 +80,9 @@ Point `$schema` at the schema of the file's kind to get completion and inline er
 { "$schema": "../schema/product.schema.json", "title": "Blue shirt", "price": "19.99" }
 ```
 
-`lsf schema <kind>` prints a schema (`store`, `product`, `collection`, `page`, `blog`,
-`customer`, `menu`, `session`), `lsf schema --out <dir>` writes them all, and a running server
-serves them at `/__lsf/schema/<kind>`.
+`npx local-storefront schema <kind>` prints a schema (`store`, `product`, `collection`, `page`,
+`blog`, `customer`, `menu`, `session`), `npx local-storefront schema --out <dir>` writes them
+all, and a running server serves them at `/__lsf/schema/<kind>`.
 
 ## Conventions
 
@@ -134,12 +135,13 @@ product with options lists its variants; each gives one value per option:
 ```
 
 - `price` and `compare_at_price` on the product apply to the variants that do not set their own.
-- **Availability** follows Shopify's rules. A variant with `inventory_quantity` is tracked: it is
-  available while the quantity is above zero, or always with `"inventory_policy": "continue"`.
-  A variant without `inventory_quantity` is not tracked and always available. `available` forces
-  the answer either way. Adding more than the stock to the cart fails as it does on Shopify.
-- `options` can spell out the order of the values: `{ "name": "Size", "values": ["S", "M", "L"] }`.
-  A value can carry a [swatch](#swatches).
+- **Availability** follows Shopify's rules. A variant with `inventory_quantity` is tracked: it
+  is available while the quantity is above zero, or always with
+  `"inventory_policy": "continue"`. A variant without `inventory_quantity` is not tracked and
+  always available. `available` forces the answer either way. Adding more than the stock to the
+  cart fails as it does on Shopify.
+- `options` can spell out the order of the values:
+  `{ "name": "Size", "values": ["S", "M", "L"] }`. A value can carry a [swatch](#swatches).
 - `selling_plan_groups` and `requires_selling_plan` sell the product by subscription: see
   [selling plans](#selling-plans).
 - A variant's `store_availabilities` says where it can be picked up: see
@@ -260,9 +262,10 @@ when it requires one.
 
 - `pick_up_enabled` and `physical_storefront` default to `true`, `pick_up_time` to
   `Usually ready in 24 hours`.
-- Every location stocks every variant, and a variant is in stock there when it is available.
-  A variant that lists `store_availabilities` is stocked by those locations only, each with
-  its own stock: `"store_availabilities": { "Portland flagship": true, "Seattle warehouse": false }`.
+- Every location stocks every variant, and a variant is in stock there when it is available. A
+  variant that lists `store_availabilities` is stocked by those locations only, each with its
+  own stock:
+  `"store_availabilities": { "Portland flagship": true, "Seattle warehouse": false }`.
 
 In Liquid, `variant.store_availabilities` lists a `store_availability` per location, with its
 `location` (`name`, `address`, `latitude`, `longitude`, `metafields`). As on Shopify, only the
@@ -425,17 +428,17 @@ or `"none"`. When the data has no customer at all, there is still one to log in 
 How a visitor logs in depends on the accounts the store uses:
 
 - **New customer accounts** are hosted by Shopify and are not part of a theme. Here, `/account`
-  is a page of `lsf` that stands in for them. It lists the customers of the data: click one to
-  be logged in as them, or "Nobody" to be logged out. Every account link of a theme
+  is a page of local-storefront that stands in for them. It lists the customers of the data:
+  click one to be logged in as them, or "Nobody" to be logged out. Every account link of a theme
   (`routes.account_login_url`, `routes.storefront_login_url`, ...) leads to that page.
 - **Legacy accounts** are rendered by the theme's `templates/customers`. The login form accepts
   a customer's `password`, or any password when none is set.
 
-`lsf` picks legacy accounts when the theme has `templates/customers/login`, and new accounts
-otherwise. Set `shop.customer_accounts` to `"new"` or `"legacy"` to decide yourself.
+local-storefront picks legacy accounts when the theme has `templates/customers/login`, and new
+accounts otherwise. Set `shop.customer_accounts` to `"new"` or `"legacy"` to decide yourself.
 
-`lsf serve --customer <email>` starts every visitor logged in as that customer. It also accepts
-`default` and `none`.
+`npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
+It also accepts `default` and `none`.
 
 ### B2B customers
 
@@ -494,12 +497,13 @@ A person can do the same from a browser: `/__lsf` lists the customers, and
 `/__lsf/login?customer=<email>` logs the browser in as one of them (`default` and `none` work
 too).
 
-A wrong body is answered with `422` and the same diagnostics as `lsf validate --format json`.
+A wrong body is answered with `422` and the same diagnostics as
+`npx local-storefront validate --format json`.
 
 ## Gift cards
 
 Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is listed by
-`lsf routes`.
+`npx local-storefront routes`.
 
 ```json
 {
@@ -544,8 +548,8 @@ URLs keep the shape Shopify gives them but point to the local server, never to S
 The server resizes and crops on the fly with Shopify's parameters: `width`, `height`, `crop`
 (`top`, `center`, `bottom`, `left`, `right`, or a region with `crop_left`, `crop_top`,
 `crop_width`, `crop_height`), `pad_color`, `format` and `quality`. Images are never scaled up
-beyond their own size, as on Shopify. The legacy `img_url` sizes (`shirt_400x400_crop_center.jpg`)
-work too.
+beyond their own size, as on Shopify. The legacy `img_url` sizes
+(`shirt_400x400_crop_center.jpg`) work too.
 
 **The file does not have to exist.** When it is missing, the server draws a placeholder of the
 declared `width` × `height` (1200 × 1200 when not declared) showing the file name, and answers
@@ -588,8 +592,9 @@ inside `files/`.
 }
 ```
 
-`{{ product.metafields.custom.care }}` and `{{ product.metafields.custom.size_guide.value.title }}`
-then behave as on Shopify, including `metafield_tag` and `metafield_text`.
+`{{ product.metafields.custom.care }}` and
+`{{ product.metafields.custom.size_guide.value.title }}` then behave as on Shopify, including
+`metafield_tag` and `metafield_text`.
 
 A `file_reference` is an image when its extension is one (`.jpg`, `.png`, `.webp`...) and a
 video for `.mp4`, `.mov`, `.webm` and `.m4v`: `sources`, `preview_image`, `video_tag` and
@@ -607,7 +612,8 @@ Metaobjects are listed by type:
 }
 ```
 
-and read with `{{ metaobjects.designer.sam.name }}` or `{% for d in metaobjects.designer.values %}`.
+and read with `{{ metaobjects.designer.sam.name }}` or
+`{% for d in metaobjects.designer.values %}`.
 
 ## Time and theme settings
 

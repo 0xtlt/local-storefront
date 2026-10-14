@@ -476,10 +476,10 @@ mod tests {
         assert!(Throttle::from_json(&json!({"preset": "fast"})).is_err());
     }
 
-    /// The README gives the values of the presets: it must say what the code does.
+    /// The testing guide gives the values of the presets: it must say what the code does.
     #[test]
-    fn the_readme_lists_the_presets_as_they_are() {
-        let readme = include_str!("../../../../README.md");
+    fn the_docs_list_the_presets_as_they_are() {
+        let readme = include_str!("../../../../docs/testing.md");
         let value = |name: &str, kind: Kind| {
             let preset = preset(name).expect("a preset");
             let (_, milliseconds) = preset.rules.iter().find(|(k, _)| *k == kind).unwrap();
@@ -489,11 +489,11 @@ mod tests {
             let row = readme
                 .lines()
                 .find(|line| line.starts_with(&format!("| `{}` |", kind.name())))
-                .unwrap_or_else(|| panic!("the README has no row for `{}`", kind.name()));
+                .unwrap_or_else(|| panic!("docs/testing.md has no row for `{}`", kind.name()));
             let expected = format!("| {} | {} |", value("simulated", kind), value("slow", kind));
             assert!(
                 row.ends_with(&expected),
-                "README: {row}\nexpected to end with {expected}"
+                "docs/testing.md: {row}\nexpected to end with {expected}"
             );
         }
         for preset in &PRESETS {

@@ -190,6 +190,8 @@ fn unexpected_character(input: &str, pos: usize) -> Error {
 pub struct MarkupParser<'s> {
     tokens: Vec<Token<'s>>,
     pos: usize,
+    /// Shopify's strict parser (`strict2`) refuses `[expr]` at the start of an expression.
+    reject_bare_brackets: bool,
 }
 
 impl<'s> MarkupParser<'s> {
@@ -197,6 +199,15 @@ impl<'s> MarkupParser<'s> {
         Ok(MarkupParser {
             tokens: tokenize(input)?,
             pos: 0,
+            reject_bare_brackets: false,
+        })
+    }
+
+    /// A parser with the rules of Shopify's strict parser (`error_mode: :strict2`).
+    pub fn strict2(input: &'s str) -> Result<Self> {
+        Ok(MarkupParser {
+            reject_bare_brackets: true,
+            ..Self::new(input)?
         })
     }
 
@@ -270,6 +281,9 @@ impl<'s> MarkupParser<'s> {
                 out.push_str(&self.variable_lookups()?);
                 Ok(out)
             }
+            TokenKind::OpenSquare if self.reject_bare_brackets => Err(Error::syntax(
+                "Bare bracket access is not allowed. Use self['...'] instead",
+            )),
             TokenKind::OpenSquare => {
                 let mut out = self.consume_any().to_string();
                 out.push_str(&self.expression()?);

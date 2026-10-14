@@ -23,12 +23,15 @@ page says how that is checked, what is covered, and where the local server knowi
   behaviour as a parse option (`bug_compatible_whitespace_trimming`), and themes are rendered
   with it. It is what gives a `robots.txt.liquid` its line breaks: the `robots.txt` of a
   store, rendered from its own template, is reproduced byte for byte.
-- **Shopify's test suite of the language**, [liquid-spec](https://github.com/Shopify/liquid-spec),
-  is replayed against the engine (`mise run liquid-spec:fetch` downloads it). 4,630 of its
-  7,369 language specs apply here, and 4,608 of them pass. The others expect a strict parser
-  to reject a template that Shopify accepts in a theme (1,923), or need what the engine has
-  no equivalent for: Ruby objects, byte strings, render limits (816). The 22 that differ are
-  [listed below](#differences-with-liquid-spec).
+- **Shopify's test suite of the language**,
+  [liquid-spec](https://github.com/Shopify/liquid-spec), is replayed against the engine
+  (`mise run liquid-spec:fetch` downloads it). 4,630 of its 7,369 language specs apply here, and
+  4,608 of them pass. The others expect a strict parser to reject a template that Shopify
+  accepts in a theme (1,923), or need what the engine has no equivalent for: Ruby objects, byte
+  strings, render limits (816). The 22 that differ are [listed
+  below](#differences-with-liquid-spec). What the strict parser rejects is checked by
+  `npx local-storefront check`: see [Shopify's strict Liquid
+  parser](#shopifys-strict-liquid-parser).
 - **Shopify's objects, filters and tags** are checked against the examples of
   [shopify.dev](https://shopify.dev/docs/api/liquid): each example's code and data are replayed
   and compared with the documented output. 196 of 313 examples match. The others depend on the
@@ -38,8 +41,8 @@ page says how that is checked, what is covered, and where the local server knowi
   error, and their JavaScript (variant pickers, cart drawer, predictive search, filters, section
   rendering, pickup availability) runs against the local endpoints unchanged.
 
-`lsf check` reports what a theme uses that is not implemented: Liquid that does not parse, and
-filters that do not exist here.
+`npx local-storefront check` reports what a theme uses that is not implemented: Liquid that does
+not parse, and filters that do not exist here.
 
 ## Liquid tags
 
@@ -76,16 +79,15 @@ Global objects: `shop`, `cart`, `customer`, `request`, `routes`, `localization`,
 
 With their related types: variants, options and option values (with swatches), media (images,
 videos, external videos, 3D models), image presentation and focal points, collection filters
-(with swatches) and sort options, links, addresses, orders and line items, comments,
-metafields of every type (a `color` is a color, a measurement has `type`, `value` and
-`unit`, a `money` prints as cents, has the `currency` it is written in, and the money filters and
-`metafield_text` format it in that currency, an
-`article_reference` is `blog/article` or the handle of an article that only one blog has, a
-`file_reference` is an image, a video or a file by its extension), metaobjects, countries,
-languages (with `direction`, from the script of the language), currencies, markets, fonts,
-colors, color schemes, quantity rules and quantity price breaks, unit prices, selling plan
-groups, selling plans and their allocations, store availabilities and locations, companies,
-company locations and company addresses.
+(with swatches) and sort options, links, addresses, orders and line items, comments, metafields
+of every type (a `color` is a color, a measurement has `type`, `value` and `unit`, a `money`
+prints as cents, has the `currency` it is written in, and the money filters and `metafield_text`
+format it in that currency, an `article_reference` is `blog/article` or the handle of an article
+that only one blog has, a `file_reference` is an image, a video or a file by its extension),
+metaobjects, countries, languages (with `direction`, from the script of the language),
+currencies, markets, fonts, colors, color schemes, quantity rules and quantity price breaks,
+unit prices, selling plan groups, selling plans and their allocations, store availabilities and
+locations, companies, company locations and company addresses.
 
 ## Theme architecture
 
@@ -104,19 +106,19 @@ company locations and company addresses.
   not. Arrays can be written in place and nested (`items: ['a', ['b', c]]`), not followed by a
   lookup (`['a'].first` is a syntax error). The output is not wrapped in a `shopify-block`
   element. A call from a section, a snippet, a block or the Liquid of a setting is an error,
-  as the reference says, and `lsf check` reports it (in `{% liquid %}` too).
+  as the reference says, and `npx local-storefront check` reports it (in `{% liquid %}` too).
 - With `--preview liquid-july-26`, partials, `{% partial 'name' %}...{% endpartial %}`, and
   `@shopify/partial-rendering` (`fetch`, `apply`, `refresh`, `get`, `getAll`). Shopify has not
-  published the markup and the requests of its own runtime yet, so `lsf` uses its own: the
-  region sits between `<!--shopify-partial name="..."-->` and `<!--/shopify-partial-->`, and
-  the runtime fetches the whole page and takes the regions out of it. A theme that only uses
-  the documented JavaScript API works the same; one that reads the markup does not. A partial
-  rendered several times (in a loop) is updated everywhere, the n-th of the response replacing
-  the n-th of the page (counted over the whole page, also when `refresh(element)` updates only
-  those inside an element); regions the response has fewer of are emptied; one around table
-  rows works too. `apply()` keeps focus, selection, the values of form controls (hidden ones
-  included, as Shopify documents: a theme updates what the server changed) and scroll;
-  scripts inside a region do not run again.
+  published the markup and the requests of its own runtime yet, so local-storefront uses its
+  own: the region sits between `<!--shopify-partial name="..."-->` and
+  `<!--/shopify-partial-->`, and the runtime fetches the whole page and takes the regions out of
+  it. A theme that only uses the documented JavaScript API works the same; one that reads the
+  markup does not. A partial rendered several times (in a loop) is updated everywhere, the n-th
+  of the response replacing the n-th of the page (counted over the whole page, also when
+  `refresh(element)` updates only those inside an element); regions the response has fewer of
+  are emptied; one around table rows works too. `apply()` keeps focus, selection, the values of
+  form controls (hidden ones included, as Shopify documents: a theme updates what the server
+  changed) and scroll; scripts inside a region do not run again.
 - Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
   turn it on, and may still change.
 - Settings resolved to the objects Liquid expects: `image_picker`, `video`, `video_url`,
@@ -133,8 +135,9 @@ company locations and company addresses.
 ## What Shopify injects into pages
 
 A storefront page is more than the theme's markup: Shopify adds scripts through
-`{{ content_for_header }}`, before `</head>` and before `</body>`. `lsf` adds the same ones,
-modelled on what a Shopify storefront serves, with every URL pointing at the local server:
+`{{ content_for_header }}`, before `</head>` and before `</body>`. local-storefront adds the
+same ones, modelled on what a Shopify storefront serves, with every URL pointing at the local
+server:
 
 | What | Where | Local behaviour |
 |---|---|---|
@@ -142,7 +145,7 @@ modelled on what a Shopify storefront serves, with every URL pointing at the loc
 | `shopify-features` JSON, `__st`, `shopify-digital-wallet` meta, `hreflang` alternates | `content_for_header` | Same shape. The Storefront API token is a placeholder. |
 | `Shopify.loadFeatures`, `Shopify.autoloadFeatures` | `content_for_header` | `consent-tracking-api` installs a local `Shopify.customerPrivacy`. Features hosted by Shopify (`model-viewer-ui`, `shopify-xr`, ...) report an error to `onLoad`, which themes handle. |
 | `Shopify.customerPrivacy` | after `loadFeatures` | Consent is kept in the browser. It has to be collected in the EEA, the United Kingdom and Switzerland (by `Shopify.country`): there, nothing is allowed and `shouldShowBanner()` is true until `setTrackingConsent` is called. A real store decides this in its privacy settings. |
-| Import map for `@shopify/partial-rendering` | first in `content_for_header` | Only with `--preview liquid-july-26`, when a Liquid file of the theme has a `{% partial %}`. The module is served by `lsf`, see [Theme architecture](#theme-architecture). |
+| Import map for `@shopify/partial-rendering` | first in `content_for_header` | Only with `--preview liquid-july-26`, when a Liquid file of the theme has a `{% partial %}`. The module is served by local-storefront, see [Theme architecture](#theme-architecture). |
 | `Shopify.PaymentButton` | `content_for_header` | Present; `init()` does nothing, since dynamic checkout buttons are drawn by Shopify. |
 | `ShopifyAnalytics.meta` (`currency`, `page`, `product`), `trekkie` | before `</head>` | Same shape. Nothing is sent anywhere. |
 | `Shopify.analytics.publish` | before `</head>` | Calls are kept in `Shopify.analytics.replayQueue`, which a test can read. |
@@ -182,9 +185,9 @@ feature loader.
 
 ## Minification
 
-Shopify minifies the stylesheets and the scripts of a theme before it serves them, and so
-does `lsf`. The rules are the ones read from Shopify's answers in October 2026, where the 97
-stylesheets and scripts of Dawn come out of esbuild to the byte.
+Shopify minifies the stylesheets and the scripts of a theme before it serves them, and so does
+local-storefront. The rules are the ones read from Shopify's answers in October 2026, where the
+97 stylesheets and scripts of Dawn come out of esbuild to the byte.
 
 - Whitespace and syntax are minified. Names are kept: a function or a variable is called the
   same in the minified file.
@@ -245,10 +248,10 @@ not use a preloaded font otherwise. `preload_tag: as: 'font'` writes `crossorigi
 in its tag and `crossorigin` in the header, as Shopify was seen to on stores that run
 Horizon 4.
 
-Shopify also reads the `<head>` it rendered and adds hints of its own, and so does `lsf`:
-the stylesheets and the scripts that block rendering are preloaded, and the other origins
-they come from are connected to. A stylesheet for print, a script with `async`, `defer` or
-`type="module"`, and what is inside `<noscript>` do not block rendering.
+Shopify also reads the `<head>` it rendered and adds hints of its own, and so does
+local-storefront: the stylesheets and the scripts that block rendering are preloaded, and the
+other origins they come from are connected to. A stylesheet for print, a script with `async`,
+`defer` or `type="module"`, and what is inside `<noscript>` do not block rendering.
 
 The header names, in this order, as on the stores it was read from in October 2026:
 
@@ -258,12 +261,15 @@ The header names, in this order, as on the stores it was read from in October 20
 4. the stylesheet built from the `{% stylesheet %}` tags;
 5. the fonts, the images and the other files the theme asks to preload.
 
-## Formatting (`lsf fmt`)
+<a id="formatting-lsf-fmt"></a>
 
-`lsf fmt` is a port of Prettier with Shopify's Liquid plugin, and the goal is the output they
-give, byte for byte. JavaScript is formatted by [Oxc](https://oxc.rs)'s formatter, itself a
-port of Prettier's. The reference is Prettier 3.9.10 with `@shopify/prettier-plugin-liquid`
-1.11.2 (`tools/prettier/package.json`; `mise run prettier:install` installs them).
+## Formatting
+
+`npx local-storefront fmt` is a port of Prettier with Shopify's Liquid plugin, and the goal is
+the output they give, byte for byte. JavaScript is formatted by [Oxc](https://oxc.rs)'s
+formatter, itself a port of Prettier's. The reference is Prettier 3.9.10 with
+`@shopify/prettier-plugin-liquid` 1.11.2 (`tools/prettier/package.json`;
+`mise run prettier:install` installs them).
 
 How it is checked:
 
@@ -307,6 +313,68 @@ What differs:
   read, nor are TOML and JSON5 files. Other Prettier plugins do not apply.
 - `requirePragma`, `insertPragma` and formatting a range of a file are not supported.
 
+## Shopify's strict Liquid parser
+
+Shopify is moving every store from its lenient Liquid parser to a strict one.
+`npx local-storefront check` reports the markup the strict parser rejects, and
+`npx local-storefront check --fix` rewrites it into markup the strict parser accepts. Where what
+the code meant is clear (a filter in a `render` argument, an `and` in an argument,
+`('X' | downcase)`, `reversed` after `limit`, `=` in a condition, `and` after the value of a
+`when`), the fix does it and says how the output changes. A `case` with such a `when` and an
+`else` becomes `if`/`elsif`/`else`, so that the `else` runs when the condition is false; only
+when its `when`s compare with distinct literals, a single `else` comes last and nothing but
+whitespace precedes the first `when`, so that it renders the same otherwise. Elsewhere it
+renders what the file renders today.
+
+The rules are those of Shopify's reference implementation, the `liquid` gem 5.14, in
+`error_mode: :strict2`: the `strict2_parse` of each tag and of outputs, ported tag by tag
+(`crates/liquid/src/strict2`). Today, Shopify parses a tag with that parser first and falls
+back on the lenient one when it fails; outputs and `{% when %}` go to the lenient parser
+directly when they are not strictly valid. A fix that keeps the output is printed from what the
+engine parses today, and is kept only when the strict parser accepts it and both parsers read
+it the same as the original.
+
+How it is checked:
+
+- **liquid-spec runs most of its specs in `strict2` mode.** For the 6,314 that apply here,
+  `npx local-storefront check` finds a rejection exactly when the spec expects one, with the
+  gem's message, and every fix leaves nothing to reject (`crates/liquid/tests/strict2_spec.rs`).
+  Two recordings of Shopify's production expect a template that the gem rejects in `strict2`
+  mode (`{% if !name.first %}`): they are left out.
+- **Fixes render the same with the gem.** 1,548 of those templates get a fix. The gem renders
+  each original in `:warn` mode, the mode Shopify renders themes in today, and each fix in
+  `:strict2` mode, with the data of the spec and again with data where every variable prints
+  its own path. The outputs are identical (`mise run oracle:strict2-fixes`).
+- **Real themes.** Horizon and Dawn have nothing the strict parser rejects.
+
+What to know:
+
+- **Shopify's own tags** (`section`, `sections`, `layout`, `form`, `paginate`, `content_for`,
+  and `render` of an object, as in `{% render block %}`) are not in the gem. Shopify has not
+  published how its strict parser reads them: local-storefront reads them with the rules of the
+  standard tags, an expression without bare brackets, and a quoted name for `section`.
+  `{% block %}` and `{% partial %}` (behind `--preview liquid-july-26`) are not checked.
+- **A fix writes the markup it replaces in the strict parser's own form:** a fixed tag gets
+  single spaces between its parts, `a . b` becomes `a.b`, and strings keep the quote the tag
+  used. Arguments written one per line stay one per line, and the rest of the file is left as
+  it is.
+- **What the lenient parser passes to a snippet by mistake is left out when the snippet does
+  not read it.** In `{% render 'image', alt: image.alt | default: shop.name %}`, it reads
+  `default: shop.name` as an argument of `render`. Where the fix cannot apply the filter
+  instead, it leaves `default` out when `snippets/image.liquid` never mentions it (nor `self`):
+  a rendered snippet sees only its arguments.
+- **`[name]` becomes `self[name]`.** The strict parser refuses a lookup that starts with a
+  bracket, and `self` is the variable it suggests instead. This reads the same unless the
+  theme assigns a variable named `self`.
+- **Some markup has no fix:** what renders an error today (`{% if a = b %}`, where `=` is an
+  unknown operator), or what the strict parser has no way to write (an assigned variable named
+  `a.b`, a string that holds both kinds of quotes).
+- **A fix that does what the code meant has no reference to be checked against**, since it
+  changes what renders on purpose. Each is checked to be accepted by the strict parser, and the
+  gem renders them as meant (a filtered `render` argument, an `and`, `('X' | downcase)`,
+  `reversed`, `==`). A variable such a fix adds gets a name the file does not use, but a
+  snippet included with `{% include %}` could still use that name.
+
 ## Known differences
 
 These are deliberate or not done yet. None of them raises a Liquid error.
@@ -315,7 +383,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 |---|---|
 | Checkout | Not part of a theme. `/checkout` shows a summary of the cart. |
 | Apps | App blocks and app embeds render nothing. `content_for_header` contains the scripts a theme relies on (`Shopify.*` globals, routes, the compiled asset tags), not Shopify's analytics and app scripts. |
-| Customer accounts | New customer accounts are hosted by Shopify, outside the theme. `/account` is a page of `lsf` that stands in for them: it shows who is logged in and lets you become anyone in the data. Every account URL (`/account/login`, `/account/register`, `/customer_authentication/login`, ...) leads to it. With legacy accounts (a theme with `templates/customers`), the theme's pages are rendered, and login and logout work against the customers of the data. Registration, password reset, activation and address editing are not simulated: their forms answer with an error. |
+| Customer accounts | New customer accounts are hosted by Shopify, outside the theme. `/account` is a page of local-storefront that stands in for them: it shows who is logged in and lets you become anyone in the data. Every account URL (`/account/login`, `/account/register`, `/customer_authentication/login`, ...) leads to it. With legacy accounts (a theme with `templates/customers`), the theme's pages are rendered, and login and logout work against the customers of the data. Registration, password reset, activation and address editing are not simulated: their forms answer with an error. |
 | Password page | `/password` always shows the theme's password page, and accepts `shop.password` (`password` by default). The storefront is never locked: nothing redirects to that page. On Shopify, a protected store redirects every page to it, and an open store redirects it to the home page. |
 | Discounts | Carts and orders have no discounts: discount arrays are empty and totals are undiscounted. `Shopify.actions.updateCart` reports every discount code as not applicable. |
 | Standard actions | A change the cart refuses (unknown variant, not enough stock) resolves with `userErrors` whose code is `INVALID`, and leaves that line untouched. The Storefront API would add what is in stock and return a warning. |
@@ -336,11 +404,11 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |
 | Sitemaps | `/robots.txt` is rendered from `templates/robots.txt.liquid`, or with Shopify's default rules. `/sitemap.xml` links one sitemap per kind (products, pages, collections, blogs), in the primary language only and without paging. |
 | Compression | Pages, styles, scripts and JSON are compressed with Brotli or gzip for the clients that accept it, at fast levels: the sizes are close to a storefront's, not equal. `--no-compression` turns it off. |
-| Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; `lsf` always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
+| Caching | Shopify keeps rendered pages in a cache of its own. An answer from that cache has an `ETag` and no `Cache-Control`; local-storefront always answers like a page that was just rendered. Files have no `Last-Modified`, so nothing is answered with `304 Not Modified`. |
 | Image formats | The format of an image is chosen by Shopify's rule, with other encoders: the files weigh about what Shopify's do, not the same, so an image can come as AVIF where Shopify sends WebP, or the reverse. A GIF is never converted. The color profile and the metadata of a file are not kept when it is encoded. |
-| Preloading | Shopify sends the `Link` header ahead of the page, as `103 Early Hints`, and with the pages it answers from its own cache. `lsf` sends it with every page. Shopify's header also asks to connect to its CDN (`cdn.shopify.com`), which serves nothing locally, and has a limit on its number of entries, which `lsf` does not have. |
-| Minification | Shopify minifies with esbuild, `lsf` with other libraries (oxc for scripts, Lightning CSS for stylesheets): a file weighs about what it does on Shopify, without being the same to the byte. In a stylesheet, declarations can come in another order within a rule. `inset` is not replaced with `top`, `right`, `bottom` and `left`. |
-| Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. `lsf` runs them all on every page. |
+| Preloading | Shopify sends the `Link` header ahead of the page, as `103 Early Hints`, and with the pages it answers from its own cache. local-storefront sends it with every page. Shopify's header also asks to connect to its CDN (`cdn.shopify.com`), which serves nothing locally, and has a limit on its number of entries, which local-storefront does not have. |
+| Minification | Shopify minifies with esbuild, local-storefront with other libraries (oxc for scripts, Lightning CSS for stylesheets): a file weighs about what it does on Shopify, without being the same to the byte. In a stylesheet, declarations can come in another order within a rule. `inset` is not replaced with `top`, `right`, `bottom` and `left`. |
+| Compiled scripts | Shopify runs the `{% javascript %}` of a section only on the pages that have that section. local-storefront runs them all on every page. |
 
 Found a difference that is not in this table? It is a bug: a Liquid snippet and the HTML
 Shopify renders for it are enough to reproduce it.

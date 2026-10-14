@@ -1192,9 +1192,9 @@ pub struct ShopInput {
     #[serde(default)]
     pub customer_accounts_optional: Option<bool>,
     /// Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and
-    /// `/account` is a page of lsf where you choose who is logged in. `legacy`: the theme's
-    /// `templates/customers` are rendered. Defaults to `legacy` when the theme has those
-    /// templates, and to `new` otherwise.
+    /// `/account` is a page of local-storefront where you choose who is logged in. `legacy`:
+    /// the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has
+    /// those templates, and to `new` otherwise.
     #[serde(default)]
     pub customer_accounts: Option<CustomerAccounts>,
     /// Whether prices include taxes. Defaults to `false`.
@@ -1369,7 +1369,7 @@ pub struct GiftCardRecipientInput {
     pub nickname: Option<String>,
 }
 
-/// An issued gift card, shown by `templates/gift_card.liquid` at the URL `lsf routes` lists
+/// An issued gift card, shown by `templates/gift_card.liquid` at the URL the `routes` command lists
 /// (`/gift_cards/<shop id>/<token>`).
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

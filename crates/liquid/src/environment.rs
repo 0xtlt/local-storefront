@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::context::Context;
 use crate::error::Result;
 use crate::parser::{Parser, TagToken};
+use crate::strict2::SyntaxCheck;
 use crate::template::Tag;
 use crate::value::Value;
 use crate::variable::FilterArgs;
@@ -18,6 +19,7 @@ pub type TagParser = fn(&mut Parser<'_, '_>, &TagToken<'_>) -> Result<Box<dyn Ta
 #[derive(Clone, Default)]
 pub struct Environment {
     tags: HashMap<String, TagParser>,
+    syntax: HashMap<String, SyntaxCheck>,
     filters: HashMap<String, FilterFn>,
     bug_compatible_whitespace_trimming: bool,
 }
@@ -53,6 +55,16 @@ impl Environment {
 
     pub fn register_tag(&mut self, name: &str, parser: TagParser) {
         self.tags.insert(name.to_string(), parser);
+    }
+
+    /// How the markup of a tag (or of a delimiter such as `elsif`) is checked against
+    /// Shopify's strict parser. See [`crate::strict2`].
+    pub fn register_syntax(&mut self, name: &str, check: SyntaxCheck) {
+        self.syntax.insert(name.to_string(), check);
+    }
+
+    pub fn syntax(&self, name: &str) -> Option<SyntaxCheck> {
+        self.syntax.get(name).copied()
     }
 
     pub fn register_filter(&mut self, name: &str, filter: FilterFn) {
