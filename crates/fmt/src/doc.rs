@@ -2,7 +2,9 @@
 //! `doc` builders and of `printDocToString`, kept faithful to it so that a document built the
 //! way a Prettier plugin builds it breaks its lines at the same places.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::rc::Rc;
 
 /// Names a group, so that an [`Doc::IfBreak`] elsewhere can ask how it was printed.
@@ -53,6 +55,35 @@ pub enum Doc {
     LineSuffixBoundary,
     BreakParent,
     Trim,
+    /// A document that depends on the width of the indentation it is printed at: what an
+    /// embedded formatter lays out on its own. It holds a hard line.
+    AtIndent(Rc<AtIndentDoc>),
+}
+
+/// What [`Doc::AtIndent`] holds: how to build the document, and the document once built.
+pub struct AtIndentDoc {
+    build: Box<dyn Fn(usize) -> Doc>,
+    built: OnceCell<Doc>,
+}
+
+impl AtIndentDoc {
+    fn get(&self, indentation: usize) -> &Doc {
+        self.built.get_or_init(|| (self.build)(indentation))
+    }
+}
+
+impl fmt::Debug for AtIndentDoc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AtIndentDoc")
+            .field("built", &self.built.get())
+            .finish()
+    }
+}
+
+impl PartialEq for AtIndentDoc {
+    fn eq(&self, other: &AtIndentDoc) -> bool {
+        std::ptr::eq(self, other)
+    }
 }
 
 impl Doc {
@@ -165,6 +196,14 @@ pub fn indent_if_break(contents: impl Into<Doc>, group_id: GroupId, negate: bool
         group_id,
         negate,
     }
+}
+
+/// A document built from the width, in columns, of the indentation it is printed at.
+pub fn at_indent(build: impl Fn(usize) -> Doc + 'static) -> Doc {
+    Doc::AtIndent(Rc::new(AtIndentDoc {
+        build: Box::new(build),
+        built: OnceCell::new(),
+    }))
 }
 
 pub fn line_suffix(contents: impl Into<Doc>) -> Doc {
@@ -502,6 +541,7 @@ fn propagate_breaks(doc: &mut Doc) -> bool {
             }
             *should_break
         }
+        Doc::AtIndent(_) => true,
         Doc::Text(_) | Doc::Line { .. } | Doc::LineSuffixBoundary | Doc::Trim => false,
     }
 }
@@ -820,6 +860,8 @@ fn fits<'a>(
                 }
             }
             Doc::BreakParent => {}
+            // It holds a hard line, which ends the line being measured.
+            Doc::AtIndent(_) => return !must_be_flat,
         }
     }
     false
@@ -1080,6 +1122,11 @@ pub fn print(mut doc: Doc, options: &PrintOptions) -> String {
                 }
             }
             Doc::BreakParent => {}
+            Doc::AtIndent(built) => commands.push(Command {
+                item: Item::Doc(built.get(indent.length)),
+                indent,
+                mode,
+            }),
         }
         if commands.is_empty() && !line_suffixes.is_empty() {
             commands.extend(line_suffixes.drain(..).rev());

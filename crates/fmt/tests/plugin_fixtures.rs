@@ -22,7 +22,7 @@ const REVISION: &str = include_str!("../../../tools/prettier/FIXTURES_REVISION")
 
 /// How many cases must be formatted as Prettier formats them, of 444. Raise the number when
 /// more are; never lower it.
-const BASELINE: usize = 438;
+const BASELINE: usize = 443;
 
 #[test]
 fn formats_the_tests_of_the_plugin_as_prettier_does() {

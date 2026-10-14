@@ -42,6 +42,27 @@
     "again": "<script>\n  document.addEventListener('DOMContentLoaded', () => {\n    const template = `one\n  two ${three}`;\n    /**\n     * A comment.\n     */\n    console.log(template);\n  });\n</script>\n"
   },
   {
+    "name": "a script is formatted as JavaScript",
+    "options": {},
+    "source": "<script>\nvar a = {b:1,\"c-d\":[1,2,3]}\nfunction f(x){return x?\"yes\":'no'}\ndocument.querySelectorAll('[data-a]').forEach(el=>{el.addEventListener('click',function(event){event.preventDefault();f(el.dataset.a,el.dataset.b,el.dataset.c)})})\n</script>\n",
+    "expected": "<script>\n  var a = { b: 1, 'c-d': [1, 2, 3] };\n  function f(x) {\n    return x ? 'yes' : 'no';\n  }\n  document.querySelectorAll('[data-a]').forEach((el) => {\n    el.addEventListener('click', function (event) {\n      event.preventDefault();\n      f(el.dataset.a, el.dataset.b, el.dataset.c);\n    });\n  });\n</script>\n",
+    "again": "<script>\n  var a = { b: 1, 'c-d': [1, 2, 3] };\n  function f(x) {\n    return x ? 'yes' : 'no';\n  }\n  document.querySelectorAll('[data-a]').forEach((el) => {\n    el.addEventListener('click', function (event) {\n      event.preventDefault();\n      f(el.dataset.a, el.dataset.b, el.dataset.c);\n    });\n  });\n</script>\n"
+  },
+  {
+    "name": "a script nested in elements breaks in the columns left",
+    "options": {},
+    "source": "<div><section><div class=\"wrapper\"><script>\n      fetch(window.Shopify.routes.root + 'cart/add.js', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(formData)}).then(response => response.json())\n</script></div></section></div>\n",
+    "expected": "<div>\n  <section>\n    <div class=\"wrapper\">\n      <script>\n        fetch(window.Shopify.routes.root + 'cart/add.js', {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify(formData),\n        }).then((response) => response.json());\n      </script>\n    </div>\n  </section>\n</div>\n",
+    "again": "<div>\n  <section>\n    <div class=\"wrapper\">\n      <script>\n        fetch(window.Shopify.routes.root + 'cart/add.js', {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify(formData),\n        }).then((response) => response.json());\n      </script>\n    </div>\n  </section>\n</div>\n"
+  },
+  {
+    "name": "a module script, with jsx and a template literal",
+    "options": {},
+    "source": "<script type=\"module\">\nimport {a} from './a.js'\nconst html = `<div>\n    ${a}\n</div>`\nexport default () => <div className=\"a\">{html}</div>\n</script>\n",
+    "expected": "<script type=\"module\">\n  import { a } from './a.js';\n  const html = `<div>\n    ${a}\n</div>`;\n  export default () => <div className=\"a\">{html}</div>;\n</script>\n",
+    "again": "<script type=\"module\">\n  import { a } from './a.js';\n  const html = `<div>\n    ${a}\n</div>`;\n  export default () => <div className=\"a\">{html}</div>;\n</script>\n"
+  },
+  {
     "name": "a script that holds liquid is indented again",
     "options": {},
     "source": "<script>\n      window.theme = {\n          money: {{ shop.money_format | json }},\n      };\n</script>\n",
@@ -51,7 +72,7 @@
   {
     "name": "the javascript tag",
     "options": {},
-    "source": "{% javascript %}\n    class A extends HTMLElement {\n      connectedCallback() {\n        this.hidden = false;\n      }\n    }\n{% endjavascript %}\n",
+    "source": "{% javascript %}\n    class A extends HTMLElement {\n      connectedCallback() {\n        this.hidden = false\n      }\n    }\n{% endjavascript %}\n",
     "expected": "{% javascript %}\n  class A extends HTMLElement {\n    connectedCallback() {\n      this.hidden = false;\n    }\n  }\n{% endjavascript %}\n",
     "again": "{% javascript %}\n  class A extends HTMLElement {\n    connectedCallback() {\n      this.hidden = false;\n    }\n  }\n{% endjavascript %}\n"
   },

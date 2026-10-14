@@ -74,7 +74,7 @@ renderer does not.
 | `doc` | The document (groups, lines that break or not, indentation) and the algorithm that lays it out in a width: Prettier's `printDocToString`. |
 | `embed/json` | The JSON of `{% schema %}` and of JSON scripts, as Prettier's `json` parser prints it. |
 | `embed/css` | CSS, as Prettier's PostCSS printer prints it: `parser` cuts a style sheet the way PostCSS does, `value`, `selector` and `media` are ports of the three parsers Prettier reads values, selectors and media queries with. |
-| `embed/js` | JavaScript, which is not reformatted. A script that parses (with `oxc`) is laid out as Prettier lays out a formatted script, so that one comes out unchanged. |
+| `embed/js` | JavaScript, formatted by Oxc's formatter (`oxc_formatter`, a port of Prettier's printer) from the indentation the script is printed at, which `doc` gives it through `Doc::AtIndent`. |
 
 `crates/cli/src/commands/fmt/` finds the files and reads the configuration Prettier reads
 (`.prettierrc`, its `overrides`, `.editorconfig`, `.prettierignore`).

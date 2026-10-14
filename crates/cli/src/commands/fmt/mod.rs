@@ -87,7 +87,7 @@ impl Formatter {
         for (name, value) in &self.overrides {
             if !options.set(name, value)? {
                 return Err(format!(
-                    "`--option {name}`: not an option that applies to Liquid. See `lsf fmt --help`"
+                    "`--option {name}`: not an option of `lsf fmt`. See the README for the list"
                 ));
             }
         }
@@ -333,7 +333,8 @@ mod tests {
         let theme = Scratch::new("errors");
         theme.write("a.liquid", "{{ a }}\n");
         assert!(run(&theme.0, args(false, &["printWidth"])).is_err());
-        assert!(run(&theme.0, args(false, &["semi=false"])).is_err());
+        assert!(run(&theme.0, args(false, &["experimentalTernaries=true"])).is_err());
+        assert!(run(&theme.0, args(false, &["semi=1"])).is_err());
         assert!(run(&theme.0, args(false, &["printWidth=wide"])).is_err());
         theme.write(".prettierrc", "{ not json");
         assert!(run(&theme.0, args(false, &[])).is_err());

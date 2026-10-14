@@ -50,6 +50,27 @@
   });
 </script>
 
+## a script is formatted as JavaScript
+<script>
+var a = {b:1,"c-d":[1,2,3]}
+function f(x){return x?"yes":'no'}
+document.querySelectorAll('[data-a]').forEach(el=>{el.addEventListener('click',function(event){event.preventDefault();f(el.dataset.a,el.dataset.b,el.dataset.c)})})
+</script>
+
+## a script nested in elements breaks in the columns left
+<div><section><div class="wrapper"><script>
+      fetch(window.Shopify.routes.root + 'cart/add.js', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(formData)}).then(response => response.json())
+</script></div></section></div>
+
+## a module script, with jsx and a template literal
+<script type="module">
+import {a} from './a.js'
+const html = `<div>
+    ${a}
+</div>`
+export default () => <div className="a">{html}</div>
+</script>
+
 ## a script that holds liquid is indented again
 <script>
       window.theme = {
@@ -61,7 +82,7 @@
 {% javascript %}
     class A extends HTMLElement {
       connectedCallback() {
-        this.hidden = false;
+        this.hidden = false
       }
     }
 {% endjavascript %}

@@ -9,6 +9,8 @@
 //! (<https://github.com/prettier/prettier>), Shopify's theme tools
 //! (<https://github.com/Shopify/theme-tools>), and the parsers Prettier reads CSS with
 //! (PostCSS, `postcss-values-parser`, `postcss-selector-parser`, `postcss-media-query-parser`).
+//! JavaScript is formatted by Oxc's formatter (<https://github.com/oxc-project/oxc>, MIT),
+//! a port of Prettier's.
 //!
 //! ```
 //! use lsf_fmt::{Options, format};

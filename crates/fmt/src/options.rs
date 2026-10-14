@@ -1,5 +1,5 @@
-//! How the output is laid out: Prettier's options that apply to Liquid, and those of
-//! Shopify's plugin, under the same names and with the same defaults.
+//! How the output is laid out: Prettier's options that apply to Liquid and to the JavaScript it
+//! holds, and those of Shopify's plugin, under the same names and with the same defaults.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlWhitespaceSensitivity {
@@ -28,6 +28,28 @@ pub enum EndOfLine {
     Auto,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrailingComma {
+    All,
+    Es5,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuoteProps {
+    AsNeeded,
+    Consistent,
+    Preserve,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectWrap {
+    /// An object stays broken when its first property is on a line of its own.
+    Preserve,
+    /// An object goes on one line when it fits.
+    Collapse,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
     pub print_width: usize,
@@ -51,6 +73,18 @@ pub struct Options {
     /// Whether what `<script>`, `<style>`, `{% schema %}`, `{% style %}`, `{% stylesheet %}`
     /// and `{% javascript %}` hold is formatted too.
     pub embedded_language_formatting: bool,
+    // The options of Prettier's printer of JavaScript, for what `<script>` and
+    // `{% javascript %}` hold.
+    pub semi: bool,
+    pub jsx_single_quote: bool,
+    pub quote_props: QuoteProps,
+    pub trailing_comma: TrailingComma,
+    pub bracket_spacing: bool,
+    pub object_wrap: ObjectWrap,
+    /// `arrowParens`: `true` for "always", `false` for "avoid".
+    pub arrow_parens: bool,
+    /// `experimentalOperatorPosition`: `true` for "start", `false` for "end".
+    pub operator_at_start: bool,
 }
 
 impl Default for Options {
@@ -71,13 +105,21 @@ impl Default for Options {
             capture_whitespace_sensitivity: CaptureWhitespaceSensitivity::Strict,
             liquid_doc_param_dash: true,
             embedded_language_formatting: true,
+            semi: true,
+            jsx_single_quote: false,
+            quote_props: QuoteProps::AsNeeded,
+            trailing_comma: TrailingComma::All,
+            bracket_spacing: true,
+            object_wrap: ObjectWrap::Preserve,
+            arrow_parens: true,
+            operator_at_start: false,
         }
     }
 }
 
 impl Options {
     /// The options [`Options::set`] knows, under the names Prettier gives them.
-    pub const NAMES: [&'static str; 15] = [
+    pub const NAMES: [&'static str; 23] = [
         "printWidth",
         "tabWidth",
         "useTabs",
@@ -93,10 +135,18 @@ impl Options {
         "indentSchema",
         "liquidDocParamDash",
         "embeddedLanguageFormatting",
+        "semi",
+        "jsxSingleQuote",
+        "quoteProps",
+        "trailingComma",
+        "bracketSpacing",
+        "objectWrap",
+        "arrowParens",
+        "experimentalOperatorPosition",
     ];
 
     /// Sets the option Prettier calls `name` from its JSON value. `Ok(false)` when the option
-    /// is not one that applies to Liquid.
+    /// is not one of these.
     pub fn set(&mut self, name: &str, value: &serde_json::Value) -> Result<bool, String> {
         let boolean = || {
             value
@@ -169,6 +219,66 @@ impl Options {
                     other => {
                         return Err(format!(
                             "`{name}` must be \"auto\" or \"off\", not \"{other}\""
+                        ));
+                    }
+                }
+            }
+            "semi" => self.semi = boolean()?,
+            "jsxSingleQuote" => self.jsx_single_quote = boolean()?,
+            "quoteProps" => {
+                self.quote_props = match choice()? {
+                    "as-needed" => QuoteProps::AsNeeded,
+                    "consistent" => QuoteProps::Consistent,
+                    "preserve" => QuoteProps::Preserve,
+                    other => {
+                        return Err(format!(
+                            "`{name}` must be \"as-needed\", \"consistent\" or \"preserve\", not \"{other}\""
+                        ));
+                    }
+                }
+            }
+            "trailingComma" => {
+                self.trailing_comma = match choice()? {
+                    "all" => TrailingComma::All,
+                    "es5" => TrailingComma::Es5,
+                    "none" => TrailingComma::None,
+                    other => {
+                        return Err(format!(
+                            "`{name}` must be \"all\", \"es5\" or \"none\", not \"{other}\""
+                        ));
+                    }
+                }
+            }
+            "bracketSpacing" => self.bracket_spacing = boolean()?,
+            "objectWrap" => {
+                self.object_wrap = match choice()? {
+                    "preserve" => ObjectWrap::Preserve,
+                    "collapse" => ObjectWrap::Collapse,
+                    other => {
+                        return Err(format!(
+                            "`{name}` must be \"preserve\" or \"collapse\", not \"{other}\""
+                        ));
+                    }
+                }
+            }
+            "arrowParens" => {
+                self.arrow_parens = match choice()? {
+                    "always" => true,
+                    "avoid" => false,
+                    other => {
+                        return Err(format!(
+                            "`{name}` must be \"always\" or \"avoid\", not \"{other}\""
+                        ));
+                    }
+                }
+            }
+            "experimentalOperatorPosition" => {
+                self.operator_at_start = match choice()? {
+                    "start" => true,
+                    "end" => false,
+                    other => {
+                        return Err(format!(
+                            "`{name}` must be \"start\" or \"end\", not \"{other}\""
                         ));
                     }
                 }

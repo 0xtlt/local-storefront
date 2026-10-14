@@ -14,8 +14,8 @@ use crate::options::Options;
 pub(crate) fn format(kind: RawKind, source: &str, options: &Options) -> Option<Doc> {
     match kind {
         RawKind::Css => css::format(source, options),
-        RawKind::Javascript => js::format(source),
-        RawKind::Json => json::format(source),
+        RawKind::Javascript => js::format(source, options),
+        RawKind::Json => json::format(source, options),
         _ => None,
     }
 }

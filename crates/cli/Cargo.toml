@@ -26,8 +26,8 @@ mimalloc = { version = "0.1", features = ["v2"] }
 brotli = { version = "8", default-features = false, features = ["std"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # The minifiers of scripts and of stylesheets.
-oxc = { version = "0.110", features = ["minifier", "codegen"] }
-oxc_compat = "0.110"
+oxc = { workspace = true, features = ["minifier", "codegen"] }
+oxc_compat.workspace = true
 lightningcss = { version = "1.0.0-alpha.72", default-features = false, features = ["sourcemap"] }
 parcel_sourcemap = "2"
 multer = "3"

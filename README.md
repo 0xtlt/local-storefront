@@ -258,9 +258,8 @@ the one for CI.
 Your Prettier configuration applies: `.prettierrc`, `.editorconfig` and `.prettierignore` are
 read. A theme that Prettier has formatted comes out of `lsf fmt` unchanged.
 
-Liquid, HTML, the JSON of `{% schema %}` and CSS are formatted as Prettier formats them.
-JavaScript is not reformatted: a script keeps its lines as you wrote them. The options and the
-details are in [Options of `lsf fmt`](#options-of-lsf-fmt).
+Liquid, HTML, the JSON of `{% schema %}`, CSS and JavaScript are formatted as Prettier formats
+them. The options and the details are in [Options of `lsf fmt`](#options-of-lsf-fmt).
 
 ## What you get
 
@@ -346,7 +345,7 @@ These files are read: `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.pretti
 | `endOfLine` | `lf` | `lf`, `crlf`, `cr`, or `auto` for what the file uses. |
 | `singleQuote` | `false` | Single quotes around HTML attributes. |
 | `liquidSingleQuote` | `true` | Single quotes around the strings of Liquid. |
-| `embeddedSingleQuote` | `true` | Single quotes in the CSS of `<style>`, `{% style %}` and `{% stylesheet %}`. |
+| `embeddedSingleQuote` | `true` | Single quotes in the CSS and the JavaScript of `<style>`, `<script>` and the `{% style %}`, `{% stylesheet %}` and `{% javascript %}` tags. |
 | `bracketSameLine` | `false` | Puts the `>` of a tag at the end of its last attribute. |
 | `singleAttributePerLine` | `false` | One attribute per line as soon as a tag has two. |
 | `htmlWhitespaceSensitivity` | `css` | Where whitespace may be added or removed: `css`, `strict`, `ignore`. |
@@ -354,10 +353,17 @@ These files are read: `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.pretti
 | `singleLineLinkTags` | `false` | Keeps `<link>` tags on one line. |
 | `indentSchema` | `false` | Indents the JSON of `{% schema %}`. |
 | `liquidDocParamDash` | `true` | A dash between a `@param` of `{% doc %}` and its description. |
-| `embeddedLanguageFormatting` | `auto` | `off` leaves JSON and CSS as they are written. |
+| `embeddedLanguageFormatting` | `auto` | `off` leaves JSON, CSS and JavaScript as they are written. |
+| `semi` | `true` | A semicolon at the end of each statement of JavaScript. |
+| `jsxSingleQuote` | `false` | Single quotes around the attributes of JSX. |
+| `quoteProps` | `as-needed` | Quotes around the keys of objects: `as-needed`, `consistent`, `preserve`. |
+| `trailingComma` | `all` | A comma after the last item of a list on several lines: `all`, `es5`, `none`. |
+| `bracketSpacing` | `true` | Spaces inside the braces of an object, in JavaScript and JSON. |
+| `objectWrap` | `preserve` | `collapse` puts an object on one line when it fits, even if it started on several. |
+| `arrowParens` | `always` | Parentheses around the only parameter of an arrow function: `always`, `avoid`. |
+| `experimentalOperatorPosition` | `end` | `start` begins a broken line with its operator. |
 
-The other options of Prettier (`semi`, `trailingComma`, ...) are for JavaScript, which is not
-reformatted. They are ignored in a configuration file.
+Other options of Prettier are ignored in a configuration file.
 
 What differs from Prettier is listed in
 [compatibility](docs/compatibility.md#formatting-lsf-fmt).

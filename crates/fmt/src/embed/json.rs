@@ -1,10 +1,11 @@
 //! JSON, laid out as Prettier's `json` parser lays it out: an object stays on one line when
-//! it fits and did not start with a line break, an array of numbers is filled, a blank line
-//! between two properties is kept.
+//! it fits and did not start with a line break (unless `objectWrap` is "collapse"), an array of
+//! numbers is filled, a blank line between two properties is kept.
 
 use crate::doc::{
     Doc, concat, fill, group, group_with, hardline, indent, line, nothing, softline, text,
 };
+use crate::options::{ObjectWrap, Options};
 
 use super::number::print_number;
 
@@ -218,7 +219,7 @@ fn is_next_line_empty(source: &str, end: usize) -> bool {
         .starts_with(['\n', '\r'])
 }
 
-fn print_value(value: &Value, source: &str) -> Doc {
+fn print_value(value: &Value, source: &str, options: &Options) -> Doc {
     match value {
         Value::Scalar { printed, .. } => text(printed.as_str()),
         Value::Object { start, properties } => {
@@ -226,7 +227,15 @@ fn print_value(value: &Value, source: &str) -> Doc {
                 return text("{}");
             };
             // An object that started on several lines stays on several lines.
-            let should_break = source[*start..first.key_start].contains('\n');
+            let should_break = options.object_wrap == ObjectWrap::Preserve
+                && source[*start..first.key_start].contains('\n');
+            let bracket_line = || {
+                if options.bracket_spacing {
+                    line()
+                } else {
+                    softline()
+                }
+            };
             let mut parts = Vec::new();
             for (index, property) in properties.iter().enumerate() {
                 if index > 0 {
@@ -239,14 +248,14 @@ fn print_value(value: &Value, source: &str) -> Doc {
                 parts.push(group(vec![
                     text(property.key.as_str()),
                     text(": "),
-                    print_value(&property.value, source),
+                    print_value(&property.value, source, options),
                 ]));
             }
             group_with(
                 vec![
                     text("{"),
-                    indent(vec![line(), concat(parts)]),
-                    line(),
+                    indent(vec![bracket_line(), concat(parts)]),
+                    bracket_line(),
                     text("}"),
                 ],
                 None,
@@ -285,7 +294,7 @@ fn print_value(value: &Value, source: &str) -> Doc {
                 let mut parts = Vec::new();
                 for (index, element) in elements.iter().enumerate() {
                     parts.push(concat(vec![
-                        print_value(&element.value, source),
+                        print_value(&element.value, source, options),
                         text(if index == last { "" } else { "," }),
                     ]));
                     if index != last {
@@ -300,7 +309,7 @@ fn print_value(value: &Value, source: &str) -> Doc {
             } else {
                 let mut parts = Vec::new();
                 for (index, element) in elements.iter().enumerate() {
-                    parts.push(print_value(&element.value, source));
+                    parts.push(print_value(&element.value, source, options));
                     if index != last {
                         parts.push(text(","));
                         parts.push(line());
@@ -329,11 +338,11 @@ fn print_value(value: &Value, source: &str) -> Doc {
 
 /// The document of a JSON source, or `None` when it is not JSON this formatter reads: it has
 /// a syntax error, or comments.
-pub(crate) fn format(source: &str) -> Option<Doc> {
+pub(crate) fn format(source: &str, options: &Options) -> Option<Doc> {
     let mut parser = Parser { source, pos: 0 };
     let value = parser.value()?;
     parser.skip_whitespace();
-    (parser.pos == source.len()).then(|| print_value(&value, source))
+    (parser.pos == source.len()).then(|| print_value(&value, source, options))
 }
 
 #[cfg(test)]
@@ -341,15 +350,31 @@ mod tests {
     use super::*;
     use crate::doc::{PrintOptions, print};
 
-    fn fmt(source: &str, print_width: usize) -> String {
+    fn fmt_with(source: &str, print_width: usize, options: &Options) -> String {
         print(
-            format(source).unwrap(),
+            format(source, options).unwrap(),
             &PrintOptions {
                 print_width,
                 tab_width: 2,
                 use_tabs: false,
             },
         )
+    }
+
+    fn fmt(source: &str, print_width: usize) -> String {
+        fmt_with(source, print_width, &Options::default())
+    }
+
+    #[test]
+    fn follows_bracket_spacing_and_object_wrap() {
+        let source = "{\"a\": {\n\"b\": 1}}";
+        assert_eq!(fmt(source, 80), "{\n  \"a\": {\n    \"b\": 1\n  }\n}");
+        let options = Options {
+            bracket_spacing: false,
+            object_wrap: ObjectWrap::Collapse,
+            ..Options::default()
+        };
+        assert_eq!(fmt_with(source, 80, &options), "{\"a\": {\"b\": 1}}");
     }
 
     #[test]
@@ -387,8 +412,9 @@ mod tests {
 
     #[test]
     fn gives_up_on_what_is_not_plain_json() {
-        assert!(format("{\"a\": 1 // why\n}").is_none());
-        assert!(format("{\"a\": }").is_none());
-        assert!(format("{{ a | json }}").is_none());
+        let options = Options::default();
+        assert!(format("{\"a\": 1 // why\n}", &options).is_none());
+        assert!(format("{\"a\": }", &options).is_none());
+        assert!(format("{{ a | json }}", &options).is_none());
     }
 }

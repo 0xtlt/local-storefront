@@ -66,6 +66,21 @@
 .a{content:'x';font-family:'A'}
 </style>
 
+## the options of javascript
+#! {"semi": false, "trailingComma": "none", "arrowParens": "avoid", "bracketSpacing": false, "quoteProps": "consistent", "embeddedSingleQuote": false, "printWidth": 60}
+<script>
+const options = {a: 1, 'b-c': (x) => x * 2, items: ['one', 'two', 'three', 'four', 'five']};
+</script>
+
+## javascript indented with tabs, objects collapsed
+#! {"useTabs": true, "objectWrap": "collapse", "jsxSingleQuote": true, "experimentalOperatorPosition": "start", "printWidth": 50}
+<div><script>
+const a = {
+  b: 1 };
+const element = <div className="x" />;
+const total = firstValue + secondValue + thirdValue + fourthValue;
+</script></div>
+
 ## windows line endings
 #! {"endOfLine": "crlf"}
 <div>{% if a %}<p>b</p>{% endif %}</div>
