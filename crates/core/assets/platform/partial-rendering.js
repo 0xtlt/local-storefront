@@ -124,59 +124,72 @@ function controlsIn(where) {
   return keys;
 }
 
-/** Swaps in the partials of an update, keeping focus, selection, form values and scroll. */
+/** Swaps one region for new HTML, keeping focus, selection and form values. */
+function swap(region, html) {
+  const range = rangeOf(region);
+  const before = controlsIn(range);
+  const active = document.activeElement;
+  const focused = [...before].find(([, control]) => control === active)?.[0];
+  const selection =
+    focused && typeof active.selectionStart === 'number'
+      ? [active.selectionStart, active.selectionEnd, active.selectionDirection]
+      : null;
+
+  const holder = document.createElement('template');
+  holder.innerHTML = html;
+  const fresh = holder.content;
+  // The values of the page win over the markup, as Shopify documents for `apply()`: a theme
+  // updates what the server changes itself.
+  const after = controlsIn(fresh);
+  for (const [key, control] of before) {
+    const replacement = after.get(key);
+    if (!replacement || replacement.type !== control.type || control.type === 'file') continue;
+    if (control.type === 'checkbox' || control.type === 'radio') {
+      replacement.checked = control.checked;
+    } else {
+      replacement.value = control.value;
+    }
+  }
+  // Inserted where the region starts: when the end of a region of table rows sits in a
+  // `<tbody>`, the new rows come in their own `<tbody>` beside it, not inside it.
+  range.deleteContents();
+  range.insertNode(fresh);
+
+  if (focused) {
+    const replacement = controlsIn(rangeOf(region)).get(focused);
+    replacement?.focus({ preventScroll: true });
+    if (replacement && selection) {
+      try {
+        replacement.setSelectionRange(...selection);
+      } catch {
+        // Some input types have no selection.
+      }
+    }
+  }
+}
+
+/**
+ * Swaps in the partials of an update, keeping focus, selection, form values and scroll. The
+ * n-th partial of a name in the update replaces the n-th one of that name on the page, counted
+ * over the whole page; with a `scope`, only those inside it are replaced. A name the update
+ * has fewer of than the page (a line removed from the cart) leaves the extra regions empty.
+ */
 function apply(update, scope) {
   const scrollX = window.scrollX;
   const scrollY = window.scrollY;
-  // The n-th partial of a name in the update replaces the n-th one of that name on the page.
-  const occurrences = new Map();
+  const inScope = (region) => !scope || scope === document || scope.contains(region.start);
+  const byName = new Map();
   for (const partial of update?.partials ?? []) {
-    const occurrence = occurrences.get(partial.name) ?? 0;
-    occurrences.set(partial.name, occurrence + 1);
-    const region = regions(scope).filter((candidate) => candidate.name === partial.name)[
-      occurrence
-    ];
-    if (!region) continue;
-    const range = rangeOf(region);
-    const before = controlsIn(range);
-    const active = document.activeElement;
-    const focused = [...before].find(([, control]) => control === active)?.[0];
-    const selection =
-      focused && typeof active.selectionStart === 'number'
-        ? [active.selectionStart, active.selectionEnd, active.selectionDirection]
-        : null;
-
-    const holder = document.createElement('template');
-    holder.innerHTML = partial.html;
-    const fresh = holder.content;
-    const after = controlsIn(fresh);
-    for (const [key, control] of before) {
-      const replacement = after.get(key);
-      // What the visitor typed or chose is kept; what the page itself holds (a hidden input,
-      // such as the id of the variant) comes from the server.
-      if (!replacement || replacement.type !== control.type) continue;
-      if (control.type === 'hidden' || control.type === 'file') continue;
-      if (control.type === 'checkbox' || control.type === 'radio') {
-        replacement.checked = control.checked;
-      } else {
-        replacement.value = control.value;
-      }
-    }
-    // Inserted where the region starts: when the end of a region of table rows sits in a
-    // `<tbody>`, the new rows come in their own `<tbody>` beside it, not inside it.
-    range.deleteContents();
-    range.insertNode(fresh);
-
-    if (focused) {
-      const replacement = controlsIn(rangeOf(region)).get(focused);
-      replacement?.focus({ preventScroll: true });
-      if (replacement && selection) {
-        try {
-          replacement.setSelectionRange(...selection);
-        } catch {
-          // Some input types have no selection.
-        }
-      }
+    if (!byName.has(partial.name)) byName.set(partial.name, []);
+    byName.get(partial.name).push(partial.html);
+  }
+  for (const [name, htmls] of byName) {
+    const count = regions().filter((region) => region.name === name).length;
+    for (let index = 0; index < Math.max(count, htmls.length); index++) {
+      // Found again each time: a swap can replace regions inside the one swapped.
+      const region = regions().filter((candidate) => candidate.name === name)[index];
+      if (!region || !inScope(region)) continue;
+      swap(region, htmls[index] ?? '');
     }
   }
   window.scrollTo(scrollX, scrollY);

@@ -111,30 +111,55 @@ fn preview_hint(error: &str) -> String {
 }
 
 /// The line of the first `{% block %}` call of a file, outside `doc`, `comment` and `raw`,
-/// where examples of calls are written.
+/// where examples of calls are written. The statements of `{% liquid %}` count too; what is
+/// inside `{{ }}` does not.
 fn block_call_line(source: &str) -> Option<usize> {
+    let line_at = |index: usize| source[..index].matches('\n').count() + 1;
     let mut quiet: Option<&str> = None;
-    let mut rest = source;
-    let mut offset = 0;
-    while let Some(open) = rest.find("{%") {
-        let tag_start = offset + open;
-        let after = &source[tag_start + 2..];
-        let close = after.find("%}")?;
-        let markup = after[..close].trim_start_matches('-').trim();
-        let name = markup.split_whitespace().next().unwrap_or_default();
-        match quiet {
-            Some(end) if name == end => quiet = None,
+    // Whether a statement opens a call, given the name of its tag; updates `quiet`.
+    let calls = |name: &str, quiet: &mut Option<&str>| -> bool {
+        match *quiet {
+            Some(end) if name == end => *quiet = None,
             Some(_) => {}
             None => match name {
-                "doc" => quiet = Some("enddoc"),
-                "comment" => quiet = Some("endcomment"),
-                "raw" => quiet = Some("endraw"),
-                "block" => return Some(source[..tag_start].matches('\n').count() + 1),
+                "doc" => *quiet = Some("enddoc"),
+                "comment" => *quiet = Some("endcomment"),
+                "raw" => *quiet = Some("endraw"),
+                "block" => return true,
                 _ => {}
             },
         }
-        offset = tag_start + 2 + close + 2;
-        rest = &source[offset..];
+        false
+    };
+    let mut position = 0;
+    while let Some(open) = source[position..].find('{') {
+        let start = position + open;
+        let after = &source[start + 1..];
+        if after.starts_with('{') && quiet.is_none() {
+            // An output: skipped whole, strings and all.
+            position = start + 2 + after[1..].find("}}").map_or(after.len() - 1, |end| end + 2);
+            continue;
+        }
+        if !after.starts_with('%') {
+            position = start + 1;
+            continue;
+        }
+        let close = after.find("%}")?;
+        let markup = after[1..close].trim_matches('-').trim();
+        let name = markup.split_whitespace().next().unwrap_or_default();
+        if name == "liquid" && quiet.is_none() {
+            let body_start = start + 2 + after[1..].find("liquid").unwrap_or(0) + "liquid".len();
+            for (offset, statement) in source[body_start..start + 1 + close].lines().enumerate() {
+                let word = statement.split_whitespace().next().unwrap_or_default();
+                if calls(word, &mut quiet) {
+                    return Some(line_at(body_start) + offset);
+                }
+            }
+            quiet = None;
+        } else if calls(name, &mut quiet) {
+            return Some(line_at(start));
+        }
+        position = start + 1 + close + 2;
     }
     None
 }
@@ -222,6 +247,20 @@ mod tests {
             Some(3)
         );
         assert_eq!(block_call_line("{% render 'block' %}"), None);
+        // An output that holds `{%` is not a tag.
+        assert_eq!(
+            block_call_line("{{ \"{% block 'x' %}\" }}\n{% comment %}{% endcomment %}"),
+            None
+        );
+        // A statement of `{% liquid %}`.
+        assert_eq!(
+            block_call_line("<p>\n{% liquid\n  assign a = 1\n  block 'a'\n  endblock\n%}"),
+            Some(4)
+        );
+        assert_eq!(
+            block_call_line("{% liquid\n  comment\n  block 'a'\n  endcomment\n%}"),
+            None
+        );
     }
 
     #[test]

@@ -56,11 +56,13 @@ struct BlockTag {
 
 impl Tag for BlockTag {
     fn render(&self, ctx: &mut Context, out: &mut String) -> Result<()> {
-        // Shopify allows the tag in layouts and templates only.
-        if let Some(file) = ctx.template_name.as_deref()
-            && !file.starts_with("layout/")
-            && !file.starts_with("templates/")
-        {
+        // Shopify allows the tag in layouts and templates only: not in a section, a snippet, a
+        // block, nor the Liquid of a setting (which has no file).
+        let allowed = ctx
+            .template_name
+            .as_deref()
+            .is_some_and(|file| file.starts_with("layout/") || file.starts_with("templates/"));
+        if !allowed {
             return Err(Error::standard(
                 "the block tag can only be used in layout/ and templates/ files",
             ));

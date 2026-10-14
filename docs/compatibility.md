@@ -103,8 +103,8 @@ company locations and company addresses.
   a parameter named after a setting of its schema also sets `block.settings`, the body does
   not. Arrays can be written in place and nested (`items: ['a', ['b', c]]`), not followed by a
   lookup (`['a'].first` is a syntax error). The output is not wrapped in a `shopify-block`
-  element. A call from a section, a snippet or a block is an error, as the reference says, and
-  `lsf check` reports it.
+  element. A call from a section, a snippet, a block or the Liquid of a setting is an error,
+  as the reference says, and `lsf check` reports it (in `{% liquid %}` too).
 - With `--preview liquid-july-26`, partials, `{% partial 'name' %}...{% endpartial %}`, and
   `@shopify/partial-rendering` (`fetch`, `apply`, `refresh`, `get`, `getAll`). Shopify has not
   published the markup and the requests of its own runtime yet, so `lsf` uses its own: the
@@ -112,8 +112,10 @@ company locations and company addresses.
   the runtime fetches the whole page and takes the regions out of it. A theme that only uses
   the documented JavaScript API works the same; one that reads the markup does not. A partial
   rendered several times (in a loop) is updated everywhere, the n-th of the response replacing
-  the n-th of the page; one around table rows works too. `apply()` keeps focus, selection,
-  the values typed or chosen in forms, and scroll; hidden inputs take the server's value;
+  the n-th of the page (counted over the whole page, also when `refresh(element)` updates only
+  those inside an element); regions the response has fewer of are emptied; one around table
+  rows works too. `apply()` keeps focus, selection, the values of form controls (hidden ones
+  included, as Shopify documents: a theme updates what the server changed) and scroll;
   scripts inside a region do not run again.
 - Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
   turn it on, and may still change.

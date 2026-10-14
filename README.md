@@ -356,7 +356,7 @@ what `lsf` does where Shopify has not said yet.
 
 | Option | What it does |
 |---|---|
-| `[paths]` | The files and the folders to format, from the current folder, else from the theme folder. Without any: the theme folder. In a folder, `node_modules`, `.git`, links to folders and what `.prettierignore` names are left out. A file named on its own is formatted if it is a `.liquid` file that `.prettierignore` does not name, as Prettier does: `lsf fmt $(git diff --name-only)` leaves the other files alone. |
+| `[paths]` | The files and the folders to format, from the current folder, else from the theme folder. Without any: the theme folder. In a folder, `node_modules`, `.git`, links to folders and what `.prettierignore` names are left out. A file named on its own is formatted if it is a `.liquid` file that `.prettierignore` does not name, as Prettier does: `lsf fmt $(git diff --name-only)` leaves the other files alone. The `.prettierignore` read is the nearest from the theme folder up, for every path. |
 | `--check` | Writes nothing. Lists the files that are not formatted, and fails (exit code 1) if there are any. |
 | `--stdin` | Reads a Liquid source from the standard input and prints it formatted. For an editor. It cannot go with `--check` or with paths. |
 | `--stdin-filepath <path>` | With `--stdin`: the file the source comes from, so that its configuration, its `overrides` and `.prettierignore` apply (an ignored file is printed as it is). |
@@ -371,8 +371,9 @@ These files are read: `.prettierrc` (JSON or YAML), `.prettierrc.json`, `.pretti
 configuration stops there for Prettier too.
 
 A file is replaced in one step, with its permissions: an interrupted run leaves no half-written
-template. A file that cannot be read or formatted is reported, the others are formatted all
-the same, and the command then fails with exit code 2.
+template, and a read-only file is not replaced. A file or a folder that cannot be read,
+written or formatted is reported, the others are formatted all the same, and the command
+then fails with exit code 2.
 
 | Prettier option | Default | What it changes |
 |---|---|---|

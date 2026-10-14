@@ -19,16 +19,21 @@ const CONFIG_FILES: [&str; 5] = [
 ];
 
 /// The configuration files Prettier reads and this command cannot: they are programs.
-const UNREADABLE_CONFIG_FILES: [&str; 9] = [
+const UNREADABLE_CONFIG_FILES: [&str; 14] = [
     ".prettierrc.js",
     ".prettierrc.mjs",
     ".prettierrc.cjs",
     ".prettierrc.ts",
+    ".prettierrc.mts",
+    ".prettierrc.cts",
     ".prettierrc.toml",
     ".prettierrc.json5",
     "prettier.config.js",
     "prettier.config.mjs",
     "prettier.config.cjs",
+    "prettier.config.ts",
+    "prettier.config.mts",
+    "prettier.config.cts",
 ];
 
 /// Every pattern `{a,b}` stands for.
@@ -618,21 +623,21 @@ impl Configs {
         if let Some(config) = self.by_directory.get(directory) {
             return Ok(config.clone());
         }
-        let mut unreadable_here = false;
-        for name in UNREADABLE_CONFIG_FILES {
-            let path = directory.join(name);
-            if path.is_file() {
-                unreadable_here = true;
+        let unreadable_here = UNREADABLE_CONFIG_FILES
+            .iter()
+            .map(|name| directory.join(name))
+            .find(|path| path.is_file());
+        // Prettier stops at the nearest configuration: one it cannot read here stops the search
+        // too, rather than a parent's applying instead. One it can read comes first.
+        let config = match Config::read(directory)? {
+            Some(config) => Some(Rc::new(config)),
+            None if unreadable_here.is_some() => {
+                let path = unreadable_here.unwrap_or_default();
                 if !self.unreadable.contains(&path) {
                     self.unreadable.push(path);
                 }
+                None
             }
-        }
-        // Prettier stops at the nearest configuration: one it cannot read here stops the search
-        // too, rather than a parent's applying instead.
-        let config = match Config::read(directory)? {
-            Some(config) => Some(Rc::new(config)),
-            None if unreadable_here => None,
             None => match directory.parent() {
                 Some(parent) => self.config_of(parent)?,
                 None => None,
@@ -813,6 +818,14 @@ mod tests {
             .unwrap();
         assert_eq!(options, Options::default());
         assert_eq!(configs.unreadable, [root.join("theme/prettier.config.js")]);
+        // Beside a configuration it can read, which comes first, it is not worth a warning.
+        fs::write(root.join("theme/.prettierrc"), r#"{ "printWidth": 20 }"#).unwrap();
+        let mut configs = Configs::default();
+        let options = configs
+            .options_for(&root.join("theme/sections/a.liquid"))
+            .unwrap();
+        assert_ne!(options, Options::default());
+        assert!(configs.unreadable.is_empty());
         let _ = fs::remove_dir_all(&root);
     }
 }

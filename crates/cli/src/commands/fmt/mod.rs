@@ -47,15 +47,22 @@ fn parse_option(option: &str) -> Result<(&str, serde_json::Value), String> {
     Ok((name, value))
 }
 
-/// The Liquid files under `directory`, in the order of their names. Links to directories are
-/// not followed, as Prettier does not follow them.
+/// The Liquid files under `directory`, in the order of their names, and the directories that
+/// could not be read. Links to directories are not followed, as Prettier does not follow them.
 fn liquid_files(
     directory: &Path,
     ignore: Option<&IgnoreFile>,
     found: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    let mut entries: Vec<(PathBuf, fs::FileType)> = fs::read_dir(directory)
-        .map_err(|error| format!("{}: {error}", directory.display()))?
+    unreadable: &mut Vec<String>,
+) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            unreadable.push(format!("{}: {error}", directory.display()));
+            return;
+        }
+    };
+    let mut entries: Vec<(PathBuf, fs::FileType)> = entries
         .flatten()
         .filter_map(|entry| Some((entry.path(), entry.file_type().ok()?)))
         .collect();
@@ -66,25 +73,43 @@ fn liquid_files(
         if kind.is_symlink() && path.is_dir() {
             continue;
         }
-        if ignore.is_some_and(|ignore| ignore.ignores(&path, is_directory)) {
+        // A file is also left out when a directory above it is, the one walked from included.
+        let ignored = ignore.is_some_and(|ignore| {
+            if is_directory {
+                ignore.ignores(&path, true)
+            } else {
+                ignore.ignores_file(&path)
+            }
+        });
+        if ignored {
             continue;
         }
         if is_directory {
             if name != "node_modules" && name != ".git" {
-                liquid_files(&path, ignore, found)?;
+                liquid_files(&path, ignore, found, unreadable);
             }
         } else if name.ends_with(".liquid") {
             found.push(path);
         }
     }
-    Ok(())
 }
 
 /// Replaces a file without a moment where it is half written: the new content goes to a file
 /// beside it, which then takes its place with its permissions. A link is followed, so that the
 /// file it points to is the one replaced.
 fn write_atomically(path: &Path, content: &str) -> std::io::Result<()> {
-    let target = fs::canonicalize(path)?;
+    let target = if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    // A read-only file stays as it is, as with a write in place.
+    if fs::metadata(&target)?.permissions().readonly() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the file is read-only",
+        ));
+    }
     let directory = target.parent().unwrap_or(Path::new("."));
     let name = target.file_name().unwrap_or_default().to_string_lossy();
     let temporary = directory.join(format!(".{name}.lsf-fmt-{}", std::process::id()));
@@ -150,13 +175,16 @@ fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
     // Configuration files are looked for from where a file is, whatever the path it was named
     // with.
     let absolute = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    // Whether `.prettierignore` leaves a file out.
-    let ignored = |formatter: &Formatter, file: &Path| {
-        formatter.read_config
-            && file
-                .parent()
-                .and_then(IgnoreFile::find)
-                .is_some_and(|ignore| ignore.ignores_file(file))
+    // One `.prettierignore`, as Prettier reads one: the nearest from the theme up. It applies to
+    // the files walked and to the files named alike.
+    let ignore = formatter
+        .read_config
+        .then(|| IgnoreFile::find(&absolute(theme)))
+        .flatten();
+    let ignored = |file: &Path| {
+        ignore
+            .as_ref()
+            .is_some_and(|ignore| ignore.ignores_file(file))
     };
 
     if args.stdin {
@@ -170,7 +198,7 @@ fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
                 .clone()
                 .unwrap_or_else(|| theme.join("stdin.liquid")),
         );
-        if ignored(&formatter, &file) {
+        if ignored(&file) {
             print!("{source}");
             return Ok(ExitCode::SUCCESS);
         }
@@ -184,7 +212,8 @@ fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
     } else {
         args.paths
     };
-    let mut files = Vec::new();
+    let mut files: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut unreadable = Vec::new();
     for root in &roots {
         // A path is read from the current directory, else from the theme's.
         let path = if root.exists() || root.is_absolute() {
@@ -193,12 +222,13 @@ fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
             theme.join(root)
         };
         if path.is_dir() {
-            let ignore = formatter
-                .read_config
-                .then(|| IgnoreFile::find(&absolute(&path)))
-                .flatten();
             let mut found = Vec::new();
-            liquid_files(&absolute(&path), ignore.as_ref(), &mut found)?;
+            liquid_files(
+                &absolute(&path),
+                ignore.as_ref(),
+                &mut found,
+                &mut unreadable,
+            );
             // Named as they were asked for: relative to the directory given.
             let base = absolute(&path);
             files.extend(found.into_iter().map(|file| {
@@ -213,7 +243,7 @@ fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
             // what `.prettierignore` names is left alone, as Prettier leaves it.
             if !root.to_string_lossy().ends_with(".liquid") {
                 eprintln!("{}: skipped, not a Liquid file", root.display());
-            } else if !ignored(&formatter, &file) {
+            } else if !ignored(&file) {
                 files.push((file, root.clone()));
             }
         } else {
@@ -221,15 +251,25 @@ fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
         }
     }
 
-    // A file that cannot be read or written is reported, and the others are formatted all the
-    // same.
+    // A file named twice, or found from two paths, is formatted once.
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|(file, _)| seen.insert(file.clone()));
+
+    // A file or a directory that cannot be read, written or formatted is reported, and the
+    // others are formatted all the same.
     let mut changed = 0;
-    let mut failed = 0;
+    let mut failed = unreadable.len();
+    for problem in &unreadable {
+        eprintln!("error: {problem}");
+    }
     for (path, shown) in &files {
         let result = (|| -> Result<bool, String> {
             let source = fs::read_to_string(path).map_err(|error| error.to_string())?;
             let options = formatter.options_for(path)?;
-            let formatted = lsf_fmt::format(&source, &options);
+            let formatted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                lsf_fmt::format(&source, &options)
+            }))
+            .map_err(|_| "the formatter failed on this file".to_string())?;
             if formatted == source {
                 return Ok(false);
             }
@@ -477,6 +517,24 @@ mod tests {
     }
 
     #[test]
+    fn an_ignored_directory_is_ignored_however_it_is_named() {
+        let theme = Scratch::new("ignored-dir");
+        theme.write(".prettierignore", "vendor/\n");
+        theme.write("vendor/b.liquid", "{{b}}");
+        theme.write("vendor/sub/c.liquid", "{{c}}");
+        theme.write("a.liquid", "{{a}}");
+        let paths = [
+            theme.0.join("vendor"),
+            theme.0.join("a.liquid"),
+            theme.0.join("a.liquid"),
+        ];
+        assert_eq!(run(&theme.0, args_for(&paths)).unwrap(), ExitCode::SUCCESS);
+        assert_eq!(theme.read("vendor/b.liquid"), "{{b}}");
+        assert_eq!(theme.read("vendor/sub/c.liquid"), "{{c}}");
+        assert_eq!(theme.read("a.liquid"), "{{ a }}\n");
+    }
+
+    #[test]
     fn a_file_that_fails_does_not_stop_the_others() {
         let theme = Scratch::new("failing");
         theme.write("a.liquid", "{{a}}");
@@ -531,6 +589,27 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o640);
+        // A read-only file is left as it is, and so is a directory that cannot be read; the
+        // others are formatted.
+        theme.write("sections/b.liquid", "{{b}}");
+        fs::set_permissions(
+            theme.0.join("sections/b.liquid"),
+            fs::Permissions::from_mode(0o444),
+        )
+        .unwrap();
+        theme.write("locked/c.liquid", "{{c}}");
+        fs::set_permissions(theme.0.join("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+        theme.write("sections/d.liquid", "{{d}}");
+        assert_eq!(run(&theme.0, args(false, &[])).unwrap(), ExitCode::from(2));
+        fs::set_permissions(theme.0.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(theme.read("sections/b.liquid"), "{{b}}");
+        assert_eq!(theme.read("sections/d.liquid"), "{{ d }}\n");
+        fs::set_permissions(
+            theme.0.join("sections/b.liquid"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+
         let leftovers: Vec<_> = fs::read_dir(theme.0.join("sections"))
             .unwrap()
             .flatten()

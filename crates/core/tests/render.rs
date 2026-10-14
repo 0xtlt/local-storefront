@@ -1524,3 +1524,39 @@ fn an_article_handle_that_two_blogs_have_names_neither() {
     );
     assert_eq!(output, "[]/blogs/news/how-to-care-for-linen");
 }
+
+#[test]
+fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
+    let fixture = theme_of(
+        "called-block-setting",
+        &[lsf_core::Preview::LiquidJuly26],
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><body>{{ content_for_layout }}</body></html>",
+            ),
+            (
+                "templates/index.json",
+                r#"{"sections": {"c": {"type": "custom", "settings": {"code": "{% block 'b' %}{% endblock %}"}}}, "order": ["c"]}"#,
+            ),
+            (
+                "sections/custom.liquid",
+                "{{ section.settings.code }}{% schema %}{\"name\": \"Custom\", \"settings\": [{\"type\": \"liquid\", \"id\": \"code\", \"label\": \"Code\"}]}{% endschema %}",
+            ),
+            ("blocks/b.liquid", "<b>called</b>"),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert!(
+        !rendered.body.contains("<b>called</b>"),
+        "{}",
+        rendered.body
+    );
+    assert!(
+        rendered
+            .body
+            .contains("the block tag can only be used in layout/ and templates/ files"),
+        "{}",
+        rendered.body
+    );
+}
