@@ -3,7 +3,7 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.1.15 - 2026-10-14
 
 ### Added
 
