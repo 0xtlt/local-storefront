@@ -295,6 +295,12 @@ fn standard_event_data(input: &Value, args: &FilterArgs, ctx: &Context) -> Resul
     Ok(Value::from(to_script_safe_json(&Json::Object(data))))
 }
 
+/// Keeps the disclosures that apply to the buyer's country. Shopify keeps them all when it
+/// cannot tell the country, and the local storefront never can: the list comes back whole.
+fn applicable_disclosures(input: &Value, _args: &FilterArgs, _ctx: &Context) -> Result<Value> {
+    Ok(input.clone())
+}
+
 pub(super) fn register(env: &mut Environment) {
     env.register_filter("json", json_filter);
     env.register_filter("handleize", handleize);
@@ -310,6 +316,7 @@ pub(super) fn register(env: &mut Environment) {
     env.register_filter("format_code", format_code);
     env.register_filter("structured_data", structured_data);
     env.register_filter("standard_event_data", standard_event_data);
+    env.register_filter("applicable_disclosures", applicable_disclosures);
 }
 
 #[cfg(test)]

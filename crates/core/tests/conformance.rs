@@ -120,6 +120,53 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// The names Shopify's machine-readable reference lists in `data/<kind>.json`.
+fn documented_names(kind: &str) -> Option<Vec<String>> {
+    let path = workspace_root().join(format!(".cache/theme-liquid-docs/data/{kind}.json"));
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let mut names: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| entry["name"].as_str().map(str::to_string))
+        .collect();
+    names.dedup();
+    Some(names)
+}
+
+/// Tags Shopify documents that lsf does not have yet. Remove a name when it is implemented.
+const TAGS_NOT_YET: [&str; 2] = ["block", "partial"];
+
+#[test]
+fn every_documented_filter_and_tag_exists() {
+    let (Some(filters), Some(tags)) = (documented_names("filters"), documented_names("tags"))
+    else {
+        eprintln!("skipped: run `mise run docs:fetch` to download Shopify's reference");
+        return;
+    };
+    let env = lsf_core::environment();
+    let missing_filters: Vec<&String> = filters
+        .iter()
+        .filter(|name| env.filter(name).is_none())
+        .collect();
+    // `else` is a part of `if`, `unless`, `case` and `for`, and the parser reads `liquid`
+    // itself: neither is a registered tag.
+    let missing_tags: Vec<&String> = tags
+        .iter()
+        .filter(|name| !matches!(name.as_str(), "else" | "liquid") && env.tag(name).is_none())
+        .filter(|name| !TAGS_NOT_YET.contains(&name.as_str()))
+        .collect();
+    assert!(
+        missing_filters.is_empty() && missing_tags.is_empty(),
+        "Shopify documents filters {missing_filters:?} and tags {missing_tags:?} that lsf lacks"
+    );
+    for name in TAGS_NOT_YET {
+        assert!(
+            env.tag(name).is_none(),
+            "`{name}` is implemented: remove it from TAGS_NOT_YET"
+        );
+    }
+}
+
 #[test]
 fn matches_shopify_documentation_examples() {
     let docs = workspace_root().join(".cache/shopify-docs");

@@ -12,6 +12,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   or by its handle alone. Every measurement type (`distance`, `temperature`, `duration`...)
   has a `type`, a `value` and a `unit`, and `metafield_tag` prints it, where only `weight`,
   `volume` and `dimension` did. A `money` has its `currency`.
+- `request.locale.direction` (and that of every locale) is `rtl` for Arabic, Hebrew, Persian
+  and the other languages written right to left. Horizon sets `dir` on `<html>` from it.
+- The `applicable_disclosures` filter keeps every disclosure, as Shopify does when it cannot
+  tell the buyer's country. It was an unknown filter that printed a warning.
 
 ## 0.1.14 - 2026-10-06
 

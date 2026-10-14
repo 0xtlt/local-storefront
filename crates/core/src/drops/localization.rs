@@ -15,10 +15,22 @@ pub fn currency_value(code: &str) -> Value {
     ])
 }
 
+/// `rtl` for the languages written right to left, `ltr` for the others.
+fn direction(iso_code: &str) -> &'static str {
+    let language = iso_code.split(['-', '_']).next().unwrap_or_default();
+    match language.to_ascii_lowercase().as_str() {
+        "ar" | "arc" | "ckb" | "dv" | "fa" | "he" | "ku" | "ps" | "sd" | "ug" | "ur" | "yi" => {
+            "rtl"
+        }
+        _ => "ltr",
+    }
+}
+
 pub fn language_value(site: &SiteRef, language: &Language) -> Value {
     let _ = site;
     hash([
         ("iso_code", Value::from(&language.iso_code)),
+        ("direction", Value::str(direction(&language.iso_code))),
         ("name", Value::from(&language.name)),
         ("endonym_name", Value::from(&language.endonym_name)),
         ("primary", Value::Bool(language.primary)),
@@ -91,5 +103,19 @@ impl Object for LocalizationDrop {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::direction;
+
+    #[test]
+    fn languages_written_right_to_left_say_so() {
+        assert_eq!(direction("ar"), "rtl");
+        assert_eq!(direction("he"), "rtl");
+        assert_eq!(direction("fa-IR"), "rtl");
+        assert_eq!(direction("en"), "ltr");
+        assert_eq!(direction("pt-BR"), "ltr");
     }
 }
