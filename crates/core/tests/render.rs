@@ -1125,6 +1125,7 @@ fn a_template_composes_its_page_from_blocks() {
                 "{% assign tag = tag | default: 'section' %}\
                  <{{ tag }} data-align=\"{{ block.settings.alignment }}\" data-also=\"{{ alignment }}\" \
                  data-items=\"{{ items | join: '+' }}\" data-greeting=\"{{ greeting }}\">{{ content }}</{{ tag }}>\
+                 {% if block.content != content %}block.content differs{% endif %}\
                  {% schema %}{\"name\": \"Box\", \"settings\": [{\"type\": \"select\", \"id\": \"alignment\", \
                  \"label\": \"Alignment\", \"options\": [{\"value\": \"left\", \"label\": \"Left\"}, \
                  {\"value\": \"center\", \"label\": \"Center\"}], \"default\": \"left\"}]}{% endschema %}",

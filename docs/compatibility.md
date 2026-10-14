@@ -88,9 +88,12 @@ company locations and company addresses.
   and `{% content_for 'block' %}`, `closest.<resource>`.
 - Blocks called from a template or a layout, as in Shopify's Skeleton theme:
   `{% block 'name', parameter: value %}content{% endblock %}`. The block sees its parameters
-  and `content`, not the caller's variables; a parameter named after a setting of its schema
+  and its body, as `content` (the Liquid reference) or `block.content` (the developer preview's
+  guide), not the caller's variables; a parameter named after a setting of its schema
   also sets `block.settings`; arrays can be written in place (`items: ['a', 'b']`). Its
   output is not wrapped in a `shopify-block` element.
+- Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
+  turn it on, and may still change.
 - Partials, `{% partial 'name' %}...{% endpartial %}`, and `@shopify/partial-rendering`
   (`fetch`, `apply`, `refresh`, `get`, `getAll`). Shopify has not published the markup and the
   requests of its own runtime yet, so `lsf` uses its own: the region sits between

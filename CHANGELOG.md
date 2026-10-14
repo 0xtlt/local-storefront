@@ -9,7 +9,7 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 - **`{% block 'name', parameter: value %}content{% endblock %}`** renders `blocks/name.liquid`
   from a template or a layout, as in Shopify's Skeleton theme. The block sees its parameters
-  and `content`; a parameter named after a setting of its schema sets `block.settings`;
+  and its body, as `content` or `block.content`; a parameter named after a setting of its schema sets `block.settings`;
   arrays can be written in place. Every page of Skeleton stopped at `Unknown tag 'block'`.
 - **`{% partial 'name' %}`** and **`@shopify/partial-rendering`**: a theme that uses partials
   gets an import map for the module, and `partials.refresh('name')` swaps in the region from

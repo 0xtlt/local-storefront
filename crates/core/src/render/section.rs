@@ -77,6 +77,9 @@ pub struct BlockDrop {
     pub id: String,
     pub kind: String,
     pub settings: Value,
+    /// The body of a `{% block %}` call. The Liquid reference reads it as `content`, the
+    /// developer preview's guide as `block.content`: both work.
+    pub content: Option<Value>,
 }
 
 impl Object for BlockDrop {
@@ -89,6 +92,7 @@ impl Object for BlockDrop {
             "id" => Value::from(&self.id),
             "type" => Value::from(&self.kind),
             "settings" => self.settings.clone(),
+            "content" => self.content.clone()?,
             // Only the theme editor needs these attributes; the storefront gets none.
             "shopify_attributes" => Value::empty_string(),
             _ => return None,
@@ -201,6 +205,7 @@ fn section_blocks(
                     &block.settings,
                     &[("closest", closest_value.clone())],
                 ),
+                content: None,
             })
         })
         .collect();
@@ -329,6 +334,7 @@ pub fn render_block(
                 ("section", container.section.clone()),
             ],
         ),
+        content: None,
     });
 
     let entered = state.enter_block(&id, key, &instance.kind)?;
@@ -420,6 +426,10 @@ pub fn render_called_block(
         id: id.clone(),
         kind: kind.to_string(),
         settings: Value::hash(settings),
+        content: parameters
+            .iter()
+            .find(|(name, _)| name == "content")
+            .map(|(_, value)| value.clone()),
     });
 
     let entered = state.enter_block(&id, &key, kind)?;
