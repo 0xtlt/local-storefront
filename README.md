@@ -257,6 +257,9 @@ The storefront is never locked: nothing redirects to that page.
   would see on the store.
 - **Shopify's scripts.** Pages have the `Shopify` JavaScript object, `Shopify.actions`,
   `Shopify.loadFeatures`, the Customer Privacy API and `ShopifyAnalytics.meta`.
+- **Block-first themes.** `{% block %}` and `{% partial %}` work, with
+  `@shopify/partial-rendering` to refresh a partial: Shopify's Skeleton theme renders, and
+  its partial refreshes.
 - **Render times and costs.** Every response says how long the server took. `lsf profile`
   shows which section, block or snippet took the longest, and what the page would cost
   Shopify, where loading a product or a metafield is not free.

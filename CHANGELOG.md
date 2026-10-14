@@ -3,6 +3,19 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **`{% block 'name', parameter: value %}content{% endblock %}`** renders `blocks/name.liquid`
+  from a template or a layout, as in Shopify's Skeleton theme. The block sees its parameters
+  and `content`; a parameter named after a setting of its schema sets `block.settings`;
+  arrays can be written in place. Every page of Skeleton stopped at `Unknown tag 'block'`.
+- **`{% partial 'name' %}`** and **`@shopify/partial-rendering`**: a theme that uses partials
+  gets an import map for the module, and `partials.refresh('name')` swaps in the region from
+  the server, keeping focus, form values and scroll. Shopify has not published its own
+  markup yet: lsf marks a partial with HTML comments.
+
 ## 0.1.14 - 2026-10-06
 
 ### Fixed

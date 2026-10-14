@@ -1,6 +1,7 @@
 //! What Shopify adds to every storefront page around the theme's own markup: the
 //! `content_for_header` scripts (the `Shopify` JavaScript global, the feature loader), the
-//! analytics objects before `</head>`, and the standard actions runtime before `</body>`.
+//! analytics objects before `</head>`, and the standard actions runtime before `</body>`. A
+//! theme that uses `{% partial %}` also gets an import map for `@shopify/partial-rendering`.
 //!
 //! The markup follows what a Shopify storefront serves, with every URL pointing at the local
 //! server. Scripts that only talk to Shopify's own services (analytics collection, Shop Pay,
@@ -20,6 +21,7 @@ use crate::util::short_hash;
 
 const LOAD_FEATURES: &str = include_str!("../../assets/platform/load-features.js");
 const STANDARD_ACTIONS: &str = include_str!("../../assets/platform/standard-actions.js");
+const PARTIAL_RENDERING: &str = include_str!("../../assets/platform/partial-rendering.js");
 
 /// `https://cdn.shopify.com/storefront/standard-actions.js` on Shopify: a fixed URL.
 const STANDARD_ACTIONS_PATH: &str = "storefront/standard-actions.js";
@@ -37,6 +39,36 @@ pub fn load_features_path() -> &'static str {
     })
 }
 
+/// Where `@shopify/partial-rendering` is served from, under `/cdn/`, with a hash of the
+/// content in the name. Shopify has not published where its own copy will live.
+pub fn partial_rendering_path() -> &'static str {
+    static PATH: OnceLock<String> = OnceLock::new();
+    PATH.get_or_init(|| {
+        format!(
+            "shopifycloud/storefront/assets/partial-rendering-{}.js",
+            &short_hash(PARTIAL_RENDERING)[..8]
+        )
+    })
+}
+
+/// Whether a Liquid file of the theme has a `{% partial %}` region.
+fn uses_partials(theme: &Theme) -> bool {
+    theme.cached_version("uses_partials", || {
+        let files = theme.files();
+        let found = ["layout", "templates", "sections", "blocks", "snippets"]
+            .iter()
+            .any(|directory| {
+                files.list(directory).iter().any(|name| {
+                    name.ends_with(".liquid")
+                        && files
+                            .read(&format!("{directory}/{name}"))
+                            .is_some_and(|source| source.contains("endpartial"))
+                })
+            });
+        u64::from(found)
+    }) == 1
+}
+
 /// A script of the platform, served from the local CDN.
 pub struct PlatformAsset {
     pub content: &'static str,
@@ -49,6 +81,11 @@ pub fn asset(path: &str) -> Option<PlatformAsset> {
     if path == load_features_path() {
         Some(PlatformAsset {
             content: LOAD_FEATURES,
+            versioned: true,
+        })
+    } else if path == partial_rendering_path() {
+        Some(PlatformAsset {
+            content: PARTIAL_RENDERING,
             versioned: true,
         })
     } else if path == STANDARD_ACTIONS_PATH {
@@ -222,6 +259,15 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
     };
     let mut out: Vec<String> = Vec::new();
 
+    // Before anything that could import it.
+    if uses_partials(&site.theme) {
+        let imports = json!({
+            "imports": {
+                "@shopify/partial-rendering": format!("{cdn}/cdn/{}", partial_rendering_path()),
+            }
+        });
+        out.push(script("type=\"importmap\"", &imports.to_string()));
+    }
     out.push(script("", &mark("start")));
     out.push(format!(
         "<meta id=\"shopify-digital-wallet\" name=\"shopify-digital-wallet\" content=\"/{}/digital_wallets/dialog\">",

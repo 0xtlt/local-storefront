@@ -1,9 +1,11 @@
 //! Shopify's theme tags: `section`, `sections`, `schema`, `style`, `stylesheet`, `javascript`,
-//! `layout`, `content_for`, `form` and `paginate`.
+//! `layout`, `content_for`, `block`, `partial`, `form` and `paginate`.
 
+mod block;
 mod content_for;
 mod form;
 mod paginate;
+mod partial;
 mod section;
 mod simple;
 
@@ -23,6 +25,8 @@ pub fn register(env: &mut Environment) {
     env.register_tag("layout", simple::parse_layout);
     env.register_tag("render", simple::parse_render);
     env.register_tag("content_for", content_for::parse);
+    env.register_tag("block", block::parse);
+    env.register_tag("partial", partial::parse);
     env.register_tag("form", form::parse);
     env.register_tag("paginate", paginate::parse);
 }
