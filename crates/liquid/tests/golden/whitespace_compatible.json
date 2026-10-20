@@ -294,6 +294,978 @@
       "parse": {
         "bug_compatible_whitespace_trimming": true
       }
+    },
+    {
+      "line": 36,
+      "template": "{% capture id -%}\n    field_{{ a }}_{{ b }}\n  {%- endcapture %}[{{ id }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[field__\n]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 37,
+      "template": "{% capture id %}x {{ 'y' }} {%- endcapture %}[{{ id }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[x y ]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 38,
+      "template": "{% capture id %}x {{ 'y' }}\n {%- endcapture -%}\n[{{ id }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[x y\n]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 39,
+      "template": "{% capture id %}x text {%- endcapture %}[{{ id }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[x text]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 40,
+      "template": "{% capture id %}{% assign q = 1 %} {{ q }}  {%- endcapture %}[{{ id }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[ 1 ]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 41,
+      "template": "a {{ 'b' }}  {%- comment %} c {% endcomment %} d",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b  d",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 42,
+      "template": "a {% comment %} c {{ 'x' }}  {%- endcomment %} d",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a  d",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 43,
+      "template": "a {% comment %} c {{ 'x' }}  {% endcomment -%}  d",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a d",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 44,
+      "template": "{% if true %}a {{ 'b' }}  {%- endif %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 45,
+      "template": "{% if true %}a {{ 'b' }}  {%- else %}c{% endif %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 46,
+      "template": "{% if false %}c{% else %}a {{ 'b' }}  {%- endif %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 47,
+      "template": "{% if false %}a{% elsif true %}b {{ 'c' }}  {%- else %}d{% endif %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "b c |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 48,
+      "template": "{% unless false %}a {{ 'b' }}  {%- endunless %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 49,
+      "template": "{% for i in (1..2) %}{{ i }} {{ 'x' }}  {%- endfor %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1 x 2 x |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 50,
+      "template": "{% for i in (1..2) %}{{ i }} {{ 'x' }}  {%- else %}e{% endfor %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1 x 2 x |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 51,
+      "template": "{% for i in (1..0) %}a{% else %}{{ 'e' }}  {%- endfor %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "e |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 52,
+      "template": "{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- when 2 %}c{% endcase %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 53,
+      "template": "{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- else %}c{% endcase %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 54,
+      "template": "{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- endcase %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 55,
+      "template": "{% case 1 %} a {{ 'b' }} {%- when 1 %}c{% endcase %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "c|",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 56,
+      "template": "{% raw %}a {{ 'b' }}  {%- endraw %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a {{ 'b' }}  |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 57,
+      "template": "{% raw %}a  {%- endraw %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a  |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 58,
+      "template": "{% raw %}a  {% endraw -%}  b",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a  b",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 59,
+      "template": "a {{ 'b' }}  {{- 'c' }}  {{ 'd' -}}  e",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b c  de",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 60,
+      "template": "a {{ 'b' -}}  {{- 'c' -}}  {{- 'd' }}  e",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a bcd  e",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 61,
+      "template": "a {{ 'b' }}  {%- assign x = 1 %}  c",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b   c",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 62,
+      "template": "a {{ 'b' }}  {%- if true -%}  c  {%- endif -%}  d",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b cd",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 63,
+      "template": "a {% assign x = 1 -%}  {{ 'b' }}  {%- assign y = 2 %}  c",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a b   c",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 64,
+      "template": "{% if true -%} {{ 'a' }} {%- endif %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 65,
+      "template": "{% for i in (1..2) -%} {{ i }} {%- endfor %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "1 2 |",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 66,
+      "template": "{% capture c -%} {{ 'a' }} {%- endcapture %}[{{ c }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[a ]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 67,
+      "template": "{% capture c %} {{ 'a' }} {% endcapture %}[{{ c }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[ a ]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 68,
+      "template": "{% capture c %}a{{ 'b' }}\n\t {%- endcapture %}[{{ c }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[ab\n]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 69,
+      "template": "{% capture c %}a{{ 'b' }}\n\t {%- endcapture -%}\n\t [{{ c }}]",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "[ab\n]",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 70,
+      "template": "{% comment %}{{ 'a' }} {%- endcomment %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "|",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
+    },
+    {
+      "line": 71,
+      "template": "{% liquid\n capture c\n echo 'a'\n endcapture\n echo c %}|",
+      "data": {
+        "groups": [
+          {
+            "agent": "User-agent: *",
+            "rules": [
+              "Disallow: /a",
+              "Disallow: /b"
+            ],
+            "sitemap": "Sitemap: /sitemap.xml"
+          },
+          {
+            "agent": "User-agent: bot",
+            "rules": [
+              "Disallow: /"
+            ]
+          }
+        ]
+      },
+      "partials": {},
+      "expected": "a|",
+      "parse": {
+        "bug_compatible_whitespace_trimming": true
+      }
     }
   ]
 }

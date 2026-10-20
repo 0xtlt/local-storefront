@@ -280,6 +280,258 @@
       "data": {},
       "partials": {},
       "expected": "ab"
+    },
+    {
+      "line": 43,
+      "template": "{% capture id -%}\n    field_{{ a }}_{{ b }}\n  {%- endcapture %}[{{ id }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[field__]"
+    },
+    {
+      "line": 44,
+      "template": "{% capture id %}x {{ 'y' }} {%- endcapture %}[{{ id }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[x y]"
+    },
+    {
+      "line": 45,
+      "template": "{% capture id %}x {{ 'y' }}\n {%- endcapture -%}\n[{{ id }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[x y]"
+    },
+    {
+      "line": 46,
+      "template": "{% capture id %}x text {%- endcapture %}[{{ id }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[x text]"
+    },
+    {
+      "line": 47,
+      "template": "{% capture id %}{% assign q = 1 %} {{ q }}  {%- endcapture %}[{{ id }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[ 1]"
+    },
+    {
+      "line": 48,
+      "template": "a {{ 'b' }}  {%- comment %} c {% endcomment %} d",
+      "data": {},
+      "partials": {},
+      "expected": "a b d"
+    },
+    {
+      "line": 49,
+      "template": "a {% comment %} c {{ 'x' }}  {%- endcomment %} d",
+      "data": {},
+      "partials": {},
+      "expected": "a  d"
+    },
+    {
+      "line": 50,
+      "template": "a {% comment %} c {{ 'x' }}  {% endcomment -%}  d",
+      "data": {},
+      "partials": {},
+      "expected": "a d"
+    },
+    {
+      "line": 51,
+      "template": "{% if true %}a {{ 'b' }}  {%- endif %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a b|"
+    },
+    {
+      "line": 52,
+      "template": "{% if true %}a {{ 'b' }}  {%- else %}c{% endif %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a b|"
+    },
+    {
+      "line": 53,
+      "template": "{% if false %}c{% else %}a {{ 'b' }}  {%- endif %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a b|"
+    },
+    {
+      "line": 54,
+      "template": "{% if false %}a{% elsif true %}b {{ 'c' }}  {%- else %}d{% endif %}|",
+      "data": {},
+      "partials": {},
+      "expected": "b c|"
+    },
+    {
+      "line": 55,
+      "template": "{% unless false %}a {{ 'b' }}  {%- endunless %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a b|"
+    },
+    {
+      "line": 56,
+      "template": "{% for i in (1..2) %}{{ i }} {{ 'x' }}  {%- endfor %}|",
+      "data": {},
+      "partials": {},
+      "expected": "1 x2 x|"
+    },
+    {
+      "line": 57,
+      "template": "{% for i in (1..2) %}{{ i }} {{ 'x' }}  {%- else %}e{% endfor %}|",
+      "data": {},
+      "partials": {},
+      "expected": "1 x2 x|"
+    },
+    {
+      "line": 58,
+      "template": "{% for i in (1..0) %}a{% else %}{{ 'e' }}  {%- endfor %}|",
+      "data": {},
+      "partials": {},
+      "expected": "e|"
+    },
+    {
+      "line": 59,
+      "template": "{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- when 2 %}c{% endcase %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a b|"
+    },
+    {
+      "line": 60,
+      "template": "{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- else %}c{% endcase %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a b|"
+    },
+    {
+      "line": 61,
+      "template": "{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- endcase %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a b|"
+    },
+    {
+      "line": 62,
+      "template": "{% case 1 %} a {{ 'b' }} {%- when 1 %}c{% endcase %}|",
+      "data": {},
+      "partials": {},
+      "expected": "c|"
+    },
+    {
+      "line": 63,
+      "template": "{% raw %}a {{ 'b' }}  {%- endraw %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a {{ 'b' }}  |"
+    },
+    {
+      "line": 64,
+      "template": "{% raw %}a  {%- endraw %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a  |"
+    },
+    {
+      "line": 65,
+      "template": "{% raw %}a  {% endraw -%}  b",
+      "data": {},
+      "partials": {},
+      "expected": "a  b"
+    },
+    {
+      "line": 66,
+      "template": "a {{ 'b' }}  {{- 'c' }}  {{ 'd' -}}  e",
+      "data": {},
+      "partials": {},
+      "expected": "a bc  de"
+    },
+    {
+      "line": 67,
+      "template": "a {{ 'b' -}}  {{- 'c' -}}  {{- 'd' }}  e",
+      "data": {},
+      "partials": {},
+      "expected": "a bcd  e"
+    },
+    {
+      "line": 68,
+      "template": "a {{ 'b' }}  {%- assign x = 1 %}  c",
+      "data": {},
+      "partials": {},
+      "expected": "a b  c"
+    },
+    {
+      "line": 69,
+      "template": "a {{ 'b' }}  {%- if true -%}  c  {%- endif -%}  d",
+      "data": {},
+      "partials": {},
+      "expected": "a bcd"
+    },
+    {
+      "line": 70,
+      "template": "a {% assign x = 1 -%}  {{ 'b' }}  {%- assign y = 2 %}  c",
+      "data": {},
+      "partials": {},
+      "expected": "a b  c"
+    },
+    {
+      "line": 71,
+      "template": "{% if true -%} {{ 'a' }} {%- endif %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a|"
+    },
+    {
+      "line": 72,
+      "template": "{% for i in (1..2) -%} {{ i }} {%- endfor %}|",
+      "data": {},
+      "partials": {},
+      "expected": "12|"
+    },
+    {
+      "line": 73,
+      "template": "{% capture c -%} {{ 'a' }} {%- endcapture %}[{{ c }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[a]"
+    },
+    {
+      "line": 74,
+      "template": "{% capture c %} {{ 'a' }} {% endcapture %}[{{ c }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[ a ]"
+    },
+    {
+      "line": 75,
+      "template": "{% capture c %}a{{ 'b' }}\n\t {%- endcapture %}[{{ c }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[ab]"
+    },
+    {
+      "line": 76,
+      "template": "{% capture c %}a{{ 'b' }}\n\t {%- endcapture -%}\n\t [{{ c }}]",
+      "data": {},
+      "partials": {},
+      "expected": "[ab]"
+    },
+    {
+      "line": 77,
+      "template": "{% comment %}{{ 'a' }} {%- endcomment %}|",
+      "data": {},
+      "partials": {},
+      "expected": "|"
+    },
+    {
+      "line": 78,
+      "template": "{% liquid\n capture c\n echo 'a'\n endcapture\n echo c %}|",
+      "data": {},
+      "partials": {},
+      "expected": "a|"
     }
   ]
 }
