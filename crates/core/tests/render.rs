@@ -1630,3 +1630,97 @@ fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
         rendered.body
     );
 }
+
+/// A theme in a temporary directory rendered against the demo store plus `overlay` (store data).
+fn theme_with_data(name: &str, overlay: &serde_json::Value, files: &[(&str, &str)]) -> Fixture {
+    let fixture = theme_of(name, &[], files);
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    Fixture {
+        store: Arc::new(store),
+        ..fixture
+    }
+}
+
+#[test]
+fn metaobject_settings_are_metaobjects() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#metaobject
+    // and #metaobject_list: the setting gives a `metaobject` (or an array of them), and
+    // `metaobject_type` says which type the picker offers. Themes store the handle alone.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "recipe": [
+                { "handle": "pancakes", "fields": { "name": { "type": "single_line_text_field", "value": "Pancakes" } } },
+                { "handle": "waffles", "fields": { "name": { "type": "single_line_text_field", "value": "Waffles" } } }
+            ]
+        }
+    });
+    let gid = format!(
+        "gid://shopify/Metaobject/{}",
+        lsf_core::util::stable_id("metaobject", "recipe/waffles")
+    );
+    let template = serde_json::json!({
+        "sections": { "main": { "type": "recipes", "blocks": {
+            "handle": { "type": "card", "settings": { "recipe": "pancakes" } },
+            "dotted": { "type": "card", "settings": { "recipe": "recipe.waffles" } },
+            "slashed": { "type": "card", "settings": { "recipe": "recipe/pancakes" } },
+            "gid": { "type": "card", "settings": { "recipe": gid } },
+            "unknown": { "type": "card", "settings": { "recipe": "nope" } },
+            "list": { "type": "card", "settings": { "recipes": ["waffles", "nope", gid, "pancakes"] } },
+            "dynamic": { "type": "card", "settings": {
+                "recipe": "{{ metaobjects.recipe.waffles }}",
+                "recipes": "{{ metaobjects.recipe.values }}"
+            } }
+        }, "block_order": ["handle", "dotted", "slashed", "gid", "unknown", "list", "dynamic"] } },
+        "order": ["main"]
+    })
+    .to_string();
+    let fixture = theme_with_data(
+        "metaobject-settings",
+        &overlay,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("templates/index.json", &template),
+            ("sections/recipes.liquid", "{% content_for 'blocks' %}\n"),
+            (
+                "blocks/card.liquid",
+                "[{{ block.settings.recipe.name.value }}|{{ block.settings.recipe.system.handle }}|\
+                 {% for p in block.settings.recipes %}{{ p.name.value }},{% endfor %}]\
+                 {% schema %}{\"name\": \"Card\", \"tag\": null, \"settings\": [\
+                 {\"type\": \"metaobject\", \"id\": \"recipe\", \"label\": \"Recipe\", \"metaobject_type\": \"recipe\"},\
+                 {\"type\": \"metaobject_list\", \"id\": \"recipes\", \"label\": \"Recipes\", \"metaobject_type\": \"recipe\"}\
+                 ]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    let body = rendered.body.split("<body>").nth(1).unwrap();
+    let cards: Vec<&str> = body
+        .split('[')
+        .skip(1)
+        .map(|card| card.split(']').next().unwrap())
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            // A handle, `type.handle`, `type/handle` and the id of the entry; an unknown one is blank.
+            "Pancakes|pancakes|",
+            "Waffles|waffles|",
+            "Pancakes|pancakes|",
+            "Waffles|waffles|",
+            "||",
+            // The list keeps its order and leaves out what it does not find.
+            "||Waffles,Waffles,Pancakes,",
+            // A dynamic source gives the entries themselves, which are kept as they are.
+            "Waffles|waffles|Pancakes,Waffles,",
+        ]
+    );
+}

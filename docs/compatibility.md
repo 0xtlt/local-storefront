@@ -122,10 +122,11 @@ locations, companies, company locations and company addresses.
 - Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
   turn it on, and may still change.
 - Settings resolved to the objects Liquid expects: `image_picker`, `video`, `video_url`,
-  `product`, `collection`, `page`, `blog`, `article`, `product_list`, `collection_list`,
-  `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
+  `product`, `collection`, `page`, `blog`, `article`, `metaobject`, `product_list`,
+  `collection_list`, `metaobject_list`, `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
   `url`, `liquid`, `checkbox`, `number` and `range`; the other types are passed as written.
-  Dynamic sources are evaluated (`{{ product.title }}`,
+  A `metaobject` setting holds the entry's handle, `<type>.<handle>`, `<type>/<handle>` or
+  `gid://shopify/Metaobject/<id>`. Dynamic sources are evaluated (`{{ product.title }}`,
   `{{ closest.product.metafields.custom.x }}`).
 - Locales: storefront translations and schema translations, pluralization rules by language,
   the fallback to the default locale, Shopify's built-in translations.
