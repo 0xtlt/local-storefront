@@ -393,7 +393,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | B2B | Companies, company locations, their addresses and metafields are there: `customer.b2b?`, `current_company`, `current_location`, `company_available_locations` and the link that changes location. Catalogs are not: a B2B customer sees the same products, prices and quantity rules as everyone. No payment terms, no store credit. |
 | Markets | One price list: every country sees the shop currency's prices. The selected country changes `localization.country`, not prices. |
 | Taxes and shipping | Not computed. |
-| Search | A simple search over titles, descriptions, vendors, types, tags and SKUs. Ranking is not Shopify's. |
+| Search | A simple search over titles, descriptions, vendors, types, tags and SKUs. Ranking is not Shopify's: `relevance` keeps the order of the data. `sort_by` takes `price-ascending` and `price-descending` (any other value is `relevance`); pages and articles come after the products. |
 | Recommendations | Products of the same collections, or the product's explicit `recommendations`. |
 | Collection filters | Availability, price, vendor, product type, tag and variant options, with the swatches of option values. Metafield filters are not generated. |
 | Placeholder artwork | `image`, `collection-2` and `lifestyle-2` are Shopify's illustrations: the three that are published under a free license. For the other names, `placeholder_svg_tag` draws generic artwork of the right proportions. |

@@ -156,6 +156,76 @@ fn collection_page_paginates_sorts_and_filters() {
 }
 
 #[test]
+fn search_results_follow_sort_by() {
+    // `sort_by` takes `relevance`, `price-ascending` or `price-descending`. Under a price sort the
+    // non-product results (pages, articles) go to the end of the results, and `paginate` slices
+    // the sorted list.
+    // https://shopify.dev/docs/api/liquid/objects/search
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/search
+    let fixture = fixture();
+    let list =
+        |path: &str, source: &str| fixture.liquid(path, Session::initial(&fixture.store), source);
+    let prices = "{{ search.sort_by }}|{% for result in search.results %}\
+                  {{ result.object_type }}:{{ result.price | default: 0 }} {% endfor %}";
+
+    // Pages are asked for first: they still come after the products.
+    let relevance = list("/search?q=a&type=page,product", prices);
+    assert_eq!(
+        relevance,
+        "relevance|page:0 page:0 page:0 product:3200 product:6800 product:2400 product:2200 \
+         product:2800 product:3400 product:1600 product:2500 "
+    );
+    // Without `sort_by`, or with a value the search page does not know, the order is relevance.
+    assert_eq!(
+        list("/search?q=a&type=page,product&sort_by=relevance", prices),
+        relevance
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=title-ascending",
+            prices
+        ),
+        relevance
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=price-ascending",
+            prices
+        ),
+        "price-ascending|product:1600 product:2200 product:2400 product:2500 product:2800 \
+         product:3200 product:3400 product:6800 page:0 page:0 page:0 "
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=price-descending",
+            prices
+        ),
+        "price-descending|product:6800 product:3400 product:3200 product:2800 product:2500 \
+         product:2400 product:2200 product:1600 page:0 page:0 page:0 "
+    );
+
+    // The page is cut out of the sorted list.
+    assert_eq!(
+        list(
+            "/search?q=a&type=product&sort_by=price-descending&page=2",
+            "{% paginate search.results by 3 %}{% for result in search.results %}\
+             {{ result.price }} {% endfor %}{% endpaginate %}"
+        ),
+        "2800 2500 2400 "
+    );
+
+    assert_eq!(
+        list(
+            "/search?q=a",
+            "{% for option in search.sort_options %}{{ option.value }}={{ option.name }}; {% endfor %}\
+             default {{ search.default_sort_by }}"
+        ),
+        "relevance=Relevance; price-ascending=Price, low to high; \
+         price-descending=Price, high to low; default relevance"
+    );
+}
+
+#[test]
 fn liquid_template_with_translations_and_dates() {
     let rendered = fixture().page("/pages/about");
     assert_clean(&rendered);
