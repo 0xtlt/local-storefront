@@ -618,7 +618,10 @@ and read with `{{ metaobjects.designer.sam.name }}` or
 ## Time and theme settings
 
 - `now` freezes the clock: `"now": "2025-01-15T10:00:00Z"`. `{{ 'now' | date: ... }}`, sale
-  countdowns and "new" badges then render the same on every run.
+  countdowns and "new" badges then render the same on every run. As on Shopify, where each
+  `'now'` is a new reading of the clock, each `'now'` of a render is one nanosecond after the
+  previous one: `{{ 'now' | date: '%N' }}` gives `000000000`, then `000000001`, and so on, so
+  ids built from it differ. Without `now`, `'now'` reads the real clock each time.
 - `theme_settings` overrides values of `config/settings_data.json` by setting id, without
   touching the theme: `"theme_settings": { "cart_type": "drawer" }`.
 

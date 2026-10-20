@@ -745,17 +745,41 @@ mod tests {
         assert_eq!(all.len(), total);
     }
 
-    /// A fixed clock stays fixed: renders with a given `now` are reproducible.
+    /// A fixed clock keeps renders reproducible, and still gives each read of `'now'` its own
+    /// `%N`, as successive `Time.now` do on Shopify: one nanosecond later per read, starting
+    /// again at every render (store data that fixes `now` still needs accordion ids that
+    /// differ).
     #[test]
-    fn now_is_stable_with_a_fixed_clock() {
+    fn a_fixed_clock_moves_one_nanosecond_per_read() {
         let env = Arc::new(Environment::standard());
-        let template = Template::parse(&env, "{{ 'now' | date: '%N' }}").unwrap();
+        let template = Template::parse(
+            &env,
+            "{{ 'now' | date: '%N' }} {{ 'now' | date: '%N' | modulo: 1000 }} {{ 'now' | date: '%Y-%m-%d %H:%M:%S.%L' }}",
+        )
+        .unwrap();
         let now = Utc.with_ymd_and_hms(2024, 1, 1, 0, 1, 58).unwrap();
-        let mut ctx = Context::builder(env.clone())
-            .now(now)
-            .time_zone(Tz::UTC)
-            .build();
-        assert_eq!(template.render(&mut ctx), "000000000");
-        assert_eq!(template.render(&mut ctx), "000000000");
+        let render = || {
+            let mut ctx = Context::builder(env.clone())
+                .now(now)
+                .time_zone(Tz::UTC)
+                .build();
+            template.render(&mut ctx)
+        };
+        assert_eq!(render(), "000000000 1 2024-01-01 00:01:58.000");
+        assert_eq!(render(), "000000000 1 2024-01-01 00:01:58.000");
+    }
+
+    /// The fixed clock never goes back: past a million reads it carries into the milliseconds
+    /// instead of starting the nanoseconds again.
+    #[test]
+    fn a_fixed_clock_keeps_moving_past_a_million_reads() {
+        let env = Arc::new(Environment::standard());
+        let now = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let ctx = Context::builder(env).now(now).time_zone(Tz::UTC).build();
+        for _ in 0..999_999 {
+            ctx.now();
+        }
+        assert_eq!(ctx.now(), now + Duration::nanoseconds(999_999));
+        assert_eq!(ctx.now(), now + Duration::nanoseconds(1_000_000));
     }
 }
