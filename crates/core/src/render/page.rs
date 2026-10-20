@@ -36,7 +36,8 @@ pub enum Resource {
         order: Option<u64>,
     },
     GiftCard(usize),
-    NotFound,
+    /// Why: what the URL asks for and the store does not have.
+    NotFound(String),
 }
 
 #[derive(Clone, Debug)]

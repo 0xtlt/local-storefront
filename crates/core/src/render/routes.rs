@@ -38,8 +38,10 @@ fn with_suffix(theme: &Theme, mut name: TemplateName, suffix: Option<&str>) -> T
     name
 }
 
-fn not_found() -> Page {
-    let mut page = Page::new("404", Resource::NotFound);
+/// The 404 page, with what is missing (shown in the server's log and its `x-lsf-not-found`
+/// header).
+fn not_found(reason: String) -> Page {
+    let mut page = Page::new("404", Resource::NotFound(reason));
     page.status = 404;
     page.title = "404 Not Found".to_string();
     page
@@ -76,7 +78,7 @@ pub fn resolve(site: &Site) -> Page {
         }
         ["products", handle] | ["collections", _, "products", handle] => {
             let Some(product) = store.product_index(handle) else {
-                return not_found();
+                return not_found(format!("no product with the handle \"{handle}\""));
             };
             let collection = match segments.as_slice() {
                 ["collections", collection, ..] => store.collection_index(collection),
@@ -109,7 +111,7 @@ pub fn resolve(site: &Site) -> Page {
                 .ok()
                 .and_then(|id| store.variant_location(id));
             let Some((product, variant)) = found else {
-                return not_found();
+                return not_found(format!("no variant with the id \"{id}\""));
             };
             let data = &store.products[product];
             let mut page = Page::new(
@@ -171,7 +173,7 @@ pub fn resolve(site: &Site) -> Page {
                 }
             };
             let Some(collection) = collection else {
-                return not_found();
+                return not_found(format!("no collection with the handle \"{handle}\""));
             };
             let data = &store.collections[collection];
             let mut page = Page::new(
@@ -198,7 +200,7 @@ pub fn resolve(site: &Site) -> Page {
         }
         ["pages", handle] => {
             let Some(index) = store.page_index(handle) else {
-                return not_found();
+                return not_found(format!("no page with the handle \"{handle}\""));
             };
             let data = &store.pages[index];
             let mut page = Page::new("page", Resource::Page(index));
@@ -220,10 +222,14 @@ pub fn resolve(site: &Site) -> Page {
                 .iter()
                 .position(|entry| entry.kind == *kind && entry.handle == *handle)
             else {
-                return not_found();
+                return not_found(format!(
+                    "no metaobject \"{kind}/{handle}\" in the store data"
+                ));
             };
             if !has_metaobject_page(theme, kind) {
-                return not_found();
+                return not_found(format!(
+                    "the theme has no templates/metaobject/{kind}.json or .liquid: the entries of \"{kind}\" have no page"
+                ));
             }
             let data = &store.metaobjects[index];
             let mut page = Page::new("metaobject", Resource::Metaobject(index));
@@ -245,7 +251,7 @@ pub fn resolve(site: &Site) -> Page {
         }
         ["blogs", handle] | ["blogs", handle, "tagged", _] => {
             let Some(blog) = store.blog_index(handle) else {
-                return not_found();
+                return not_found(format!("no blog with the handle \"{handle}\""));
             };
             let tags = match segments.get(3) {
                 Some(tags) => tags.split('+').map(str::to_string).collect(),
@@ -268,7 +274,7 @@ pub fn resolve(site: &Site) -> Page {
                 .blog_index(blog_handle)
                 .and_then(|blog| Some((blog, store.article_index(blog, article_handle)?)));
             let Some((blog, article)) = found else {
-                return not_found();
+                return not_found(format!("no article \"{blog_handle}/{article_handle}\""));
             };
             let data = &store.blogs[blog].articles[article];
             let mut page = Page::new("article", Resource::Article { blog, article });
@@ -304,7 +310,7 @@ pub fn resolve(site: &Site) -> Page {
         }
         ["policies", handle] => {
             let Some(policy) = store.policy(handle) else {
-                return not_found();
+                return not_found(format!("no policy with the handle \"{handle}\""));
             };
             let mut page = Page::new("policy", Resource::Policy(policy.handle.clone()));
             page.title = policy.title.clone();
@@ -324,7 +330,7 @@ pub fn resolve(site: &Site) -> Page {
                 .iter()
                 .position(|card| card.token == *token)
             else {
-                return not_found();
+                return not_found("no gift card with this token".to_string());
             };
             let card = &store.gift_cards[index];
             let mut page = Page::new("gift_card", Resource::GiftCard(index));
@@ -353,7 +359,7 @@ pub fn resolve(site: &Site) -> Page {
             None,
         ),
         ["account", "orders", id] => customers("order", "Order", "/account", id.parse().ok()),
-        _ => return not_found(),
+        _ => return not_found(format!("no page at \"{}\"", request.path)),
     };
 
     if let Some(view) = view

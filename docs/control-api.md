@@ -95,6 +95,7 @@ Pages and other responses carry headers a test can check:
 | Header | Meaning |
 |---|---|
 | `x-lsf-template` | The template that rendered the page (`product`, `product.alternate`, `404`). |
+| `x-lsf-not-found` | Why a page is the `404` page: `no product with the handle "x"`, `no page at "/x"`, the metaobject type with no template... Absent on every other response. |
 | `x-lsf-liquid-errors` | The number of Liquid errors in the page. Absent when there are none. |
 | `x-lsf-placeholder` | `1`: the image is a placeholder, the file is not in `shopify-local/files/`. |
 | `x-lsf-throttle` | The delay that was applied, as `1000ms`. |

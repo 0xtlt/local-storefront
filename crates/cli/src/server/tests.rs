@@ -109,6 +109,36 @@ fn variant_id(state: &ServerState, sku: &str) -> u64 {
 }
 
 #[test]
+fn a_page_that_is_not_found_says_why() {
+    // Shopify answers a 404 page without a word about the cause; a test that reads a page can
+    // tell a missing page from a working one with `x-lsf-not-found`.
+    let state = server();
+    let reason = |path: &str| {
+        let reply = get(&state, path, "not-found");
+        assert_eq!(reply.status, 404, "{path}");
+        header(&reply, "x-lsf-not-found").map(str::to_string)
+    };
+    assert_eq!(reason("/nope").as_deref(), Some("no page at \"/nope\""));
+    assert_eq!(
+        reason("/products/nope").as_deref(),
+        Some("no product with the handle \"nope\"")
+    );
+    assert_eq!(
+        reason("/pages/event/nope").as_deref(),
+        Some("no metaobject \"event/nope\" in the store data")
+    );
+    // A URL can hold what a header cannot.
+    assert_eq!(
+        reason("/caf\u{e9}").as_deref(),
+        Some("no page at \"/caf?\"")
+    );
+    // A page that exists does not carry it.
+    let home = get(&state, "/", "not-found");
+    assert_eq!(home.status, 200);
+    assert_eq!(header(&home, "x-lsf-not-found"), None);
+}
+
+#[test]
 fn a_new_visitor_gets_a_session_cookie() {
     let state = server();
     let mut incoming = request("GET", "/", json!({}), "ignored");

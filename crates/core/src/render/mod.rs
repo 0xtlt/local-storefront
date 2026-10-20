@@ -110,6 +110,8 @@ pub struct Rendered {
     pub warnings: Vec<String>,
     /// The template that rendered the page, e.g. `product.alternate`.
     pub template: String,
+    /// Why a page is the 404 page: what its URL asks for and the store does not have.
+    pub not_found: Option<String>,
     /// How long it took.
     pub timings: Timings,
 }
@@ -377,6 +379,10 @@ impl Renderer {
             errors: ctx.errors(),
             warnings: ctx.warnings(),
             template: page.template.full(),
+            not_found: match (&page.resource, target) {
+                (Resource::NotFound(reason), Target::Page) => Some(reason.clone()),
+                _ => None,
+            },
             timings: Timings {
                 total: started.elapsed(),
                 sections: state.section_timings(),
@@ -468,7 +474,7 @@ impl Renderer {
                     policy.get("body").to_str()
                 )
             }
-            Resource::NotFound => "<h1>404 Not Found</h1>".to_string(),
+            Resource::NotFound(_) => "<h1>404 Not Found</h1>".to_string(),
             _ => format!(
                 "<!-- lsf: the theme has no templates/{}.json or .liquid -->",
                 escape_html(&page.template.full())
@@ -631,6 +637,7 @@ impl Renderer {
             errors: ctx.errors(),
             warnings: ctx.warnings(),
             template: page.template.full(),
+            not_found: None,
             timings: Timings {
                 total: started.elapsed(),
                 ..Timings::default()
