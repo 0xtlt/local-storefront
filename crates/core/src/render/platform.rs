@@ -23,6 +23,59 @@ const LOAD_FEATURES: &str = include_str!("../../assets/platform/load-features.js
 const STANDARD_ACTIONS: &str = include_str!("../../assets/platform/standard-actions.js");
 const PARTIAL_RENDERING: &str = include_str!("../../assets/platform/partial-rendering.js");
 
+/// Shopify's global assets, by their name for `shopify_asset_url`, with the type they are
+/// served as.
+const GLOBAL_ASSETS: [(&str, &str, &str); 8] = [
+    (
+        "vendor/qrcode.js",
+        include_str!("../../assets/platform/themes_support/vendor/qrcode.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "shopify_common.js",
+        include_str!("../../assets/platform/themes_support/shopify_common.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "option_selection.js",
+        include_str!("../../assets/platform/themes_support/option_selection.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "api.jquery.js",
+        include_str!("../../assets/platform/themes_support/api.jquery.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "customer_area.js",
+        include_str!("../../assets/platform/themes_support/customer_area.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "currencies.js",
+        include_str!("../../assets/platform/themes_support/currencies.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "customer.css",
+        include_str!("../../assets/platform/themes_support/customer.css"),
+        "text/css; charset=utf-8",
+    ),
+    // The "Add to Apple Wallet" badge of the gift card page, which is Apple's artwork: the
+    // placeholder drawing keeps the layout.
+    (
+        "gift-card/add-to-apple-wallet.svg",
+        PLACEHOLDER_SVG,
+        "image/svg+xml",
+    ),
+];
+
+/// A neutral drawing for the images of Shopify that are not available offline.
+pub const PLACEHOLDER_SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 334 200\" role=\"img\">\
+     <rect width=\"334\" height=\"200\" rx=\"12\" fill=\"#e7e5e1\"/>\
+     <rect x=\"24\" y=\"132\" width=\"120\" height=\"14\" rx=\"7\" fill=\"#c9c6c0\"/>\
+     <rect x=\"24\" y=\"156\" width=\"72\" height=\"14\" rx=\"7\" fill=\"#c9c6c0\"/></svg>";
+
 /// `https://cdn.shopify.com/storefront/standard-actions.js` on Shopify: a fixed URL.
 const STANDARD_ACTIONS_PATH: &str = "storefront/standard-actions.js";
 
@@ -100,6 +153,26 @@ pub fn asset(path: &str) -> Option<PlatformAsset> {
     } else {
         None
     }
+}
+
+/// A file of Shopify's global assets, which themes load with `shopify_asset_url`.
+pub struct GlobalAsset {
+    pub content: &'static str,
+    pub content_type: &'static str,
+}
+
+/// A global asset by its name for `shopify_asset_url` (`vendor/qrcode.js`). The library behind
+/// `vendor/qrcode.js` is Shopify's own; the other files are Shopify's proprietary code, of which
+/// the server has a small stand-in or a warning.
+/// <https://shopify.dev/docs/api/liquid/filters/shopify_asset_url>
+pub fn global_asset(name: &str) -> Option<GlobalAsset> {
+    GLOBAL_ASSETS
+        .iter()
+        .find(|(known, ..)| *known == name)
+        .map(|(_, content, content_type)| GlobalAsset {
+            content,
+            content_type,
+        })
 }
 
 /// `theme_name` and `theme_version` of `config/settings_schema.json`.

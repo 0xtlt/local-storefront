@@ -460,6 +460,76 @@ fn locale_prefixes_select_the_language() {
     );
 }
 
+/// The path of the file `{{ name | shopify_asset_url }}` points at, as a theme renders it.
+fn shopify_asset_path(state: &ServerState, name: &str) -> String {
+    let loaded = state.loaded();
+    let request = state.storefront_request(
+        &loaded.store,
+        &request("GET", "/", json!({}), "cdn"),
+        "/",
+        Vec::new(),
+    );
+    let url = state.app.renderer.render_asset(
+        loaded.store.clone(),
+        request,
+        &format!("{{{{ '{name}' | shopify_asset_url }}}}"),
+        "assets/url.txt",
+    );
+    url.trim_start_matches("//shop.test").to_string()
+}
+
+#[test]
+fn the_cdn_serves_the_global_assets_of_shopify_asset_url() {
+    // Shopify lists the files that `shopify_asset_url` reaches, and the gift card of Dawn loads
+    // `vendor/qrcode.js` from it:
+    // https://shopify.dev/docs/api/liquid/filters/shopify_asset_url
+    let state = server();
+    let qrcode = get(
+        &state,
+        &shopify_asset_path(&state, "vendor/qrcode.js"),
+        "cdn",
+    );
+    assert_eq!(qrcode.status, 200);
+    assert_eq!(
+        header(&qrcode, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert!(text(&qrcode).contains("QRCode"));
+    // The MIT license of the library travels with the file.
+    assert!(text(&qrcode).contains("Copyright (c) 2012 davidshimjs"));
+    assert!(text(&qrcode).contains("Permission is hereby granted"));
+
+    let documented = get(
+        &state,
+        &shopify_asset_path(&state, "option_selection.js"),
+        "cdn",
+    );
+    assert_eq!(documented.status, 200);
+    let stylesheet = get(&state, &shopify_asset_path(&state, "customer.css"), "cdn");
+    assert_eq!(
+        header(&stylesheet, "content-type"),
+        Some("text/css; charset=utf-8")
+    );
+
+    let unknown = get(
+        &state,
+        &shopify_asset_path(&state, "vendor/unknown.js"),
+        "cdn",
+    );
+    assert_eq!(unknown.status, 404);
+
+    // The gift card's badge is drawn as a stand-in; an unknown image is no placeholder.
+    let badge = get(
+        &state,
+        &shopify_asset_path(&state, "gift-card/add-to-apple-wallet.svg"),
+        "cdn",
+    );
+    assert_eq!(badge.status, 200);
+    assert_eq!(header(&badge, "content-type"), Some("image/svg+xml"));
+    let unknown_image = get(&state, &shopify_asset_path(&state, "unknown.svg"), "cdn");
+    assert_eq!(unknown_image.status, 404);
+}
+
 #[test]
 fn the_cdn_serves_assets_bundles_and_placeholder_images() {
     let state = server();
@@ -505,7 +575,7 @@ fn the_cdn_serves_assets_bundles_and_placeholder_images() {
     // Shopify's shared assets are stubbed, with a drawing where an image is expected.
     let shared = get(
         &state,
-        "/cdn/shopifycloud/storefront/assets/themes_support/gift-card/card.svg",
+        "/cdn/shopifycloud/storefront/assets/gift-card/card.svg",
         "cdn",
     );
     assert_eq!(header(&shared, "content-type"), Some("image/svg+xml"));

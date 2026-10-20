@@ -398,7 +398,7 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | Collection filters | Availability, price, vendor, product type, tag and variant options, with the swatches of option values. Metafield filters are not generated. |
 | Placeholder artwork | `image`, `collection-2` and `lifestyle-2` are Shopify's illustrations: the three that are published under a free license. For the other names, `placeholder_svg_tag` draws generic artwork of the right proportions. |
 | Fonts | Shopify's font library is not bundled. `font_face` and `font_url` generate the same markup and URLs; the files are blank unless provided in `files/fonts/`. |
-| Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. |
+| Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. The files of `shopify_asset_url` are served from the binary: `vendor/qrcode.js` is the qrcode.js library (MIT), as on Shopify; `shopify_common.js` has our own `Shopify.formatMoney` and `Shopify.resizeImage`; `option_selection.js`, `api.jquery.js`, `customer_area.js` and `currencies.js` only log a warning to the console, and `customer.css` is empty, because Shopify's code is proprietary. Any other name is a 404, logged by the server. |
 | Theme editor | `request.design_mode` is always `false`, `Shopify.designMode` is not set, and `block.shopify_attributes` is empty. |
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |

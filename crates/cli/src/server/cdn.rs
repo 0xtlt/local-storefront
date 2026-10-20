@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use lsf_core::filters::html_payment_icon;
 use lsf_core::images::{Accepted, Transform, placeholder, served_as_is, transform_file};
+use lsf_core::render::platform::PLACEHOLDER_SVG;
 
 use super::minify::{self, Minified};
 use super::reply::{Reply, cache, content_type};
@@ -73,17 +74,20 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             Reply::new(200, "image/svg+xml", html_payment_icon(handle, None))
                 .cached(cache::PLATFORM)
         }
-        // Shopify's shared images (the gift card illustration, ...) are not available offline:
-        // a neutral drawing keeps the layout without a broken image.
-        ["shopifycloud", ..] | ["s", "global", ..] if path.ends_with(".svg") => Reply::new(
-            200,
-            "image/svg+xml",
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 334 200\" role=\"img\">\
-             <rect width=\"334\" height=\"200\" rx=\"12\" fill=\"#e7e5e1\"/>\
-             <rect x=\"24\" y=\"132\" width=\"120\" height=\"14\" rx=\"7\" fill=\"#c9c6c0\"/>\
-             <rect x=\"24\" y=\"156\" width=\"72\" height=\"14\" rx=\"7\" fill=\"#c9c6c0\"/></svg>",
-        )
-        .header("x-lsf-placeholder", "1"),
+        // The files `shopify_asset_url` points at: embedded copies, or stand-ins. They come
+        // before the generic fallbacks, so an unknown name is a 404 whatever its extension.
+        [
+            "shopifycloud",
+            "storefront",
+            "assets",
+            "themes_support",
+            rest @ ..,
+        ] => global_asset(state, &rest.join("/")),
+        // Shopify's shared images are not available offline: a neutral drawing keeps the
+        // layout without a broken image.
+        ["shopifycloud", ..] | ["s", "global", ..] if path.ends_with(".svg") => {
+            Reply::new(200, "image/svg+xml", PLACEHOLDER_SVG).header("x-lsf-placeholder", "1")
+        }
         // Shopify's shared scripts and styles are not available offline: answer with an empty
         // file of the right type rather than a 404 that would show up as a page error.
         ["shopifycloud", ..] | ["s", "global", ..] => Reply::new(
@@ -92,6 +96,32 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             format!("/* {path} is served by Shopify and is not available locally */"),
         ),
         _ => Reply::not_found(),
+    }
+}
+
+/// A global asset of Shopify (`{{ 'vendor/qrcode.js' | shopify_asset_url }}`): the local copy or
+/// stand-in, or a 404 that the log names.
+fn global_asset(state: &ServerState, name: &str) -> Reply {
+    match lsf_core::render::platform::global_asset(name) {
+        Some(asset) => {
+            let reply =
+                Reply::new(200, asset.content_type, asset.content).cached(cache::PLATFORM_FIXED);
+            // The drawing of an image of Shopify is a stand-in.
+            if name.ends_with(".svg") {
+                reply.header("x-lsf-placeholder", "1")
+            } else {
+                reply
+            }
+        }
+        None => {
+            if !state.options.quiet {
+                eprintln!(
+                    "404 /cdn/shopifycloud/storefront/assets/themes_support/{name}: \
+                     not one of Shopify's global assets that local-storefront serves"
+                );
+            }
+            Reply::not_found().cached(cache::MISSING_ASSET)
+        }
     }
 }
 
