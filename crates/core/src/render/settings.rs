@@ -15,7 +15,7 @@ use crate::drops::color::{Color, ColorDrop};
 use crate::drops::content::{ArticleDrop, BlogDrop, PageDrop};
 use crate::drops::font::{Font, FontDrop};
 use crate::drops::media::{ImageDrop, MediaDrop};
-use crate::drops::metafield::{image_from_src, video_from_src};
+use crate::drops::metafield::{MetaobjectDrop, image_from_src, video_from_src};
 use crate::drops::navigation::LinkListDrop;
 use crate::drops::product::ProductDrop;
 use crate::site::Site;
@@ -67,6 +67,10 @@ impl Dynamic<'_> {
 /// Resolves `shopify://` links and prefixes storefront paths with the locale root.
 pub fn resolve_url(site: &Site, raw: &str) -> String {
     let path = match raw.strip_prefix("shopify://") {
+        // The page of a metaobject entry: `shopify://metaobjects/<type>/<handle>`.
+        Some(rest) if rest.starts_with("metaobjects/") => {
+            format!("/pages/{}", &rest["metaobjects/".len()..])
+        }
         Some(rest) => format!("/{rest}"),
         None => raw.to_string(),
     };
@@ -298,6 +302,35 @@ fn convert(
                 .unwrap_or(Value::Nil),
             None if is_object => value,
             None => Value::Nil,
+        },
+        // Shopify stores the entry's id; themes also write its handle, alone or with its type.
+        "metaobject" => match handle_of(&value) {
+            Some(reference) => store
+                .metaobject_by_reference(reference, def.metaobject_type.as_deref())
+                .map_or(Value::Nil, |entry| MetaobjectDrop::value(site, entry)),
+            None if is_object => value,
+            None => Value::Nil,
+        },
+        "metaobject_list" => match &value {
+            // A dynamic source may give entries already; stored references are looked up.
+            Value::Array(references) => Value::array(
+                references
+                    .iter()
+                    .filter_map(|reference| {
+                        if reference.downcast::<MetaobjectDrop>().is_some() {
+                            return Some(reference.clone());
+                        }
+                        store
+                            .metaobject_by_reference(
+                                reference.as_str()?,
+                                def.metaobject_type.as_deref(),
+                            )
+                            .map(|entry| MetaobjectDrop::value(site, entry))
+                    })
+                    .collect(),
+            ),
+            other if other.items().is_some() => value,
+            _ => Value::array(Vec::new()),
         },
         "product_list" => match &value {
             Value::Array(handles) => Value::array(

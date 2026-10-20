@@ -29,7 +29,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `selling_plan_groups` | array of [SellingPlanGroup](#sellingplangroup) | Groups of selling plans: subscriptions, pre-orders and other purchase options. |
 | `files` | map of [File](#file) | Metadata for files in `files/`, by path. |
 | `session` | [Session](#session) | What every new browser session starts with: a logged-in customer, a filled cart... |
-| `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible. Defaults to the real time. |
+| `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
 
 ## Shop
@@ -671,6 +671,7 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 |---|---|---|
 | `handle` | string | **Required.** |
 | `fields` | map of [Metafield](#metafield) | Field values, with the same shorthand as metafields. |
+| `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<type>/<handle>`. |
 
 ## Localization
 

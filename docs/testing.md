@@ -301,6 +301,21 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
   [compatibility](compatibility.md#what-shopify-injects-into-pages).
 - **The template.** `x-lsf-template` names the template that rendered the page (`product`,
   `product.alternate`, `404`, ...).
+- **Pages that are not found.** A 404 renders the theme's `404` template, so a wrong URL looks
+  like a page that works. The response carries `x-lsf-not-found` with the cause (`no product
+  with the handle "x"`, `no page at "/x"`, `no metaobject "type/x" in the store data`, `the
+  theme has no templates/metaobject/<type>.json...`) and `lsf serve` prints it in its log. To
+  fail a test on a link that leads nowhere:
+
+  ```ts
+  page.on('response', (response) => {
+    const reason = response.headers()['x-lsf-not-found'];
+    if (reason) throw new Error(`${response.url()} is a 404: ${reason}`);
+  });
+  ```
+
+  A test of the theme's own 404 page can leave this out. There is no option that turns 404s
+  into errors, since a 404 is also what a test of the 404 page expects.
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.
 - **Render time.** Every response carries `Server-Timing`, as on Shopify: `processing` for the
   whole request, `render` for the Liquid, and with `--timings` one entry per section and per

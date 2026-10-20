@@ -39,3 +39,40 @@ a {%- assign x = 1 %}{{ x }} b
 {%- if true -%}\n  nested {{- ' x ' -}} end \n{%- endif -%}
 {{-'a'-}}{{-'b'-}}
 a{{- -}}b
+## `{%-` strips the whitespace on its left, including after an output tag (the id of a form field)
+{% capture id -%}\n    field_{{ a }}_{{ b }}\n  {%- endcapture %}[{{ id }}]
+{% capture id %}x {{ 'y' }} {%- endcapture %}[{{ id }}]
+{% capture id %}x {{ 'y' }}\n {%- endcapture -%}\n[{{ id }}]
+{% capture id %}x text {%- endcapture %}[{{ id }}]
+{% capture id %}{% assign q = 1 %} {{ q }}  {%- endcapture %}[{{ id }}]
+a {{ 'b' }}  {%- comment %} c {% endcomment %} d
+a {% comment %} c {{ 'x' }}  {%- endcomment %} d
+a {% comment %} c {{ 'x' }}  {% endcomment -%}  d
+{% if true %}a {{ 'b' }}  {%- endif %}|
+{% if true %}a {{ 'b' }}  {%- else %}c{% endif %}|
+{% if false %}c{% else %}a {{ 'b' }}  {%- endif %}|
+{% if false %}a{% elsif true %}b {{ 'c' }}  {%- else %}d{% endif %}|
+{% unless false %}a {{ 'b' }}  {%- endunless %}|
+{% for i in (1..2) %}{{ i }} {{ 'x' }}  {%- endfor %}|
+{% for i in (1..2) %}{{ i }} {{ 'x' }}  {%- else %}e{% endfor %}|
+{% for i in (1..0) %}a{% else %}{{ 'e' }}  {%- endfor %}|
+{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- when 2 %}c{% endcase %}|
+{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- else %}c{% endcase %}|
+{% case 1 %}{% when 1 %}a {{ 'b' }}  {%- endcase %}|
+{% case 1 %} a {{ 'b' }} {%- when 1 %}c{% endcase %}|
+{% raw %}a {{ 'b' }}  {%- endraw %}|
+{% raw %}a  {%- endraw %}|
+{% raw %}a  {% endraw -%}  b
+a {{ 'b' }}  {{- 'c' }}  {{ 'd' -}}  e
+a {{ 'b' -}}  {{- 'c' -}}  {{- 'd' }}  e
+a {{ 'b' }}  {%- assign x = 1 %}  c
+a {{ 'b' }}  {%- if true -%}  c  {%- endif -%}  d
+a {% assign x = 1 -%}  {{ 'b' }}  {%- assign y = 2 %}  c
+{% if true -%} {{ 'a' }} {%- endif %}|
+{% for i in (1..2) -%} {{ i }} {%- endfor %}|
+{% capture c -%} {{ 'a' }} {%- endcapture %}[{{ c }}]
+{% capture c %} {{ 'a' }} {% endcapture %}[{{ c }}]
+{% capture c %}a{{ 'b' }}\n\t {%- endcapture %}[{{ c }}]
+{% capture c %}a{{ 'b' }}\n\t {%- endcapture -%}\n\t [{{ c }}]
+{% comment %}{{ 'a' }} {%- endcomment %}|
+{% liquid\n capture c\n echo 'a'\n endcapture\n echo c %}|

@@ -138,7 +138,8 @@ to stderr when it can take requests. Then:
 - `GET /__lsf/status` gives the data diagnostics, the templates, the customers and every page.
 - `PUT /__lsf/session` sets the cart, the customer and data for one session; a wrong body
   answers `422` with the same diagnostics as `npx local-storefront validate --format json`.
-- The header `x-lsf-liquid-errors` counts the Liquid errors of a page.
+- The header `x-lsf-liquid-errors` counts the Liquid errors of a page, and `x-lsf-not-found`
+  says why a page is a 404.
 
 Reference: [control API](control-api.md).
 

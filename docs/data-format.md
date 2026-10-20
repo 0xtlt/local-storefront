@@ -615,10 +615,21 @@ Metaobjects are listed by type:
 and read with `{{ metaobjects.designer.sam.name }}` or
 `{% for d in metaobjects.designer.values %}`.
 
+A type whose theme has `templates/metaobject/<type>.json` (or `.liquid`) is a type with web
+pages on Shopify: each entry is served at `/pages/<type>/<handle>`, the template sees it as
+`metaobject`, and `metaobject.system.url` is that URL. Without the template the entry has no
+page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders it with
+`templates/metaobject/<type>.alt.json`, and `?view=alt` does the same for one request. The page
+title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
+in a `url` setting leads to the page.
+
 ## Time and theme settings
 
 - `now` freezes the clock: `"now": "2025-01-15T10:00:00Z"`. `{{ 'now' | date: ... }}`, sale
-  countdowns and "new" badges then render the same on every run.
+  countdowns and "new" badges then render the same on every run. As on Shopify, where each
+  `'now'` is a new reading of the clock, each `'now'` of a render is one nanosecond after the
+  previous one: `{{ 'now' | date: '%N' }}` gives `000000000`, then `000000001`, and so on, so
+  ids built from it differ. Without `now`, `'now'` reads the real clock each time.
 - `theme_settings` overrides values of `config/settings_data.json` by setting id, without
   touching the theme: `"theme_settings": { "cart_type": "drawer" }`.
 

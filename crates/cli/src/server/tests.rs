@@ -109,6 +109,36 @@ fn variant_id(state: &ServerState, sku: &str) -> u64 {
 }
 
 #[test]
+fn a_page_that_is_not_found_says_why() {
+    // Shopify answers a 404 page without a word about the cause; a test that reads a page can
+    // tell a missing page from a working one with `x-lsf-not-found`.
+    let state = server();
+    let reason = |path: &str| {
+        let reply = get(&state, path, "not-found");
+        assert_eq!(reply.status, 404, "{path}");
+        header(&reply, "x-lsf-not-found").map(str::to_string)
+    };
+    assert_eq!(reason("/nope").as_deref(), Some("no page at \"/nope\""));
+    assert_eq!(
+        reason("/products/nope").as_deref(),
+        Some("no product with the handle \"nope\"")
+    );
+    assert_eq!(
+        reason("/pages/event/nope").as_deref(),
+        Some("no metaobject \"event/nope\" in the store data")
+    );
+    // A URL can hold what a header cannot.
+    assert_eq!(
+        reason("/caf\u{e9}").as_deref(),
+        Some("no page at \"/caf?\"")
+    );
+    // A page that exists does not carry it.
+    let home = get(&state, "/", "not-found");
+    assert_eq!(home.status, 200);
+    assert_eq!(header(&home, "x-lsf-not-found"), None);
+}
+
+#[test]
 fn a_new_visitor_gets_a_session_cookie() {
     let state = server();
     let mut incoming = request("GET", "/", json!({}), "ignored");
@@ -460,6 +490,76 @@ fn locale_prefixes_select_the_language() {
     );
 }
 
+/// The path of the file `{{ name | shopify_asset_url }}` points at, as a theme renders it.
+fn shopify_asset_path(state: &ServerState, name: &str) -> String {
+    let loaded = state.loaded();
+    let request = state.storefront_request(
+        &loaded.store,
+        &request("GET", "/", json!({}), "cdn"),
+        "/",
+        Vec::new(),
+    );
+    let url = state.app.renderer.render_asset(
+        loaded.store.clone(),
+        request,
+        &format!("{{{{ '{name}' | shopify_asset_url }}}}"),
+        "assets/url.txt",
+    );
+    url.trim_start_matches("//shop.test").to_string()
+}
+
+#[test]
+fn the_cdn_serves_the_global_assets_of_shopify_asset_url() {
+    // Shopify lists the files that `shopify_asset_url` reaches, and the gift card of Dawn loads
+    // `vendor/qrcode.js` from it:
+    // https://shopify.dev/docs/api/liquid/filters/shopify_asset_url
+    let state = server();
+    let qrcode = get(
+        &state,
+        &shopify_asset_path(&state, "vendor/qrcode.js"),
+        "cdn",
+    );
+    assert_eq!(qrcode.status, 200);
+    assert_eq!(
+        header(&qrcode, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert!(text(&qrcode).contains("QRCode"));
+    // The MIT license of the library travels with the file.
+    assert!(text(&qrcode).contains("Copyright (c) 2012 davidshimjs"));
+    assert!(text(&qrcode).contains("Permission is hereby granted"));
+
+    let documented = get(
+        &state,
+        &shopify_asset_path(&state, "option_selection.js"),
+        "cdn",
+    );
+    assert_eq!(documented.status, 200);
+    let stylesheet = get(&state, &shopify_asset_path(&state, "customer.css"), "cdn");
+    assert_eq!(
+        header(&stylesheet, "content-type"),
+        Some("text/css; charset=utf-8")
+    );
+
+    let unknown = get(
+        &state,
+        &shopify_asset_path(&state, "vendor/unknown.js"),
+        "cdn",
+    );
+    assert_eq!(unknown.status, 404);
+
+    // The gift card's badge is drawn as a stand-in; an unknown image is no placeholder.
+    let badge = get(
+        &state,
+        &shopify_asset_path(&state, "gift-card/add-to-apple-wallet.svg"),
+        "cdn",
+    );
+    assert_eq!(badge.status, 200);
+    assert_eq!(header(&badge, "content-type"), Some("image/svg+xml"));
+    let unknown_image = get(&state, &shopify_asset_path(&state, "unknown.svg"), "cdn");
+    assert_eq!(unknown_image.status, 404);
+}
+
 #[test]
 fn the_cdn_serves_assets_bundles_and_placeholder_images() {
     let state = server();
@@ -505,7 +605,7 @@ fn the_cdn_serves_assets_bundles_and_placeholder_images() {
     // Shopify's shared assets are stubbed, with a drawing where an image is expected.
     let shared = get(
         &state,
-        "/cdn/shopifycloud/storefront/assets/themes_support/gift-card/card.svg",
+        "/cdn/shopifycloud/storefront/assets/gift-card/card.svg",
         "cdn",
     );
     assert_eq!(header(&shared, "content-type"), Some("image/svg+xml"));

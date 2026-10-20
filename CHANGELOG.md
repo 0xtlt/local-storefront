@@ -3,6 +3,32 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **The pages of metaobjects are served.** With `templates/metaobject/<type>.json` (or
+  `.liquid`) in the theme, `/pages/<type>/<handle>` renders the entry, with the global
+  `metaobject`, `?view=` and a per-entry `template_suffix` in the data. `shopify://metaobjects/`
+  links lead there, and `metaobject.system.url` is nil for a type without a template, as on a
+  store whose definition has no web pages.
+- **A 404 page says why.** The server answers it with an `x-lsf-not-found` header (no route,
+  unknown resource, no template) and logs the reason, so a test can fail on it.
+- **`shopify_asset_url` files are served.** `vendor/qrcode.js` is the MIT qrcode.js library that
+  Shopify serves, so a gift card draws its QR code. The other documented files are small local
+  stand-ins: `shopify_common.js` formats money, the others only warn in the console.
+
+### Fixed
+
+- **`metaobject` and `metaobject_list` settings are metaobjects**, not the string of the
+  template: a handle, `type.handle`, `type/handle` or a `gid://shopify/Metaobject/` id.
+- **The search follows `sort_by`**: `relevance`, `price-ascending` and `price-descending`, with
+  the other results after the products under a price order, as Shopify does. `search.sort_by`
+  says which order applies and `search.sort_options` lists those three.
+- **`'now' | date: '%N'` differs between calls.** Each `'now'` reads the clock again, as on
+  Shopify, so ids built from it no longer repeat. With a fixed `now` in the data, each read is one
+  nanosecond after the previous one: renders stay reproducible.
+
 ## 0.1.16 - 2026-10-14
 
 ### Added

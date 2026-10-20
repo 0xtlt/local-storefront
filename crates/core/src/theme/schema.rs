@@ -9,6 +9,8 @@ pub struct SettingDef {
     pub kind: String,
     pub id: String,
     pub default: Option<Json>,
+    /// The metaobject type a `metaobject` or `metaobject_list` setting picks from.
+    pub metaobject_type: Option<String>,
 }
 
 /// A block type a section declares in its schema.
@@ -63,6 +65,10 @@ pub fn parse_settings(list: Option<&Json>) -> Vec<SettingDef> {
                 kind: entry.get("type")?.as_str()?.to_string(),
                 id: entry.get("id")?.as_str()?.to_string(),
                 default: entry.get("default").cloned(),
+                metaobject_type: entry
+                    .get("metaobject_type")
+                    .and_then(Json::as_str)
+                    .map(str::to_string),
             })
         })
         .collect()

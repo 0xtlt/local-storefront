@@ -146,6 +146,15 @@ pub fn routes(state: &ServerState) -> Vec<String> {
                 .map(|article| format!("/blogs/{}/{}", blog.handle, article.handle)),
         );
     }
+    routes.extend(
+        store
+            .metaobjects
+            .iter()
+            .filter(|entry| {
+                lsf_core::render::routes::has_metaobject_page(&state.app.theme, &entry.kind)
+            })
+            .map(|entry| format!("/pages/{}/{}", entry.kind, entry.handle)),
+    );
     routes.extend(store.gift_cards.iter().map(|card| card.path(store.shop.id)));
     routes.extend(
         store

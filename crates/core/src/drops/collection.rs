@@ -521,8 +521,13 @@ pub fn collection_url(site: &SiteRef, collection: &Collection) -> String {
 }
 
 pub fn sort_options() -> Value {
+    options_value(&SORT_OPTIONS)
+}
+
+/// A list of `sort_option` objects from `(value, label)` pairs.
+pub fn options_value(options: &[(&str, &str)]) -> Value {
     Value::array(
-        SORT_OPTIONS
+        options
             .iter()
             .map(|(value, name)| hash([("name", Value::str(name)), ("value", Value::str(value))]))
             .collect(),

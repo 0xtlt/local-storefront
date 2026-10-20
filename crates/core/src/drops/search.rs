@@ -2,11 +2,12 @@
 
 use lsf_liquid::Value;
 
-use super::collection::{CollectionDrop, sort_options};
+use super::collection::{CollectionDrop, options_value, sort_products};
 use super::content::{ArticleDrop, PageDrop};
 use super::product::ProductDrop;
 use super::{PaginatedList, SiteRef, hash, strings};
 use crate::render::cost;
+use crate::store::SortOrder;
 
 /// The resource types a search covers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,8 +87,38 @@ fn matches(clauses: &[Clause], document: &Document) -> bool {
     })
 }
 
-/// Runs a search and returns the matching resources as drops, grouped by type.
-pub fn run(site: &SiteRef, query: &str, types: &[SearchType]) -> Vec<(SearchType, Vec<Value>)> {
+/// The sort orders of the search page: `(value, label)`. `relevance` is the default.
+/// https://shopify.dev/docs/storefronts/themes/navigation-search/search
+const SORT_OPTIONS: [(&str, &str); 3] = [
+    ("relevance", "Relevance"),
+    ("price-ascending", "Price, low to high"),
+    ("price-descending", "Price, high to low"),
+];
+
+/// The order requested by `sort_by`: only the price orders reorder products, anything else
+/// (`relevance`, a collection sort order, an unknown value) keeps the order of the data.
+fn sort_order(site: &SiteRef) -> SortOrder {
+    match site.request.param("sort_by").and_then(SortOrder::parse) {
+        Some(order @ (SortOrder::PriceAscending | SortOrder::PriceDescending)) => order,
+        _ => SortOrder::Manual,
+    }
+}
+
+fn applied_sort_by(order: SortOrder) -> &'static str {
+    match order {
+        SortOrder::Manual => "relevance",
+        order => order.as_str(),
+    }
+}
+
+/// Runs a search and returns the matching resources as drops, grouped by type. Products are
+/// sorted by `order`.
+pub fn run(
+    site: &SiteRef,
+    query: &str,
+    types: &[SearchType],
+    order: SortOrder,
+) -> Vec<(SearchType, Vec<Value>)> {
     cost::asked(cost::SEARCH);
     let clauses = clauses(query);
     let store = &site.store;
@@ -97,52 +128,59 @@ pub fn run(site: &SiteRef, query: &str, types: &[SearchType]) -> Vec<(SearchType
     }
     for kind in types {
         let results: Vec<Value> = match kind {
-            SearchType::Product => store
-                .products
-                .iter()
-                .enumerate()
-                .filter(|(_, product)| {
-                    let variants: Vec<&str> = product
-                        .variants
-                        .iter()
-                        .flat_map(|v| [v.title.as_str(), v.sku.as_str()])
-                        .collect();
-                    let mut fields = vec![
-                        ("id", product.id.to_string()),
-                        ("handle", product.handle.clone()),
-                        ("title", product.title.clone()),
-                        ("vendor", product.vendor.clone()),
-                        ("product_type", product.product_type.clone()),
-                    ];
-                    fields.extend(product.tags.iter().map(|tag| ("tag", tag.clone())));
-                    fields.extend(
-                        product
+            SearchType::Product => {
+                let mut indexes: Vec<usize> = store
+                    .products
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, product)| {
+                        let variants: Vec<&str> = product
                             .variants
                             .iter()
-                            .map(|variant| ("sku", variant.sku.clone())),
-                    );
-                    fields.extend(
-                        product
-                            .variants
-                            .iter()
-                            .map(|variant| ("variants.sku", variant.sku.clone())),
-                    );
-                    let document = Document {
-                        text: format!(
-                            "{} {} {} {} {} {}",
-                            product.title,
-                            strip_tags(&product.description),
-                            product.vendor,
-                            product.product_type,
-                            product.tags.join(" "),
-                            variants.join(" ")
-                        ),
-                        fields,
-                    };
-                    matches(&clauses, &document)
-                })
-                .map(|(index, _)| ProductDrop::value(site, index))
-                .collect(),
+                            .flat_map(|v| [v.title.as_str(), v.sku.as_str()])
+                            .collect();
+                        let mut fields = vec![
+                            ("id", product.id.to_string()),
+                            ("handle", product.handle.clone()),
+                            ("title", product.title.clone()),
+                            ("vendor", product.vendor.clone()),
+                            ("product_type", product.product_type.clone()),
+                        ];
+                        fields.extend(product.tags.iter().map(|tag| ("tag", tag.clone())));
+                        fields.extend(
+                            product
+                                .variants
+                                .iter()
+                                .map(|variant| ("sku", variant.sku.clone())),
+                        );
+                        fields.extend(
+                            product
+                                .variants
+                                .iter()
+                                .map(|variant| ("variants.sku", variant.sku.clone())),
+                        );
+                        let document = Document {
+                            text: format!(
+                                "{} {} {} {} {} {}",
+                                product.title,
+                                strip_tags(&product.description),
+                                product.vendor,
+                                product.product_type,
+                                product.tags.join(" "),
+                                variants.join(" ")
+                            ),
+                            fields,
+                        };
+                        matches(&clauses, &document)
+                    })
+                    .map(|(index, _)| index)
+                    .collect();
+                sort_products(&store.products, &mut indexes, order);
+                indexes
+                    .into_iter()
+                    .map(|index| ProductDrop::value(site, index))
+                    .collect()
+            }
             SearchType::Page => store
                 .pages
                 .iter()
@@ -255,7 +293,15 @@ pub fn search_value(site: &SiteRef) -> Value {
         &[SearchType::Product, SearchType::Article, SearchType::Page],
     );
     let performed = site.request.param("q").is_some();
-    let results: Vec<Value> = run(site, &query, &types)
+    let order = sort_order(site);
+    // Under a price sort the non-product results go to the end of the list, in their own order.
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/search
+    let mut searched = types.clone();
+    if order != SortOrder::Manual {
+        searched.sort_by_key(|kind| *kind != SearchType::Product);
+    }
+    // Pagination slices this list, so it is sorted before `paginate` sees it.
+    let results: Vec<Value> = run(site, &query, &searched, order)
         .into_iter()
         .flat_map(|(_, results)| results)
         .collect();
@@ -266,13 +312,8 @@ pub fn search_value(site: &SiteRef) -> Value {
         ("results", PaginatedList::value(results)),
         ("types", type_names(&types)),
         ("filters", Value::array(Vec::new())),
-        ("sort_options", sort_options()),
-        (
-            "sort_by",
-            site.request
-                .param("sort_by")
-                .map_or_else(|| Value::str("relevance"), Value::from),
-        ),
+        ("sort_options", options_value(&SORT_OPTIONS)),
+        ("sort_by", Value::str(applied_sort_by(order))),
         ("default_sort_by", Value::str("relevance")),
     ])
 }
@@ -299,7 +340,7 @@ pub fn predictive_search_value(site: &SiteRef) -> Value {
     let mut collections = Vec::new();
     let mut pages = Vec::new();
     let mut articles = Vec::new();
-    for (kind, mut results) in run(site, &query, &types) {
+    for (kind, mut results) in run(site, &query, &types, SortOrder::Manual) {
         results.truncate(limit);
         match kind {
             SearchType::Product => products = results,

@@ -446,6 +446,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
                 .iter()
                 .map(|(key, field)| (key.clone(), metafield(field)))
                 .collect(),
+            template_suffix: entry.value.template_suffix.clone(),
         });
     }
     if let Some(session) = &input.session {

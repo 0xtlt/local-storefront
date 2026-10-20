@@ -156,6 +156,76 @@ fn collection_page_paginates_sorts_and_filters() {
 }
 
 #[test]
+fn search_results_follow_sort_by() {
+    // `sort_by` takes `relevance`, `price-ascending` or `price-descending`. Under a price sort the
+    // non-product results (pages, articles) go to the end of the results, and `paginate` slices
+    // the sorted list.
+    // https://shopify.dev/docs/api/liquid/objects/search
+    // https://shopify.dev/docs/storefronts/themes/navigation-search/search
+    let fixture = fixture();
+    let list =
+        |path: &str, source: &str| fixture.liquid(path, Session::initial(&fixture.store), source);
+    let prices = "{{ search.sort_by }}|{% for result in search.results %}\
+                  {{ result.object_type }}:{{ result.price | default: 0 }} {% endfor %}";
+
+    // Pages are asked for first: they still come after the products.
+    let relevance = list("/search?q=a&type=page,product", prices);
+    assert_eq!(
+        relevance,
+        "relevance|page:0 page:0 page:0 product:3200 product:6800 product:2400 product:2200 \
+         product:2800 product:3400 product:1600 product:2500 "
+    );
+    // Without `sort_by`, or with a value the search page does not know, the order is relevance.
+    assert_eq!(
+        list("/search?q=a&type=page,product&sort_by=relevance", prices),
+        relevance
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=title-ascending",
+            prices
+        ),
+        relevance
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=price-ascending",
+            prices
+        ),
+        "price-ascending|product:1600 product:2200 product:2400 product:2500 product:2800 \
+         product:3200 product:3400 product:6800 page:0 page:0 page:0 "
+    );
+    assert_eq!(
+        list(
+            "/search?q=a&type=page,product&sort_by=price-descending",
+            prices
+        ),
+        "price-descending|product:6800 product:3400 product:3200 product:2800 product:2500 \
+         product:2400 product:2200 product:1600 page:0 page:0 page:0 "
+    );
+
+    // The page is cut out of the sorted list.
+    assert_eq!(
+        list(
+            "/search?q=a&type=product&sort_by=price-descending&page=2",
+            "{% paginate search.results by 3 %}{% for result in search.results %}\
+             {{ result.price }} {% endfor %}{% endpaginate %}"
+        ),
+        "2800 2500 2400 "
+    );
+
+    assert_eq!(
+        list(
+            "/search?q=a",
+            "{% for option in search.sort_options %}{{ option.value }}={{ option.name }}; {% endfor %}\
+             default {{ search.default_sort_by }}"
+        ),
+        "relevance=Relevance; price-ascending=Price, low to high; \
+         price-descending=Price, high to low; default relevance"
+    );
+}
+
+#[test]
 fn liquid_template_with_translations_and_dates() {
     let rendered = fixture().page("/pages/about");
     assert_clean(&rendered);
@@ -1556,6 +1626,189 @@ fn a_block_cannot_be_called_from_the_liquid_of_a_setting() {
         rendered
             .body
             .contains("the block tag can only be used in layout/ and templates/ files"),
+        "{}",
+        rendered.body
+    );
+}
+
+/// A theme in a temporary directory rendered against the demo store plus `overlay` (store data).
+fn theme_with_data(name: &str, overlay: &serde_json::Value, files: &[(&str, &str)]) -> Fixture {
+    let fixture = theme_of(name, &[], files);
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &DataSource::Demo,
+        &LoadOptions::default(),
+        Some(overlay),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics}");
+    Fixture {
+        store: Arc::new(store),
+        ..fixture
+    }
+}
+
+#[test]
+fn metaobject_settings_are_metaobjects() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/settings/input-settings#metaobject
+    // and #metaobject_list: the setting gives a `metaobject` (or an array of them), and
+    // `metaobject_type` says which type the picker offers. Themes store the handle alone.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "recipe": [
+                { "handle": "pancakes", "fields": { "name": { "type": "single_line_text_field", "value": "Pancakes" } } },
+                { "handle": "waffles", "fields": { "name": { "type": "single_line_text_field", "value": "Waffles" } } }
+            ]
+        }
+    });
+    let gid = format!(
+        "gid://shopify/Metaobject/{}",
+        lsf_core::util::stable_id("metaobject", "recipe/waffles")
+    );
+    let template = serde_json::json!({
+        "sections": { "main": { "type": "recipes", "blocks": {
+            "handle": { "type": "card", "settings": { "recipe": "pancakes" } },
+            "dotted": { "type": "card", "settings": { "recipe": "recipe.waffles" } },
+            "slashed": { "type": "card", "settings": { "recipe": "recipe/pancakes" } },
+            "gid": { "type": "card", "settings": { "recipe": gid } },
+            "unknown": { "type": "card", "settings": { "recipe": "nope" } },
+            "list": { "type": "card", "settings": { "recipes": ["waffles", "nope", gid, "pancakes"] } },
+            "dynamic": { "type": "card", "settings": {
+                "recipe": "{{ metaobjects.recipe.waffles }}",
+                "recipes": "{{ metaobjects.recipe.values }}"
+            } }
+        }, "block_order": ["handle", "dotted", "slashed", "gid", "unknown", "list", "dynamic"] } },
+        "order": ["main"]
+    })
+    .to_string();
+    let fixture = theme_with_data(
+        "metaobject-settings",
+        &overlay,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("templates/index.json", &template),
+            ("sections/recipes.liquid", "{% content_for 'blocks' %}\n"),
+            (
+                "blocks/card.liquid",
+                "[{{ block.settings.recipe.name.value }}|{{ block.settings.recipe.system.handle }}|\
+                 {% for p in block.settings.recipes %}{{ p.name.value }},{% endfor %}]\
+                 {% schema %}{\"name\": \"Card\", \"tag\": null, \"settings\": [\
+                 {\"type\": \"metaobject\", \"id\": \"recipe\", \"label\": \"Recipe\", \"metaobject_type\": \"recipe\"},\
+                 {\"type\": \"metaobject_list\", \"id\": \"recipes\", \"label\": \"Recipes\", \"metaobject_type\": \"recipe\"}\
+                 ]}{% endschema %}",
+            ),
+        ],
+    );
+    let rendered = fixture.page("/");
+    assert_clean(&rendered);
+    let body = rendered.body.split("<body>").nth(1).unwrap();
+    let cards: Vec<&str> = body
+        .split('[')
+        .skip(1)
+        .map(|card| card.split(']').next().unwrap())
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            // A handle, `type.handle`, `type/handle` and the id of the entry; an unknown one is blank.
+            "Pancakes|pancakes|",
+            "Waffles|waffles|",
+            "Pancakes|pancakes|",
+            "Waffles|waffles|",
+            "||",
+            // The list keeps its order and leaves out what it does not find.
+            "||Waffles,Waffles,Pancakes,",
+            // A dynamic source gives the entries themselves, which are kept as they are.
+            "Waffles|waffles|Pancakes,Waffles,",
+        ]
+    );
+}
+
+#[test]
+fn the_entries_of_a_metaobject_type_have_pages() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/templates/metaobject: a type
+    // whose definition has the online store capability has `templates/metaobject/<type>.json`,
+    // rendered with the entry as `metaobject` at `/pages/<type>/<handle>`. Without the
+    // capability (here: without that template) the entry has no page and no `system.url`.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "event": [
+                { "handle": "summer", "fields": { "title": { "type": "single_line_text_field", "value": "Summer fair" } } },
+                { "handle": "winter", "template_suffix": "alt", "fields": { "title": { "type": "single_line_text_field", "value": "Winter fair" } } }
+            ],
+            "note": [{ "handle": "n", "fields": {} }]
+        }
+    });
+    let section = "<h1>{{ metaobject.title.value }}</h1><i>{{ metaobject.system.handle }}</i>\
+                   <u>{{ metaobject.system.url }}</u><s>{{ request.page_type }}|{{ template.directory }}|{{ template.name }}|{{ template.suffix }}</s>\
+                   <a href=\"{{ section.settings.link }}\">{{ page_title }}</a>\n\
+                   {% schema %}{\"name\": \"Event\", \"settings\": [{\"type\": \"url\", \"id\": \"link\"}]}{% endschema %}";
+    let template = serde_json::json!({
+        "sections": { "main": { "type": "event", "settings": { "link": "shopify://metaobjects/event/winter" } } },
+        "order": ["main"]
+    })
+    .to_string();
+    let fixture = theme_with_data(
+        "metaobject-pages",
+        &overlay,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("sections/event.liquid", section),
+            ("templates/metaobject/event.json", &template),
+            (
+                "templates/metaobject/event.alt.json",
+                &template.replace("winter", "summer"),
+            ),
+        ],
+    );
+    let body = |path: &str| {
+        let rendered = fixture.page(path);
+        (rendered.status, rendered.template.clone(), rendered.body)
+    };
+    let (status, template, html) = body("/pages/event/summer");
+    assert_eq!(status, 200, "{html}");
+    assert_eq!(template, "metaobject/event");
+    assert!(
+        html.contains(
+            "<h1>Summer fair</h1><i>summer</i><u>/pages/event/summer</u>\
+             <s>metaobject|metaobject|event|</s>\
+             <a href=\"/pages/event/winter\">Summer fair</a>"
+        ),
+        "{html}"
+    );
+    // The entry's template suffix, and `?view=`.
+    let (status, template, html) = body("/pages/event/winter");
+    assert_eq!((status, template.as_str()), (200, "metaobject/event.alt"));
+    assert!(
+        html.contains("<s>metaobject|metaobject|event|alt</s>"),
+        "{html}"
+    );
+    assert!(html.contains("<a href=\"/pages/event/summer\">"), "{html}");
+    assert_eq!(
+        body("/pages/event/summer?view=alt").1,
+        "metaobject/event.alt"
+    );
+    // An unknown entry, and a type without a template, are not found.
+    assert_eq!(body("/pages/event/nope").0, 404);
+    assert_eq!(body("/pages/note/n").0, 404);
+    assert_eq!(body("/pages/nope/summer").0, 404);
+    // `system.url` is blank for the type without pages, and follows the locale.
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "[{{ metaobjects.note.n.system.url }}][{{ metaobjects.event.summer.system.url }}]",
+    );
+    assert_eq!(output, "[][/pages/event/summer]");
+    let mut french = request("/pages/event/summer");
+    french.root = "/fr".to_string();
+    let rendered = fixture.render_with(french, Session::initial(&fixture.store), &Target::Page);
+    assert_eq!(rendered.status, 200);
+    assert!(
+        rendered.body.contains("<u>/fr/pages/event/summer</u>"),
         "{}",
         rendered.body
     );

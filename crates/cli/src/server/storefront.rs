@@ -286,8 +286,29 @@ fn log_problems(state: &ServerState, rendered: &Rendered) {
     }
 }
 
+/// The reason of a 404 as a header value: printable ASCII only, since the URL it quotes can
+/// hold anything.
+fn header_text(reason: &str) -> String {
+    reason
+        .chars()
+        .map(|c| {
+            if c.is_ascii() && !c.is_ascii_control() {
+                c
+            } else {
+                '?'
+            }
+        })
+        .collect()
+}
+
 fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     log_problems(visit.state, &rendered);
+    // A missing page is easy to take for a working one: say why it is missing.
+    if let Some(reason) = &rendered.not_found
+        && !visit.state.options.quiet
+    {
+        eprintln!("    404: {reason}");
+    }
     visit.state.timings.add(&rendered, target);
     let timings = timing::of_render(&rendered.timings, visit.state.options.timings);
     let mut body = rendered.body;
@@ -301,6 +322,9 @@ fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
         .header("x-lsf-template", rendered.template)
         .header("server-timing", timings)
         .header("content-language", visit.request.locale.clone());
+    if let Some(reason) = &rendered.not_found {
+        reply = reply.header("x-lsf-not-found", header_text(reason));
+    }
     if !rendered.errors.is_empty() {
         reply = reply.header("x-lsf-liquid-errors", rendered.errors.len().to_string());
     }

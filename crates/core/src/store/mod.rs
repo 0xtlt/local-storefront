@@ -733,6 +733,7 @@ pub struct Metaobject {
     pub kind: String,
     pub handle: String,
     pub fields: IndexMap<String, Metafield>,
+    pub template_suffix: Option<String>,
 }
 
 /// A cart line as stored in a session.
@@ -934,6 +935,30 @@ impl Store {
         self.metaobjects
             .iter()
             .find(|entry| entry.kind == kind && entry.handle == handle)
+    }
+
+    /// The metaobject a setting value points to: `<type>/<handle>`, `<type>.<handle>`, a
+    /// `gid://shopify/Metaobject/<id>`, or a bare handle of the `kind` the setting picks from.
+    pub fn metaobject_by_reference(
+        &self,
+        reference: &str,
+        kind: Option<&str>,
+    ) -> Option<&Metaobject> {
+        let reference = reference.trim();
+        if let Some(id) = reference.strip_prefix("gid://shopify/Metaobject/") {
+            let id = id.parse::<u64>().ok()?;
+            return self.metaobjects.iter().find(|entry| {
+                crate::util::stable_id("metaobject", &format!("{}/{}", entry.kind, entry.handle))
+                    == id
+            });
+        }
+        if let Some(entry) = kind.and_then(|kind| self.metaobject(kind, reference)) {
+            return Some(entry);
+        }
+        let (kind, handle) = reference
+            .split_once('/')
+            .or_else(|| reference.split_once('.'))?;
+        self.metaobject(kind, handle)
     }
 
     pub(crate) fn index(&mut self) {

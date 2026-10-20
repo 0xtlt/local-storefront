@@ -1283,6 +1283,11 @@ pub struct MetaobjectInput {
     /// Field values, with the same shorthand as metafields.
     #[serde(default)]
     pub fields: IndexMap<String, MetafieldInput>,
+    /// Selects `templates/metaobject/<type>.<suffix>.json` instead of
+    /// `templates/metaobject/<type>.json` for the page of the entry, which is
+    /// `/pages/<type>/<handle>`.
+    #[serde(default)]
+    pub template_suffix: Option<String>,
 }
 
 /// A reference to a variant: its numeric id, its SKU, or a product handle (meaning that
@@ -1472,7 +1477,9 @@ pub struct StoreInput {
     #[serde(default)]
     pub session: Option<SessionInput>,
     /// Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`.
-    /// Set it to make renders reproducible. Defaults to the real time.
+    /// Set it to make renders reproducible; each `'now'` of a render is then one nanosecond
+    /// after the previous one, so `%N` still differs between calls. Defaults to the real time,
+    /// read at each `'now'`.
     #[serde(default)]
     pub now: Option<String>,
     /// Overrides for theme settings (`config/settings_data.json`), by setting id.

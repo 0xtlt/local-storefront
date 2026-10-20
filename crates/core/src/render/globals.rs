@@ -16,7 +16,7 @@ use crate::drops::customer::{CustomerDrop, find_order};
 use crate::drops::gift_card::GiftCardDrop;
 use crate::drops::lists::{Kind, Lookup};
 use crate::drops::localization::LocalizationDrop;
-use crate::drops::metafield::MetaobjectsDrop;
+use crate::drops::metafield::{MetaobjectDrop, MetaobjectsDrop};
 use crate::drops::navigation::LinkListsDrop;
 use crate::drops::product::{ProductDrop, VariantDrop};
 use crate::drops::request::{RequestDrop, RoutesDrop, TemplateDrop};
@@ -175,6 +175,12 @@ impl Globals {
             },
             "page" => match &page.resource {
                 Resource::Page(index) => PageDrop::value(site, *index),
+                _ => return None,
+            },
+            "metaobject" => match &page.resource {
+                Resource::Metaobject(index) => {
+                    MetaobjectDrop::value(site, &store.metaobjects[*index])
+                }
                 _ => return None,
             },
             "blog" => match &page.resource {

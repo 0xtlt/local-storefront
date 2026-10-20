@@ -70,9 +70,9 @@ pluralization and interpolation, `date` with locale formats, `json`, `structured
 
 Global objects: `shop`, `cart`, `customer`, `request`, `routes`, `localization`, `template`,
 `theme`, `settings`, `section`, `block`, `closest`, `linklists`, `collections`, `all_products`,
-`pages`, `blogs`, `articles`, `images`, `metaobjects`, `product`, `collection`, `page`, `blog`,
-`article`, `policy`, `order`, `gift_card`, `search`, `predictive_search`, `recommendations`,
-`paginate`, `form`, `forloop`, `tablerowloop`, `canonical_url`, `page_title`,
+`pages`, `blogs`, `articles`, `images`, `metaobjects`, `metaobject` (on the pages of a
+metaobject type), `product`, `collection`, `page`, `blog`, `article`, `policy`, `order`,
+`gift_card`, `search`, `predictive_search`, `recommendations`, `paginate`, `form`, `forloop`, `tablerowloop`, `canonical_url`, `page_title`,
 `page_description`, `page_image`, `handle`, `current_page`, `current_tags`, `shop_locale`,
 `content_for_header`, `content_for_layout`, `country_option_tags`, `all_country_option_tags`,
 `powered_by_link`, `additional_checkout_buttons`, `robots`, `self`.
@@ -122,10 +122,11 @@ locations, companies, company locations and company addresses.
 - Both tags are a developer preview on Shopify ("Liquid July '26"), on development stores that
   turn it on, and may still change.
 - Settings resolved to the objects Liquid expects: `image_picker`, `video`, `video_url`,
-  `product`, `collection`, `page`, `blog`, `article`, `product_list`, `collection_list`,
-  `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
+  `product`, `collection`, `page`, `blog`, `article`, `metaobject`, `product_list`,
+  `collection_list`, `metaobject_list`, `link_list`, `color`, `color_palette`, `color_scheme`, `color_scheme_group`, `font_picker`,
   `url`, `liquid`, `checkbox`, `number` and `range`; the other types are passed as written.
-  Dynamic sources are evaluated (`{{ product.title }}`,
+  A `metaobject` setting holds the entry's handle, `<type>.<handle>`, `<type>/<handle>` or
+  `gid://shopify/Metaobject/<id>`. Dynamic sources are evaluated (`{{ product.title }}`,
   `{{ closest.product.metafields.custom.x }}`).
 - Locales: storefront translations and schema translations, pluralization rules by language,
   the fallback to the default locale, Shopify's built-in translations.
@@ -393,12 +394,12 @@ These are deliberate or not done yet. None of them raises a Liquid error.
 | B2B | Companies, company locations, their addresses and metafields are there: `customer.b2b?`, `current_company`, `current_location`, `company_available_locations` and the link that changes location. Catalogs are not: a B2B customer sees the same products, prices and quantity rules as everyone. No payment terms, no store credit. |
 | Markets | One price list: every country sees the shop currency's prices. The selected country changes `localization.country`, not prices. |
 | Taxes and shipping | Not computed. |
-| Search | A simple search over titles, descriptions, vendors, types, tags and SKUs. Ranking is not Shopify's. |
+| Search | A simple search over titles, descriptions, vendors, types, tags and SKUs. Ranking is not Shopify's: `relevance` keeps the order of the data. `sort_by` takes `price-ascending` and `price-descending` (any other value is `relevance`); pages and articles come after the products. |
 | Recommendations | Products of the same collections, or the product's explicit `recommendations`. |
 | Collection filters | Availability, price, vendor, product type, tag and variant options, with the swatches of option values. Metafield filters are not generated. |
 | Placeholder artwork | `image`, `collection-2` and `lifestyle-2` are Shopify's illustrations: the three that are published under a free license. For the other names, `placeholder_svg_tag` draws generic artwork of the right proportions. |
 | Fonts | Shopify's font library is not bundled. `font_face` and `font_url` generate the same markup and URLs; the files are blank unless provided in `files/fonts/`. |
-| Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. |
+| Shopify's shared assets | Requests under `/cdn/shopifycloud/` (payment buttons, model viewer UI, ...) get an empty file of the right type. The files of `shopify_asset_url` are served from the binary: `vendor/qrcode.js` is the qrcode.js library (MIT), as on Shopify; `shopify_common.js` has our own `Shopify.formatMoney` and `Shopify.resizeImage`; `option_selection.js`, `api.jquery.js`, `customer_area.js` and `currencies.js` only log a warning to the console, and `customer.css` is empty, because Shopify's code is proprietary. Any other name is a 404, logged by the server. |
 | Theme editor | `request.design_mode` is always `false`, `Shopify.designMode` is not set, and `block.shopify_attributes` is empty. |
 | Integers | 64-bit. Liquid on Shopify uses arbitrary-precision integers. |
 | Byte strings | Strings are text (UTF-8). `base64_decode` of bytes that are not text replaces them with `�`, where Shopify carries the bytes on to the next filter. |

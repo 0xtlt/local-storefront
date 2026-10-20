@@ -113,8 +113,11 @@ pub struct Shared {
     registers: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
     errors: Mutex<Vec<Error>>,
     warnings: Mutex<Vec<String>>,
-    /// The instant `'now'` resolves to. Fixing it makes renders reproducible.
-    pub now: DateTime<Utc>,
+    /// The instant `'now'` resolves to. Fixing it makes renders reproducible; without it, `'now'`
+    /// reads the clock each time, as Ruby's `Time.now` does.
+    pub now: Option<DateTime<Utc>>,
+    /// How many times the fixed `now` was read: each read is one nanosecond later.
+    now_reads: AtomicU64,
     /// The time zone dates are displayed in.
     pub time_zone: Tz,
     /// Records what the render spends its time in, when it is asked to.
@@ -187,7 +190,8 @@ impl ContextBuilder {
                 registers: self.registers,
                 errors: Mutex::new(Vec::new()),
                 warnings: Mutex::new(Vec::new()),
-                now: self.now.unwrap_or_else(Utc::now),
+                now: self.now,
+                now_reads: AtomicU64::new(0),
                 time_zone: self.time_zone,
                 profiler: self.profiler,
             }),
@@ -459,8 +463,18 @@ impl Context {
         self.shared.partials.load(name)
     }
 
+    /// The time `'now'` stands for. On Shopify each read is a new `Time.now`, so two reads in a
+    /// render differ, down to `%N`. A fixed `now` keeps that: each read is one nanosecond after
+    /// the previous one, the same sequence at every render (a render would need a million reads
+    /// to move `%L`).
     pub fn now(&self) -> DateTime<Utc> {
-        self.shared.now
+        match self.shared.now {
+            Some(now) => {
+                let reads = self.shared.now_reads.fetch_add(1, Ordering::Relaxed);
+                now + chrono::Duration::nanoseconds(i64::try_from(reads).unwrap_or(i64::MAX))
+            }
+            None => crate::time::clock_now(),
+        }
     }
 
     pub fn time_zone(&self) -> Tz {
