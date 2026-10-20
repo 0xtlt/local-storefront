@@ -70,9 +70,9 @@ pluralization and interpolation, `date` with locale formats, `json`, `structured
 
 Global objects: `shop`, `cart`, `customer`, `request`, `routes`, `localization`, `template`,
 `theme`, `settings`, `section`, `block`, `closest`, `linklists`, `collections`, `all_products`,
-`pages`, `blogs`, `articles`, `images`, `metaobjects`, `product`, `collection`, `page`, `blog`,
-`article`, `policy`, `order`, `gift_card`, `search`, `predictive_search`, `recommendations`,
-`paginate`, `form`, `forloop`, `tablerowloop`, `canonical_url`, `page_title`,
+`pages`, `blogs`, `articles`, `images`, `metaobjects`, `metaobject` (on the pages of a
+metaobject type), `product`, `collection`, `page`, `blog`, `article`, `policy`, `order`,
+`gift_card`, `search`, `predictive_search`, `recommendations`, `paginate`, `form`, `forloop`, `tablerowloop`, `canonical_url`, `page_title`,
 `page_description`, `page_image`, `handle`, `current_page`, `current_tags`, `shop_locale`,
 `content_for_header`, `content_for_layout`, `country_option_tags`, `all_country_option_tags`,
 `powered_by_link`, `additional_checkout_buttons`, `robots`, `self`.

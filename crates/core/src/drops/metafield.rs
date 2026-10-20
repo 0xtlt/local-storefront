@@ -499,14 +499,20 @@ impl Object for MetaobjectDrop {
                         &format!("{}/{}", self.entry.kind, self.entry.handle),
                     ) as i64),
                 ),
+                // Only the types that have pages (`templates/metaobject/<type>.json`) have an URL.
                 (
                     "url",
-                    Value::from(
-                        self.site.request.localized(&format!(
+                    if crate::render::routes::has_metaobject_page(
+                        &self.site.theme,
+                        &self.entry.kind,
+                    ) {
+                        Value::from(self.site.request.localized(&format!(
                             "/pages/{}/{}",
                             self.entry.kind, self.entry.handle
-                        )),
-                    ),
+                        )))
+                    } else {
+                        Value::Nil
+                    },
                 ),
             ]));
         }

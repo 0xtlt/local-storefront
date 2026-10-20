@@ -615,6 +615,14 @@ Metaobjects are listed by type:
 and read with `{{ metaobjects.designer.sam.name }}` or
 `{% for d in metaobjects.designer.values %}`.
 
+A type whose theme has `templates/metaobject/<type>.json` (or `.liquid`) is a type with web
+pages on Shopify: each entry is served at `/pages/<type>/<handle>`, the template sees it as
+`metaobject`, and `metaobject.system.url` is that URL. Without the template the entry has no
+page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders it with
+`templates/metaobject/<type>.alt.json`, and `?view=alt` does the same for one request. The page
+title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
+in a `url` setting leads to the page.
+
 ## Time and theme settings
 
 - `now` freezes the clock: `"now": "2025-01-15T10:00:00Z"`. `{{ 'now' | date: ... }}`, sale

@@ -1724,3 +1724,92 @@ fn metaobject_settings_are_metaobjects() {
         ]
     );
 }
+
+#[test]
+fn the_entries_of_a_metaobject_type_have_pages() {
+    // https://shopify.dev/docs/storefronts/themes/architecture/templates/metaobject: a type
+    // whose definition has the online store capability has `templates/metaobject/<type>.json`,
+    // rendered with the entry as `metaobject` at `/pages/<type>/<handle>`. Without the
+    // capability (here: without that template) the entry has no page and no `system.url`.
+    let overlay = serde_json::json!({
+        "metaobjects": {
+            "event": [
+                { "handle": "summer", "fields": { "title": { "type": "single_line_text_field", "value": "Summer fair" } } },
+                { "handle": "winter", "template_suffix": "alt", "fields": { "title": { "type": "single_line_text_field", "value": "Winter fair" } } }
+            ],
+            "note": [{ "handle": "n", "fields": {} }]
+        }
+    });
+    let section = "<h1>{{ metaobject.title.value }}</h1><i>{{ metaobject.system.handle }}</i>\
+                   <u>{{ metaobject.system.url }}</u><s>{{ request.page_type }}|{{ template.directory }}|{{ template.name }}|{{ template.suffix }}</s>\
+                   <a href=\"{{ section.settings.link }}\">{{ page_title }}</a>\n\
+                   {% schema %}{\"name\": \"Event\", \"settings\": [{\"type\": \"url\", \"id\": \"link\"}]}{% endschema %}";
+    let template = serde_json::json!({
+        "sections": { "main": { "type": "event", "settings": { "link": "shopify://metaobjects/event/winter" } } },
+        "order": ["main"]
+    })
+    .to_string();
+    let fixture = theme_with_data(
+        "metaobject-pages",
+        &overlay,
+        &[
+            (
+                "layout/theme.liquid",
+                "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+            ),
+            ("sections/event.liquid", section),
+            ("templates/metaobject/event.json", &template),
+            (
+                "templates/metaobject/event.alt.json",
+                &template.replace("winter", "summer"),
+            ),
+        ],
+    );
+    let body = |path: &str| {
+        let rendered = fixture.page(path);
+        (rendered.status, rendered.template.clone(), rendered.body)
+    };
+    let (status, template, html) = body("/pages/event/summer");
+    assert_eq!(status, 200, "{html}");
+    assert_eq!(template, "metaobject/event");
+    assert!(
+        html.contains(
+            "<h1>Summer fair</h1><i>summer</i><u>/pages/event/summer</u>\
+             <s>metaobject|metaobject|event|</s>\
+             <a href=\"/pages/event/winter\">Summer fair</a>"
+        ),
+        "{html}"
+    );
+    // The entry's template suffix, and `?view=`.
+    let (status, template, html) = body("/pages/event/winter");
+    assert_eq!((status, template.as_str()), (200, "metaobject/event.alt"));
+    assert!(
+        html.contains("<s>metaobject|metaobject|event|alt</s>"),
+        "{html}"
+    );
+    assert!(html.contains("<a href=\"/pages/event/summer\">"), "{html}");
+    assert_eq!(
+        body("/pages/event/summer?view=alt").1,
+        "metaobject/event.alt"
+    );
+    // An unknown entry, and a type without a template, are not found.
+    assert_eq!(body("/pages/event/nope").0, 404);
+    assert_eq!(body("/pages/note/n").0, 404);
+    assert_eq!(body("/pages/nope/summer").0, 404);
+    // `system.url` is blank for the type without pages, and follows the locale.
+    let output = fixture.liquid(
+        "/",
+        Session::initial(&fixture.store),
+        "[{{ metaobjects.note.n.system.url }}][{{ metaobjects.event.summer.system.url }}]",
+    );
+    assert_eq!(output, "[][/pages/event/summer]");
+    let mut french = request("/pages/event/summer");
+    french.root = "/fr".to_string();
+    let rendered = fixture.render_with(french, Session::initial(&fixture.store), &Target::Page);
+    assert_eq!(rendered.status, 200);
+    assert!(
+        rendered.body.contains("<u>/fr/pages/event/summer</u>"),
+        "{}",
+        rendered.body
+    );
+}

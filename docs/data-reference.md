@@ -671,6 +671,7 @@ A metaobject entry (`metaobjects.<type>.<handle>`).
 |---|---|---|
 | `handle` | string | **Required.** |
 | `fields` | map of [Metafield](#metafield) | Field values, with the same shorthand as metafields. |
+| `template_suffix` | string | Selects `templates/metaobject/<type>.<suffix>.json` instead of `templates/metaobject/<type>.json` for the page of the entry, which is `/pages/<type>/<handle>`. |
 
 ## Localization
 

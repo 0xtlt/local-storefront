@@ -1283,6 +1283,11 @@ pub struct MetaobjectInput {
     /// Field values, with the same shorthand as metafields.
     #[serde(default)]
     pub fields: IndexMap<String, MetafieldInput>,
+    /// Selects `templates/metaobject/<type>.<suffix>.json` instead of
+    /// `templates/metaobject/<type>.json` for the page of the entry, which is
+    /// `/pages/<type>/<handle>`.
+    #[serde(default)]
+    pub template_suffix: Option<String>,
 }
 
 /// A reference to a variant: its numeric id, its SKU, or a product handle (meaning that

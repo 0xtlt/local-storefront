@@ -17,6 +17,8 @@ pub enum Resource {
     },
     ListCollections,
     Page(usize),
+    /// An entry of the store's `metaobjects`, by position.
+    Metaobject(usize),
     Blog {
         blog: usize,
         tags: Vec<String>,

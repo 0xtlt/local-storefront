@@ -733,6 +733,7 @@ pub struct Metaobject {
     pub kind: String,
     pub handle: String,
     pub fields: IndexMap<String, Metafield>,
+    pub template_suffix: Option<String>,
 }
 
 /// A cart line as stored in a session.

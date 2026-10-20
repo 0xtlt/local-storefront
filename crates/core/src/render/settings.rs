@@ -67,6 +67,10 @@ impl Dynamic<'_> {
 /// Resolves `shopify://` links and prefixes storefront paths with the locale root.
 pub fn resolve_url(site: &Site, raw: &str) -> String {
     let path = match raw.strip_prefix("shopify://") {
+        // The page of a metaobject entry: `shopify://metaobjects/<type>/<handle>`.
+        Some(rest) if rest.starts_with("metaobjects/") => {
+            format!("/pages/{}", &rest["metaobjects/".len()..])
+        }
         Some(rest) => format!("/{rest}"),
         None => raw.to_string(),
     };
