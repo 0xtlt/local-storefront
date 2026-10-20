@@ -249,8 +249,11 @@ impl Renderer {
                 loaded: Mutex::new(HashMap::new()),
             }))
             .register(state.clone())
-            .now(site.now)
             .time_zone(site.store.shop.timezone);
+        // Without a fixed `now`, `'now'` reads the clock at each use, as it does on Shopify.
+        if let Some(now) = site.store.now {
+            builder = builder.now(now);
+        }
         if let Some(profiler) = profiler {
             builder = builder.profiler(profiler);
         }

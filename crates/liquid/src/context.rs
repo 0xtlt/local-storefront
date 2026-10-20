@@ -113,8 +113,9 @@ pub struct Shared {
     registers: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
     errors: Mutex<Vec<Error>>,
     warnings: Mutex<Vec<String>>,
-    /// The instant `'now'` resolves to. Fixing it makes renders reproducible.
-    pub now: DateTime<Utc>,
+    /// The instant `'now'` resolves to. Fixing it makes renders reproducible; without it, `'now'`
+    /// reads the clock each time, as Ruby's `Time.now` does.
+    pub now: Option<DateTime<Utc>>,
     /// The time zone dates are displayed in.
     pub time_zone: Tz,
     /// Records what the render spends its time in, when it is asked to.
@@ -187,7 +188,7 @@ impl ContextBuilder {
                 registers: self.registers,
                 errors: Mutex::new(Vec::new()),
                 warnings: Mutex::new(Vec::new()),
-                now: self.now.unwrap_or_else(Utc::now),
+                now: self.now,
                 time_zone: self.time_zone,
                 profiler: self.profiler,
             }),
@@ -460,7 +461,7 @@ impl Context {
     }
 
     pub fn now(&self) -> DateTime<Utc> {
-        self.shared.now
+        self.shared.now.unwrap_or_else(crate::time::clock_now)
     }
 
     pub fn time_zone(&self) -> Tz {

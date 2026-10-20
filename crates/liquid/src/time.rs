@@ -3,6 +3,9 @@
 
 use std::any::Any;
 use std::borrow::Cow;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Instant;
 
 use chrono::{
     DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
@@ -61,6 +64,32 @@ impl Object for Time {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// The wall clock, as `Time.now` reads it on Shopify's hosts: every call moves forward and the
+/// nanoseconds are all significant.
+///
+/// Some systems (macOS) only tell the time to the microsecond, which would make `%N` always end
+/// in `000` and two calls in the same microsecond equal. The missing digits are taken from a
+/// monotonic clock, and a call never returns an instant before the previous one.
+pub fn clock_now() -> DateTime<Utc> {
+    static START: OnceLock<Instant> = OnceLock::new();
+    static LAST: AtomicI64 = AtomicI64::new(i64::MIN);
+
+    let mut nanos = Utc::now().timestamp_nanos_opt().unwrap_or(i64::MAX - 1);
+    if nanos % 1000 == 0 {
+        let elapsed = START.get_or_init(Instant::now).elapsed().as_nanos();
+        nanos += (elapsed % 999) as i64 + 1;
+    }
+    // Reserve the instant atomically, so that two threads never get the same one.
+    let reserve = |previous: i64| nanos.max(previous.saturating_add(1));
+    let previous = LAST
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous| {
+            Some(reserve(previous))
+        })
+        .unwrap_or_else(|previous| previous);
+    let reserved = reserve(previous);
+    DateTime::from_timestamp_nanos(reserved)
 }
 
 /// Ruby Liquid's `Utils.to_date`: the time a value stands for, if any.
@@ -594,7 +623,11 @@ fn format_directive(time: &DateTime<Tz>, conversion: char, spec: &Spec) -> Optio
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::environment::Environment;
+    use crate::template::Template;
 
     fn at(input: &str) -> DateTime<Tz> {
         let now = Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap();
@@ -655,5 +688,74 @@ mod tests {
             "2024-01-05 09:07:03 01/05/24 09:07 09:07:03 AM Fri Jan  5 09:07:03 2024"
         );
         assert_eq!(strftime(&time, "%L %3N %N"), "000 000 000000000");
+    }
+
+    /// Reference: Ruby 3.x `Time#strftime` on `12:34:56.123456789`:
+    /// `"%N %L %3N %6N %9N %12N %1N"` => `"123456789 123 123 123456 123456789 123456789000 1"`.
+    #[test]
+    fn formats_fractional_seconds_like_ruby() {
+        let time = at("2024-01-05T09:07:03Z") + Duration::nanoseconds(123_456_789);
+        assert_eq!(
+            strftime(&time, "%N %L %3N %6N %9N %12N %1N").unwrap(),
+            "123456789 123 123 123456 123456789 123456789000 1"
+        );
+    }
+
+    /// Reference: Ruby's `Time.now` is read at every `date` call, so successive
+    /// `{{ 'now' | date: '%N' }}` in one render differ (themes build accordion ids from it). A
+    /// context without a fixed clock must do the same, and, as on a Linux host, the nanoseconds
+    /// must not always end in `000` (the macOS clock only has microseconds, and themes take
+    /// `%N | modulo: 1000`).
+    #[test]
+    fn now_moves_between_calls_without_a_fixed_clock() {
+        let env = Arc::new(Environment::standard());
+        let template = Template::parse(&env, "{{ 'now' | date: '%N' }} ").unwrap();
+        let mut ctx = Context::builder(env.clone()).time_zone(Tz::UTC).build();
+        let seen: Vec<String> = (0..200).map(|_| template.render(&mut ctx)).collect();
+        let distinct: std::collections::HashSet<_> = seen.iter().collect();
+        assert_eq!(distinct.len(), seen.len());
+        // The sub-microsecond digits vary. (A single `...000` is legitimate: it can be the
+        // successor of a `...999`.)
+        let low_digits: std::collections::HashSet<_> = seen
+            .iter()
+            .map(|nanos| nanos.trim()[6..].to_string())
+            .collect();
+        assert!(low_digits.len() >= 10, "{low_digits:?}");
+    }
+
+    /// Threads reading the clock at the same time never get the same instant.
+    #[test]
+    fn the_clock_gives_each_thread_its_own_instant() {
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    (0..10_000)
+                        .map(|_| clock_now().timestamp_nanos_opt().unwrap())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let mut all: Vec<i64> = threads
+            .into_iter()
+            .flat_map(|thread| thread.join().unwrap())
+            .collect();
+        let total = all.len();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), total);
+    }
+
+    /// A fixed clock stays fixed: renders with a given `now` are reproducible.
+    #[test]
+    fn now_is_stable_with_a_fixed_clock() {
+        let env = Arc::new(Environment::standard());
+        let template = Template::parse(&env, "{{ 'now' | date: '%N' }}").unwrap();
+        let now = Utc.with_ymd_and_hms(2024, 1, 1, 0, 1, 58).unwrap();
+        let mut ctx = Context::builder(env.clone())
+            .now(now)
+            .time_zone(Tz::UTC)
+            .build();
+        assert_eq!(template.render(&mut ctx), "000000000");
+        assert_eq!(template.render(&mut ctx), "000000000");
     }
 }
