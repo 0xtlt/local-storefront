@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "lsf"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "axum",
  "brotli",
@@ -1761,7 +1761,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-core"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "blake3",
  "chrono",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-fmt"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "oxc",
  "oxc_formatter",
@@ -1792,7 +1792,7 @@ dependencies = [
 
 [[package]]
 name = "lsf-liquid"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "base64 0.23.1",
  "chrono",

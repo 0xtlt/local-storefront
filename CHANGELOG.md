@@ -3,6 +3,16 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## 0.1.18 - 2026-10-21
+
+### Changed
+
+- **Security update of the dependencies.** 33 crates are updated, among them `brotli` 9,
+  `jsonschema` 0.59 and `base64` 0.23. Nothing changes in what `lsf` does.
+- **The release binaries are built with Rust 1.99.1**, up from 1.98.1.
+- **The npm packages are built and published with Node 24.22.1.** The release and npm workflows
+  pin it, and the development toolchain pins Node 26.12.1.
+
 ## 0.1.17 - 2026-10-20
 
 ### Added
