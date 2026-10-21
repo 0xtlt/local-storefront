@@ -84,7 +84,7 @@ pub fn clock_now() -> DateTime<Utc> {
     // Reserve the instant atomically, so that two threads never get the same one.
     let reserve = |previous: i64| nanos.max(previous.saturating_add(1));
     let previous = LAST
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |previous| {
             Some(reserve(previous))
         })
         .unwrap_or_else(|previous| previous);
