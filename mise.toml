@@ -1,12 +1,12 @@
 # Toolchain + tasks for local-storefront. Run `mise install` once, then `mise run <task>`.
 [tools]
-rust = { version = "1.98.1", components = "clippy,rustfmt" }
+rust = { version = "1.99.1", components = "clippy,rustfmt" }
 # For the npm packaging (`npm/`), the tests of the injected scripts, and `mise run prettier:*`
 # (differential tests of `lsf fmt` against Prettier with Shopify's Liquid plugin).
-node = "26"
+node = "26.12.1"
 # Only needed for `mise run oracle:*` (differential tests against Shopify's reference Liquid gem)
 # and for the tasks that download test material (`docs:fetch`, `liquid-spec:fetch`).
-ruby = "3.4.10"
+ruby = "3.4.11"
 
 [env]
 LSF_HORIZON_DIR = "{{config_root}}/themes/horizon"
