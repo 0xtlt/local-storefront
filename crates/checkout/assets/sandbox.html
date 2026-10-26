@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light" />
+    <style>
+      :root {
+        color-scheme: light;
+        --lsf-accent: #005bd3;
+        --lsf-link: #005bd3;
+        --lsf-radius: 8px;
+        --lsf-subdued: #616161;
+      }
+      html[data-variant='shop'] {
+        --lsf-accent: #5433eb;
+        --lsf-link: #5433eb;
+        --lsf-radius: 14px;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        color: #303030;
+        font: 14px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      }
+      body {
+        display: flow-root;
+        overflow: hidden;
+      }
+      html.lsf-overlay body {
+        visibility: hidden;
+      }
+    </style>
+    <!-- Classic scripts: this frame has an opaque origin, which cannot load modules without CORS. -->
+    <script src="sandbox-api.js"></script>
+    <script src="sandbox-components.js"></script>
+    <script src="sandbox-legacy.js"></script>
+    <script src="sandbox.js"></script>
+  </head>
+  <body></body>
+</html>

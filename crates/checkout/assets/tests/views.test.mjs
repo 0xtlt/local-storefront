@@ -1,0 +1,201 @@
+// The pages as virtual DOM: what each state of the checkout shows.
+
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { withCurrency } from '../format.js';
+import { update } from '../preview/mock-engine.mjs';
+import { renderPage } from '../views.js';
+import { checkoutState, engineCheckout, pageState } from './harness.mjs';
+
+const walk = (node, visit) => {
+  visit(node);
+  for (const child of node.children) walk(child, visit);
+};
+const findAll = (tree, predicate) => {
+  const found = [];
+  walk(tree, (node) => predicate(node) && found.push(node));
+  return found;
+};
+const has = (node, name) => (node.props.class ?? '').split(/\s+/).includes(name);
+const byClass = (tree, name) => findAll(tree, (node) => has(node, name));
+const text = (node) => (node.tag === '#text' ? node.text : node.children.map(text).join(''));
+
+function page(state, ui = {}, { slots = [] } = {}) {
+  const actions = new Proxy({}, { get: () => () => {} });
+  const slot = (target, instance) => {
+    slots.push([target, instance]);
+    return null;
+  };
+  return renderPage({ state, ui: { draft: { address: {} }, openRuns: new Set(), ...ui }, slot, actions, location: 'http://localhost/checkouts/cn/preview' });
+}
+
+/** The sample checkout after `operations`, as the page gets it. */
+function after(...operations) {
+  return pageState(update(engineCheckout(), operations).state);
+}
+
+const ADDRESS = { lastName: 'Martin', address1: '1 rue de Rivoli', city: 'Paris', countryCode: 'FR' };
+
+test('the one-page checkout has its steps in order', () => {
+  const tree = page(checkoutState());
+  assert.equal(tree.props['data-variant'], 'standard');
+  assert.deepEqual(findAll(tree, (node) => node.tag === 'section').map((node) => node.props['data-section']), ['contact', 'delivery', 'shipping', 'payment']);
+  assert.equal(text(byClass(tree, 'lsf-pay')[0]), 'Pay now');
+  assert.match(text(byClass(tree, 'lsf-summary-toggle')[0]), /Show order summary.*€73\.00/);
+});
+
+test('the Shop skin changes the words and the data attribute, not the steps', () => {
+  const tree = page(checkoutState({ variant: 'shop' }));
+  assert.equal(tree.props['data-variant'], 'shop');
+  assert.equal(text(byClass(tree, 'lsf-shop-logo')[0]), 'shop');
+  assert.match(text(byClass(tree, 'lsf-pay')[0]), /^Pay now · €73\.00$/);
+  assert.equal(text(findAll(tree, (node) => node.tag === 'h2')[1]), 'Ship to');
+});
+
+test('shipping methods wait for the address', () => {
+  const before = page(checkoutState());
+  assert.match(text(byClass(before, 'lsf-placeholder')[0]), /Enter your shipping address/);
+  const withAddress = page(after({ type: 'shippingAddress', address: ADDRESS }));
+  assert.equal(byClass(withAddress, 'lsf-placeholder').length, 0);
+  const cards = byClass(withAddress, 'lsf-radio-card').filter((card) => card.props.key === 'standard' || card.props.key === 'express');
+  assert.equal(cards.length, 2);
+  assert.match(text(cards[0]), /Standard.*3 to 5 business days.*€4\.90/);
+  assert.match(text(cards[1]), /Express.*€12\.00/);
+});
+
+test('shows the chosen shipping method and the total with it', () => {
+  const state = after({ type: 'shippingAddress', address: ADDRESS }, { type: 'deliveryOption', group: 'shipping', handle: 'standard' });
+  const tree = page(state);
+  assert.equal(byClass(tree, 'is-selected').filter((node) => node.props.key === 'standard').length, 1);
+  const total = byClass(tree, 'lsf-total')[0];
+  assert.match(text(total), /EUR.*€77\.90/);
+});
+
+test('shows discount codes, what they took off and an ignored code', () => {
+  const state = after({ type: 'discountCode', action: 'add', code: 'save10' }, { type: 'discountCode', action: 'add', code: 'nope' });
+  const tree = page(state, { discountError: 'Enter a valid discount code' });
+  const codes = byClass(tree, 'lsf-code');
+  assert.deepEqual(codes.map((code) => has(code, 'is-ignored')), [false, true]);
+  assert.match(text(codes[1]), /NOPE.*Not applied/);
+  assert.match(text(byClass(tree, 'lsf-cost-discount')[0]), /SAVE10.*−€7\.30/);
+  assert.match(text(byClass(tree, 'lsf-field-error')[0]), /Enter a valid discount code/);
+  assert.match(text(byClass(tree, 'lsf-line')[0]), /SAVE10 \(−€4\.90\)/);
+});
+
+test('the pay button says what paying will do', () => {
+  assert.equal(text(byClass(page(after({ type: 'paymentMethod', handle: 'card' })), 'lsf-pay')[0]), 'Pay now');
+  assert.equal(text(byClass(page(after({ type: 'paymentMethod', handle: 'cod' })), 'lsf-pay')[0]), 'Complete order');
+  assert.equal(text(byClass(page(checkoutState(), { busy: true }), 'lsf-pay')[0]), 'Processing…');
+});
+
+test('what is missing shows once the buyer tried to pay', () => {
+  const quiet = page(checkoutState());
+  assert.equal(byClass(quiet, 'lsf-field-error').length, 0);
+  const tried = page(checkoutState(), { tried: true });
+  const errors = byClass(tried, 'lsf-field-error').map(text);
+  assert.ok(errors.includes('Enter an email'));
+  assert.ok(errors.includes('Enter an address'));
+  assert.ok(errors.includes('Select a payment method'));
+  assert.equal(findAll(tried, (node) => node.props['aria-invalid'] === 'true').length >= 3, true);
+});
+
+test('errors of the checkout go to their field or to a banner', () => {
+  const state = checkoutState({
+    errors: [
+      { message: 'Use a work email', target: '$.cart.buyerIdentity.email', function: 'x' },
+      { message: 'Order too large', target: '$.cart', function: 'y' },
+    ],
+  });
+  const tree = page(state);
+  const email = byClass(tree, 'lsf-field').find((node) => node.props['data-field'] === 'email');
+  assert.match(text(byClass(email, 'lsf-field-error')[0]), /Use a work email/);
+  assert.match(text(findAll(tree, (node) => node.props['data-banner'] === 'errors')[0]), /Order too large/);
+});
+
+test('extensions that block the buyer are heard', () => {
+  const tree = page(checkoutState(), { block: { reason: 'The gift message is empty.', errors: [{ message: 'Write a message.' }] } });
+  assert.match(text(findAll(tree, (node) => node.props['data-banner'] === 'blocked')[0]), /The gift message is empty\.Write a message\./);
+});
+
+test('asks for a slot at each target, with an instance for each line', () => {
+  const slots = [];
+  page(after({ type: 'shippingAddress', address: ADDRESS }, { type: 'deliveryOption', group: 'shipping', handle: 'standard' }), {}, { slots });
+  const targets = slots.map(([target]) => target);
+  for (const expected of [
+    'purchase.checkout.header.render-after',
+    'purchase.checkout.contact.render-after',
+    'purchase.checkout.delivery-address.render-before',
+    'purchase.checkout.delivery-address.render-after',
+    'purchase.checkout.shipping-option-list.render-before',
+    'purchase.checkout.shipping-option-list.render-after',
+    'purchase.checkout.shipping-option-item.render-after',
+    'purchase.checkout.shipping-option-item.details.render',
+    'purchase.checkout.block.render',
+    'purchase.checkout.payment-method-list.render-before',
+    'purchase.checkout.payment-method-list.render-after',
+    'purchase.checkout.actions.render-before',
+    'purchase.checkout.footer.render-after',
+    'purchase.checkout.cart-line-item.render-after',
+    'purchase.checkout.cart-line-list.render-after',
+    'purchase.checkout.reductions.render-before',
+    'purchase.checkout.reductions.render-after',
+  ]) {
+    assert.ok(targets.includes(expected), `${expected} is rendered`);
+  }
+  const lineSlots = slots.filter(([target]) => target === 'purchase.checkout.cart-line-item.render-after');
+  assert.deepEqual(lineSlots.map(([, instance]) => instance.lineId), ['gid://shopify/CartLine/1', 'gid://shopify/CartLine/2']);
+  const options = slots.filter(([target]) => target === 'purchase.checkout.shipping-option-item.render-after');
+  assert.deepEqual(options.map(([, instance]) => instance.option), ['standard', 'express']);
+});
+
+test('the thank-you page shows the order and the thank-you targets', () => {
+  const slots = [];
+  const done = withCurrency({ ...after({ type: 'email', value: 'a@b.c' }, { type: 'shippingAddress', address: { ...ADDRESS, firstName: 'Ada' } }, { type: 'deliveryOption', group: 'shipping', handle: 'express' }, { type: 'paymentMethod', handle: 'card' }), status: 'completed', order: { id: 'gid://shopify/Order/1', number: '#1001' } });
+  const tree = page(done, {}, { slots });
+  assert.equal(tree.props['data-status'], 'completed');
+  assert.equal(text(findAll(tree, (node) => node.tag === 'h1')[0]), 'Thank you, Ada!');
+  assert.equal(text(byClass(tree, 'lsf-muted').find((node) => node.props['data-test'] === 'confirmation')), 'Confirmation #1001');
+  const details = text(byClass(tree, 'lsf-details')[0]);
+  assert.match(details, /a@b\.c/);
+  assert.match(details, /1 rue de Rivoli/);
+  assert.match(details, /Express · €12\.00/);
+  assert.match(details, /Credit card/);
+  assert.equal(byClass(tree, 'lsf-pay').filter((node) => node.tag === 'button').length, 0, 'nothing to pay any more');
+  const targets = slots.map(([target]) => target);
+  for (const expected of ['purchase.thank-you.announcement.render', 'purchase.thank-you.header.render-after', 'purchase.thank-you.block.render', 'purchase.thank-you.customer-information.render-after', 'purchase.thank-you.cart-line-item.render-after', 'purchase.thank-you.cart-line-list.render-after', 'purchase.thank-you.footer.render-after']) {
+    assert.ok(targets.includes(expected), `${expected} is rendered`);
+  }
+  assert.ok(!targets.some((target) => target.startsWith('purchase.checkout.')), 'no checkout target on the thank-you page');
+});
+
+test('the Functions panel lists the runs and opens them on demand', () => {
+  const state = checkoutState();
+  const closed = page(state);
+  const panel = byClass(closed, 'lsf-functions')[0];
+  assert.match(text(panel.children[0]), /Functions.*2 runs/);
+  assert.equal(byClass(closed, 'lsf-run').length, 0, 'nothing built while the panel is closed');
+
+  const open = page(state, { functionsOpen: true });
+  const runs = byClass(open, 'lsf-run');
+  assert.deepEqual(runs.map((run) => run.props['data-run']), ['volume-discount', 'order-rules']);
+  assert.equal(findAll(open, (node) => node.tag === 'pre').length, 0, 'inputs are built only for the runs that are open');
+
+  const withRun = page(state, { functionsOpen: true, openRuns: new Set([0]) });
+  const pres = findAll(withRun, (node) => node.tag === 'pre').map(text);
+  assert.equal(pres.length, 2);
+  assert.match(pres[0], /"cart"/);
+  assert.match(pres[1], /"operations"/);
+});
+
+test('a failed run shows its error and counts as failed', () => {
+  const state = checkoutState();
+  state.runs[0] = { ...state.runs[0], error: 'unreachable executed', output: null };
+  const tree = page(state, { functionsOpen: true, openRuns: new Set([0]) });
+  assert.match(text(byClass(tree, 'lsf-chip').find((node) => has(node, 'is-error'))), /1 failed/);
+  assert.match(text(findAll(tree, (node) => node.tag === 'pre' && has(node, 'is-error'))[0]), /unreachable executed/);
+});
+
+test('problems with the app show as banners', () => {
+  const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle, run `shopify app build`'] }));
+  assert.match(text(byClass(tree, 'lsf-diagnostics')[0]), /shopify app build/);
+});

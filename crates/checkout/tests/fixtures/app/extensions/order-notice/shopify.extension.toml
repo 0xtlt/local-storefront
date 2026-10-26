@@ -1,0 +1,31 @@
+api_version = "2025-07"
+
+[[extensions]]
+name = "Order notice"
+handle = "order-notice"
+type = "ui_extension"
+description = "Tells the buyer how far they are from free shipping, with a button for the code. Built for API 2025-07, which still runs on remote-ui."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.reductions.render-after"
+  module = "./src/Reductions.jsx"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-list.render-after"
+  module = "./src/Shipping.jsx"
+
+  [extensions.capabilities]
+  api_access = true
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "threshold"
+    type = "number_integer"
+    name = "Free shipping from"
+    description = "The order total from which shipping is free."
+
+    [[extensions.settings.fields]]
+    key = "code"
+    type = "single_line_text_field"
+    name = "Discount code"
+    description = "The code the button applies."
