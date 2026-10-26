@@ -158,7 +158,12 @@ pub struct UiExtension {
     pub name: Option<String>,
     pub dir: PathBuf,
     pub api_version: Option<String>,
+    /// The release `api_version` names. `None` when it is missing or not supported (an error
+    /// diagnostic says so): the extension is then not offered to the page.
+    pub version: Option<ApiVersion>,
     pub targets: Vec<UiTarget>,
+    /// `[[extensions.metafields]]`: the metafields the extension declares it reads.
+    pub metafields: Vec<MetafieldDeclaration>,
     /// `[extensions.capabilities]` as JSON.
     pub capabilities: Value,
     /// `[extensions.settings]` as JSON.
@@ -171,6 +176,15 @@ impl UiExtension {
     pub fn built(&self) -> bool {
         self.bundle.is_file()
     }
+}
+
+/// A metafield a checkout UI extension declares: `[[extensions.metafields]]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetafieldDeclaration {
+    pub namespace: String,
+    pub key: String,
+    /// `owner_type`: the resource the metafield is read from. Required from API version 2027-01.
+    pub owner_type: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -641,6 +655,25 @@ fn load_ui_extension(
     api_version: Option<String>,
     entry: &toml::Table,
 ) -> UiExtension {
+    let version = match api_version.as_deref() {
+        Some(text) => ApiVersion::parse(text),
+        None => Err(format!(
+            "no `api_version` (supported: {})",
+            ApiVersion::supported()
+        )),
+    };
+    let version = match version {
+        Ok(version) => Some(version),
+        Err(message) => {
+            app.error(
+                Some(handle),
+                format!("{message}: the extension is not offered to the checkout page"),
+            );
+            None
+        }
+    };
+    let metafields = load_metafield_declarations(app, handle, version, entry);
+
     let mut targets = Vec::new();
     // `[[extensions.targeting]]`, and `extension_points = [...]`, the older way to list targets.
     for target in entry
@@ -711,11 +744,60 @@ fn load_ui_extension(
         name,
         dir: dir.to_path_buf(),
         api_version,
+        version,
         targets,
+        metafields,
         capabilities: entry.get("capabilities").map_or(Value::Null, toml_to_json),
         settings: entry.get("settings").map_or(Value::Null, toml_to_json),
         bundle,
     }
+}
+
+/// `[[extensions.metafields]]`. An entry without `namespace` or `key` is an error and left out;
+/// one without `owner_type` is an error when the API version requires it (the declaration is
+/// kept: the page says why the extension is refused).
+fn load_metafield_declarations(
+    app: &mut App,
+    handle: &str,
+    version: Option<ApiVersion>,
+    entry: &toml::Table,
+) -> Vec<MetafieldDeclaration> {
+    let mut declarations = Vec::new();
+    for declared in entry
+        .get("metafields")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_table())
+    {
+        let text = |name: &str| declared.get(name).and_then(|v| v.as_str());
+        let (Some(namespace), Some(key)) = (text("namespace"), text("key")) else {
+            app.error(
+                Some(handle),
+                "a `metafields` entry needs a `namespace` and a `key`".to_string(),
+            );
+            continue;
+        };
+        let owner_type = text("owner_type").map(str::to_string);
+        if owner_type.is_none()
+            && let Some(version) = version
+            && version.requires_metafield_owner_type()
+        {
+            app.error(
+                Some(handle),
+                format!(
+                    "API version {version} requires `owner_type` on every metafield declaration: \
+                     `{namespace}.{key}` has none"
+                ),
+            );
+        }
+        declarations.push(MetafieldDeclaration {
+            namespace: namespace.to_string(),
+            key: key.to_string(),
+            owner_type,
+        });
+    }
+    declarations
 }
 
 fn toml_to_json(value: &toml::Value) -> Value {
@@ -802,7 +884,7 @@ type = "function"
             &root,
             "extensions/banner/shopify.extension.toml",
             r#"
-api_version = "2025-10"
+api_version = "2026-10"
 
 [[extensions]]
 name = "Banner"
@@ -992,6 +1074,113 @@ handle = "banner"
             "{:?}",
             app.diagnostics
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_ui_extension_needs_a_supported_api_version() {
+        let root = temp_app("ui-versions");
+        let extension = |handle: &str, version: &str| {
+            write(
+                &root,
+                &format!("extensions/{handle}/shopify.extension.toml"),
+                &format!(
+                    "type = \"ui_extension\"\n{version}\n[[targeting]]\ntarget = \"purchase.checkout.block.render\"\n"
+                ),
+            );
+            write(
+                &root,
+                &format!("extensions/{handle}/dist/{handle}.js"),
+                "// built",
+            );
+        };
+        extension("current", "api_version = \"2026-10\"");
+        extension("candidate", "api_version = \"2027-01\"");
+        extension("old", "api_version = \"2025-07\"");
+        extension("unstable", "api_version = \"unstable\"");
+        extension("none", "");
+        let app = load(&root).unwrap();
+        let version = |handle: &str| {
+            app.ui_extension(handle)
+                .unwrap()
+                .version
+                .map(|v| v.to_string())
+        };
+        assert_eq!(version("current").as_deref(), Some("2026-10"));
+        assert_eq!(version("candidate").as_deref(), Some("2027-01"));
+        for handle in ["old", "unstable", "none"] {
+            assert_eq!(version(handle), None, "{handle}");
+        }
+        let errors: Vec<String> = app
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(errors.contains(&"old: api_version \"2025-07\" is not supported (supported: 2026-10, 2027-01): the extension is not offered to the checkout page".to_string()), "{errors:?}");
+        assert!(
+            errors.contains(
+                &"none: no `api_version` (supported: 2026-10, 2027-01): the extension is not offered to the checkout page"
+                    .to_string()
+            ),
+            "{errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_ui_extension_declares_its_metafields() {
+        let root = temp_app("ui-metafields");
+        for (handle, version) in [("old", "2026-10"), ("new", "2027-01")] {
+            write(
+                &root,
+                &format!("extensions/{handle}/shopify.extension.toml"),
+                &format!(
+                    r#"
+api_version = "{version}"
+
+[[extensions]]
+type = "ui_extension"
+handle = "{handle}"
+
+  [[extensions.metafields]]
+  namespace = "$app:gift"
+  key = "wrapped"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+  key = "note"
+  owner_type = "CART"
+
+  [[extensions.metafields]]
+  namespace = "custom"
+"#
+                ),
+            );
+        }
+        let app = load(&root).unwrap();
+        // The entry without a key is left out; the others are kept as written.
+        for handle in ["old", "new"] {
+            let metafields = &app.ui_extension(handle).unwrap().metafields;
+            assert_eq!(metafields.len(), 2, "{handle}");
+            assert_eq!(metafields[0].namespace, "$app:gift");
+            assert_eq!(metafields[0].key, "wrapped");
+            assert_eq!(metafields[0].owner_type, None);
+            assert_eq!(metafields[1].owner_type.as_deref(), Some("CART"));
+        }
+        // 2026-10 does not need the owner type; 2027-01 does.
+        let incomplete = "a `metafields` entry needs a `namespace` and a `key`";
+        let missing = "API version 2027-01 requires `owner_type` on every metafield declaration: `$app:gift.wrapped` has none";
+        let messages = |handle: &str| -> Vec<&str> {
+            app.diagnostics
+                .iter()
+                .filter(|d| d.severity == Severity::Error && d.extension.as_deref() == Some(handle))
+                .map(|d| d.message.as_str())
+                .collect()
+        };
+        assert_eq!(messages("old"), [incomplete]);
+        assert_eq!(messages("new"), [missing, incomplete]);
         let _ = std::fs::remove_dir_all(root);
     }
 

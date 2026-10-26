@@ -2974,6 +2974,15 @@ fn fixture_app() -> std::path::PathBuf {
 
 /// A server whose checkout runs the fixture app of `lsf-checkout`.
 fn checkout_server(extensions: &[&str], standalone: bool) -> ServerState {
+    checkout_server_of(fixture_app(), extensions, standalone)
+}
+
+/// A server whose checkout runs the app in `app_dir`.
+fn checkout_server_of(
+    app_dir: std::path::PathBuf,
+    extensions: &[&str],
+    standalone: bool,
+) -> ServerState {
     let options = |app: App| {
         ServerState::new(
             app,
@@ -2987,7 +2996,7 @@ fn checkout_server(extensions: &[&str], standalone: bool) -> ServerState {
                 timings: false,
                 customer: None,
                 checkout: Some(crate::checkout::CheckoutOptions {
-                    app_dir: fixture_app(),
+                    app_dir,
                     extensions: extensions.iter().map(|handle| handle.to_string()).collect(),
                     variant: crate::checkout::Variant::Standard,
                     standalone,
@@ -3135,6 +3144,17 @@ fn the_state_describes_the_checkout() {
     // The manifest declares the settings; nothing sets them.
     assert_eq!(extensions[0]["settings"], json!({}));
     assert_eq!(extensions[0]["capabilities"]["block_progress"], true);
+    // The metafields they declare: `owner_type` is `ownerType`, absent when not written.
+    assert_eq!(extensions[0]["apiVersion"], "2026-10");
+    assert_eq!(
+        extensions[0]["metafields"],
+        json!([{"namespace": "$app:gift", "key": "wrapped"}])
+    );
+    assert_eq!(extensions[1]["apiVersion"], "2027-01");
+    assert_eq!(
+        extensions[1]["metafields"],
+        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART"}])
+    );
     // The fixture keeps one legacy target on purpose: it still runs, with a warning.
     assert_eq!(
         json["diagnostics"],
@@ -3146,6 +3166,111 @@ fn the_state_describes_the_checkout() {
     // The control API says the same, for a test that is not the browser.
     let control = body_json(&get(&state, "/__lsf/checkout?session=co-state", "other"));
     assert_eq!(control["token"], json["token"]);
+}
+
+#[test]
+fn an_extension_on_an_unsupported_api_version_is_not_offered() {
+    let root =
+        std::env::temp_dir().join(format!("lsf-checkout-ui-versions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (handle, version) in [
+        ("supported", "api_version = \"2026-10\""),
+        ("candidate", "api_version = \"2027-01\""),
+        ("old", "api_version = \"2025-07\""),
+        ("unversioned", ""),
+    ] {
+        let dir = root.join("extensions").join(handle);
+        std::fs::create_dir_all(dir.join("dist")).unwrap();
+        std::fs::write(dir.join("dist").join(format!("{handle}.js")), "// built").unwrap();
+        std::fs::write(
+            dir.join("shopify.extension.toml"),
+            format!(
+                "type = \"ui_extension\"\n{version}\n[[targeting]]\ntarget = \"purchase.checkout.block.render\"\n"
+            ),
+        )
+        .unwrap();
+    }
+    let state = checkout_server_of(root.clone(), &[], false);
+    let path = start_checkout(
+        &state,
+        "co-ui-versions",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-ui-versions"));
+    let mut handles: Vec<&str> = json["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    handles.sort();
+    assert_eq!(handles, ["candidate", "supported"]);
+    let diagnostics: Vec<&str> = json["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap())
+        .collect();
+    for message in [
+        "old: api_version \"2025-07\" is not supported (supported: 2026-10, 2027-01): the extension is not offered to the checkout page",
+        "unversioned: no `api_version` (supported: 2026-10, 2027-01): the extension is not offered to the checkout page",
+    ] {
+        assert!(diagnostics.contains(&message), "{diagnostics:?}");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_metafield_without_owner_type_is_reported_from_2027_01() {
+    let root = std::env::temp_dir().join(format!("lsf-checkout-ui-owner-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (handle, version) in [("stable", "2026-10"), ("candidate", "2027-01")] {
+        let dir = root.join("extensions").join(handle);
+        std::fs::create_dir_all(dir.join("dist")).unwrap();
+        std::fs::write(dir.join("dist").join(format!("{handle}.js")), "// built").unwrap();
+        std::fs::write(
+            dir.join("shopify.extension.toml"),
+            format!(
+                "api_version = \"{version}\"\ntype = \"ui_extension\"\n[[targeting]]\ntarget = \"purchase.checkout.block.render\"\n[[metafields]]\nnamespace = \"$app:gift\"\nkey = \"wrapped\"\n"
+            ),
+        )
+        .unwrap();
+    }
+    let state = checkout_server_of(root.clone(), &[], false);
+    let path = start_checkout(
+        &state,
+        "co-ui-owner",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-ui-owner"));
+    // Both are offered: the page says why it refuses the second.
+    let extensions = json["extensions"].as_array().unwrap();
+    assert_eq!(extensions.len(), 2);
+    for extension in extensions {
+        assert_eq!(
+            extension["metafields"],
+            json!([{"namespace": "$app:gift", "key": "wrapped"}])
+        );
+    }
+    let diagnostics: Vec<&str> = json["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap())
+        .collect();
+    assert!(
+        diagnostics.contains(&"candidate: API version 2027-01 requires `owner_type` on every metafield declaration: `$app:gift.wrapped` has none"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !d.starts_with("stable:") || !d.contains("owner_type")),
+        "{diagnostics:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

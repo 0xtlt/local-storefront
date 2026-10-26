@@ -92,6 +92,12 @@ impl ApiVersion {
         ApiVersion(VERSIONS.last().expect("at least one release"))
     }
 
+    /// Whether a checkout UI extension has to give the `owner_type` of each of its metafield
+    /// declarations: from 2027-01 on. `refusalOf` in `assets/api-versions.js` has the same rule.
+    pub fn requires_metafield_owner_type(self) -> bool {
+        self.as_str() >= "2027-01"
+    }
+
     /// The schema of a Function API in this release.
     pub fn schema(self, api: FunctionApi) -> &'static Schema {
         type Cache = Mutex<HashMap<(&'static str, FunctionApi), &'static Schema>>;
@@ -271,6 +277,20 @@ mod tests {
         for other in ["", "unstable", "latest", "2026-1", "2026-10-01", "2027-04"] {
             assert!(ApiVersion::parse(other).is_err(), "{other}");
         }
+    }
+
+    #[test]
+    fn owner_type_is_required_from_2027_01() {
+        assert!(
+            !ApiVersion::parse("2026-10")
+                .unwrap()
+                .requires_metafield_owner_type()
+        );
+        assert!(
+            ApiVersion::parse("2027-01")
+                .unwrap()
+                .requires_metafield_owner_type()
+        );
     }
 
     #[test]

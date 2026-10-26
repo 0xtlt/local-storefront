@@ -264,12 +264,12 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
     Ok(Computed { json, result })
 }
 
-/// The checkout UI extensions to load: the built ones.
+/// The checkout UI extensions to load: the built ones on a supported API version.
 fn extensions_json(app: &App, selection: &Selection) -> Json {
     Json::Array(
         selection
             .ui_extensions(app)
-            .filter(|extension| extension.built())
+            .filter(|extension| extension.built() && extension.version.is_some())
             .map(|extension| {
                 let file = extension
                     .bundle
@@ -289,6 +289,13 @@ fn extensions_json(app: &App, selection: &Selection) -> Json {
                     "targets": targets,
                     "capabilities": extension.capabilities,
                     "settings": setting_values(&extension.settings),
+                    "metafields": extension.metafields.iter().map(|declared| {
+                        let mut entry = json!({"namespace": declared.namespace, "key": declared.key});
+                        if let Some(owner_type) = &declared.owner_type {
+                            entry["ownerType"] = json!(owner_type);
+                        }
+                        entry
+                    }).collect::<Vec<_>>(),
                     "translations": translations(&extension.dir),
                 })
             })

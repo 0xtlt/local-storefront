@@ -119,6 +119,10 @@ each. They read the checkout through the `shopify` global and change it with the
 methods, `buyerJourney.intercept` can block the payment, and both the Polaris web components and
 the older React components work.
 
+An extension needs a supported `api_version`, or it is reported as an error and not shown. From
+2027-01, each `[[extensions.metafields]]` entry needs an `owner_type` (`CART`, `CUSTOMER`, ...),
+or the loader reports an error and the page says why it does not load the extension.
+
 ## Run a Function without a server
 
 ```bash

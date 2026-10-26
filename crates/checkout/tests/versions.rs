@@ -86,7 +86,13 @@ fn every_function_runs_at_each_supported_version() {
         let copy = AppCopy::new(&format!("each-{version}"));
         copy.set_api_version(version.as_str());
         let app = copy.load();
-        assert!(errors(&app).is_empty(), "{version}: {:?}", errors(&app));
+        // `gift-message` declares a metafield without `owner_type`, which 2027-01 refuses: the
+        // extension is not what this test runs.
+        let errors: Vec<_> = errors(&app)
+            .into_iter()
+            .filter(|error| !error.starts_with("gift-message:"))
+            .collect();
+        assert!(errors.is_empty(), "{version}: {errors:?}");
         assert!(
             app.functions.iter().all(|f| f.version == Some(version)),
             "{version}"
@@ -374,5 +380,54 @@ fn a_cart_transform_of_the_first_generation_has_its_own_operation_names() {
             .contains("`operations[0]` has no field `lineUpdate`"),
         "{:?}",
         result.errors
+    );
+}
+
+#[test]
+fn a_checkout_ui_extension_on_an_unsupported_version_is_an_error_and_not_offered() {
+    let copy = AppCopy::new("ui-unsupported");
+    copy.replace(
+        "gift-message",
+        "shopify.extension.toml",
+        "api_version = \"2026-10\"",
+        "api_version = \"2025-07\"",
+    );
+    let app = copy.load();
+    let gift = app.ui_extension("gift-message").unwrap();
+    assert!(gift.version.is_none());
+    assert_eq!(gift.api_version.as_deref(), Some("2025-07"));
+    assert!(app.ui_extension("order-notice").unwrap().version.is_some());
+    let errors = errors(&app);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        errors[0],
+        "gift-message: api_version \"2025-07\" is not supported (supported: 2026-10, 2027-01): the extension is not offered to the checkout page"
+    );
+}
+
+#[test]
+fn the_fixture_metafields_follow_the_rule_of_their_version() {
+    let app = app();
+    let gift = app.ui_extension("gift-message").unwrap();
+    assert_eq!(gift.metafields.len(), 1);
+    assert_eq!(gift.metafields[0].owner_type, None);
+    let notice = app.ui_extension("order-notice").unwrap();
+    assert_eq!(notice.metafields[0].owner_type.as_deref(), Some("CART"));
+    assert!(errors(&app).is_empty(), "{:?}", errors(&app));
+
+    // The same declaration without `owner_type` is fine on 2026-10 and an error on 2027-01.
+    let copy = AppCopy::new("ui-owner-type");
+    copy.replace(
+        "order-notice",
+        "shopify.extension.toml",
+        "  owner_type = \"CART\"\n",
+        "",
+    );
+    let errors = errors(&copy.load());
+    assert_eq!(
+        errors,
+        [
+            "order-notice: API version 2027-01 requires `owner_type` on every metafield declaration: `$app:notice.dismissed` has none"
+        ]
     );
 }

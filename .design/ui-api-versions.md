@@ -67,7 +67,9 @@ Sources: [owner_type changelog (2026-10-08)](https://shopify.dev/changelog/posts
   sandbox has no version switch: it is one code path.
 - State JSON: `extensions[].metafields` is the list of declarations,
   `[{"namespace", "key", "ownerType"?}]` (`ownerType` is the toml's `owner_type`). Absent means
-  none declared.
+  none declared. `crates/checkout/src/app.rs` reads them from `[[extensions.metafields]]` and
+  reports a missing `owner_type` on 2027-01 as an error diagnostic; an extension whose
+  `api_version` is not supported is an error too and is left out of `extensions`.
 
 ## Fixtures (`crates/checkout/tests/fixtures/app/extensions/`)
 
@@ -95,10 +97,6 @@ no call back at once).
 
 ## Gaps
 
-- The Rust side (`crates/checkout/src/app.rs`) does not read `[[extensions.metafields]]` yet, so
-  a real app's state has no `extensions[].metafields` and the `owner_type` check does not fire
-  there; it works on the preview's sample state. `shopify app build` would not deploy such an
-  extension either way.
 - `[[extensions.targeting.metafields]]` (per target) is not modelled: only the extension-wide
   declarations are checked.
 - `shopify.appMetafields` returns every cart metafield, not only the declared ones, and no
