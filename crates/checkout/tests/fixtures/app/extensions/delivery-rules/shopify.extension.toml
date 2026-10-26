@@ -1,0 +1,16 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "Delivery rules"
+handle = "delivery-rules"
+type = "function"
+description = "Hides, renames and moves delivery options"
+
+  [[extensions.targeting]]
+  target = "purchase.delivery-customization.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../../../../tools/checkout/build_function_fixtures.sh"
+  path = "dist/function.wasm"

@@ -1,0 +1,16 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "Quantity limit"
+handle = "quantity-limit"
+type = "function"
+description = "Blocks the checkout when a line has too many items"
+
+  [[extensions.targeting]]
+  target = "purchase.validation.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../../../../tools/checkout/build_function_fixtures.sh"
+  path = "dist/function.wasm"

@@ -1,0 +1,26 @@
+api_version = "2025-10"
+
+[[extensions]]
+name = "Volume discount"
+handle = "volume-discount"
+type = "function"
+description = "Percentage off the lines with enough items, off the order, and free shipping above an amount"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [[extensions.targeting]]
+  target = "cart.delivery-options.discounts.generate.run"
+  input_query = "src/cart_delivery_options_discounts_generate_run.graphql"
+  export = "cart_delivery_options_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../../../../tools/checkout/build_function_fixtures.sh"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

@@ -1,0 +1,3 @@
+target/
+# Downloaded by `mise run fixtures:functions` (Shopify's Function API schemas, ~5k lines each).
+extensions/*/schema.graphql

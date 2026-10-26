@@ -42,6 +42,10 @@ run = "node --test crates/core/assets/platform/tests/*.test.mjs crates/cli/asset
 description = "Clippy on the whole workspace, warnings are errors"
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
+[tasks."fixtures:functions"]
+description = "Rebuild the Wasm Functions of the lsf-checkout test app (crates/checkout/tests/fixtures/app); the built modules are committed"
+run = "tools/checkout/build_function_fixtures.sh"
+
 [tasks.fmt]
 description = "Format the code"
 run = "cargo fmt --all"
