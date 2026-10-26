@@ -111,9 +111,10 @@ pub struct DiscountConfig {
     pub metafields: Vec<Metafield>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DiscountClass {
+    #[default]
     Product,
     Order,
     Shipping,
@@ -162,7 +163,19 @@ pub struct ResultLine {
     pub components: Vec<ResultLine>,
     /// Which cart transform operation changed the line: `expand`, `merge`, `update`.
     pub transformed_by: Option<String>,
+    /// The lines of the cart the line is made of, with the quantity of each it holds: one for a
+    /// line of the cart, expanded or updated, several for a merge. Lets a change of the line be
+    /// made on the cart.
+    #[serde(skip)]
+    pub sources: Vec<SourceLine>,
     pub requires_shipping: bool,
+}
+
+/// A part of a line of the cart: its index in the cart, and the quantity taken from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceLine {
+    pub index: usize,
+    pub quantity: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -179,6 +192,10 @@ pub struct DiscountAllocation {
     pub code: Option<String>,
     #[serde(serialize_with = "money")]
     pub amount: Cents,
+    /// The class of the discount that made it: the cart cost of a Function input leaves out
+    /// the order discounts from its subtotal.
+    #[serde(skip)]
+    pub class: DiscountClass,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -210,6 +227,20 @@ pub struct DeliveryGroup {
     /// In the order the buyer sees them, after delivery customizations.
     pub options: Vec<DeliveryOption>,
     pub selected: Option<String>,
+}
+
+impl DeliveryGroup {
+    /// What the selected option costs, after shipping discounts (0 when none is selected).
+    pub fn selected_cost(&self) -> Cents {
+        self.selected
+            .as_ref()
+            .and_then(|selected| {
+                self.options
+                    .iter()
+                    .find(|option| &option.handle == selected)
+            })
+            .map_or(0, |option| option.cost)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -3438,6 +3438,177 @@ fn operations_change_the_cart_lines() {
     assert_eq!(cart["item_count"], 0);
 }
 
+/// A checkout where the cart transform of the fixture app does what `operations` says.
+fn transformed_checkout(
+    state: &ServerState,
+    session: &str,
+    items: Json,
+    operations: Json,
+) -> String {
+    start_checkout(
+        state,
+        session,
+        items,
+        json!({"checkout": {"functions": {"bundle-transform": {"metafields": {
+            "$app:config.settings": {"type": "json", "value": {"operations": operations}}
+        }}}}}),
+    )
+}
+
+/// The `(sku, quantity)` of the lines of the cart of the theme.
+fn cart_of(state: &ServerState, session: &str) -> Vec<(String, u64)> {
+    body_json(&get(state, "/cart.js", session))["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["sku"].as_str().unwrap().to_string(),
+                item["quantity"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn change_line(state: &ServerState, path: &str, session: &str, change: Json) -> Reply {
+    operations(
+        state,
+        path,
+        session,
+        json!([{"type": "cartLines", "change": change}]),
+    )
+}
+
+#[test]
+fn a_merged_line_is_removed_through_the_lines_it_is_made_of() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-merge-remove",
+        json!([
+            {"variant": "TEE-BLK-M", "quantity": 1},
+            {"variant": "TOTE-NAT", "quantity": 2},
+            {"variant": "MUG-OAT", "quantity": 1}
+        ]),
+        json!([{"type": "merge", "lines": [1, 2], "parentVariant": variant_id(&state, "MUG-OAT"), "title": "Set"}]),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-merge-remove"));
+    let lines = json["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 2, "{json}");
+    assert_eq!(lines[0]["id"], "gid://shopify/CartLine/4");
+    assert_eq!(lines[0]["transformedBy"], "merge");
+    assert_eq!(lines[1]["id"], "gid://shopify/CartLine/3");
+
+    // The line of the checkout is not a position in the cart.
+    let reply = change_line(
+        &state,
+        &path,
+        "co-merge-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/4", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-merge-remove"),
+        [("MUG-OAT".to_string(), 1)]
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["lines"].as_array().unwrap().len(), 1);
+    assert_eq!(json["lines"][0]["sku"], "MUG-OAT");
+}
+
+#[test]
+fn a_merged_line_is_scaled_through_the_lines_it_is_made_of() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-merge-update",
+        json!([
+            {"variant": "TEE-BLK-M", "quantity": 1},
+            {"variant": "TOTE-NAT", "quantity": 2},
+            {"variant": "MUG-OAT", "quantity": 1}
+        ]),
+        json!([{"type": "merge", "lines": [1, 2], "parentVariant": variant_id(&state, "MUG-OAT")}]),
+    );
+    let reply = change_line(
+        &state,
+        &path,
+        "co-merge-update",
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/4", "quantity": 3}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-merge-update"),
+        [
+            ("TEE-BLK-M".to_string(), 3),
+            ("TOTE-NAT".to_string(), 6),
+            ("MUG-OAT".to_string(), 1)
+        ]
+    );
+
+    // Its merchandise, and what belongs to one line only, cannot be changed.
+    for change in [
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/4", "merchandiseId": format!("gid://shopify/ProductVariant/{}", variant_id(&state, "MUG-OAT"))}),
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/4", "attributes": [{"key": "a", "value": "b"}]}),
+    ] {
+        let reply = change_line(&state, &path, "co-merge-update", change);
+        assert_eq!(reply.status, 400, "{}", text(&reply));
+        assert!(text(&reply).contains("cart transform"), "{}", text(&reply));
+    }
+    assert_eq!(cart_of(&state, "co-merge-update").len(), 3);
+}
+
+#[test]
+fn an_expanded_line_is_removed_through_its_line_of_the_cart() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-expand-remove",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}, {"variant": "MUG-OAT", "quantity": 1}]),
+        json!([{"type": "expand", "line": 1, "items": [
+            {"variant": variant_id(&state, "MUG-OAT"), "quantity": 1},
+            {"variant": variant_id(&state, "TOTE-NAT"), "quantity": 1}
+        ]}]),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-expand-remove"));
+    assert_eq!(json["lines"][0]["transformedBy"], "expand");
+    assert_eq!(json["lines"][0]["components"].as_array().unwrap().len(), 2);
+
+    let reply = change_line(
+        &state,
+        &path,
+        "co-expand-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-expand-remove"),
+        [("TEE-BLK-M".to_string(), 1), ("MUG-OAT".to_string(), 1)]
+    );
+    assert_eq!(body_json(&reply)["lines"][0]["quantity"], 1);
+
+    // The id of a component is not a line to change.
+    let component = body_json(&reply)["lines"][0]["components"][0]["id"].clone();
+    let reply = change_line(
+        &state,
+        &path,
+        "co-expand-remove",
+        json!({"type": "removeCartLine", "id": component, "quantity": 1}),
+    );
+    assert_eq!(reply.status, 400, "{}", text(&reply));
+
+    let reply = change_line(
+        &state,
+        &path,
+        "co-expand-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-expand-remove"),
+        [("MUG-OAT".to_string(), 1)]
+    );
+}
+
 #[test]
 fn a_bad_operation_changes_nothing() {
     let state = checkout_server(&[], false);

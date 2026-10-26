@@ -10,7 +10,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use lsf_checkout::app::{App, Selection};
 use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
-use lsf_checkout::{Address, CheckoutResult, CheckoutState, Metafield};
+use lsf_checkout::{Address, CheckoutResult, CheckoutState, Metafield, ResultLine};
 use lsf_core::drops::cart::line_key;
 use lsf_core::store::CartLine;
 use lsf_core::{Session, Store};
@@ -243,15 +243,18 @@ fn read(state: &ServerState, session_id: &str) -> (Session, Arc<Store>, Checkout
     })
 }
 
-fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result<Computed, String> {
+/// Runs the Functions of the app on a cart: what the checkout looks like, with the app and the
+/// extensions selected. A logged-in customer does not have to type what the store knows.
+fn price(
+    state: &ServerState,
+    session: &Session,
+    store: &Store,
+    checkout: &mut CheckoutState,
+) -> Result<(App, Selection, CheckoutResult), String> {
     let options = options(state);
-    let variant = variant_of(state, session_id, incoming);
     let app = lsf_checkout::app::load(&options.app_dir)?;
     let selection = Selection::resolve(&app, &options.extensions)?;
-    // One read, so that the basis is what the result is computed from.
-    let (session, store, mut checkout, basis) = read(state, session_id);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
-    // A logged-in customer does not have to type what the store knows.
     if checkout.email.is_none() {
         checkout.email = customer.map(|customer| customer.email.clone());
     }
@@ -260,8 +263,17 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
             .map(|customer| customer.phone.clone())
             .filter(|phone| !phone.is_empty());
     }
-    let config = config_from_store(&store);
-    let result = pipeline::compute(&app, &selection, &store, &session, &checkout, &config);
+    let config = config_from_store(store);
+    let result = pipeline::compute(&app, &selection, store, session, checkout, &config);
+    Ok((app, selection, result))
+}
+
+fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result<Computed, String> {
+    let variant = variant_of(state, session_id, incoming);
+    // One read, so that the basis is what the result is computed from.
+    let (session, store, mut checkout, basis) = read(state, session_id);
+    let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
+    let (app, selection, result) = price(state, &session, &store, &mut checkout)?;
 
     let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
     let object = json.as_object_mut().expect("a result is an object");
@@ -513,7 +525,14 @@ pub(super) fn apply_update(
     let (mut session, store, mut checkout, basis) = read(state, id);
     let config = config_from_store(&store);
     for (position, operation) in operations.iter().enumerate() {
-        if let Err(problem) = apply(operation, &mut session, &mut checkout, &store, &config) {
+        if let Err(problem) = apply(
+            state,
+            operation,
+            &mut session,
+            &mut checkout,
+            &store,
+            &config,
+        ) {
             return error(400, format!("operation {position}: {problem}"));
         }
     }
@@ -567,6 +586,7 @@ fn change_of<'a>(operation: &'a Json, kind: &str) -> Result<&'a Json, String> {
 
 /// Applies one operation to the cart and the choices of the buyer.
 fn apply(
+    state: &ServerState,
     operation: &Json,
     session: &mut Session,
     checkout: &mut CheckoutState,
@@ -678,7 +698,7 @@ fn apply(
                 _ => return Err("the `action` of a `discountCode` is `add` or `remove`".into()),
             }
         }
-        "cartLines" => cart_lines(change_of(operation, kind)?, session, store)?,
+        "cartLines" => cart_lines(state, change_of(operation, kind)?, session, checkout, store)?,
         "attribute" => {
             let change = change_of(operation, kind)?;
             let key = text_of(change, "key").ok_or("an attribute change needs a `key`")?;
@@ -746,17 +766,52 @@ fn gid_number(id: &str) -> Option<u64> {
     id.rsplit('/').next()?.parse().ok()
 }
 
-/// The index in the cart of a line named by its id: `gid://shopify/CartLine/<n>`, n from 1.
-fn line_index(change: &Json, session: &Session) -> Result<usize, String> {
+/// The line of the checkout a change names by its id. The ids are those of the checkout, not
+/// positions in the cart: after a cart transform a line may be a merge of several lines of the
+/// cart.
+fn checkout_line(
+    state: &ServerState,
+    change: &Json,
+    session: &Session,
+    checkout: &CheckoutState,
+    store: &Store,
+) -> Result<ResultLine, String> {
     let id = change
         .get("id")
         .and_then(Json::as_str)
         .ok_or("the change needs the `id` of a line")?;
-    gid_number(id)
-        .and_then(|number| number.checked_sub(1))
-        .map(|index| index as usize)
-        .filter(|index| *index < session.cart_lines.len())
+    let mut checkout = checkout.clone();
+    let (_, _, result) = price(state, session, store, &mut checkout)?;
+    result
+        .lines
+        .into_iter()
+        .find(|line| line.id == id)
+        .filter(|line| !line.sources.is_empty())
         .ok_or_else(|| format!("there is no line `{id}` in the cart"))
+}
+
+/// Changes the quantity of a checkout line to `quantity` by changing the lines of the cart it is
+/// made of: each holds the same share of the new quantity as of the old one. A line the share of
+/// which falls to nothing leaves the cart.
+fn requantify(session: &mut Session, line: &ResultLine, quantity: u32) -> Result<(), String> {
+    let old = u64::from(line.quantity.max(1));
+    for source in &line.sources {
+        let held = u64::from(source.quantity);
+        let share = if quantity == 0 {
+            0
+        } else {
+            ((held * u64::from(quantity) + old / 2) / old).max(1)
+        };
+        let share = u32::try_from(share).map_err(|_| "the quantity is too large".to_string())?;
+        let cart_line = &mut session.cart_lines[source.index];
+        cart_line.quantity = (cart_line.quantity - source.quantity.min(cart_line.quantity))
+            .checked_add(share)
+            .ok_or("the quantity is too large")?;
+    }
+    session
+        .cart_lines
+        .retain(|cart_line| cart_line.quantity > 0);
+    Ok(())
 }
 
 fn line_properties(change: &Json) -> Option<indexmap::IndexMap<String, String>> {
@@ -799,8 +854,15 @@ fn quantity(change: &Json) -> Result<Option<u32>, String> {
 }
 
 /// `applyCartLinesChange` of the UI extension API: `addCartLine`, `removeCartLine` and
-/// `updateCartLine`.
-fn cart_lines(change: &Json, session: &mut Session, store: &Store) -> Result<(), String> {
+/// `updateCartLine`. The lines it names are those of the checkout; a line a cart transform made
+/// from several lines of the cart is removed or scaled through them.
+fn cart_lines(
+    state: &ServerState,
+    change: &Json,
+    session: &mut Session,
+    checkout: &CheckoutState,
+    store: &Store,
+) -> Result<(), String> {
     match change.get("type").and_then(Json::as_str) {
         Some("addCartLine") => {
             let merchandise = change
@@ -835,23 +897,40 @@ fn cart_lines(change: &Json, session: &mut Session, store: &Store) -> Result<(),
             }
         }
         Some("removeCartLine") => {
-            let index = line_index(change, session)?;
+            let line = checkout_line(state, change, session, checkout, store)?;
             let removed = quantity(change)?.ok_or("removeCartLine needs a `quantity`")?;
-            let line = &mut session.cart_lines[index];
-            if removed >= line.quantity {
-                session.cart_lines.remove(index);
-            } else {
-                line.quantity -= removed;
-            }
+            requantify(session, &line, line.quantity.saturating_sub(removed))?;
         }
         Some("updateCartLine") => {
-            let index = line_index(change, session)?;
+            let line = checkout_line(state, change, session, checkout, store)?;
             let new_quantity = quantity(change)?;
             if new_quantity == Some(0) {
-                session.cart_lines.remove(index);
-                return Ok(());
+                return requantify(session, &line, 0);
             }
-            if let Some(merchandise) = change.get("merchandiseId").and_then(Json::as_str) {
+            let merchandise = change.get("merchandiseId").and_then(Json::as_str);
+            if let (Some(kind), true) = (&line.transformed_by, merchandise.is_some()) {
+                return Err(format!(
+                    "the line `{}` was changed by a cart transform ({kind}): its merchandise cannot be changed",
+                    line.id
+                ));
+            }
+            let own_changes = merchandise.is_some()
+                || change.get("attributes").is_some()
+                || change.get("sellingPlanId").is_some();
+            let [source] = line.sources.as_slice() else {
+                if own_changes {
+                    return Err(format!(
+                        "the line `{}` is made of several lines by a cart transform: only its quantity can be changed",
+                        line.id
+                    ));
+                }
+                if let Some(quantity) = new_quantity {
+                    requantify(session, &line, quantity)?;
+                }
+                return Ok(());
+            };
+            let index = source.index;
+            if let Some(merchandise) = merchandise {
                 let variant_id = gid_number(merchandise)
                     .ok_or_else(|| format!("`{merchandise}` is not a product variant id"))?;
                 if store.variant(variant_id).is_none() {
@@ -867,7 +946,7 @@ fn cart_lines(change: &Json, session: &mut Session, store: &Store) -> Result<(),
                 session.cart_lines[index].selling_plan = selling_plan(change, store, variant_id)?;
             }
             if let Some(quantity) = new_quantity {
-                session.cart_lines[index].quantity = quantity;
+                requantify(session, &line, quantity)?;
             }
         }
         other => return Err(format!("unknown cart line change {other:?}")),

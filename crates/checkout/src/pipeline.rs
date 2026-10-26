@@ -28,7 +28,7 @@ use crate::version::ApiVersion;
 use crate::{
     AppliedDiscount, Cents, CheckoutConfig, CheckoutError, CheckoutResult, CheckoutState, Cost,
     DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass, DiscountCodeStatus,
-    DiscountConfig, FunctionRun, KeyValue, Metafield, PaymentMethod, ResultLine,
+    DiscountConfig, FunctionRun, KeyValue, Metafield, PaymentMethod, ResultLine, SourceLine,
 };
 
 /// The handle of the delivery group: one group holds every line that needs shipping.
@@ -329,7 +329,21 @@ impl<'a> Pipeline<'a> {
         });
     }
 
+    /// The output of the run that just ran could not be applied (rejected money, an operation
+    /// that does not exist): the run fails, like a Function Shopify would reject the result of.
+    /// Errors a Function reports on purpose (validations) do not come here.
     fn function_error(&mut self, function: &FunctionExtension, message: String) {
+        if let Some(run) = self
+            .runs
+            .iter_mut()
+            .rev()
+            .find(|run| run.handle == function.handle)
+        {
+            run.error = Some(match run.error.take() {
+                Some(previous) => format!("{previous}; {message}"),
+                None => message.clone(),
+            });
+        }
         self.errors.push(CheckoutError {
             message: format!("Function `{}`: {message}", function.handle),
             target: None,
@@ -562,11 +576,14 @@ impl<'a> Pipeline<'a> {
         let parent_unit_price = parent_price(sum, op.get("price"))?.unwrap_or(sum);
 
         let mut components = Vec::new();
+        let mut cart_sources = Vec::new();
         for (index, take) in &sources {
             let line = &mut self.lines[*index];
             let mut component = line.clone();
             component.quantity = *take;
             refresh(&mut component);
+            (component.sources, line.sources) = split_sources(&line.sources, *take, line.quantity);
+            cart_sources.extend(component.sources.iter().copied());
             line.quantity -= take;
             if line.quantity > 0 {
                 // A part of the line stays: the component is a new line.
@@ -580,6 +597,7 @@ impl<'a> Pipeline<'a> {
             .iter()
             .any(|component| component.requires_shipping);
         parent.components = components;
+        parent.sources = cart_sources;
         parent.transformed_by = Some("merge".to_string());
         override_presentation(&mut parent, op);
         refresh(&mut parent);
@@ -874,6 +892,7 @@ impl<'a> Pipeline<'a> {
                 title: title.clone(),
                 code: code.clone(),
                 amount: cents,
+                class,
             });
             total += cents;
         }
@@ -1203,18 +1222,7 @@ impl<'a> Pipeline<'a> {
             .filter(|discount| discount.class != DiscountClass::Shipping)
             .map(|discount| discount.amount)
             .sum();
-        let shipping: Cents = self
-            .groups
-            .iter()
-            .filter_map(|group| {
-                let selected = group.selected.as_ref()?;
-                group
-                    .options
-                    .iter()
-                    .find(|option| &option.handle == selected)
-            })
-            .map(|option| option.cost)
-            .sum();
+        let shipping: Cents = self.groups.iter().map(DeliveryGroup::selected_cost).sum();
         let taxable = (subtotal - discounts).max(0);
         let tax = (taxable as f64 * self.config.tax_rate_bps as f64 / 10_000.0).round() as Cents;
 
@@ -1317,6 +1325,10 @@ fn initial_lines(store: &lsf_core::Store, session: &lsf_core::Session) -> Vec<Re
                 .collect();
             let mut line = line_from_variant(store, cart_line, attributes)?;
             line.id = format!("gid://shopify/CartLine/{}", index + 1);
+            line.sources = vec![SourceLine {
+                index,
+                quantity: line.quantity,
+            }];
             Some(line)
         })
         .collect()
@@ -1371,6 +1383,32 @@ fn line_from_variant(
     };
     refresh(&mut line);
     Some(line)
+}
+
+/// Divides the cart lines a line is made of when `take` of its `quantity` units go elsewhere:
+/// what goes, and what stays.
+fn split_sources(
+    sources: &[SourceLine],
+    take: u32,
+    quantity: u32,
+) -> (Vec<SourceLine>, Vec<SourceLine>) {
+    let (mut taken, mut left) = (Vec::new(), Vec::new());
+    for source in sources {
+        let part = if quantity == 0 {
+            0
+        } else {
+            (u64::from(source.quantity) * u64::from(take) / u64::from(quantity)) as u32
+        };
+        for (list, amount) in [(&mut taken, part), (&mut left, source.quantity - part)] {
+            if amount > 0 {
+                list.push(SourceLine {
+                    index: source.index,
+                    quantity: amount,
+                });
+            }
+        }
+    }
+    (taken, left)
 }
 
 /// Recomputes the amounts of a line from its unit price, quantity and allocations.
