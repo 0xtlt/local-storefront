@@ -256,8 +256,11 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         instance.pending.delete(data.id);
         break;
       case 'navigate':
-        if (/^(https?:|mailto:|tel:|\/)/.test(data.url)) {
-          window.open(data.url, data.target === '_self' ? '_self' : '_blank', 'noopener');
+        // Always a new tab, whatever the extension asks for: `_self` would take the checkout
+        // itself away from the buyer. Only web pages: no `javascript:`, `data:` or relative URL
+        // (it would mean the sandbox's, not the shop's).
+        if (typeof data.url === 'string' && /^https?:\/\//i.test(data.url)) {
+          window.open(data.url, '_blank', 'noopener');
         }
         break;
       case 'dismiss':

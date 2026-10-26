@@ -17,6 +17,8 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, FixedOffset, Utc};
+use lsf_core::drops::cart::ResolvedLine;
+use lsf_core::store::CartLine;
 use serde_json::Value;
 
 use crate::app::{App, FunctionExtension, FunctionTarget, Selection, TargetKind};
@@ -388,7 +390,13 @@ impl<'a> Pipeline<'a> {
     ) -> Result<ResultLine, String> {
         let variant_id = gid_number(merchandise_id)
             .ok_or_else(|| format!("`{merchandise_id}` is not a product variant id"))?;
-        let mut line = line_from_variant(self.store, variant_id, quantity, attributes)
+        let cart_line = CartLine {
+            variant_id,
+            quantity,
+            properties: Default::default(),
+            selling_plan: None,
+        };
+        let mut line = line_from_variant(self.store, &cart_line, attributes)
             .ok_or_else(|| format!("no product variant `{merchandise_id}`"))?;
         line.id = format!("gid://shopify/CartLine/{}", self.next_line_id);
         self.next_line_id += 1;
@@ -1195,21 +1203,35 @@ fn initial_lines(store: &lsf_core::Store, session: &lsf_core::Session) -> Vec<Re
                     value: value.clone(),
                 })
                 .collect();
-            let mut line =
-                line_from_variant(store, cart_line.variant_id, cart_line.quantity, attributes)?;
+            let mut line = line_from_variant(store, cart_line, attributes)?;
             line.id = format!("gid://shopify/CartLine/{}", index + 1);
             Some(line)
         })
         .collect()
 }
 
+/// A checkout line for a cart line, priced as the storefront cart prices it: with the selling
+/// plan of the line and the quantity price breaks of the variant ([`ResolvedLine`]).
 fn line_from_variant(
     store: &lsf_core::Store,
-    variant_id: u64,
-    quantity: u32,
+    cart_line: &CartLine,
     attributes: Vec<KeyValue>,
 ) -> Option<ResultLine> {
-    let (product, variant) = store.variant(variant_id)?;
+    let variant_id = cart_line.variant_id;
+    let (product_index, variant_index) = store.variant_location(variant_id)?;
+    let product = &store.products[product_index];
+    let variant = &product.variants[variant_index];
+    let resolved = ResolvedLine {
+        line: cart_line,
+        product_index,
+        variant_index,
+        product,
+        variant,
+        selling_plan: cart_line
+            .selling_plan
+            .and_then(|id| store.selling_plan_of(product, id)),
+    };
+    let quantity = cart_line.quantity;
     let image = variant
         .media_index
         .and_then(|index| product.media.get(index))
@@ -1230,7 +1252,7 @@ fn line_from_variant(
         sku: (!variant.sku.is_empty()).then(|| variant.sku.clone()),
         image,
         quantity,
-        unit_price: variant.price,
+        unit_price: resolved.unit_price(),
         attributes,
         requires_shipping: variant.requires_shipping,
         ..ResultLine::default()

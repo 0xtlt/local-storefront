@@ -716,6 +716,43 @@ fn shop_metafield() {
 }
 
 #[test]
+fn cart_metafields_are_the_ones_the_extensions_wrote() {
+    let mut f = Fixture::new();
+    f.state.metafields = vec![
+        Metafield {
+            namespace: "$app:gift".to_string(),
+            key: "message".to_string(),
+            kind: "single_line_text_field".to_string(),
+            value: "Happy birthday".to_string(),
+        },
+        Metafield {
+            namespace: "custom".to_string(),
+            key: "count".to_string(),
+            kind: "number_integer".to_string(),
+            value: "3".to_string(),
+        },
+    ];
+    let out = f.run(
+        r#"{ cart {
+            gift: metafield(namespace: "$app:gift", key: "message") { type value jsonValue }
+            reserved: metafield(namespace: "app--123456--gift", key: "message") { value }
+            count: metafield(namespace: "custom", key: "count") { jsonValue }
+            absent: metafield(namespace: "custom", key: "nope") { value }
+            elsewhere: metafield(namespace: "other", key: "message") { value } } }"#,
+    );
+    assert_eq!(
+        out["cart"],
+        json!({
+            "gift": {"type": "single_line_text_field", "value": "Happy birthday", "jsonValue": "Happy birthday"},
+            "reserved": {"value": "Happy birthday"},
+            "count": {"jsonValue": 3},
+            "absent": null,
+            "elsewhere": null,
+        })
+    );
+}
+
+#[test]
 fn presentment_currency_rate_and_buyer_journey() {
     let f = Fixture::new();
     assert_eq!(

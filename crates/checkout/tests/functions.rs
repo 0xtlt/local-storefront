@@ -813,3 +813,146 @@ fn a_function_without_a_module_is_an_error_not_a_panic() {
     );
     assert!(result.runs[0].error.is_some());
 }
+
+// ---- lines are priced like the storefront cart ----
+
+#[test]
+fn lines_take_the_quantity_price_breaks_of_the_variant() {
+    let app = app();
+    let mut store = store();
+    let (product, variant) = store.variant_location(TEE).unwrap();
+    store.products[product].variants[variant].quantity_price_breaks = vec![(3, 2500), (10, 2000)];
+    let config = config();
+    let selection = Selection::only(Vec::<String>::new());
+    let priced = |quantity| {
+        let session = session(&store, &[(TEE, quantity)]);
+        let result = compute(
+            &app,
+            &selection,
+            &store,
+            &session,
+            &CheckoutState::default(),
+            &config,
+        );
+        (
+            result.lines[0].unit_price,
+            result.lines[0].subtotal,
+            result.cost.subtotal,
+        )
+    };
+    assert_eq!(priced(2), (3200, 6400, 6400), "below the first break");
+    assert_eq!(priced(3), (2500, 7500, 7500));
+    assert_eq!(priced(12), (2000, 24000, 24000));
+}
+
+#[test]
+fn lines_take_the_price_of_their_selling_plan() {
+    use lsf_core::store::{
+        Adjustment, CheckoutCharge, PriceAdjustment, SellingPlan, SellingPlanGroup,
+    };
+    let app = app();
+    let mut store = store();
+    let group = store.selling_plan_groups.len();
+    store.selling_plan_groups.push(SellingPlanGroup {
+        id: "subscribe".to_string(),
+        name: "Subscribe".to_string(),
+        app_id: None,
+        options: vec!["Delivery".to_string()],
+        plans: vec![SellingPlan {
+            id: 42,
+            name: "Monthly".to_string(),
+            description: None,
+            options: vec!["Monthly".to_string()],
+            price_adjustments: vec![PriceAdjustment {
+                adjustment: Adjustment::FixedAmount(500),
+                order_count: None,
+            }],
+            recurring_deliveries: true,
+            checkout_charge: CheckoutCharge::Percentage(100),
+        }],
+    });
+    let (product, variant) = store.variant_location(TEE).unwrap();
+    store.products[product].selling_plan_groups = vec![group];
+    // A quantity price break does not stack with the plan: the cart takes the plan's price.
+    store.products[product].variants[variant].quantity_price_breaks = vec![(2, 1000)];
+    let mut session = session(&store, &[(TEE, 2), (TOTE, 1)]);
+    session.cart_lines[0].selling_plan = Some(42);
+    let result = compute(
+        &app,
+        &Selection::only(Vec::<String>::new()),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config(),
+    );
+    assert_eq!(result.lines[0].unit_price, 2700, "32.00 less 5.00");
+    assert_eq!(result.lines[0].subtotal, 5400);
+    assert_eq!(
+        result.lines[1].unit_price, 2400,
+        "a line without a plan keeps the price of the variant"
+    );
+    assert_eq!(result.cost.subtotal, 7800);
+}
+
+// ---- metafields written by UI extensions, read by Functions ----
+
+#[test]
+fn a_function_reads_the_cart_metafields_the_extensions_wrote() {
+    use std::cell::RefCell;
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(TEE, 1)]);
+    let config = config();
+    // What `applyMetafieldChange` leaves in the state of the checkout.
+    let state = CheckoutState {
+        metafields: vec![Metafield {
+            namespace: "$app:gift".to_string(),
+            key: "message".to_string(),
+            kind: "single_line_text_field".to_string(),
+            value: "Happy birthday".to_string(),
+        }],
+        ..CheckoutState::default()
+    };
+    // The fixture modules do not read cart metafields: the input query is asked for them besides
+    // its own, and what the executor builds from it is kept.
+    let seen = RefCell::new(Vec::new());
+    let build = |query: &str,
+                 variables: Option<&serde_json::Value>,
+                 ctx: &lsf_checkout::input::InputContext| {
+        let asked = query.replacen(
+            "cart {",
+            "cart { written: metafield(namespace: \"$app:gift\", key: \"message\") { type value } \
+             absent: metafield(namespace: \"$app:gift\", key: \"nope\") { value } \
+             other: metafield(namespace: \"custom\", key: \"message\") { value }",
+            1,
+        );
+        let input = lsf_checkout::input::build(&asked, variables, ctx)?;
+        seen.borrow_mut().push(input["cart"].clone());
+        Ok(input)
+    };
+    let mut config = config;
+    config
+        .function_metafields
+        .insert("quantity-limit".into(), settings(json!({"maxQuantity": 5})));
+    let result = compute_with(
+        &app,
+        &Selection::only(["quantity-limit"]),
+        &store,
+        &session,
+        &state,
+        &config,
+        &build,
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let seen = seen.into_inner();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        seen[0]["written"],
+        json!({"type": "single_line_text_field", "value": "Happy birthday"})
+    );
+    assert!(seen[0]["absent"].is_null());
+    assert!(
+        seen[0]["other"].is_null(),
+        "another namespace is another metafield"
+    );
+}

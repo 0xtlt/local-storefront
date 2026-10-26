@@ -301,8 +301,16 @@ test('reloads a frame on request and opens only safe links', () => {
   assert.equal(frame.ready, false, 'it says ready again once it has loaded');
   from(frame, { type: 'navigate', url: 'https://example.com/a' });
   from(frame, { type: 'navigate', url: 'javascript:alert(1)' });
-  from(frame, { type: 'navigate', url: '/cart', target: '_self' });
-  assert.deepEqual(window.opened, [['https://example.com/a', '_blank', 'noopener'], ['/cart', '_self', 'noopener']]);
+  from(frame, { type: 'navigate', url: 'https://example.com/b', target: '_self' });
+  from(frame, { type: 'navigate', url: 'HTTP://example.com/c', target: '_top' });
+  for (const url of ['/cart', '//evil.example/x', 'data:text/html,hi', 'mailto:a@b.c', 'tel:123', 'blob:https://example.com/1', undefined, 42]) {
+    from(frame, { type: 'navigate', url, target: '_self' });
+  }
+  assert.deepEqual(window.opened, [
+    ['https://example.com/a', '_blank', 'noopener'],
+    ['https://example.com/b', '_blank', 'noopener'],
+    ['HTTP://example.com/c', '_blank', 'noopener'],
+  ], 'web pages only, and always in a tab of their own: never the checkout itself');
 });
 
 test('shows what extensions see of the state', () => {

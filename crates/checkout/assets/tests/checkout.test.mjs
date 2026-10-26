@@ -15,7 +15,7 @@ const publicState = (state) => {
 };
 
 /** A page on a checkout kept by the mock engine; `requests` is what it was asked. */
-function app({ variant = 'standard', mutate } = {}) {
+function app({ variant = 'standard', mutate, hold } = {}) {
   let engine = engineCheckout();
   engine.variant = variant;
   if (mutate) mutate(engine);
@@ -29,6 +29,7 @@ function app({ variant = 'standard', mutate } = {}) {
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body);
     requests.push({ url, body });
+    await hold?.(url, body);
     if (url.endsWith('/update')) {
       const result = update(engine, body.operations);
       if (result.error) return reply(400, { error: result.error });
@@ -159,6 +160,73 @@ test('paying completes the order and goes to the thank-you page', async () => {
   assert.deepEqual(page.location.assigned, ['http://localhost/checkouts/cn/preview/thank-you']);
   assert.equal(page.engine().status, 'completed');
   assert.equal(page.checkout.ui.busy, false);
+});
+
+test('paying waits for the updates on their way, then pays for the state they made', async () => {
+  let release;
+  let holding = false;
+  const held = new Promise((resolve) => { release = resolve; });
+  const page = app({ hold: async (url) => { if (holding && url.endsWith('/update')) await held; } });
+  await fillIn(page);
+  holding = true;
+  const sent = page.checkout.send([{ type: 'note', change: { type: 'updateNote', note: 'late' } }]);
+  const paying = page.checkout.actions.pay();
+  await settle();
+  await settle();
+  assert.equal(page.requests.some((request) => request.url.endsWith('/complete')), false, 'the update has not answered: nothing is paid');
+  assert.equal(page.checkout.ui.busy, true);
+  holding = false;
+  release();
+  await sent;
+  await paying;
+  const urls = page.requests.map((request) => request.url.split('/').pop());
+  assert.deepEqual(urls.slice(-2), ['update', 'complete']);
+  assert.equal(page.engine().note, 'late', 'the order carries the note the update made');
+  assert.equal(page.location.assigned.length, 1);
+});
+
+test('paying sends what the buyer typed and has not left the field of, before the order', async () => {
+  const page = app();
+  await fillIn(page);
+  page.checkout.actions.draft('email', 'typed@b.c');
+  page.checkout.actions.draft('city', 'Lyon');
+  await page.checkout.actions.pay();
+  const urls = page.requests.map((request) => request.url.split('/').pop());
+  assert.equal(urls.at(-1), 'complete');
+  assert.equal(urls.at(-2), 'update');
+  const last = page.requests.at(-2).body.operations;
+  assert.deepEqual(last.map((operation) => operation.type), ['email', 'shippingAddress']);
+  assert.equal(page.engine().buyer.email, 'typed@b.c');
+  assert.equal(page.engine().shippingAddress.city, 'Lyon');
+});
+
+test('paying asks the interceptors about the state the updates made, not the one on screen', async () => {
+  let release;
+  let holding = false;
+  const held = new Promise((resolve) => { release = resolve; });
+  const page = app({ hold: async (url) => { if (holding && url.endsWith('/update')) await held; } });
+  await fillIn(page);
+  const gift = connect(page).find((frame) => frame.target === 'purchase.checkout.block.render');
+  say(page, gift, { type: 'ready' });
+  say(page, gift, { type: 'interceptors', count: 1 });
+  const seen = [];
+  gift.iframe.contentWindow.postMessage = (message) => {
+    gift.iframe.contentWindow.posted.push(message);
+    if (message.type === 'intercept') {
+      seen.push(page.checkout.getState().note);
+      queueMicrotask(() => say(page, gift, { type: 'intercepted', id: message.id, results: [{ behavior: 'allow' }] }));
+    }
+  };
+  holding = true;
+  const sent = page.checkout.send([{ type: 'note', change: { type: 'updateNote', note: 'fresh' } }]);
+  const paying = page.checkout.actions.pay();
+  await settle();
+  assert.deepEqual(seen, [], 'not asked while an update is pending');
+  holding = false;
+  release();
+  await sent;
+  await paying;
+  assert.deepEqual(seen, ['fresh']);
 });
 
 test('a checkout the server refuses stays open with its errors', async () => {

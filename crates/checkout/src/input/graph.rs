@@ -847,6 +847,8 @@ impl<'c> FunctionInput<'c> {
         let store = self.ctx.store;
         match node {
             Node::Owner => Some(Source::Owned(self.ctx.owner.metafields)),
+            // The ones checkout UI extensions write (`applyMetafieldChange`).
+            Node::Cart => Some(Source::Owned(&self.ctx.state.metafields)),
             Node::Product(line) => Some(Source::Core(
                 self.store_variant(line)
                     .map(|(product, _)| &product.metafields),

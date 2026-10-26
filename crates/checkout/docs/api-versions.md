@@ -108,9 +108,9 @@ generators (both only exist in `unstable`). Listed, not run, as before.
 
 ## Gaps
 
-- Checkout UI extensions keep `api_version` as a string: their API (the `shopify` global of the
-  extension host, `crates/checkout/assets`) is not version aware and not restricted to 2026-10 and
-  2027-01.
+- Checkout UI extensions are gated on `api_version` (2026-10 and 2027-01 only, plus the `owner_type`
+  rule of 2027-01: see `ui-api-versions.md`), but their API, the `shopify` global of the extension
+  host (`crates/checkout/assets`), has one code path: the two versions have the same surface.
 - The `Customer.createdAt` and delivery option metafield answers are placeholders.
 - `orderReviewAdd` and `paymentTermsSet` (payment) are accepted and not applied.
 - No real "version-only" field exists between the two releases, so the proof of "a field missing in

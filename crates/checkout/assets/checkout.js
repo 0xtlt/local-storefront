@@ -77,10 +77,17 @@ export function startCheckout({ root, initial, document, window, location, fetch
     paint();
   }
 
-  // The server applies operations one after the other: so do we, whatever asks.
+  // The server applies operations one after the other: so do we, whatever asks. Everything that
+  // talks to the server about this checkout, the payment included, goes through this queue.
   let queue = Promise.resolve();
+  function enqueue(task) {
+    const request = queue.then(task);
+    queue = request.catch(() => {});
+    return request;
+  }
+
   function send(operations) {
-    const request = queue.then(async () => {
+    return enqueue(async () => {
       const response = await fetch(endpoint('/update'), {
         method: 'POST',
         headers: JSON_HEADERS,
@@ -91,8 +98,6 @@ export function startCheckout({ root, initial, document, window, location, fetch
       accept(body);
       return body;
     });
-    queue = request.catch(() => {});
-    return request;
   }
 
   /** Sends operations for the buyer, showing a failure instead of throwing. */
@@ -113,6 +118,23 @@ export function startCheckout({ root, initial, document, window, location, fetch
       address[name] = value === '' ? null : value;
     }
     return address;
+  }
+
+  /** The operations for what the buyer typed and the server does not know yet. */
+  function draftOperations() {
+    const operations = [];
+    if (ui.draft.email !== undefined && ui.draft.email !== (state.buyer?.email ?? '')) {
+      operations.push(op.email(ui.draft.email));
+    }
+    const typedAddress = Object.entries(ui.draft.address).some(
+      ([name, value]) => value !== (state.shippingAddress?.[name] ?? ''),
+    );
+    if (typedAddress) {
+      operations.push(op.shippingAddress(addressToSend()));
+      const phone = ui.draft.address.phone;
+      if (phone !== undefined && phone !== (state.buyer?.phone ?? '')) operations.push(op.phone(phone));
+    }
+    return operations;
   }
 
   const actions = {
@@ -186,6 +208,15 @@ export function startCheckout({ root, initial, document, window, location, fetch
       ui.busy = true;
       paint();
       try {
+        // What the buyer typed and left no field for yet goes first, after what is already on
+        // its way: the order is paid for the state the server holds, not the one on screen.
+        await queue;
+        const drafted = draftOperations();
+        if (drafted.length > 0) await send(drafted);
+        if (missingFields(state, ui.draft).length > 0) {
+          ui.tried = true;
+          return;
+        }
         const { blocks } = await host.intercept();
         if (blocks.length > 0) {
           const reasons = blocks.map((block) => block.reason).filter(Boolean);
@@ -195,8 +226,11 @@ export function startCheckout({ root, initial, document, window, location, fetch
           };
           return;
         }
-        const response = await fetch(endpoint('/complete'), { method: 'POST', headers: JSON_HEADERS, body: '{}' });
-        const body = await response.json();
+        // Behind whatever the extensions changed while they answered.
+        const { response, body } = await enqueue(async () => {
+          const reply = await fetch(endpoint('/complete'), { method: 'POST', headers: JSON_HEADERS, body: '{}' });
+          return { response: reply, body: await reply.json() };
+        });
         if (response.ok) {
           location.assign(body.redirect);
         } else if (body.lines) {
