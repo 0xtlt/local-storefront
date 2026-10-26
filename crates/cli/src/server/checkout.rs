@@ -5,6 +5,8 @@
 //! the checkout shares with the theme. Every request computes the checkout again, running the
 //! Functions of the app: `lsf_checkout::pipeline::compute`.
 
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use lsf_checkout::app::{App, Selection};
 use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
@@ -35,24 +37,45 @@ pub struct CheckoutSession {
     pub placed: u64,
 }
 
-/// What a completion read of the session. The order may only consume the cart if this is still
-/// what the session holds, otherwise the buyer would pay for something they did not see, and
-/// wipe what changed meanwhile (another tab, another completion).
+/// A store, which is the same as another only if it is the very one that was loaded.
+struct SameStore(Arc<Store>);
+
+impl PartialEq for SameStore {
+    fn eq(&self, other: &SameStore) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// What a request read of the session: everything `compute` runs the Functions on. A completion
+/// may only consume the cart, and an update only write, if this is still what the session holds,
+/// otherwise the buyer would pay for something they did not see, and wipe or restore what
+/// changed meanwhile (another tab, another completion, a login, a reload of the data).
 #[derive(PartialEq)]
 struct Basis {
     cart_lines: Vec<CartLine>,
     cart_note: String,
     cart_attributes: IndexMap<String, String>,
+    customer_id: Option<u64>,
+    company_location: Option<u64>,
+    country: Option<String>,
+    /// The store the session sees: its own, or the loaded one. Another one when the data was
+    /// reloaded or the control API gave the session a store.
+    store: SameStore,
     state: Json,
     placed: u64,
 }
 
 impl Basis {
-    fn of(entry: &SessionEntry) -> Basis {
+    /// `loaded` is the store of the server, which a session without a store of its own sees.
+    fn of(entry: &SessionEntry, loaded: &Arc<Store>) -> Basis {
         Basis {
             cart_lines: entry.session.cart_lines.clone(),
             cart_note: entry.session.cart_note.clone(),
             cart_attributes: entry.session.cart_attributes.clone(),
+            customer_id: entry.session.customer_id,
+            company_location: entry.session.company_location,
+            country: entry.session.country.clone(),
+            store: SameStore(entry.store.clone().unwrap_or_else(|| loaded.clone())),
             state: json!(entry.checkout.state),
             placed: entry.checkout.placed,
         }
@@ -205,21 +228,28 @@ struct Computed {
     basis: Basis,
 }
 
+/// Everything the session holds that the checkout is computed from, read in one step, with the
+/// basis that tells later whether it still holds.
+fn read(state: &ServerState, session_id: &str) -> (Session, Arc<Store>, CheckoutState, Basis) {
+    let loaded = state.loaded().store.clone();
+    state.with_session(session_id, |entry| {
+        let basis = Basis::of(entry, &loaded);
+        (
+            entry.session.clone(),
+            basis.store.0.clone(),
+            entry.checkout.state.clone(),
+            basis,
+        )
+    })
+}
+
 fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result<Computed, String> {
     let options = options(state);
     let variant = variant_of(state, session_id, incoming);
     let app = lsf_checkout::app::load(&options.app_dir)?;
     let selection = Selection::resolve(&app, &options.extensions)?;
     // One read, so that the basis is what the result is computed from.
-    let base = state.loaded().store.clone();
-    let (session, store, mut checkout, basis) = state.with_session(session_id, |entry| {
-        (
-            entry.session.clone(),
-            entry.store.clone().unwrap_or(base),
-            entry.checkout.state.clone(),
-            Basis::of(entry),
-        )
-    });
+    let (session, store, mut checkout, basis) = read(state, session_id);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     // A logged-in customer does not have to type what the store knows.
     if checkout.email.is_none() {
@@ -458,32 +488,65 @@ fn update(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     let Some(operations) = incoming.params.get("operations").and_then(Json::as_array) else {
         return error(400, "The body must be {\"operations\": [...]}.");
     };
-    let (mut session, store) = state.snapshot(&id);
-    let mut checkout = state.with_session(&id, |entry| entry.checkout.state.clone());
+    let reply = apply_update(state, incoming, &id, operations, || {});
+    with_cookie(reply, &id, is_new)
+}
+
+/// Applies the operations of an update to the session they were read from. `between` runs after
+/// they were applied and before they are written, where another request may change the session.
+///
+/// The write is one step of the session that checks the session is still what the operations
+/// were applied to: an update never reopens an order that was placed, restores lines the order
+/// took, or overwrites a change made meanwhile. In those cases nothing is written and the answer
+/// is the checkout as it is now, with status 409.
+pub(super) fn apply_update(
+    state: &ServerState,
+    incoming: &Incoming,
+    id: &str,
+    operations: &[Json],
+    between: impl FnOnce(),
+) -> Reply {
+    // An order that was placed is final: the cart it took is empty, and there is nothing to change.
+    if already_placed(state, id) {
+        return conflict(state, incoming, id);
+    }
+    let (mut session, store, mut checkout, basis) = read(state, id);
     let config = config_from_store(&store);
     for (position, operation) in operations.iter().enumerate() {
         if let Err(problem) = apply(operation, &mut session, &mut checkout, &store, &config) {
-            return with_cookie(
-                error(400, format!("operation {position}: {problem}")),
-                &id,
-                is_new,
-            );
+            return error(400, format!("operation {position}: {problem}"));
         }
     }
-    state.with_session(&id, |entry| {
-        entry.session.cart_lines = session.cart_lines;
-        entry.session.cart_note = session.cart_note;
-        entry.session.cart_attributes = session.cart_attributes;
-        entry.session.country = session.country;
-        entry.checkout.state = checkout;
-        // Changing an order that was completed starts another.
-        entry.checkout.completed = None;
+    between();
+    let written = state.with_session(id, |entry| {
+        let unchanged = !is_placed(entry) && Basis::of(entry, &state.loaded().store) == basis;
+        if unchanged {
+            entry.session.cart_lines = session.cart_lines;
+            entry.session.cart_note = session.cart_note;
+            entry.session.cart_attributes = session.cart_attributes;
+            entry.session.country = session.country;
+            entry.checkout.state = checkout;
+            // Changing a cart after an order starts another checkout.
+            entry.checkout.completed = None;
+        }
+        unchanged
     });
-    let reply = match compute(state, &id, incoming) {
+    if !written {
+        return conflict(state, incoming, id);
+    }
+    match compute(state, id, incoming) {
         Ok(computed) => Reply::json(200, &computed.json).cached(cache::PRIVATE),
         Err(problem) => error(500, problem),
-    };
-    with_cookie(reply, &id, is_new)
+    }
+}
+
+/// The answer to a request that was made on a checkout that is not the one it saw any more:
+/// nothing was done, and the buyer sees the checkout as it is now (the order, if it was placed).
+fn conflict(state: &ServerState, incoming: &Incoming, id: &str) -> Reply {
+    match current(state, id, incoming) {
+        Ok(fresh) => Reply::json(409, &fresh).cached(cache::PRIVATE),
+        Err(reply) => reply,
+    }
 }
 
 fn text_of(operation: &Json, key: &str) -> Option<String> {
@@ -885,9 +948,11 @@ fn redirect_to_thanks(token: &str) -> Reply {
 /// Whether the order of this checkout was placed already, and its cart taken: asking again
 /// leads to the same thank-you page instead of placing another order.
 fn already_placed(state: &ServerState, id: &str) -> bool {
-    state.with_session(id, |entry| {
-        entry.checkout.completed.is_some() && entry.session.cart_lines.is_empty()
-    })
+    state.with_session(id, |entry| is_placed(entry))
+}
+
+fn is_placed(entry: &SessionEntry) -> bool {
+    entry.checkout.completed.is_some() && entry.session.cart_lines.is_empty()
 }
 
 /// Places the order of the cart the Functions were run on. `between` runs after the session was
@@ -922,7 +987,7 @@ pub(super) fn place_order(
     // The cart is taken only if it is still the one that was priced; the check and the take are
     // one step of the session.
     let taken = state.with_session(id, |entry| {
-        if Basis::of(entry) != computed.basis {
+        if Basis::of(entry, &state.loaded().store) != computed.basis {
             return false;
         }
         let number = 1000 + state.next_order();
@@ -946,10 +1011,7 @@ pub(super) fn place_order(
     }
     // The cart changed while the order was being priced: nothing was bought, and the buyer
     // sees the cart as it is now.
-    match current(state, id, incoming) {
-        Ok(fresh) => Reply::json(409, &fresh).cached(cache::PRIVATE),
-        Err(reply) => reply,
-    }
+    conflict(state, incoming, id)
 }
 
 /// A file of the page, from the binary.

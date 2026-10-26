@@ -3646,6 +3646,173 @@ fn a_cart_change_while_completing_is_kept_and_buys_nothing() {
     assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
 }
 
+/// Completes the checkout of `session` while `change` happens after the Functions ran, and
+/// checks that nothing was bought.
+///
+/// A session starts with the store of the server, or with one of its own when `own_store`.
+fn completion_buys_nothing_when(session: &str, own_store: bool, change: impl FnOnce(&ServerState)) {
+    let state = checkout_server(&[], false);
+    let path = if own_store {
+        ready_checkout(&state, session)
+    } else {
+        let reply = post(
+            &state,
+            "/cart/add.js",
+            json!({"id": variant_id(&state, "TEE-BLK-M"), "quantity": 2}),
+            session,
+        );
+        assert!(reply.status < 300, "{}", text(&reply));
+        let path = header(&get(&state, "/checkout", session), "location")
+            .expect("a location")
+            .to_string();
+        assert_eq!(
+            operations(&state, &path, session, buyer_details()).status,
+            200
+        );
+        path
+    };
+    let token = path.rsplit('/').next().unwrap();
+    let reply = super::checkout::place_order(
+        &state,
+        &request("POST", &format!("{path}/complete"), json!({}), session),
+        session,
+        token,
+        || change(&state),
+    );
+    assert_eq!(reply.status, 409, "{session}: {}", text(&reply));
+    assert_eq!(body_json(&reply)["status"], "open", "{session}");
+    assert_eq!(cart_count(&state, session), 2, "{session}");
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), session).status,
+        302
+    );
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+#[test]
+fn what_the_functions_read_of_the_session_cannot_change_while_completing() {
+    completion_buys_nothing_when("co-login", false, |state| {
+        let reply = get(state, "/__lsf/login?customer=default", "co-login");
+        assert_eq!(reply.status, 302);
+    });
+    completion_buys_nothing_when("co-country", false, |state| {
+        let reply = post(
+            state,
+            "/localization",
+            json!({"country_code": "CA", "return_to": "/"}),
+            "co-country",
+        );
+        assert!(reply.status < 400, "{}", text(&reply));
+    });
+    // The data is reloaded, or the store of the session replaced by the same cart on new data.
+    completion_buys_nothing_when("co-reload", false, |state| {
+        state.reload();
+    });
+    completion_buys_nothing_when("co-store", true, |state| {
+        let reply = state.dispatch(&request(
+            "PUT",
+            "/__lsf/session",
+            json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}, "data": {}}),
+            "co-store",
+        ));
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+    });
+}
+
+#[test]
+fn an_update_after_the_completion_is_refused() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-late");
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-late");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    let reply = operations(
+        &state,
+        &path,
+        "co-late",
+        json!([{"type": "email", "value": "other@example.com"}]),
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["order"]["number"], "#1001");
+
+    // The order is still the order: the thank-you page, the state, another completion.
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), "co-late").status,
+        200
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-late"));
+    assert_eq!(json["status"], "completed");
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-late");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(cart_count(&state, "co-late"), 0);
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[test]
+fn an_update_that_read_the_cart_before_the_completion_writes_nothing() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-stale");
+    let token = path.rsplit('/').next().unwrap();
+    let update = [json!({"type": "email", "value": "other@example.com"})];
+
+    // The update read the cart, then the order took it, then the update wants to write.
+    let reply = super::checkout::apply_update(
+        &state,
+        &request("POST", &format!("{path}/update"), json!({}), "co-stale"),
+        "co-stale",
+        &update,
+        || {
+            let reply = post(&state, &format!("{path}/complete"), json!({}), "co-stale");
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["order"]["number"], "#1001");
+
+    // The lines the order consumed did not come back, and the order stays one.
+    assert_eq!(cart_count(&state, "co-stale"), 0);
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), "co-stale").status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-stale");
+    assert_eq!(
+        body_json(&reply)["redirect"],
+        format!("/checkouts/cn/{token}/thank-you")
+    );
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[test]
+fn an_update_does_not_overwrite_a_cart_change_made_meanwhile() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-lost");
+    let reply = super::checkout::apply_update(
+        &state,
+        &request("POST", &format!("{path}/update"), json!({}), "co-lost"),
+        "co-lost",
+        &[json!({"type": "email", "value": "other@example.com"})],
+        || {
+            let reply = post(
+                &state,
+                "/cart/add.js",
+                json!({"id": variant_id(&state, "TOTE-NAT"), "quantity": 1}),
+                "co-lost",
+            );
+            assert!(reply.status < 300, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["buyer"]["email"], "buyer@example.com");
+    assert_eq!(cart_count(&state, "co-lost"), 3);
+}
+
 #[test]
 fn completing_again_places_no_second_order() {
     let state = checkout_server(&[], false);
