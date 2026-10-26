@@ -793,7 +793,11 @@ fn checkout_line(
 /// Changes the quantity of a checkout line to `quantity` by changing the lines of the cart it is
 /// made of: each holds the same share of the new quantity as of the old one. A line the share of
 /// which falls to nothing leaves the cart.
-fn requantify(session: &mut Session, line: &ResultLine, quantity: u32) -> Result<(), String> {
+pub(super) fn requantify(
+    session: &mut Session,
+    line: &ResultLine,
+    quantity: u32,
+) -> Result<(), String> {
     let old = u64::from(line.quantity.max(1));
     for source in &line.sources {
         let held = u64::from(source.quantity);
@@ -853,6 +857,76 @@ fn quantity(change: &Json) -> Result<Option<u32>, String> {
     }
 }
 
+/// Applies an `updateCartLine` to a line of the checkout, through the lines of the cart it is
+/// made of. A cart line may be shared: after a partial merge, a cart line of three T-shirts
+/// holds one in a bundle and two in a line of its own. What a change does to a line must stay
+/// within the share of that line, so a change of what the line *is* (its merchandise, its
+/// attributes, its selling plan) splits the cart line, and the other share is left as it was.
+pub(super) fn update_line(
+    session: &mut Session,
+    line: &ResultLine,
+    change: &Json,
+    store: &Store,
+) -> Result<(), String> {
+    let new_quantity = quantity(change)?;
+    if new_quantity == Some(0) {
+        return requantify(session, line, 0);
+    }
+    let merchandise = change.get("merchandiseId").and_then(Json::as_str);
+    if let (Some(kind), true) = (&line.transformed_by, merchandise.is_some()) {
+        return Err(format!(
+            "the line `{}` was changed by a cart transform ({kind}): its merchandise cannot be changed",
+            line.id
+        ));
+    }
+    let own_changes = merchandise.is_some()
+        || change.get("attributes").is_some()
+        || change.get("sellingPlanId").is_some();
+    let [source] = line.sources.as_slice() else {
+        if own_changes {
+            return Err(format!(
+                "the line `{}` is made of several lines by a cart transform: only its quantity can be changed",
+                line.id
+            ));
+        }
+        if let Some(quantity) = new_quantity {
+            requantify(session, line, quantity)?;
+        }
+        return Ok(());
+    };
+    let index = source.index;
+    // The cart line as the change would leave it; nothing is written before all is checked.
+    let mut changed = session.cart_lines[index].clone();
+    if let Some(merchandise) = merchandise {
+        let variant_id = gid_number(merchandise)
+            .ok_or_else(|| format!("`{merchandise}` is not a product variant id"))?;
+        if store.variant(variant_id).is_none() {
+            return Err(format!("there is no product variant `{merchandise}`"));
+        }
+        changed.variant_id = variant_id;
+    }
+    if let Some(properties) = line_properties(change) {
+        changed.properties = properties;
+    }
+    if change.get("sellingPlanId").is_some() {
+        changed.selling_plan = selling_plan(change, store, changed.variant_id)?;
+    }
+    let shared = session.cart_lines[index].quantity > source.quantity;
+    if shared && line_key(&changed) != line_key(&session.cart_lines[index]) {
+        // The share of this line moves to a line of its own, at the end of the cart so that the
+        // position of the other lines (which a cart transform may name) does not change.
+        session.cart_lines[index].quantity -= source.quantity;
+        changed.quantity = new_quantity.unwrap_or(source.quantity);
+        session.cart_lines.push(changed);
+        return Ok(());
+    }
+    session.cart_lines[index] = changed;
+    if let Some(quantity) = new_quantity {
+        requantify(session, line, quantity)?;
+    }
+    Ok(())
+}
+
 /// `applyCartLinesChange` of the UI extension API: `addCartLine`, `removeCartLine` and
 /// `updateCartLine`. The lines it names are those of the checkout; a line a cart transform made
 /// from several lines of the cart is removed or scaled through them.
@@ -903,51 +977,7 @@ fn cart_lines(
         }
         Some("updateCartLine") => {
             let line = checkout_line(state, change, session, checkout, store)?;
-            let new_quantity = quantity(change)?;
-            if new_quantity == Some(0) {
-                return requantify(session, &line, 0);
-            }
-            let merchandise = change.get("merchandiseId").and_then(Json::as_str);
-            if let (Some(kind), true) = (&line.transformed_by, merchandise.is_some()) {
-                return Err(format!(
-                    "the line `{}` was changed by a cart transform ({kind}): its merchandise cannot be changed",
-                    line.id
-                ));
-            }
-            let own_changes = merchandise.is_some()
-                || change.get("attributes").is_some()
-                || change.get("sellingPlanId").is_some();
-            let [source] = line.sources.as_slice() else {
-                if own_changes {
-                    return Err(format!(
-                        "the line `{}` is made of several lines by a cart transform: only its quantity can be changed",
-                        line.id
-                    ));
-                }
-                if let Some(quantity) = new_quantity {
-                    requantify(session, &line, quantity)?;
-                }
-                return Ok(());
-            };
-            let index = source.index;
-            if let Some(merchandise) = merchandise {
-                let variant_id = gid_number(merchandise)
-                    .ok_or_else(|| format!("`{merchandise}` is not a product variant id"))?;
-                if store.variant(variant_id).is_none() {
-                    return Err(format!("there is no product variant `{merchandise}`"));
-                }
-                session.cart_lines[index].variant_id = variant_id;
-            }
-            if let Some(properties) = line_properties(change) {
-                session.cart_lines[index].properties = properties;
-            }
-            if change.get("sellingPlanId").is_some() {
-                let variant_id = session.cart_lines[index].variant_id;
-                session.cart_lines[index].selling_plan = selling_plan(change, store, variant_id)?;
-            }
-            if let Some(quantity) = new_quantity {
-                requantify(session, &line, quantity)?;
-            }
+            update_line(session, &line, change, store)?;
         }
         other => return Err(format!("unknown cart line change {other:?}")),
     }

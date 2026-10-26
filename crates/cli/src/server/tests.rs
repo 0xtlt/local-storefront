@@ -3557,6 +3557,211 @@ fn a_merged_line_is_scaled_through_the_lines_it_is_made_of() {
     assert_eq!(cart_of(&state, "co-merge-update").len(), 3);
 }
 
+/// A cart of three T-shirts and a mug where one T-shirt and the mug were merged into a bundle
+/// (as a cart transform does with part of a line): the cart line of the T-shirts is shared by
+/// the bundle and by a line of two T-shirts. Returns the store, the cart, and the lines of the
+/// checkout, the T-shirts first.
+fn partly_merged() -> (
+    std::sync::Arc<lsf_core::Store>,
+    lsf_core::Session,
+    lsf_checkout::ResultLine,
+    lsf_checkout::ResultLine,
+) {
+    use lsf_checkout::{ResultLine, SourceLine};
+    use lsf_core::store::CartLine;
+
+    let state = checkout_server(&["bundle-transform"], false);
+    let store = state.loaded().store.clone();
+    let cart_line = |sku: &str, quantity: u32| CartLine {
+        variant_id: variant_id(&state, sku),
+        quantity,
+        properties: Default::default(),
+        selling_plan: None,
+    };
+    let session = lsf_core::Session {
+        cart_lines: vec![cart_line("TEE-BLK-M", 3), cart_line("MUG-OAT", 1)],
+        ..Default::default()
+    };
+    let tees = ResultLine {
+        id: "gid://shopify/CartLine/1".into(),
+        quantity: 2,
+        sources: vec![SourceLine {
+            index: 0,
+            quantity: 2,
+        }],
+        ..ResultLine::default()
+    };
+    let bundle = ResultLine {
+        id: "gid://shopify/CartLine/3".into(),
+        quantity: 1,
+        transformed_by: Some("merge".into()),
+        sources: vec![
+            SourceLine {
+                index: 0,
+                quantity: 1,
+            },
+            SourceLine {
+                index: 1,
+                quantity: 1,
+            },
+        ],
+        ..ResultLine::default()
+    };
+    (store, session, tees, bundle)
+}
+
+/// The SKU, quantity and properties of a cart line.
+type CartEntry = (String, u32, Vec<(String, String)>);
+
+fn cart_skus(store: &lsf_core::Store, session: &lsf_core::Session) -> Vec<CartEntry> {
+    session
+        .cart_lines
+        .iter()
+        .map(|line| {
+            let (_, variant) = store.variant(line.variant_id).expect("a variant");
+            (
+                variant.sku.clone(),
+                line.quantity,
+                line.properties
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn sku(name: &str, quantity: u32) -> CartEntry {
+    (name.to_string(), quantity, vec![])
+}
+
+#[test]
+fn a_change_of_merchandise_leaves_the_share_of_the_bundle_alone() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let tote = format!(
+        "gid://shopify/ProductVariant/{}",
+        variant_id(&state, "TOTE-NAT")
+    );
+    let (store, mut session, tees, _) = partly_merged();
+
+    // The two T-shirts become totes, the one in the bundle stays a T-shirt.
+    let change = json!({"type": "updateCartLine", "id": tees.id, "merchandiseId": tote});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 1), sku("MUG-OAT", 1), sku("TOTE-NAT", 2)]
+    );
+
+    // With a new quantity at the same time, the new line has it.
+    let (store, mut session, tees, _) = partly_merged();
+    let change =
+        json!({"type": "updateCartLine", "id": tees.id, "merchandiseId": tote, "quantity": 5});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 1), sku("MUG-OAT", 1), sku("TOTE-NAT", 5)]
+    );
+}
+
+#[test]
+fn a_change_of_attributes_leaves_the_share_of_the_bundle_alone() {
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id,
+        "attributes": [{"key": "engraving", "value": "Ada"}]});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [
+            sku("TEE-BLK-M", 1),
+            sku("MUG-OAT", 1),
+            (
+                "TEE-BLK-M".to_string(),
+                2,
+                vec![("engraving".to_string(), "Ada".to_string())]
+            )
+        ]
+    );
+
+    // An attribute that changes nothing does not split the line.
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id, "attributes": []});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 3), sku("MUG-OAT", 1)]
+    );
+}
+
+#[test]
+fn a_change_that_is_refused_changes_nothing_of_a_shared_line() {
+    let (store, mut session, tees, bundle) = partly_merged();
+    let before = cart_skus(&store, &session);
+    for (line, change, message) in [
+        (
+            &tees,
+            json!({"type": "updateCartLine", "id": tees.id, "merchandiseId": "gid://shopify/ProductVariant/1"}),
+            "there is no product variant",
+        ),
+        (
+            &tees,
+            json!({"type": "updateCartLine", "id": tees.id, "sellingPlanId": "gid://shopify/SellingPlan/1"}),
+            "is not offered for this product",
+        ),
+        (
+            &bundle,
+            json!({"type": "updateCartLine", "id": bundle.id, "attributes": [{"key": "a", "value": "b"}]}),
+            "only its quantity can be changed",
+        ),
+        (
+            &bundle,
+            json!({"type": "updateCartLine", "id": bundle.id, "merchandiseId": "gid://shopify/ProductVariant/1"}),
+            "cart transform (merge)",
+        ),
+    ] {
+        let problem = super::checkout::update_line(&mut session, line, &change, &store)
+            .expect_err("the change is refused");
+        assert!(problem.contains(message), "{problem}");
+    }
+    assert_eq!(cart_skus(&store, &session), before);
+}
+
+#[test]
+fn a_change_of_quantity_stays_within_the_share_of_the_line() {
+    // More of the two T-shirts: the one of the bundle is still there.
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id, "quantity": 5});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 6), sku("MUG-OAT", 1)]
+    );
+
+    // Fewer of them.
+    let (store, mut session, tees, _) = partly_merged();
+    super::checkout::requantify(&mut session, &tees, 1).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 2), sku("MUG-OAT", 1)]
+    );
+}
+
+#[test]
+fn a_removed_line_takes_its_share_of_a_shared_line_only() {
+    // The two T-shirts go: the bundle keeps its T-shirt.
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id, "quantity": 0});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 1), sku("MUG-OAT", 1)]
+    );
+
+    // The bundle goes: the two T-shirts stay.
+    let (store, mut session, _, bundle) = partly_merged();
+    super::checkout::requantify(&mut session, &bundle, 0).unwrap();
+    assert_eq!(cart_skus(&store, &session), [sku("TEE-BLK-M", 2)]);
+}
+
 #[test]
 fn an_expanded_line_is_removed_through_its_line_of_the_cart() {
     let state = checkout_server(&["bundle-transform"], false);
