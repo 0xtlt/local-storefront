@@ -1386,3 +1386,382 @@ fn a_function_reads_the_cart_metafields_the_extensions_wrote() {
         "another namespace is another metafield"
     );
 }
+
+// ---- outputs a Function should not be able to get applied ----
+//
+// The modules below do not compute anything: they answer with what they read, and the input
+// builder of the test gives them the output to answer with. Whatever a real Function could
+// write, the pipeline gets to see it.
+
+/// A Wasm module that spins `spin` times, then writes its input back as its output.
+fn answering_module(export: &str, spin: u32) -> String {
+    r#"
+(module
+  (import "wasi_snapshot_preview1" "fd_read" (func $fd_read (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (func (export "EXPORT") (local $i i32)
+    (loop $spin
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $spin (i32.lt_u (local.get $i) (i32.const SPIN))))
+    (i32.store (i32.const 0) (i32.const 256))
+    (i32.store (i32.const 4) (i32.const 4096))
+    (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))
+    (i32.store (i32.const 4) (i32.load (i32.const 8)))
+    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 12)))))
+"#
+    .replace("EXPORT", export)
+    .replace("SPIN", &spin.to_string())
+}
+
+/// What the cart of `answer` holds: two tees, then a tote (lines 1 and 2).
+const CART: [(u64, u32); 2] = [(TEE, 2), (TOTE, 1)];
+
+/// Runs `handle` on a cart of [`CART`] with a module that answers `output`, and returns the
+/// checkout. `settings` is the configuration the Function reads (any, the module ignores it).
+fn answer(
+    handle: &str,
+    export: &str,
+    spin: u32,
+    output: serde_json::Value,
+    configure: impl FnOnce(&mut lsf_checkout::CheckoutConfig),
+) -> lsf_checkout::CheckoutResult {
+    static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let copy = AppCopy::new(&format!(
+        "answer-{handle}-{}",
+        COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(
+        copy.file(handle, "dist/function.wasm"),
+        answering_module(export, spin),
+    )
+    .unwrap();
+    let app = copy.load();
+    let store = store();
+    let session = session(&store, &CART);
+    let mut config = config();
+    config
+        .function_metafields
+        .insert(handle.to_string(), settings(json!({})));
+    configure(&mut config);
+    compute_with(
+        &app,
+        &Selection::only([handle]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+        &|_, _, _| Ok(output.clone()),
+    )
+}
+
+fn transform(operation: serde_json::Value) -> lsf_checkout::CheckoutResult {
+    answer(
+        "bundle-transform",
+        "run",
+        0,
+        json!({"operations": [operation]}),
+        |_| {},
+    )
+}
+
+const LINE_1: &str = "gid://shopify/CartLine/1";
+const LINE_2: &str = "gid://shopify/CartLine/2";
+
+/// The run failed with `error` in its message, and the checkout says so once.
+fn assert_refused(result: &lsf_checkout::CheckoutResult, handle: &str, error: &str) {
+    let run = run_for(result, handle);
+    assert!(
+        run.error.as_deref().is_some_and(|e| e.contains(error)),
+        "{:?} does not say `{error}`",
+        run.error
+    );
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(
+        result.errors[0].message.contains(error),
+        "{:?}",
+        result.errors
+    );
+}
+
+/// The cart as it was before any Function ran.
+fn assert_untouched(result: &lsf_checkout::CheckoutResult) {
+    assert_eq!(result.lines.len(), 2);
+    assert_eq!(result.lines[0].id, LINE_1);
+    assert_eq!(result.lines[0].quantity, 2);
+    assert_eq!(result.lines[0].unit_price, 3200);
+    assert!(result.lines[0].components.is_empty());
+    assert_eq!(result.lines[0].transformed_by, None);
+    assert_eq!(result.lines[1].id, LINE_2);
+    assert_eq!(result.lines[1].quantity, 1);
+    assert_eq!(result.cost.subtotal, 8800);
+    assert_eq!(result.cost.discounts, 0);
+}
+
+#[test]
+fn a_merge_cannot_take_a_line_twice() {
+    // The line holds 2, each source takes 1: 2 in all, but the line is named twice.
+    let result = transform(json!({"linesMerge": {
+        "parentVariantId": format!("gid://shopify/ProductVariant/{MUG}"),
+        "cartLines": [
+            {"cartLineId": LINE_1, "quantity": 1},
+            {"cartLineId": LINE_1, "quantity": 1},
+        ],
+    }}));
+    assert_refused(&result, "bundle-transform", "merged more than once");
+    assert_untouched(&result);
+}
+
+#[test]
+fn a_merge_cannot_take_more_than_a_line_holds() {
+    let result = transform(json!({"linesMerge": {
+        "parentVariantId": format!("gid://shopify/ProductVariant/{MUG}"),
+        "cartLines": [
+            {"cartLineId": LINE_1, "quantity": 1},
+            {"cartLineId": LINE_2, "quantity": 2},
+        ],
+    }}));
+    assert_refused(&result, "bundle-transform", "which has 1");
+    assert_untouched(&result);
+}
+
+#[test]
+fn a_merge_takes_what_it_asks_for_from_each_line() {
+    // The control of the two tests above: one unit of the tees stays, the tote goes.
+    let result = transform(json!({"linesMerge": {
+        "parentVariantId": format!("gid://shopify/ProductVariant/{MUG}"),
+        "cartLines": [
+            {"cartLineId": LINE_1, "quantity": 1},
+            {"cartLineId": LINE_2, "quantity": 1},
+        ],
+    }}));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(run_for(&result, "bundle-transform").error, None);
+    assert_eq!(result.lines.len(), 2);
+    assert_eq!(result.lines[0].transformed_by.as_deref(), Some("merge"));
+    assert_eq!(result.lines[0].unit_price, 3200 + 2400);
+    assert_eq!(result.lines[1].quantity, 1, "one tee stays in the cart");
+}
+
+#[test]
+fn a_merge_quantity_has_to_be_a_positive_whole_number() {
+    for quantity in [json!(0), json!(-1), json!(4294967297u64), json!(1.5)] {
+        let result = transform(json!({"linesMerge": {
+            "parentVariantId": format!("gid://shopify/ProductVariant/{MUG}"),
+            "cartLines": [{"cartLineId": LINE_1, "quantity": quantity}],
+        }}));
+        assert_refused(&result, "bundle-transform", "quantity");
+        assert_untouched(&result);
+    }
+}
+
+#[test]
+fn a_merge_parent_has_to_be_a_variant_id() {
+    let result = transform(json!({"linesMerge": {
+        "parentVariantId": "not-an-id",
+        "cartLines": [{"cartLineId": LINE_1, "quantity": 1}],
+    }}));
+    assert_refused(&result, "bundle-transform", "is not a product variant id");
+    assert_untouched(&result);
+}
+
+#[test]
+fn an_expanded_item_quantity_has_to_be_a_positive_whole_number() {
+    for quantity in [
+        json!(-2),
+        json!(0),
+        json!(1.5),
+        json!(2147483648u64),
+        json!(4294967297u64),
+        json!(u64::MAX),
+        json!(-9_000_000_000_000i64),
+    ] {
+        let result = transform(json!({"lineExpand": {
+            "cartLineId": LINE_1,
+            "expandedCartItems": [
+                {"merchandiseId": format!("gid://shopify/ProductVariant/{MUG}"), "quantity": 1},
+                {"merchandiseId": format!("gid://shopify/ProductVariant/{TOTE}"), "quantity": quantity},
+            ],
+        }}));
+        assert_refused(&result, "bundle-transform", "quantity");
+        assert_untouched(&result);
+    }
+}
+
+#[test]
+fn a_quantity_of_an_expand_that_overflows_the_line_is_refused() {
+    // 2 bundles of 2147483647 components: more than a line can hold.
+    let result = transform(json!({"lineExpand": {
+        "cartLineId": LINE_1,
+        "expandedCartItems": [
+            {"merchandiseId": format!("gid://shopify/ProductVariant/{MUG}"), "quantity": 2147483647},
+        ],
+    }}));
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(run_for(&result, "bundle-transform").error.is_some());
+    assert_untouched(&result);
+}
+
+#[test]
+fn an_expand_needs_items() {
+    let result = transform(json!({"lineExpand": {"cartLineId": LINE_1, "expandedCartItems": []}}));
+    assert_refused(&result, "bundle-transform", "expandedCartItems");
+    assert_untouched(&result);
+}
+
+#[test]
+fn a_function_past_the_instruction_limit_fails_and_its_output_is_not_applied() {
+    let update = json!({"operations": [{"lineUpdate": {"cartLineId": LINE_1, "title": "Spun"}}]});
+    // Under the limit the same output is applied (the control).
+    let fast = answer("bundle-transform", "run", 1000, update.clone(), |_| {});
+    let run = run_for(&fast, "bundle-transform");
+    assert_eq!(run.error, None);
+    assert!(run.instructions < lsf_checkout::runner::INSTRUCTIONS_LIMIT);
+    assert!(fast.errors.is_empty(), "{:?}", fast.errors);
+    assert_eq!(fast.lines[0].title, "Spun");
+
+    // 2 million turns of 8 instructions: past the 11 million.
+    let slow = answer("bundle-transform", "run", 2_000_000, update, |_| {});
+    let run = run_for(&slow, "bundle-transform");
+    assert!(run.instructions > lsf_checkout::runner::INSTRUCTIONS_LIMIT);
+    assert_refused(&slow, "bundle-transform", "instructions");
+    assert_ne!(slow.lines[0].title, "Spun", "the output was applied");
+    assert_untouched(&slow);
+}
+
+#[test]
+fn a_discount_past_the_instruction_limit_is_not_applied() {
+    let output = json!({"operations": [{"productDiscountsAdd": {
+        "selectionStrategy": "ALL",
+        "candidates": [{
+            "targets": [{"cartLine": {"id": LINE_1}}],
+            "value": {"percentage": {"value": "10"}},
+        }],
+    }}]});
+    let configure = |config: &mut lsf_checkout::CheckoutConfig| {
+        config.discounts = vec![discount(
+            "volume-discount",
+            "Spin",
+            None,
+            &[Product],
+            json!({}),
+        )];
+    };
+    let slow = answer(
+        "volume-discount",
+        "cart_lines_discounts_generate_run",
+        2_000_000,
+        output,
+        configure,
+    );
+    assert_refused(&slow, "volume-discount", "instructions");
+    assert!(slow.discounts.is_empty());
+    assert_untouched(&slow);
+}
+
+/// A product discount, answered as is, on [`CART`].
+fn product_discount(targets: serde_json::Value) -> lsf_checkout::CheckoutResult {
+    answer(
+        "volume-discount",
+        "cart_lines_discounts_generate_run",
+        0,
+        json!({"operations": [{"productDiscountsAdd": {
+            "selectionStrategy": "ALL",
+            "candidates": [{"targets": targets, "value": {"percentage": {"value": "10"}}}],
+        }}]}),
+        |config| {
+            config.discounts = vec![discount(
+                "volume-discount",
+                "Answer",
+                None,
+                &[Product],
+                json!({}),
+            )];
+        },
+    )
+}
+
+#[test]
+fn a_discount_target_names_a_line_that_exists_and_a_quantity_that_makes_sense() {
+    // The control: a quantity of 1 out of 2 takes 10 % off 32.00.
+    let result = product_discount(json!([{"cartLine": {"id": LINE_1, "quantity": 1}}]));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.cost.discounts, 320);
+
+    for quantity in [json!(0), json!(-3), json!(4294967297u64), json!(2.5)] {
+        let result = product_discount(json!([{"cartLine": {"id": LINE_1, "quantity": quantity}}]));
+        assert_refused(&result, "volume-discount", "quantity");
+        assert_untouched(&result);
+    }
+    let result = product_discount(json!([{"cartLine": {"id": "gid://shopify/CartLine/99"}}]));
+    assert_refused(&result, "volume-discount", "no cart line");
+    assert_untouched(&result);
+}
+
+#[test]
+fn a_delivery_option_moves_to_a_valid_index_only() {
+    let moves = |index: serde_json::Value| {
+        answer(
+            "delivery-rules",
+            "run",
+            0,
+            json!({"operations": [{"deliveryOptionMove": {"deliveryOptionHandle": "express", "index": index}}]}),
+            |_| {},
+        )
+    };
+    let handles = |result: &lsf_checkout::CheckoutResult| -> Vec<String> {
+        result.delivery_groups[0]
+            .options
+            .iter()
+            .map(|option| option.handle.clone())
+            .collect()
+    };
+    let result = moves(json!(0));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(handles(&result), ["express", "standard"]);
+
+    for index in [
+        json!(-1),
+        json!(4294967296u64),
+        json!(2147483648u64),
+        json!(1.5),
+    ] {
+        let result = moves(index);
+        assert_refused(&result, "delivery-rules", "index");
+        assert_eq!(handles(&result), ["standard", "express"]);
+    }
+}
+
+#[test]
+fn a_payment_method_moves_to_a_valid_index_only() {
+    let moves = |index: serde_json::Value| {
+        answer(
+            "payment-rules",
+            "run",
+            0,
+            json!({"operations": [{"paymentMethodMove": {"paymentMethodId": "bank", "index": index}}]}),
+            |_| {},
+        )
+    };
+    let handles = |result: &lsf_checkout::CheckoutResult| -> Vec<String> {
+        result
+            .payment_methods
+            .iter()
+            .map(|method| method.handle.clone())
+            .collect()
+    };
+    let result = moves(json!(0));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(handles(&result), ["bank", "card", "cod"]);
+
+    for index in [
+        json!(-1),
+        json!(4294967296u64),
+        json!(2147483648u64),
+        json!(0.5),
+    ] {
+        let result = moves(index);
+        assert_refused(&result, "payment-rules", "index");
+        assert_eq!(handles(&result), ["card", "cod", "bank"]);
+    }
+}

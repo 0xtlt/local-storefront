@@ -327,6 +327,17 @@ mod tests {
     /// Runs `lsf function run` on the fixture app of lsf-checkout, for a store with one product
     /// (4 at 32.00 in the cart) and the given discount, and says whether it exits with 1.
     fn run_fails(discount: Json, handle: &str, function_settings: Option<Json>) -> bool {
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        run_fails_in(app, discount, handle, function_settings)
+    }
+
+    /// [`run_fails`] for the app in `app`.
+    fn run_fails_in(
+        app: std::path::PathBuf,
+        discount: Json,
+        handle: &str,
+        function_settings: Option<Json>,
+    ) -> bool {
         let root = std::env::temp_dir().join(format!(
             "lsf-function-run-{}-{}",
             std::process::id(),
@@ -347,7 +358,6 @@ mod tests {
             "checkout": checkout,
         });
         std::fs::write(data.join("store.json"), store.to_string()).unwrap();
-        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
         let args = Args {
             command: Subcommand::Run(RunArgs {
                 handles: vec![handle.to_string()],
@@ -394,6 +404,66 @@ mod tests {
             "quantity-limit",
             Some(serde_json::json!({"maxQuantity": 1}))
         ));
+        // Shopify stops a Function past 11 million instructions: the run fails, and what the
+        // Function answered does not count. The same module with 1 000 turns of 8 instructions
+        // is fine, with 2 million turns it does 16 million.
+        let unused = serde_json::json!({"function": "spin"});
+        let quick = spinning_app(1_000);
+        assert!(!run_fails_in(quick.clone(), unused.clone(), "spin", None));
+        let slow = spinning_app(2_000_000);
+        assert!(run_fails_in(slow.clone(), unused, "spin", None));
+        std::fs::remove_dir_all(quick).ok();
+        std::fs::remove_dir_all(slow).ok();
+    }
+
+    /// An app with one validation Function whose module spins `turns` times (8 Wasm
+    /// instructions each) and answers `{"errors": []}`, a valid output that blocks nothing.
+    fn spinning_app(turns: u32) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "lsf-function-run-spin-{}-{turns}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let extension = root.join("extensions/spin");
+        std::fs::create_dir_all(extension.join("src")).unwrap();
+        std::fs::create_dir_all(extension.join("dist")).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        std::fs::copy(
+            fixture.join("shopify.app.toml"),
+            root.join("shopify.app.toml"),
+        )
+        .unwrap();
+        let limit = fixture.join("extensions/quantity-limit");
+        std::fs::copy(
+            limit.join("src/run.graphql"),
+            extension.join("src/run.graphql"),
+        )
+        .unwrap();
+        let toml = std::fs::read_to_string(limit.join("shopify.extension.toml")).unwrap();
+        // Same Function as the fixture, with another handle and no build command.
+        let toml = toml
+            .replace("quantity-limit", "spin")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("command = "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(extension.join("shopify.extension.toml"), toml).unwrap();
+        let module = r#"
+(module
+  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 100) "{\"errors\":[]}")
+  (func (export "run") (local $i i32)
+    (loop $spin
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $spin (i32.lt_u (local.get $i) (i32.const TURNS))))
+    (i32.store (i32.const 0) (i32.const 100))
+    (i32.store (i32.const 4) (i32.const 13))
+    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 12)))))
+"#
+        .replace("TURNS", &turns.to_string());
+        std::fs::write(extension.join("dist/function.wasm"), module).unwrap();
+        root
     }
 
     #[test]

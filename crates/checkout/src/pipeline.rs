@@ -267,6 +267,18 @@ impl<'a> Pipeline<'a> {
                 spec.result
             ));
         }
+        // Shopify stops a Function that runs past the limit: its output does not count.
+        if execution.instructions > runner::INSTRUCTIONS_LIMIT {
+            let message = format!(
+                "used {} instructions: Shopify stops a Function past {}",
+                execution.instructions,
+                runner::INSTRUCTIONS_LIMIT
+            );
+            execution.error = Some(match execution.error.take() {
+                Some(previous) => format!("{previous}; {message}"),
+                None => message,
+            });
+        }
         let failed = execution.error.is_some() || execution.output.is_none();
         let run = FunctionRun {
             handle: function.handle.clone(),
@@ -278,18 +290,6 @@ impl<'a> Pipeline<'a> {
             error: execution.error.clone(),
             instructions: execution.instructions,
         };
-        if execution.instructions > runner::INSTRUCTIONS_LIMIT {
-            self.errors.push(CheckoutError {
-                message: format!(
-                    "Function `{}` used {} instructions: Shopify stops a Function past {}",
-                    function.handle,
-                    execution.instructions,
-                    runner::INSTRUCTIONS_LIMIT
-                ),
-                target: None,
-                function: Some(function.handle.clone()),
-            });
-        }
         if failed {
             self.errors.push(CheckoutError {
                 message: format!(
@@ -374,6 +374,8 @@ impl<'a> Pipeline<'a> {
 
     fn apply_cart_transform(&mut self, function: &FunctionExtension, output: &Value) {
         for operation in array(output, "operations") {
+            // A refused operation leaves nothing behind, not even the ids it took for new lines.
+            let next_line_id = self.next_line_id;
             let result = if let Some(op) = operation.get("expand").or(operation.get("lineExpand")) {
                 self.expand(op)
             } else if let Some(op) = operation.get("merge").or(operation.get("linesMerge")) {
@@ -384,6 +386,7 @@ impl<'a> Pipeline<'a> {
                 Err("unknown operation".to_string())
             };
             if let Err(message) = result {
+                self.next_line_id = next_line_id;
                 self.function_error(function, format!("cart transform: {message}"));
             }
         }
@@ -429,6 +432,9 @@ impl<'a> Pipeline<'a> {
         let quantity = self.lines[index].quantity;
 
         let items: Vec<&Value> = array(op, "expandedCartItems").collect();
+        if items.is_empty() {
+            return Err("expand without `expandedCartItems`".to_string());
+        }
         let fixed: Vec<Option<Cents>> = items
             .iter()
             .map(|item| {
@@ -461,11 +467,7 @@ impl<'a> Pipeline<'a> {
         for (item, fixed) in items.iter().zip(&fixed) {
             let merchandise =
                 str_field(item, "merchandiseId").ok_or("expanded item without `merchandiseId`")?;
-            let per_unit = item
-                .get("quantity")
-                .and_then(Value::as_u64)
-                .map_or(Some(1), |quantity| u32::try_from(quantity).ok())
-                .ok_or("an expanded item has a quantity that is too large")?;
+            let per_unit = quantity_of(item.get("quantity"), "the quantity of an expanded item")?;
             let units = per_unit
                 .checked_mul(quantity)
                 .ok_or("an expanded item has a quantity that is too large")?;
@@ -473,8 +475,9 @@ impl<'a> Pipeline<'a> {
             let mut component = self.new_line(merchandise, units, attributes)?;
             if let Some(amount) = fixed {
                 component.unit_price = *amount;
-                line_total(*amount, units)?;
             }
+            // Whatever prices the component, its line has to fit (the shares below add them up).
+            line_total(component.unit_price, units)?;
             components.push((component, per_unit));
         }
 
@@ -531,29 +534,37 @@ impl<'a> Pipeline<'a> {
     fn merge(&mut self, op: &Value) -> Result<(), String> {
         let parent_variant =
             str_field(op, "parentVariantId").ok_or("merge without `parentVariantId`")?;
-        // Resolve every source line before changing anything.
-        let mut sources = Vec::new();
+        // Resolve every source line before changing anything: a line is merged once, and no
+        // more than it holds.
+        let mut sources: Vec<(usize, u32)> = Vec::new();
         for source in array(op, "cartLines") {
             let id = str_field(source, "cartLineId").ok_or("merged line without `cartLineId`")?;
             let index = self.line_index(id)?;
-            let take = source
-                .get("quantity")
-                .and_then(Value::as_u64)
-                .map_or(self.lines[index].quantity, |q| q as u32)
-                .min(self.lines[index].quantity);
+            if sources.iter().any(|(seen, _)| *seen == index) {
+                return Err(format!("the cart line `{id}` is merged more than once"));
+            }
+            let take = quantity_of(source.get("quantity"), "the quantity of a merged line")?;
+            let available = self.lines[index].quantity;
+            if take > available {
+                return Err(format!(
+                    "{take} of the cart line `{id}` are merged, which has {available}"
+                ));
+            }
             sources.push((index, take));
         }
         if sources.is_empty() {
             return Err("merge of no cart line".to_string());
         }
 
+        let parent_id = gid_number(parent_variant)
+            .ok_or_else(|| format!("`{parent_variant}` is not a product variant id"))?;
         let mut parent = self
             .new_line(parent_variant, 1, attributes(op.get("attributes")))
             .or_else(|_| {
                 // A parent variant that is not in the store data still makes a line.
                 let mut line = ResultLine {
                     id: format!("gid://shopify/CartLine/{}", self.next_line_id),
-                    variant_id: gid_number(parent_variant).unwrap_or(0),
+                    variant_id: parent_id,
                     title: "Bundle".to_string(),
                     quantity: 1,
                     attributes: attributes(op.get("attributes")),
@@ -777,7 +788,7 @@ impl<'a> Pipeline<'a> {
                     if let Some(op) = operation.get("productDiscountsAdd") {
                         if classes.contains(&DiscountClass::Product) {
                             let strategy = str_field(op, "selectionStrategy");
-                            match candidates_of(op, "candidates") {
+                            match self.product_candidates(op, "candidates") {
                                 Ok(candidates) => {
                                     self.apply_product(&context, strategy, candidates)
                                 }
@@ -811,7 +822,7 @@ impl<'a> Pipeline<'a> {
             }
             TargetKind::ProductDiscount => {
                 let strategy = str_field(output, "discountApplicationStrategy");
-                match candidates_of(output, "discounts") {
+                match self.product_candidates(output, "discounts") {
                     Ok(candidates) => self.apply_product(&context, strategy, candidates),
                     Err(error) => {
                         self.function_error(function, format!("product discount: {error}"))
@@ -827,6 +838,19 @@ impl<'a> Pipeline<'a> {
             }
             _ => {}
         }
+    }
+
+    /// The candidates of a product discount: valid ones that only target cart lines that exist.
+    fn product_candidates(&self, op: &Value, key: &str) -> Result<Vec<Candidate>, String> {
+        let candidates = candidates_of(op, key)?;
+        for target in candidates.iter().flat_map(|candidate| &candidate.targets) {
+            if let Target::Line { id, .. } = target
+                && self.lines.iter().all(|line| &line.id != id)
+            {
+                return Err(format!("no cart line `{id}`"));
+            }
+        }
+        Ok(candidates)
     }
 
     fn apply_product(
@@ -966,7 +990,12 @@ impl<'a> Pipeline<'a> {
                 };
                 if let Some(output) = self.execute(function, target, owner, None) {
                     for operation in array(&output, "operations") {
-                        self.apply_delivery_operation(operation);
+                        if let Err(message) = self.apply_delivery_operation(operation) {
+                            self.function_error(
+                                function,
+                                format!("delivery customization: {message}"),
+                            );
+                        }
                     }
                     self.select_delivery();
                 }
@@ -975,41 +1004,40 @@ impl<'a> Pipeline<'a> {
     }
 
     /// An operation of `cart.delivery-options.transform.run`: `deliveryOptionHide`,
-    /// `deliveryOptionMove`, `deliveryOptionRename`.
-    fn apply_delivery_operation(&mut self, operation: &Value) {
-        for group in &mut self.groups {
-            if let Some(op) = operation.get("deliveryOptionHide") {
-                if let Some(handle) = str_field(op, "deliveryOptionHandle") {
-                    group.options.retain(|option| option.handle != handle);
-                }
-            } else if let Some(op) = operation.get("deliveryOptionMove") {
-                let (Some(handle), Some(to)) = (
-                    str_field(op, "deliveryOptionHandle"),
-                    op.get("index").and_then(Value::as_u64),
-                ) else {
-                    continue;
-                };
+    /// `deliveryOptionMove`, `deliveryOptionRename`. An option that is not offered is left alone.
+    fn apply_delivery_operation(&mut self, operation: &Value) -> Result<(), String> {
+        if let Some(op) = operation.get("deliveryOptionHide") {
+            let handle = handle_of(op, "deliveryOptionHandle", "deliveryOptionHide")?;
+            for group in &mut self.groups {
+                group.options.retain(|option| option.handle != handle);
+            }
+        } else if let Some(op) = operation.get("deliveryOptionMove") {
+            let handle = handle_of(op, "deliveryOptionHandle", "deliveryOptionMove")?;
+            let to = index_of(op.get("index"), "the `index` of a deliveryOptionMove")?;
+            for group in &mut self.groups {
                 if let Some(from) = group
                     .options
                     .iter()
                     .position(|option| option.handle == handle)
                 {
                     let option = group.options.remove(from);
-                    group
-                        .options
-                        .insert((to as usize).min(group.options.len()), option);
+                    group.options.insert(to.min(group.options.len()), option);
                 }
-            } else if let Some(op) = operation.get("deliveryOptionRename")
-                && let Some(handle) = str_field(op, "deliveryOptionHandle")
-                && let Some(option) = group
+            }
+        } else if let Some(op) = operation.get("deliveryOptionRename") {
+            let handle = handle_of(op, "deliveryOptionHandle", "deliveryOptionRename")?;
+            let title = handle_of(op, "title", "deliveryOptionRename")?;
+            for group in &mut self.groups {
+                if let Some(option) = group
                     .options
                     .iter_mut()
                     .find(|option| option.handle == handle)
-                && let Some(title) = str_field(op, "title")
-            {
-                option.title = title.to_string();
+                {
+                    option.title = title.to_string();
+                }
             }
         }
+        Ok(())
     }
 
     fn shipping_discounts(&mut self) {
@@ -1130,7 +1158,12 @@ impl<'a> Pipeline<'a> {
                 };
                 if let Some(output) = self.execute(function, target, owner, None) {
                     for operation in array(&output, "operations") {
-                        self.apply_payment_operation(operation);
+                        if let Err(message) = self.apply_payment_operation(operation) {
+                            self.function_error(
+                                function,
+                                format!("payment customization: {message}"),
+                            );
+                        }
                     }
                 }
             }
@@ -1140,14 +1173,14 @@ impl<'a> Pipeline<'a> {
     /// An operation of `cart.payment-methods.transform.run`: `paymentMethodHide`,
     /// `paymentMethodMove`, `paymentMethodRename`. Payment terms and order reviews
     /// (`paymentTermsSet`, `orderReviewAdd`) have no place in the local checkout.
-    fn apply_payment_operation(&mut self, operation: &Value) {
-        let position = |methods: &[PaymentMethod], op: &Value| {
-            let id = str_field(op, "paymentMethodId")?;
+    fn apply_payment_operation(&mut self, operation: &Value) -> Result<(), String> {
+        let position = |methods: &[PaymentMethod], id: &str| {
             methods
                 .iter()
                 .position(|method| id_matches(id, &method.handle))
         };
         if let Some(op) = operation.get("paymentMethodHide") {
+            let id = handle_of(op, "paymentMethodId", "paymentMethodHide")?;
             // Hidden from the accelerated checkout only: the method stays in the list.
             let in_list = op
                 .get("placements")
@@ -1158,24 +1191,25 @@ impl<'a> Pipeline<'a> {
                             .iter()
                             .any(|placement| placement.as_str() == Some("PAYMENT_METHOD"))
                 });
-            if in_list && let Some(at) = position(&self.payment_methods, op) {
+            if in_list && let Some(at) = position(&self.payment_methods, id) {
                 self.payment_methods.remove(at);
             }
         } else if let Some(op) = operation.get("paymentMethodMove") {
-            if let (Some(from), Some(to)) = (
-                position(&self.payment_methods, op),
-                op.get("index").and_then(Value::as_u64),
-            ) {
+            let id = handle_of(op, "paymentMethodId", "paymentMethodMove")?;
+            let to = index_of(op.get("index"), "the `index` of a paymentMethodMove")?;
+            if let Some(from) = position(&self.payment_methods, id) {
                 let method = self.payment_methods.remove(from);
-                let to = (to as usize).min(self.payment_methods.len());
-                self.payment_methods.insert(to, method);
+                self.payment_methods
+                    .insert(to.min(self.payment_methods.len()), method);
             }
-        } else if let Some(op) = operation.get("paymentMethodRename")
-            && let Some(at) = position(&self.payment_methods, op)
-            && let Some(name) = str_field(op, "name")
-        {
-            self.payment_methods[at].name = name.to_string();
+        } else if let Some(op) = operation.get("paymentMethodRename") {
+            let id = handle_of(op, "paymentMethodId", "paymentMethodRename")?;
+            let name = handle_of(op, "name", "paymentMethodRename")?;
+            if let Some(at) = position(&self.payment_methods, id) {
+                self.payment_methods[at].name = name.to_string();
+            }
         }
+        Ok(())
     }
 
     fn validations(&mut self) {
@@ -1413,7 +1447,7 @@ fn split_sources(
 
 /// Recomputes the amounts of a line from its unit price, quantity and allocations.
 fn refresh(line: &mut ResultLine) {
-    line.subtotal = line.unit_price * Cents::from(line.quantity);
+    line.subtotal = line.unit_price.saturating_mul(Cents::from(line.quantity));
     let allocated: Cents = line.discount_allocations.iter().map(|a| a.amount).sum();
     line.total = (line.subtotal - allocated).max(0);
 }
@@ -1434,7 +1468,7 @@ fn override_presentation(line: &mut ResultLine, op: &Value) {
 fn allocate(total: Cents, components: &[(ResultLine, u32)]) -> Vec<Cents> {
     let weights: Vec<Cents> = components
         .iter()
-        .map(|(component, per_unit)| component.unit_price * Cents::from(*per_unit))
+        .map(|(component, per_unit)| component.unit_price.saturating_mul(Cents::from(*per_unit)))
         .collect();
     if weights.iter().sum::<Cents>() > 0 {
         return distribute(total, &weights);
@@ -1517,47 +1551,56 @@ enum Amount {
     None,
 }
 
+/// A target of a discount candidate: a cart line, a product variant, the order, a delivery group
+/// or option. Ids and quantities have to be valid, a target is never dropped.
+fn target_of(target: &Value) -> Result<Target, String> {
+    if let Some(line) = target.get("cartLine") {
+        Ok(Target::Line {
+            id: handle_of(line, "id", "a cartLine target")?.to_string(),
+            quantity: optional_quantity(line.get("quantity"), "the quantity of a cartLine target")?,
+        })
+    } else if let Some(variant) = target.get("productVariant") {
+        Ok(Target::Variant {
+            id: variant_id_of(variant.get("id"), "a productVariant target")?,
+            quantity: optional_quantity(
+                variant.get("quantity"),
+                "the quantity of a productVariant target",
+            )?,
+        })
+    } else if let Some(order) = target.get("orderSubtotal") {
+        let excluded_lines = array(order, "excludedCartLineIds")
+            .map(|id| {
+                id.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("an excluded cart line id is not a string: {id}"))
+            })
+            .collect::<Result<_, _>>()?;
+        let excluded_variants = array(order, "excludedVariantIds")
+            .map(|id| variant_id_of(Some(id), "an excluded variant"))
+            .collect::<Result<_, _>>()?;
+        Ok(Target::Order {
+            excluded_lines,
+            excluded_variants,
+        })
+    } else if let Some(group) = target.get("deliveryGroup") {
+        Ok(Target::DeliveryGroup(
+            handle_of(group, "id", "a deliveryGroup target")?.to_string(),
+        ))
+    } else if let Some(option) = target.get("deliveryOption") {
+        Ok(Target::DeliveryOption(
+            handle_of(option, "handle", "a deliveryOption target")?.to_string(),
+        ))
+    } else {
+        Err(format!("a discount target of an unknown kind: {target}"))
+    }
+}
+
 /// Reads a discount candidate of the current output shape (`productDiscountsAdd` candidates:
 /// `fixedAmount.amount`) or the legacy one (`discounts`: `fixedAmount.value`).
 fn candidate(raw: &Value) -> Result<Candidate, String> {
     let targets = array(raw, "targets")
-        .filter_map(|target| {
-            if let Some(line) = target.get("cartLine") {
-                Some(Target::Line {
-                    id: str_field(line, "id")?.to_string(),
-                    quantity: line
-                        .get("quantity")
-                        .and_then(Value::as_u64)
-                        .map(|q| q as u32),
-                })
-            } else if let Some(variant) = target.get("productVariant") {
-                Some(Target::Variant {
-                    id: gid_number(str_field(variant, "id")?)?,
-                    quantity: variant
-                        .get("quantity")
-                        .and_then(Value::as_u64)
-                        .map(|q| q as u32),
-                })
-            } else if let Some(order) = target.get("orderSubtotal") {
-                Some(Target::Order {
-                    excluded_lines: array(order, "excludedCartLineIds")
-                        .filter_map(|id| id.as_str().map(str::to_string))
-                        .collect(),
-                    excluded_variants: array(order, "excludedVariantIds")
-                        .filter_map(|id| id.as_str().and_then(gid_number))
-                        .collect(),
-                })
-            } else if let Some(group) = target.get("deliveryGroup") {
-                Some(Target::DeliveryGroup(str_field(group, "id")?.to_string()))
-            } else if let Some(option) = target.get("deliveryOption") {
-                Some(Target::DeliveryOption(
-                    str_field(option, "handle")?.to_string(),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
+        .map(target_of)
+        .collect::<Result<Vec<_>, _>>()?;
 
     // New shape: `value: { percentage: { value }, fixedAmount: { amount, appliesToEachItem } }`.
     // Legacy: `fixedAmount: { value, appliesToEachItem }`.
@@ -1647,7 +1690,11 @@ fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cent
     }
     let bases: Vec<Cents> = covered
         .iter()
-        .map(|(index, quantity)| lines[*index].unit_price * Cents::from(*quantity))
+        .map(|(index, quantity)| {
+            lines[*index]
+                .unit_price
+                .saturating_mul(Cents::from(*quantity))
+        })
         .collect();
     let amounts: Vec<Cents> = match candidate.value {
         Amount::Percentage(percentage) => bases
@@ -1839,6 +1886,51 @@ fn line_total(unit_price: Cents, quantity: u32) -> Result<Cents, String> {
         .checked_mul(Cents::from(quantity))
         .filter(|total| *total <= MAX_CENTS)
         .ok_or_else(|| MONEY_OVERFLOW.to_string())
+}
+
+/// The largest quantity a Function can give: a GraphQL `Int`.
+const MAX_QUANTITY: u64 = i32::MAX as u64;
+
+/// A quantity of a Function output (`what` says which, for the error): a whole number from 1 to
+/// the largest `Int`. A quantity is never corrected to fit.
+fn quantity_of(value: Option<&Value>, what: &str) -> Result<u32, String> {
+    let value = value.ok_or_else(|| format!("{what} is missing"))?;
+    value
+        .as_u64()
+        .filter(|quantity| (1..=MAX_QUANTITY).contains(quantity))
+        .and_then(|quantity| u32::try_from(quantity).ok())
+        .ok_or_else(|| format!("{what} is not a whole number from 1 to {MAX_QUANTITY}: {value}"))
+}
+
+/// [`quantity_of`] for a quantity the output may leave out (or give as `null`).
+fn optional_quantity(value: Option<&Value>, what: &str) -> Result<Option<u32>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        some => quantity_of(some, what).map(Some),
+    }
+}
+
+/// A position in a list of a Function output: a whole number from 0 to the largest `Int`.
+fn index_of(value: Option<&Value>, what: &str) -> Result<usize, String> {
+    let value = value.ok_or_else(|| format!("{what} is missing"))?;
+    value
+        .as_u64()
+        .filter(|index| *index <= MAX_QUANTITY)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| format!("{what} is not a whole number from 0 to {MAX_QUANTITY}: {value}"))
+}
+
+/// The string `key` of an operation or target (an id, a handle, a title), which has to be there.
+fn handle_of<'v>(value: &'v Value, key: &str, what: &str) -> Result<&'v str, String> {
+    str_field(value, key).ok_or_else(|| format!("{what} without `{key}`"))
+}
+
+/// The id of a product variant a Function names: a gid that ends with its number.
+fn variant_id_of(value: Option<&Value>, what: &str) -> Result<u64, String> {
+    value
+        .and_then(Value::as_str)
+        .and_then(gid_number)
+        .ok_or_else(|| format!("{what} has no valid product variant id: {value:?}"))
 }
 
 /// The candidates of a discount operation (`candidates`) or of a legacy output (`discounts`).
@@ -2097,6 +2189,73 @@ mod tests {
             {"targets": target, "value": {"fixedAmount": {"amount": "0"}}},
         ]});
         assert_eq!(candidates_of(&good, "candidates").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn quantities_and_indexes_are_never_corrected() {
+        let quantity = |value: Value| quantity_of(Some(&value), "a quantity");
+        assert_eq!(quantity(json!(1)), Ok(1));
+        assert_eq!(quantity(json!(2147483647)), Ok(2147483647));
+        for bad in [
+            json!(0),
+            json!(-2),
+            json!(1.5),
+            json!(2.0),
+            json!("3"),
+            json!(null),
+            json!(2147483648u64),
+            json!(4294967297u64),
+            json!(u64::MAX),
+            json!(i64::MIN),
+        ] {
+            assert!(quantity(bad.clone()).is_err(), "{bad} was accepted");
+        }
+        assert!(quantity_of(None, "a quantity").is_err());
+        assert_eq!(optional_quantity(None, "a quantity"), Ok(None));
+        assert_eq!(
+            optional_quantity(Some(&json!(null)), "a quantity"),
+            Ok(None)
+        );
+        assert!(optional_quantity(Some(&json!(0)), "a quantity").is_err());
+
+        let index = |value: Value| index_of(Some(&value), "an index");
+        assert_eq!(index(json!(0)), Ok(0));
+        assert_eq!(index(json!(2147483647)), Ok(2147483647));
+        for bad in [
+            json!(-1),
+            json!(0.5),
+            json!("1"),
+            json!(2147483648u64),
+            json!(u64::MAX),
+        ] {
+            assert!(index(bad.clone()).is_err(), "{bad} was accepted");
+        }
+    }
+
+    #[test]
+    fn a_target_is_never_dropped_for_an_invalid_id_or_quantity() {
+        for target in [
+            json!({"productVariant": {"id": "nope"}}),
+            json!({"productVariant": {"id": "gid://shopify/ProductVariant/x1"}}),
+            json!({"productVariant": {}}),
+            json!({"productVariant": {"id": "gid://shopify/ProductVariant/1", "quantity": 0}}),
+            json!({"productVariant": {"id": "gid://shopify/ProductVariant/1", "quantity": 4294967297u64}}),
+            json!({"cartLine": {"id": "gid://shopify/CartLine/1", "quantity": -1}}),
+            json!({"cartLine": {}}),
+            json!({"orderSubtotal": {"excludedVariantIds": ["gid://shopify/ProductVariant/1", "x"]}}),
+            json!({"orderSubtotal": {"excludedCartLineIds": [1]}}),
+            json!({"deliveryGroup": {}}),
+            json!({"deliveryOption": {}}),
+            json!({"somethingElse": {}}),
+        ] {
+            let raw = json!({"targets": [target], "value": {"percentage": {"value": "10"}}});
+            assert!(candidate(&raw).is_err(), "{target} was accepted");
+        }
+        let raw = json!({"targets": [
+            {"productVariant": {"id": "gid://shopify/ProductVariant/1", "quantity": null}},
+            {"orderSubtotal": {"excludedVariantIds": ["gid://shopify/ProductVariant/2"]}},
+        ]});
+        assert_eq!(candidate(&raw).unwrap().targets.len(), 2);
     }
 
     #[test]
