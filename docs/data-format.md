@@ -62,9 +62,9 @@ shopify-local/
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
-`session`, `now` and `theme_settings`. Root files are merged, so the data can be split however
-is convenient. Lists add up; `shop`, `localization`, `session` and `now` may be defined in one
-file only.
+`session`, `checkout`, `now` and `theme_settings`. Root files are merged, so the data can be
+split however is convenient. Lists add up; `shop`, `localization`, `session`, `checkout` and
+`now` may be defined in one file only.
 
 A file in `products/`, `collections/`, `pages/`, `blogs/` or `customers/` holds one entity, or
 an array of them. Files are read in alphabetical order, which is the order products matched by
@@ -513,6 +513,42 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 }
 ```
 
+## Checkout
+
+The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
+checkout --app <dir>`, see [checkout](checkout.md)). Every field has a default, and the section
+changes nothing for a theme.
+
+```json
+{
+  "checkout": {
+    "shipping_rates": [{ "handle": "standard", "title": "Standard", "price": "4.90" }],
+    "payment_methods": [{ "handle": "card", "name": "Credit card" }],
+    "discounts": [
+      {
+        "function": "volume-discount",
+        "title": "Volume",
+        "classes": ["PRODUCT"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+      }
+    ],
+    "functions": { "delivery-rules": { "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "tax_rate": 20
+  }
+}
+```
+
+- `shipping_rates`: the delivery options offered to every address. Without it, one: "Standard"
+  at 5.00.
+- `payment_methods`: without it, "Credit card", "Cash on Delivery" and "Bank Deposit".
+- `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
+  code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
+  what it may reduce, all three by default. `metafields` are those of the discount, by
+  `"namespace.key"`, in the same shorthand as other metafields.
+- `functions`: the metafields of the other Functions (cart transform, delivery or payment
+  customization, validation), by the handle of the Function.
+- `tax_rate`: a percentage, added to the discounted subtotal.
+
 ## Localization
 
 ```json
@@ -645,7 +681,7 @@ in a `url` setting leads to the page.
 | `invalid_value`, `invalid_format` | A value outside what the field accepts. |
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
-| `duplicate_section` | `shop`, `localization`, `session` or `now` defined in two files. |
+| `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data. The hint suggests the closest match. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations without a company. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |

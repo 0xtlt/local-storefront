@@ -1,13 +1,16 @@
 # Architecture
 
-Three crates, each depending only on the one before it, and one that stands alone.
+Three crates, each depending only on the one before it, and two that stand beside them.
 
 ```text
-crates/liquid   lsf-liquid   the Liquid language: no knowledge of Shopify
-crates/core     lsf-core     Shopify on top of it: store data, objects, filters, tags, rendering
-crates/cli      lsf          the command line and the HTTP server
-crates/fmt      lsf-fmt      the formatter of `lsf fmt`: a source in, a source out
+crates/liquid    lsf-liquid     the Liquid language: no knowledge of Shopify
+crates/core      lsf-core       Shopify on top of it: store data, objects, filters, tags, rendering
+crates/checkout  lsf-checkout   the Functions and checkout UI extensions of a Shopify app, on the store data
+crates/cli       lsf            the command line and the HTTP server
+crates/fmt       lsf-fmt        the formatter of `lsf fmt`: a source in, a source out
 ```
+
+`lsf-checkout` uses `lsf-core` for the store and the session; `lsf` uses both.
 
 ## `lsf-liquid`: the language
 
@@ -62,6 +65,28 @@ demo store, with HTML snapshots), `tests/conformance.rs` (the examples of shopif
 downloaded by `mise run docs:fetch`; it also fails when Shopify documents a filter or a tag lsf
 lacks), `tests/docs.rs` (the generated reference is current).
 
+## `lsf-checkout`: the checkout of an app
+
+Reads a Shopify app, runs its Functions against a cart and describes the checkout the buyer
+sees. It does not serve anything: `lsf` does, with `lsf checkout`, `lsf serve --app` and
+`lsf function run`.
+
+| Module | Role |
+|---|---|
+| `app` | Reads `shopify.app.toml` and `extensions/*/shopify.extension.toml`: Functions, checkout UI extensions, the others listed and ignored. What is wrong with the app (a missing build, an unknown target) is a diagnostic, not an error. `Selection` is the set of extensions in use (`--extension`). |
+| `input` | Builds the input of a Function: runs its GraphQL input query against the cart, the buyer and the store (a small executor over a resolver of the Function input graph). |
+| `runner` | Runs a Wasm module with Shopify's own `function-runner` as a library, caches the compiled modules by path, time and size, stops a Function after 10 seconds, and reports logs, instructions and errors. |
+| `pipeline` | `compute`: the Functions in the order Shopify runs them, applying each output, to a `CheckoutResult`. |
+| `types` | The state the buyer builds, the configuration (`CheckoutConfig`, which `lsf` maps from the `checkout` section of the store data) and the result, which is the JSON the page reads. |
+| `assets` | The page and the sandbox of its extensions, embedded in the binary: the files of `assets/`, except `tests/` and `preview/`. |
+
+`assets/` holds the checkout page and `extension-host.js`, which runs each extension in a
+sandboxed frame (`sandbox.html`; its scripts are classic scripts, since the frame has an opaque
+origin and cannot load modules). They need no build step. Tests: the unit tests, `tests/` against
+the fixture app (`tests/fixtures/app`: Rust Functions whose `dist/function.wasm` is committed and
+two built UI extensions; `mise run fixtures:functions` rebuilds the Functions), and Node's test
+runner for the scripts (`mise run test:js`).
+
 ## `lsf-fmt`: the formatter
 
 A port of Prettier with Shopify's Liquid plugin (`@shopify/prettier-plugin-liquid`), step for
@@ -91,7 +116,7 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 
 ## `lsf`: commands and server
 
-`commands/` holds one file per subcommand. `server/` is the HTTP side:
+`commands/` holds one file per subcommand (`checkout` is `serve` without a theme: `App::open_without_theme`; `function run` runs the pipeline once). `server/` is the HTTP side:
 
 | Module | Role |
 |---|---|
@@ -103,6 +128,7 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 | `minify` | The stylesheets and the scripts of the theme, minified with a source map. |
 | `compress` | Brotli or gzip for the responses that gain from it, by what the client accepts. |
 | `control` | The `/__lsf` API. |
+| `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. |
 | `../profile` | Shared by `lsf profile` and `/__lsf/profile`: renders a page several times with the profiler, keeps the render in the middle, and writes it as a tree of text or in the format of speedscope, in time or in points. `lsf-core` adds the frames Liquid does not know (`render`, a JSON template, `section <id>`, `block <key>`) and the costs (`render/cost`): the objects charge for what they load where they are created. |
 | `speedscope` | The viewer of flame graphs, served from the binary for `/__lsf/profile?...&html=1`. Its files are in `assets/speedscope/`, with their licenses. |
 | `timing` | The `Server-Timing` header of each response, and the render times `/__lsf/timings` adds up: a histogram per template, per section and per theme block, so that they take the same room after a million pages. |
@@ -132,8 +158,10 @@ mise run oracle:strict2-fixes                # check the fixes of `lsf check --f
 Documentation: user-facing changes go into the guide of their task in `docs/` and into
 `CHANGELOG.md`; the README only lists the tasks. Tables that repeat values of the code are
 checked by tests (`throttle.rs` reads `docs/testing.md`, `fmt` reads `docs/formatting.md`,
-`profile.rs` reads `docs/performance.md`), and `docs/data-format.md` is embedded in the binary
-by `lsf docs` and `lsf init`.
+`profile.rs` reads `docs/performance.md`), `docs/data-reference.md` is generated from the JSON
+Schema (`UPDATE_SNAPSHOTS=1 cargo test -p lsf-core --test docs` rewrites it after a change to
+`store/model.rs`), and `docs/data-format.md` is embedded in the binary by `lsf docs` and
+`lsf init`.
 
 ## Releasing
 

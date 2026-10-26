@@ -19,7 +19,7 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | Code | Meaning |
 |---|---|
 | `0` | Done, nothing to report. |
-| `1` | Done, and something to fix: data errors (`validate`), problems in the theme (`check`), Liquid errors in the page (`render --strict`), files not formatted (`fmt --check`). |
+| `1` | Done, and something to fix: data errors (`validate`), problems in the theme (`check`), Liquid errors in the page (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run (`function run`). |
 | `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write. The message is on stderr, after `error:`. |
 
 ## serve
@@ -45,12 +45,54 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--timings` | | Names every section and theme block in the `Server-Timing` header. See [performance](performance.md#render-times). |
 | `--no-minify` | | Serves styles and scripts as written. Without it, they are minified with a source map, as on Shopify. |
 | `--no-compression` | | Sends responses uncompressed. Without it, they are compressed (Brotli or gzip) for clients that accept it, as on Shopify. |
+| `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions. See [checkout](checkout.md). |
+| `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
+| `--build` | | With `--app`: runs the build command of each Function first. |
+| `--variant <standard\|shop>` | | With `--app`: the look of the checkout page, `standard` by default. |
 
 When it is ready, the server prints a line to stderr that starts with
 `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. It runs
 until it is stopped.
 
 While it runs, tests talk to it through the [control API](control-api.md).
+
+## checkout
+
+`npx local-storefront checkout --app <dir>`
+
+Serves the checkout of a Shopify app alone, without a theme: `serve --app` without the
+storefront. `/` leads to `/checkout`; the control API and `/cdn` are there, other pages answer
+`404`. It takes the options of [`serve`](#serve), and `--app` is required. Guide:
+[checkout](checkout.md).
+
+```bash
+npx local-storefront checkout --app ../my-app --extension volume-discount --variant shop
+```
+
+## function run
+
+`npx local-storefront function run [handle]... --app <dir>`
+
+Runs the Functions of an app once, without a server. Builds the input of each from the store
+data, runs them in checkout order, and prints each input, output and log with the checkout that
+results. Guide: [checkout](checkout.md#run-a-function-without-a-server).
+
+```bash
+npx local-storefront function run volume-discount --app ../my-app --session '{"cart":{"items":[{"variant":"TEE-BLK-M","quantity":3}]}}'
+```
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The Functions to run. Every Function of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Required. |
+| `--build` | | Runs the build command of each Function first. |
+| `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it. Defaults to the `session` of the store data. |
+| `--checkout <file or JSON>` | | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
+| `--format text` | | Default. Each run, then the checkout. |
+| `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. |
+
+Exits with `1` when a Function fails to run. Errors a validation Function reports are part of
+the checkout and do not change the exit code.
 
 ## render
 

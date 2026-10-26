@@ -351,8 +351,8 @@ Everything a theme talks to on a storefront:
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
 | Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`, `GET` and `DELETE /__lsf/timings`, `/__lsf/profile?path=<path>`. |
 
-Not simulated: checkout (`/checkout` shows a summary of the cart and nothing else), customer
-registration, password reset and address editing (the forms answer with an error saying so),
+Not simulated: Shopify's checkout (`/checkout` shows a summary of the cart, or, with `--app`,
+the local [checkout](checkout.md) of a Shopify app), customer registration, password reset and address editing (the forms answer with an error saying so),
 and anything served by apps. See [compatibility.md](compatibility.md).
 
 ## Reproducibility
