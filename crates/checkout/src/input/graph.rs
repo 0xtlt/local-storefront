@@ -664,6 +664,16 @@ impl<'c> FunctionInput<'c> {
                     full
                 })
             }
+            // Added in 2026-10. The store data has no creation date: the first order's, or now.
+            "createdAt" => {
+                let created = customer
+                    .orders
+                    .iter()
+                    .map(|order| order.created_at.fixed_offset())
+                    .min()
+                    .unwrap_or(self.ctx.now);
+                leaf(created.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+            }
             "numberOfOrders" => leaf(customer.orders.len() as u64),
             "amountSpent" => {
                 let spent: i64 = customer
@@ -846,6 +856,8 @@ impl<'c> FunctionInput<'c> {
                     .map(|(_, variant)| &variant.metafields),
             )),
             Node::Customer(customer) => Some(Source::Core(Some(&customer.metafields))),
+            // Added in 2026-10. Shipping rates carry no metafields.
+            Node::DeliveryOption(_) => Some(Source::Core(None)),
             Node::Company(company) => Some(Source::Core(Some(&company.metafields))),
             Node::CompanyLocation(location) => Some(Source::Core(Some(&location.metafields))),
             Node::Shop => Some(Source::Core(Some(&store.shop.metafields))),

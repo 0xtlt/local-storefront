@@ -1,4 +1,4 @@
-api_version = "2025-01"
+api_version = "2027-01"
 
 [[extensions]]
 name = "Payment rules"
@@ -7,7 +7,7 @@ type = "function"
 description = "Hides and renames payment methods"
 
   [[extensions.targeting]]
-  target = "purchase.payment-customization.run"
+  target = "cart.payment-methods.transform.run"
   input_query = "src/run.graphql"
   export = "run"
 

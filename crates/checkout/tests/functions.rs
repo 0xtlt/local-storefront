@@ -286,7 +286,7 @@ fn delivery_customization_hides_renames_and_moves_options() {
     assert_eq!(group.selected.as_deref(), Some("pickup"));
     assert_eq!(result.cost.shipping, 0);
     let run = run_for(&result, "delivery-rules");
-    assert_eq!(run.target, "purchase.delivery-customization.run");
+    assert_eq!(run.target, "cart.delivery-options.transform.run");
     assert!(run.logs.contains("hiding express"));
 
     // ...and a choice the Function hid falls back to the first option.
@@ -356,7 +356,7 @@ fn payment_customization_hides_and_renames_methods() {
     assert_eq!(names, ["Wire transfer", "Credit card"]);
     assert_eq!(
         run_for(&result, "payment-rules").target,
-        "purchase.payment-customization.run"
+        "cart.payment-methods.transform.run"
     );
 }
 
@@ -812,81 +812,4 @@ fn a_function_without_a_module_is_an_error_not_a_panic() {
         result.errors
     );
     assert!(result.runs[0].error.is_some());
-}
-
-#[test]
-fn the_new_target_names_are_run_too() {
-    // The same modules under the names of the current API: the outputs have the same shapes.
-    let dir = std::env::temp_dir().join(format!("lsf-checkout-targets-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    copy_dir(
-        &fixture_app_dir().join("extensions"),
-        &dir.join("extensions"),
-    );
-    for (handle, old, new) in [
-        (
-            "quantity-limit",
-            "purchase.validation.run",
-            "cart.validations.generate.run",
-        ),
-        (
-            "delivery-rules",
-            "purchase.delivery-customization.run",
-            "cart.delivery-options.transform.run",
-        ),
-        (
-            "payment-rules",
-            "purchase.payment-customization.run",
-            "cart.payment-methods.transform.run",
-        ),
-    ] {
-        let file = dir
-            .join("extensions")
-            .join(handle)
-            .join("shopify.extension.toml");
-        let content = std::fs::read_to_string(&file).unwrap().replace(old, new);
-        std::fs::write(file, content).unwrap();
-    }
-    let app = lsf_checkout::app::load(&dir).unwrap();
-    let store = store();
-    let session = session(&store, &[(TEE, 6)]);
-    let result = compute(
-        &app,
-        &Selection::all(),
-        &store,
-        &session,
-        &CheckoutState::default(),
-        &config(),
-    );
-    let targets: Vec<_> = result.runs.iter().map(|run| run.target.as_str()).collect();
-    for target in [
-        "cart.validations.generate.run",
-        "cart.delivery-options.transform.run",
-        "cart.payment-methods.transform.run",
-    ] {
-        assert!(targets.contains(&target), "{targets:?}");
-    }
-    assert_eq!(
-        result.errors.len(),
-        1,
-        "6 items is over the default limit: {:?}",
-        result.errors
-    );
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap().flatten() {
-        let path = entry.path();
-        let target = to.join(entry.file_name());
-        if entry.file_name() == "target" || entry.file_name() == "schema.graphql" {
-            continue;
-        }
-        if path.is_dir() {
-            copy_dir(&path, &target);
-        } else {
-            std::fs::copy(&path, &target).unwrap();
-        }
-    }
 }

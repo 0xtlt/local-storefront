@@ -74,6 +74,11 @@ Findings from the implementation:
 - Failures come back as one string: function-runner appends the trap or exit code to the logs.
   `runner` splits them again (a Rust panic message becomes the error).
 
+## API versions
+
+Two releases are supported, 2026-10 and 2027-01 (RC): see `.design/api-versions.md`. A Function's
+input query and output are checked against the schema of its `api_version`.
+
 ## Function input (`input`)
 
 `input_query` (GraphQL) is executed against the local checkout: a GraphQL executor over a

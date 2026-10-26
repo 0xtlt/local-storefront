@@ -1,3 +1,3 @@
 target/
-# Downloaded by `mise run fixtures:functions` (Shopify's Function API schemas, ~5k lines each).
+# Copied from crates/checkout/schemas by `mise run fixtures:functions` (the schema of the API version of each extension).
 extensions/*/schema.graphql

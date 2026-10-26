@@ -88,3 +88,85 @@ pub fn run_for<'a>(result: &'a CheckoutResult, handle: &str) -> &'a lsf_checkout
             )
         })
 }
+
+/// A copy of the fixture app in a new temporary directory (without the schemas and `target`
+/// that are only needed to build the Functions), for tests that edit extension files.
+pub struct AppCopy {
+    pub dir: PathBuf,
+}
+
+impl AppCopy {
+    pub fn new(name: &str) -> AppCopy {
+        let dir = std::env::temp_dir().join(format!("lsf-checkout-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        copy_dir(
+            &fixture_app_dir().join("extensions"),
+            &dir.join("extensions"),
+        );
+        std::fs::copy(
+            fixture_app_dir().join("shopify.app.toml"),
+            dir.join("shopify.app.toml"),
+        )
+        .unwrap();
+        AppCopy { dir }
+    }
+
+    pub fn file(&self, handle: &str, path: &str) -> PathBuf {
+        self.dir.join("extensions").join(handle).join(path)
+    }
+
+    /// Replaces `from` by `to` in a file of an extension; the text has to be there.
+    pub fn replace(&self, handle: &str, path: &str, from: &str, to: &str) {
+        let file = self.file(handle, path);
+        let content = std::fs::read_to_string(&file).unwrap();
+        assert!(content.contains(from), "{} has no `{from}`", file.display());
+        std::fs::write(file, content.replace(from, to)).unwrap();
+    }
+
+    /// Writes `api_version` of every Function of the app.
+    pub fn set_api_version(&self, version: &str) {
+        for entry in std::fs::read_dir(self.dir.join("extensions"))
+            .unwrap()
+            .flatten()
+        {
+            let file = entry.path().join("shopify.extension.toml");
+            let content = std::fs::read_to_string(&file).unwrap();
+            let mut out = String::new();
+            for line in content.lines() {
+                if line.starts_with("api_version = ") {
+                    out.push_str(&format!("api_version = \"{version}\"\n"));
+                } else {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+            std::fs::write(file, out).unwrap();
+        }
+    }
+
+    pub fn load(&self) -> App {
+        app::load(&self.dir).expect("the copy of the fixture app loads")
+    }
+}
+
+impl Drop for AppCopy {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let path = entry.path();
+        let target = to.join(entry.file_name());
+        if entry.file_name() == "target" || entry.file_name() == "schema.graphql" {
+            continue;
+        }
+        if path.is_dir() {
+            copy_dir(&path, &target);
+        } else {
+            std::fs::copy(&path, &target).unwrap();
+        }
+    }
+}

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Rebuilds the Wasm modules of the fixture app of lsf-checkout
 # (crates/checkout/tests/fixtures/app). The modules are committed: this is only needed after
-# changing a Function. Needs network access the first time, for Shopify's Function API
-# schemas (not committed), the crates and Shopify's trampoline.
+# changing a Function. Needs network access the first time, for the crates and Shopify's
+# trampoline.
 #
 # A Rust Function built for `wasm32-unknown-unknown` calls the Function Wasm API of the host by
 # name. Shopify's CLI links it to the host's provider with `shopify-function-trampoline` when it
@@ -13,22 +13,22 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 app="$root/crates/checkout/tests/fixtures/app"
 
-# Shopify's examples at a fixed commit hold the schemas of the Function APIs.
-examples="19ccafceda1d0052c2c90c0a1e4db3fe37b16c27"
-raw="https://raw.githubusercontent.com/Shopify/function-examples/$examples"
-
-# extension handle -> where its schema is
-schemas=(
-  "volume-discount discounts/rust/discount/default"
-  "delivery-rules checkout/rust/delivery-customization/default"
-  "payment-rules checkout/rust/payment-customization/default"
-  "quantity-limit checkout/rust/cart-checkout-validation/default"
-  "bundle-transform checkout/rust/cart-transform/default"
+# The schema of each Function is the one of its API version (`api_version` in its
+# shopify.extension.toml) and Function API, from crates/checkout/schemas (`mise run
+# checkout:schemas`). Not committed here: they are copies, git-ignored.
+# extension handle -> Function API
+apis=(
+  "volume-discount discount"
+  "delivery-rules delivery_customization"
+  "payment-rules payment_customization"
+  "quantity-limit cart_checkout_validation"
+  "bundle-transform cart_transform"
 )
-for entry in "${schemas[@]}"; do
-  read -r handle path <<<"$entry"
-  schema="$app/extensions/$handle/schema.graphql"
-  [ -s "$schema" ] || curl -fsSL "$raw/$path/schema.graphql" -o "$schema"
+schemas="$root/crates/checkout/schemas"
+for entry in "${apis[@]}"; do
+  read -r handle api <<<"$entry"
+  version="$(sed -n 's/^api_version = "\(.*\)"/\1/p' "$app/extensions/$handle/shopify.extension.toml" | head -n 1)"
+  cp "$schemas/$version/$api.graphql" "$app/extensions/$handle/schema.graphql"
 done
 
 trampoline_version="2.0.0"
@@ -53,7 +53,7 @@ fi
 rustup target add wasm32-unknown-unknown >/dev/null
 cargo build --manifest-path "$app/Cargo.toml" --release --target wasm32-unknown-unknown
 
-for entry in "${schemas[@]}"; do
+for entry in "${apis[@]}"; do
   read -r handle _ <<<"$entry"
   module="${handle//-/_}.wasm"
   mkdir -p "$app/extensions/$handle/dist"

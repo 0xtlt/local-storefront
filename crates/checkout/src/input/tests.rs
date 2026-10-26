@@ -7,6 +7,7 @@ use lsf_core::{Session, Store};
 use serde_json::{Value, json};
 
 use super::*;
+use crate::version::{ApiVersion, FunctionApi};
 use crate::{Address, DeliveryKind, DeliveryOption, KeyValue};
 
 struct Fixture {
@@ -19,6 +20,7 @@ struct Fixture {
     metafields: Vec<Metafield>,
     classes: Vec<DiscountClass>,
     codes: Vec<String>,
+    version: ApiVersion,
 }
 
 impl Fixture {
@@ -154,6 +156,7 @@ impl Fixture {
             ],
             classes: vec![DiscountClass::Product, DiscountClass::Order],
             codes: vec!["SAVE10".to_string()],
+            version: ApiVersion::latest(),
         }
     }
 
@@ -163,7 +166,27 @@ impl Fixture {
         query: &str,
         variables: Option<&Value>,
     ) -> Result<Value, String> {
+        self.build_as(kind, query, variables, build)
+    }
+
+    fn build_as(
+        &self,
+        kind: OwnerKind,
+        query: &str,
+        variables: Option<&Value>,
+        build: fn(&str, Option<&Value>, &InputContext) -> Result<Value, String>,
+    ) -> Result<Value, String> {
+        let api = match kind {
+            OwnerKind::Discount => FunctionApi::Discount,
+            OwnerKind::DiscountNode => FunctionApi::ProductDiscount,
+            OwnerKind::CartTransform => FunctionApi::CartTransform,
+            OwnerKind::DeliveryCustomization => FunctionApi::DeliveryCustomization,
+            OwnerKind::PaymentCustomization => FunctionApi::PaymentCustomization,
+            OwnerKind::Validation => FunctionApi::CartCheckoutValidation,
+        };
         let ctx = InputContext {
+            version: self.version,
+            api,
             store: &self.store,
             session: &self.session,
             state: &self.state,
@@ -189,8 +212,14 @@ impl Fixture {
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
+    /// What the executor says about a query, without the check against the schema.
     fn fail(&self, query: &str) -> String {
-        self.run_as(OwnerKind::Discount, query, None).unwrap_err()
+        self.fail_as(OwnerKind::Discount, query)
+    }
+
+    fn fail_as(&self, kind: OwnerKind, query: &str) -> String {
+        self.build_as(kind, query, None, build_unchecked)
+            .unwrap_err()
     }
 }
 
@@ -454,6 +483,32 @@ fn buyer_identity_with_a_customer() {
 }
 
 #[test]
+fn the_fields_added_in_2026_10_are_answered_in_every_version() {
+    let mut f = Fixture::new();
+    let jane = f.store.customer_by_email("jane.doe@example.com").unwrap();
+    let first_order = jane.orders.iter().map(|o| o.created_at).min().unwrap();
+    f.session.customer_id = Some(jane.id);
+    for version in ApiVersion::all() {
+        f.version = version;
+        let out = f.run_as(
+            OwnerKind::DeliveryCustomization,
+            r#"{ cart { buyerIdentity { customer { createdAt } }
+                deliveryGroups { deliveryOptions { handle metafield(namespace: "custom", key: "carrier") { value } } } } }"#,
+            None,
+        );
+        let out = out.unwrap_or_else(|error| panic!("{version}: {error}"));
+        // The store data has no creation date for customers: the first order's stands for it.
+        assert_eq!(
+            out["cart"]["buyerIdentity"]["customer"]["createdAt"],
+            first_order.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "{version}"
+        );
+        let option = &out["cart"]["deliveryGroups"][0]["deliveryOptions"][0];
+        assert!(option["metafield"].is_null(), "{version}: {option}");
+    }
+}
+
+#[test]
 fn a_company_customer_has_a_purchasing_company() {
     let mut f = Fixture::new();
     let alex = f
@@ -579,16 +634,24 @@ fn selling_plan_allocation_follows_the_session_cart_line() {
 #[test]
 fn payment_methods_and_discount_codes() {
     let f = Fixture::new();
-    let out = f.run(
-        "{ paymentMethods { id name } enteredDiscountCodes { code rejectable } triggeringDiscountCode }",
-    );
+    let methods = f
+        .run_as(
+            OwnerKind::PaymentCustomization,
+            "{ paymentMethods { id name } }",
+            None,
+        )
+        .unwrap();
     assert_eq!(
-        out,
+        methods,
+        json!({"paymentMethods": [
+            {"id": payment_method_id("card"), "name": "Credit card"},
+            {"id": payment_method_id("cod"), "name": "Cash on Delivery"},
+        ]})
+    );
+    let codes = f.run("{ enteredDiscountCodes { code rejectable } triggeringDiscountCode }");
+    assert_eq!(
+        codes,
         json!({
-            "paymentMethods": [
-                {"id": payment_method_id("card"), "name": "Credit card"},
-                {"id": payment_method_id("cod"), "name": "Cash on Delivery"},
-            ],
             "enteredDiscountCodes": [{"code": "SAVE10", "rejectable": true}],
             "triggeringDiscountCode": "SAVE10",
         })
@@ -656,7 +719,12 @@ fn shop_metafield() {
 fn presentment_currency_rate_and_buyer_journey() {
     let f = Fixture::new();
     assert_eq!(
-        f.run("{ presentmentCurrencyRate buyerJourney { step } }"),
+        f.run_as(
+            OwnerKind::Validation,
+            "{ presentmentCurrencyRate buyerJourney { step } }",
+            None
+        )
+        .unwrap(),
         json!({"presentmentCurrencyRate": "1.0", "buyerJourney": {"step": "CHECKOUT_COMPLETION"}})
     );
 }
@@ -811,13 +879,7 @@ fn every_owner_kind_answers_on_its_own_root_field() {
 #[test]
 fn another_functions_owner_is_an_error() {
     let f = Fixture::new();
-    let error = f
-        .run_as(
-            OwnerKind::Validation,
-            "{ discount { discountClasses } }",
-            None,
-        )
-        .unwrap_err();
+    let error = f.fail_as(OwnerKind::Validation, "{ discount { discountClasses } }");
     assert!(
         error.contains("owner is the `validation` root field, not `discount`"),
         "{error}"

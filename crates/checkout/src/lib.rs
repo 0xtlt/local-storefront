@@ -8,6 +8,8 @@ pub mod app;
 pub mod input;
 pub mod pipeline;
 pub mod runner;
+pub mod schema;
 pub mod types;
+pub mod version;
 
 pub use types::*;
