@@ -1,0 +1,30 @@
+api_version = "2025-10"
+
+[[extensions]]
+name = "Gift message"
+handle = "gift-message"
+type = "ui_extension"
+description = "Lets the buyer mark the order as a gift and write a message for the recipient."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+  module = "./src/Checkout.jsx"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.cart-line-item.render-after"
+  module = "./src/LineItem.jsx"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.block.render"
+  module = "./src/ThankYou.jsx"
+
+  [extensions.capabilities]
+  api_access = true
+  block_progress = true
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "max_length"
+    type = "number_integer"
+    name = "Longest message"
+    description = "How many characters the message may have."
