@@ -26,7 +26,10 @@ const field = (text, name) => text.match(new RegExp(`^\\s*${name}\\s*=\\s*"([^"]
 const targetsOf = (text) => [...text.matchAll(/^\s*target\s*=\s*"([^"]+)"/gm)].map((match) => match[1]);
 
 test('each fixture is an app extension with a toml and a bundle named after its handle', () => {
-  const handles = readdirSync(fixtures).sort();
+  // The fixture app also holds Functions: only its UI extensions are bundles.
+  const handles = readdirSync(fixtures)
+    .filter((handle) => field(toml(handle), 'type') === 'ui_extension')
+    .sort();
   assert.deepEqual(handles, ['gift-message', 'order-notice']);
   for (const handle of handles) {
     const text = toml(handle);
