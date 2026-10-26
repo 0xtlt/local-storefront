@@ -758,6 +758,79 @@ pub struct SessionDefaults {
     pub company_location: Option<u64>,
 }
 
+/// A metafield of the checkout settings: its value is the string form (JSON for `json`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckoutMetafield {
+    pub namespace: String,
+    pub key: String,
+    pub kind: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CheckoutShippingRate {
+    pub handle: String,
+    pub title: String,
+    pub price: i64,
+    pub description: Option<String>,
+    pub kind: model::CheckoutDeliveryKind,
+}
+
+#[derive(Clone, Debug)]
+pub struct CheckoutPaymentMethod {
+    pub handle: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CheckoutDiscount {
+    pub function: String,
+    pub title: String,
+    pub code: Option<String>,
+    pub classes: Vec<model::CheckoutDiscountClass>,
+    pub metafields: Vec<CheckoutMetafield>,
+}
+
+/// How the local checkout is set up, with the defaults applied.
+#[derive(Clone, Debug)]
+pub struct CheckoutSettings {
+    pub shipping_rates: Vec<CheckoutShippingRate>,
+    pub payment_methods: Vec<CheckoutPaymentMethod>,
+    pub discounts: Vec<CheckoutDiscount>,
+    /// Function handle → the metafields of its owner.
+    pub functions: IndexMap<String, Vec<CheckoutMetafield>>,
+    /// Basis points: 2000 is 20 %.
+    pub tax_rate_bps: i64,
+}
+
+impl Default for CheckoutSettings {
+    fn default() -> Self {
+        CheckoutSettings {
+            shipping_rates: vec![CheckoutShippingRate {
+                handle: "standard".to_string(),
+                title: "Standard".to_string(),
+                price: 500,
+                description: None,
+                kind: model::CheckoutDeliveryKind::Shipping,
+            }],
+            payment_methods: [
+                ("card", "Credit card"),
+                ("cod", "Cash on Delivery"),
+                ("bank", "Bank Deposit"),
+            ]
+            .into_iter()
+            .map(|(handle, name)| CheckoutPaymentMethod {
+                handle: handle.to_string(),
+                name: name.to_string(),
+            })
+            .collect(),
+            discounts: Vec::new(),
+            functions: IndexMap::new(),
+            tax_rate_bps: 0,
+        }
+    }
+}
+
 pub struct Store {
     pub shop: Shop,
     pub products: Vec<Product>,
@@ -775,6 +848,8 @@ pub struct Store {
     pub languages: Vec<Language>,
     pub files: IndexMap<String, FileMeta>,
     pub session_defaults: SessionDefaults,
+    /// How the local checkout is set up.
+    pub checkout: CheckoutSettings,
     /// The frozen clock, if the data sets one.
     pub now: Option<DateTime<Utc>>,
     pub theme_settings: IndexMap<String, Json>,

@@ -65,6 +65,7 @@ pub struct MergedInput {
     pub localization: Option<Sourced<model::LocalizationInput>>,
     pub files: IndexMap<String, model::FileInput>,
     pub session: Option<Sourced<model::SessionInput>>,
+    pub checkout: Option<Sourced<model::CheckoutInput>>,
     pub now: Option<Sourced<String>>,
     pub theme_settings: IndexMap<String, Json>,
 }
@@ -402,6 +403,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         languages: Vec::new(),
         files: IndexMap::new(),
         session_defaults: SessionDefaults::default(),
+        checkout: CheckoutSettings::default(),
         now: None,
         theme_settings: input.theme_settings,
         product_handles: HashMap::new(),
@@ -451,6 +453,9 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     }
     if let Some(session) = &input.session {
         build_session(&mut builder, &mut store, session);
+    }
+    if let Some(checkout) = &input.checkout {
+        store.checkout = build_checkout(&mut builder, checkout);
     }
     if let Some(now) = &input.now {
         let parsed = builder.date(&Some(now.value.clone()), &now.origin, epoch());
@@ -2851,6 +2856,142 @@ fn build_session(
         }
     }
     store.session_defaults = defaults;
+}
+
+fn build_checkout(
+    builder: &mut Builder<'_>,
+    checkout: &Sourced<model::CheckoutInput>,
+) -> CheckoutSettings {
+    let Sourced {
+        value: input,
+        origin,
+    } = checkout;
+    let mut settings = CheckoutSettings::default();
+
+    if let Some(rates) = &input.shipping_rates {
+        let mut seen = HashSet::new();
+        settings.shipping_rates = Vec::new();
+        for (position, rate) in rates.iter().enumerate() {
+            let rate_origin = origin.child("shipping_rates").child(position);
+            if !seen.insert(rate.handle.clone()) {
+                builder.error(
+                    "duplicate_handle",
+                    &rate_origin.child("handle"),
+                    format!("there are two shipping rates called \"{}\"", rate.handle),
+                );
+            }
+            let price = builder.money(&rate.price, &rate_origin.child("price"));
+            if price < 0 {
+                builder.error(
+                    "invalid_money",
+                    &rate_origin.child("price"),
+                    "a shipping rate cannot cost less than nothing",
+                );
+            }
+            settings.shipping_rates.push(CheckoutShippingRate {
+                handle: rate.handle.clone(),
+                title: rate.title.clone().unwrap_or_else(|| rate.handle.clone()),
+                price,
+                description: rate.description.clone(),
+                kind: rate.kind.unwrap_or_default(),
+            });
+        }
+    }
+    if let Some(methods) = &input.payment_methods {
+        let mut seen = HashSet::new();
+        settings.payment_methods = Vec::new();
+        for (position, method) in methods.iter().enumerate() {
+            if !seen.insert(method.handle.clone()) {
+                builder.error(
+                    "duplicate_handle",
+                    &origin
+                        .child("payment_methods")
+                        .child(position)
+                        .child("handle"),
+                    format!("there are two payment methods called \"{}\"", method.handle),
+                );
+            }
+            settings.payment_methods.push(CheckoutPaymentMethod {
+                handle: method.handle.clone(),
+                name: method.name.clone().unwrap_or_else(|| method.handle.clone()),
+            });
+        }
+    }
+    for (position, discount) in input.discounts.iter().enumerate() {
+        let discount_origin = origin.child("discounts").child(position);
+        settings.discounts.push(CheckoutDiscount {
+            function: discount.function.clone(),
+            title: discount
+                .title
+                .clone()
+                .unwrap_or_else(|| discount.function.clone()),
+            code: discount.code.clone().filter(|code| !code.trim().is_empty()),
+            classes: discount.classes.clone(),
+            metafields: checkout_metafields(
+                builder,
+                &discount.metafields,
+                &discount_origin.child("metafields"),
+            ),
+        });
+    }
+    for (handle, function) in &input.functions {
+        let metafields = checkout_metafields(
+            builder,
+            &function.metafields,
+            &origin.child("functions").child(handle).child("metafields"),
+        );
+        settings.functions.insert(handle.clone(), metafields);
+    }
+    if let Some(rate) = input.tax_rate {
+        if rate.is_finite() && (0.0..=100.0).contains(&rate) {
+            settings.tax_rate_bps = (rate * 100.0).round() as i64;
+        } else {
+            builder
+                .error(
+                    "invalid_value",
+                    &origin.child("tax_rate"),
+                    format!("{rate} is not a tax rate"),
+                )
+                .hint("use a percentage between 0 and 100, e.g. 20 for 20 %");
+        }
+    }
+    settings
+}
+
+/// The metafields of a checkout setting, written `"namespace.key"`.
+fn checkout_metafields(
+    builder: &mut Builder<'_>,
+    input: &IndexMap<String, MetafieldInput>,
+    origin: &Origin,
+) -> Vec<CheckoutMetafield> {
+    let mut metafields = Vec::new();
+    for (name, field) in input {
+        let Some((namespace, key)) = name
+            .split_once('.')
+            .filter(|(namespace, key)| !namespace.is_empty() && !key.is_empty())
+        else {
+            builder
+                .error(
+                    "invalid_value",
+                    &origin.child(name),
+                    format!("\"{name}\" is not a metafield name"),
+                )
+                .hint("write the namespace, a dot and the key: \"$app:config.settings\"");
+            continue;
+        };
+        let Metafield { kind, value } = metafield(field);
+        metafields.push(CheckoutMetafield {
+            namespace: namespace.to_string(),
+            key: key.to_string(),
+            kind,
+            // Shopify keeps every value as text: JSON for `json` and for lists.
+            value: match value {
+                Json::String(text) => text,
+                other => other.to_string(),
+            },
+        });
+    }
+    metafields
 }
 
 /// Resolves a cart written in the data format against a built store. Used for the per-session
