@@ -12,3 +12,9 @@ indexmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
+
+# The runner: Shopify's own function-runner (the engine behind `shopify app function run`), used
+# as a library. wasmtime is pinned to the version it pins.
+function-runner = { git = "https://github.com/Shopify/function-runner", tag = "v9.2.2" }
+wasmtime = { version = "=39.0.1", default-features = false, features = ["runtime", "cranelift", "std"] }
+toml = "0.9"
