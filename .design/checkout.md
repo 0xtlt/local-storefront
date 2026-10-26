@@ -60,6 +60,20 @@ and Javy (JS Functions). If it cannot be used as a library, embed wasmtime and i
 the same way. Cache compiled modules by path + mtime + size so a rebuild is picked up on the
 next run. Report logs, instructions, errors.
 
+Findings from the implementation:
+
+- function-runner v9.2.2 builds and runs as a library (`function_runner::engine::run`, with
+  wasmtime 39 and the providers embedded). It enables `serde_json/arbitrary_precision` for the
+  whole build: the workspace tests pass with it.
+- It does not stop a Function (fuel is `u64::MAX`, the epoch never moves): `runner` moves the
+  engine's epoch after 10 seconds.
+- A Rust Function built for `wasm32-unknown-unknown` (`shopify_function` 2.x, Wasm API) only runs
+  once `shopify-function-trampoline` linked it to the provider; the Shopify CLI does it when it
+  builds an app. An unlinked module fails with "unknown import", so `runner` says so instead.
+  `mise run fixtures:functions` does it for the test Functions.
+- Failures come back as one string: function-runner appends the trap or exit code to the logs.
+  `runner` splits them again (a Rust panic message becomes the error).
+
 ## Function input (`input`)
 
 `input_query` (GraphQL) is executed against the local checkout: a GraphQL executor over a
@@ -89,7 +103,13 @@ customization (`cart.delivery-options.transform.run`, legacy `purchase.delivery-
 `purchase.shipping-discount.run`) → payment customization (`cart.payment-methods.transform.run`,
 legacy `purchase.payment-customization.run`) → validation (`cart.validations.generate.run`,
 legacy `purchase.validation.run`) → cost. Out of scope (listed, not run): fulfillment
-constraints, order routing, pickup point/local pickup generators.
+constraints, order routing, pickup point/local pickup generators, the `.fetch` targets, discount
+`conditions` and combinations (all discounts stack).
+
+The delivery group is `group-1`. Outputs name a delivery group or a payment method by its
+handle or by a gid ending with it, so `input` must give them an `id` of that form. A Function
+whose run fails adds a blocking `CheckoutError`; a discount whose Function is not in the app
+too.
 
 ## Server routes (integration)
 
