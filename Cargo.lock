@@ -1763,6 +1763,7 @@ dependencies = [
 name = "lsf-checkout"
 version = "0.1.18"
 dependencies = [
+ "chrono",
  "indexmap",
  "lsf-core",
  "serde",

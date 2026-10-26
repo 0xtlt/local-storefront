@@ -168,3 +168,32 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   with `customElements.define`, and a remote-ui root for legacy (React, `@shopify/ui-extensions-react`)
   bundles that maps components (`Banner`, `BlockStack`, `Text`, …) to the same elements.
   The iframe resizes to its content.
+
+## Contract between `pipeline` and `input`
+
+```rust
+// crates/checkout/src/input.rs (owned by the input agent; the engine agent stubs it)
+pub struct InputContext<'a> {
+    pub store: &'a lsf_core::Store,
+    pub session: &'a lsf_core::Session,          // customer_id, country, cart note/attributes
+    pub state: &'a crate::CheckoutState,          // email, phone, address, codes, metafields
+    pub lines: &'a [crate::ResultLine],           // the lines as they are at this step
+    pub delivery_groups: &'a [crate::DeliveryGroup],
+    pub payment_methods: &'a [crate::PaymentMethod],
+    pub owner: Owner<'a>,                         // the object that owns the Function
+    pub entered_codes: &'a [String],
+    pub triggering_code: Option<&'a str>,
+    pub currency: &'a str,
+    pub now: chrono::DateTime<chrono::FixedOffset>,
+}
+pub struct Owner<'a> {
+    pub kind: OwnerKind,                          // which root field holds it
+    pub id: String,                               // gid, e.g. gid://shopify/DiscountAutomaticNode/1
+    pub metafields: &'a [crate::Metafield],
+    pub discount_classes: &'a [crate::DiscountClass],
+}
+pub enum OwnerKind { Discount, DiscountNode, CartTransform, DeliveryCustomization, PaymentCustomization, Validation }
+/// Runs `query` (the Function's input query) against the checkout, with `variables` from
+/// `[extensions.input.variables]` (the JSON value of that owner metafield, or none).
+pub fn build(query: &str, variables: Option<&serde_json::Value>, ctx: &InputContext) -> Result<serde_json::Value, String>;
+```
