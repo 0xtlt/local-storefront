@@ -70,6 +70,8 @@ lacks), `tests/docs.rs` (the generated reference is current).
 Reads a Shopify app, runs its Functions against a cart and describes the checkout the buyer
 sees. It does not serve anything: `lsf` does, with `lsf checkout`, `lsf serve --app` and
 `lsf function run`.
+Its design, and what each supported Shopify API release changes, are in
+`crates/checkout/docs/` (`design.md`, `api-versions.md`, `ui-api-versions.md`).
 
 | Module | Role |
 |---|---|

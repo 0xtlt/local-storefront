@@ -11,7 +11,7 @@ crate, each configured by the JSON metafield `$app:config.settings` of the objec
 | `quantity-limit`   | 2027-01     | `purchase.validation.run` (legacy: still complete in both versions)   | errors on too many items per line and on a blocked email domain           |
 | `bundle-transform` | 2026-10     | `cart.transform.run`                                                  | runs the `update`, `expand` and `merge` operations its configuration lists |
 
-The two versions have the same Function schemas (`.design/api-versions.md`), so there is one module per
+The two versions have the same Function schemas (`crates/checkout/docs/api-versions.md`), so there is one module per
 Function: the app mixes the versions, and `tests/versions.rs` moves the whole app to each version.
 
 The built modules (`extensions/*/dist/function.wasm`) are committed. After changing a Function:

@@ -1,7 +1,7 @@
 // The Shopify API releases of checkout UI extensions the local checkout implements: exactly
 // these, nothing older (2025-07 was the last one built on React and remote-ui). To support
 // another release, add it here and, if it changes something, read the change in `refusalOf`
-// or in the sandbox; `.design/ui-api-versions.md` says what each release changed.
+// or in the sandbox; `crates/checkout/docs/ui-api-versions.md` says what each release changed.
 
 export const API_VERSIONS = {
   '2026-10': { metafieldOwnerType: 'optional' },

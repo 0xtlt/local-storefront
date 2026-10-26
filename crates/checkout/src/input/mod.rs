@@ -1,5 +1,5 @@
 //! The input of a Shopify Function: its input query (GraphQL) is executed against the local
-//! checkout, and the result is the JSON Shopify would send. See `.design/checkout.md`.
+//! checkout, and the result is the JSON Shopify would send. See `crates/checkout/docs/design.md`.
 //!
 //! - [`exec`] is a generic GraphQL executor (aliases, fragments, variables, `__typename`).
 //! - [`crate::schema`] checks the query against the schema of the Function's API version: a field

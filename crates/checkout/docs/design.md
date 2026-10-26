@@ -1,4 +1,4 @@
-# Design: local checkout for Shopify apps (temporary, removed before the PR)
+# Design of the local checkout
 
 ## Goal
 
@@ -76,7 +76,7 @@ Findings from the implementation:
 
 ## API versions
 
-Two releases are supported, 2026-10 and 2027-01 (RC): see `.design/api-versions.md`. A Function's
+Two releases are supported, 2026-10 and 2027-01 (RC): see `api-versions.md`. A Function's
 input query and output are checked against the schema of its `api_version`.
 
 ## Function input (`input`)
@@ -193,7 +193,7 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   with `customElements.define`. The iframe resizes to its content.
 - `api-versions.js`: the API releases the host runs, `2026-10` and the `2027-01` release
   candidate; an extension on another version, or declaring its metafields against the rules of
-  its version, is not loaded and the page shows why. See `.design/ui-api-versions.md`.
+  its version, is not loaded and the page shows why. See `ui-api-versions.md`.
 
 ## Contract between `pipeline` and `input`
 

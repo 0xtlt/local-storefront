@@ -2,7 +2,7 @@
 //! configured, and what it computes. Amounts are in minor units of the shop's currency.
 //!
 //! Result types serialize to the JSON the checkout page reads (camelCase, money as
-//! `{"amount": 19.99, "currencyCode": "EUR"}`): see `.design/checkout.md`.
+//! `{"amount": 19.99, "currencyCode": "EUR"}`): see `crates/checkout/docs/design.md`.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,4 @@
-# Design: API versions of the local checkout (temporary, removed before the PR)
+# API versions of the local checkout: Functions
 
 `lsf-checkout` supports two Shopify API releases: **2026-10** (stable) and **2027-01** (release
 candidate, stable on 2027-01-01). A Function declares its release with `api_version` in
