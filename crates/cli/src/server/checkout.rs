@@ -771,7 +771,9 @@ fn cart_lines(change: &Json, session: &mut Session, store: &Store) -> Result<(),
 fn missing(computed: &Computed, state: &CheckoutState) -> Vec<Json> {
     let error = |message: &str, target: &str| json!({"message": message, "target": target, "function": null});
     let mut errors = Vec::new();
-    if state.email.as_deref().is_none_or(str::is_empty) {
+    // The buyer the page shows: the email typed, or the one of the logged-in customer.
+    let email = computed.json["buyer"]["email"].as_str();
+    if email.is_none_or(str::is_empty) {
         errors.push(error("Enter an email", "$.cart.buyerIdentity.email"));
     }
     if computed
@@ -780,6 +782,13 @@ fn missing(computed: &Computed, state: &CheckoutState) -> Vec<Json> {
         .iter()
         .any(|line| line.requires_shipping)
     {
+        let groups = &computed.result.delivery_groups;
+        if groups.is_empty() || groups.iter().any(|group| group.options.is_empty()) {
+            errors.push(error(
+                "No delivery option is available",
+                "$.cart.deliveryGroups[0].selectedDeliveryOption",
+            ));
+        }
         let address = state.shipping_address.clone().unwrap_or_default();
         let field = |value: &Option<String>| value.as_deref().is_none_or(str::is_empty);
         let target = |name: &str| format!("$.cart.deliveryGroups[0].deliveryAddress.{name}");
@@ -798,7 +807,12 @@ fn missing(computed: &Computed, state: &CheckoutState) -> Vec<Json> {
             }
         }
     }
-    if !computed.result.payment_methods.is_empty() && computed.json["selectedPayment"].is_null() {
+    if computed.result.payment_methods.is_empty() {
+        errors.push(error(
+            "No payment method is available",
+            "$.cart.selectedPayment",
+        ));
+    } else if computed.json["selectedPayment"].is_null() {
         errors.push(error("Select a payment method", "$.cart.selectedPayment"));
     }
     errors
@@ -883,13 +897,52 @@ fn extension_file(state: &ServerState, handle: &str, file: &[&str]) -> Reply {
     let Some(directory) = extension.bundle.parent() else {
         return Reply::not_found();
     };
+    // Only what the build wrote: a link in `dist/` must not lead out of it.
+    let Ok(directory) = directory.canonicalize() else {
+        return Reply::not_found();
+    };
     let path = file
         .iter()
-        .fold(directory.to_path_buf(), |path, part| path.join(part));
+        .fold(directory.clone(), |path, part| path.join(part));
+    let Ok(path) = path.canonicalize() else {
+        return Reply::not_found();
+    };
+    if !path.starts_with(&directory) || !path.is_file() {
+        return Reply::not_found();
+    }
+    let Some(kind) = extension_content_type(&path) else {
+        return Reply::not_found();
+    };
     match std::fs::read(&path) {
-        Ok(content) => {
-            Reply::new(200, content_type(&file.join("/")), content).cached(cache::PRIVATE)
-        }
+        // The page of an extension is a sandboxed frame, but nothing stops the extension from
+        // sending it to one of its own files: with this policy such a file runs without the
+        // origin of the checkout, which it would otherwise share.
+        Ok(content) => Reply::new(200, kind, content)
+            .header("content-security-policy", "sandbox allow-scripts")
+            .header("x-content-type-options", "nosniff")
+            .cached(cache::PRIVATE),
         Err(_) => Reply::not_found(),
     }
+}
+
+/// The content type of a file of an extension, when it is one a checkout UI extension needs:
+/// scripts, styles, images and JSON. A page (HTML, XML) is never served.
+fn extension_content_type(path: &std::path::Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "js" | "mjs"
+            | "css"
+            | "json"
+            | "map"
+            | "svg"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "avif"
+            | "ico"
+    )
+    .then(|| content_type(&format!("file.{extension}")))
 }

@@ -3733,6 +3733,12 @@ fn the_files_of_the_page_and_of_the_extensions_are_served() {
     let on_disk =
         std::fs::read(fixture_app().join("extensions/gift-message/dist/gift-message.js")).unwrap();
     assert_eq!(bundle.body, on_disk);
+    // Nothing of an extension runs with the origin of the checkout, even in a frame of its own.
+    assert_eq!(
+        header(&bundle, "content-security-policy"),
+        Some("sandbox allow-scripts")
+    );
+    assert_eq!(header(&bundle, "x-content-type-options"), Some("nosniff"));
     for missing in [
         "/__lsf/extensions/gift-message/nope.js",
         "/__lsf/extensions/gift-message/../shopify.extension.toml",
@@ -3742,6 +3748,245 @@ fn the_files_of_the_page_and_of_the_extensions_are_served() {
     ] {
         assert_eq!(get(&state, missing, "co-files").status, 404, "{missing}");
     }
+}
+
+/// An app of one checkout UI extension, `ext`, whose `dist/` has a script and what `files` adds.
+fn ui_extension_app(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("extensions/ext");
+    std::fs::create_dir_all(dir.join("dist")).unwrap();
+    std::fs::write(dir.join("dist/ext.js"), "// built").unwrap();
+    for (file, content) in files {
+        std::fs::write(dir.join("dist").join(file), content).unwrap();
+    }
+    std::fs::write(
+        dir.join("shopify.extension.toml"),
+        "type = \"ui_extension\"\napi_version = \"2026-10\"\n[[targeting]]\ntarget = \"purchase.checkout.block.render\"\n",
+    )
+    .unwrap();
+    root
+}
+
+#[cfg(unix)]
+#[test]
+fn an_extension_cannot_serve_files_outside_its_dist() {
+    let root = ui_extension_app("checkout-ui-links", &[]);
+    let dist = root.join("extensions/ext/dist");
+    let outside = root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.js"), "// secret").unwrap();
+    std::os::unix::fs::symlink(outside.join("secret.js"), dist.join("file-link.js")).unwrap();
+    std::os::unix::fs::symlink(&outside, dist.join("directory-link")).unwrap();
+    std::os::unix::fs::symlink("../shopify.extension.toml", dist.join("toml-link.json")).unwrap();
+    // A link that stays inside `dist/` is fine.
+    std::fs::create_dir_all(dist.join("assets")).unwrap();
+    std::fs::write(dist.join("assets/inner.js"), "// inner").unwrap();
+    std::os::unix::fs::symlink("assets/inner.js", dist.join("inner-link.js")).unwrap();
+
+    let state = checkout_server_of(root.clone(), &[], false);
+    for escape in [
+        "/__lsf/extensions/ext/file-link.js",
+        "/__lsf/extensions/ext/directory-link/secret.js",
+        "/__lsf/extensions/ext/toml-link.json",
+    ] {
+        assert_eq!(get(&state, escape, "co-links").status, 404, "{escape}");
+    }
+    for served in ["ext.js", "assets/inner.js", "inner-link.js"] {
+        let reply = get(
+            &state,
+            &format!("/__lsf/extensions/ext/{served}"),
+            "co-links",
+        );
+        assert_eq!(reply.status, 200, "{served}");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_extension_cannot_serve_a_page_on_the_checkout_origin() {
+    let root = ui_extension_app(
+        "checkout-ui-pages",
+        &[
+            ("evil.html", "<script>parent.document</script>"),
+            ("evil.xhtml", "<html/>"),
+            ("evil.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"),
+            ("style.css", "a {}"),
+            ("data.json", "{}"),
+        ],
+    );
+    let state = checkout_server_of(root.clone(), &[], false);
+    // A page the extension could send its frame to is not served at all.
+    for page in ["evil.html", "evil.xhtml"] {
+        let reply = get(&state, &format!("/__lsf/extensions/ext/{page}"), "co-pages");
+        assert_eq!(reply.status, 404, "{page}");
+    }
+    // The rest comes with a policy that gives it an opaque origin, if it is ever navigated to.
+    for (file, kind) in [
+        ("ext.js", "text/javascript; charset=utf-8"),
+        ("style.css", "text/css; charset=utf-8"),
+        ("data.json", "application/json; charset=utf-8"),
+        ("evil.svg", "image/svg+xml"),
+    ] {
+        let reply = get(&state, &format!("/__lsf/extensions/ext/{file}"), "co-pages");
+        assert_eq!(reply.status, 200, "{file}");
+        assert_eq!(header(&reply, "content-type"), Some(kind), "{file}");
+        assert_eq!(
+            header(&reply, "content-security-policy"),
+            Some("sandbox allow-scripts"),
+            "{file}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_logged_in_customer_completes_with_the_email_the_store_knows() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-login",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert_eq!(
+        get(&state, "/__lsf/login?customer=default", "co-login").status,
+        302
+    );
+    // The page shows the email of the customer, so it does not ask for one.
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-login"));
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+    let reply = operations(
+        &state,
+        &path,
+        "co-login",
+        json!([
+            {"type": "shippingAddress", "address": {
+                "lastName": "Doe", "address1": "1 Main St", "city": "London", "countryCode": "gb"
+            }},
+            {"type": "paymentMethod", "handle": "card"}
+        ]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-login");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-login"));
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+}
+
+/// The targets of the errors `complete` answers with.
+fn complete_errors(state: &ServerState, path: &str, session: &str) -> Vec<(String, String)> {
+    let reply = post(state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 422, "{}", text(&reply));
+    body_json(&reply)["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| {
+            (
+                error["message"].as_str().unwrap().to_string(),
+                error["target"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_shippable_cart_needs_a_delivery_option_to_complete() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-no-delivery",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"shipping_rates": []}}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-no-delivery", buyer_details()).status,
+        200
+    );
+    let errors = complete_errors(&state, &path, "co-no-delivery");
+    assert!(
+        errors
+            .iter()
+            .any(|(message, _)| message == "No delivery option is available"),
+        "{errors:?}"
+    );
+
+    // With a rate, the same checkout goes through.
+    let path = start_checkout(
+        &state,
+        "co-no-delivery",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"shipping_rates": [{"handle": "standard", "price": "4.90"}]}}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-no-delivery", buyer_details()).status,
+        200
+    );
+    let reply = post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-no-delivery",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+}
+
+#[test]
+fn a_checkout_needs_a_payment_method_to_complete() {
+    let state = checkout_server(&["payment-rules"], false);
+    // Nothing is configured.
+    let path = start_checkout(
+        &state,
+        "co-no-pay",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"payment_methods": []}}),
+    );
+    let details = json!([
+        {"type": "email", "value": "buyer@example.com"},
+        {"type": "shippingAddress", "address": {
+            "lastName": "Lovelace", "address1": "1 Analytical Way",
+            "city": "London", "countryCode": "gb"
+        }}
+    ]);
+    assert_eq!(
+        operations(&state, &path, "co-no-pay", details.clone()).status,
+        200
+    );
+    let errors = complete_errors(&state, &path, "co-no-pay");
+    assert!(
+        errors
+            .iter()
+            .any(|(message, _)| message == "No payment method is available"),
+        "{errors:?}"
+    );
+
+    // A Function hides the only one.
+    let path = start_checkout(
+        &state,
+        "co-hidden-pay",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {
+            "payment_methods": [{"handle": "card", "name": "Card"}],
+            "functions": {"payment-rules": {"metafields": {"$app:config.settings": {
+                "type": "json", "value": {"hideName": "Card", "hideAbove": 0}
+            }}}}
+        }}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-hidden-pay", details).status,
+        200
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-hidden-pay"));
+    assert_eq!(json["paymentMethods"], json!([]));
+    let errors = complete_errors(&state, &path, "co-hidden-pay");
+    assert!(
+        errors
+            .iter()
+            .any(|(message, _)| message == "No payment method is available"),
+        "{errors:?}"
+    );
 }
 
 #[test]
