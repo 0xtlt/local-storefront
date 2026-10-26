@@ -26,6 +26,7 @@ fn server() -> ServerState {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     assert!(diagnostics.is_empty(), "{diagnostics}");
@@ -792,6 +793,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
             throttle: Throttle::parse([rules]).expect("valid rules"),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     state
@@ -1081,6 +1083,7 @@ fn the_server_can_start_logged_in() {
             throttle: Default::default(),
             timings: false,
             customer: Some("alex.morgan@example.com".to_string()),
+            checkout: None,
         },
     );
     assert_eq!(
@@ -1188,6 +1191,7 @@ fn robots_and_sitemaps_are_served() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let body = text(&get(&plain, "/robots.txt", "seo"));
@@ -1587,6 +1591,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let image = |path: &str, accept: &str| {
@@ -1670,6 +1675,7 @@ fn a_video_is_served_in_the_parts_the_browser_asks_for() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let path = "/cdn/shop/files/clip.mp4";
@@ -1736,6 +1742,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
                 throttle: Default::default(),
                 timings: false,
                 customer: None,
+                checkout: None,
             },
         )
         .0
@@ -1809,6 +1816,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let page = get(&state, "/", "preloads");
@@ -1981,6 +1989,7 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
                 throttle: Default::default(),
                 timings: false,
                 customer: None,
+                checkout: None,
             },
         );
         state
@@ -2141,6 +2150,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2247,6 +2257,7 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2275,6 +2286,7 @@ async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compre
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2543,6 +2555,7 @@ fn what_is_rendered_says_how_long_it_took() {
             throttle: Default::default(),
             timings: true,
             customer: None,
+            checkout: None,
         },
     );
     let of_template = |key: &str| lsf_core::render::template_section_id("index", key);
@@ -2951,4 +2964,682 @@ fn a_profile_is_drawn_as_a_flame_graph() {
         get(&state, "/__lsf/speedscope/nope.js", "flame").status,
         404
     );
+}
+
+// --- The checkout of a Shopify app ---
+
+fn fixture_app() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")
+}
+
+/// A server whose checkout runs the fixture app of `lsf-checkout`.
+fn checkout_server(extensions: &[&str], standalone: bool) -> ServerState {
+    let options = |app: App| {
+        ServerState::new(
+            app,
+            ServeOptions {
+                live_reload: false,
+                watch: false,
+                quiet: true,
+                compress: true,
+                minify: true,
+                throttle: Default::default(),
+                timings: false,
+                customer: None,
+                checkout: Some(crate::checkout::CheckoutOptions {
+                    app_dir: fixture_app(),
+                    extensions: extensions.iter().map(|handle| handle.to_string()).collect(),
+                    variant: crate::checkout::Variant::Standard,
+                    standalone,
+                }),
+            },
+        )
+        .0
+    };
+    if standalone {
+        options(App::open_without_theme(Path::new("."), None, &[]).expect("no theme"))
+    } else {
+        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+        options(App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme"))
+    }
+}
+
+/// Puts `session` in a cart of `items` (SKU, quantity) and the store data `data` on top of the
+/// files, then returns the path of its checkout.
+fn start_checkout(state: &ServerState, session: &str, items: Json, data: Json) -> String {
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": items}, "data": data}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = get(state, "/checkout", session);
+    assert_eq!(reply.status, 302);
+    header(&reply, "location").expect("a location").to_string()
+}
+
+fn operations(state: &ServerState, path: &str, session: &str, operations: Json) -> Reply {
+    post(
+        state,
+        &format!("{path}/update"),
+        json!({ "operations": operations }),
+        session,
+    )
+}
+
+/// The email and address that make a checkout complete.
+fn buyer_details() -> Json {
+    json!([
+        {"type": "email", "value": "buyer@example.com"},
+        {"type": "shippingAddress", "address": {
+            "firstName": "Ada", "lastName": "Lovelace", "address1": "1 Analytical Way",
+            "city": "London", "countryCode": "gb"
+        }},
+        {"type": "paymentMethod", "handle": "card"}
+    ])
+}
+
+#[test]
+fn the_checkout_page_is_a_shell_with_the_state_in_it() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-shell",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    assert!(path.starts_with("/checkouts/cn/c1-"), "{path}");
+
+    let page = get(&state, &path, "co-shell");
+    assert_eq!(page.status, 200);
+    let html = text(&page);
+    assert!(
+        html.contains("src=\"/__lsf/checkout/assets/checkout.js\""),
+        "{html}"
+    );
+    assert!(!html.contains("<!--LSF_"), "{html}");
+    let start = html.find("id=\"lsf-checkout-state\">").expect("the state") + 24;
+    let end = start + html[start..].find("</script>").expect("its end");
+    let state_json: Json = serde_json::from_str(&html[start..end]).expect("JSON");
+    assert_eq!(state_json["status"], "open");
+    assert_eq!(state_json["variant"], "standard");
+    assert_eq!(state_json["lines"][0]["quantity"], 2);
+
+    // The page asks for another look, and keeps it.
+    let shop = get(&state, &format!("{path}?variant=shop"), "co-shell");
+    assert!(text(&shop).contains("\"variant\":\"shop\""));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-shell"));
+    assert_eq!(json["variant"], "shop");
+
+    // Nobody else's cart is behind this token.
+    assert_eq!(get(&state, &path, "co-other").status, 404);
+    assert_eq!(get(&state, "/checkouts/cn/nope", "co-shell").status, 404);
+}
+
+#[test]
+fn the_state_describes_the_checkout() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-state",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({"checkout": {
+            "shipping_rates": [
+                {"handle": "standard", "title": "Standard", "price": "4.90"},
+                {"handle": "express", "title": "Express", "price": "12.90"}
+            ],
+            "tax_rate": 20
+        }}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-state"));
+    assert_eq!(json["token"], path.rsplit('/').next().unwrap());
+    assert_eq!(json["shop"]["currencyCode"], "USD");
+    assert_eq!(json["shop"]["storefrontUrl"], "http://shop.test");
+    assert_eq!(json["buyer"]["email"], Json::Null);
+    assert_eq!(json["lines"][0]["id"], "gid://shopify/CartLine/1");
+    assert_eq!(json["lines"][0]["sku"], "TEE-BLK-M");
+    let group = &json["deliveryGroups"][0];
+    assert_eq!(group["handle"], "group-1");
+    assert_eq!(group["selected"], "standard");
+    assert_eq!(group["options"][1]["cost"]["amount"], 12.9);
+    let methods: Vec<&str> = json["paymentMethods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|method| method["handle"].as_str().unwrap())
+        .collect();
+    assert_eq!(methods, ["card", "cod", "bank"]);
+    let subtotal = json["cost"]["subtotal"]["amount"].as_f64().unwrap();
+    assert_eq!(json["cost"]["shipping"]["amount"], 4.9);
+    let total = json["cost"]["total"]["amount"].as_f64().unwrap();
+    assert!((total - (subtotal * 1.2 + 4.9)).abs() < 0.02, "{total}");
+
+    // The built extensions of the app, with where they render.
+    let extensions = json["extensions"].as_array().unwrap();
+    let handles: Vec<&str> = extensions
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    assert_eq!(handles, ["gift-message", "order-notice"]);
+    assert_eq!(
+        extensions[0]["script"],
+        "/__lsf/extensions/gift-message/gift-message.js"
+    );
+    assert!(
+        extensions[0]["targets"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("purchase.checkout.block.render"))
+    );
+    // The manifest declares the settings; nothing sets them.
+    assert_eq!(extensions[0]["settings"], json!({}));
+    assert_eq!(extensions[0]["capabilities"]["block_progress"], true);
+    assert_eq!(json["diagnostics"], json!([]));
+
+    // The control API says the same, for a test that is not the browser.
+    let control = body_json(&get(&state, "/__lsf/checkout?session=co-state", "other"));
+    assert_eq!(control["token"], json["token"]);
+}
+
+#[test]
+fn only_the_extensions_asked_for_are_used() {
+    let state = checkout_server(&["order-notice"], false);
+    let path = start_checkout(
+        &state,
+        "co-some",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-some"));
+    let handles: Vec<&str> = json["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    assert_eq!(handles, ["order-notice"]);
+    // A bundle that is not used is not served.
+    assert_eq!(
+        get(
+            &state,
+            "/__lsf/extensions/gift-message/gift-message.js",
+            "co-some"
+        )
+        .status,
+        404
+    );
+}
+
+#[test]
+fn operations_change_what_the_buyer_chose() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-ops",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({"checkout": {"shipping_rates": [
+            {"handle": "standard", "price": "4.90"},
+            {"handle": "express", "price": "12.90"}
+        ]}}),
+    );
+    let reply = operations(
+        &state,
+        &path,
+        "co-ops",
+        json!([
+            {"type": "email", "value": "buyer@example.com"},
+            {"type": "phone", "value": "+33102030405"},
+            {"type": "shippingAddress", "address": {"lastName": "Doe", "countryCode": "fr", "city": ""}},
+            {"type": "deliveryOption", "group": "group-1", "handle": "express"},
+            {"type": "paymentMethod", "handle": "cod"},
+            {"type": "discountCode", "action": "add", "code": "SAVE10"},
+            {"type": "note", "change": {"type": "updateNote", "note": "Ring twice"}},
+            {"type": "attribute", "change": {"type": "updateAttribute", "key": "gift", "value": "yes"}},
+            {"type": "metafield", "change": {
+                "type": "updateCartMetafield", "namespace": "$app:gift", "key": "message",
+                "valueType": "single_line_text_field", "value": "Happy birthday"
+            }}
+        ]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["buyer"]["email"], "buyer@example.com");
+    assert_eq!(json["buyer"]["phone"], "+33102030405");
+    assert_eq!(json["shippingAddress"]["countryCode"], "FR");
+    assert_eq!(json["shippingAddress"]["city"], Json::Null);
+    assert_eq!(json["deliveryGroups"][0]["selected"], "express");
+    assert_eq!(json["selectedPayment"], "cod");
+    assert_eq!(json["discountCodes"][0]["code"], "SAVE10");
+    assert_eq!(json["discountCodes"][0]["applicable"], false);
+    assert_eq!(json["note"], "Ring twice");
+    assert_eq!(json["attributes"], json!([{"key": "gift", "value": "yes"}]));
+    assert_eq!(json["metafields"][0]["namespace"], "$app:gift");
+    assert_eq!(json["metafields"][0]["value"], "Happy birthday");
+
+    // The note and the attribute are the ones of the cart the theme shows.
+    let cart = body_json(&get(&state, "/cart.js", "co-ops"));
+    assert_eq!(cart["note"], "Ring twice");
+    assert_eq!(cart["attributes"]["gift"], "yes");
+
+    // Codes, attributes and metafields can be taken back.
+    let reply = operations(
+        &state,
+        &path,
+        "co-ops",
+        json!([
+            {"type": "discountCode", "action": "remove", "code": "save10"},
+            {"type": "note", "change": {"type": "removeNote"}},
+            {"type": "attribute", "change": {"type": "removeAttribute", "key": "gift"}},
+            {"type": "metafield", "change": {"type": "removeCartMetafield", "namespace": "$app:gift", "key": "message"}},
+            {"type": "paymentMethod", "handle": null}
+        ]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["discountCodes"], json!([]));
+    assert_eq!(json["note"], Json::Null);
+    assert_eq!(json["attributes"], json!([]));
+    assert_eq!(json["metafields"], json!([]));
+    assert_eq!(json["selectedPayment"], Json::Null);
+}
+
+#[test]
+fn operations_change_the_cart_lines() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-lines",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    let tote = variant_id(&state, "TOTE-NAT");
+    let apply = |change: Json| {
+        let reply = operations(
+            &state,
+            &path,
+            "co-lines",
+            json!([{"type": "cartLines", "change": change}]),
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        body_json(&reply)
+    };
+    let quantities = |json: &Json| -> Vec<(String, u64)> {
+        json["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| {
+                (
+                    line["sku"].as_str().unwrap().to_string(),
+                    line["quantity"].as_u64().unwrap(),
+                )
+            })
+            .collect()
+    };
+
+    let json = apply(json!({
+        "type": "addCartLine",
+        "merchandiseId": format!("gid://shopify/ProductVariant/{tote}"),
+        "quantity": 1,
+        "attributes": [{"key": "engraving", "value": "AL"}]
+    }));
+    assert_eq!(
+        quantities(&json),
+        [("TEE-BLK-M".to_string(), 2), ("TOTE-NAT".to_string(), 1)]
+    );
+    assert_eq!(json["lines"][1]["attributes"][0]["key"], "engraving");
+
+    let json =
+        apply(json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 5}));
+    assert_eq!(json["lines"][0]["quantity"], 5);
+    let json =
+        apply(json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 2}));
+    assert_eq!(json["lines"][0]["quantity"], 3);
+    let json =
+        apply(json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/2", "quantity": 1}));
+    assert_eq!(quantities(&json), [("TEE-BLK-M".to_string(), 3)]);
+    let json =
+        apply(json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 0}));
+    assert_eq!(json["lines"], json!([]));
+
+    // The cart is the one of the theme.
+    let cart = body_json(&get(&state, "/cart.js", "co-lines"));
+    assert_eq!(cart["item_count"], 0);
+}
+
+#[test]
+fn a_bad_operation_changes_nothing() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-bad",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    for (bad, message) in [
+        (json!({"type": "teleport"}), "unknown operation `teleport`"),
+        (json!({"value": "x"}), "an operation needs a `type`"),
+        (
+            json!({"type": "deliveryOption", "group": "group-1", "handle": "drone"}),
+            "there is no delivery option `drone`",
+        ),
+        (
+            json!({"type": "paymentMethod", "handle": "bitcoin"}),
+            "there is no payment method `bitcoin`",
+        ),
+        (
+            json!({"type": "cartLines", "change": {"type": "updateCartLine", "id": "gid://shopify/CartLine/9", "quantity": 1}}),
+            "there is no line `gid://shopify/CartLine/9`",
+        ),
+        (
+            json!({"type": "cartLines", "change": {"type": "addCartLine", "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1}}),
+            "there is no product variant",
+        ),
+        (
+            json!({"type": "discountCode", "action": "toggle", "code": "X"}),
+            "`add` or `remove`",
+        ),
+    ] {
+        // The email is valid and comes first: it must not stick.
+        let reply = operations(
+            &state,
+            &path,
+            "co-bad",
+            json!([{"type": "email", "value": "kept@example.com"}, bad]),
+        );
+        assert_eq!(reply.status, 400, "{bad}");
+        let error = body_json(&reply)["error"].as_str().unwrap().to_string();
+        assert!(
+            error.starts_with("operation 1: ") && error.contains(message),
+            "{error}"
+        );
+    }
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-bad"));
+    assert_eq!(json["buyer"]["email"], Json::Null);
+
+    let reply = post(&state, &format!("{path}/update"), json!({}), "co-bad");
+    assert_eq!(reply.status, 400);
+}
+
+#[test]
+fn a_checkout_is_completed_when_nothing_is_missing() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-done",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+
+    // What the buyer has not filled in comes back as errors on the fields.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-done");
+    assert_eq!(reply.status, 422);
+    let json = body_json(&reply);
+    let targets: Vec<&str> = json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| error["target"].as_str().unwrap())
+        .collect();
+    assert!(
+        targets.contains(&"$.cart.buyerIdentity.email"),
+        "{targets:?}"
+    );
+    assert!(targets.contains(&"$.cart.selectedPayment"), "{targets:?}");
+    assert!(
+        json["lines"].is_array(),
+        "the page reads the state of the reply"
+    );
+    assert_eq!(json["status"], "open");
+
+    assert_eq!(
+        operations(&state, &path, "co-done", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-done");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+
+    // The thank-you page shows the order, and the cart is empty.
+    let thanks = get(&state, &format!("{path}/thank-you"), "co-done");
+    assert_eq!(thanks.status, 200);
+    let html = text(&thanks);
+    assert!(html.contains("\"status\":\"completed\""), "{html}");
+    assert!(html.contains("\"number\":\"#1001\""), "{html}");
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-done"));
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["lines"][0]["quantity"], 2);
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", "co-done"))["item_count"],
+        0
+    );
+
+    // A new cart is a new checkout, with an order number of its own.
+    let again = start_checkout(
+        &state,
+        "co-done",
+        json!([{"variant": "TOTE-NAT", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{again}.json"), "co-done"));
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["buyer"]["email"], Json::Null);
+    assert_eq!(
+        operations(&state, &again, "co-done", buyer_details()).status,
+        200
+    );
+    post(&state, &format!("{again}/complete"), json!({}), "co-done");
+    let json = body_json(&get(&state, &format!("{again}.json"), "co-done"));
+    assert_eq!(json["order"]["number"], "#1002");
+
+    // Without a completed order, the thank-you page leads back to the checkout.
+    let reply = get(&state, &format!("{path}/thank-you"), "co-fresh");
+    assert_eq!(reply.status, 404);
+    let path = start_checkout(
+        &state,
+        "co-fresh",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let reply = get(&state, &format!("{path}/thank-you"), "co-fresh");
+    assert_eq!(
+        (reply.status, header(&reply, "location")),
+        (302, Some(path.as_str()))
+    );
+
+    // An empty cart is not an order.
+    let empty = start_checkout(&state, "co-empty", json!([]), json!({}));
+    let reply = post(&state, &format!("{empty}/complete"), json!({}), "co-empty");
+    assert_eq!(reply.status, 422);
+}
+
+#[test]
+fn the_functions_of_the_app_apply() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-fn",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {
+            "discounts": [{
+                "function": "volume-discount",
+                "title": "Volume",
+                "classes": ["PRODUCT"],
+                "metafields": {"$app:config.settings": {
+                    "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
+                }}
+            }],
+            "functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+                "type": "json", "value": {"maxQuantity": 2}
+            }}}}
+        }}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-fn"));
+
+    // The discount took 10 % off the lines.
+    let line = &json["lines"][0];
+    let subtotal = line["subtotal"]["amount"].as_f64().unwrap();
+    let total = line["total"]["amount"].as_f64().unwrap();
+    assert!((total - subtotal * 0.9).abs() < 0.01, "{subtotal} {total}");
+    assert_eq!(json["discounts"][0]["function"], "volume-discount");
+    assert_eq!(
+        json["cost"]["discounts"]["amount"],
+        json!(((subtotal - total) * 100.0).round() / 100.0)
+    );
+
+    // Every run is there, with its input and its output, for the panel of the page.
+    let run = json["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["handle"] == "volume-discount")
+        .expect("the run");
+    assert_eq!(run["target"], "cart.lines.discounts.generate.run");
+    assert_eq!(run["input"]["cart"]["lines"][0]["quantity"], 3);
+    assert!(run["output"]["operations"].is_array());
+    assert_eq!(run["error"], Json::Null);
+
+    // The validation Function blocks the order.
+    assert_eq!(json["errors"][0]["function"], "quantity-limit");
+    assert_eq!(
+        operations(&state, &path, "co-fn", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fn");
+    assert_eq!(reply.status, 422);
+    let blocked = body_json(&reply);
+    assert_eq!(
+        blocked["errors"][0]["message"],
+        "Not possible to order more than 2 of each"
+    );
+
+    // Taking one off lets it through.
+    let reply = operations(
+        &state,
+        &path,
+        "co-fn",
+        json!([{"type": "cartLines", "change": {"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 1}}]),
+    );
+    assert_eq!(body_json(&reply)["errors"], json!([]));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fn");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+}
+
+#[test]
+fn a_discount_code_triggers_its_discount() {
+    let state = checkout_server(&["volume-discount"], false);
+    let path = start_checkout(
+        &state,
+        "co-code",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"discounts": [{
+            "function": "volume-discount",
+            "title": "Welcome",
+            "code": "WELCOME",
+            "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"minimumQuantity": 1, "percentage": 20}
+            }}
+        }]}}),
+    );
+    let before = body_json(&get(&state, &format!("{path}.json"), "co-code"));
+    assert_eq!(before["discounts"], json!([]));
+    let reply = operations(
+        &state,
+        &path,
+        "co-code",
+        json!([{"type": "discountCode", "action": "add", "code": "welcome"}]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["discountCodes"][0]["applicable"], true);
+    assert_eq!(json["discounts"][0]["code"], "WELCOME");
+}
+
+#[test]
+fn the_files_of_the_page_and_of_the_extensions_are_served() {
+    let state = checkout_server(&[], false);
+    let script = get(&state, "/__lsf/checkout/assets/checkout.js", "co-files");
+    assert_eq!(script.status, 200);
+    assert_eq!(
+        header(&script, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert!(text(&script).contains("startCheckout"));
+    let css = get(&state, "/__lsf/checkout/assets/checkout.css", "co-files");
+    assert_eq!(
+        header(&css, "content-type"),
+        Some("text/css; charset=utf-8")
+    );
+    let sandbox = get(&state, "/__lsf/checkout/assets/sandbox.html", "co-files");
+    assert_eq!(
+        header(&sandbox, "content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    // The tests of the scripts are not part of the binary.
+    for missing in ["tests/fake-dom.mjs", "preview/serve.mjs", "nope.js"] {
+        assert_eq!(
+            get(
+                &state,
+                &format!("/__lsf/checkout/assets/{missing}"),
+                "co-files"
+            )
+            .status,
+            404,
+            "{missing}"
+        );
+    }
+
+    // The bundle `shopify app build` wrote.
+    let bundle = get(
+        &state,
+        "/__lsf/extensions/gift-message/gift-message.js",
+        "co-files",
+    );
+    assert_eq!(bundle.status, 200);
+    assert_eq!(
+        header(&bundle, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    let on_disk =
+        std::fs::read(fixture_app().join("extensions/gift-message/dist/gift-message.js")).unwrap();
+    assert_eq!(bundle.body, on_disk);
+    for missing in [
+        "/__lsf/extensions/gift-message/nope.js",
+        "/__lsf/extensions/gift-message/../shopify.extension.toml",
+        "/__lsf/extensions/volume-discount/function.wasm",
+        "/__lsf/extensions/nope/nope.js",
+        "/__lsf/extensions/gift-message",
+    ] {
+        assert_eq!(get(&state, missing, "co-files").status, 404, "{missing}");
+    }
+}
+
+#[test]
+fn without_an_app_the_checkout_is_the_cart_listing() {
+    let state = server();
+    let page = get(&state, "/checkout", "co-none");
+    assert_eq!(page.status, 200);
+    assert!(text(&page).contains("data-lsf-checkout"));
+    assert_eq!(get(&state, "/__lsf/checkout", "co-none").status, 404);
+    assert_eq!(
+        get(&state, "/__lsf/checkout/assets/checkout.js", "co-none").status,
+        404
+    );
+}
+
+#[test]
+fn a_standalone_checkout_serves_nothing_else() {
+    let state = checkout_server(&[], true);
+    let home = get(&state, "/", "co-alone");
+    let location = format!("/checkouts/cn/{}", super::cart_token_of("co-alone"));
+    assert_eq!(home.status, 302);
+    assert_eq!(header(&home, "location"), Some(location.as_str()));
+    assert_eq!(get(&state, &location, "co-alone").status, 200);
+    assert_eq!(get(&state, "/products/anything", "co-alone").status, 404);
+    // A session that is named needs no cookie.
+    let named = get(&state, "/checkout", "co-alone");
+    assert!(cookies(&named).is_empty());
+    // A visitor without one gets it.
+    let mut incoming = request("GET", "/checkout", json!({}), "ignored");
+    incoming.headers.remove(SESSION_HEADER);
+    assert_eq!(cookies(&state.dispatch(&incoming)).len(), 1);
 }

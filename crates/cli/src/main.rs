@@ -1,6 +1,7 @@
 //! `lsf`: serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API.
 
 mod app;
+mod checkout;
 mod commands;
 mod output;
 mod profile;
@@ -55,8 +56,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Serve the theme over HTTP.
+    /// Serve the theme over HTTP. With `--app`, its `/checkout` runs the Functions and shows the
+    /// checkout UI extensions of a Shopify app.
     Serve(commands::serve::Args),
+    /// Serve the checkout of a Shopify app alone, without a theme: `serve --app` without the
+    /// storefront. It takes the options of `serve`.
+    Checkout(commands::serve::Args),
+    /// Run the Shopify Functions of an app against the store data.
+    Function(commands::function::Args),
     /// Render one URL and print the HTML.
     Render(commands::render::Args),
     /// Render one URL and print what the render spent its time in: sections, blocks, snippets.
@@ -93,7 +100,13 @@ fn main() -> ExitCode {
     let previews = cli.previews.as_slice();
     let result = match cli.command {
         Command::Serve(args) => {
-            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args)
+            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, false)
+        }
+        Command::Checkout(args) => {
+            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, true)
+        }
+        Command::Function(args) => {
+            commands::function::run(&cli.theme, cli.data.as_deref(), previews, args)
         }
         Command::Render(args) => {
             commands::render::run(&cli.theme, cli.data.as_deref(), previews, args)

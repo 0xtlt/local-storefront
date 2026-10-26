@@ -3,9 +3,10 @@
 mod account;
 mod cart;
 mod cdn;
+mod checkout;
 mod compress;
 mod control;
-pub use control::routes;
+pub use control::{apply_session_input, routes};
 mod forms;
 mod live_reload;
 mod minify;
@@ -71,6 +72,9 @@ pub struct ServeOptions {
     /// Who new sessions are logged in as, instead of what the store data says: an email,
     /// `default` or `none`.
     pub customer: Option<String>,
+    /// The Shopify app whose checkout the server shows. Without it, `/checkout` is a page that
+    /// lists the cart.
+    pub checkout: Option<crate::checkout::CheckoutOptions>,
 }
 
 /// The store as last loaded from disk.
@@ -86,6 +90,8 @@ pub struct SessionEntry {
     pub store: Option<Arc<Store>>,
     /// A throttle of its own, which replaces the server's for this session.
     pub throttle: Option<throttle::Throttle>,
+    /// What the buyer entered at the checkout of the app.
+    pub checkout: checkout::CheckoutSession,
 }
 
 pub struct ServerState {
@@ -101,6 +107,8 @@ pub struct ServerState {
     /// `None` for the ones that are served as written.
     pub(crate) minified: Mutex<HashMap<String, Option<Arc<minify::Minified>>>>,
     session_counter: AtomicU64,
+    /// How many orders the checkout completed, for their numbers.
+    orders: AtomicU64,
     started: Instant,
     /// The token of the files when live reload last looked at them.
     last_token: AtomicU64,
@@ -206,6 +214,7 @@ impl ServerState {
             image_cache: Mutex::new(HashMap::new()),
             minified: Mutex::new(HashMap::new()),
             session_counter: AtomicU64::new(0),
+            orders: AtomicU64::new(0),
             started: Instant::now(),
             last_token: AtomicU64::new(0),
             changes: live_reload::Changes::new(),
@@ -374,8 +383,14 @@ impl ServerState {
                 },
                 store: None,
                 throttle: None,
+                checkout: Default::default(),
             });
         action(entry)
+    }
+
+    /// The number of the next order of the checkout, from 1.
+    fn next_order(&self) -> u64 {
+        self.orders.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     pub fn reset_session(&self, id: &str) {
@@ -443,6 +458,9 @@ impl ServerState {
             return cdn::handle(self, incoming);
         }
         self.refresh_if_changed(false);
+        if let Some(reply) = checkout::route(self, incoming) {
+            return reply;
+        }
         storefront::handle(self, incoming)
     }
 }
