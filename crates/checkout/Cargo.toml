@@ -1,0 +1,13 @@
+[package]
+name = "lsf-checkout"
+description = "A local Shopify checkout: runs the Shopify Functions and checkout UI extensions of an app against local store data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+lsf-core.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true

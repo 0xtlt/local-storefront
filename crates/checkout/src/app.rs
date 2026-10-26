@@ -1,0 +1,1 @@
+//! See .design/checkout.md.

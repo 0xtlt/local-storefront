@@ -1760,6 +1760,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsf-checkout"
+version = "0.1.18"
+dependencies = [
+ "indexmap",
+ "lsf-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lsf-core"
 version = "0.1.18"
 dependencies = [
