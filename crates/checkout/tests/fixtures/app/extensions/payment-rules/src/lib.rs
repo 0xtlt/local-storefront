@@ -29,7 +29,7 @@ struct Config {
 }
 
 #[shopify_function]
-fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
+fn run(input: schema::run::Input) -> Result<schema::CartPaymentMethodsTransformRunResult> {
     let config: Config = input
         .payment_customization()
         .metafield()
@@ -44,20 +44,20 @@ fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
             && config.hide_above.is_some_and(|above| subtotal >= above)
         {
             log!("hiding {name}: subtotal {subtotal}");
-            operations.push(schema::Operation::Hide(schema::HideOperation {
+            operations.push(schema::Operation::PaymentMethodHide(schema::PaymentMethodHideOperation {
                 payment_method_id: method.id().clone(),
                 placements: None,
             }));
         } else if let Some(new_name) = config.rename.get(name) {
-            operations.push(schema::Operation::Rename(schema::RenameOperation {
+            operations.push(schema::Operation::PaymentMethodRename(schema::PaymentMethodRenameOperation {
                 payment_method_id: method.id().clone(),
                 name: new_name.clone(),
             }));
-            operations.push(schema::Operation::Move(schema::MoveOperation {
+            operations.push(schema::Operation::PaymentMethodMove(schema::PaymentMethodMoveOperation {
                 payment_method_id: method.id().clone(),
                 index: 0,
             }));
         }
     }
-    Ok(schema::FunctionRunResult { operations })
+    Ok(schema::CartPaymentMethodsTransformRunResult { operations })
 }

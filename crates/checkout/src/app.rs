@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::version::{ApiVersion, TargetSpec, successor, target_spec};
+
 /// A Shopify app on disk.
 #[derive(Clone, Debug, Default)]
 pub struct App {
@@ -58,7 +60,11 @@ pub struct FunctionExtension {
     pub name: Option<String>,
     /// The directory of `shopify.extension.toml`.
     pub dir: PathBuf,
+    /// `api_version` as written.
     pub api_version: Option<String>,
+    /// The release `api_version` names. `None` when it is missing or not supported (an error
+    /// diagnostic says so): the Function is then not run.
+    pub version: Option<ApiVersion>,
     pub targets: Vec<FunctionTarget>,
     /// `[extensions.build] command`.
     pub build_command: Option<String>,
@@ -86,6 +92,13 @@ pub struct FunctionTarget {
     pub export: String,
 }
 
+impl FunctionTarget {
+    /// The Function API and result type of the target; `None` for a target that is not run.
+    pub fn spec(&self) -> Option<TargetSpec> {
+        target_spec(&self.target)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputVariables {
     pub namespace: String,
@@ -95,7 +108,7 @@ pub struct InputVariables {
 /// What a Function target does in the checkout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetKind {
-    /// `cart.transform.run`.
+    /// `cart.transform.run`, and `purchase.cart-transform.run` (legacy).
     CartTransform,
     /// `cart.lines.discounts.generate.run`: product and order discounts.
     LinesDiscounts,
@@ -121,7 +134,7 @@ pub enum TargetKind {
 impl TargetKind {
     pub fn parse(target: &str) -> TargetKind {
         match target {
-            "cart.transform.run" => TargetKind::CartTransform,
+            "cart.transform.run" | "purchase.cart-transform.run" => TargetKind::CartTransform,
             "cart.lines.discounts.generate.run" => TargetKind::LinesDiscounts,
             "purchase.product-discount.run" => TargetKind::ProductDiscount,
             "purchase.order-discount.run" => TargetKind::OrderDiscount,
@@ -460,6 +473,20 @@ fn load_function(
     api_version: Option<String>,
     entry: &toml::Table,
 ) -> FunctionExtension {
+    let version = match api_version.as_deref() {
+        Some(text) => ApiVersion::parse(text),
+        None => Err(format!(
+            "no `api_version` (supported: {})",
+            ApiVersion::supported()
+        )),
+    };
+    let version = match version {
+        Ok(version) => Some(version),
+        Err(message) => {
+            app.error(Some(handle), format!("{message}: the Function is not run"));
+            None
+        }
+    };
     let mut targets = Vec::new();
     for target in entry
         .get("targeting")
@@ -481,6 +508,11 @@ fn load_function(
                 Some(handle),
                 format!("target `{target_name}` is not run by the local checkout"),
             );
+        }
+        if let (Some(spec), Some(version)) = (target_spec(target_name), version)
+            && spec.legacy
+        {
+            app.warn(Some(handle), legacy_note(target_name, spec, version));
         }
         let input_query_path = target
             .get("input_query")
@@ -569,11 +601,31 @@ fn load_function(
         name,
         dir: dir.to_path_buf(),
         api_version,
+        version,
         targets,
         build_command,
         wasm_path,
         input_variables,
     }
+}
+
+/// Why a `purchase.*` target is to be left, and what its release still takes from it.
+fn legacy_note(target: &str, spec: TargetSpec, version: ApiVersion) -> String {
+    let mut note = format!("`{target}` is a legacy target");
+    if let Some(successor) = successor(target) {
+        note.push_str(&format!(": use `{successor}`"));
+    }
+    match version.schema(spec.api).operations(spec.result) {
+        Some(operations) if operations.is_empty() => note.push_str(&format!(
+            "; API version {version} takes no operation from it"
+        )),
+        Some(operations) => note.push_str(&format!(
+            "; API version {version} only takes the operations {}",
+            operations.join(", ")
+        )),
+        None => {}
+    }
+    note
 }
 
 /// The targets of the checkout UI extensions the extension host knows how to place.
@@ -715,7 +767,7 @@ mod tests {
             &root,
             "extensions/volume/shopify.extension.toml",
             r#"
-api_version = "2025-10"
+api_version = "2026-10"
 
 [[extensions]]
 name = "Volume"
@@ -786,7 +838,11 @@ handle = "banner"
         assert_eq!(app.client_id.as_deref(), Some("abc"));
 
         let function = app.function("volume-discount").unwrap();
-        assert_eq!(function.api_version.as_deref(), Some("2025-10"));
+        assert_eq!(function.api_version.as_deref(), Some("2026-10"));
+        assert_eq!(
+            function.version.map(|v| v.to_string()).as_deref(),
+            Some("2026-10")
+        );
         assert_eq!(function.targets.len(), 2);
         assert_eq!(function.targets[0].kind, TargetKind::LinesDiscounts);
         assert_eq!(
@@ -870,7 +926,7 @@ handle = "banner"
         write(
             &root,
             "extensions/check/shopify.extension.toml",
-            "type = \"function\"\napi_version = \"2025-01\"\n[[targeting]]\ntarget = \"purchase.validation.run\"\ninput_query = \"run.graphql\"\n",
+            "type = \"function\"\napi_version = \"2027-01\"\n[[targeting]]\ntarget = \"purchase.validation.run\"\ninput_query = \"run.graphql\"\n",
         );
         write(
             &root,
@@ -883,6 +939,59 @@ handle = "banner"
         assert_eq!(function.targets[0].kind, TargetKind::Validation);
         assert_eq!(function.targets[0].export, "run");
         assert!(function.wasm_path.ends_with("dist/function.wasm"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_function_needs_a_supported_api_version() {
+        let root = temp_app("versions");
+        let function = |handle: &str, version: &str| {
+            write(
+                &root,
+                &format!("extensions/{handle}/shopify.extension.toml"),
+                &format!(
+                    "type = \"function\"\n{version}\n[[targeting]]\ntarget = \"purchase.validation.run\"\ninput_query = \"run.graphql\"\n"
+                ),
+            );
+            write(
+                &root,
+                &format!("extensions/{handle}/run.graphql"),
+                "query Input { cart { lines { id } } }",
+            );
+        };
+        function("current", "api_version = \"2027-01\"");
+        function("old", "api_version = \"2025-01\"");
+        function("future", "api_version = \"2027-04\"");
+        function("unstable", "api_version = \"unstable\"");
+        function("none", "");
+        let app = load(&root).unwrap();
+        let version = |handle: &str| app.function(handle).unwrap().version.map(|v| v.to_string());
+        assert_eq!(version("current").as_deref(), Some("2027-01"));
+        for handle in ["old", "future", "unstable", "none"] {
+            assert_eq!(version(handle), None, "{handle}");
+        }
+        let errors: Vec<String> = app
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(errors.len(), 4, "{errors:?}");
+        assert!(errors.contains(&"old: api_version \"2025-01\" is not supported (supported: 2026-10, 2027-01): the Function is not run".to_string()), "{errors:?}");
+        assert!(
+            errors.contains(
+                &"none: no `api_version` (supported: 2026-10, 2027-01): the Function is not run"
+                    .to_string()
+            ),
+            "{errors:?}"
+        );
+        // The legacy target of `current` is reported too.
+        assert!(
+            app.diagnostics.iter().any(|d| d.severity == Severity::Warning
+                && d.to_string().starts_with("current: `purchase.validation.run` is a legacy target: use `cart.validations.generate.run`")),
+            "{:?}",
+            app.diagnostics
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -2,6 +2,8 @@
 //! checkout, and the result is the JSON Shopify would send. See `.design/checkout.md`.
 //!
 //! - [`exec`] is a generic GraphQL executor (aliases, fragments, variables, `__typename`).
+//! - [`crate::schema`] checks the query against the schema of the Function's API version: a field
+//!   that release does not have is an error, whatever the graph could answer.
 //! - [`graph`] is the Function input graph: `cart`, `localization`, `shop`, the owners, ...,
 //!   read from the store, the session and the state of the checkout.
 //!
@@ -15,10 +17,15 @@ mod tests;
 
 use serde_json::Value as Json;
 
+use crate::version::{ApiVersion, FunctionApi};
 use crate::{CheckoutState, DeliveryGroup, DiscountClass, Metafield, PaymentMethod, ResultLine};
 
 /// Everything a Function input can show about the checkout at one step of the pipeline.
 pub struct InputContext<'a> {
+    /// The API version of the Function: its schema says which fields the input query can ask.
+    pub version: ApiVersion,
+    /// The Function API of the target the query is for.
+    pub api: FunctionApi,
     pub store: &'a lsf_core::Store,
     /// `customer_id`, `country`, cart note and attributes.
     pub session: &'a lsf_core::Session,
@@ -102,10 +109,40 @@ const DELIVERY_GROUP_PREFIX: &str = "gid://shopify/CartDeliveryGroup/";
 /// `[extensions.input.variables]` (the JSON value of that owner metafield, or none): its
 /// top-level keys are the values of the query's variables.
 ///
-/// The error names the path of the field that cannot be answered.
+/// The error names the path of the field that does not exist in the API version, or that
+/// cannot be answered.
 pub fn build(query: &str, variables: Option<&Json>, ctx: &InputContext) -> Result<Json, String> {
     let document = graphql_parser::parse_query::<String>(query)
         .map_err(|error| format!("input query: invalid GraphQL: {error}"))?;
+    ctx.version
+        .schema(ctx.api)
+        .validate_query(&document)
+        .map_err(|message| {
+            format!(
+                "input query: not valid in API version {} ({} Function API): {message}",
+                ctx.version, ctx.api
+            )
+        })?;
+    execute(&document, variables, ctx)
+}
+
+/// [`build`] without the check against the schema: what the executor says about a query.
+#[cfg(test)]
+fn build_unchecked(
+    query: &str,
+    variables: Option<&Json>,
+    ctx: &InputContext,
+) -> Result<Json, String> {
+    let document = graphql_parser::parse_query::<String>(query)
+        .map_err(|error| format!("input query: invalid GraphQL: {error}"))?;
+    execute(&document, variables, ctx)
+}
+
+fn execute<'q>(
+    document: &'q graphql_parser::query::Document<'q, String>,
+    variables: Option<&Json>,
+    ctx: &InputContext,
+) -> Result<Json, String> {
     let empty = serde_json::Map::new();
     let variables = match variables {
         None | Some(Json::Null) => &empty,
@@ -116,7 +153,7 @@ pub fn build(query: &str, variables: Option<&Json>, ctx: &InputContext) -> Resul
             ));
         }
     };
-    exec::execute(&graph::FunctionInput::new(ctx), &document, variables)
+    exec::execute(&graph::FunctionInput::new(ctx), document, variables)
         .map_err(|message| format!("input query: {message}"))
 }
 

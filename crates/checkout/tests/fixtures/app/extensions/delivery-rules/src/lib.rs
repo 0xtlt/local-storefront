@@ -29,7 +29,7 @@ struct Config {
 }
 
 #[shopify_function]
-fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
+fn run(input: schema::run::Input) -> Result<schema::CartDeliveryOptionsTransformRunResult> {
     let config: Config = input
         .delivery_customization()
         .metafield()
@@ -42,11 +42,11 @@ fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
             let handle = option.handle();
             if config.hide.contains(handle) {
                 log!("hiding {handle}");
-                operations.push(schema::Operation::Hide(schema::HideOperation {
+                operations.push(schema::Operation::DeliveryOptionHide(schema::DeliveryOptionHideOperation {
                     delivery_option_handle: handle.clone(),
                 }));
             } else if let Some(title) = config.rename.get(handle) {
-                operations.push(schema::Operation::Rename(schema::RenameOperation {
+                operations.push(schema::Operation::DeliveryOptionRename(schema::DeliveryOptionRenameOperation {
                     delivery_option_handle: handle.clone(),
                     title: title.clone(),
                 }));
@@ -54,12 +54,12 @@ fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
         }
         if let Some(first) = &config.first {
             if group.delivery_options().iter().any(|option| option.handle() == first) {
-                operations.push(schema::Operation::Move(schema::MoveOperation {
+                operations.push(schema::Operation::DeliveryOptionMove(schema::DeliveryOptionMoveOperation {
                     delivery_option_handle: first.clone(),
                     index: 0,
                 }));
             }
         }
     }
-    Ok(schema::FunctionRunResult { operations })
+    Ok(schema::CartDeliveryOptionsTransformRunResult { operations })
 }

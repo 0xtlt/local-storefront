@@ -8,6 +8,11 @@
 //! (listed by [`crate::app`], not run), the `.fetch` targets of discounts, discount
 //! `conditions` on candidates (every candidate applies), combinations between discounts (they
 //! all stack), tax lines (one rate on the discounted subtotal) and prices by market.
+//!
+//! Each Function runs at the API version it declares: its input query is checked against the
+//! schema of that version, and its output has to fit the result type of its target in that
+//! schema (operations of the current targets, `FunctionRunResult` of the legacy `purchase.*`
+//! ones). A Function whose version is not supported is not run.
 
 use std::collections::BTreeSet;
 
@@ -17,6 +22,7 @@ use serde_json::Value;
 use crate::app::{App, FunctionExtension, FunctionTarget, Selection, TargetKind};
 use crate::input::{InputContext, Owner, OwnerKind};
 use crate::runner;
+use crate::version::ApiVersion;
 use crate::{
     AppliedDiscount, Cents, CheckoutConfig, CheckoutError, CheckoutResult, CheckoutState, Cost,
     DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass, DiscountCodeStatus,
@@ -167,6 +173,7 @@ impl<'a> Pipeline<'a> {
             .iter()
             .enumerate()
             .filter(|(_, function)| enabled.contains(&function.handle))
+            .filter(|(_, function)| function.version.is_some())
             .filter(|(_, function)| {
                 function
                     .targets
@@ -193,6 +200,15 @@ impl<'a> Pipeline<'a> {
         owner: OwnerSpec,
         triggering_code: Option<&str>,
     ) -> Option<Value> {
+        let (Some(version), Some(spec)) = (function.version, target.spec()) else {
+            self.record_failure(
+                function,
+                target,
+                Value::Null,
+                format!("`{}` is not run by the local checkout", target.target),
+            );
+            return None;
+        };
         let variables = match owner_variables(function, owner.metafields) {
             Ok(variables) => variables,
             Err(error) => {
@@ -203,6 +219,8 @@ impl<'a> Pipeline<'a> {
         let entered_codes: Vec<String> = self.state.discount_codes.clone();
         let input = {
             let context = InputContext {
+                version,
+                api: spec.api,
                 store: self.store,
                 session: self.session,
                 state: self.state,
@@ -235,7 +253,18 @@ impl<'a> Pipeline<'a> {
             }
         };
 
-        let execution = runner::run(&function.wasm_path, &target.export, &input);
+        let mut execution = runner::run(&function.wasm_path, &target.export, &input);
+        if execution.error.is_none()
+            && let Some(output) = &execution.output
+            && let Err(problems) = version
+                .schema(spec.api)
+                .validate_output(spec.result, output)
+        {
+            execution.error = Some(format!(
+                "the output does not fit `{}` in API version {version}: {problems}",
+                spec.result
+            ));
+        }
         let failed = execution.error.is_some() || execution.output.is_none();
         let run = FunctionRun {
             handle: function.handle.clone(),
@@ -531,6 +560,19 @@ impl<'a> Pipeline<'a> {
     fn discount_function(&mut self, discount: &DiscountConfig) -> Option<&'a FunctionExtension> {
         let app = self.app;
         match app.function(&discount.function) {
+            Some(function) if function.version.is_none() => {
+                self.errors.push(CheckoutError {
+                    message: format!(
+                        "discount \"{}\": the Function `{}` is not run, its api_version is not supported (supported: {})",
+                        discount.title,
+                        discount.function,
+                        ApiVersion::supported()
+                    ),
+                    target: None,
+                    function: Some(function.handle.clone()),
+                });
+                None
+            }
             Some(function) => Some(function),
             None => {
                 self.errors.push(CheckoutError {
@@ -804,13 +846,15 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// An operation of `cart.delivery-options.transform.run`: `deliveryOptionHide`,
+    /// `deliveryOptionMove`, `deliveryOptionRename`.
     fn apply_delivery_operation(&mut self, operation: &Value) {
         for group in &mut self.groups {
-            if let Some(op) = operation.get("hide") {
+            if let Some(op) = operation.get("deliveryOptionHide") {
                 if let Some(handle) = str_field(op, "deliveryOptionHandle") {
                     group.options.retain(|option| option.handle != handle);
                 }
-            } else if let Some(op) = operation.get("move") {
+            } else if let Some(op) = operation.get("deliveryOptionMove") {
                 let (Some(handle), Some(to)) = (
                     str_field(op, "deliveryOptionHandle"),
                     op.get("index").and_then(Value::as_u64),
@@ -827,19 +871,15 @@ impl<'a> Pipeline<'a> {
                         .options
                         .insert((to as usize).min(group.options.len()), option);
                 }
-            } else if let Some(op) = operation.get("rename")
+            } else if let Some(op) = operation.get("deliveryOptionRename")
                 && let Some(handle) = str_field(op, "deliveryOptionHandle")
                 && let Some(option) = group
                     .options
                     .iter_mut()
                     .find(|option| option.handle == handle)
+                && let Some(title) = str_field(op, "title")
             {
-                if let Some(title) = str_field(op, "title") {
-                    option.title = title.to_string();
-                }
-                if let Some(description) = str_field(op, "description") {
-                    option.description = Some(description.to_string());
-                }
+                option.title = title.to_string();
             }
         }
     }
@@ -958,6 +998,9 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// An operation of `cart.payment-methods.transform.run`: `paymentMethodHide`,
+    /// `paymentMethodMove`, `paymentMethodRename`. Payment terms and order reviews
+    /// (`paymentTermsSet`, `orderReviewAdd`) have no place in the local checkout.
     fn apply_payment_operation(&mut self, operation: &Value) {
         let position = |methods: &[PaymentMethod], op: &Value| {
             let id = str_field(op, "paymentMethodId")?;
@@ -965,11 +1008,21 @@ impl<'a> Pipeline<'a> {
                 .iter()
                 .position(|method| id_matches(id, &method.handle))
         };
-        if let Some(op) = operation.get("hide") {
-            if let Some(at) = position(&self.payment_methods, op) {
+        if let Some(op) = operation.get("paymentMethodHide") {
+            // Hidden from the accelerated checkout only: the method stays in the list.
+            let in_list = op
+                .get("placements")
+                .and_then(Value::as_array)
+                .is_none_or(|placements| {
+                    placements.is_empty()
+                        || placements
+                            .iter()
+                            .any(|placement| placement.as_str() == Some("PAYMENT_METHOD"))
+                });
+            if in_list && let Some(at) = position(&self.payment_methods, op) {
                 self.payment_methods.remove(at);
             }
-        } else if let Some(op) = operation.get("move") {
+        } else if let Some(op) = operation.get("paymentMethodMove") {
             if let (Some(from), Some(to)) = (
                 position(&self.payment_methods, op),
                 op.get("index").and_then(Value::as_u64),
@@ -978,7 +1031,7 @@ impl<'a> Pipeline<'a> {
                 let to = (to as usize).min(self.payment_methods.len());
                 self.payment_methods.insert(to, method);
             }
-        } else if let Some(op) = operation.get("rename")
+        } else if let Some(op) = operation.get("paymentMethodRename")
             && let Some(at) = position(&self.payment_methods, op)
             && let Some(name) = str_field(op, "name")
         {

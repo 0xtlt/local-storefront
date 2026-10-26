@@ -64,7 +64,7 @@ fn decimal(text: &str) -> Decimal {
 }
 
 #[shopify_function]
-fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
+fn run(input: schema::run::Input) -> Result<schema::CartTransformRunResult> {
     let config: Config = input
         .cart_transform()
         .metafield()
@@ -82,19 +82,19 @@ fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
     for operation in &config.operations {
         match operation {
             Operation::Update { line, title, price } => {
-                operations.push(schema::CartOperation::Update(schema::UpdateOperation {
+                operations.push(schema::Operation::LineUpdate(schema::LineUpdateOperation {
                     cart_line_id: line_id(*line)?,
                     image: None,
-                    price: price.as_deref().map(|price| schema::UpdateOperationPriceAdjustment {
-                        adjustment: schema::UpdateOperationPriceAdjustmentValue::FixedPricePerUnit(
-                            schema::UpdateOperationFixedPricePerUnitAdjustment { amount: decimal(price) },
+                    price: price.as_deref().map(|price| schema::LineUpdateOperationPriceAdjustment {
+                        adjustment: schema::LineUpdateOperationPriceAdjustmentValue::FixedPricePerUnit(
+                            schema::LineUpdateOperationFixedPricePerUnitAdjustment { amount: decimal(price) },
                         ),
                     }),
                     title: title.clone(),
                 }));
             }
             Operation::Expand { line, title, percentage_decrease, items } => {
-                operations.push(schema::CartOperation::Expand(schema::ExpandOperation {
+                operations.push(schema::Operation::LineExpand(schema::LineExpandOperation {
                     cart_line_id: line_id(*line)?,
                     expanded_cart_items: items
                         .iter()
@@ -124,7 +124,7 @@ fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
                         quantity: *input.cart().lines()[*position - 1].quantity(),
                     });
                 }
-                operations.push(schema::CartOperation::Merge(schema::MergeOperation {
+                operations.push(schema::Operation::LinesMerge(schema::LinesMergeOperation {
                     attributes: Some(vec![]),
                     cart_lines,
                     image: None,
@@ -137,5 +137,5 @@ fn run(input: schema::run::Input) -> Result<schema::FunctionRunResult> {
             }
         }
     }
-    Ok(schema::FunctionRunResult { operations })
+    Ok(schema::CartTransformRunResult { operations })
 }
