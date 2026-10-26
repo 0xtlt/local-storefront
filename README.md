@@ -72,6 +72,16 @@ await page.goto('/cart');
 
 Guide: [testing](docs/testing.md).
 
+### Try the checkout of a Shopify app
+
+```bash
+npx local-storefront checkout --app ../my-app
+```
+
+Runs the Shopify Functions of the app and shows its checkout UI extensions on a local checkout,
+without a store. `npx local-storefront function run --app ../my-app` runs the Functions once and
+prints their input and output. Guide: [checkout](docs/checkout.md).
+
 ### Get ready for Shopify's strict Liquid parser
 
 Shopify is moving every store to a strict Liquid parser, and a file it rejects can no longer be
@@ -119,6 +129,8 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 | `npx local-storefront validate` | Checks the store data. `--format json` for tools. |
 | `npx local-storefront check` | Checks every Liquid file, and what Shopify's strict parser rejects. `--fix` rewrites it. `--format json` for tools. |
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
+| `npx local-storefront checkout --app <dir>` | Serves the checkout of a Shopify app: its Functions run, its checkout UI extensions show. `serve --app` does it with the theme. |
+| `npx local-storefront function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--format json` for tools. |
 | `npx local-storefront render <path>` | Prints the HTML of one page, without a server. |
 | `npx local-storefront profile <path>` | Shows what a page spends its time on, or what it would cost Shopify. |
 | `npx local-storefront routes` | Lists the pages the store data creates. |
@@ -136,6 +148,7 @@ Every option, exit code and output format: [CLI reference](docs/cli.md).
 | Fix what Shopify's strict parser rejects | [Strict Liquid](docs/strict-liquid.md) |
 | Format Liquid files | [Formatting](docs/formatting.md) |
 | Make a page faster | [Performance](docs/performance.md) |
+| Run the Functions and checkout extensions of a Shopify app | [Checkout](docs/checkout.md) |
 | Use the storefront in a browser | [Storefront](docs/storefront.md): accounts, password page, live reload, previews |
 | Know an option or an exit code | [CLI reference](docs/cli.md) |
 | Drive local-storefront from an AI agent | [Agents](docs/agents.md) |
@@ -146,9 +159,10 @@ What changed in each version: [changelog](CHANGELOG.md).
 
 ## What it does not do
 
-local-storefront renders themes. It does not simulate checkout, apps, discounts, B2B catalogs,
-taxes or shipping rates. Customers can log in, but not register. The full list:
-[compatibility](docs/compatibility.md#known-differences).
+local-storefront renders themes. It does not simulate Shopify's checkout, apps, B2B catalogs, or
+discounts and shipping rates in the theme's cart. The checkout of an app is a local stand-in: it
+runs its Functions and shows its extensions, and takes no payment. Customers can log in, but not
+register. The full list: [compatibility](docs/compatibility.md#known-differences).
 
 ## Other ways to install
 

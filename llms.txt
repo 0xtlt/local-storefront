@@ -16,6 +16,7 @@ Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fi
 - [Strict Liquid](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/strict-liquid.md): `npx local-storefront check` and `npx local-storefront check --fix`
 - [Formatting](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/formatting.md): `npx local-storefront fmt` and its options
 - [Performance](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/performance.md): `npx local-storefront profile`, points, Server-Timing
+- [Checkout](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/checkout.md): `npx local-storefront checkout --app` and `function run`: the Functions and checkout UI extensions of a Shopify app
 - [Storefront](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/storefront.md): accounts, password page, images, feature previews
 
 ## Reference

@@ -7,7 +7,7 @@
 //!   *.json            any number of files, each holding any of: shop, products, collections,
 //!                     pages, blogs, menus, customers, companies, gift_cards, locations,
 //!                     selling_plan_groups, swatches, metaobjects, localization, files,
-//!                     session, now, theme_settings. They are merged.
+//!                     session, checkout, now, theme_settings. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
 //!   files/            images and other files, served under /cdn/shop/files/
@@ -320,6 +320,17 @@ fn merge_store_file(
             origin: origin("/session".to_string()),
         });
     }
+    if let Some(checkout) = input.checkout {
+        singleton(
+            "checkout",
+            merged.checkout.as_ref().map(|c| c.origin.file.as_str()),
+            diagnostics,
+        );
+        merged.checkout = Some(Sourced {
+            value: checkout,
+            origin: origin("/checkout".to_string()),
+        });
+    }
     if let Some(now) = input.now {
         singleton(
             "now",
@@ -552,6 +563,12 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
         merged.session = Some(Sourced {
             value,
             origin: origin("/session".to_string()),
+        });
+    }
+    if let Some(value) = input.checkout {
+        merged.checkout = Some(Sourced {
+            value,
+            origin: origin("/checkout".to_string()),
         });
     }
     if let Some(value) = input.now {
@@ -948,6 +965,94 @@ mod tests {
         let tote = store.product_by_handle("canvas-tote-bag").expect("tote");
         assert_eq!(tote.variants[0].price, 100);
         assert!(!tote.available());
+    }
+
+    #[test]
+    fn the_checkout_section_has_defaults() {
+        let (store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let rates = &store.checkout.shipping_rates;
+        assert_eq!(
+            (rates.len(), rates[0].title.as_str(), rates[0].price),
+            (1, "Standard", 500)
+        );
+        let methods: Vec<&str> = store
+            .checkout
+            .payment_methods
+            .iter()
+            .map(|method| method.name.as_str())
+            .collect();
+        assert_eq!(methods, ["Credit card", "Cash on Delivery", "Bank Deposit"]);
+        assert_eq!(store.checkout.tax_rate_bps, 0);
+    }
+
+    #[test]
+    fn the_checkout_section_is_resolved() {
+        let overlay = serde_json::json!({"checkout": {
+            "shipping_rates": [{"handle": "express", "price": "12.90", "kind": "pick_up"}],
+            "payment_methods": [{"handle": "card", "name": "Card"}],
+            "discounts": [{
+                "function": "volume-discount",
+                "code": "SAVE",
+                "classes": ["PRODUCT"],
+                "metafields": {"$app:config.settings": {"type": "json", "value": {"percent": 10}}}
+            }],
+            "functions": {"delivery-rules": {"metafields": {"$app:config.mode": "strict"}}},
+            "tax_rate": 5.5
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let checkout = &store.checkout;
+        assert_eq!(checkout.shipping_rates[0].title, "express");
+        assert_eq!(checkout.shipping_rates[0].price, 1290);
+        assert_eq!(
+            checkout.shipping_rates[0].kind,
+            model::CheckoutDeliveryKind::PickUp
+        );
+        assert_eq!(checkout.payment_methods.len(), 1);
+        let discount = &checkout.discounts[0];
+        assert_eq!(discount.title, "volume-discount");
+        assert_eq!(discount.code.as_deref(), Some("SAVE"));
+        assert_eq!(discount.classes, [model::CheckoutDiscountClass::Product]);
+        let settings = &discount.metafields[0];
+        assert_eq!(
+            (
+                settings.namespace.as_str(),
+                settings.key.as_str(),
+                settings.kind.as_str()
+            ),
+            ("$app:config", "settings", "json")
+        );
+        assert_eq!(settings.value, r#"{"percent":10}"#);
+        assert_eq!(checkout.functions["delivery-rules"][0].value, "strict");
+        assert_eq!(checkout.tax_rate_bps, 550);
+    }
+
+    #[test]
+    fn a_bad_checkout_section_is_reported() {
+        let overlay = serde_json::json!({"checkout": {
+            "shipping_rates": [
+                {"handle": "a", "price": "-1.00"},
+                {"handle": "a", "price": 100}
+            ],
+            "discounts": [{"function": "f", "metafields": {"nodot": "x"}}],
+            "tax_rate": 120
+        }});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[invalid_money]: a shipping rate cannot cost less than nothing",
+            "error[duplicate_handle]: there are two shipping rates called \"a\"",
+            "error[invalid_value]: \"nodot\" is not a metafield name",
+            "error[invalid_value]: 120 is not a tax rate",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
     }
 
     #[test]

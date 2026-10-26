@@ -15,6 +15,41 @@ pub struct App {
     pub theme: Arc<Theme>,
     pub renderer: Renderer,
     pub source: DataSource,
+    /// The empty theme of an app opened without one, removed when the app is dropped.
+    _scratch: Option<Scratch>,
+}
+
+/// A directory made for the process, removed with it.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Where the store data is read from: `--data`, then `<theme>/shopify-local`, then the demo.
+fn data_source(theme_dir: &Path, data_dir: Option<&Path>) -> Result<DataSource, String> {
+    match data_dir {
+        Some(directory) => {
+            if !directory.is_dir() {
+                return Err(format!(
+                    "the data directory {} does not exist. The `init` command creates it: `init --data {}`.",
+                    directory.display(),
+                    directory.display()
+                ));
+            }
+            Ok(DataSource::Directory(directory.to_path_buf()))
+        }
+        None => {
+            let default = theme_dir.join(DEFAULT_DATA_DIRECTORY);
+            Ok(if default.is_dir() {
+                DataSource::Directory(default)
+            } else {
+                DataSource::Demo
+            })
+        }
+    }
 }
 
 impl App {
@@ -29,30 +64,37 @@ impl App {
         let env = Arc::new(lsf_core::environment_with(previews));
         let theme =
             Arc::new(Theme::open(theme_dir, env, revalidate).map_err(|error| error.to_string())?);
-        let source = match data_dir {
-            Some(directory) => {
-                if !directory.is_dir() {
-                    return Err(format!(
-                        "the data directory {} does not exist. The `init` command creates it: `init --data {}`.",
-                        directory.display(),
-                        directory.display()
-                    ));
-                }
-                DataSource::Directory(directory.to_path_buf())
-            }
-            None => {
-                let default = theme_dir.join(DEFAULT_DATA_DIRECTORY);
-                if default.is_dir() {
-                    DataSource::Directory(default)
-                } else {
-                    DataSource::Demo
-                }
-            }
-        };
+        let source = data_source(theme_dir, data_dir)?;
         Ok(App {
             renderer: Renderer::new(theme.clone()),
             theme,
             source,
+            _scratch: None,
+        })
+    }
+
+    /// Opens the store data without a theme, for what does not render pages (the checkout of an
+    /// app). The data is looked for in `<theme_dir>/shopify-local`, as with a theme. The theme
+    /// is an empty one that lives as long as the app does.
+    pub fn open_without_theme(
+        theme_dir: &Path,
+        data_dir: Option<&Path>,
+        previews: &[Preview],
+    ) -> Result<App, String> {
+        let source = data_source(theme_dir, data_dir)?;
+        let scratch = std::env::temp_dir().join(format!("lsf-no-theme-{}", std::process::id()));
+        std::fs::create_dir_all(scratch.join("layout"))
+            .map_err(|error| format!("cannot create {}: {error}", scratch.display()))?;
+        let scratch = Scratch(scratch);
+        let env = Arc::new(lsf_core::environment_with(previews));
+        let theme = Arc::new(
+            Theme::open(&scratch.0, env, Revalidate::Never).map_err(|error| error.to_string())?,
+        );
+        Ok(App {
+            renderer: Renderer::new(theme.clone()),
+            theme,
+            source,
+            _scratch: Some(scratch),
         })
     }
 
@@ -66,6 +108,10 @@ impl App {
 
     /// The theme's locales, default first, which decide the store's default language.
     pub fn load_options(&self) -> LoadOptions {
+        // Without a theme there are no locales to translate to.
+        if self._scratch.is_some() {
+            return LoadOptions::default();
+        }
         let default = self.theme.default_locale();
         let mut theme_locales = vec![default.clone()];
         theme_locales.extend(

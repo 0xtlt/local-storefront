@@ -5,6 +5,7 @@
 //! ([`input`]), runs it ([`runner`]) and applies its output to the checkout.
 
 pub mod app;
+pub mod assets;
 pub mod input;
 pub mod pipeline;
 pub mod runner;

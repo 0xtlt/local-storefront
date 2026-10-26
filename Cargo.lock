@@ -2507,6 +2507,7 @@ dependencies = [
  "image",
  "indexmap",
  "lightningcss",
+ "lsf-checkout",
  "lsf-core",
  "lsf-fmt",
  "lsf-liquid",

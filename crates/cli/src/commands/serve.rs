@@ -6,6 +6,7 @@ use std::time::Duration;
 use lsf_core::theme::Revalidate;
 
 use crate::app::App;
+use crate::checkout::{self, AppArgs, CheckoutOptions, Variant};
 use crate::output::print_diagnostics;
 use crate::server::throttle::Throttle;
 use crate::server::{ServeOptions, ServerState, run as run_server};
@@ -71,6 +72,14 @@ pub struct Args {
     /// (`session.customer`).
     #[arg(long, env = "LSF_CUSTOMER", value_name = "EMAIL")]
     customer: Option<String>,
+
+    #[command(flatten)]
+    app: AppArgs,
+
+    /// The look of the checkout of the app: `standard` (Shopify's one-page checkout) or `shop`
+    /// (the Shop app and Shop Pay). A checkout URL can ask for the other with `?variant=`.
+    #[arg(long, value_enum, default_value_t = Variant::Standard)]
+    variant: Variant,
 }
 
 /// The port used when `--port` is not given.
@@ -102,12 +111,42 @@ async fn listen(
     Err(failure)
 }
 
+/// Serves the theme. With `standalone`, serves the checkout of `--app` alone: `lsf checkout`.
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
     previews: &[lsf_core::Preview],
     args: Args,
+    standalone: bool,
 ) -> Result<ExitCode, String> {
+    // The app is read before the store data and the theme, so that a wrong `--app` is the first
+    // thing said. `--build` runs here too.
+    let checkout = match &args.app.app {
+        Some(dir) => {
+            let (app, selection) = checkout::open(&args.app, dir)?;
+            checkout::print_app_diagnostics(&app, &selection);
+            Some((
+                CheckoutOptions {
+                    app_dir: dir.clone(),
+                    extensions: args.app.extensions.clone(),
+                    variant: args.variant,
+                    standalone,
+                },
+                (
+                    selection.functions(&app).count(),
+                    selection.ui_extensions(&app).count(),
+                ),
+            ))
+        }
+        None if standalone => {
+            return Err("`lsf checkout` needs the app: `--app DIR` (or LSF_APP)".to_string());
+        }
+        None => None,
+    };
+    let (checkout, extensions) = match checkout {
+        Some((options, counts)) => (Some(options), Some(counts)),
+        None => (None, None),
+    };
     let revalidate = if args.static_files {
         Revalidate::Never
     } else {
@@ -115,8 +154,13 @@ pub fn run(
     };
     let throttle = Throttle::parse(args.throttle.iter().map(String::as_str))
         .map_err(|problem| format!("--throttle: {problem}"))?;
-    let app = App::open(theme, data, revalidate, previews)?;
-    crate::app::note_missing_previews(&app.theme, previews);
+    let app = if standalone {
+        App::open_without_theme(theme, data, previews)?
+    } else {
+        let app = App::open(theme, data, revalidate, previews)?;
+        crate::app::note_missing_previews(&app.theme, previews);
+        app
+    };
     let source = app.describe_source();
     let (state, diagnostics) = ServerState::new(
         app,
@@ -129,6 +173,7 @@ pub fn run(
             throttle: throttle.clone(),
             timings: args.timings,
             customer: args.customer.clone(),
+            checkout,
         },
     );
     print_diagnostics(&diagnostics);
@@ -158,7 +203,15 @@ pub fn run(
         };
         let listener = listen(&args.host, ports).await?;
         let local = listener.local_addr().map_err(|error| error.to_string())?;
-        eprintln!("theme:  {}", theme.display());
+        if !standalone {
+            eprintln!("theme:  {}", theme.display());
+        }
+        if let (Some(dir), Some((functions, ui_extensions))) = (&args.app.app, extensions) {
+            eprintln!(
+                "app:    {} ({functions} Functions, {ui_extensions} checkout UI extensions)",
+                dir.display()
+            );
+        }
         eprintln!("data:   {source}");
         if args.port.is_none() && local.port() != DEFAULT_PORT {
             eprintln!("port:   {DEFAULT_PORT} is taken, using {}", local.port());
@@ -166,7 +219,13 @@ pub fn run(
         if !throttle.is_empty() {
             eprintln!("throttle: {throttle}");
         }
-        eprintln!("ready:  http://{local}/   (status and control API: http://{local}/__lsf)");
+        if standalone {
+            eprintln!(
+                "ready:  http://{local}/checkout   (status and control API: http://{local}/__lsf)"
+            );
+        } else {
+            eprintln!("ready:  http://{local}/   (status and control API: http://{local}/__lsf)");
+        }
         run_server(Arc::new(state), listener)
             .await
             .map_err(|error| error.to_string())

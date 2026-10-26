@@ -1417,6 +1417,110 @@ pub struct GiftCardInput {
     pub template_suffix: Option<String>,
 }
 
+/// What kind of delivery a shipping rate is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckoutDeliveryKind {
+    /// Delivered to the address.
+    #[default]
+    Shipping,
+    /// Picked up in a store.
+    PickUp,
+    /// Delivered locally.
+    Local,
+}
+
+/// A delivery option the local checkout offers to every address.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutShippingRateInput {
+    /// What Functions and the page call the option: `"standard"`.
+    pub handle: String,
+    /// What the buyer sees. Defaults to the handle.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The cost, e.g. `"4.90"`.
+    pub price: Money,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Defaults to `"shipping"`.
+    #[serde(default)]
+    pub kind: Option<CheckoutDeliveryKind>,
+}
+
+/// A payment method the local checkout offers.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutPaymentMethodInput {
+    /// What payment customization Functions and the page call the method: `"card"`.
+    pub handle: String,
+    /// What the buyer sees. Defaults to the handle.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// What a discount may reduce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CheckoutDiscountClass {
+    Product,
+    Order,
+    Shipping,
+}
+
+/// A discount backed by a discount Function of the app.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutDiscountInput {
+    /// The handle of the discount Function in the app.
+    pub function: String,
+    /// What the buyer sees. Defaults to the handle of the Function.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The code that triggers the discount. Without one the discount is automatic.
+    #[serde(default)]
+    pub code: Option<String>,
+    /// What the discount may reduce. All three when omitted.
+    #[serde(default)]
+    pub classes: Vec<CheckoutDiscountClass>,
+    /// The metafields of the discount, which its Function's input query reads, by
+    /// `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`.
+    #[serde(default)]
+    pub metafields: IndexMap<String, MetafieldInput>,
+}
+
+/// The settings of a Function that is not a discount: cart transform, delivery or payment
+/// customization, validation.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutFunctionInput {
+    /// The metafields of the object the Function belongs to, by `"namespace.key"`.
+    #[serde(default)]
+    pub metafields: IndexMap<String, MetafieldInput>,
+}
+
+/// How the local checkout (`lsf checkout --app`) is set up. Every field has a default.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutInput {
+    /// The delivery options offered to every address. Defaults to one, "Standard" at 5.00.
+    #[serde(default)]
+    pub shipping_rates: Option<Vec<CheckoutShippingRateInput>>,
+    /// The payment methods. Defaults to "Credit card", "Cash on Delivery" and "Bank Deposit".
+    #[serde(default)]
+    pub payment_methods: Option<Vec<CheckoutPaymentMethodInput>>,
+    /// Discounts backed by discount Functions of the app.
+    #[serde(default)]
+    pub discounts: Vec<CheckoutDiscountInput>,
+    /// The settings of the other Functions, by the handle of the Function.
+    #[serde(default)]
+    pub functions: IndexMap<String, CheckoutFunctionInput>,
+    /// Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when
+    /// omitted.
+    #[serde(default)]
+    pub tax_rate: Option<f64>,
+}
+
 /// A data file: any combination of the sections below. Every `*.json` file at the root of the
 /// data directory is one of these, and they are merged, so you can split the data as you like
 /// (`shop.json`, `catalog.json`, ...).
@@ -1476,6 +1580,10 @@ pub struct StoreInput {
     /// What every new browser session starts with: a logged-in customer, a filled cart...
     #[serde(default)]
     pub session: Option<SessionInput>,
+    /// The fake checkout of `lsf checkout --app`: shipping rates, payment methods, discounts
+    /// and Function settings. At most one data file may define it.
+    #[serde(default)]
+    pub checkout: Option<CheckoutInput>,
     /// Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`.
     /// Set it to make renders reproducible; each `'now'` of a render is then one nanosecond
     /// after the previous one, so `%N` still differs between calls. Defaults to the real time,

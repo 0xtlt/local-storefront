@@ -1,0 +1,888 @@
+//! The local checkout of a Shopify app: the pages at `/checkouts/cn/<token>`, the operations
+//! the page sends, and the files of the page and of the checkout UI extensions.
+//!
+//! What the buyer chose lives in the session (`SessionEntry::checkout`), next to the cart, which
+//! the checkout shares with the theme. Every request computes the checkout again, running the
+//! Functions of the app: `lsf_checkout::pipeline::compute`.
+
+use lsf_checkout::app::{App, Selection};
+use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
+use lsf_checkout::{Address, CheckoutResult, CheckoutState, Metafield};
+use lsf_core::drops::cart::line_key;
+use lsf_core::store::CartLine;
+use lsf_core::{Session, Store};
+use serde_json::{Value as Json, json};
+
+use super::reply::{Reply, cache, content_type};
+use super::{Incoming, SESSION_COOKIE, ServerState};
+use crate::checkout::{CheckoutOptions, Variant, config_from_store, translations};
+
+/// Where the files of the page are served from.
+const ASSETS: &str = "/__lsf/checkout/assets";
+
+/// What the checkout keeps for a session, besides the cart.
+#[derive(Default)]
+pub struct CheckoutSession {
+    /// What the buyer entered and chose.
+    pub state: CheckoutState,
+    /// The look the buyer asked for with `?variant=`.
+    pub variant: Option<Variant>,
+    /// The state of the order the buyer completed, which the thank-you page shows.
+    pub completed: Option<Json>,
+}
+
+/// The pages and the API of the checkout. `None` when the request is not for the checkout, so
+/// that the storefront answers it.
+pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
+    let options = state.options.checkout.as_ref()?;
+    // The theme's cart form leads to `/fr/checkout` in French.
+    let (_, _, path) = state.localize(&state.loaded().store, &incoming.path);
+    let path = path.trim_matches('/');
+    let segments: Vec<&str> = if path.is_empty() {
+        Vec::new()
+    } else {
+        path.split('/').collect()
+    };
+    let method = incoming.method.as_str();
+    let reply = match (method, segments.as_slice()) {
+        ("GET" | "HEAD", ["checkout"]) => Some(start(state, incoming)),
+        ("GET" | "HEAD", ["checkouts", "cn", token]) => Some(match token.strip_suffix(".json") {
+            Some(token) => state_json(state, incoming, token),
+            None => page(state, incoming, token),
+        }),
+        ("GET" | "HEAD", ["checkouts", "cn", token, "thank-you"]) => {
+            Some(thank_you(state, incoming, token))
+        }
+        ("POST", ["checkouts", "cn", token, "update"]) => Some(update(state, incoming, token)),
+        ("POST", ["checkouts", "cn", token, "complete"]) => Some(complete(state, incoming, token)),
+        ("GET" | "HEAD", []) if options.standalone => Some(start(state, incoming)),
+        _ if options.standalone => Some(Reply::text(
+            404,
+            "Not found. This server shows the checkout of an app only: start `lsf serve --app` \
+             to serve a theme with it.",
+        )),
+        _ => None,
+    }?;
+    Some(reply)
+}
+
+/// The API under `/__lsf` that belongs to the checkout: `segments` follow `/__lsf/`.
+pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> Option<Reply> {
+    state.options.checkout.as_ref()?;
+    match (incoming.method.as_str(), segments) {
+        ("GET", ["checkout"]) => Some(control_state(state, incoming)),
+        ("GET", ["checkout", "assets", file]) => Some(asset(file)),
+        ("GET", ["extensions", handle, file @ ..]) if !file.is_empty() => {
+            Some(extension_file(state, handle, file))
+        }
+        _ => None,
+    }
+}
+
+fn options(state: &ServerState) -> &CheckoutOptions {
+    state
+        .options
+        .checkout
+        .as_ref()
+        .expect("checkout routes need --app")
+}
+
+fn error(status: u16, message: impl Into<String>) -> Reply {
+    Reply::json(status, &json!({ "error": message.into() })).cached(cache::PRIVATE)
+}
+
+/// Gives a new visitor the session cookie, as the storefront does.
+fn with_cookie(reply: Reply, session_id: &str, is_new: bool) -> Reply {
+    if is_new {
+        reply.header(
+            "set-cookie",
+            format!("{SESSION_COOKIE}={session_id}; Path=/; HttpOnly; SameSite=Lax"),
+        )
+    } else {
+        reply
+    }
+}
+
+/// The session of the request, when the token in its URL is the one of the session's cart.
+fn session_of(
+    state: &ServerState,
+    incoming: &Incoming,
+    token: &str,
+) -> Result<(String, bool), Reply> {
+    let (id, is_new) = state.session_id(incoming);
+    let known = state.with_session(&id, |entry| entry.session.cart_token.clone());
+    if known == token {
+        Ok((id, is_new))
+    } else {
+        Err(error(
+            404,
+            format!("There is no checkout with the token {token}."),
+        ))
+    }
+}
+
+fn token_of(state: &ServerState, session_id: &str) -> String {
+    state.with_session(session_id, |entry| entry.session.cart_token.clone())
+}
+
+fn checkout_path(token: &str) -> String {
+    format!("/checkouts/cn/{token}")
+}
+
+/// `/checkout`: a checkout for the cart of the visitor.
+fn start(state: &ServerState, incoming: &Incoming) -> Reply {
+    let (id, is_new) = state.session_id(incoming);
+    let mut location = checkout_path(&token_of(state, &id));
+    if let Some(variant) = incoming.query_param("variant") {
+        location.push_str(&format!("?variant={}", escape_query(variant)));
+    }
+    with_cookie(Reply::redirect(&location), &id, is_new)
+}
+
+fn escape_query(value: &str) -> String {
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// The look of the checkout: `?variant=` when the request has it, which the session then keeps,
+/// otherwise what the session kept, otherwise the server's.
+fn variant_of(state: &ServerState, session_id: &str, incoming: &Incoming) -> Variant {
+    let asked = incoming.query_param("variant").and_then(Variant::from_name);
+    state.with_session(session_id, |entry| {
+        if asked.is_some() {
+            entry.checkout.variant = asked;
+        }
+        entry
+            .checkout
+            .variant
+            .unwrap_or_else(|| options(state).variant)
+    })
+}
+
+/// The scheme and host the visitor reached the server by.
+fn origin_of(incoming: &Incoming) -> String {
+    format!(
+        "{}://{}",
+        incoming.header("x-forwarded-proto").unwrap_or("http"),
+        incoming.host
+    )
+}
+
+/// The checkout as the page reads it: the result of the Functions and everything around it.
+struct Computed {
+    json: Json,
+    result: CheckoutResult,
+}
+
+fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result<Computed, String> {
+    let options = options(state);
+    let variant = variant_of(state, session_id, incoming);
+    let app = lsf_checkout::app::load(&options.app_dir)?;
+    let selection = Selection::resolve(&app, &options.extensions)?;
+    let (session, store) = state.snapshot(session_id);
+    let mut checkout = state.with_session(session_id, |entry| entry.checkout.state.clone());
+    let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
+    // A logged-in customer does not have to type what the store knows.
+    if checkout.email.is_none() {
+        checkout.email = customer.map(|customer| customer.email.clone());
+    }
+    if checkout.phone.is_none() {
+        checkout.phone = customer
+            .map(|customer| customer.phone.clone())
+            .filter(|phone| !phone.is_empty());
+    }
+    let config = config_from_store(&store);
+    let result = pipeline::compute(&app, &selection, &store, &session, &checkout, &config);
+
+    let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    let object = json.as_object_mut().expect("a result is an object");
+    object.insert("token".into(), json!(session.cart_token));
+    object.insert("variant".into(), json!(variant.name()));
+    object.insert("status".into(), json!("open"));
+    object.insert(
+        "shop".into(),
+        json!({
+            "name": store.shop.name,
+            "currencyCode": store.shop.currency,
+            "moneyFormat": store.shop.money_format,
+            "locale": store.primary_language().iso_code,
+            "storefrontUrl": origin_of(incoming),
+        }),
+    );
+    object.insert(
+        "buyer".into(),
+        json!({
+            "email": checkout.email,
+            "phone": checkout.phone,
+            "customer": customer.map(|customer| json!({
+                "id": format!("gid://shopify/Customer/{}", customer.id),
+                "email": customer.email,
+                "firstName": customer.first_name,
+                "lastName": customer.last_name,
+            })),
+        }),
+    );
+    object.insert("shippingAddress".into(), json!(checkout.shipping_address));
+    object.insert(
+        "note".into(),
+        json!((!session.cart_note.is_empty()).then_some(&session.cart_note)),
+    );
+    object.insert(
+        "attributes".into(),
+        Json::Array(
+            session
+                .cart_attributes
+                .iter()
+                .map(|(key, value)| json!({"key": key, "value": value}))
+                .collect(),
+        ),
+    );
+    object.insert("metafields".into(), json!(checkout.metafields));
+    // A method a Function hid is not selected any more.
+    let selected = checkout.selected_payment.as_ref().filter(|handle| {
+        result
+            .payment_methods
+            .iter()
+            .any(|method| &method.handle == *handle)
+    });
+    object.insert("selectedPayment".into(), json!(selected));
+    object.insert("extensions".into(), extensions_json(&app, &selection));
+    object.insert(
+        "diagnostics".into(),
+        Json::Array(
+            app.diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic
+                        .extension
+                        .as_deref()
+                        .is_none_or(|handle| selection.contains(handle))
+                })
+                .map(|diagnostic| json!(diagnostic.to_string()))
+                .collect(),
+        ),
+    );
+    Ok(Computed { json, result })
+}
+
+/// The checkout UI extensions to load: the built ones.
+fn extensions_json(app: &App, selection: &Selection) -> Json {
+    Json::Array(
+        selection
+            .ui_extensions(app)
+            .filter(|extension| extension.built())
+            .map(|extension| {
+                let file = extension
+                    .bundle
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let mut targets: Vec<&str> = Vec::new();
+                for target in &extension.targets {
+                    if !targets.contains(&target.target.as_str()) {
+                        targets.push(&target.target);
+                    }
+                }
+                json!({
+                    "handle": extension.handle,
+                    "apiVersion": extension.api_version,
+                    "script": format!("/__lsf/extensions/{}/{file}", extension.handle),
+                    "targets": targets,
+                    "capabilities": extension.capabilities,
+                    "settings": setting_values(&extension.settings),
+                    "translations": translations(&extension.dir),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The values the extension reads from `shopify.settings`. `[extensions.settings]` of the
+/// manifest declares the fields (`fields`) a merchant fills in; nothing here fills them in, so
+/// only the entries that are not that declaration are values.
+fn setting_values(settings: &Json) -> Json {
+    match settings {
+        Json::Object(entries) => Json::Object(
+            entries
+                .iter()
+                .filter(|(key, _)| key.as_str() != "fields")
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
+        _ => json!({}),
+    }
+}
+
+/// The state of the session's checkout: the order that was completed, if the cart was emptied by
+/// completing it, otherwise the open checkout.
+fn current(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result<Json, Reply> {
+    let completed = state.with_session(session_id, |entry| {
+        let empty = entry.session.cart_lines.is_empty();
+        entry.checkout.completed.clone().filter(|_| empty)
+    });
+    if let Some(completed) = completed {
+        return Ok(completed);
+    }
+    // A cart again after an order: a new checkout.
+    state.with_session(session_id, |entry| entry.checkout.completed = None);
+    compute(state, session_id, incoming)
+        .map(|computed| computed.json)
+        .map_err(|problem| error(500, problem))
+}
+
+fn state_json(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
+    let (id, is_new) = match session_of(state, incoming, token) {
+        Ok(session) => session,
+        Err(reply) => return reply,
+    };
+    let reply = match current(state, &id, incoming) {
+        Ok(json) => Reply::json(200, &json).cached(cache::PRIVATE),
+        Err(reply) => reply,
+    };
+    with_cookie(reply, &id, is_new)
+}
+
+/// `GET /__lsf/checkout?session=<id>`: the state of a session's checkout, for tests.
+fn control_state(state: &ServerState, incoming: &Incoming) -> Reply {
+    let id = match incoming.query_param("session") {
+        Some(id) if !id.is_empty() => id.to_string(),
+        _ => state.session_id(incoming).0,
+    };
+    match current(state, &id, incoming) {
+        Ok(json) => Reply::json(200, &json).cached(cache::PRIVATE),
+        Err(reply) => reply,
+    }
+}
+
+/// The HTML of the page with the state in it.
+fn shell(json: &Json) -> Reply {
+    let template = lsf_checkout::assets::get("checkout.html").expect("checkout.html is embedded");
+    let template = String::from_utf8_lossy(template);
+    // Inside a script element: nothing in the JSON may close it or open a comment.
+    let state = json
+        .to_string()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    let html = template
+        .replace("<!--LSF_ASSETS-->", ASSETS)
+        .replace("<!--LSF_STATE-->", &state);
+    Reply::html(200, html).cached(cache::PRIVATE)
+}
+
+fn page(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
+    let (id, is_new) = match session_of(state, incoming, token) {
+        Ok(session) => session,
+        Err(reply) => return reply,
+    };
+    let reply = match current(state, &id, incoming) {
+        Ok(json) => shell(&json),
+        Err(reply) => reply,
+    };
+    with_cookie(reply, &id, is_new)
+}
+
+fn thank_you(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
+    let (id, is_new) = match session_of(state, incoming, token) {
+        Ok(session) => session,
+        Err(reply) => return reply,
+    };
+    let completed = state.with_session(&id, |entry| entry.checkout.completed.clone());
+    let reply = match completed {
+        Some(json) => shell(&json),
+        None => Reply::redirect(&checkout_path(token)),
+    };
+    with_cookie(reply, &id, is_new)
+}
+
+/// `POST …/update`: applies the operations in the body, one after the other, and answers with
+/// the new state. When one fails none is applied.
+fn update(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
+    let (id, is_new) = match session_of(state, incoming, token) {
+        Ok(session) => session,
+        Err(reply) => return reply,
+    };
+    let Some(operations) = incoming.params.get("operations").and_then(Json::as_array) else {
+        return error(400, "The body must be {\"operations\": [...]}.");
+    };
+    let (mut session, store) = state.snapshot(&id);
+    let mut checkout = state.with_session(&id, |entry| entry.checkout.state.clone());
+    let config = config_from_store(&store);
+    for (position, operation) in operations.iter().enumerate() {
+        if let Err(problem) = apply(operation, &mut session, &mut checkout, &store, &config) {
+            return with_cookie(
+                error(400, format!("operation {position}: {problem}")),
+                &id,
+                is_new,
+            );
+        }
+    }
+    state.with_session(&id, |entry| {
+        entry.session.cart_lines = session.cart_lines;
+        entry.session.cart_note = session.cart_note;
+        entry.session.cart_attributes = session.cart_attributes;
+        entry.session.country = session.country;
+        entry.checkout.state = checkout;
+        // Changing an order that was completed starts another.
+        entry.checkout.completed = None;
+    });
+    let reply = match compute(state, &id, incoming) {
+        Ok(computed) => Reply::json(200, &computed.json).cached(cache::PRIVATE),
+        Err(problem) => error(500, problem),
+    };
+    with_cookie(reply, &id, is_new)
+}
+
+fn text_of(operation: &Json, key: &str) -> Option<String> {
+    operation
+        .get(key)
+        .and_then(Json::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn change_of<'a>(operation: &'a Json, kind: &str) -> Result<&'a Json, String> {
+    operation
+        .get("change")
+        .filter(|change| change.is_object())
+        .ok_or_else(|| format!("a `{kind}` operation needs a `change`"))
+}
+
+/// Applies one operation to the cart and the choices of the buyer.
+fn apply(
+    operation: &Json,
+    session: &mut Session,
+    checkout: &mut CheckoutState,
+    store: &Store,
+    config: &lsf_checkout::CheckoutConfig,
+) -> Result<(), String> {
+    let kind = operation
+        .get("type")
+        .and_then(Json::as_str)
+        .ok_or("an operation needs a `type`")?;
+    match kind {
+        "email" => checkout.email = text_of(operation, "value"),
+        "phone" => checkout.phone = text_of(operation, "value"),
+        "shippingAddress" => {
+            let address = operation
+                .get("address")
+                .filter(|address| !address.is_null())
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let mut address: Address = serde_json::from_value(address)
+                .map_err(|problem| format!("the address is not valid: {problem}"))?;
+            for field in [
+                &mut address.first_name,
+                &mut address.last_name,
+                &mut address.company,
+                &mut address.address1,
+                &mut address.address2,
+                &mut address.city,
+                &mut address.country_code,
+                &mut address.province_code,
+                &mut address.zip,
+                &mut address.phone,
+            ] {
+                if field.as_deref().is_some_and(|text| text.trim().is_empty()) {
+                    *field = None;
+                }
+            }
+            if let Some(code) = &mut address.country_code {
+                *code = code.trim().to_ascii_uppercase();
+                // Markets decide on the country of the address.
+                if store.country(code).is_some() {
+                    session.country = Some(code.clone());
+                }
+            }
+            checkout.shipping_address = (address != Address::default()).then_some(address);
+        }
+        "deliveryOption" => {
+            let group = text_of(operation, "group").unwrap_or_else(|| DELIVERY_GROUP_HANDLE.into());
+            let handle =
+                text_of(operation, "handle").ok_or("a `deliveryOption` needs a `handle`")?;
+            if group != DELIVERY_GROUP_HANDLE {
+                return Err(format!(
+                    "there is no delivery group `{group}` (the group is `{DELIVERY_GROUP_HANDLE}`)"
+                ));
+            }
+            if !config
+                .shipping_rates
+                .iter()
+                .any(|rate| rate.handle == handle)
+            {
+                let known: Vec<&str> = config
+                    .shipping_rates
+                    .iter()
+                    .map(|rate| rate.handle.as_str())
+                    .collect();
+                return Err(format!(
+                    "there is no delivery option `{handle}` (the options are {})",
+                    known.join(", ")
+                ));
+            }
+            checkout.selected_delivery.insert(group, handle);
+        }
+        "paymentMethod" => match text_of(operation, "handle") {
+            None => checkout.selected_payment = None,
+            Some(handle) => {
+                if !config
+                    .payment_methods
+                    .iter()
+                    .any(|method| method.handle == handle)
+                {
+                    let known: Vec<&str> = config
+                        .payment_methods
+                        .iter()
+                        .map(|method| method.handle.as_str())
+                        .collect();
+                    return Err(format!(
+                        "there is no payment method `{handle}` (the methods are {})",
+                        known.join(", ")
+                    ));
+                }
+                checkout.selected_payment = Some(handle);
+            }
+        },
+        "discountCode" => {
+            let code = text_of(operation, "code").ok_or("a `discountCode` needs a `code`")?;
+            match operation.get("action").and_then(Json::as_str) {
+                Some("add") => {
+                    if !checkout
+                        .discount_codes
+                        .iter()
+                        .any(|entered| entered.eq_ignore_ascii_case(&code))
+                    {
+                        checkout.discount_codes.push(code);
+                    }
+                }
+                Some("remove") => checkout
+                    .discount_codes
+                    .retain(|entered| !entered.eq_ignore_ascii_case(&code)),
+                _ => return Err("the `action` of a `discountCode` is `add` or `remove`".into()),
+            }
+        }
+        "cartLines" => cart_lines(change_of(operation, kind)?, session, store)?,
+        "attribute" => {
+            let change = change_of(operation, kind)?;
+            let key = text_of(change, "key").ok_or("an attribute change needs a `key`")?;
+            match change.get("type").and_then(Json::as_str) {
+                Some("updateAttribute") => {
+                    let value = change
+                        .get("value")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default();
+                    session.cart_attributes.insert(key, value.to_string());
+                }
+                Some("removeAttribute") => {
+                    session.cart_attributes.shift_remove(&key);
+                }
+                other => return Err(format!("unknown attribute change {other:?}")),
+            }
+        }
+        "note" => {
+            let change = change_of(operation, kind)?;
+            match change.get("type").and_then(Json::as_str) {
+                Some("updateNote") => {
+                    session.cart_note = change
+                        .get("note")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                }
+                Some("removeNote") => session.cart_note.clear(),
+                other => return Err(format!("unknown note change {other:?}")),
+            }
+        }
+        "metafield" => {
+            let change = change_of(operation, kind)?;
+            let namespace =
+                text_of(change, "namespace").ok_or("a metafield change needs a `namespace`")?;
+            let key = text_of(change, "key").ok_or("a metafield change needs a `key`")?;
+            checkout
+                .metafields
+                .retain(|field| !(field.namespace == namespace && field.key == key));
+            match change.get("type").and_then(Json::as_str) {
+                Some("updateMetafield" | "updateCartMetafield") => {
+                    checkout.metafields.push(Metafield {
+                        namespace,
+                        key,
+                        kind: text_of(change, "valueType")
+                            .unwrap_or_else(|| "single_line_text_field".into()),
+                        value: change
+                            .get("value")
+                            .and_then(Json::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    });
+                }
+                Some("removeMetafield" | "removeCartMetafield") => {}
+                other => return Err(format!("unknown metafield change {other:?}")),
+            }
+        }
+        other => return Err(format!("unknown operation `{other}`")),
+    }
+    Ok(())
+}
+
+/// The number at the end of a gid (`gid://shopify/ProductVariant/42`), or a plain number.
+fn gid_number(id: &str) -> Option<u64> {
+    id.rsplit('/').next()?.parse().ok()
+}
+
+/// The index in the cart of a line named by its id: `gid://shopify/CartLine/<n>`, n from 1.
+fn line_index(change: &Json, session: &Session) -> Result<usize, String> {
+    let id = change
+        .get("id")
+        .and_then(Json::as_str)
+        .ok_or("the change needs the `id` of a line")?;
+    gid_number(id)
+        .and_then(|number| number.checked_sub(1))
+        .map(|index| index as usize)
+        .filter(|index| *index < session.cart_lines.len())
+        .ok_or_else(|| format!("there is no line `{id}` in the cart"))
+}
+
+fn line_properties(change: &Json) -> Option<indexmap::IndexMap<String, String>> {
+    change
+        .get("attributes")
+        .and_then(Json::as_array)
+        .map(|attributes| {
+            attributes
+                .iter()
+                .filter_map(|attribute| {
+                    let key = attribute.get("key")?.as_str()?;
+                    let value = attribute.get("value")?.as_str()?;
+                    (!value.is_empty()).then(|| (key.to_string(), value.to_string()))
+                })
+                .collect()
+        })
+}
+
+fn selling_plan(change: &Json, store: &Store, variant_id: u64) -> Result<Option<u64>, String> {
+    let Some(id) = change.get("sellingPlanId").and_then(Json::as_str) else {
+        return Ok(None);
+    };
+    let plan = gid_number(id).ok_or_else(|| format!("`{id}` is not a selling plan id"))?;
+    let (product, _) = store.variant(variant_id).ok_or("unknown variant")?;
+    store
+        .selling_plan_of(product, plan)
+        .map(|_| Some(plan))
+        .ok_or_else(|| format!("the selling plan `{id}` is not offered for this product"))
+}
+
+fn quantity(change: &Json) -> Result<Option<u32>, String> {
+    match change.get("quantity") {
+        None | Some(Json::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|quantity| u32::try_from(quantity).ok())
+            .map(Some)
+            .ok_or_else(|| "the quantity must be a whole number".to_string()),
+    }
+}
+
+/// `applyCartLinesChange` of the UI extension API: `addCartLine`, `removeCartLine` and
+/// `updateCartLine`.
+fn cart_lines(change: &Json, session: &mut Session, store: &Store) -> Result<(), String> {
+    match change.get("type").and_then(Json::as_str) {
+        Some("addCartLine") => {
+            let merchandise = change
+                .get("merchandiseId")
+                .and_then(Json::as_str)
+                .ok_or("addCartLine needs a `merchandiseId`")?;
+            let variant_id = gid_number(merchandise)
+                .ok_or_else(|| format!("`{merchandise}` is not a product variant id"))?;
+            let (_, variant) = store
+                .variant(variant_id)
+                .ok_or_else(|| format!("there is no product variant `{merchandise}`"))?;
+            if !variant.available {
+                return Err(format!("the product variant `{merchandise}` is sold out"));
+            }
+            let quantity = quantity(change)?
+                .filter(|quantity| *quantity > 0)
+                .unwrap_or(1);
+            let line = CartLine {
+                variant_id,
+                quantity,
+                properties: line_properties(change).unwrap_or_default(),
+                selling_plan: selling_plan(change, store, variant_id)?,
+            };
+            let key = line_key(&line);
+            match session
+                .cart_lines
+                .iter_mut()
+                .find(|existing| line_key(existing) == key)
+            {
+                Some(existing) => existing.quantity += quantity,
+                None => session.cart_lines.push(line),
+            }
+        }
+        Some("removeCartLine") => {
+            let index = line_index(change, session)?;
+            let removed = quantity(change)?.ok_or("removeCartLine needs a `quantity`")?;
+            let line = &mut session.cart_lines[index];
+            if removed >= line.quantity {
+                session.cart_lines.remove(index);
+            } else {
+                line.quantity -= removed;
+            }
+        }
+        Some("updateCartLine") => {
+            let index = line_index(change, session)?;
+            let new_quantity = quantity(change)?;
+            if new_quantity == Some(0) {
+                session.cart_lines.remove(index);
+                return Ok(());
+            }
+            if let Some(merchandise) = change.get("merchandiseId").and_then(Json::as_str) {
+                let variant_id = gid_number(merchandise)
+                    .ok_or_else(|| format!("`{merchandise}` is not a product variant id"))?;
+                if store.variant(variant_id).is_none() {
+                    return Err(format!("there is no product variant `{merchandise}`"));
+                }
+                session.cart_lines[index].variant_id = variant_id;
+            }
+            if let Some(properties) = line_properties(change) {
+                session.cart_lines[index].properties = properties;
+            }
+            if change.get("sellingPlanId").is_some() {
+                let variant_id = session.cart_lines[index].variant_id;
+                session.cart_lines[index].selling_plan = selling_plan(change, store, variant_id)?;
+            }
+            if let Some(quantity) = new_quantity {
+                session.cart_lines[index].quantity = quantity;
+            }
+        }
+        other => return Err(format!("unknown cart line change {other:?}")),
+    }
+    Ok(())
+}
+
+/// What the buyer has to fill before paying, as errors on the fields of the page.
+fn missing(computed: &Computed, state: &CheckoutState) -> Vec<Json> {
+    let error = |message: &str, target: &str| json!({"message": message, "target": target, "function": null});
+    let mut errors = Vec::new();
+    if state.email.as_deref().is_none_or(str::is_empty) {
+        errors.push(error("Enter an email", "$.cart.buyerIdentity.email"));
+    }
+    if computed
+        .result
+        .lines
+        .iter()
+        .any(|line| line.requires_shipping)
+    {
+        let address = state.shipping_address.clone().unwrap_or_default();
+        let field = |value: &Option<String>| value.as_deref().is_none_or(str::is_empty);
+        let target = |name: &str| format!("$.cart.deliveryGroups[0].deliveryAddress.{name}");
+        for (empty, message, name) in [
+            (field(&address.last_name), "Enter a last name", "lastName"),
+            (field(&address.address1), "Enter an address", "address1"),
+            (field(&address.city), "Enter a city", "city"),
+            (
+                field(&address.country_code),
+                "Select a country/region",
+                "countryCode",
+            ),
+        ] {
+            if empty {
+                errors.push(error(message, &target(name)));
+            }
+        }
+    }
+    if !computed.result.payment_methods.is_empty() && computed.json["selectedPayment"].is_null() {
+        errors.push(error("Select a payment method", "$.cart.selectedPayment"));
+    }
+    errors
+}
+
+/// `POST …/complete`: places the order when nothing blocks it.
+fn complete(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
+    let (id, is_new) = match session_of(state, incoming, token) {
+        Ok(session) => session,
+        Err(reply) => return reply,
+    };
+    let reply = place_order(state, incoming, &id, token);
+    with_cookie(reply, &id, is_new)
+}
+
+fn place_order(state: &ServerState, incoming: &Incoming, id: &str, token: &str) -> Reply {
+    let mut computed = match compute(state, id, incoming) {
+        Ok(computed) => computed,
+        Err(problem) => return error(500, problem),
+    };
+    if computed.result.lines.is_empty() {
+        return error(422, "The cart is empty.");
+    }
+    let checkout = state.with_session(id, |entry| entry.checkout.state.clone());
+    let mut blocking = missing(&computed, &checkout);
+    if !computed.result.errors.is_empty() || !blocking.is_empty() {
+        // What the Functions said stays first.
+        if let Some(errors) = computed.json["errors"].as_array_mut() {
+            errors.append(&mut blocking);
+        }
+        return Reply::json(422, &computed.json).cached(cache::PRIVATE);
+    }
+    let number = 1000 + state.next_order();
+    let mut order = computed.json;
+    order["status"] = json!("completed");
+    order["order"] =
+        json!({"id": format!("gid://shopify/Order/{number}"), "number": format!("#{number}")});
+    state.with_session(id, |entry| {
+        entry.checkout.completed = Some(order);
+        entry.checkout.state = CheckoutState::default();
+        // The order took what was in the cart.
+        entry.session.cart_lines.clear();
+        entry.session.cart_note.clear();
+        entry.session.cart_attributes.clear();
+    });
+    Reply::json(
+        200,
+        &json!({"redirect": format!("{}/thank-you", checkout_path(token))}),
+    )
+    .cached(cache::PRIVATE)
+}
+
+/// A file of the page, from the binary.
+fn asset(file: &str) -> Reply {
+    match lsf_checkout::assets::get(file) {
+        Some(content) => Reply::new(200, content_type(file), content).cached(cache::RENDERED),
+        None => Reply::not_found(),
+    }
+}
+
+/// A file of the build of a checkout UI extension: `<extension>/dist/<file>`.
+fn extension_file(state: &ServerState, handle: &str, file: &[&str]) -> Reply {
+    let options = options(state);
+    let Ok(app) = lsf_checkout::app::load(&options.app_dir) else {
+        return Reply::not_found();
+    };
+    let Ok(selection) = Selection::resolve(&app, &options.extensions) else {
+        return Reply::not_found();
+    };
+    let Some(extension) = app
+        .ui_extension(handle)
+        .filter(|extension| selection.contains(&extension.handle))
+    else {
+        return Reply::not_found();
+    };
+    if file
+        .iter()
+        .any(|part| part.is_empty() || *part == ".." || *part == "." || part.contains(['/', '\\']))
+    {
+        return Reply::not_found();
+    }
+    let Some(directory) = extension.bundle.parent() else {
+        return Reply::not_found();
+    };
+    let path = file
+        .iter()
+        .fold(directory.to_path_buf(), |path, part| path.join(part));
+    match std::fs::read(&path) {
+        Ok(content) => {
+            Reply::new(200, content_type(&file.join("/")), content).cached(cache::PRIVATE)
+        }
+        Err(_) => Reply::not_found(),
+    }
+}

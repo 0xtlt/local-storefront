@@ -29,6 +29,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `selling_plan_groups` | array of [SellingPlanGroup](#sellingplangroup) | Groups of selling plans: subscriptions, pre-orders and other purchase options. |
 | `files` | map of [File](#file) | Metadata for files in `files/`, by path. |
 | `session` | [Session](#session) | What every new browser session starts with: a logged-in customer, a filled cart... |
+| `checkout` | [Checkout](#checkout) | The fake checkout of `lsf checkout --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
 
@@ -843,3 +844,73 @@ One of:
 
 - integer
 - string
+
+## Checkout
+
+How the local checkout (`lsf checkout --app`) is set up. Every field has a default.
+
+| Field | Type | Description |
+|---|---|---|
+| `shipping_rates` | array of [CheckoutShippingRate](#checkoutshippingrate) | The delivery options offered to every address. Defaults to one, "Standard" at 5.00. |
+| `payment_methods` | array of [CheckoutPaymentMethod](#checkoutpaymentmethod) | The payment methods. Defaults to "Credit card", "Cash on Delivery" and "Bank Deposit". |
+| `discounts` | array of [CheckoutDiscount](#checkoutdiscount) | Discounts backed by discount Functions of the app. |
+| `functions` | map of [CheckoutFunction](#checkoutfunction) | The settings of the other Functions, by the handle of the Function. |
+| `tax_rate` | number | Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when omitted. |
+
+## CheckoutShippingRate
+
+A delivery option the local checkout offers to every address.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | **Required.** What Functions and the page call the option: `"standard"`. |
+| `title` | string | What the buyer sees. Defaults to the handle. |
+| `price` | [Money](#money) | **Required.** The cost, e.g. `"4.90"`. |
+| `description` | string |  |
+| `kind` | [CheckoutDeliveryKind](#checkoutdeliverykind) | Defaults to `"shipping"`. |
+
+## CheckoutDeliveryKind
+
+What kind of delivery a shipping rate is.
+
+One of:
+
+- `"shipping"`: Delivered to the address.
+- `"pick_up"`: Picked up in a store.
+- `"local"`: Delivered locally.
+
+## CheckoutPaymentMethod
+
+A payment method the local checkout offers.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | **Required.** What payment customization Functions and the page call the method: `"card"`. |
+| `name` | string | What the buyer sees. Defaults to the handle. |
+
+## CheckoutDiscount
+
+A discount backed by a discount Function of the app.
+
+| Field | Type | Description |
+|---|---|---|
+| `function` | string | **Required.** The handle of the discount Function in the app. |
+| `title` | string | What the buyer sees. Defaults to the handle of the Function. |
+| `code` | string | The code that triggers the discount. Without one the discount is automatic. |
+| `classes` | array of [CheckoutDiscountClass](#checkoutdiscountclass) | What the discount may reduce. All three when omitted. |
+| `metafields` | map of [Metafield](#metafield) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`. |
+
+## CheckoutDiscountClass
+
+What a discount may reduce.
+
+One of: `"PRODUCT"`, `"ORDER"`, `"SHIPPING"`.
+
+## CheckoutFunction
+
+The settings of a Function that is not a discount: cart transform, delivery or payment
+customization, validation.
+
+| Field | Type | Description |
+|---|---|---|
+| `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |

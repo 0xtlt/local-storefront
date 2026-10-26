@@ -130,6 +130,17 @@ Points are deterministic: the same at every run and on every machine, so they ca
 before and after a change. Times are not. `--json` prints a speedscope profile. Guide:
 [performance](performance.md).
 
+### Run the Functions of a Shopify app
+
+```bash
+npx local-storefront function run --app ../my-app --format json
+```
+
+Prints the checkout the Functions produce for the cart of the store data (`--session` sets
+another): `lines`, `discounts`, `deliveryGroups`, `errors`, `cost`, and in `runs` the input,
+the output, the logs and the error of each Function. Exits with `1` when a Function fails to
+run. Guide: [checkout](checkout.md).
+
 ### Drive a running server
 
 `npx local-storefront serve --port 0 --static --quiet` prints `ready:  http://127.0.0.1:<port>/`
@@ -145,6 +156,8 @@ Reference: [control API](control-api.md).
 
 ## What not to expect
 
-local-storefront renders themes. It has no checkout, no apps, no discounts, no taxes, no
-shipping rates. A difference with Shopify that is known is listed in
+local-storefront renders themes. Its checkout is a summary of the cart, unless it runs with
+`--app <dir>`: then it runs the Functions and shows the checkout UI extensions of a Shopify app
+([checkout](checkout.md)). It has no apps, no discounts, no taxes and no shipping rates in the
+theme. A difference with Shopify that is known is listed in
 [compatibility](compatibility.md#known-differences): check there before you report one.

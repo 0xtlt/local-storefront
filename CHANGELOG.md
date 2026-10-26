@@ -3,6 +3,30 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **A local checkout for Shopify apps.** `lsf checkout --app <dir>` serves the checkout of an
+  app without a theme, and `lsf serve --app <dir>` leads the `/checkout` of a theme to it. It
+  runs the Shopify Functions of the app (cart transform, discounts, delivery and payment
+  customization, validation) from their built Wasm modules, and shows its checkout UI
+  extensions in the page, in the standard one-page look or in the Shop app's (`--variant shop`).
+  `--extension <handle>` (repeatable) picks the extensions to use, `--build` runs the build
+  command of each Function first. API versions 2026-10 and 2027-01 are supported. Guide:
+  [checkout](docs/checkout.md).
+- **`lsf function run [handle]... --app <dir>`** runs the Functions once, without a server, and
+  prints each input, output and log with the checkout that results. `--session` and
+  `--checkout` set the cart and what the buyer entered, `--format json` is for tools. It exits
+  with `1` when a Function fails to run.
+- **A `checkout` section in the store data** sets the shipping rates, the payment methods, the
+  discounts that use the Functions of the app, the settings of its other Functions and a tax
+  rate. Without it: one "Standard" rate at 5.00, three payment methods and no tax.
+- **The checkout in the control API.** `/checkouts/cn/<token>` serves the page, `.json` its
+  state, `/update` takes operations and `/complete` places the order, which `/thank-you` shows.
+  `GET /__lsf/checkout?session=<id>` reads the state of a session for tests. Without `--app`,
+  `/checkout` is the summary of the cart, as before.
+
 ## 0.1.18 - 2026-10-21
 
 ### Changed
