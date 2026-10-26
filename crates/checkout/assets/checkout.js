@@ -94,7 +94,16 @@ export function startCheckout({ root, initial, document, window, location, fetch
         body: JSON.stringify({ operations }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? `The checkout answered ${response.status}.`);
+      if (!response.ok) {
+        // The checkout is not the one the operations were made for (another tab changed it, or
+        // the order was placed): the reply is the checkout as it is now, and the page shows it
+        // before it says the operations were not applied.
+        if (response.status === 409 && body.lines) {
+          accept(body);
+          throw new Error(body.error ?? 'The checkout changed: that change was not applied.');
+        }
+        throw new Error(body.error ?? `The checkout answered ${response.status}.`);
+      }
       accept(body);
       return body;
     });

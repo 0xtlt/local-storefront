@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { startCheckout } from '../checkout.js';
+import { op } from '../operations.js';
 import { complete, update } from '../preview/mock-engine.mjs';
 import { FakeDocument } from './fake-dom.mjs';
 import { engineCheckout, pageState, settle } from './harness.mjs';
@@ -15,7 +16,7 @@ const publicState = (state) => {
 };
 
 /** A page on a checkout kept by the mock engine; `requests` is what it was asked. */
-function app({ variant = 'standard', mutate, hold } = {}) {
+function app({ variant = 'standard', mutate, hold, conflict } = {}) {
   let engine = engineCheckout();
   engine.variant = variant;
   if (mutate) mutate(engine);
@@ -31,6 +32,12 @@ function app({ variant = 'standard', mutate, hold } = {}) {
     requests.push({ url, body });
     await hold?.(url, body);
     if (url.endsWith('/update')) {
+      // Someone else changed the checkout: nothing is applied and the reply is the checkout now.
+      const other = conflict?.(engine, body.operations);
+      if (other) {
+        engine = other;
+        return reply(409, publicState(engine));
+      }
       const result = update(engine, body.operations);
       if (result.error) return reply(400, { error: result.error });
       engine = result.state;
@@ -140,6 +147,30 @@ test('a failed operation shows its message', async () => {
   assert.match(page.text('[data-banner="failure"]'), /No delivery option drone/);
   await page.checkout.actions.choosePayment('card');
   assert.equal(page.query('[data-banner="failure"]'), null, 'it goes with the next gesture');
+});
+
+test('a refused operation that comes with the fresh checkout shows that checkout first', async () => {
+  // Another tab sets the phone while this one chooses a payment method: the server refuses.
+  const page = app({
+    conflict: (engine, operations) => {
+      if (!operations.some((operation) => operation.type === 'paymentMethod')) return null;
+      return update(engine, [op.phone('+33102030405')]).state;
+    },
+  });
+  const frames = connect(page);
+  for (const frame of frames) say(page, frame, { type: 'ready' });
+  assert.equal(page.checkout.getState().buyer?.phone ?? '', '');
+  await page.checkout.actions.choosePayment('card');
+
+  const now = page.checkout.getState();
+  assert.equal(now.buyer.phone, '+33102030405', 'the page took the checkout the server sent');
+  assert.equal(now.selectedPayment ?? null, null, 'what was refused is not in it');
+  assert.match(page.text('[data-banner="failure"]'), /not applied/);
+  assert.equal(page.requests.length, 1, 'nothing else was asked');
+  for (const frame of frames) {
+    const states = frame.iframe.contentWindow.posted.filter((message) => message.type === 'state');
+    assert.equal(states.at(-1).state.buyer.phone, '+33102030405', frame.ext.handle);
+  }
 });
 
 test('paying with something missing shows what, and does not ask the server', async () => {

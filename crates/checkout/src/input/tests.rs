@@ -285,14 +285,61 @@ fn cart_cost_sums_the_lines() {
     let out = f.run(
         "{ cart { cost { subtotalAmount { amount currencyCode } totalAmount { amount } totalTaxAmount { amount } totalDutyAmount { amount } } } }",
     );
+    // The total adds the 4.90 of the selected delivery option.
     assert_eq!(
         out["cart"]["cost"],
         json!({
             "subtotalAmount": {"amount": decimal(subtotal), "currencyCode": "EUR"},
-            "totalAmount": {"amount": decimal(subtotal)},
+            "totalAmount": {"amount": decimal(subtotal + 490)},
             "totalTaxAmount": null,
             "totalDutyAmount": null,
         })
+    );
+}
+
+#[test]
+fn costs_follow_the_discounts_applied_so_far() {
+    let mut f = Fixture::new();
+    let allocate = |line: &mut ResultLine, class, amount| {
+        line.discount_allocations.push(crate::DiscountAllocation {
+            title: "Discount".to_string(),
+            code: None,
+            amount,
+            class,
+        });
+        line.total -= amount;
+    };
+    allocate(&mut f.lines[0], DiscountClass::Product, 500);
+    allocate(&mut f.lines[0], DiscountClass::Order, 300);
+    allocate(&mut f.lines[1], DiscountClass::Order, 100);
+    let before: i64 = f.lines.iter().map(|line| line.subtotal).sum();
+    let line_total: i64 = f.lines.iter().map(|line| line.total).sum();
+    assert_eq!(line_total, before - 900);
+
+    let out = f.run(
+        "{ cart { cost { subtotalAmount { amount } totalAmount { amount } } lines { cost { subtotalAmount { amount } totalAmount { amount } } } } }",
+    );
+    // The subtotal keeps the discounts of the lines and leaves out the order discounts.
+    assert_eq!(
+        out["cart"]["cost"]["subtotalAmount"]["amount"],
+        decimal(before - 500)
+    );
+    assert_eq!(
+        out["cart"]["cost"]["totalAmount"]["amount"],
+        decimal(line_total + 490)
+    );
+    let costs = &out["cart"]["lines"];
+    assert_eq!(
+        costs[0]["cost"]["subtotalAmount"]["amount"],
+        decimal(f.lines[0].subtotal)
+    );
+    assert_eq!(
+        costs[0]["cost"]["totalAmount"]["amount"],
+        decimal(f.lines[0].subtotal - 800)
+    );
+    assert_eq!(
+        costs[1]["cost"]["totalAmount"]["amount"],
+        decimal(f.lines[1].subtotal - 100)
     );
 }
 

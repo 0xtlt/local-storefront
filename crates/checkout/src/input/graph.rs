@@ -9,7 +9,9 @@ use serde_json::{Value as Json, json};
 
 use super::exec::{Args, Graph, Resolved};
 use super::{InputContext, OwnerKind, decimal, delivery_group_id, payment_method_id};
-use crate::{Address, DeliveryGroup, DeliveryOption, Metafield, PaymentMethod, ResultLine};
+use crate::{
+    Address, DeliveryGroup, DeliveryOption, DiscountClass, Metafield, PaymentMethod, ResultLine,
+};
 
 pub(super) struct FunctionInput<'c> {
     ctx: &'c InputContext<'c>,
@@ -333,6 +335,15 @@ impl<'c> Graph for FunctionInput<'c> {
     }
 }
 
+/// What the order discounts took from a line.
+fn order_discounts(line: &ResultLine) -> i64 {
+    line.discount_allocations
+        .iter()
+        .filter(|allocation| allocation.class == DiscountClass::Order)
+        .map(|allocation| allocation.amount)
+        .sum()
+}
+
 fn leaf<'c>(value: impl serde::Serialize) -> Option<Resolved<Node<'c>>> {
     Some(Resolved::Leaf(
         serde_json::to_value(value).unwrap_or(Json::Null),
@@ -437,9 +448,27 @@ impl<'c> FunctionInput<'c> {
     }
 
     fn cart_cost(&self, name: &str) -> Option<Resolved<Node<'c>>> {
-        let subtotal: i64 = self.ctx.lines.iter().map(|line| line.subtotal).sum();
+        let lines = self.ctx.lines;
         match name {
-            "subtotalAmount" | "totalAmount" => object(Node::Money(subtotal)),
+            // Before taxes and cart-level (order) discounts, after the discounts on the lines.
+            "subtotalAmount" => object(Node::Money(
+                lines
+                    .iter()
+                    .map(|line| line.total + order_discounts(line))
+                    .sum(),
+            )),
+            // What the buyer pays at this step: every discount applied so far and the selected
+            // shipping, before taxes.
+            "totalAmount" => {
+                let items: i64 = lines.iter().map(|line| line.total).sum();
+                let shipping: i64 = self
+                    .ctx
+                    .delivery_groups
+                    .iter()
+                    .map(DeliveryGroup::selected_cost)
+                    .sum();
+                object(Node::Money(items + shipping))
+            }
             // Taxes and duties are only known once the checkout is complete.
             "totalTaxAmount" | "totalDutyAmount" => Some(Resolved::Null),
             _ => None,
@@ -498,8 +527,9 @@ impl<'c> FunctionInput<'c> {
                     .filter(|price| *price > line.unit_price)
                     .map_or(Resolved::Null, |price| Resolved::Object(Node::Money(price))),
             ),
-            // Discounts are computed from this cost: they are not in it.
-            "subtotalAmount" | "totalAmount" => object(Node::Money(line.subtotal)),
+            // Before any discount, then after the ones applied so far.
+            "subtotalAmount" => object(Node::Money(line.subtotal)),
+            "totalAmount" => object(Node::Money(line.total)),
             _ => None,
         }
     }

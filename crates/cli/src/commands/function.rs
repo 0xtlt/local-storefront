@@ -324,6 +324,78 @@ mod tests {
         );
     }
 
+    /// Runs `lsf function run` on the fixture app of lsf-checkout, for a store with one product
+    /// (4 at 32.00 in the cart) and the given discount, and says whether it exits with 1.
+    fn run_fails(discount: Json, handle: &str, function_settings: Option<Json>) -> bool {
+        let root = std::env::temp_dir().join(format!(
+            "lsf-function-run-{}-{}",
+            std::process::id(),
+            handle
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let data = root.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let mut checkout = serde_json::json!({ "discounts": [discount] });
+        if let Some(settings) = function_settings {
+            checkout["functions"] = serde_json::json!({
+                handle: {"metafields": {"$app:config.settings": {"type": "json", "value": settings}}}
+            });
+        }
+        let store = serde_json::json!({
+            "products": [{"title": "Thing", "price": 3200}],
+            "session": {"cart": {"items": [{"variant": "thing", "quantity": 4}]}},
+            "checkout": checkout,
+        });
+        std::fs::write(data.join("store.json"), store.to_string()).unwrap();
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let args = Args {
+            command: Subcommand::Run(RunArgs {
+                handles: vec![handle.to_string()],
+                app: Some(app),
+                build: false,
+                session: None,
+                checkout: None,
+                format: Format::Json,
+            }),
+        };
+        let code = run(&root, Some(&data), &[], args).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+        format!("{code:?}") == format!("{:?}", ExitCode::FAILURE)
+    }
+
+    fn volume_discount(settings: Json) -> Json {
+        serde_json::json!({
+            "function": "volume-discount",
+            "classes": ["PRODUCT"],
+            "metafields": {"$app:config.settings": {"type": "json", "value": settings}}
+        })
+    }
+
+    /// One test: the runs share the scratch theme `App::open_without_theme` makes per process.
+    #[test]
+    fn only_a_failed_run_exits_with_1() {
+        // The Function ran and gave an output, but it gives more than 100 percent off and the
+        // checkout cannot apply it: the run fails.
+        assert!(run_fails(
+            volume_discount(serde_json::json!({"minimumQuantity": 1, "percentage": 150})),
+            "volume-discount",
+            None
+        ));
+        // The same Function with a fair discount.
+        assert!(!run_fails(
+            volume_discount(serde_json::json!({"minimumQuantity": 1, "percentage": 50})),
+            "volume-discount",
+            None
+        ));
+        // The cart has 4 items and the validation allows 1: the checkout cannot be placed, but
+        // the Function did its job.
+        assert!(!run_fails(
+            serde_json::json!({"function": "volume-discount"}),
+            "quantity-limit",
+            Some(serde_json::json!({"maxQuantity": 1}))
+        ));
+    }
+
     #[test]
     fn money_prints_with_its_currency() {
         assert_eq!(money(1999, "EUR"), "19.99 EUR");

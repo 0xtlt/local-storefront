@@ -360,6 +360,158 @@ fn payment_customization_hides_and_renames_methods() {
     );
 }
 
+/// The payment rules of the fixture: hide Cash on Delivery from 100.00 of subtotal.
+fn payment_rules() -> Vec<lsf_checkout::Metafield> {
+    settings(json!({"hideName": "Cash on Delivery", "hideAbove": 100}))
+}
+
+fn method_names(result: &lsf_checkout::CheckoutResult) -> Vec<&str> {
+    result
+        .payment_methods
+        .iter()
+        .map(|method| method.name.as_str())
+        .collect()
+}
+
+#[test]
+fn payment_customization_sees_the_cart_after_the_discounts() {
+    let app = app();
+    let store = store();
+    // 4 x 32.00 = 128.00, 64.00 once half of it is discounted.
+    let session = session(&store, &[(TEE, 4)]);
+    let mut config = config();
+    config
+        .function_metafields
+        .insert("payment-rules".to_string(), payment_rules());
+    let selection = Selection::only(["volume-discount", "payment-rules"]);
+
+    let without = compute(
+        &app,
+        &selection,
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+    );
+    assert!(without.errors.is_empty(), "{:?}", without.errors);
+    assert_eq!(
+        run_for(&without, "payment-rules").input["cart"]["cost"]["subtotalAmount"]["amount"],
+        "128.0"
+    );
+    assert!(!method_names(&without).contains(&"Cash on Delivery"));
+
+    config.discounts = vec![discount(
+        "volume-discount",
+        "Half price",
+        None,
+        &[Product],
+        json!({"minimumQuantity": 1, "percentage": 50}),
+    )];
+    let result = compute(
+        &app,
+        &selection,
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.lines[0].total, 6400);
+    let run = run_for(&result, "payment-rules");
+    assert_eq!(
+        run.input["cart"]["cost"]["subtotalAmount"]["amount"],
+        "64.0"
+    );
+    assert!(run.error.is_none());
+    assert!(
+        method_names(&result).contains(&"Cash on Delivery"),
+        "{:?}",
+        method_names(&result)
+    );
+}
+
+/// The amounts a validation Function can read, whatever its own input query asks.
+fn cost_seen_by_validation(
+    discounts: Vec<DiscountConfig>,
+) -> (lsf_checkout::CheckoutResult, serde_json::Value) {
+    const QUERY: &str = r#"query Input {
+        cart {
+            lines { quantity cost { subtotalAmount { amount } totalAmount { amount } } }
+            buyerIdentity { email }
+            cost { subtotalAmount { amount } totalAmount { amount } }
+        }
+        validation { metafield(namespace: "$app:config", key: "settings") { value } }
+    }"#;
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(TEE, 4)]);
+    let mut config = config();
+    config.discounts = discounts;
+    config.function_metafields.insert(
+        "quantity-limit".to_string(),
+        settings(json!({"maxQuantity": 10})),
+    );
+    let build = |query: &str,
+                 variables: Option<&serde_json::Value>,
+                 ctx: &lsf_checkout::input::InputContext| {
+        let query = match ctx.owner.kind {
+            lsf_checkout::input::OwnerKind::Validation => QUERY,
+            _ => query,
+        };
+        lsf_checkout::input::build(query, variables, ctx)
+    };
+    let result = compute_with(
+        &app,
+        &Selection::only(["volume-discount", "quantity-limit"]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+        &build,
+    );
+    let input = run_for(&result, "quantity-limit").input.clone();
+    (result, input)
+}
+
+#[test]
+fn validation_sees_the_cart_after_a_product_discount() {
+    let (result, input) = cost_seen_by_validation(vec![discount(
+        "volume-discount",
+        "Half price",
+        None,
+        &[Product],
+        json!({"minimumQuantity": 1, "percentage": 50}),
+    )]);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let cost = &input["cart"]["cost"];
+    assert_eq!(cost["subtotalAmount"]["amount"], "64.0");
+    // 64.00 and the 4.90 of the selected rate.
+    assert_eq!(cost["totalAmount"]["amount"], "68.9");
+    let line = &input["cart"]["lines"][0]["cost"];
+    assert_eq!(line["subtotalAmount"]["amount"], "128.0");
+    assert_eq!(line["totalAmount"]["amount"], "64.0");
+}
+
+#[test]
+fn an_order_discount_is_not_in_the_subtotal_but_in_the_total() {
+    let (result, input) = cost_seen_by_validation(vec![discount(
+        "volume-discount",
+        "Ten percent",
+        None,
+        &[Order],
+        json!({"orderPercentage": 10}),
+    )]);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.lines[0].total, 11520);
+    let cost = &input["cart"]["cost"];
+    // The subtotal is before the cart-level discounts, the total after them (and the rate).
+    assert_eq!(cost["subtotalAmount"]["amount"], "128.0");
+    assert_eq!(cost["totalAmount"]["amount"], "120.1");
+    let line = &input["cart"]["lines"][0]["cost"];
+    assert_eq!(line["subtotalAmount"]["amount"], "128.0");
+    assert_eq!(line["totalAmount"]["amount"], "115.2");
+}
+
 #[test]
 fn validation_errors_block_the_checkout() {
     let app = app();
@@ -403,6 +555,8 @@ fn validation_errors_block_the_checkout() {
         run_for(&result, "quantity-limit").target,
         "purchase.validation.run"
     );
+    // A validation error is a checkout error the Function meant, not a failed run.
+    assert!(run_for(&result, "quantity-limit").error.is_none());
 }
 
 #[test]
@@ -727,6 +881,15 @@ fn out_of_range_discount(class: DiscountClass, settings: serde_json::Value) {
         result.errors[0].message.contains("between 0 and 100"),
         "{:?}",
         result.errors
+    );
+    // The Function ran but its output cannot be applied: the run fails.
+    let run = run_for(&result, "volume-discount");
+    assert!(
+        run.error
+            .as_deref()
+            .is_some_and(|error| error.contains("between 0 and 100")),
+        "{:?}",
+        run.error
     );
     assert!(result.discounts.is_empty());
     assert_eq!(result.lines[0].total, result.lines[0].subtotal);
