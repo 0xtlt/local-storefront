@@ -5,6 +5,7 @@
 //! the checkout shares with the theme. Every request computes the checkout again, running the
 //! Functions of the app: `lsf_checkout::pipeline::compute`.
 
+use indexmap::IndexMap;
 use lsf_checkout::app::{App, Selection};
 use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
 use lsf_checkout::{Address, CheckoutResult, CheckoutState, Metafield};
@@ -14,7 +15,7 @@ use lsf_core::{Session, Store};
 use serde_json::{Value as Json, json};
 
 use super::reply::{Reply, cache, content_type};
-use super::{Incoming, SESSION_COOKIE, ServerState};
+use super::{Incoming, SESSION_COOKIE, ServerState, SessionEntry};
 use crate::checkout::{CheckoutOptions, Variant, config_from_store, translations};
 
 /// Where the files of the page are served from.
@@ -29,6 +30,33 @@ pub struct CheckoutSession {
     pub variant: Option<Variant>,
     /// The state of the order the buyer completed, which the thank-you page shows.
     pub completed: Option<Json>,
+    /// How many orders this session placed: a completion that started before one finished
+    /// must not place another.
+    pub placed: u64,
+}
+
+/// What a completion read of the session. The order may only consume the cart if this is still
+/// what the session holds, otherwise the buyer would pay for something they did not see, and
+/// wipe what changed meanwhile (another tab, another completion).
+#[derive(PartialEq)]
+struct Basis {
+    cart_lines: Vec<CartLine>,
+    cart_note: String,
+    cart_attributes: IndexMap<String, String>,
+    state: Json,
+    placed: u64,
+}
+
+impl Basis {
+    fn of(entry: &SessionEntry) -> Basis {
+        Basis {
+            cart_lines: entry.session.cart_lines.clone(),
+            cart_note: entry.session.cart_note.clone(),
+            cart_attributes: entry.session.cart_attributes.clone(),
+            state: json!(entry.checkout.state),
+            placed: entry.checkout.placed,
+        }
+    }
 }
 
 /// The pages and the API of the checkout. `None` when the request is not for the checkout, so
@@ -171,6 +199,10 @@ fn origin_of(incoming: &Incoming) -> String {
 struct Computed {
     json: Json,
     result: CheckoutResult,
+    /// What the buyer entered, with what the store knows of them.
+    checkout: CheckoutState,
+    /// What the session held when it was read.
+    basis: Basis,
 }
 
 fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result<Computed, String> {
@@ -178,8 +210,16 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
     let variant = variant_of(state, session_id, incoming);
     let app = lsf_checkout::app::load(&options.app_dir)?;
     let selection = Selection::resolve(&app, &options.extensions)?;
-    let (session, store) = state.snapshot(session_id);
-    let mut checkout = state.with_session(session_id, |entry| entry.checkout.state.clone());
+    // One read, so that the basis is what the result is computed from.
+    let base = state.loaded().store.clone();
+    let (session, store, mut checkout, basis) = state.with_session(session_id, |entry| {
+        (
+            entry.session.clone(),
+            entry.store.clone().unwrap_or(base),
+            entry.checkout.state.clone(),
+            Basis::of(entry),
+        )
+    });
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     // A logged-in customer does not have to type what the store knows.
     if checkout.email.is_none() {
@@ -261,7 +301,12 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
                 .collect(),
         ),
     );
-    Ok(Computed { json, result })
+    Ok(Computed {
+        json,
+        result,
+        checkout,
+        basis,
+    })
 }
 
 /// The checkout UI extensions to load: the built ones on a supported API version.
@@ -824,20 +869,48 @@ fn complete(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
         Ok(session) => session,
         Err(reply) => return reply,
     };
-    let reply = place_order(state, incoming, &id, token);
+    let reply = place_order(state, incoming, &id, token, || {});
     with_cookie(reply, &id, is_new)
 }
 
-fn place_order(state: &ServerState, incoming: &Incoming, id: &str, token: &str) -> Reply {
+/// The way to the thank-you page.
+fn redirect_to_thanks(token: &str) -> Reply {
+    Reply::json(
+        200,
+        &json!({"redirect": format!("{}/thank-you", checkout_path(token))}),
+    )
+    .cached(cache::PRIVATE)
+}
+
+/// Whether the order of this checkout was placed already, and its cart taken: asking again
+/// leads to the same thank-you page instead of placing another order.
+fn already_placed(state: &ServerState, id: &str) -> bool {
+    state.with_session(id, |entry| {
+        entry.checkout.completed.is_some() && entry.session.cart_lines.is_empty()
+    })
+}
+
+/// Places the order of the cart the Functions were run on. `between` runs after the session was
+/// read and before the order takes the cart, where the Functions take their time.
+pub(super) fn place_order(
+    state: &ServerState,
+    incoming: &Incoming,
+    id: &str,
+    token: &str,
+    between: impl FnOnce(),
+) -> Reply {
+    if already_placed(state, id) {
+        return redirect_to_thanks(token);
+    }
     let mut computed = match compute(state, id, incoming) {
         Ok(computed) => computed,
         Err(problem) => return error(500, problem),
     };
+    between();
     if computed.result.lines.is_empty() {
         return error(422, "The cart is empty.");
     }
-    let checkout = state.with_session(id, |entry| entry.checkout.state.clone());
-    let mut blocking = missing(&computed, &checkout);
+    let mut blocking = missing(&computed, &computed.checkout);
     if !computed.result.errors.is_empty() || !blocking.is_empty() {
         // What the Functions said stays first.
         if let Some(errors) = computed.json["errors"].as_array_mut() {
@@ -845,24 +918,38 @@ fn place_order(state: &ServerState, incoming: &Incoming, id: &str, token: &str) 
         }
         return Reply::json(422, &computed.json).cached(cache::PRIVATE);
     }
-    let number = 1000 + state.next_order();
     let mut order = computed.json;
-    order["status"] = json!("completed");
-    order["order"] =
-        json!({"id": format!("gid://shopify/Order/{number}"), "number": format!("#{number}")});
-    state.with_session(id, |entry| {
+    // The cart is taken only if it is still the one that was priced; the check and the take are
+    // one step of the session.
+    let taken = state.with_session(id, |entry| {
+        if Basis::of(entry) != computed.basis {
+            return false;
+        }
+        let number = 1000 + state.next_order();
+        order["status"] = json!("completed");
+        order["order"] =
+            json!({"id": format!("gid://shopify/Order/{number}"), "number": format!("#{number}")});
         entry.checkout.completed = Some(order);
+        entry.checkout.placed += 1;
         entry.checkout.state = CheckoutState::default();
-        // The order took what was in the cart.
         entry.session.cart_lines.clear();
         entry.session.cart_note.clear();
         entry.session.cart_attributes.clear();
+        true
     });
-    Reply::json(
-        200,
-        &json!({"redirect": format!("{}/thank-you", checkout_path(token))}),
-    )
-    .cached(cache::PRIVATE)
+    if taken {
+        return redirect_to_thanks(token);
+    }
+    // Another request placed the order meanwhile.
+    if already_placed(state, id) {
+        return redirect_to_thanks(token);
+    }
+    // The cart changed while the order was being priced: nothing was bought, and the buyer
+    // sees the cart as it is now.
+    match current(state, id, incoming) {
+        Ok(fresh) => Reply::json(409, &fresh).cached(cache::PRIVATE),
+        Err(reply) => reply,
+    }
 }
 
 /// A file of the page, from the binary.

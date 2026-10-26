@@ -3584,6 +3584,119 @@ fn a_checkout_is_completed_when_nothing_is_missing() {
     assert_eq!(reply.status, 422);
 }
 
+/// A checkout of `session` that can be completed.
+fn ready_checkout(state: &ServerState, session: &str) -> String {
+    let path = start_checkout(
+        state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(state, &path, session, buyer_details()).status,
+        200
+    );
+    path
+}
+
+fn cart_count(state: &ServerState, session: &str) -> u64 {
+    body_json(&get(state, "/cart.js", session))["item_count"]
+        .as_u64()
+        .expect("a count")
+}
+
+#[test]
+fn a_cart_change_while_completing_is_kept_and_buys_nothing() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-race");
+    let token = path.rsplit('/').next().unwrap();
+
+    // Another tab adds an item after the Functions ran on the cart, before the order takes it.
+    let reply = super::checkout::place_order(
+        &state,
+        &request("POST", &format!("{path}/complete"), json!({}), "co-race"),
+        "co-race",
+        token,
+        || {
+            let reply = post(
+                &state,
+                "/cart/add.js",
+                json!({"id": variant_id(&state, "TOTE-NAT"), "quantity": 1}),
+                "co-race",
+            );
+            assert!(reply.status < 300, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["lines"].as_array().unwrap().len(), 2, "{json}");
+    // Nothing was bought, nothing was wiped, no number was spent.
+    assert_eq!(cart_count(&state, "co-race"), 3);
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), "co-race").status,
+        302
+    );
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 0);
+
+    // The buyer completes what they now see.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-race");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(cart_count(&state, "co-race"), 0);
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[test]
+fn completing_again_places_no_second_order() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-twice");
+    let token = path.rsplit('/').next().unwrap();
+
+    // A second completion that started before the first one finished.
+    let reply = super::checkout::place_order(
+        &state,
+        &request("POST", &format!("{path}/complete"), json!({}), "co-twice"),
+        "co-twice",
+        token,
+        || {
+            let reply = post(&state, &format!("{path}/complete"), json!({}), "co-twice");
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+    // And one that comes after: the same thank-you page, not a new order.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-twice");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-twice"));
+    assert_eq!(json["order"]["number"], "#1001");
+}
+
+#[test]
+fn concurrent_completions_place_one_order() {
+    let state = std::sync::Arc::new(checkout_server(&[], false));
+    let path = ready_checkout(&state, "co-threads");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let replies: Vec<u16> = (0..4)
+        .map(|_| {
+            let (state, path, barrier) = (state.clone(), path.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                post(&state, &format!("{path}/complete"), json!({}), "co-threads").status
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|thread| thread.join().expect("a reply"))
+        .collect();
+    assert!(replies.iter().all(|status| *status == 200), "{replies:?}");
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(cart_count(&state, "co-threads"), 0);
+}
+
 #[test]
 fn the_functions_of_the_app_apply() {
     let state = checkout_server(&[], false);

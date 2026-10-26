@@ -184,7 +184,7 @@ await request.post(`${path}/update`, {
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
-| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you"}`, or `422` and the state with `errors` |
+| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you"}`, `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
 | `GET /checkouts/cn/<token>/thank-you` | The page of the order. | HTML |
 | `GET /__lsf/checkout?session=<id>` | The state of a session's checkout, from outside its browser. | JSON |
 
@@ -210,7 +210,9 @@ the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount":
 
 `complete` refuses an empty cart, an order with errors from a Function, and one without an
 email, a payment method or, for a cart that ships, an address. It empties the cart: the order is
-what the thank-you page shows.
+what the thank-you page shows. It takes the cart only if the cart is still the one the Functions
+ran on: if it changed meanwhile (another tab), nothing is bought and the reply is `409`. Completing
+an order that was placed already leads to the same thank-you page, never to a second order.
 
 ## What it does not do
 
