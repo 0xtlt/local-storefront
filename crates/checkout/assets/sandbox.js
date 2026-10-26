@@ -42,27 +42,16 @@
   }
 
   async function run(init) {
-    const registered = runtime.registered;
-    const name = init.names.find((candidate) => registered.has(candidate));
-    if (!name) {
-      const known = [...registered.keys()];
+    const render = runtime.registered.get(init.target);
+    if (!render) {
+      const known = [...runtime.registered.keys()];
       fail(
         'The bundle did not register ' + init.target + ' with shopify.extend (it registered: ' +
           (known.length ? known.join(', ') : 'nothing') + ').',
       );
       return;
     }
-    const render = registered.get(name);
-    if (init.mode === 'legacy') {
-      const legacy = Sandbox.createLegacyHost({
-        document,
-        container: document.body,
-        warn: (message) => post({ type: 'log', level: 'warn', args: [message] }),
-      });
-      await render({ channel: legacy.channel, components: legacy.components }, runtime.shopify);
-    } else {
-      await render();
-    }
+    await render();
   }
 
   async function start(init) {

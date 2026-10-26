@@ -1,15 +1,17 @@
 // The two fixture extensions, as built bundles: run through the whole sandbox (boot, API,
-// components or legacy host) against states of the checkout.
+// components) against states of the checkout. `gift-message` is on API 2026-10 and draws the
+// DOM by hand; `order-notice` is a Preact bundle on the 2027-01 release candidate.
 
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { FakeEvent } from './fake-dom.mjs';
+import { refusalOf } from '../api-versions.js';
 import { bundle, engineCheckout, fixtures, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
 import { update } from '../preview/mock-engine.mjs';
 
-const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox-legacy.js', 'sandbox.js'];
+const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
 const url = (handle) => `http://localhost/__lsf/extensions/${handle}/${handle}.js`;
 const next = (...operations) => pageState(update(engineCheckout(), operations).state);
 
@@ -25,6 +27,14 @@ const toml = (handle) => readFileSync(join(fixtures, handle, 'shopify.extension.
 const field = (text, name) => text.match(new RegExp(`^\\s*${name}\\s*=\\s*"([^"]*)"`, 'm'))?.[1];
 const targetsOf = (text) => [...text.matchAll(/^\s*target\s*=\s*"([^"]+)"/gm)].map((match) => match[1]);
 
+/** The `[[extensions.metafields]]` of a toml, as the state of the page spells them. */
+const metafieldsOf = (text) =>
+  text
+    .split(/^\s*\[\[extensions\.metafields\]\]\s*$/m)
+    .slice(1)
+    .map((block) => block.split(/^\s*\[/m)[0])
+    .map((block) => ({ namespace: field(block, 'namespace'), key: field(block, 'key'), ownerType: field(block, 'owner_type') }));
+
 test('each fixture is an app extension with a toml and a bundle named after its handle', () => {
   // The fixture app also holds Functions: only its UI extensions are bundles.
   const handles = readdirSync(fixtures)
@@ -37,10 +47,23 @@ test('each fixture is an app extension with a toml and a bundle named after its 
     assert.equal(field(text, 'type'), 'ui_extension');
     assert.ok(field(text, 'api_version'));
     assert.ok(bundle(handle).startsWith('//'), 'the bundle says what it is');
-    assert.match(bundle(handle).replace(/^(\/\/.*\n)+/, ''), /^\(\(\) => \{/, 'an IIFE, as esbuild leaves it');
+    assert.match(bundle(handle).replace(/^(\/\/.*\n)+/, ''), /^\(\(\) ?=> ?\{/, 'an IIFE, as esbuild leaves it');
   }
-  assert.equal(field(toml('gift-message'), 'api_version'), '2025-10');
-  assert.equal(field(toml('order-notice'), 'api_version'), '2025-07');
+  assert.equal(field(toml('gift-message'), 'api_version'), '2026-10');
+  assert.equal(field(toml('order-notice'), 'api_version'), '2027-01');
+});
+
+test('each fixture declares a metafield the way its API version asks for', () => {
+  const gift = { apiVersion: field(toml('gift-message'), 'api_version'), metafields: metafieldsOf(toml('gift-message')) };
+  const notice = { apiVersion: field(toml('order-notice'), 'api_version'), metafields: metafieldsOf(toml('order-notice')) };
+  // 2026-10 lets a declaration go without owner_type: gift-message does.
+  assert.deepEqual(gift.metafields, [{ namespace: '$app:gift', key: 'wrapped', ownerType: undefined }]);
+  assert.equal(refusalOf(gift), null);
+  // 2027-01 requires it: order-notice has it, and gift-message would not run there.
+  assert.deepEqual(notice.metafields, [{ namespace: '$app:notice', key: 'dismissed', ownerType: 'CART' }]);
+  assert.equal(refusalOf(notice), null);
+  assert.match(refusalOf({ ...gift, apiVersion: '2027-01' }), /requires owner_type.*\$app:gift\.wrapped/);
+  assert.equal(refusalOf({ ...notice, apiVersion: '2026-10' }), null, 'owner_type is allowed on 2026-10');
 });
 
 test('a bundle registers the targets its toml declares, and no others', () => {
@@ -124,30 +147,34 @@ test('gift-message thanks the buyer on the thank-you page', async () => {
   assert.equal(banner.hidden, false);
 });
 
-test('order-notice draws a remote-ui tree and updates it', async () => {
-  const settings = { threshold: 100, code: 'FREESHIP' };
-  const win = await boot('order-notice', 'purchase.checkout.reductions.render-after', { apiVersion: '2025-07', ext: { settings, capabilities: { api_access: true } } });
+/** Boots order-notice, a Preact bundle, and waits for Preact to draw. */
+const notice = (target, options = {}) =>
+  boot('order-notice', target, { apiVersion: '2027-01', ...options, ext: { capabilities: { api_access: true }, ...options.ext } });
+
+test('order-notice draws with Preact and follows the checkout through signals', async () => {
+  const win = await notice('purchase.checkout.reductions.render-after', { ext: { settings: { threshold: 100, code: 'FREESHIP' } } });
   assert.equal(win.posts('error').length, 0, JSON.stringify(win.posts('error')));
-  const banner = win.document.body.firstChild;
+  const [banner] = win.document.body.childNodes;
   assert.equal(banner.localName, 's-banner');
   assert.equal(banner.getAttribute('heading'), 'Free shipping from €100.00');
   assert.equal(banner.getAttribute('tone'), 'info');
-  const stack = banner.firstChild;
-  assert.equal(stack.localName, 's-stack');
-  const [sentence, progress, button] = stack.childNodes;
+  const [sentence, progress, actions] = banner.firstChild.childNodes;
   assert.equal(sentence.textContent, 'You are €27.00 away from free shipping.');
   assert.equal(progress.localName, 's-progress');
   assert.equal(progress.getAttribute('value'), '73');
-  assert.equal(button.localName, 's-button');
-  assert.equal(button.getAttribute('variant'), 'secondary');
-  assert.equal(button.textContent, 'Apply FREESHIP');
+  assert.equal(progress.getAttribute('max'), '100');
+  const [apply] = actions.childNodes;
+  assert.equal(apply.getAttribute('variant'), 'secondary');
+  assert.equal(apply.textContent, 'Apply FREESHIP');
 
+  // Preact reads `shopify.cost.totalAmount.value` while it renders: a new total redraws it.
   win.receive({ type: 'state', state: next({ type: 'cartLines', change: { type: 'updateCartLine', id: 'gid://shopify/CartLine/2', quantity: 6 } }) });
+  await settle();
   assert.equal(sentence.textContent, 'Shipping is free on this order.');
   assert.equal(banner.getAttribute('tone'), 'success');
   assert.equal(progress.getAttribute('value'), '100');
 
-  button.click();
+  apply.click();
   const request = win.posts('change').at(-1);
   assert.deepEqual([request.method, request.change], ['applyDiscountCodeChange', { type: 'addDiscountCode', code: 'FREESHIP' }]);
   win.receive({ type: 'result', id: request.id, result: { type: 'error', message: 'Code not valid' } });
@@ -156,20 +183,44 @@ test('order-notice draws a remote-ui tree and updates it', async () => {
   assert.equal(banner.getAttribute('tone'), 'critical');
 });
 
+test('order-notice reads the cart metafield it declares with an owner_type, and writes it to dismiss', async () => {
+  const win = await notice('purchase.checkout.reductions.render-after');
+  assert.equal(win.posts('error').length, 0, JSON.stringify(win.posts('error')));
+  assert.equal(win.document.body.childNodes.length, 1);
+  const dismiss = win.document.body.firstChild.firstChild.childNodes[2].childNodes[1];
+  assert.equal(dismiss.textContent, 'Dismiss');
+  dismiss.click();
+  const request = win.posts('change').at(-1);
+  assert.equal(request.method, 'applyMetafieldChange');
+  assert.deepEqual(request.change, {
+    type: 'updateCartMetafield',
+    metafield: { namespace: '$app:notice', key: 'dismissed', type: 'boolean', value: 'true' },
+  });
+
+  // The checkout now holds it as a cart metafield: the notice goes.
+  const stored = { type: 'metafield', change: { type: 'updateCartMetafield', namespace: '$app:notice', key: 'dismissed', valueType: 'boolean', value: 'true' } };
+  win.receive({ type: 'state', state: next(stored) });
+  await settle();
+  assert.equal(win.document.body.childNodes.length, 0);
+  // Another metafield of the cart does not dismiss it.
+  const other = { ...stored, change: { ...stored.change, key: 'other' } };
+  const again = await notice('purchase.checkout.reductions.render-after', { state: next(other) });
+  assert.equal(again.document.body.childNodes.length, 1);
+});
+
 test('order-notice reads and writes the note from the shipping step', async () => {
   const state = pageState({ ...update(engineCheckout(), [{ type: 'shippingAddress', address: { countryCode: 'FR' } }]).state, note: 'ring twice' });
-  const win = await boot('order-notice', 'purchase.checkout.shipping-option-list.render-after', { apiVersion: '2025-07', state, ext: { capabilities: { api_access: true } } });
+  const win = await notice('purchase.checkout.shipping-option-list.render-after', { state });
   assert.equal(win.posts('error').length, 0, JSON.stringify(win.posts('error')));
   const [info, field] = win.document.body.firstChild.childNodes;
   assert.equal(info.textContent, '2 shipping options for this order');
   assert.equal(field.localName, 's-text-area', 'multiline');
-  assert.equal(field.value, 'ring twice');
-  field.value = 'leave at the door';
-  field.dispatchEvent(new FakeEvent('change'));
-  assert.deepEqual(win.posts('change').at(-1).change, { type: 'updateNote', note: 'leave at the door' });
-  field.value = '';
-  field.dispatchEvent(new FakeEvent('change'));
-  assert.deepEqual(win.posts('change').at(-1).change, { type: 'removeNote' });
+  assert.equal(field.getAttribute('value'), 'ring twice');
+  for (const [typed, change] of [['leave at the door', { type: 'updateNote', note: 'leave at the door' }], ['', { type: 'removeNote' }]]) {
+    field.value = typed;
+    field.dispatchEvent(new FakeEvent('change'));
+    assert.deepEqual(win.posts('change').at(-1).change, change);
+  }
 });
 
 test('reports a bundle that is missing, and a target it did not register', async () => {
@@ -178,18 +229,8 @@ test('reports a bundle that is missing, and a target it did not register', async
   for (let i = 0; i < 3; i++) await settle();
   assert.match(missing.posts('error')[0].message, /shopify app build/);
 
-  const wrong = await boot('order-notice', 'purchase.checkout.block.render', { apiVersion: '2025-07' });
+  const wrong = await boot('order-notice', 'purchase.checkout.block.render', { apiVersion: '2027-01' });
   assert.match(wrong.posts('error')[0].message, /did not register purchase\.checkout\.block\.render.*registered: purchase\.checkout\.reductions\.render-after, purchase\.checkout\.shipping-option-list\.render-after/);
-});
-
-test('an extension registered under an older name of its target still runs', async () => {
-  const handle = 'gift-message';
-  const source = bundle(handle).replace('"purchase.checkout.block.render"', '"Checkout::Dynamic::Render"');
-  const win = sandboxWindow({ scripts: SANDBOX, bundles: { [url(handle)]: source } });
-  win.receive(init({ handle, target: 'purchase.checkout.block.render', names: ['purchase.checkout.block.render', 'Checkout::Dynamic::Render'] }));
-  for (let i = 0; i < 4; i++) await settle();
-  assert.equal(win.posts('error').length, 0);
-  assert.equal(win.document.body.firstChild.localName, 's-stack');
 });
 
 test('the frame is as tall as the extension and says when it changes', async () => {

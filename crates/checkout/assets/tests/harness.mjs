@@ -53,6 +53,7 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     Event: FakeEvent,
     Promise,
     setTimeout,
+    queueMicrotask,
     JSON,
     addEventListener: (type, listener) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
     ResizeObserver: class {
@@ -120,15 +121,13 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
 }
 
 /** The `init` message of the page for an extension on a target. */
-export function init({ handle, target, apiVersion = '2025-10', state = checkoutState(), ctx = {}, ext = {}, names }) {
+export function init({ handle, target, apiVersion = '2026-10', state = checkoutState(), ctx = {}, ext = {} }) {
   return {
     type: 'init',
     handle,
     target,
-    names: names ?? [target],
     script: `http://localhost/__lsf/extensions/${handle}/${handle}.js`,
     apiVersion,
-    mode: apiVersion < '2025-10' ? 'legacy' : 'modern',
     ctx,
     variant: 'standard',
     ext: { settings: {}, capabilities: { api_access: true, block_progress: true }, translations: {}, ...ext },

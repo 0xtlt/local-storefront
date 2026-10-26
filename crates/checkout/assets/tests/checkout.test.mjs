@@ -241,6 +241,15 @@ test('puts extension frames where their targets are, with the state', () => {
   assert.equal(page.query('.lsf-slot[data-target="purchase.checkout.block.render"]').childNodes.length, 1);
 });
 
+test('does not load an extension on an API version it does not run, and says why', () => {
+  const page = app({ mutate: (engine) => { engine.extensions[1].apiVersion = '2025-07'; } });
+  const placed = connect(page).map((frame) => frame.ext.handle);
+  assert.ok(placed.includes('gift-message'));
+  assert.ok(!placed.includes('order-notice'));
+  assert.equal(page.query('.lsf-slot[data-target="purchase.checkout.reductions.render-after"]'), null, 'no slot where only that extension targets');
+  assert.match(page.text('.lsf-diagnostics'), /order-notice: not loaded\. API version 2025-07 is not supported/);
+});
+
 test('keeps its frames when the page is drawn again', async () => {
   const page = app();
   const before = connect(page).map((frame) => frame.iframe);

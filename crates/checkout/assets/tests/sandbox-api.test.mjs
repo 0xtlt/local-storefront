@@ -34,7 +34,7 @@ test('reads the checkout as signals', () => {
   assert.equal(shopify.buyerIdentity.email.value, undefined);
   assert.equal(shopify.extensionPoint, 'purchase.checkout.block.render');
   assert.equal(shopify.extension.target, 'purchase.checkout.block.render');
-  assert.equal(shopify.extension.apiVersion, '2025-10');
+  assert.equal(shopify.extension.apiVersion, '2026-10');
   assert.deepEqual(plain(shopify.extension.capabilities.value), ['api_access', 'block_progress']);
 });
 
@@ -224,19 +224,6 @@ test('uses the Signal class the extension hands over', () => {
   assert.equal(lines.value.length, 2);
   refresh(next({ type: 'cartLines', change: { type: 'removeCartLine', id: 'gid://shopify/CartLine/2', quantity: 2 } }));
   assert.equal(lines.value.length, 1, 'the extension\'s own signal is the one that is updated');
-});
-
-test('legacy API versions get subscribables: current, and no call back at once', () => {
-  const { shopify, refresh } = runtime({ apiVersion: '2025-07' });
-  const total = shopify.cost.totalAmount;
-  assert.equal(total.current.amount, 73);
-  const seen = [];
-  total.subscribe((value) => seen.push(value.amount));
-  assert.deepEqual(seen, []);
-  refresh(next({ type: 'discountCode', action: 'add', code: 'SAVE10' }));
-  assert.deepEqual(seen, [65.7]);
-  assert.equal(total.current.amount, 65.7);
-  assert.equal(typeof total.destroy, 'function');
 });
 
 test('settings and translations', () => {

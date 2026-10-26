@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { TARGET_ALIASES, canonicalTarget, createExtensionHost, modeOf, namesOfTarget, sessionToken, stateForExtensions } from '../extension-host.js';
+import { createExtensionHost, sessionToken, stateForExtensions } from '../extension-host.js';
 import { FakeDocument } from './fake-dom.mjs';
 import { checkoutState, settle } from './harness.mjs';
 
@@ -52,22 +52,6 @@ function setup({ extensions, storage, state } = {}) {
 
 const BLOCK = 'purchase.checkout.block.render';
 
-test('knows the targets under their old names too', () => {
-  assert.equal(canonicalTarget('Checkout::Dynamic::Render'), BLOCK);
-  assert.equal(canonicalTarget(BLOCK), BLOCK);
-  assert.deepEqual(namesOfTarget(BLOCK), [BLOCK, 'Checkout::Dynamic::Render']);
-  assert.ok(Object.values(TARGET_ALIASES).every((target) => target.startsWith('purchase.')));
-});
-
-test('API versions before 2025-10 are legacy', () => {
-  assert.equal(modeOf('2025-07'), 'legacy');
-  assert.equal(modeOf('2024-10'), 'legacy');
-  assert.equal(modeOf('2025-10'), 'modern');
-  assert.equal(modeOf('2026-01'), 'modern');
-  assert.equal(modeOf('unstable'), 'modern');
-  assert.equal(modeOf(undefined), 'modern');
-});
-
 test('shows extensions only where they target, one frame for each', () => {
   const { host, slot, connect } = setup();
   assert.equal(host.hasTarget(BLOCK), true);
@@ -85,15 +69,32 @@ test('shows extensions only where they target, one frame for each', () => {
   connect();
 });
 
-test('extensions registered under an old target name are placed', () => {
-  const { host, slot } = setup({ extensions: [{ handle: 'old', apiVersion: '2024-10', script: '/x.js', targets: ['Checkout::Dynamic::Render'] }] });
-  assert.equal(host.hasTarget(BLOCK), true);
+test('loads the extensions of the two API versions it runs, and says why it leaves out the others', () => {
+  const extensions = [
+    { handle: 'stable', apiVersion: '2026-10', script: '/s.js', targets: [BLOCK] },
+    { handle: 'candidate', apiVersion: '2027-01', script: '/c.js', targets: [BLOCK] },
+    { handle: 'react', apiVersion: '2025-07', script: '/r.js', targets: [BLOCK] },
+    { handle: 'unversioned', script: '/u.js', targets: [BLOCK] },
+  ];
+  const { host, slot } = setup({ extensions });
   host.attach(slot, BLOCK);
-  assert.equal(host.instances().length, 1);
+  assert.deepEqual(host.instances().map((instance) => instance.ext.handle), ['stable', 'candidate']);
+  assert.deepEqual(host.refusals().map((refusal) => refusal.handle), ['react', 'unversioned']);
+  assert.match(host.refusals()[0].reason, /API version 2025-07 is not supported.*2026-10 and 2027-01/);
+  assert.match(host.refusals()[1].reason, /API version \(none\)/);
+});
+
+test('an extension that only another API version allows is not loaded either', () => {
+  const metafields = [{ namespace: 'custom', key: 'note' }];
+  const on = (apiVersion) => setup({ extensions: [{ handle: 'meta', apiVersion, script: '/m.js', targets: [BLOCK], metafields }] }).host;
+  assert.equal(on('2026-10').hasTarget(BLOCK), true);
+  assert.deepEqual(on('2026-10').refusals(), []);
+  assert.equal(on('2027-01').hasTarget(BLOCK), false);
+  assert.match(on('2027-01').refusals()[0].reason, /requires owner_type on every metafield declaration: custom\.note/);
 });
 
 test('extensions without a bundle are left out', () => {
-  const { host } = setup({ extensions: [{ handle: 'nobuild', apiVersion: '2025-10', targets: [BLOCK] }] });
+  const { host } = setup({ extensions: [{ handle: 'nobuild', apiVersion: '2026-10', targets: [BLOCK] }] });
   assert.equal(host.hasTarget(BLOCK), false);
 });
 
@@ -109,8 +110,8 @@ test('answers a frame that is ready with everything it needs', () => {
   assert.equal(init.handle, 'gift-message');
   assert.equal(init.target, 'purchase.checkout.cart-line-item.render-after');
   assert.equal(init.script, 'http://localhost/__lsf/extensions/gift-message/gift-message.js', 'an absolute URL, for a frame of another origin');
-  assert.equal(init.mode, 'modern');
-  assert.equal(init.apiVersion, '2025-10');
+  assert.equal(init.apiVersion, '2026-10');
+  assert.equal('names' in init, false);
   assert.deepEqual(init.ctx, { key: 'l1', lineId: 'gid://shopify/CartLine/1' });
   assert.deepEqual(init.ext.settings, { max_length: 80 });
   assert.deepEqual(init.ext.capabilities, { api_access: true, block_progress: true });
@@ -122,13 +123,14 @@ test('answers a frame that is ready with everything it needs', () => {
   assert.equal('diagnostics' in init.state, false);
 });
 
-test('a legacy extension is told so', () => {
+test('tells each extension its own API version', () => {
   const { host, slot, connect, from, windows } = setup();
   host.attach(slot, 'purchase.checkout.reductions.render-after');
   connect();
   from(host.instances()[0], { type: 'ready' });
   const [init] = windows.get('order-noticepurchase.checkout.reductions.render-after').posted;
-  assert.equal(init.mode, 'legacy');
+  assert.equal(init.apiVersion, '2027-01');
+  assert.equal('mode' in init, false);
 });
 
 test('sends the new state to the frames that are ready', () => {
@@ -267,7 +269,7 @@ test('asks the interceptors before the buyer pays, and tells them how it went', 
 });
 
 test('says an extension without the capability cannot block', async () => {
-  const { host, slot, connect, from } = setup({ extensions: [{ handle: 'weak', apiVersion: '2025-10', script: '/w.js', targets: [BLOCK], capabilities: { api_access: true } }] });
+  const { host, slot, connect, from } = setup({ extensions: [{ handle: 'weak', apiVersion: '2026-10', script: '/w.js', targets: [BLOCK], capabilities: { api_access: true } }] });
   host.attach(slot, BLOCK);
   connect();
   const [frame] = host.instances();
