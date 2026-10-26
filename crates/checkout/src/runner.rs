@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use function_runner::engine::{
@@ -74,11 +74,30 @@ struct Slot {
     modules: HashMap<PathBuf, Cached>,
 }
 
+/// How many engines stay in the pool when no run needs them.
+const IDLE_ENGINES: usize = 2;
+
+/// The engines of a runner.
+struct Pool {
+    idle: Vec<Slot>,
+    /// Slots in use.
+    busy: usize,
+    /// Runs waiting for a slot.
+    waiting: usize,
+}
+
 /// Runs Functions, concurrent runs included: each run has an engine of its own (from a pool, so
 /// that the compiled modules are reused).
+///
+/// At most as many runs as the machine has CPUs go at once (a run is CPU-bound; every run holds
+/// an engine and the memory of its instance): the others wait for one to finish. Past a small
+/// number of idle engines, the engines of a burst are dropped, with the modules they compiled.
 pub struct Runner {
     timeout: Duration,
-    slots: Mutex<Vec<Slot>>,
+    max_concurrent: usize,
+    keep_idle: usize,
+    pool: Mutex<Pool>,
+    released: Condvar,
 }
 
 impl Default for Runner {
@@ -87,43 +106,102 @@ impl Default for Runner {
     }
 }
 
+/// A slot taken from the pool: it goes back to it when the run is over, even if the run panics.
+struct Lease<'r> {
+    runner: &'r Runner,
+    slot: Option<Slot>,
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot.take() {
+            self.runner.release(slot);
+        }
+    }
+}
+
 impl Runner {
     pub fn new() -> Runner {
         Runner {
             timeout: DEFAULT_TIMEOUT,
-            slots: Mutex::new(Vec::new()),
+            max_concurrent: std::thread::available_parallelism().map_or(4, |count| count.get()),
+            keep_idle: IDLE_ENGINES,
+            pool: Mutex::new(Pool {
+                idle: Vec::new(),
+                busy: 0,
+                waiting: 0,
+            }),
+            released: Condvar::new(),
         }
     }
 
-    /// An idle slot, or a new one.
-    fn acquire(&self) -> Result<Slot, String> {
-        let idle = self.slots.lock().unwrap_or_else(|e| e.into_inner()).pop();
-        if let Some(slot) = idle {
-            return Ok(slot);
+    /// A runner that runs at most `max_concurrent` Functions at once (at least one) and keeps
+    /// at most `keep_idle` engines when it is idle.
+    pub fn with_limits(mut self, max_concurrent: usize, keep_idle: usize) -> Runner {
+        self.max_concurrent = max_concurrent.max(1);
+        self.keep_idle = keep_idle;
+        self
+    }
+
+    /// How many engines wait for a run.
+    pub fn idle_engines(&self) -> usize {
+        self.pool().idle.len()
+    }
+
+    fn pool(&self) -> std::sync::MutexGuard<'_, Pool> {
+        self.pool.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// An idle slot, or a new one. Waits while `max_concurrent` runs are going.
+    fn acquire(&self) -> Result<Lease<'_>, String> {
+        let mut pool = self.pool();
+        if pool.busy >= self.max_concurrent {
+            pool.waiting += 1;
+            while pool.busy >= self.max_concurrent {
+                pool = self.released.wait(pool).unwrap_or_else(|e| e.into_inner());
+            }
+            pool.waiting -= 1;
         }
-        // function-runner's engine keeps wasmtime's compilation cache on disk (a second run of a
-        // Function does not compile it again). Where that cache cannot be set up, the same
-        // configuration without it does.
-        let engine = new_engine().or_else(|_| {
-            let mut config = Config::new();
-            config
-                .wasm_multi_memory(true)
-                .wasm_threads(false)
-                .consume_fuel(true)
-                .epoch_interruption(true);
-            Engine::new(&config)
-        });
-        Ok(Slot {
-            engine: engine.map_err(|error| format!("cannot start the Wasm engine: {error}"))?,
-            modules: HashMap::new(),
-        })
+        pool.busy += 1;
+        let idle = pool.idle.pop();
+        drop(pool);
+        let slot = match idle {
+            Some(slot) => Ok(slot),
+            None => new_slot(),
+        };
+        match slot {
+            Ok(slot) => Ok(Lease {
+                runner: self,
+                slot: Some(slot),
+            }),
+            Err(error) => {
+                self.give_back(None);
+                Err(error)
+            }
+        }
     }
 
     fn release(&self, slot: Slot) {
-        self.slots
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(slot);
+        self.give_back(Some(slot));
+    }
+
+    /// Ends a run. Its slot stays in the pool if the pool is short of idle engines (or runs wait
+    /// for one), and is dropped otherwise.
+    fn give_back(&self, slot: Option<Slot>) {
+        let mut pool = self.pool();
+        pool.busy -= 1;
+        let keep = self.keep_idle.max(pool.waiting);
+        let dropped = match slot {
+            Some(slot) if pool.idle.len() < keep => {
+                pool.idle.push(slot);
+                None
+            }
+            other => other,
+        };
+        drop(pool);
+        self.released.notify_one();
+        // An engine is torn down outside the lock.
+        drop(dropped);
     }
 
     /// A runner that stops a Function after `timeout` (10 seconds by default).
@@ -133,14 +211,15 @@ impl Runner {
     }
 
     pub fn run(&self, wasm: &Path, export: &str, input: &Value) -> Execution {
-        let mut slot = match self.acquire() {
-            Ok(slot) => slot,
+        let mut lease = match self.acquire() {
+            Ok(lease) => lease,
             Err(error) => return Execution::failed(error),
         };
+        let Some(slot) = lease.slot.as_mut() else {
+            return Execution::failed("no Wasm engine");
+        };
         // The watchdog is over when `execute` returns, so the slot is clean for the next run.
-        let execution = self.execute(&mut slot, wasm, export, input);
-        self.release(slot);
-        execution
+        self.execute(slot, wasm, export, input)
     }
 
     fn execute(&self, slot: &mut Slot, wasm: &Path, export: &str, input: &Value) -> Execution {
@@ -221,6 +300,25 @@ impl Runner {
         }
         execution
     }
+}
+
+/// A new engine. function-runner's engine keeps wasmtime's compilation cache on disk (a second
+/// run of a Function does not compile it again). Where that cache cannot be set up, the same
+/// configuration without it does.
+fn new_slot() -> Result<Slot, String> {
+    let engine = new_engine().or_else(|_| {
+        let mut config = Config::new();
+        config
+            .wasm_multi_memory(true)
+            .wasm_threads(false)
+            .consume_fuel(true)
+            .epoch_interruption(true);
+        Engine::new(&config)
+    });
+    Ok(Slot {
+        engine: engine.map_err(|error| format!("cannot start the Wasm engine: {error}"))?,
+        modules: HashMap::new(),
+    })
 }
 
 impl Slot {

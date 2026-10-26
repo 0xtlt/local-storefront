@@ -419,9 +419,10 @@ impl<'a> Pipeline<'a> {
             .iter()
             .map(|item| {
                 item.pointer("/price/adjustment/fixedPricePerUnit/amount")
-                    .and_then(cents_of)
+                    .map(|amount| money_of(amount, "the `fixedPricePerUnit` of an expanded item"))
+                    .transpose()
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let priced = fixed.iter().filter(|price| price.is_some()).count();
         if priced != 0 && priced != items.len() {
             return Err(
@@ -430,17 +431,9 @@ impl<'a> Pipeline<'a> {
             );
         }
         let decrease = match op.pointer("/price/percentageDecrease/value") {
-            Some(value) => {
-                let percentage = number_of(value)
-                    .ok_or("invalid_price_adjustment_percentage_decrease: not a number")?;
-                if !(0.0..=100.0).contains(&percentage) {
-                    return Err(
-                        "invalid_price_adjustment_percentage_decrease: the percentage decrease must be between 0 and 100"
-                            .to_string(),
-                    );
-                }
-                Some(percentage)
-            }
+            Some(value) => Some(percentage_of(value).map_err(|error| {
+                format!("invalid_price_adjustment_percentage_decrease: {error}")
+            })?),
             None => None,
         };
         if priced != 0 && decrease.is_some() {
@@ -454,31 +447,59 @@ impl<'a> Pipeline<'a> {
         for (item, fixed) in items.iter().zip(&fixed) {
             let merchandise =
                 str_field(item, "merchandiseId").ok_or("expanded item without `merchandiseId`")?;
-            let per_unit = item.get("quantity").and_then(Value::as_u64).unwrap_or(1) as u32;
+            let per_unit = item
+                .get("quantity")
+                .and_then(Value::as_u64)
+                .map_or(Some(1), |quantity| u32::try_from(quantity).ok())
+                .ok_or("an expanded item has a quantity that is too large")?;
+            let units = per_unit
+                .checked_mul(quantity)
+                .ok_or("an expanded item has a quantity that is too large")?;
             let attributes = attributes(item.get("attributes"));
-            let mut component = self.new_line(merchandise, per_unit * quantity, attributes)?;
+            let mut component = self.new_line(merchandise, units, attributes)?;
             if let Some(amount) = fixed {
                 component.unit_price = *amount;
+                line_total(*amount, units)?;
             }
             components.push((component, per_unit));
         }
 
         let bundle_price = if priced != 0 {
-            components
-                .iter()
-                .map(|(component, per_unit)| component.unit_price * Cents::from(*per_unit))
-                .sum()
+            let mut sum: Cents = 0;
+            for (component, per_unit) in &components {
+                sum = sum
+                    .checked_add(line_total(component.unit_price, *per_unit)?)
+                    .ok_or(MONEY_OVERFLOW)?;
+            }
+            sum
         } else {
             let price = self.lines[index].unit_price;
-            let price = match decrease {
+            match decrease {
                 Some(percentage) => (price as f64 * (1.0 - percentage / 100.0)).round() as Cents,
                 None => price,
-            };
-            allocate(price, &mut components);
-            price
+            }
         };
-        for (component, _) in &mut components {
-            refresh(component);
+        let bundle_total = line_total(bundle_price, quantity)?;
+        // Without prices of their own, the components share the price of the bundle, to the
+        // cent: their line totals add up to the total of the expanded line.
+        let shares = if priced != 0 {
+            None
+        } else {
+            Some(allocate(bundle_total, &components))
+        };
+        for (position, (component, _)) in components.iter_mut().enumerate() {
+            if let Some(shares) = &shares {
+                let share = shares[position];
+                // The unit price is the share per unit, to the cent. When the share does not
+                // divide evenly, the line total stays exact and the unit price is rounded.
+                let units = Cents::from(component.quantity.max(1));
+                component.unit_price = (share as f64 / units as f64).round() as Cents;
+                refresh(component);
+                component.subtotal = share;
+                component.total = share;
+            } else {
+                refresh(component);
+            }
         }
 
         let line = &mut self.lines[index];
@@ -529,6 +550,17 @@ impl<'a> Pipeline<'a> {
                 Ok::<_, String>(line)
             })?;
 
+        // The price of the parent is checked before any line changes.
+        let mut sum: Cents = 0;
+        for (index, take) in &sources {
+            let cost = line_total(self.lines[*index].unit_price, *take)?;
+            sum = sum
+                .checked_add(cost)
+                .filter(|sum| *sum <= MAX_CENTS)
+                .ok_or(MONEY_OVERFLOW)?;
+        }
+        let parent_unit_price = parent_price(sum, op.get("price"))?.unwrap_or(sum);
+
         let mut components = Vec::new();
         for (index, take) in &sources {
             let line = &mut self.lines[*index];
@@ -543,8 +575,7 @@ impl<'a> Pipeline<'a> {
             }
             components.push(component);
         }
-        let sum: Cents = components.iter().map(|component| component.subtotal).sum();
-        parent.unit_price = parent_price(sum, op.get("price")).unwrap_or(sum);
+        parent.unit_price = parent_unit_price;
         parent.requires_shipping = components
             .iter()
             .any(|component| component.requires_shipping);
@@ -582,11 +613,13 @@ impl<'a> Pipeline<'a> {
     fn update(&mut self, op: &Value) -> Result<(), String> {
         let id = str_field(op, "cartLineId").ok_or("update without `cartLineId`")?;
         let index = self.line_index(id)?;
-        let line = &mut self.lines[index];
-        if let Some(amount) = op
+        let amount = op
             .pointer("/price/adjustment/fixedPricePerUnit/amount")
-            .and_then(cents_of)
-        {
+            .map(|amount| money_of(amount, "the `fixedPricePerUnit` of an update"))
+            .transpose()?;
+        let line = &mut self.lines[index];
+        if let Some(amount) = amount {
+            line_total(amount, line.quantity)?;
             line.unit_price = amount;
         }
         override_presentation(line, op);
@@ -726,14 +759,22 @@ impl<'a> Pipeline<'a> {
                     if let Some(op) = operation.get("productDiscountsAdd") {
                         if classes.contains(&DiscountClass::Product) {
                             let strategy = str_field(op, "selectionStrategy");
-                            let candidates = array(op, "candidates").map(candidate).collect();
-                            self.apply_product(&context, strategy, candidates);
+                            match candidates_of(op, "candidates") {
+                                Ok(candidates) => {
+                                    self.apply_product(&context, strategy, candidates)
+                                }
+                                Err(error) => self
+                                    .function_error(function, format!("product discount: {error}")),
+                            }
                         }
                     } else if let Some(op) = operation.get("orderDiscountsAdd") {
                         if classes.contains(&DiscountClass::Order) {
                             let strategy = str_field(op, "selectionStrategy");
-                            let candidates = array(op, "candidates").map(candidate).collect();
-                            self.apply_order(&context, strategy, candidates);
+                            match candidates_of(op, "candidates") {
+                                Ok(candidates) => self.apply_order(&context, strategy, candidates),
+                                Err(error) => self
+                                    .function_error(function, format!("order discount: {error}")),
+                            }
                         }
                     } else if let Some(op) = operation.get("enteredDiscountCodesAccept") {
                         for entry in array(op, "codes") {
@@ -752,13 +793,19 @@ impl<'a> Pipeline<'a> {
             }
             TargetKind::ProductDiscount => {
                 let strategy = str_field(output, "discountApplicationStrategy");
-                let candidates = array(output, "discounts").map(candidate).collect();
-                self.apply_product(&context, strategy, candidates);
+                match candidates_of(output, "discounts") {
+                    Ok(candidates) => self.apply_product(&context, strategy, candidates),
+                    Err(error) => {
+                        self.function_error(function, format!("product discount: {error}"))
+                    }
+                }
             }
             TargetKind::OrderDiscount => {
                 let strategy = str_field(output, "discountApplicationStrategy");
-                let candidates = array(output, "discounts").map(candidate).collect();
-                self.apply_order(&context, strategy, candidates);
+                match candidates_of(output, "discounts") {
+                    Ok(candidates) => self.apply_order(&context, strategy, candidates),
+                    Err(error) => self.function_error(function, format!("order discount: {error}")),
+                }
             }
             _ => {}
         }
@@ -983,14 +1030,25 @@ impl<'a> Pipeline<'a> {
                 };
                 if legacy {
                     let strategy = str_field(&output, "discountApplicationStrategy");
-                    let candidates = array(&output, "discounts").map(candidate).collect();
-                    self.apply_shipping(&context, strategy, candidates);
+                    match candidates_of(&output, "discounts") {
+                        Ok(candidates) => self.apply_shipping(&context, strategy, candidates),
+                        Err(error) => {
+                            self.function_error(function, format!("shipping discount: {error}"))
+                        }
+                    }
                 } else {
                     for operation in array(&output, "operations") {
                         if let Some(op) = operation.get("deliveryDiscountsAdd") {
                             let strategy = str_field(op, "selectionStrategy");
-                            let candidates = array(op, "candidates").map(candidate).collect();
-                            self.apply_shipping(&context, strategy, candidates);
+                            match candidates_of(op, "candidates") {
+                                Ok(candidates) => {
+                                    self.apply_shipping(&context, strategy, candidates)
+                                }
+                                Err(error) => self.function_error(
+                                    function,
+                                    format!("shipping discount: {error}"),
+                                ),
+                            }
                         } else if let Some(op) = operation.get("enteredDiscountCodesAccept") {
                             for entry in array(op, "codes") {
                                 if let Some(code) = str_field(entry, "code") {
@@ -1331,54 +1389,44 @@ fn override_presentation(line: &mut ResultLine, op: &Value) {
     }
 }
 
-/// Shares `price` (one bundle) among components in proportion to their variant prices (a
-/// component counts as many times as it has units in the bundle), and sets their unit prices.
-/// The shares add up to `price`; a unit price is rounded to the cent.
-fn allocate(price: Cents, components: &mut [(ResultLine, u32)]) {
+/// Shares `total` (the price of every bundle of an expanded line) among its components in
+/// proportion to their variant prices (a component counts as many times as it has units in the
+/// bundle). The shares are exact: they add up to `total`, to the cent, even when a share does
+/// not divide evenly by the units of its component.
+fn allocate(total: Cents, components: &[(ResultLine, u32)]) -> Vec<Cents> {
     let weights: Vec<Cents> = components
         .iter()
         .map(|(component, per_unit)| component.unit_price * Cents::from(*per_unit))
         .collect();
-    let total: Cents = weights.iter().sum();
-    let (weights, total) = if total > 0 {
-        (weights, total)
-    } else {
-        // Components without a price share it by units.
-        let units: Vec<Cents> = components
-            .iter()
-            .map(|(_, per_unit)| Cents::from(*per_unit))
-            .collect();
-        let sum = units.iter().sum();
-        (units, sum)
-    };
-    if total <= 0 {
-        return;
+    if weights.iter().sum::<Cents>() > 0 {
+        return distribute(total, &weights);
     }
-    // Cumulative rounding: the share of a component is the difference of two rounded prefixes.
-    let mut before: Cents = 0;
-    let mut running: Cents = 0;
-    for ((component, per_unit), weight) in components.iter_mut().zip(weights) {
-        running += weight;
-        let upto = (price as f64 * running as f64 / total as f64).round() as Cents;
-        let share = upto - before;
-        before = upto;
-        component.unit_price = (share as f64 / f64::from((*per_unit).max(1))).round() as Cents;
-    }
+    // Components without a price share it by units.
+    let units: Vec<Cents> = components
+        .iter()
+        .map(|(_, per_unit)| Cents::from(*per_unit))
+        .collect();
+    distribute(total, &units)
 }
 
-/// The price of a bundle line after a price adjustment of the operation, per unit.
-fn parent_price(sum: Cents, price: Option<&Value>) -> Option<Cents> {
-    let price = price?;
-    if let Some(percentage) = price
-        .pointer("/percentageDecrease/value")
-        .and_then(number_of)
-    {
-        return Some((sum as f64 * (1.0 - percentage / 100.0)).round() as Cents);
+/// The price of a bundle line after a price adjustment of the operation, per unit. `None` when
+/// the operation has no price adjustment.
+fn parent_price(sum: Cents, price: Option<&Value>) -> Result<Option<Cents>, String> {
+    let Some(price) = price else {
+        return Ok(None);
+    };
+    if let Some(percentage) = price.pointer("/percentageDecrease/value") {
+        let percentage = percentage_of(percentage)
+            .map_err(|error| format!("invalid_price_adjustment_percentage_decrease: {error}"))?;
+        return Ok(Some(
+            (sum as f64 * (1.0 - percentage / 100.0)).round() as Cents
+        ));
     }
     price
         .pointer("/adjustment/fixedPricePerUnit/amount")
         .or_else(|| price.pointer("/fixedPricePerUnit/amount"))
-        .and_then(cents_of)
+        .map(|amount| money_of(amount, "the `fixedPricePerUnit` of a merge"))
+        .transpose()
 }
 
 fn attributes(value: Option<&Value>) -> Vec<KeyValue> {
@@ -1433,7 +1481,7 @@ enum Amount {
 
 /// Reads a discount candidate of the current output shape (`productDiscountsAdd` candidates:
 /// `fixedAmount.amount`) or the legacy one (`discounts`: `fixedAmount.value`).
-fn candidate(raw: &Value) -> Candidate {
+fn candidate(raw: &Value) -> Result<Candidate, String> {
     let targets = array(raw, "targets")
         .filter_map(|target| {
             if let Some(line) = target.get("cartLine") {
@@ -1475,35 +1523,41 @@ fn candidate(raw: &Value) -> Candidate {
 
     // New shape: `value: { percentage: { value }, fixedAmount: { amount, appliesToEachItem } }`.
     // Legacy: `fixedAmount: { value, appliesToEachItem }`.
-    let value = raw.get("value");
-    let amount = value
-        .and_then(|value| value.pointer("/percentage/value"))
-        .and_then(number_of)
-        .map(Amount::Percentage)
-        .or_else(|| {
-            let fixed = value?.get("fixedAmount")?;
-            Some(Amount::Fixed {
-                cents: fixed
+    let value = match raw.get("value") {
+        Some(value) => {
+            if let Some(percentage) = value.pointer("/percentage/value") {
+                Amount::Percentage(
+                    percentage_of(percentage)
+                        .map_err(|error| format!("the percentage of a discount: {error}"))?,
+                )
+            } else if let Some(fixed) = value.get("fixedAmount") {
+                let amount = fixed
                     .get("amount")
                     .or(fixed.get("value"))
-                    .and_then(cents_of)?,
-                each: fixed
-                    .get("appliesToEachItem")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            })
-        })
-        .unwrap_or(Amount::None);
+                    .ok_or("a fixed amount discount without an amount")?;
+                Amount::Fixed {
+                    cents: money_of(amount, "the fixed amount of a discount")?,
+                    each: fixed
+                        .get("appliesToEachItem")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                }
+            } else {
+                Amount::None
+            }
+        }
+        None => Amount::None,
+    };
 
-    Candidate {
+    Ok(Candidate {
         targets,
         message: str_field(raw, "message").map(str::to_string),
         code: raw
             .pointer("/associatedDiscountCode/code")
             .and_then(Value::as_str)
             .map(str::to_string),
-        value: amount,
-    }
+        value,
+    })
 }
 
 /// Which candidates a selection strategy applies: all of them, the first one, or the one that
@@ -1564,7 +1618,7 @@ fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cent
             .collect(),
         Amount::Fixed { cents, each: true } => covered
             .iter()
-            .map(|(_, quantity)| cents * Cents::from(*quantity))
+            .map(|(_, quantity)| cents.saturating_mul(Cents::from(*quantity)))
             .collect(),
         Amount::Fixed { cents, each: false } => distribute(cents.min(bases.iter().sum()), &bases),
         Amount::None => vec![0; covered.len()],
@@ -1708,8 +1762,51 @@ fn number_of(value: &Value) -> Option<f64> {
     }
 }
 
-fn cents_of(value: &Value) -> Option<Cents> {
-    number_of(value).map(|amount| (amount * 100.0).round() as Cents)
+/// The largest amount, in cents, a Function can give, and the largest a line can cost (10 billion
+/// in the currency of the shop): sums of such amounts cannot overflow.
+const MAX_CENTS: Cents = 1_000_000_000_000;
+
+const MONEY_OVERFLOW: &str = "the amount is too large";
+
+/// A monetary value of a Function output (`what` says which, for the error): a decimal that is
+/// finite, not negative and not too large. Shopify rejects the output of a Function otherwise.
+fn money_of(value: &Value, what: &str) -> Result<Cents, String> {
+    let amount = number_of(value).ok_or_else(|| format!("{what} is not a number: {value}"))?;
+    if !amount.is_finite() {
+        return Err(format!("{what} is not finite: {value}"));
+    }
+    if amount < 0.0 {
+        return Err(format!("{what} is negative: {value}"));
+    }
+    if amount * 100.0 > MAX_CENTS as f64 {
+        return Err(format!("{what} is too large: {value}"));
+    }
+    Ok((amount * 100.0).round() as Cents)
+}
+
+/// A percentage of a Function output: between 0 and 100.
+fn percentage_of(value: &Value) -> Result<f64, String> {
+    let percentage = number_of(value).ok_or_else(|| format!("{value} is not a number"))?;
+    if !(0.0..=100.0).contains(&percentage) {
+        return Err(format!(
+            "the percentage must be between 0 and 100, not {value}"
+        ));
+    }
+    Ok(percentage)
+}
+
+/// What `quantity` units at `unit_price` cost, if a line can cost that.
+fn line_total(unit_price: Cents, quantity: u32) -> Result<Cents, String> {
+    unit_price
+        .checked_mul(Cents::from(quantity))
+        .filter(|total| *total <= MAX_CENTS)
+        .ok_or_else(|| MONEY_OVERFLOW.to_string())
+}
+
+/// The candidates of a discount operation (`candidates`) or of a legacy output (`discounts`).
+/// One candidate that is not valid rejects the whole list.
+fn candidates_of(op: &Value, key: &str) -> Result<Vec<Candidate>, String> {
+    array(op, key).map(candidate).collect()
 }
 
 /// The number at the end of a gid, `gid://shopify/ProductVariant/42?x=1` → 42.
@@ -1741,7 +1838,7 @@ mod tests {
     }
 
     fn product_candidate(raw: Value) -> Candidate {
-        candidate(&raw)
+        candidate(&raw).unwrap()
     }
 
     #[test]
@@ -1789,7 +1886,8 @@ mod tests {
             "message": "Ten off",
             "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 2}}],
             "value": {"fixedAmount": {"value": "2.00", "appliesToEachItem": true}},
-        }));
+        }))
+        .unwrap();
         assert_eq!(candidate.message.as_deref(), Some("Ten off"));
         assert_eq!(plan_product(&lines, &candidate), vec![(0, 400)]);
     }
@@ -1886,9 +1984,122 @@ mod tests {
 
     #[test]
     fn decimals_are_strings_or_numbers() {
-        assert_eq!(cents_of(&json!("19.99")), Some(1999));
-        assert_eq!(cents_of(&json!(19.995)), Some(2000));
-        assert_eq!(cents_of(&json!(5)), Some(500));
-        assert_eq!(cents_of(&json!(null)), None);
+        let money = |value: Value| money_of(&value, "an amount");
+        assert_eq!(money(json!("19.99")), Ok(1999));
+        assert_eq!(money(json!(19.995)), Ok(2000));
+        assert_eq!(money(json!(5)), Ok(500));
+        assert!(money(json!(null)).is_err());
+    }
+
+    #[test]
+    fn money_must_be_finite_positive_and_not_overflow() {
+        let money = |value: Value| money_of(&value, "an amount");
+        assert_eq!(money(json!("0")), Ok(0));
+        for bad in [
+            json!("-10.00"),
+            json!(-0.01),
+            json!("NaN"),
+            json!("inf"),
+            json!("-inf"),
+            json!("1e300"),
+            json!(1e18),
+            json!("12,5"),
+            json!(true),
+            json!([]),
+        ] {
+            assert!(money(bad.clone()).is_err(), "{bad} was accepted");
+        }
+        assert!(percentage_of(&json!("100")).is_ok());
+        for bad in [
+            json!(-1),
+            json!("100.01"),
+            json!("NaN"),
+            json!("inf"),
+            json!({}),
+        ] {
+            assert!(percentage_of(&bad).is_err(), "{bad} was accepted");
+        }
+        assert!(line_total(MAX_CENTS, 2).is_err());
+        assert!(line_total(Cents::MAX, 2).is_err());
+        assert_eq!(line_total(1999, 3), Ok(5997));
+    }
+
+    /// The candidates of every discount output kind: the current shapes (product, order,
+    /// delivery) and the legacy ones.
+    #[test]
+    fn a_discount_candidate_with_invalid_money_is_rejected() {
+        let target = json!([{"cartLine": {"id": "gid://shopify/CartLine/1"}}]);
+        let values = [
+            json!({"fixedAmount": {"amount": "-5.00"}}),
+            json!({"fixedAmount": {"value": "-5.00"}}),
+            json!({"fixedAmount": {"amount": "NaN"}}),
+            json!({"fixedAmount": {"amount": "1e300"}}),
+            json!({"fixedAmount": {"amount": "abc"}}),
+            json!({"fixedAmount": {}}),
+            json!({"percentage": {"value": "-10"}}),
+            json!({"percentage": {"value": "150"}}),
+            json!({"percentage": {"value": "inf"}}),
+        ];
+        for value in values {
+            // `productDiscountsAdd`, `orderDiscountsAdd` and `deliveryDiscountsAdd` carry
+            // `candidates`, the legacy outputs `discounts`.
+            for key in ["candidates", "discounts"] {
+                let op = json!({ key: [
+                    {"targets": target, "value": {"percentage": {"value": "10"}}},
+                    {"targets": target, "value": value},
+                ]});
+                assert!(
+                    candidates_of(&op, key).is_err(),
+                    "{value} was accepted in `{key}`"
+                );
+            }
+        }
+        let good = json!({"candidates": [
+            {"targets": target, "value": {"percentage": {"value": "100"}}},
+            {"targets": target, "value": {"fixedAmount": {"amount": "0"}}},
+        ]});
+        assert_eq!(candidates_of(&good, "candidates").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_huge_fixed_discount_per_item_does_not_overflow() {
+        let lines = vec![line(1, 10, 1000, u32::MAX)];
+        let candidate = product_candidate(json!({
+            "targets": [{"cartLine": {"id": "gid://shopify/CartLine/1"}}],
+            "value": {"fixedAmount": {"amount": "9999999999.99", "appliesToEachItem": true}},
+        }));
+        assert_eq!(plan_product(&lines, &candidate), vec![(0, lines[0].total)]);
+    }
+
+    fn component(variant: u64, price: Cents, quantity: u32, per_unit: u32) -> (ResultLine, u32) {
+        (line(variant, variant, price, quantity * per_unit), per_unit)
+    }
+
+    #[test]
+    fn components_share_the_price_of_the_bundles_to_the_cent() {
+        // Two 32.00 bundles of 3 x 22.00 and 1 x 24.00: 64.00 in all.
+        let components = [component(1, 2200, 2, 3), component(2, 2400, 2, 1)];
+        let shares = allocate(6400, &components);
+        assert_eq!(shares, vec![4693, 1707]);
+        assert_eq!(shares.iter().sum::<Cents>(), 6400);
+    }
+
+    #[test]
+    fn shares_add_up_whatever_the_prices() {
+        for (total, prices) in [
+            (1, vec![(1, 1), (1, 1), (1, 1)]),
+            (10_001, vec![(333, 3), (777, 1), (1, 7)]),
+            (999, vec![(0, 2), (0, 5)]),
+            (0, vec![(100, 1)]),
+        ] {
+            let components: Vec<_> = prices
+                .iter()
+                .enumerate()
+                .map(|(i, (price, per_unit))| component(i as u64 + 1, *price, 1, *per_unit))
+                .collect();
+            let shares = allocate(total, &components);
+            assert_eq!(shares.iter().sum::<Cents>(), total, "{prices:?}");
+            assert!(shares.iter().all(|share| *share >= 0));
+        }
     }
 }

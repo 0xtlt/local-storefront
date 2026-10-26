@@ -582,6 +582,168 @@ fn an_expand_cannot_decrease_the_price_by_more_than_100_percent() {
 }
 
 #[test]
+fn an_expanded_line_shares_its_price_to_the_cent_when_it_does_not_divide() {
+    // Two 32.00 bundles of 3 x 22.00 and 1 x 24.00: 64.00 to share as 66 : 24.
+    let result = expand(json!({
+        "type": "expand", "line": 1,
+        "items": [{"variant": MUG, "quantity": 3}, {"variant": TOTE, "quantity": 1}]
+    }));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let line = &result.lines[0];
+    assert_eq!(line.subtotal, 6400);
+    let [mug, tote] = &line.components[..] else {
+        panic!("{:?}", line.components)
+    };
+    assert_eq!((mug.quantity, tote.quantity), (6, 2));
+    // The line totals are exact and add up to the total of the bundles...
+    assert_eq!((mug.subtotal, tote.subtotal), (4693, 1707));
+    assert_eq!((mug.total, tote.total), (4693, 1707));
+    assert_eq!(mug.subtotal + tote.subtotal, line.subtotal);
+    // ...the unit prices are rounded to the cent.
+    assert_eq!((mug.unit_price, tote.unit_price), (782, 854));
+    assert_eq!(result.cost.subtotal, 6400);
+}
+
+#[test]
+fn a_function_cannot_give_negative_prices_to_expanded_items() {
+    let result = expand(json!({
+        "type": "expand", "line": 1,
+        "items": [
+            {"variant": MUG, "quantity": 1, "price": "-10.00"},
+            {"variant": TOTE, "quantity": 1, "price": "5.00"}
+        ]
+    }));
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(
+        result.errors[0].message.contains("is negative"),
+        "{:?}",
+        result.errors
+    );
+    // The operation is refused: the line is left as it was.
+    assert!(result.lines[0].components.is_empty());
+    assert_eq!(result.cost.subtotal, 6400);
+}
+
+#[test]
+fn a_function_cannot_give_an_overflowing_price_to_expanded_items() {
+    for price in ["1e300", "99999999999999999999"] {
+        let result = expand(json!({
+            "type": "expand", "line": 1,
+            "items": [{"variant": MUG, "quantity": 1, "price": price}]
+        }));
+        assert_eq!(result.errors.len(), 1, "{price}: {:?}", result.errors);
+        assert!(result.lines[0].components.is_empty(), "{price}");
+        assert_eq!(result.cost.subtotal, 6400, "{price}");
+    }
+}
+
+#[test]
+fn a_function_cannot_decrease_a_price_by_a_negative_percentage() {
+    let result = expand(json!({
+        "type": "expand", "line": 1, "percentageDecrease": "-25",
+        "items": [{"variant": MUG, "quantity": 1}]
+    }));
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(result.lines[0].components.is_empty());
+    assert_eq!(result.cost.subtotal, 6400);
+}
+
+#[test]
+fn a_function_cannot_update_a_line_to_a_negative_or_overflowing_price() {
+    for price in ["-10.00", "1e300"] {
+        let app = app();
+        let store = store();
+        let session = session(&store, &[(TEE, 2)]);
+        let mut config = config();
+        config.function_metafields.insert(
+            "bundle-transform".to_string(),
+            settings(json!({"operations": [{"type": "update", "line": 1, "title": "Cheap", "price": price}]})),
+        );
+        let result = compute(
+            &app,
+            &Selection::only(["bundle-transform"]),
+            &store,
+            &session,
+            &CheckoutState::default(),
+            &config,
+        );
+        assert_eq!(result.errors.len(), 1, "{price}: {:?}", result.errors);
+        // Nothing of the operation is applied, not even its title.
+        assert_ne!(result.lines[0].title, "Cheap", "{price}");
+        assert_eq!(result.lines[0].unit_price, 3200, "{price}");
+        assert_eq!(result.cost.subtotal, 6400, "{price}");
+    }
+}
+
+#[test]
+fn a_function_cannot_merge_lines_at_a_negative_percentage() {
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(MUG, 1), (TOTE, 1)]);
+    let mut config = config();
+    config.function_metafields.insert(
+        "bundle-transform".to_string(),
+        settings(json!({"operations": [{
+            "type": "merge", "lines": [1, 2], "parentVariant": TEE, "percentageDecrease": "-50"
+        }]})),
+    );
+    let result = compute(
+        &app,
+        &Selection::only(["bundle-transform"]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+    );
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.lines.len(), 2, "the lines are not merged");
+    assert_eq!(result.cost.subtotal, 4600);
+}
+
+/// A discount Function that gives a percentage out of 0..100 (the fixture does it when its
+/// configuration says so).
+fn out_of_range_discount(class: DiscountClass, settings: serde_json::Value) {
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(TEE, 3)]);
+    let mut config = config();
+    config.discounts = vec![discount(
+        "volume-discount",
+        "Too much",
+        None,
+        &[class],
+        settings,
+    )];
+    let result = compute(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+    );
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(
+        result.errors[0].message.contains("between 0 and 100"),
+        "{:?}",
+        result.errors
+    );
+    assert!(result.discounts.is_empty());
+    assert_eq!(result.lines[0].total, result.lines[0].subtotal);
+    assert_eq!(result.cost.discounts, 0);
+}
+
+#[test]
+fn a_product_discount_over_100_percent_is_refused() {
+    out_of_range_discount(Product, json!({"minimumQuantity": 1, "percentage": 150}));
+}
+
+#[test]
+fn an_order_discount_over_100_percent_is_refused() {
+    out_of_range_discount(Order, json!({"orderPercentage": 150}));
+}
+
+#[test]
 fn a_cart_transform_merges_lines_into_a_bundle() {
     let app = app();
     let store = store();

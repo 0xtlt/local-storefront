@@ -226,3 +226,60 @@ fn a_rebuilt_module_is_picked_up() {
     std::fs::write(&wasm, format!("{EXIT}\n\n\n")).unwrap();
     assert!(runner.run(&wasm, "_start", &input).error.is_some());
 }
+
+#[test]
+fn a_burst_of_runs_leaves_only_a_few_idle_engines() {
+    let dir = temp_dir("burst");
+    let wasm = write(&dir, "echo.wasm", ECHO);
+    let runner = Runner::new().with_limits(8, 2);
+    // Eight runs at once, each on an engine of its own.
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        for number in 0..8 {
+            let (runner, wasm, barrier) = (&runner, &wasm, &barrier);
+            scope.spawn(move || {
+                let input = json!({"run": number});
+                barrier.wait();
+                let execution = runner.run(wasm, "_start", &input);
+                assert_eq!(execution.error, None);
+                assert_eq!(execution.output, Some(input));
+            });
+        }
+    });
+    assert!(
+        runner.idle_engines() <= 2,
+        "{} idle engines kept after a burst",
+        runner.idle_engines()
+    );
+    // What stays is used again.
+    let before = runner.idle_engines();
+    assert!(before >= 1);
+    assert_eq!(runner.run(&wasm, "_start", &json!({})).error, None);
+    assert_eq!(runner.idle_engines(), before);
+}
+
+#[test]
+fn concurrent_runs_are_bounded_and_the_others_wait() {
+    let dir = temp_dir("bounded");
+    let wasm = write(&dir, "forever.wasm", FOREVER);
+    let timeout = Duration::from_millis(300);
+    // Two at a time: four runs that each last until the timeout take two rounds. The time a run
+    // waits is not part of its timeout.
+    let runner = Runner::new().with_timeout(timeout).with_limits(2, 1);
+    let started = std::time::Instant::now();
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            let (runner, wasm) = (&runner, &wasm);
+            scope.spawn(move || {
+                let execution = runner.run(wasm, "_start", &json!({}));
+                assert!(execution.error.unwrap().contains("was stopped"));
+            });
+        }
+    });
+    assert!(
+        started.elapsed() >= timeout * 2,
+        "four runs took {:?} with two at a time",
+        started.elapsed()
+    );
+    assert!(runner.idle_engines() <= 1);
+}
