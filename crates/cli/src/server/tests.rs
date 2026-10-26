@@ -3135,7 +3135,13 @@ fn the_state_describes_the_checkout() {
     // The manifest declares the settings; nothing sets them.
     assert_eq!(extensions[0]["settings"], json!({}));
     assert_eq!(extensions[0]["capabilities"]["block_progress"], true);
-    assert_eq!(json["diagnostics"], json!([]));
+    // The fixture keeps one legacy target on purpose: it still runs, with a warning.
+    assert_eq!(
+        json["diagnostics"],
+        json!([
+            "quantity-limit: `purchase.validation.run` is a legacy target: use `cart.validations.generate.run`"
+        ])
+    );
 
     // The control API says the same, for a test that is not the browser.
     let control = body_json(&get(&state, "/__lsf/checkout?session=co-state", "other"));

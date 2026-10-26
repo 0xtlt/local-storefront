@@ -21,6 +21,7 @@ macro_rules! embed {
 }
 
 embed!(
+    "api-versions.js",
     "checkout.css",
     "checkout.html",
     "checkout.js",
@@ -29,7 +30,6 @@ embed!(
     "operations.js",
     "sandbox-api.js",
     "sandbox-components.js",
-    "sandbox-legacy.js",
     "sandbox.html",
     "sandbox.js",
     "vdom.js",
@@ -62,12 +62,7 @@ mod tests {
 
     #[test]
     fn the_scripts_of_the_sandbox_are_classic_scripts() {
-        for name in [
-            "sandbox-api.js",
-            "sandbox-components.js",
-            "sandbox-legacy.js",
-            "sandbox.js",
-        ] {
+        for name in ["sandbox-api.js", "sandbox-components.js", "sandbox.js"] {
             let source = String::from_utf8(get(name).unwrap().to_vec()).unwrap();
             for line in source.lines() {
                 let line = line.trim_start();
