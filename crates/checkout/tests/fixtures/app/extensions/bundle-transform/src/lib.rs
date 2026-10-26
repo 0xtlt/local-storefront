@@ -6,10 +6,15 @@
 //! {"operations": [
 //!   {"type": "update", "line": 1, "title": "Member price", "price": "7.50"},
 //!   {"type": "expand", "line": 2, "title": "Duo", "percentageDecrease": "10",
-//!    "items": [{"variant": 123, "quantity": 2}, {"variant": 456, "quantity": 1, "price": "1.00"}]},
+//!    "items": [{"variant": 123, "quantity": 2}, {"variant": 456, "quantity": 1}]},
+//!   {"type": "expand", "line": 5,
+//!    "items": [{"variant": 123, "quantity": 2, "price": "1.00"}, {"variant": 456, "quantity": 1, "price": "2.00"}]},
 //!   {"type": "merge", "lines": [3, 4], "parentVariant": 789, "title": "Set", "percentageDecrease": "5"}
 //! ]}
 //! ```
+//!
+//! An expand either prices all its items or none, and an overall `percentageDecrease` goes with
+//! no item price (Shopify rejects the other combinations).
 
 use serde::Deserialize;
 use shopify_function::prelude::*;

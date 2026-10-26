@@ -139,6 +139,73 @@ fn an_endless_function_is_stopped() {
 }
 
 #[test]
+fn only_the_overdue_run_is_stopped() {
+    // Two endless runs overlap on one runner: the first one is overdue at 600 ms, the second
+    // (started 300 ms later) must keep running until its own deadline.
+    let timeout = Duration::from_millis(600);
+    let dir = temp_dir("overlap");
+    let wasm = write(&dir, "forever.wasm", FOREVER);
+    let runner = Runner::new().with_timeout(timeout);
+    // Compile the module before the clock starts.
+    let _ = Runner::new()
+        .with_timeout(Duration::from_millis(1))
+        .run(&wasm, "_start", &json!({}));
+
+    let origin = std::time::Instant::now();
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            let execution = runner.run(&wasm, "_start", &json!({}));
+            (origin.elapsed(), execution)
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        let second = scope.spawn(|| {
+            let started = origin.elapsed();
+            let execution = runner.run(&wasm, "_start", &json!({}));
+            (origin.elapsed() - started, execution)
+        });
+        (first.join().unwrap(), second.join().unwrap())
+    });
+
+    assert!(first.1.error.unwrap().contains("was stopped"));
+    assert!(first.0 >= timeout, "{:?}", first.0);
+    // Stopped by its own watchdog, not by the one of the first run (that fired 300 ms in).
+    assert!(second.1.error.unwrap().contains("was stopped"));
+    assert!(second.0 >= timeout, "{:?}", second.0);
+}
+
+#[test]
+fn a_run_survives_the_timeout_of_another_one() {
+    let timeout = Duration::from_millis(500);
+    let dir = temp_dir("survive");
+    let endless = write(&dir, "forever.wasm", FOREVER);
+    let echo = write(&dir, "echo.wasm", ECHO);
+    let runner = Runner::new().with_timeout(timeout);
+    let input = json!({"a": 1});
+    // Compile the modules before the clock starts.
+    assert_eq!(runner.run(&echo, "_start", &input).error, None);
+
+    let (endless_run, echo_run) = std::thread::scope(|scope| {
+        let endless_run = scope.spawn(|| runner.run(&endless, "_start", &json!({})));
+        // Runs of an instant overlap the overdue one, before and after its deadline.
+        let echo_run = scope.spawn(|| {
+            let mut runs = Vec::new();
+            for _ in 0..8 {
+                runs.push(runner.run(&echo, "_start", &input));
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            runs
+        });
+        (endless_run.join().unwrap(), echo_run.join().unwrap())
+    });
+
+    assert!(endless_run.error.unwrap().contains("was stopped"));
+    for run in echo_run {
+        assert_eq!(run.error, None);
+        assert_eq!(run.output, Some(input.clone()));
+    }
+}
+
+#[test]
 fn a_rebuilt_module_is_picked_up() {
     let dir = temp_dir("cache");
     let wasm = dir.join("function.wasm");

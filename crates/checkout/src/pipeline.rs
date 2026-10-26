@@ -403,32 +403,86 @@ impl<'a> Pipeline<'a> {
         Ok(line)
     }
 
+    /// Shopify's pricing rules of `lineExpand`: either every component has a
+    /// `fixedPricePerUnit` or none has, and an overall `percentageDecrease` cannot come with
+    /// component prices. The bundle costs the sum of its components' prices when they have one,
+    /// the price of the expanded line otherwise; the decrease applies to the latter. A bundle
+    /// without component prices keeps its price, which is shared among its components in
+    /// proportion to their variant prices.
     fn expand(&mut self, op: &Value) -> Result<(), String> {
         let id = str_field(op, "cartLineId").ok_or("expand without `cartLineId`")?;
         let index = self.line_index(id)?;
         let quantity = self.lines[index].quantity;
+
+        let items: Vec<&Value> = array(op, "expandedCartItems").collect();
+        let fixed: Vec<Option<Cents>> = items
+            .iter()
+            .map(|item| {
+                item.pointer("/price/adjustment/fixedPricePerUnit/amount")
+                    .and_then(cents_of)
+            })
+            .collect();
+        let priced = fixed.iter().filter(|price| price.is_some()).count();
+        if priced != 0 && priced != items.len() {
+            return Err(
+                "expanded_items_missing_prices: one or more expanded cart items are missing prices, either all must have a price, or none"
+                    .to_string(),
+            );
+        }
+        let decrease = match op.pointer("/price/percentageDecrease/value") {
+            Some(value) => {
+                let percentage = number_of(value)
+                    .ok_or("invalid_price_adjustment_percentage_decrease: not a number")?;
+                if !(0.0..=100.0).contains(&percentage) {
+                    return Err(
+                        "invalid_price_adjustment_percentage_decrease: the percentage decrease must be between 0 and 100"
+                            .to_string(),
+                    );
+                }
+                Some(percentage)
+            }
+            None => None,
+        };
+        if priced != 0 && decrease.is_some() {
+            return Err(
+                "cannot_combine_price_adjustment_and_price_per_component: cannot combine both an overall price adjustment and individual prices for components"
+                    .to_string(),
+            );
+        }
+
         let mut components = Vec::new();
-        for item in array(op, "expandedCartItems") {
+        for (item, fixed) in items.iter().zip(&fixed) {
             let merchandise =
                 str_field(item, "merchandiseId").ok_or("expanded item without `merchandiseId`")?;
             let per_unit = item.get("quantity").and_then(Value::as_u64).unwrap_or(1) as u32;
             let attributes = attributes(item.get("attributes"));
             let mut component = self.new_line(merchandise, per_unit * quantity, attributes)?;
-            if let Some(amount) = item
-                .pointer("/price/adjustment/fixedPricePerUnit/amount")
-                .and_then(cents_of)
-            {
-                component.unit_price = amount;
+            if let Some(amount) = fixed {
+                component.unit_price = *amount;
             }
-            refresh(&mut component);
             components.push((component, per_unit));
         }
-        let per_parent_unit: Cents = components
-            .iter()
-            .map(|(component, per_unit)| component.unit_price * Cents::from(*per_unit))
-            .sum();
+
+        let bundle_price = if priced != 0 {
+            components
+                .iter()
+                .map(|(component, per_unit)| component.unit_price * Cents::from(*per_unit))
+                .sum()
+        } else {
+            let price = self.lines[index].unit_price;
+            let price = match decrease {
+                Some(percentage) => (price as f64 * (1.0 - percentage / 100.0)).round() as Cents,
+                None => price,
+            };
+            allocate(price, &mut components);
+            price
+        };
+        for (component, _) in &mut components {
+            refresh(component);
+        }
+
         let line = &mut self.lines[index];
-        line.unit_price = parent_price(per_parent_unit, op.get("price")).unwrap_or(per_parent_unit);
+        line.unit_price = bundle_price;
         line.requires_shipping = components.iter().any(|(c, _)| c.requires_shipping);
         line.components = components
             .into_iter()
@@ -1274,6 +1328,41 @@ fn override_presentation(line: &mut ResultLine, op: &Value) {
     }
     if let Some(url) = op.pointer("/image/url").and_then(Value::as_str) {
         line.image = Some(url.to_string());
+    }
+}
+
+/// Shares `price` (one bundle) among components in proportion to their variant prices (a
+/// component counts as many times as it has units in the bundle), and sets their unit prices.
+/// The shares add up to `price`; a unit price is rounded to the cent.
+fn allocate(price: Cents, components: &mut [(ResultLine, u32)]) {
+    let weights: Vec<Cents> = components
+        .iter()
+        .map(|(component, per_unit)| component.unit_price * Cents::from(*per_unit))
+        .collect();
+    let total: Cents = weights.iter().sum();
+    let (weights, total) = if total > 0 {
+        (weights, total)
+    } else {
+        // Components without a price share it by units.
+        let units: Vec<Cents> = components
+            .iter()
+            .map(|(_, per_unit)| Cents::from(*per_unit))
+            .collect();
+        let sum = units.iter().sum();
+        (units, sum)
+    };
+    if total <= 0 {
+        return;
+    }
+    // Cumulative rounding: the share of a component is the difference of two rounded prefixes.
+    let mut before: Cents = 0;
+    let mut running: Cents = 0;
+    for ((component, per_unit), weight) in components.iter_mut().zip(weights) {
+        running += weight;
+        let upto = (price as f64 * running as f64 / total as f64).round() as Cents;
+        let share = upto - before;
+        before = upto;
+        component.unit_price = (share as f64 / f64::from((*per_unit).max(1))).round() as Cents;
     }
 }
 

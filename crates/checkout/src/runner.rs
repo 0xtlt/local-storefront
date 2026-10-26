@@ -65,10 +65,20 @@ struct Cached {
 }
 
 /// An engine and the modules compiled with it.
+///
+/// function-runner arms the engine's epoch deadline itself, at the next epoch, so the epoch
+/// of an engine stops every run that uses it at the time. A slot is therefore used by one run at
+/// a time: the watchdog of a run moves the epoch of its own engine only.
+struct Slot {
+    engine: Engine,
+    modules: HashMap<PathBuf, Cached>,
+}
+
+/// Runs Functions, concurrent runs included: each run has an engine of its own (from a pool, so
+/// that the compiled modules are reused).
 pub struct Runner {
-    engine: Result<Engine, String>,
     timeout: Duration,
-    modules: Mutex<HashMap<PathBuf, Cached>>,
+    slots: Mutex<Vec<Slot>>,
 }
 
 impl Default for Runner {
@@ -79,6 +89,18 @@ impl Default for Runner {
 
 impl Runner {
     pub fn new() -> Runner {
+        Runner {
+            timeout: DEFAULT_TIMEOUT,
+            slots: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// An idle slot, or a new one.
+    fn acquire(&self) -> Result<Slot, String> {
+        let idle = self.slots.lock().unwrap_or_else(|e| e.into_inner()).pop();
+        if let Some(slot) = idle {
+            return Ok(slot);
+        }
         // function-runner's engine keeps wasmtime's compilation cache on disk (a second run of a
         // Function does not compile it again). Where that cache cannot be set up, the same
         // configuration without it does.
@@ -91,11 +113,17 @@ impl Runner {
                 .epoch_interruption(true);
             Engine::new(&config)
         });
-        Runner {
-            engine: engine.map_err(|error| format!("cannot start the Wasm engine: {error}")),
-            timeout: DEFAULT_TIMEOUT,
-            modules: Mutex::new(HashMap::new()),
-        }
+        Ok(Slot {
+            engine: engine.map_err(|error| format!("cannot start the Wasm engine: {error}"))?,
+            modules: HashMap::new(),
+        })
+    }
+
+    fn release(&self, slot: Slot) {
+        self.slots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(slot);
     }
 
     /// A runner that stops a Function after `timeout` (10 seconds by default).
@@ -105,14 +133,22 @@ impl Runner {
     }
 
     pub fn run(&self, wasm: &Path, export: &str, input: &Value) -> Execution {
-        let engine = match &self.engine {
-            Ok(engine) => engine,
-            Err(error) => return Execution::failed(error.clone()),
+        let mut slot = match self.acquire() {
+            Ok(slot) => slot,
+            Err(error) => return Execution::failed(error),
         };
-        let module = match self.module(engine, wasm) {
+        // The watchdog is over when `execute` returns, so the slot is clean for the next run.
+        let execution = self.execute(&mut slot, wasm, export, input);
+        self.release(slot);
+        execution
+    }
+
+    fn execute(&self, slot: &mut Slot, wasm: &Path, export: &str, input: &Value) -> Execution {
+        let module = match slot.module(wasm) {
             Ok(module) => module,
             Err(error) => return Execution::failed(error),
         };
+        let engine = &slot.engine;
 
         if let Some(error) = untrampolined(&module) {
             return Execution::failed(error);
@@ -185,8 +221,10 @@ impl Runner {
         }
         execution
     }
+}
 
-    fn module(&self, engine: &Engine, wasm: &Path) -> Result<Module, String> {
+impl Slot {
+    fn module(&mut self, wasm: &Path) -> Result<Module, String> {
         let metadata = std::fs::metadata(wasm).map_err(|_| {
             format!(
                 "no Wasm module at {}: build the Function (`shopify app build`)",
@@ -196,16 +234,15 @@ impl Runner {
         let modified = metadata.modified().ok();
         let size = metadata.len();
 
-        let mut modules = self.modules.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(cached) = modules.get(wasm)
+        if let Some(cached) = self.modules.get(wasm)
             && cached.modified == modified
             && cached.size == size
         {
             return Ok(cached.module.clone());
         }
-        let module = Module::from_file(engine, wasm)
+        let module = Module::from_file(&self.engine, wasm)
             .map_err(|error| format!("cannot load {}: {error:#}", wasm.display()))?;
-        modules.insert(
+        self.modules.insert(
             wasm.to_path_buf(),
             Cached {
                 modified,
@@ -278,8 +315,8 @@ fn summarize_failure(failure: &str) -> String {
     }
 }
 
-/// Stops a run that takes too long by moving the engine's epoch forward (the engine is
-/// configured to trap at the next epoch).
+/// Stops a run that takes too long by moving the epoch of its engine forward (the run traps at
+/// the next epoch). The engine is the run's own: no other run is stopped with it.
 struct Watchdog {
     cancel: mpsc::Sender<()>,
     handle: std::thread::JoinHandle<bool>,

@@ -436,27 +436,32 @@ fn a_cart_transform_updates_a_line() {
     );
 }
 
-#[test]
-fn a_cart_transform_expands_a_line_into_components() {
+/// Runs the cart transform with one `expand` of the first line (two TEE at 32.00).
+fn expand(operation: serde_json::Value) -> lsf_checkout::CheckoutResult {
     let app = app();
     let store = store();
     let session = session(&store, &[(TEE, 2)]);
     let mut config = config();
     config.function_metafields.insert(
         "bundle-transform".to_string(),
-        settings(json!({"operations": [{
-            "type": "expand", "line": 1, "title": "Duo", "percentageDecrease": "10",
-            "items": [{"variant": MUG, "quantity": 2}, {"variant": TOTE, "quantity": 1, "price": "10.00"}]
-        }]})),
+        settings(json!({"operations": [operation]})),
     );
-    let result = compute(
+    compute(
         &app,
         &Selection::only(["bundle-transform"]),
         &store,
         &session,
         &CheckoutState::default(),
         &config,
-    );
+    )
+}
+
+#[test]
+fn an_expanded_line_keeps_its_price_shared_by_the_variant_prices_of_the_components() {
+    let result = expand(json!({
+        "type": "expand", "line": 1, "title": "Duo",
+        "items": [{"variant": MUG, "quantity": 2}, {"variant": TOTE, "quantity": 2}]
+    }));
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert_eq!(result.lines.len(), 1, "the components are inside the line");
     let line = &result.lines[0];
@@ -464,16 +469,116 @@ fn a_cart_transform_expands_a_line_into_components() {
     assert_eq!(line.title, "Duo");
     assert_eq!(line.transformed_by.as_deref(), Some("expand"));
     assert_eq!(line.quantity, 2);
-    // Per bundle: 2 x 22.00 + 10.00 = 54.00, 10 % off = 48.60.
-    assert_eq!(line.unit_price, 4860);
-    assert_eq!(line.subtotal, 9720);
+    // The bundle keeps its price, 32.00.
+    assert_eq!(line.unit_price, 3200);
+    assert_eq!(line.subtotal, 6400);
     assert_eq!(line.components.len(), 2);
-    assert_eq!(line.components[0].variant_id, MUG);
-    assert_eq!(line.components[0].quantity, 4);
-    assert_eq!(line.components[1].unit_price, 1000);
     assert_eq!(line.components[0].id, "gid://shopify/CartLine/2");
     assert_eq!(line.components[1].id, "gid://shopify/CartLine/3");
-    assert_eq!(result.cost.subtotal, 9720);
+    assert_eq!(line.components[0].variant_id, MUG);
+    assert_eq!(line.components[0].quantity, 4);
+    assert_eq!(line.components[1].quantity, 4);
+    // 3200 shared as 44 : 48 (2 x 22.00 : 2 x 24.00), and by unit.
+    assert_eq!(line.components[0].unit_price, 765);
+    assert_eq!(line.components[1].unit_price, 835);
+    let shared: i64 = line.components.iter().map(|c| c.subtotal).sum();
+    assert_eq!(shared, line.subtotal);
+    assert_eq!(result.cost.subtotal, 6400);
+}
+
+#[test]
+fn the_percentage_decrease_of_an_expand_applies_to_the_price_of_the_expanded_line() {
+    let result = expand(json!({
+        "type": "expand", "line": 1, "percentageDecrease": "25",
+        "items": [{"variant": MUG, "quantity": 2}, {"variant": TOTE, "quantity": 2}]
+    }));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let line = &result.lines[0];
+    // 32.00, 25 % off, and not the sum of the variant prices of the components.
+    assert_eq!(line.unit_price, 2400);
+    assert_eq!(line.subtotal, 4800);
+    assert_eq!(line.components[0].unit_price, 574);
+    assert_eq!(line.components[1].unit_price, 626);
+    let shared: i64 = line.components.iter().map(|c| c.subtotal).sum();
+    assert_eq!(shared, line.subtotal);
+    assert_eq!(result.cost.subtotal, 4800);
+}
+
+#[test]
+fn an_expanded_line_costs_the_sum_of_the_prices_of_its_components() {
+    let result = expand(json!({
+        "type": "expand", "line": 1,
+        "items": [
+            {"variant": MUG, "quantity": 2, "price": "10.00"},
+            {"variant": TOTE, "quantity": 2, "price": "5.00"}
+        ]
+    }));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let line = &result.lines[0];
+    // Per bundle: 2 x 10.00 + 2 x 5.00.
+    assert_eq!(line.unit_price, 3000);
+    assert_eq!(line.subtotal, 6000);
+    assert_eq!(line.components[0].unit_price, 1000);
+    assert_eq!(line.components[1].unit_price, 500);
+    assert_eq!(result.cost.subtotal, 6000);
+}
+
+#[test]
+fn an_expand_cannot_combine_component_prices_and_an_overall_decrease() {
+    let result = expand(json!({
+        "type": "expand", "line": 1, "percentageDecrease": "10",
+        "items": [
+            {"variant": MUG, "quantity": 1, "price": "10.00"},
+            {"variant": TOTE, "quantity": 1, "price": "5.00"}
+        ]
+    }));
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(
+        result.errors[0]
+            .message
+            .contains("cannot_combine_price_adjustment_and_price_per_component"),
+        "{:?}",
+        result.errors
+    );
+    // The operation is refused: the line is left as it was.
+    assert!(result.lines[0].components.is_empty());
+    assert_eq!(result.lines[0].unit_price, 3200);
+    assert_eq!(result.cost.subtotal, 6400);
+}
+
+#[test]
+fn an_expand_prices_all_its_components_or_none() {
+    let result = expand(json!({
+        "type": "expand", "line": 1,
+        "items": [{"variant": MUG, "quantity": 1, "price": "10.00"}, {"variant": TOTE, "quantity": 1}]
+    }));
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(
+        result.errors[0]
+            .message
+            .contains("expanded_items_missing_prices"),
+        "{:?}",
+        result.errors
+    );
+    assert!(result.lines[0].components.is_empty());
+    assert_eq!(result.cost.subtotal, 6400);
+}
+
+#[test]
+fn an_expand_cannot_decrease_the_price_by_more_than_100_percent() {
+    let result = expand(json!({
+        "type": "expand", "line": 1, "percentageDecrease": "101",
+        "items": [{"variant": MUG, "quantity": 1}]
+    }));
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(
+        result.errors[0]
+            .message
+            .contains("invalid_price_adjustment_percentage_decrease"),
+        "{:?}",
+        result.errors
+    );
+    assert!(result.lines[0].components.is_empty());
 }
 
 #[test]
