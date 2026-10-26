@@ -158,9 +158,9 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   "metafields": [{"namespace","key","type","value"}],
   "lines": […], "discounts": […], "discountCodes": […], "deliveryGroups": […],
   "paymentMethods": […], "selectedPayment": "card" | null, "errors": […], "cost": {…}, "runs": […],
-  "extensions": [{"handle": "…", "apiVersion": "2025-10", "script": "/__lsf/extensions/<handle>/<handle>.js",
+  "extensions": [{"handle": "…", "apiVersion": "2026-10", "script": "/__lsf/extensions/<handle>/<handle>.js",
                   "targets": ["purchase.checkout.block.render", …], "capabilities": {…},
-                  "settings": {…}}],
+                  "settings": {…}, "metafields": [{"namespace": "…", "key": "…", "ownerType": "CART"}]}],
   "diagnostics": ["…"]   // app problems: missing builds, unknown targets
 }
 ```
@@ -185,9 +185,10 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   `buyerJourney.intercept`, `i18n`, `settings`, `extension`, `storage`, `sessionToken`,
   `query` (rejects: no Storefront API)), `shopify.extend(target, fn)` registration, Polaris
   web components (`s-banner`, `s-stack`, `s-text`, `s-button`, `s-text-field`, …) defined
-  with `customElements.define`, and a remote-ui root for legacy (React, `@shopify/ui-extensions-react`)
-  bundles that maps components (`Banner`, `BlockStack`, `Text`, …) to the same elements.
-  The iframe resizes to its content.
+  with `customElements.define`. The iframe resizes to its content.
+- `api-versions.js`: the API releases the host runs, `2026-10` and the `2027-01` release
+  candidate; an extension on another version, or declaring its metafields against the rules of
+  its version, is not loaded and the page shows why. See `.design/ui-api-versions.md`.
 
 ## Contract between `pipeline` and `input`
 

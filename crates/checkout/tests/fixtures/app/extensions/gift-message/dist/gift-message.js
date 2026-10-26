@@ -1,5 +1,5 @@
 // Written by hand to be what `shopify app build` leaves in dist/ for an extension on API
-// 2025-10: one IIFE that registers each target with `shopify.extend` and draws Polaris web
+// 2026-10: one IIFE that registers each target with `shopify.extend` and draws Polaris web
 // components into `document.body`. A real build carries Preact and its signals; this one does
 // the same with the DOM, so the fixture stays small and readable.
 (() => {

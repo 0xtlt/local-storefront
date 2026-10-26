@@ -1,4 +1,4 @@
-api_version = "2025-10"
+api_version = "2026-10"
 
 [[extensions]]
 name = "Gift message"
@@ -17,6 +17,11 @@ description = "Lets the buyer mark the order as a gift and write a message for t
   [[extensions.targeting]]
   target = "purchase.thank-you.block.render"
   module = "./src/ThankYou.jsx"
+
+  # No `owner_type`: optional on 2026-10, required from 2027-01 on.
+  [[extensions.metafields]]
+  namespace = "$app:gift"
+  key = "wrapped"
 
   [extensions.capabilities]
   api_access = true

@@ -1,10 +1,10 @@
-api_version = "2025-07"
+api_version = "2027-01"
 
 [[extensions]]
 name = "Order notice"
 handle = "order-notice"
 type = "ui_extension"
-description = "Tells the buyer how far they are from free shipping, with a button for the code. Built for API 2025-07, which still runs on remote-ui."
+description = "Tells the buyer how far they are from free shipping, with a button for the code and a way to dismiss it. A Preact bundle built for the 2027-01 release candidate."
 
   [[extensions.targeting]]
   target = "purchase.checkout.reductions.render-after"
@@ -13,6 +13,12 @@ description = "Tells the buyer how far they are from free shipping, with a butto
   [[extensions.targeting]]
   target = "purchase.checkout.shipping-option-list.render-after"
   module = "./src/Shipping.jsx"
+
+  # Required from 2027-01 on: the resource the metafield is read from.
+  [[extensions.metafields]]
+  namespace = "$app:notice"
+  key = "dismissed"
+  owner_type = "CART"
 
   [extensions.capabilities]
   api_access = true

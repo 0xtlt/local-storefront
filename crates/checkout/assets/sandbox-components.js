@@ -4,7 +4,7 @@
 //
 // Layout and text components are styled from their attributes by a stylesheet of the
 // document; the others have a shadow root. Properties mirror attributes the way Polaris
-// does, so Preact's `el.gap = 'base'` and remote-ui's attribute updates end up the same.
+// does, so Preact's `el.gap = 'base'` and `setAttribute('gap', 'base')` end up the same.
 (function (global) {
   'use strict';
   const Sandbox = (global.LsfSandbox = global.LsfSandbox || {});

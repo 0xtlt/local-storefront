@@ -4,19 +4,18 @@
 // browser refuses module scripts that the server did not mark with CORS headers. It adds
 // `createRuntime` to `LsfSandbox`; `sandbox.js` wires it to the page.
 //
-// Two flavours of the same API:
-//   current  (2025-10 and later) values are signals, `shopify.lines.value`, and the extension
-//            passes its own `Signal` class to `shopify.setSignals`, so Preact re-renders by itself
-//   legacy   (before 2025-10) values are subscribables, `api.lines.current`, handed to the
-//            function registered with `shopify.extend` together with a remote-ui channel
+// Values are signals, `shopify.lines.value`, and an extension built with Preact passes its own
+// `Signal` class to `shopify.setSignals`, so it re-renders by itself. The API releases the
+// page runs (2026-10, 2027-01) look the same from here: `extension-host.js` decides whether an
+// extension runs at all (`api-versions.js`).
 (function (global) {
   'use strict';
   const Sandbox = (global.LsfSandbox = global.LsfSandbox || {});
 
   // --- Signals ---------------------------------------------------------------------------
 
-  /** `immediate`: `subscribe` calls back at once with the current value, as signals do. */
-  function createSignalClass(immediate) {
+  /** `subscribe` calls back at once with the current value, as signals do. */
+  function createSignalClass() {
     return class LsfSignal {
       constructor(value) {
         this._value = value;
@@ -30,15 +29,12 @@
         this._value = next;
         for (const subscriber of [...this._subscribers]) subscriber(next);
       }
-      get current() {
-        return this._value;
-      }
       peek() {
         return this._value;
       }
       subscribe(subscriber) {
         this._subscribers.add(subscriber);
-        if (immediate) subscriber(this._value);
+        subscriber(this._value);
         return () => {
           this._subscribers.delete(subscriber);
         };
@@ -271,11 +267,10 @@
    * @param {object} options.init                      the `init` message of the page
    */
   function createRuntime({ post, init }) {
-    const { target, mode, ext, script } = init;
-    const legacy = mode === 'legacy';
+    const { target, ext, script } = init;
     let state = init.state;
     let ctx = init.ctx || {};
-    let SignalClass = createSignalClass(!legacy);
+    let SignalClass = createSignalClass();
 
     // Signals are made when an extension first reads them, with the class it handed to
     // `setSignals` by then; every update recomputes the ones that exist.
@@ -579,7 +574,7 @@
       }
     }
 
-    return { shopify, api, registered, receive, refresh, mode };
+    return { shopify, api, registered, receive, refresh };
   }
 
   Sandbox.createRuntime = createRuntime;

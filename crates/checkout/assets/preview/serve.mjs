@@ -6,7 +6,9 @@
 //        [--extensions DIR]   # an app's extensions/ directory, default: the test fixtures
 //        [--state FILE]       # the checkout to start from, default: sample-state.json
 //
-// Then open http://127.0.0.1:9293/ (add `?variant=shop` for the Shop skin).
+// Then open http://127.0.0.1:9293/ (add `?variant=shop` for the Shop skin, `?reset` to start
+// over). `?apiVersion=order-notice:2026-10` runs an extension of the state on another API
+// version, to see the page refuse the ones the checkout does not run.
 
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -96,6 +98,10 @@ export async function startPreview({
       current ??= createCheckout(sample, { origin: origin(request), variant });
       const wanted = url.searchParams.get('variant');
       if (wanted === 'shop' || wanted === 'standard') current = { ...current, variant: wanted };
+      for (const override of url.searchParams.getAll('apiVersion')) {
+        const [handle, apiVersion] = override.split(':');
+        current = { ...current, extensions: current.extensions.map((ext) => (ext.handle === handle ? { ...ext, apiVersion } : ext)) };
+      }
 
       if (tail === '.json') return json(response, 200, publicState(current));
       if (tail === '/update') {

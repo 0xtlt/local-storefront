@@ -20,13 +20,13 @@ const has = (node, name) => (node.props.class ?? '').split(/\s+/).includes(name)
 const byClass = (tree, name) => findAll(tree, (node) => has(node, name));
 const text = (node) => (node.tag === '#text' ? node.text : node.children.map(text).join(''));
 
-function page(state, ui = {}, { slots = [] } = {}) {
+function page(state, ui = {}, { slots = [], refusals } = {}) {
   const actions = new Proxy({}, { get: () => () => {} });
   const slot = (target, instance) => {
     slots.push([target, instance]);
     return null;
   };
-  return renderPage({ state, ui: { draft: { address: {} }, openRuns: new Set(), ...ui }, slot, actions, location: 'http://localhost/checkouts/cn/preview' });
+  return renderPage({ state, ui: { draft: { address: {} }, openRuns: new Set(), ...ui }, slot, actions, refusals, location: 'http://localhost/checkouts/cn/preview' });
 }
 
 /** The sample checkout after `operations`, as the page gets it. */
@@ -198,4 +198,17 @@ test('a failed run shows its error and counts as failed', () => {
 test('problems with the app show as banners', () => {
   const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle, run `shopify app build`'] }));
   assert.match(text(byClass(tree, 'lsf-diagnostics')[0]), /shopify app build/);
+});
+
+test('an extension the host does not load shows why, next to the problems with the app', () => {
+  const refusals = [{ handle: 'order-notice', apiVersion: '2025-07', reason: 'API version 2025-07 is not supported: the local checkout runs 2026-10 and 2027-01.' }];
+  const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle'] }), { functionsOpen: true }, { refusals });
+  const banners = byClass(tree, 'lsf-diagnostics')[0];
+  assert.match(text(banners), /gift-message: no bundle/);
+  assert.match(text(banners), /order-notice: not loaded\. API version 2025-07 is not supported/);
+  const listed = findAll(tree, (node) => node.tag === 'li' && node.props.key === 'order-notice')[0];
+  assert.match(text(listed), /not loaded/);
+  const kept = findAll(tree, (node) => node.tag === 'li' && node.props.key === 'gift-message')[0];
+  assert.doesNotMatch(text(kept), /not loaded/);
+  assert.equal(byClass(page(checkoutState()), 'lsf-diagnostics').length, 0, 'nothing to say, nothing shown');
 });

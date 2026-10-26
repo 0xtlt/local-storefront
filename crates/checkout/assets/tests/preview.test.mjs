@@ -103,8 +103,18 @@ test('serves the shell with the state and the asset base filled in', async () =>
   assert.equal((await fetch(`${base}/checkouts/cn/preview?variant=shop`).then((response) => response.text())).includes('"variant":"shop"'), true);
 });
 
+test('runs an extension on another API version when asked, until the checkout is reset', async () => {
+  const versions = async (query) =>
+    (await fetch(`${base}/checkouts/cn/preview.json${query}`).then((response) => response.json())).extensions.map((ext) => `${ext.handle}@${ext.apiVersion}`);
+  assert.deepEqual(await versions(''), ['gift-message@2026-10', 'order-notice@2027-01']);
+  assert.deepEqual(await versions('?apiVersion=order-notice:2026-10'), ['gift-message@2026-10', 'order-notice@2026-10']);
+  assert.deepEqual(await versions(''), ['gift-message@2026-10', 'order-notice@2026-10'], 'it stays');
+  await fetch(`${base}/checkouts/cn/preview?reset`);
+  assert.deepEqual(await versions(''), ['gift-message@2026-10', 'order-notice@2027-01']);
+});
+
 test('serves the assets and the bundles of the extensions, and nothing else', async () => {
-  for (const file of ['checkout.js', 'checkout.css', 'sandbox.html', 'sandbox.js', 'extension-host.js']) {
+  for (const file of ['checkout.js', 'checkout.css', 'sandbox.html', 'sandbox.js', 'extension-host.js', 'api-versions.js']) {
     assert.equal((await fetch(`${base}/__lsf/checkout/assets/${file}`)).status, 200, file);
   }
   const js = await fetch(`${base}/__lsf/extensions/gift-message/gift-message.js`);

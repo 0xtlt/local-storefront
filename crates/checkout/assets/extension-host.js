@@ -5,46 +5,8 @@
 // global it builds from the state we send. Everything an extension changes comes back as a
 // message, becomes operations (`operations.js`) and ends in a new state, sent to every iframe.
 
+import { refusalOf } from './api-versions.js';
 import { operationsForChange } from './operations.js';
-
-/** Targets that older API versions spell differently: the name they run under. */
-export const TARGET_ALIASES = {
-  'Checkout::Actions::RenderBefore': 'purchase.checkout.actions.render-before',
-  'Checkout::CartLines::RenderAfter': 'purchase.checkout.cart-line-list.render-after',
-  'Checkout::CartLineDetails::RenderAfter': 'purchase.checkout.cart-line-item.render-after',
-  'Checkout::CartLineDetails::RenderLineComponents': 'purchase.cart-line-item.line-components.render',
-  'Checkout::Contact::RenderAfter': 'purchase.checkout.contact.render-after',
-  'Checkout::CustomerInformation::RenderAfter': 'purchase.checkout.contact.render-after',
-  'Checkout::DeliveryAddress::RenderBefore': 'purchase.checkout.delivery-address.render-before',
-  'Checkout::Dynamic::Render': 'purchase.checkout.block.render',
-  'Checkout::ThankYou::Dynamic::Render': 'purchase.thank-you.block.render',
-  'Checkout::ThankYou::CartLineDetails::RenderAfter': 'purchase.thank-you.cart-line-item.render-after',
-  'Checkout::ThankYou::CartLines::RenderAfter': 'purchase.thank-you.cart-line-list.render-after',
-  'Checkout::ThankYou::CustomerInformation::RenderAfter':
-    'purchase.thank-you.customer-information.render-after',
-  'Checkout::Reductions::RenderBefore': 'purchase.checkout.reductions.render-before',
-  'Checkout::Reductions::RenderAfter': 'purchase.checkout.reductions.render-after',
-  'Checkout::ShippingMethods::RenderBefore': 'purchase.checkout.shipping-option-list.render-before',
-  'Checkout::ShippingMethods::RenderAfter': 'purchase.checkout.shipping-option-list.render-after',
-  'Checkout::ShippingMethodDetails::RenderAfter': 'purchase.checkout.shipping-option-item.render-after',
-  'Checkout::ShippingMethodDetails::RenderExpanded': 'purchase.checkout.shipping-option-item.details.render',
-  'Checkout::PaymentMethod::Render': 'purchase.checkout.payment-option-item.details.render',
-  'Checkout::PickupLocations::RenderBefore': 'purchase.checkout.pickup-location-list.render-before',
-  'Checkout::PickupLocations::RenderAfter': 'purchase.checkout.pickup-location-list.render-after',
-  'Checkout::PickupPoints::RenderBefore': 'purchase.checkout.pickup-point-list.render-before',
-  'Checkout::PickupPoints::RenderAfter': 'purchase.checkout.pickup-point-list.render-after',
-  'Checkout::GiftCard::Render': 'purchase.checkout.gift-card.render',
-};
-
-export const canonicalTarget = (target) => TARGET_ALIASES[target] ?? target;
-
-/** Every name an extension may register `target` under with `shopify.extend`. */
-export const namesOfTarget = (target) => [
-  target,
-  ...Object.entries(TARGET_ALIASES)
-    .filter(([, canonical]) => canonical === target)
-    .map(([alias]) => alias),
-];
 
 /** The targets the page renders (the others of the API need things a local checkout lacks). */
 export const RENDERED_TARGETS = [
@@ -73,11 +35,6 @@ export const RENDERED_TARGETS = [
   'purchase.thank-you.cart-line-item.render-after',
   'purchase.thank-you.footer.render-after',
 ];
-
-/** Extensions on API versions before 2025-10 build a remote-ui tree; later ones use the DOM. */
-export function modeOf(apiVersion) {
-  return /^\d{4}-\d{2}$/.test(apiVersion ?? '') && apiVersion < '2025-10' ? 'legacy' : 'modern';
-}
 
 /** The part of the state extensions see: the runs of Functions are the page's business. */
 export function stateForExtensions(state) {
@@ -127,11 +84,18 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
   const slots = new Map();
   let counter = 0;
 
-  const extensions = () => (getState().extensions ?? []).filter((ext) => ext.script);
-  const targetsOf = (ext) => (ext.targets ?? []).map(canonicalTarget);
+  // An extension on an API version we do not run, or declared against its rules, is not loaded.
+  const extensions = () => (getState().extensions ?? []).filter((ext) => ext.script && !refusalOf(ext));
+
+  /** `[{handle, reason}]`: the extensions that are not loaded because of their API version. */
+  const refusals = () =>
+    (getState().extensions ?? []).flatMap((ext) => {
+      const reason = refusalOf(ext);
+      return reason ? [{ handle: ext.handle, apiVersion: ext.apiVersion, reason }] : [];
+    });
 
   function hasTarget(target) {
-    return extensions().some((ext) => targetsOf(ext).includes(target));
+    return extensions().some((ext) => ext.targets?.includes(target));
   }
 
   function post(instance, message) {
@@ -145,10 +109,8 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
       type: 'init',
       handle: ext.handle,
       target: instance.target,
-      names: namesOfTarget(instance.target),
       script: new URL(ext.script, document.baseURI ?? sandboxUrl).href,
       apiVersion: ext.apiVersion,
-      mode: modeOf(ext.apiVersion),
       ctx: instance.ctx,
       variant: state.variant,
       ext: {
@@ -182,7 +144,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
 
   function attach(el, target, ctx = {}) {
     const created = extensions()
-      .filter((ext) => targetsOf(ext).includes(target))
+      .filter((ext) => ext.targets?.includes(target))
       .map((ext) => create(el, target, ext, ctx));
     slots.set(el, created);
   }
@@ -352,6 +314,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
 
   return {
     hasTarget,
+    refusals,
     attach,
     detach,
     update,

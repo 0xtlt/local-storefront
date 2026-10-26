@@ -74,7 +74,8 @@
   "extensions": [
     {
       "handle": "gift-message",
-      "apiVersion": "2025-10",
+      "apiVersion": "2026-10",
+      "metafields": [{ "namespace": "$app:gift", "key": "wrapped" }],
       "script": "/__lsf/extensions/gift-message/gift-message.js",
       "targets": [
         "purchase.checkout.block.render",
@@ -87,7 +88,8 @@
     },
     {
       "handle": "order-notice",
-      "apiVersion": "2025-07",
+      "apiVersion": "2027-01",
+      "metafields": [{ "namespace": "$app:notice", "key": "dismissed", "ownerType": "CART" }],
       "script": "/__lsf/extensions/order-notice/order-notice.js",
       "targets": [
         "purchase.checkout.reductions.render-after",

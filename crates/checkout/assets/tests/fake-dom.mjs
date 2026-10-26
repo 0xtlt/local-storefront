@@ -75,6 +75,13 @@ export class FakeText extends Node {
   get textContent() {
     return this.nodeValue;
   }
+  // Preact changes a text through `data`.
+  get data() {
+    return this.nodeValue;
+  }
+  set data(value) {
+    this.nodeValue = value;
+  }
 }
 
 /** Does `el` match one simple selector: `tag`, `.class`, `[attr]`, `[attr="v"]`, combined. */
@@ -275,6 +282,10 @@ export class FakeDocument extends FakeElement {
   createElement(tag) {
     const factory = this.elementFactory?.(tag.toLowerCase());
     return factory ? factory(this, tag) : new FakeElement(this, tag);
+  }
+  // Preact makes every element with it; the namespace does not matter here.
+  createElementNS(_namespace, tag) {
+    return this.createElement(tag);
   }
   createTextNode(text) {
     return new FakeText(this, text);

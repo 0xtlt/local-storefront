@@ -2,11 +2,12 @@
 // the panel that shows the Functions. Both skins (`standard`, `shop`) share the markup; the CSS
 // tells them apart (`[data-variant]`), apart from a few words and the order of the summary.
 //
-// A view takes `{state, ui, slot, actions}`:
+// A view takes `{state, ui, slot, actions, refusals}`:
 //   state    the checkout, amounts as `{amount, currencyCode}` (see `withCurrency`)
 //   ui       what only the page knows: drafts of the fields, what is open, what failed
 //   slot     `slot(target, instance)` → the node where extensions of that target render, or null
 //   actions  what the buyer's gestures do
+//   refusals the extensions the host does not load, `[{handle, reason}]` (see `api-versions.js`)
 
 import { COUNTRIES, countryName, price, priceOrFree } from './format.js';
 import { missingFields, placeErrors } from './operations.js';
@@ -392,9 +393,14 @@ function header(ctx) {
     h('span', { class: 'lsf-secure' }, icon('lock'), isShop(state) ? 'Shop Pay' : 'Secure checkout'));
 }
 
-function diagnostics(state) {
-  return (state.diagnostics ?? []).length > 0
-    ? h('div', { class: 'lsf-diagnostics' }, state.diagnostics.map((message) => banner('warning', h('p', null, message))))
+/** What is wrong with the app: the server's diagnostics and the extensions the host does not load. */
+function diagnostics({ state, refusals = [] }) {
+  const messages = [
+    ...(state.diagnostics ?? []),
+    ...refusals.map((refusal) => `${refusal.handle}: not loaded. ${refusal.reason}`),
+  ];
+  return messages.length > 0
+    ? h('div', { class: 'lsf-diagnostics' }, messages.map((message) => banner('warning', h('p', null, message))))
     : null;
 }
 
@@ -487,6 +493,7 @@ function run(ctx, entry, index) {
 
 function functionsPanel(ctx) {
   const { state, ui, actions } = ctx;
+  const refused = new Set((ctx.refusals ?? []).map((refusal) => refusal.handle));
   const runs = state.runs ?? [];
   const failures = runs.filter((entry) => entry.error).length;
   const other = isShop(state) ? 'standard' : 'shop';
@@ -503,7 +510,7 @@ function functionsPanel(ctx) {
       (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
         h('ul', null, state.errors.map((error) => h('li', null, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
       (state.extensions ?? []).length > 0 && h('div', null, h('h4', null, 'Extensions'),
-        h('ul', null, state.extensions.map((ext) => h('li', { key: ext.handle }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), (ext.targets ?? []).map((target) => h('code', null, target)))))),
+        h('ul', null, state.extensions.map((ext) => h('li', { key: ext.handle }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), (ext.targets ?? []).map((target) => h('code', null, target)))))),
       runs.length === 0 ? h('p', { class: 'lsf-muted' }, 'No Function ran.') : runs.map((entry, index) => run(ctx, entry, index))));
 }
 
@@ -512,7 +519,7 @@ export function renderPage(ctx) {
   const { state } = ctx;
   return h('div', { class: `lsf-app lsf-${state.status}`, 'data-variant': state.variant, 'data-status': state.status },
     header(ctx),
-    diagnostics(state),
+    diagnostics(ctx),
     state.status === 'completed' ? thankYouPage(ctx) : checkoutPage(ctx),
     functionsPanel(ctx));
 }

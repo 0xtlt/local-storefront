@@ -62,7 +62,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
 
   function paint() {
     document.body?.setAttribute?.('data-variant', state.variant);
-    render(root, renderPage({ state, ui, slot, actions, location: location.href }));
+    render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals() }));
     host.update(state);
   }
 
