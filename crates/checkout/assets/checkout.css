@@ -443,3 +443,54 @@ body[data-variant='shop'] { background: var(--page); }
   border-radius: var(--radius-card);
   background: var(--surface);
 }
+
+/* --- The home page: the extensions of the app and the checkout scenarios ------------------- */
+
+.lsf-home-main { display: flex; flex-direction: column; gap: 2rem; max-width: 1100px; margin: 0 auto; padding: .5rem 1rem 4rem; }
+.lsf-home h3 { font-size: 1rem; font-weight: 600; }
+.lsf-home h2 .lsf-muted { font-size: .9rem; font-weight: 400; }
+.lsf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
+.lsf-card {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.lsf-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .6rem; }
+.lsf-chips { display: flex; flex-wrap: wrap; gap: .3rem; width: 100%; }
+.lsf-home code { padding: 0 .3rem; border-radius: 4px; background: #ebebeb; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.lsf-targets { display: flex; flex-direction: column; gap: .35rem; margin: 0; padding: 0; list-style: none; }
+.lsf-targets li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .5rem; }
+.lsf-facts { display: flex; flex-direction: column; gap: .3rem; margin: 0; }
+.lsf-facts > div { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: .5rem; }
+.lsf-facts dt { color: var(--muted); }
+.lsf-facts dd { margin: 0; overflow-wrap: anywhere; }
+.lsf-home-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: auto; }
+.lsf-home-actions .lsf-pay, .lsf-home-actions .lsf-apply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: 0 1.1rem;
+  font-size: .9rem;
+  text-decoration: none;
+}
+.lsf-file { font-size: .8rem; }
+.lsf-home-problem {
+  margin: 0;
+  padding: .6rem .75rem;
+  border: 1px solid var(--critical-border);
+  border-radius: var(--radius);
+  background: var(--critical-bg);
+  color: var(--critical);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lsf-home .lsf-banner { margin: 0; }

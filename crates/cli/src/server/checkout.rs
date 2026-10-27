@@ -112,7 +112,7 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         }
         ("POST", ["checkouts", "cn", token, "update"]) => Some(update(state, incoming, token)),
         ("POST", ["checkouts", "cn", token, "complete"]) => Some(complete(state, incoming, token)),
-        ("GET" | "HEAD", []) if options.standalone => Some(start(state, incoming)),
+        ("GET" | "HEAD", []) if options.standalone => Some(home(state, incoming)),
         _ if options.standalone => Some(Reply::text(
             404,
             "Not found. This server shows the checkout of an app only: start `lsf serve --app` \
@@ -128,6 +128,7 @@ pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> O
     state.options.checkout.as_ref()?;
     match (incoming.method.as_str(), segments) {
         ("GET", ["checkout"]) => Some(control_state(state, incoming)),
+        ("GET", ["checkouts"]) => Some(home(state, incoming)),
         ("GET", ["checkout", "assets", file]) => Some(asset(file)),
         ("GET", ["extensions", handle, file @ ..]) if !file.is_empty() => {
             Some(extension_file(state, handle, file))
@@ -216,6 +217,14 @@ fn root_of(language: &Language) -> &str {
 fn request_root(state: &ServerState, session_id: &str, incoming: &Incoming) -> String {
     let (_, store) = state.snapshot(session_id);
     root_of(language_of(state, &store, incoming)).to_string()
+}
+
+/// The home page: the extensions of the app and the checkout scenarios. It is the page of `/` of
+/// a checkout without a theme; with a theme, which owns `/`, it is `/__lsf/checkouts`.
+fn home(state: &ServerState, incoming: &Incoming) -> Reply {
+    let store = state.store_of(incoming);
+    let root = root_of(language_of(state, &store, incoming)).to_string();
+    home::page(state, incoming, options(state), &root)
 }
 
 /// `/checkout`: a checkout for the cart of the visitor, in the language of the request. With

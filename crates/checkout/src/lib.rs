@@ -9,6 +9,7 @@ pub mod assets;
 pub mod fetch;
 pub mod input;
 pub mod pipeline;
+pub mod placement;
 pub mod runner;
 pub mod schema;
 pub mod types;

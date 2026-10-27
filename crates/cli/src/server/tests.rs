@@ -5505,10 +5505,14 @@ fn without_an_app_the_checkout_is_the_cart_listing() {
 #[test]
 fn a_standalone_checkout_serves_nothing_else() {
     let state = checkout_server(&[], true);
+    // `/` is the home page, and `/checkout` starts a checkout.
     let home = get(&state, "/", "co-alone");
+    assert_eq!(home.status, 200);
+    assert!(text(&home).contains("data-section=\"scenarios\""));
+    let start = get(&state, "/checkout", "co-alone");
     let location = format!("/checkouts/cn/{}", super::cart_token_of("co-alone"));
-    assert_eq!(home.status, 302);
-    assert_eq!(header(&home, "location"), Some(location.as_str()));
+    assert_eq!(start.status, 302);
+    assert_eq!(header(&start, "location"), Some(location.as_str()));
     assert_eq!(get(&state, &location, "co-alone").status, 200);
     assert_eq!(get(&state, "/products/anything", "co-alone").status, 404);
     // A session that is named needs no cookie.
@@ -5739,4 +5743,358 @@ fn a_scenario_is_reloaded_when_its_file_changes() {
         9.9
     );
     assert_eq!(get(&state, "/checkout?scenario=new", "viewer").status, 302);
+}
+
+// --- The home page ---
+
+/// The same fixture app with an extra Function that has a `.fetch` target and an extra checkout
+/// UI extension that is not built, declares a target the page has no place for, and an API
+/// version that is not supported.
+fn app_with_oddities(label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-home-app-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let write = |handle: &str, toml: &str| {
+        let directory = root.join("extensions").join(handle);
+        std::fs::create_dir_all(directory.join("src")).unwrap();
+        std::fs::write(directory.join("shopify.extension.toml"), toml).unwrap();
+        directory
+    };
+    let remote = write(
+        "remote-rules",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Remote rules"
+handle = "remote-rules"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.fetch"
+  input_query = "src/fetch.graphql"
+  export = "fetch"
+"#,
+    );
+    std::fs::write(
+        remote.join("src/run.graphql"),
+        "query Input { cart { lines { quantity } } }",
+    )
+    .unwrap();
+    std::fs::write(
+        remote.join("src/fetch.graphql"),
+        "query Input { cart { lines { quantity } } }",
+    )
+    .unwrap();
+    write(
+        "chat-widget",
+        r#"api_version = "2025-07"
+
+[[extensions]]
+name = "Chat widget"
+handle = "chat-widget"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+  module = "./src/Block.jsx"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.chat.render"
+  module = "./src/Chat.jsx"
+"#,
+    );
+    write(
+        "theme-widget",
+        "api_version = \"2026-10\"\n\n[[extensions]]\nname = \"Widget\"\nhandle = \"theme-widget\"\ntype = \"theme\"\n",
+    );
+    root
+}
+
+#[test]
+fn the_home_page_lists_every_extension_of_the_app() {
+    let data = ScenarioData::new("home-extensions", &[]);
+    let state = data.server(&[], true);
+    let page = get(&state, "/", "home");
+    assert_eq!(page.status, 200);
+    assert!(
+        header(&page, "content-type").is_some_and(|kind| kind.starts_with("text/html")),
+        "{:?}",
+        page.headers
+    );
+    let html = text(&page);
+    // It wears the checkout's stylesheet and needs no script and no other host.
+    assert!(html.contains("/__lsf/checkout/assets/checkout.css"));
+    assert!(!html.contains("<script"));
+    assert!(!html.contains("http://") && !html.contains("https://"));
+    for handle in [
+        "volume-discount",
+        "delivery-rules",
+        "payment-rules",
+        "quantity-limit",
+        "bundle-transform",
+    ] {
+        assert!(
+            html.contains(&format!("data-function=\"{handle}\"")),
+            "{handle}"
+        );
+    }
+    for handle in ["gift-message", "order-notice"] {
+        assert!(
+            html.contains(&format!("data-ui-extension=\"{handle}\"")),
+            "{handle}"
+        );
+    }
+    // What each one is: its API version, targets and the places of the targets.
+    assert!(html.contains("API 2027-01") && html.contains("API 2026-10"));
+    assert!(html.contains("cart.lines.discounts.generate.run"));
+    assert!(html.contains("discount API"));
+    assert!(html.contains("purchase.checkout.reductions.render-after"));
+    assert!(html.contains("Checkout summary: under the discount code field"));
+    // And how to see them all.
+    assert!(html.contains("href=\"/checkout?targets=all\""));
+    assert!(html.contains("href=\"/checkout?variant=shop\""));
+
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let function = |handle: &str| {
+        json["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|function| function["handle"] == handle)
+            .unwrap_or_else(|| panic!("no {handle}"))
+            .clone()
+    };
+    let discount = function("volume-discount");
+    assert_eq!(discount["apiVersion"], "2026-10");
+    assert_eq!(discount["built"], true);
+    assert_eq!(discount["network"], false);
+    assert_eq!(discount["apis"], json!(["discount"]));
+    assert_eq!(discount["selected"], true);
+    // The legacy target of the validation Function is said to be one.
+    let validation = function("quantity-limit");
+    assert_eq!(validation["targets"][0]["legacy"], true);
+    assert_eq!(validation["problems"][0]["severity"], "warning");
+}
+
+#[test]
+fn the_home_page_says_what_is_wrong_with_the_extensions() {
+    let app = app_with_oddities("wrong");
+    let state = checkout_server_with_data(app.clone(), &["volume-discount"], true, None);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+
+    let find = |list: &str, handle: &str| {
+        json[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["handle"] == handle)
+            .unwrap_or_else(|| panic!("no {handle} in {list}"))
+            .clone()
+    };
+    // A Function with a `.fetch` target can reach the network, and is not built.
+    let remote = find("functions", "remote-rules");
+    assert_eq!(remote["network"], true);
+    assert_eq!(remote["built"], false);
+    assert_eq!(remote["selected"], false);
+    assert!(
+        remote["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|problem| problem["message"]
+                .as_str()
+                .unwrap()
+                .contains("no Wasm module")),
+        "{remote}"
+    );
+    assert_eq!(find("functions", "volume-discount")["selected"], true);
+
+    // An extension on an API version the checkout does not run, and a target without a place.
+    let chat = find("uiExtensions", "chat-widget");
+    assert_eq!(chat["supported"], false);
+    assert_eq!(chat["built"], false);
+    assert_eq!(
+        chat["targets"][0]["place"],
+        "Checkout: a block between the shipping method and the payment"
+    );
+    assert_eq!(chat["targets"][1]["place"], Json::Null);
+    assert!(
+        chat["problems"].as_array().unwrap().iter().any(|problem| {
+            problem["severity"] == "error"
+                && problem["message"].as_str().unwrap().contains("2025-07")
+        }),
+        "{chat}"
+    );
+    assert_eq!(
+        json["otherExtensions"],
+        json!([{"handle": "theme-widget", "type": "theme"}])
+    );
+
+    let app = app_with_oddities("wrong-html");
+    let state = checkout_server_with_data(app.clone(), &[], true, None);
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert!(html.contains("no place on the page"), "{html}");
+    assert!(
+        html.contains("has no place for purchase.checkout.chat.render"),
+        "{html}"
+    );
+    assert!(html.contains("network access"));
+    assert!(html.contains("not built"));
+    assert!(html.contains("API 2025-07 is not supported"));
+    assert!(html.contains("Other extensions"));
+}
+
+#[test]
+fn the_home_page_lists_the_scenarios_and_the_ones_with_errors() {
+    let broken = r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#;
+    let data = ScenarioData::new(
+        "home-scenarios",
+        &[
+            ("tees.json", TEES),
+            ("broken.json", broken),
+            ("unreadable.json", "{ nope"),
+        ],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let scenarios = json["scenarios"].as_array().unwrap();
+    let names: Vec<&str> = scenarios
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["broken", "tees", "unreadable"]);
+
+    let tees = &scenarios[1];
+    assert_eq!(tees["title"], "Three tees in French");
+    assert_eq!(tees["open"], "/checkout?scenario=tees");
+    assert_eq!(
+        tees["openAllTargets"],
+        "/checkout?scenario=tees&targets=all"
+    );
+    assert_eq!(tees["problems"], json!([]));
+    let summary: HashMap<&str, &str> = tees["summary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["label"].as_str().unwrap(),
+                row["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary["Cart"],
+        "3 × Organic Cotton T-Shirt (Black / M) · note “A gift”"
+    );
+    assert_eq!(summary["Buyer"], "customer jane.doe@example.com");
+    assert_eq!(summary["Country, language"], "FR, French");
+    assert!(
+        summary["Entered"].contains("email gift@example.com"),
+        "{summary:?}"
+    );
+    assert!(
+        summary["Entered"].contains("address 1 rue de Rivoli, Paris, FR"),
+        "{summary:?}"
+    );
+    assert_eq!(summary["Discounts"], "codes entered: WELCOME");
+    assert_eq!(
+        summary["Overrides"],
+        "shipping Standard 4.90 USD, Express 12.90 USD · tax 20%"
+    );
+    assert_eq!(summary["Look"], "shop");
+
+    // A scenario with errors is listed with them, and has nowhere to go.
+    for name in [0, 2] {
+        assert_eq!(scenarios[name]["open"], Json::Null);
+        assert_eq!(scenarios[name]["summary"], json!([]));
+    }
+    assert!(
+        scenarios[0]["problems"][0]
+            .as_str()
+            .unwrap()
+            .contains("unknown_variant")
+    );
+    assert!(
+        scenarios[2]["problems"][0]
+            .as_str()
+            .unwrap()
+            .contains("invalid_json")
+    );
+
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("data-scenario=\"tees\""));
+    assert!(html.contains("href=\"/checkout?scenario=tees\""));
+    assert!(html.contains("href=\"/checkout?scenario=tees&amp;targets=all\""));
+    assert!(html.contains("Three tees in French"));
+    assert!(html.contains("data-scenario=\"broken\""));
+    assert!(html.contains("has errors"));
+    assert!(
+        html.contains("checkouts/broken.json at /session/cart/items/0/variant"),
+        "{html}"
+    );
+    assert!(!html.contains("href=\"/checkout?scenario=broken\""));
+    // The link of a scenario opens it.
+    assert_eq!(get(&state, "/checkout?scenario=tees", "home").status, 302);
+}
+
+#[test]
+fn the_home_page_says_how_to_get_scenarios() {
+    let state = checkout_server(&[], true);
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("None yet"), "{html}");
+    assert!(html.contains("lsf checkout init --app"), "{html}");
+}
+
+#[test]
+fn the_home_page_follows_the_language_of_the_url() {
+    let data = ScenarioData::new("home-fr", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/fr/?format=json", "home"));
+    assert_eq!(json["scenarios"][0]["open"], "/fr/checkout?scenario=tees");
+    assert_eq!(json["links"]["checkout"], "/fr/checkout");
+    assert_eq!(json["links"]["allTargets"], "/fr/checkout?targets=all");
+    // A checkout started there is in French, with the page's own parameters kept.
+    let reply = get(&state, "/fr/checkout?targets=all", "home");
+    assert_eq!(
+        header(&reply, "location"),
+        Some(
+            format!(
+                "/fr/checkouts/cn/{}?targets=all",
+                super::cart_token_of("home")
+            )
+            .as_str()
+        )
+    );
+}
+
+#[test]
+fn with_a_theme_the_home_page_is_under_the_control_api() {
+    let data = ScenarioData::new("home-theme", &[("tees.json", TEES)]);
+    let state = data.server(&[], false);
+    // The theme owns `/`.
+    let storefront = text(&get(&state, "/", "home"));
+    assert!(!storefront.contains("data-section=\"scenarios\""));
+    let html = text(&get(&state, "/__lsf/checkouts", "home"));
+    assert!(html.contains("data-scenario=\"tees\""));
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home"));
+    assert_eq!(json["scenarios"][0]["open"], "/checkout?scenario=tees");
+    let french = body_json(&get(
+        &state,
+        "/__lsf/checkouts?format=json&locale=fr",
+        "home",
+    ));
+    assert_eq!(french["scenarios"][0]["open"], "/fr/checkout?scenario=tees");
+    // A notice leads back to it.
+    let missing = text(&get(&state, "/checkout?scenario=nope", "home"));
+    assert!(missing.contains("href=\"/__lsf/checkouts\""), "{missing}");
+    // Without an app there is nothing to list.
+    assert_eq!(get(&server(), "/__lsf/checkouts", "home").status, 404);
 }

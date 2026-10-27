@@ -219,12 +219,34 @@ pub fn run(
         if !throttle.is_empty() {
             eprintln!("throttle: {throttle}");
         }
+        if let Some(dir) = &args.app.app {
+            let scenarios = &state.loaded().store.scenarios;
+            let broken = scenarios.iter().filter(|s| !s.problems.is_empty()).count();
+            if scenarios.is_empty() {
+                eprintln!(
+                    "scenarios: none (`lsf checkout init --app {}` writes a set in `checkouts/` of the data)",
+                    dir.display()
+                );
+            } else if broken > 0 {
+                eprintln!(
+                    "scenarios: {} ({broken} with errors, listed on the home page)",
+                    scenarios.len()
+                );
+            } else {
+                eprintln!("scenarios: {}", scenarios.len());
+            }
+        }
         if standalone {
             eprintln!(
-                "ready:  http://{local}/checkout   (status and control API: http://{local}/__lsf)"
+                "ready:  http://{local}/   (extensions and checkout scenarios; checkout: http://{local}/checkout; status and control API: http://{local}/__lsf)"
             );
         } else {
             eprintln!("ready:  http://{local}/   (status and control API: http://{local}/__lsf)");
+            if args.app.app.is_some() {
+                eprintln!(
+                    "home:   http://{local}/__lsf/checkouts   (extensions and checkout scenarios of the app)"
+                );
+            }
         }
         run_server(Arc::new(state), listener)
             .await
