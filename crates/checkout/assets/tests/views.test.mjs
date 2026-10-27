@@ -460,6 +460,12 @@ test('the JSON of the Functions panel is colored by kind, and reads the same as 
   assert.deepEqual(kinds('null'), ['null']);
 });
 
+test('numbers with an exponent are one number token', () => {
+  const pre = jsonCode({ small: 1e-7, big: -1e21 });
+  assert.equal(text(pre), '{\n  "small": 1e-7,\n  "big": -1e+21\n}');
+  assert.deepEqual(byClass(pre, 'lsf-json-number').map(text), ['1e-7', '-1e+21']);
+});
+
 test('a very large JSON is shown plain', () => {
   const pre = jsonCode({ big: 'x'.repeat(250_000) });
   assert.equal(pre.children.length, 1);
