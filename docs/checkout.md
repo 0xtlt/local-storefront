@@ -237,8 +237,10 @@ first. The second rule is what makes overlapping fixed amounts predictable: two 
 a fixed 100.00 across both and a fixed 100.00 on the second alone leave 0.00 in either
 configuration order (the narrow one first takes the second line, the general one takes the
 first), and not 50.00 in one and 0.00 in the other. Candidates that cover the same lines are
-told apart by their amount, Function, title, code and message; two that agree on all of these
-take the same from the same lines, and only their metafields tell them apart. The order is this
+told apart by what they would take from each line, their amount, their targets with the
+quantities they name, Function, title, code and message, never by their place in the
+configuration or in the answer; two that agree on all of these take the same from the same
+lines, and only their metafields tell them apart. The order is this
 checkout's choice, and so is the sharing of a fixed amount between lines: Shopify documents
 neither for overlapping amounts. It is a fixed order, not the one that takes the most in every
 case.

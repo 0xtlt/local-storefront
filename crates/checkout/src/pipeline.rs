@@ -2345,8 +2345,9 @@ fn distribute_capped(total: Cents, weights: &[Cents], caps: &[Cents]) -> Vec<Cen
 ///   lines, and a narrow one cannot (100.00 on lines A and B, then 100.00 on B alone, takes
 ///   the whole 200.00 in that order, and only 150.00 in the other).
 ///
-/// Candidates that tie are told apart by what they say (the lines they cover, the amount, the
-/// Function, the title, the code, the message), never by their position in the configuration.
+/// Candidates that tie are told apart by what they say (the lines they cover and what they would
+/// take from each, the amount, the targets with their quantities, the Function, the title, the
+/// code, the message), never by their position in the configuration or in the answer.
 /// Two candidates that agree on all of it take the same from the same lines; only their
 /// metafields differ, and they keep the order of the configuration.
 /// `covered` is the plan of the candidate on the lines before any candidate of the class.
@@ -2355,8 +2356,17 @@ fn stacking_key(
     candidate: &Candidate,
     covered: Vec<(usize, Cents)>,
 ) -> impl Ord + use<> {
-    let mut lines: Vec<usize> = covered.into_iter().map(|(index, _)| index).collect();
+    // The lines with what the candidate would take from each: two candidates on the same lines
+    // for different quantities take different amounts, and must not tie.
+    let mut lines = covered;
     lines.sort_unstable();
+    // What the candidate targets, quantities included, for the candidates that still tie.
+    let mut targets: Vec<String> = candidate
+        .targets
+        .iter()
+        .map(|target| format!("{target:?}"))
+        .collect();
+    targets.sort_unstable();
     let (kind, rank, each, cents) = match candidate.value {
         // Millionths of a percent, negated: the larger percentage sorts first.
         Amount::Percentage(percentage) => (0u8, -((percentage * 1e6).round() as i64), false, 0),
@@ -2369,6 +2379,7 @@ fn stacking_key(
         lines,
         cents,
         each,
+        targets,
         context.function.to_string(),
         context.title.to_string(),
         candidate

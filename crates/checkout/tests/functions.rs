@@ -3539,3 +3539,38 @@ fn a_shipping_discount_alone_is_not_reported_as_skipped() {
     assert_eq!(result.cost.shipping, 245);
     assert!(result.skipped_discounts.is_empty());
 }
+
+/// One answer with two shared fixed amounts on the same lines, for different quantities.
+fn quantities_answer(candidates: &[[u32; 2]], amount: &str) -> serde_json::Value {
+    json!({"operations": [{"productDiscountsAdd": {
+        "selectionStrategy": "ALL",
+        "candidates": candidates.iter().map(|quantities| json!({
+            "targets": [
+                {"cartLine": {"id": LINE_1, "quantity": quantities[0]}},
+                {"cartLine": {"id": LINE_2, "quantity": quantities[1]}},
+            ],
+            "value": shared_fixed_amount(amount),
+        })).collect::<Vec<_>>(),
+    }}]})
+}
+
+#[test]
+fn candidates_that_differ_only_by_their_quantities_stack_in_any_order() {
+    // Same lines, same amount, same Function: only the quantities they target tell them apart,
+    // and the order of the answer must not decide which one is applied first.
+    let cart = [(TEE, 3), (TOTE, 3)];
+    let run = |candidates: &[[u32; 2]]| {
+        answer_discounts(
+            "cart_lines_discounts_generate_run",
+            &cart,
+            &[Product],
+            &[("Bundle", quantities_answer(candidates, AMOUNT))],
+        )
+    };
+    const AMOUNT: &str = "80.00";
+    let forward = run(&[[1, 1], [1, 3]]);
+    let reversed = run(&[[1, 3], [1, 1]]);
+    assert_eq!(prices_and_amounts(&forward), prices_and_amounts(&reversed));
+    assert_allocations_add_up(&forward);
+    assert_allocations_add_up(&reversed);
+}
