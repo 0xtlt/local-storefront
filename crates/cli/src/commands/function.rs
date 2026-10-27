@@ -262,6 +262,16 @@ fn print_text(result: &CheckoutResult) {
             }
             None => println!("output: none"),
         }
+        if let Some(exchange) = &run.exchange {
+            println!(
+                "http: {} {} -> {}",
+                exchange.request.method.as_str(),
+                exchange.request.url,
+                exchange.response.status
+            );
+            println!("response body:");
+            println!("{}", indent(&exchange.response.body));
+        }
         if !run.logs.trim().is_empty() {
             println!("logs:");
             println!("{}", indent(run.logs.trim_end()));

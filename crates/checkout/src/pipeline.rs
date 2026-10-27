@@ -2,10 +2,12 @@
 //! applies what they return.
 //!
 //! Cart transform → product and order discounts → delivery groups → delivery customization →
-//! shipping discounts → payment customization → validation → cost.
+//! shipping discounts → payment customization → validation → cost. A discount or validation
+//! Function with network access runs its `.fetch` target first, and its `.run` target reads
+//! the response ([`crate::fetch`]).
 //!
 //! What is not supported: fulfillment constraints, order routing and the pickup generators
-//! (listed by [`crate::app`], not run), the `.fetch` targets of discounts, discount
+//! (listed by [`crate::app`], not run), discount
 //! `conditions` on candidates (every candidate applies), combinations between discounts (they
 //! all stack), tax lines (one rate on the discounted subtotal) and prices by market.
 //!
@@ -22,14 +24,16 @@ use lsf_core::store::CartLine;
 use serde_json::Value;
 
 use crate::app::{App, FunctionExtension, FunctionTarget, Selection, TargetKind};
-use crate::input::{InputContext, Owner, OwnerKind};
+use crate::fetch::{self, Exchange, Fetcher, HttpFetcher};
+use crate::input::{FetchInput, InputContext, Owner, OwnerKind};
 use crate::runner;
 use crate::version::ApiVersion;
 use crate::{
-    AppliedDiscount, Cents, CheckoutConfig, CheckoutError, CheckoutResult, CheckoutState, Cost,
-    DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass, DiscountCodeStatus,
-    DiscountConfig, FunctionRun, KeyValue, LineSellingPlan, Metafield, PaymentMethod, ResultLine,
-    SelectedOption, SourceLine,
+    AllocationMethod, AppliedDiscount, Cents, CheckoutConfig, CheckoutError, CheckoutResult,
+    CheckoutState, Cost, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass,
+    DiscountCodeStatus, DiscountConfig, DiscountDetails, DiscountTarget, DiscountValue,
+    FunctionRun, KeyValue, LineSellingPlan, Metafield, PaymentMethod, PaymentPlacement, ResultLine,
+    SelectedOption, SourceLine, TargetSelection,
 };
 
 /// The handle of the delivery group: one group holds every line that needs shipping.
@@ -78,6 +82,31 @@ pub fn compute_with(
     config: &CheckoutConfig,
     build: &InputBuilder,
 ) -> CheckoutResult {
+    compute_with_fetcher(
+        app,
+        enabled,
+        store,
+        session,
+        state,
+        config,
+        build,
+        &HttpFetcher,
+    )
+}
+
+/// [`compute_with`] with another way to send the HTTP requests of the `.fetch` targets: tests
+/// answer them without the network.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_with_fetcher(
+    app: &App,
+    enabled: &Selection,
+    store: &lsf_core::Store,
+    session: &lsf_core::Session,
+    state: &CheckoutState,
+    config: &CheckoutConfig,
+    build: &InputBuilder,
+    fetcher: &dyn Fetcher,
+) -> CheckoutResult {
     let now = store
         .now
         .unwrap_or_else(Utc::now)
@@ -91,6 +120,7 @@ pub fn compute_with(
         state,
         config,
         build,
+        fetcher,
         currency: store.shop.currency.clone(),
         now,
         lines: initial_lines(store, session),
@@ -105,6 +135,11 @@ pub fn compute_with(
             .map(|method| PaymentMethod {
                 handle: method.handle.clone(),
                 name: method.name.clone(),
+                placements: if method.placements.is_empty() {
+                    vec![PaymentPlacement::PaymentMethod]
+                } else {
+                    method.placements.clone()
+                },
             })
             .collect(),
         errors: Vec::new(),
@@ -121,6 +156,7 @@ struct Pipeline<'a> {
     state: &'a CheckoutState,
     config: &'a CheckoutConfig,
     build: &'a InputBuilder<'a>,
+    fetcher: &'a dyn Fetcher,
     currency: String,
     now: DateTime<FixedOffset>,
     lines: Vec<ResultLine>,
@@ -137,6 +173,7 @@ struct Pipeline<'a> {
 }
 
 /// What owns a Function run: the object whose metafields configure it.
+#[derive(Clone)]
 struct OwnerSpec<'a> {
     kind: OwnerKind,
     id: String,
@@ -203,6 +240,71 @@ impl<'a> Pipeline<'a> {
         owner: OwnerSpec,
         triggering_code: Option<&str>,
     ) -> Option<Value> {
+        self.execute_with(
+            function,
+            target,
+            owner,
+            triggering_code,
+            FetchInput::Response(None),
+        )
+    }
+
+    /// The HTTP response a `.run` target reads as `fetchResult`: runs the `.fetch` target of
+    /// the Function, if it has one, and sends the request it asks for. `Ok(None)` when there is
+    /// nothing to fetch, `Err` when the `.fetch` target failed (the failure is in the checkout
+    /// errors, and the `.run` target does not run).
+    fn fetch_for(
+        &mut self,
+        function: &FunctionExtension,
+        run: &FunctionTarget,
+        owner: &OwnerSpec,
+        triggering_code: Option<&str>,
+    ) -> Result<Option<fetch::Response>, ()> {
+        let Some(fetch_kind) = run.kind.fetch_target() else {
+            return Ok(None);
+        };
+        let Some(target) = function
+            .targets
+            .iter()
+            .find(|target| target.kind == fetch_kind)
+        else {
+            return Ok(None);
+        };
+        let output = self
+            .execute_with(
+                function,
+                target,
+                owner.clone(),
+                triggering_code,
+                FetchInput::Unavailable,
+            )
+            .ok_or(())?;
+        let request = match fetch::request_from_output(&output) {
+            Ok(Some(request)) => request,
+            Ok(None) => return Ok(None),
+            Err(message) => {
+                self.function_error(function, format!("fetch request: {message}"));
+                return Err(());
+            }
+        };
+        let response = self.fetcher.send(&request);
+        if let Some(run) = self.runs.last_mut() {
+            run.exchange = Some(Exchange {
+                request,
+                response: response.clone(),
+            });
+        }
+        Ok(Some(response))
+    }
+
+    fn execute_with(
+        &mut self,
+        function: &FunctionExtension,
+        target: &FunctionTarget,
+        owner: OwnerSpec,
+        triggering_code: Option<&str>,
+        fetch: FetchInput,
+    ) -> Option<Value> {
         let (Some(version), Some(spec)) = (function.version, target.spec()) else {
             self.record_failure(
                 function,
@@ -228,6 +330,7 @@ impl<'a> Pipeline<'a> {
                 session: self.session,
                 state: self.state,
                 lines: &self.lines,
+                discounts: &self.discounts,
                 delivery_groups: &self.groups,
                 payment_methods: &self.payment_methods,
                 owner: Owner {
@@ -238,6 +341,7 @@ impl<'a> Pipeline<'a> {
                 },
                 entered_codes: &entered_codes,
                 triggering_code,
+                fetch,
                 currency: &self.currency,
                 now: self.now,
             };
@@ -298,6 +402,7 @@ impl<'a> Pipeline<'a> {
             logs: execution.logs,
             error: execution.error.clone(),
             instructions: execution.instructions,
+            exchange: None,
         };
         if failed {
             self.errors.push(CheckoutError {
@@ -335,6 +440,7 @@ impl<'a> Pipeline<'a> {
             logs: String::new(),
             error: Some(error),
             instructions: 0,
+            exchange: None,
         });
     }
 
@@ -801,7 +907,16 @@ impl<'a> Pipeline<'a> {
                     metafields: &discount.metafields,
                     classes: &classes,
                 };
-                let Some(output) = self.execute(function, target, owner, code.as_deref()) else {
+                let Ok(fetched) = self.fetch_for(function, target, &owner, code.as_deref()) else {
+                    continue;
+                };
+                let Some(output) = self.execute_with(
+                    function,
+                    target,
+                    owner,
+                    code.as_deref(),
+                    FetchInput::Response(fetched.as_ref()),
+                ) else {
                     continue;
                 };
                 self.apply_line_discounts(
@@ -829,6 +944,7 @@ impl<'a> Pipeline<'a> {
             function: &function.handle,
             title: &discount.title,
             code,
+            metafields: &discount.metafields,
         };
         match kind {
             TargetKind::LinesDiscounts => {
@@ -944,6 +1060,7 @@ impl<'a> Pipeline<'a> {
         class: DiscountClass,
         plan: Vec<(usize, Cents)>,
     ) {
+        let discount = self.discounts.len();
         let title = candidate
             .message
             .clone()
@@ -965,6 +1082,7 @@ impl<'a> Pipeline<'a> {
                 code: code.clone(),
                 amount: cents,
                 class,
+                discount,
             });
             total += cents;
         }
@@ -975,6 +1093,7 @@ impl<'a> Pipeline<'a> {
                 class,
                 amount: total,
                 function: context.function.to_string(),
+                details: details_of(candidate, class, context.metafields),
             });
         }
     }
@@ -1009,6 +1128,7 @@ impl<'a> Pipeline<'a> {
             line_ids,
             options,
             selected: None,
+            discount_allocations: Vec::new(),
         }];
         self.select_delivery();
     }
@@ -1115,13 +1235,23 @@ impl<'a> Pipeline<'a> {
                     metafields: &discount.metafields,
                     classes: &classes,
                 };
-                let Some(output) = self.execute(function, target, owner, code.as_deref()) else {
+                let Ok(fetched) = self.fetch_for(function, target, &owner, code.as_deref()) else {
+                    continue;
+                };
+                let Some(output) = self.execute_with(
+                    function,
+                    target,
+                    owner,
+                    code.as_deref(),
+                    FetchInput::Response(fetched.as_ref()),
+                ) else {
                     continue;
                 };
                 let context = DiscountContext {
                     function: &function.handle,
                     title: &discount.title,
                     code: code.as_deref(),
+                    metafields: &discount.metafields,
                 };
                 if legacy {
                     let strategy = str_field(&output, "discountApplicationStrategy");
@@ -1171,23 +1301,39 @@ impl<'a> Pipeline<'a> {
     ) {
         let chosen = select(strategy, candidates, |candidate| {
             let mut groups = self.groups.clone();
-            reduce_shipping(&mut groups, candidate)
+            reduce_shipping(&mut groups, candidate).iter().sum()
         });
         for candidate in chosen {
-            let reduced = reduce_shipping(&mut self.groups, &candidate);
+            let cuts = reduce_shipping(&mut self.groups, &candidate);
+            let reduced: Cents = cuts.iter().sum();
             if reduced > 0 {
+                let title = candidate
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| context.title.to_string());
+                let code = candidate
+                    .code
+                    .clone()
+                    .or_else(|| context.code.map(str::to_string));
+                let discount = self.discounts.len();
+                for (group, cut) in self.groups.iter_mut().zip(cuts) {
+                    if cut > 0 {
+                        group.discount_allocations.push(DiscountAllocation {
+                            title: title.clone(),
+                            code: code.clone(),
+                            amount: cut,
+                            class: DiscountClass::Shipping,
+                            discount,
+                        });
+                    }
+                }
                 self.discounts.push(AppliedDiscount {
-                    title: candidate
-                        .message
-                        .clone()
-                        .unwrap_or_else(|| context.title.to_string()),
-                    code: candidate
-                        .code
-                        .clone()
-                        .or_else(|| context.code.map(str::to_string)),
+                    title,
+                    code,
                     class: DiscountClass::Shipping,
                     amount: reduced,
                     function: context.function.to_string(),
+                    details: details_of(&candidate, DiscountClass::Shipping, context.metafields),
                 });
             }
         }
@@ -1229,18 +1375,24 @@ impl<'a> Pipeline<'a> {
         };
         if let Some(op) = operation.get("paymentMethodHide") {
             let id = handle_of(op, "paymentMethodId", "paymentMethodHide")?;
-            // Hidden from the accelerated checkout only: the method stays in the list.
-            let in_list = op
+            // Hides the placements it names, or all of them. A method left with none is gone.
+            let hidden: Vec<&str> = op
                 .get("placements")
                 .and_then(Value::as_array)
-                .is_none_or(|placements| {
-                    placements.is_empty()
-                        || placements
-                            .iter()
-                            .any(|placement| placement.as_str() == Some("PAYMENT_METHOD"))
-                });
-            if in_list && let Some(at) = position(&self.payment_methods, id) {
-                self.payment_methods.remove(at);
+                .map(|placements| placements.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            if let Some(at) = position(&self.payment_methods, id) {
+                let method = &mut self.payment_methods[at];
+                if hidden.is_empty() {
+                    method.placements.clear();
+                } else {
+                    method
+                        .placements
+                        .retain(|placement| !hidden.contains(&placement.graphql()));
+                }
+                if method.placements.is_empty() {
+                    self.payment_methods.remove(at);
+                }
             }
         } else if let Some(op) = operation.get("paymentMethodMove") {
             let id = handle_of(op, "paymentMethodId", "paymentMethodMove")?;
@@ -1269,7 +1421,16 @@ impl<'a> Pipeline<'a> {
                     metafields: self.function_metafields(&function.handle),
                     classes: &[],
                 };
-                let Some(output) = self.execute(function, target, owner, None) else {
+                let Ok(fetched) = self.fetch_for(function, target, &owner, None) else {
+                    continue;
+                };
+                let Some(output) = self.execute_with(
+                    function,
+                    target,
+                    owner,
+                    None,
+                    FetchInput::Response(fetched.as_ref()),
+                ) else {
                     continue;
                 };
                 // `purchase.validation.run` returns `{ errors }`, `cart.validations.generate.run`
@@ -1334,7 +1495,12 @@ impl<'a> Pipeline<'a> {
             discounts: self.discounts,
             discount_codes,
             delivery_groups: self.groups,
-            payment_methods: self.payment_methods,
+            // Offered in the list of the checkout, not only as an express button.
+            payment_methods: self
+                .payment_methods
+                .into_iter()
+                .filter(|method| method.placements.contains(&PaymentPlacement::PaymentMethod))
+                .collect(),
             errors: self.errors,
             cost: Cost {
                 subtotal,
@@ -1353,6 +1519,71 @@ struct DiscountContext<'a> {
     function: &'a str,
     title: &'a str,
     code: Option<&'a str>,
+    /// The metafields of the discount.
+    metafields: &'a [Metafield],
+}
+
+/// What a Function input shows of a discount it can see (`DiscountApplication`), from the
+/// candidate that made it.
+fn details_of(
+    candidate: &Candidate,
+    class: DiscountClass,
+    metafields: &[Metafield],
+) -> DiscountDetails {
+    let (value, allocation_method) = match candidate.value {
+        Amount::Percentage(percentage) => (
+            DiscountValue::Percentage(percentage),
+            AllocationMethod::Each,
+        ),
+        Amount::Fixed { cents, each } => (
+            DiscountValue::Fixed(cents),
+            if each {
+                AllocationMethod::Each
+            } else {
+                AllocationMethod::Across
+            },
+        ),
+        Amount::None => (DiscountValue::Fixed(0), AllocationMethod::Across),
+    };
+    let target_selection = match class {
+        // The lines the Function named.
+        DiscountClass::Product => TargetSelection::Explicit,
+        // The whole order, or the lines it leaves some out of.
+        DiscountClass::Order => {
+            let leaves_out = candidate.targets.iter().any(|target| {
+                matches!(target, Target::Order { excluded_lines, excluded_variants }
+                    if !excluded_lines.is_empty() || !excluded_variants.is_empty())
+            });
+            if leaves_out {
+                TargetSelection::Entitled
+            } else {
+                TargetSelection::All
+            }
+        }
+        // Every option of a group, or the options the Function named.
+        DiscountClass::Shipping => {
+            if candidate
+                .targets
+                .iter()
+                .any(|target| matches!(target, Target::DeliveryOption(_)))
+            {
+                TargetSelection::Explicit
+            } else {
+                TargetSelection::All
+            }
+        }
+    };
+    DiscountDetails {
+        allocation_method,
+        target_selection,
+        target_type: if class == DiscountClass::Shipping {
+            DiscountTarget::ShippingLine
+        } else {
+            DiscountTarget::LineItem
+        },
+        value,
+        metafields: metafields.to_vec(),
+    }
 }
 
 fn classes_of(discount: &DiscountConfig) -> Vec<DiscountClass> {
@@ -1871,11 +2102,11 @@ fn distribute(total: Cents, weights: &[Cents]) -> Vec<Cents> {
     shares
 }
 
-/// Lowers the cost of the options a shipping candidate targets. Returns what the options the
-/// buyer selected got cheaper by.
-fn reduce_shipping(groups: &mut [DeliveryGroup], candidate: &Candidate) -> Cents {
-    let mut reduced = 0;
-    for group in groups.iter_mut() {
+/// Lowers the cost of the options a shipping candidate targets. Returns, for each group, what
+/// the option the buyer selected got cheaper by.
+fn reduce_shipping(groups: &mut [DeliveryGroup], candidate: &Candidate) -> Vec<Cents> {
+    let mut reduced = vec![0; groups.len()];
+    for (group, reduced) in groups.iter_mut().zip(&mut reduced) {
         let group_targeted = candidate.targets.iter().any(|target| match target {
             Target::DeliveryGroup(id) => id_matches(id, &group.handle),
             _ => false,
@@ -1899,7 +2130,7 @@ fn reduce_shipping(groups: &mut [DeliveryGroup], candidate: &Candidate) -> Cents
             .clamp(0, option.cost);
             option.cost -= cut;
             if group.selected.as_ref() == Some(&option.handle) {
-                reduced += cut;
+                *reduced += cut;
             }
         }
     }
@@ -2303,12 +2534,13 @@ mod tests {
             line_ids: vec![],
             options: vec![option("standard", 490), option("express", 1290)],
             selected: Some("standard".into()),
+            discount_allocations: vec![],
         }];
         let candidate = product_candidate(json!({
             "targets": [{"deliveryGroup": {"id": "gid://shopify/CartDeliveryGroup/group-1"}}],
             "value": {"percentage": {"value": "100"}},
         }));
-        assert_eq!(reduce_shipping(&mut groups, &candidate), 490);
+        assert_eq!(reduce_shipping(&mut groups, &candidate), vec![490]);
         assert_eq!(groups[0].options[0].cost, 0);
         assert_eq!(groups[0].options[1].cost, 0);
         assert_eq!(groups[0].options[1].original_cost, 1290);

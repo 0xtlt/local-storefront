@@ -1,7 +1,8 @@
 # Checkout
 
 Run the Shopify Functions and show the checkout UI extensions of a Shopify app, on your machine.
-local-storefront serves a fake checkout for it: no store, no network, no payment. It is a way to
+local-storefront serves a fake checkout for it: no store, no payment, and no network except the
+requests of the Functions that have [network access](#network-access). It is a way to
 see what your Functions do to a cart, and how your extensions look and behave, not a copy of
 Shopify's checkout.
 
@@ -95,6 +96,21 @@ settings of your other Functions, and a tax rate.
 Without the section: one shipping rate, "Standard" at 5.00, the payment methods "Credit card",
 "Cash on Delivery" and "Bank Deposit", and no tax.
 
+The rest of what a Function reads comes from the other sections of the store data:
+
+- `buyerIdentity.purchasingCompany` (company, location and `contact`, with their dates, locale
+  and, for a location, `ordersCount` and `totalSpent`) from the
+  [companies and the customers](data-format.md#b2b-customers).
+- `localization.market` and `MailingAddress.market` from
+  [`localization.markets`](data-format.md#localization): a country in no market is a market of
+  its own.
+- `shop.metaobject(handle: {type:, handle:})` from the
+  [metaobjects](data-format.md#metafields-and-metaobjects).
+- `paymentMethods { placements }` from `payment_methods[].placements` (the list of the checkout
+  by default). A payment customization that hides a method for one placement only keeps the
+  other, and a method left in no placement is removed.
+- `cart.deliverableLines` is the lines that ship: the ones the delivery group holds.
+
 ## What runs
 
 Every time the page changes something, the Functions run again, in the order Shopify runs
@@ -122,6 +138,42 @@ by bundles. Shopify's documentation gives the examples (every merged quantity is
 the lines) and the units that stay as "a separate item", but does not say how the quantity of the
 merged line follows from the quantities: the greatest common divisor is the one rule that keeps
 every merged unit in a whole number of identical bundles.
+
+Each Function sees the checkout as the steps before it left it, as on Shopify. A Function that
+asks for `cart.discountApplications`, `CartLine.discountAllocations` or
+`CartDeliveryGroup.discountAllocations` reads the discounts applied so far: the cart transform
+sees none, the delivery customization the product and order discounts, the payment
+customization and the validation all of them, shipping included. Discounts run one after the
+other, so a discount sees the ones that ran before it. An application has the value of the
+discount (`PricingPercentageValue` or `MoneyV2`), its allocation method (`EACH` for a percentage,
+`ACROSS` for a fixed amount shared between the lines), what it targets (`EXPLICIT` for the lines
+the Function named, `ALL` for the whole order, `ENTITLED` when an order discount leaves lines
+out) and what it took off in total; its `metafield` is one of the discount's.
+
+### Network access
+
+A Function with network access has a `.fetch` target next to its `.run` target:
+`cart.lines.discounts.generate.fetch`, `cart.delivery-options.discounts.generate.fetch` and
+`cart.validations.generate.fetch` (the Discount and Cart and Checkout Validation APIs, in
+2026-10 and 2027-01). The checkout runs the `.fetch` target right before its `.run` target, sends
+the HTTP request it answers from your machine, and gives the response to the `.run` target as
+`fetchResult` (`status`, `body`, `jsonBody`, `header(name:)`). The request and the response
+show in the Functions panel and in `lsf function run`.
+
+Shopify's limits apply: `GET` and `POST`; an HTTPS URL (an `http` URL is accepted for
+`localhost` and loopback addresses, so a server of the app under development can answer); a
+`policy.readTimeoutMs` from 100 to 2000; 100 KB for the headers and the body of the response; no
+redirect followed; a UTF-8 body. A request that is out of these limits fails the `.fetch`
+target, and its `.run` target does not run. A request that cannot be made is a response,
+as on Shopify: `504` after the timeout, `502` when the connection or the TLS handshake fails
+or the response is too big, `501` for another charset, with Shopify's body (`504 Gateway
+Timeout`). A `.fetch` target that answers no request leaves `fetchResult` null, and its input
+query cannot ask for `fetchResult`.
+
+Not simulated: the JWT Shopify signs the request with (`x-shopify-request-jwt` needs the secret
+of the app) and its cache of responses (every run of the Function sends its request, so a page
+that changes the checkout sends it again). The pickup point and local pickup generators, which
+have `.fetch` targets too, are not run.
 
 A validation Function can check a rule at the placing of the order only: `buyerJourney.step` is
 `CHECKOUT_INTERACTION` when the page loads (and for `.json`) or changes (`update`, a line included),
@@ -243,7 +295,8 @@ the `market`. The store has no avatar, no consent to SMS marketing and no store 
 customer, nor a time zone for a buyer (`timezone` is the one of the browser).
 
 The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
-cost that the Functions produced, `runs`, the buyer, the address, the note, the attributes and
+cost that the Functions produced, `runs` (a run of a `.fetch` target has its `exchange`, the
+request and the response), the buyer, the address, the note, the attributes and
 the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount": 19.99}`.
 
 ### Operations
@@ -271,18 +324,18 @@ an order that was placed already leads to the same thank-you page, never to a se
 - Payments, gift cards, and payment method attributes. Choosing a payment method pays nothing.
 - One delivery group holds every line that ships. No pickup points, no split shipments, no
   prices by address: the rates are the same for every address.
-- Fulfillment constraints, order routing, and the pickup point and local pickup generators are
-  listed and not run. So are the `.fetch` targets.
+- Fulfillment constraints, order routing, and the pickup point and local pickup generators (with
+  their `.fetch` targets) are listed and not run.
 - Discounts have no `conditions` and no combinations: all of them stack.
 - Tax is one rate on the discounted subtotal, with no tax lines.
 - The values of the `settings` of an extension are not set: the manifest declares them, and
   `shopify.settings.value` is empty.
 - No Storefront API: `query` in an extension rejects.
-- A few fields of the Function input have no local data, and a query that asks for them fails
-  with the field's path: `fetchResult`, `Cart.deliverableLines`, the discount applications and
-  allocations of the cart, its lines and its delivery groups, `PurchasingCompany.contact`, the
-  dates, locale and totals of companies and their locations, `MailingAddress.market`,
-  `PaymentCustomizationPaymentMethod.placements` and `Shop.metaobject`.
+- Some fields of the Function input hold what the store data says and nothing more. The orders of
+  the customers are not counted in the `ordersCount` of a company location, nor spent in its
+  `totalSpent` (set them in the data); a `Market` is a country, or the group of countries that
+  `localization.markets` declares, with no catalog or price list; the `id` of a `Metaobject`
+  is made up from its type and handle.
 - Customer accounts hosted by Shopify, Shop Pay and express checkout.
 - With `checkout` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.

@@ -127,6 +127,29 @@ pub enum DeliveryKind {
 pub struct PaymentMethodConfig {
     pub handle: String,
     pub name: String,
+    /// Where the method is offered. Empty means `[PaymentMethod]`.
+    pub placements: Vec<PaymentPlacement>,
+}
+
+/// `PaymentCustomizationPaymentMethodPlacement` of the Functions API: where a payment method
+/// is offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PaymentPlacement {
+    /// The list of payment methods of the checkout.
+    PaymentMethod,
+    /// The express buttons (Shop Pay, Apple Pay, ...).
+    AcceleratedCheckout,
+}
+
+impl PaymentPlacement {
+    /// The value of the enum in the Functions API.
+    pub fn graphql(self) -> &'static str {
+        match self {
+            Self::PaymentMethod => "PAYMENT_METHOD",
+            Self::AcceleratedCheckout => "ACCELERATED_CHECKOUT",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -253,6 +276,10 @@ pub struct DiscountAllocation {
     /// the order discounts from its subtotal, and the cost of a line of a UI extension leaves
     /// them out of its total.
     pub class: DiscountClass,
+    /// Which discount made it: its index in [`CheckoutResult::discounts`], where a Function
+    /// input finds the application the allocation belongs to.
+    #[serde(skip)]
+    pub discount: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -265,6 +292,92 @@ pub struct AppliedDiscount {
     pub amount: Cents,
     /// The Function that produced it.
     pub function: String,
+    /// What a Function input shows of the discount: its `DiscountApplication`.
+    #[serde(skip)]
+    pub details: DiscountDetails,
+}
+
+/// `DiscountApplication` of the Functions API: how a discount is spread and what it targets.
+#[derive(Clone, Debug, Default)]
+pub struct DiscountDetails {
+    pub allocation_method: AllocationMethod,
+    pub target_selection: TargetSelection,
+    pub target_type: DiscountTarget,
+    pub value: DiscountValue,
+    /// The metafields of the discount, which `DiscountApplication.metafield` reads.
+    pub metafields: Vec<Metafield>,
+}
+
+/// `DiscountApplicationAllocationMethod`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AllocationMethod {
+    /// The value is spread across the lines it targets.
+    #[default]
+    Across,
+    /// The value applies to each line it targets.
+    Each,
+}
+
+impl AllocationMethod {
+    pub fn graphql(self) -> &'static str {
+        match self {
+            Self::Across => "ACROSS",
+            Self::Each => "EACH",
+        }
+    }
+}
+
+/// `DiscountApplicationTargetSelection`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TargetSelection {
+    /// Every line.
+    #[default]
+    All,
+    /// The lines the discount is entitled to (an order discount that leaves some out).
+    Entitled,
+    /// The lines or options the Function named.
+    Explicit,
+}
+
+impl TargetSelection {
+    pub fn graphql(self) -> &'static str {
+        match self {
+            Self::All => "ALL",
+            Self::Entitled => "ENTITLED",
+            Self::Explicit => "EXPLICIT",
+        }
+    }
+}
+
+/// `DiscountApplicationTarget`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DiscountTarget {
+    #[default]
+    LineItem,
+    ShippingLine,
+}
+
+impl DiscountTarget {
+    pub fn graphql(self) -> &'static str {
+        match self {
+            Self::LineItem => "LINE_ITEM",
+            Self::ShippingLine => "SHIPPING_LINE",
+        }
+    }
+}
+
+/// `PricingValue`: what the discount takes off.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DiscountValue {
+    /// A percentage: `10.0` is 10 %.
+    Percentage(f64),
+    Fixed(Cents),
+}
+
+impl Default for DiscountValue {
+    fn default() -> Self {
+        Self::Fixed(0)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -284,6 +397,9 @@ pub struct DeliveryGroup {
     /// In the order the buyer sees them, after delivery customizations.
     pub options: Vec<DeliveryOption>,
     pub selected: Option<String>,
+    /// What the shipping discounts took off the selected option.
+    #[serde(skip)]
+    pub discount_allocations: Vec<DiscountAllocation>,
 }
 
 impl DeliveryGroup {
@@ -319,6 +435,11 @@ pub struct DeliveryOption {
 pub struct PaymentMethod {
     pub handle: String,
     pub name: String,
+    /// Where the method is still offered. A method a Function hid from the list of the checkout
+    /// only (`PAYMENT_METHOD`) is not in [`CheckoutResult::payment_methods`], and a Function
+    /// that runs after sees it with the placements that are left.
+    #[serde(skip)]
+    pub placements: Vec<PaymentPlacement>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -363,6 +484,9 @@ pub struct FunctionRun {
     pub error: Option<String>,
     /// Wasm instructions executed. Shopify stops a Function past 11 million.
     pub instructions: u64,
+    /// For a `.fetch` target: the HTTP request it asked for and the response it got.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exchange: Option<crate::fetch::Exchange>,
 }
 
 /// Money as checkout UI extensions see it: `{"amount": 19.99, "currencyCode": "EUR"}`. The

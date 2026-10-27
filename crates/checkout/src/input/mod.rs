@@ -18,7 +18,10 @@ mod tests;
 use serde_json::Value as Json;
 
 use crate::version::{ApiVersion, FunctionApi};
-use crate::{CheckoutState, DeliveryGroup, DiscountClass, Metafield, PaymentMethod, ResultLine};
+use crate::{
+    AppliedDiscount, CheckoutState, DeliveryGroup, DiscountClass, Metafield, PaymentMethod,
+    ResultLine,
+};
 
 /// Everything a Function input can show about the checkout at one step of the pipeline.
 pub struct InputContext<'a> {
@@ -33,14 +36,29 @@ pub struct InputContext<'a> {
     pub state: &'a CheckoutState,
     /// The lines as they are at this step.
     pub lines: &'a [ResultLine],
+    /// The discounts applied so far (by the earlier steps and Functions): the discount
+    /// applications of the cart, which the allocations of lines and delivery groups point to.
+    pub discounts: &'a [AppliedDiscount],
     pub delivery_groups: &'a [DeliveryGroup],
     pub payment_methods: &'a [PaymentMethod],
     /// The object that owns the Function.
     pub owner: Owner<'a>,
     pub entered_codes: &'a [String],
     pub triggering_code: Option<&'a str>,
+    /// `fetchResult`: what the `.fetch` target of the Function got.
+    pub fetch: FetchInput<'a>,
     pub currency: &'a str,
     pub now: chrono::DateTime<chrono::FixedOffset>,
+}
+
+/// The `fetchResult` of the input of a target.
+#[derive(Clone, Copy, Debug)]
+pub enum FetchInput<'a> {
+    /// The input of a `.fetch` target: `fetchResult` is only there for the `.run` target.
+    Unavailable,
+    /// The input of a `.run` target: the response to the request of the `.fetch` target of the
+    /// Function, `None` when the Function has none or asked for no request.
+    Response(Option<&'a crate::fetch::Response>),
 }
 
 /// The object that owns a Function (a discount, a cart transform, ...): it holds the

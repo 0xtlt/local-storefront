@@ -1053,8 +1053,31 @@ pub struct CustomerInput {
     /// of them.
     #[serde(default)]
     pub company_locations: Vec<String>,
+    /// What the company knows of the customer as a buyer: their job title, language, dates.
+    /// Checkout Functions read it as `purchasingCompany.contact`.
+    #[serde(default)]
+    pub company_contact: Option<CompanyContactInput>,
     #[serde(default)]
     pub metafields: Metafields,
+}
+
+/// A customer as a contact of their company (B2B): `purchasingCompany.contact` of a checkout
+/// Function.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyContactInput {
+    /// The job title of the contact, e.g. `"Purchasing manager"`.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The language of the contact, e.g. `"fr"`. None when absent.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// Defaults to the creation date of the company.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Defaults to `created_at`.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 /// A place a company buys for (`customer.current_location`): a branch, a shop, a warehouse.
@@ -1073,6 +1096,22 @@ pub struct CompanyLocationInput {
     /// The tax number of the location, e.g. a VAT number.
     #[serde(default)]
     pub tax_registration_id: Option<String>,
+    /// The preferred language of the location, e.g. `"fr"`. None when absent.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// Defaults to the creation date of the company.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Defaults to `created_at`.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    /// The number of orders placed at the location, which checkout Functions read as
+    /// `ordersCount`. The orders of the customers are not counted: defaults to 0.
+    #[serde(default)]
+    pub orders_count: Option<u32>,
+    /// The amount spent at the location (`totalSpent`), e.g. `"1250.00"`. Defaults to 0.
+    #[serde(default)]
+    pub total_spent: Option<Money>,
     #[serde(default)]
     pub metafields: Metafields,
 }
@@ -1092,6 +1131,12 @@ pub struct CompanyInput {
     /// The places the company buys for. The first one is selected when a customer logs in.
     #[serde(default)]
     pub locations: Vec<CompanyLocationInput>,
+    /// Defaults to a fixed date, 2024-01-01 plus one day per company.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Defaults to `created_at`.
+    #[serde(default)]
+    pub updated_at: Option<String>,
     #[serde(default)]
     pub metafields: Metafields,
 }
@@ -1258,6 +1303,23 @@ pub struct LocalizationInput {
     pub countries: Vec<CountryInput>,
     #[serde(default)]
     pub languages: Vec<LanguageInput>,
+    /// Groups of countries sold as one market. A country in none of them is a market of its
+    /// own, named after the country.
+    #[serde(default)]
+    pub markets: Vec<MarketInput>,
+}
+
+/// A market: the countries the store sells to as one, as checkout Functions see it in
+/// `localization.market` and `MailingAddress.market`.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MarketInput {
+    /// What Functions call the market: `"europe"`.
+    pub handle: String,
+    /// The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`.
+    pub countries: Vec<String>,
+    #[serde(default)]
+    pub metafields: Metafields,
 }
 
 /// A file in `files/` that needs metadata. Files without an entry work too.
@@ -1457,6 +1519,20 @@ pub struct CheckoutPaymentMethodInput {
     /// What the buyer sees. Defaults to the handle.
     #[serde(default)]
     pub name: Option<String>,
+    /// Where the method is offered, which payment customization Functions read as
+    /// `placements`. Defaults to `["PAYMENT_METHOD"]`: the list of the checkout.
+    #[serde(default)]
+    pub placements: Vec<CheckoutPaymentPlacement>,
+}
+
+/// Where a payment method is offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CheckoutPaymentPlacement {
+    /// The list of payment methods of the checkout.
+    PaymentMethod,
+    /// The express buttons (Shop Pay, Apple Pay, ...).
+    AcceleratedCheckout,
 }
 
 /// What a discount may reduce.

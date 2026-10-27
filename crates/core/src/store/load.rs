@@ -1056,6 +1056,170 @@ mod tests {
     }
 
     #[test]
+    fn company_details_have_defaults_and_can_be_set() {
+        let overlay = serde_json::json!({
+            "companies": [{
+                "name": "Dated Co",
+                "created_at": "2025-03-01T08:30:00Z",
+                "locations": [
+                    {"name": "Head office", "locale": "fr", "orders_count": 12, "total_spent": "1234.50",
+                     "updated_at": "2025-04-01", "created_at": "2025-03-02"},
+                    {"name": "Depot"}
+                ]
+            }],
+            "customers": [{
+                "email": "buyer@dated.example", "company": "Dated Co",
+                "company_contact": {"title": "Purchasing manager", "locale": "de", "updated_at": "2025-05-01"}
+            }, {
+                "email": "plain@dated.example", "company": "Dated Co"
+            }]
+        });
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let company = store
+            .companies
+            .iter()
+            .find(|c| c.name == "Dated Co")
+            .unwrap();
+        let date = |text: &str| text.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        assert_eq!(company.created_at, date("2025-03-01T08:30:00Z"));
+        // Without `updated_at`: the creation date.
+        assert_eq!(company.updated_at, company.created_at);
+        let head = &company.locations[0];
+        assert_eq!(head.locale.as_deref(), Some("fr"));
+        assert_eq!((head.orders_count, head.total_spent), (12, 123_450));
+        assert_eq!(head.created_at.date_naive().to_string(), "2025-03-02");
+        assert_eq!(head.updated_at.date_naive().to_string(), "2025-04-01");
+        // A location with nothing set: the company's date, no language, nothing ordered.
+        let depot = &company.locations[1];
+        assert_eq!(depot.created_at, company.created_at);
+        assert_eq!(depot.updated_at, company.created_at);
+        assert_eq!(
+            (depot.locale.clone(), depot.orders_count, depot.total_spent),
+            (None, 0, 0)
+        );
+
+        let buyer = store.customer_by_email("buyer@dated.example").unwrap();
+        let contact = buyer.company_contact.as_ref().unwrap();
+        assert_eq!(contact.title.as_deref(), Some("Purchasing manager"));
+        assert_eq!(contact.locale.as_deref(), Some("de"));
+        assert_eq!(contact.created_at, company.created_at);
+        assert_eq!(contact.updated_at.date_naive().to_string(), "2025-05-01");
+        assert!(
+            store
+                .customer_by_email("plain@dated.example")
+                .unwrap()
+                .company_contact
+                .is_none()
+        );
+
+        // The companies of the demo get fixed, distinct creation dates.
+        let demo = &store.companies[0];
+        assert_eq!(demo.created_at, date("2024-01-01T12:00:00Z"));
+    }
+
+    #[test]
+    fn bad_company_details_are_reported() {
+        let overlay = serde_json::json!({
+            "companies": [{"name": "Bad Co", "created_at": "soon",
+                "locations": [{"name": "A", "updated_at": "never"}]}],
+            "customers": [{"email": "orphan@bad.example", "company_contact": {"title": "x"}}]
+        });
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[invalid_date]: \"soon\" is not a date",
+            "error[invalid_date]: \"never\" is not a date",
+            "error[missing_company]: the customer has a company contact but names no company",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn markets_group_countries() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "de"}, {"iso_code": "CA"}],
+            "markets": [{"handle": "europe", "countries": ["fr", "DE"],
+                "metafields": {"custom": {"tier": "gold"}}}]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let market = store.market_of("de").expect("a market");
+        assert_eq!(market.handle, "europe");
+        assert_eq!(market.countries, ["FR", "DE"]);
+        assert!(market.metafields.contains_key("custom"));
+        assert!(store.market_of("CA").is_none());
+        // Without markets, no country is in one.
+        let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(store.markets.is_empty() && store.market_of("US").is_none());
+    }
+
+    #[test]
+    fn bad_markets_are_reported() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "DE"}],
+            "markets": [
+                {"handle": "a", "countries": ["FR", "XX"]},
+                {"handle": "a", "countries": ["FR"]}
+            ]
+        }});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[unknown_country]: \"XX\" is not one of the countries in \"localization.countries\"",
+            "error[duplicate_handle]: there are two markets called \"a\"",
+            "error[duplicate_market_country]: FR is already in the market \"a\"",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn payment_methods_are_offered_in_the_list_by_default() {
+        let overlay = serde_json::json!({"checkout": {"payment_methods": [
+            {"handle": "card"},
+            {"handle": "wallet", "placements": ["ACCELERATED_CHECKOUT", "PAYMENT_METHOD"]}
+        ]}});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let methods = &store.checkout.payment_methods;
+        assert_eq!(
+            methods[0].placements,
+            [model::CheckoutPaymentPlacement::PaymentMethod]
+        );
+        assert_eq!(
+            methods[1].placements,
+            [
+                model::CheckoutPaymentPlacement::AcceleratedCheckout,
+                model::CheckoutPaymentPlacement::PaymentMethod
+            ]
+        );
+        for method in &store.checkout.payment_methods {
+            assert!(!method.placements.is_empty());
+        }
+        let bad = serde_json::json!({"checkout": {"payment_methods": [
+            {"handle": "card", "placements": ["EVERYWHERE"]}]}});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&bad));
+        assert!(
+            diagnostics.to_string().contains("EVERYWHERE"),
+            "{diagnostics}"
+        );
+    }
+
+    #[test]
     fn overlay_errors_are_reported() {
         let overlay = serde_json::json!({"products": [{"titel": "x"}]});
         let (_, diagnostics) =

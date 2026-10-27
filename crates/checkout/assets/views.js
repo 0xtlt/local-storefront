@@ -496,7 +496,10 @@ function run(ctx, entry, index) {
       failed && h('div', null, h('h4', null, 'Error'), h('pre', { class: 'is-error' }, entry.error)),
       entry.logs && h('div', null, h('h4', null, 'Logs'), h('pre', null, entry.logs)),
       h('div', null, h('h4', null, 'Input'), h('pre', null, json(entry.input))),
-      h('div', null, h('h4', null, 'Output'), h('pre', null, entry.output === null || entry.output === undefined ? '(none)' : json(entry.output)))));
+      h('div', null, h('h4', null, 'Output'), h('pre', null, entry.output === null || entry.output === undefined ? '(none)' : json(entry.output))),
+      // A `.fetch` target: the request it asked for and the response its `.run` target reads.
+      entry.exchange && h('div', null, h('h4', null, 'HTTP request'), h('pre', null, json(entry.exchange.request))),
+      entry.exchange && h('div', null, h('h4', null, 'HTTP response'), h('pre', null, json(entry.exchange.response)))));
 }
 
 function functionsPanel(ctx) {

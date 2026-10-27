@@ -110,8 +110,27 @@ customization (`cart.delivery-options.transform.run`, legacy `purchase.delivery-
 `purchase.shipping-discount.run`) → payment customization (`cart.payment-methods.transform.run`,
 legacy `purchase.payment-customization.run`) → validation (`cart.validations.generate.run`,
 legacy `purchase.validation.run`) → cost. Out of scope (listed, not run): fulfillment
-constraints, order routing, pickup point/local pickup generators, the `.fetch` targets, discount
-`conditions` and combinations (all discounts stack).
+constraints, order routing, pickup point/local pickup generators (and their `.fetch` targets),
+discount `conditions` and combinations (all discounts stack).
+
+Network access (`fetch`): `cart.lines.discounts.generate`, `cart.delivery-options.discounts.generate`
+and `cart.validations.generate` may have a `.fetch` target (`TargetKind::*Fetch`). Right before its
+`.run` target the pipeline runs it with `FetchInput::Unavailable` (its query cannot read
+`fetchResult`), reads the request of its output (`fetch::request_from_output`: GET/POST, HTTPS or
+loopback http, `readTimeoutMs` 100 to 2000), sends it through the `Fetcher` of the pipeline
+(`HttpFetcher` over `ureq`, or a fake in tests: `compute_with_fetcher`) and records the exchange on
+the `FunctionRun`. The `.run` target then reads `FetchInput::Response(Some(..))` as `fetchResult`.
+A request that cannot be made is a 5xx response (504 timeout; 502 connection, TLS, size over 100 KB;
+501 charset), never a Function failure; a refused request fails the `.fetch` target and the `.run`
+target does not run. See `fetch.rs`.
+
+What each step shows of the discounts: `AppliedDiscount::details` (a `DiscountApplication`: value,
+allocation method, target selection and type, metafields of the discount) and, on lines and delivery
+groups, `DiscountAllocation { discount }` (index in `InputContext::discounts`). The pipeline fills
+them as it applies the candidates, so a Function only sees what the steps before it applied.
+`PaymentMethod::placements` is what `PaymentCustomizationPaymentMethod.placements` reads; a hide
+operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists
+the methods still in `PAYMENT_METHOD`.
 
 The lines start as the cart lines of the session, priced by `lsf_core::drops::cart::resolve_line`:
 the same `ResolvedLine` the storefront cart (`/cart.js`, the `cart` drop) is computed from, so that

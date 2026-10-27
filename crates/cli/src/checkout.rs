@@ -9,10 +9,12 @@ use clap::ValueEnum;
 use lsf_checkout::app::{self, App, Selection};
 use lsf_checkout::{
     CheckoutConfig, DeliveryKind, DiscountClass, DiscountConfig, Metafield, PaymentMethodConfig,
-    ShippingRate,
+    PaymentPlacement, ShippingRate,
 };
 use lsf_core::Store;
-use lsf_core::store::model::{CheckoutDeliveryKind, CheckoutDiscountClass};
+use lsf_core::store::model::{
+    CheckoutDeliveryKind, CheckoutDiscountClass, CheckoutPaymentPlacement,
+};
 use serde_json::Value as Json;
 
 /// Which look the checkout page takes.
@@ -159,6 +161,16 @@ pub fn config_from_store(store: &Store) -> CheckoutConfig {
             .map(|method| PaymentMethodConfig {
                 handle: method.handle.clone(),
                 name: method.name.clone(),
+                placements: method
+                    .placements
+                    .iter()
+                    .map(|placement| match placement {
+                        CheckoutPaymentPlacement::PaymentMethod => PaymentPlacement::PaymentMethod,
+                        CheckoutPaymentPlacement::AcceleratedCheckout => {
+                            PaymentPlacement::AcceleratedCheckout
+                        }
+                    })
+                    .collect(),
             })
             .collect(),
         discounts: settings
@@ -260,6 +272,10 @@ mod tests {
         assert_eq!(config.shipping_rates[0].kind, DeliveryKind::PickUp);
         // Not mentioned: the defaults.
         assert_eq!(config.payment_methods.len(), 3);
+        assert_eq!(
+            config.payment_methods[0].placements,
+            [PaymentPlacement::PaymentMethod]
+        );
         let discount = &config.discounts[0];
         assert_eq!(discount.code.as_deref(), Some("SAVE"));
         assert_eq!(

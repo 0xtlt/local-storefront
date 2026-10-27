@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use lsf_checkout::app::{self, App};
 use lsf_checkout::{CheckoutConfig, CheckoutResult, Metafield, PaymentMethodConfig, ShippingRate};
@@ -51,6 +55,7 @@ pub fn config() -> CheckoutConfig {
     let method = |handle: &str, name: &str| PaymentMethodConfig {
         handle: handle.to_string(),
         name: name.to_string(),
+        placements: Vec::new(),
     };
     CheckoutConfig {
         shipping_rates: vec![
@@ -169,4 +174,106 @@ fn copy_dir(from: &Path, to: &Path) {
             std::fs::copy(&path, &target).unwrap();
         }
     }
+}
+
+// ---- a server to send the requests of the .fetch targets to ----
+
+/// What the server of a test received.
+#[derive(Clone, Debug, Default)]
+pub struct Received {
+    pub request_line: String,
+    /// Lower-case names.
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
+/// Answers one connection per entry of `answers`, in order, and records what it received. An
+/// answer is the bytes to write, after `delay`.
+pub struct Server {
+    pub port: u16,
+    pub received: Arc<Mutex<Vec<Received>>>,
+}
+
+pub fn serve(answers: Vec<(Duration, Vec<u8>)>) -> Server {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let log = received.clone();
+    std::thread::spawn(move || {
+        for (delay, answer) in answers {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let request = read_request(&mut stream);
+            log.lock().unwrap().push(request);
+            std::thread::sleep(delay);
+            // The client may have given up already.
+            let _ = stream.write_all(&answer);
+            let _ = stream.flush();
+        }
+    });
+    Server { port, received }
+}
+
+pub fn read_request(stream: &mut TcpStream) -> Received {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let header_end = loop {
+        let read = stream.read(&mut chunk).unwrap_or(0);
+        if read == 0 {
+            break bytes.len();
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if let Some(at) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break at + 4;
+        }
+    };
+    let head = String::from_utf8_lossy(&bytes[..header_end.min(bytes.len())]).into_owned();
+    let mut lines = head.lines();
+    let request_line = lines.next().unwrap_or("").to_string();
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
+        .collect();
+    let length = headers
+        .iter()
+        .find(|(name, _)| name == "content-length")
+        .and_then(|(_, value)| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    while bytes.len() < header_end + length {
+        let read = stream.read(&mut chunk).unwrap_or(0);
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    Received {
+        request_line,
+        headers,
+        body: String::from_utf8_lossy(&bytes[header_end.min(bytes.len())..]).into_owned(),
+    }
+}
+
+pub fn ok(content_type: &str, body: &str) -> (Duration, Vec<u8>) {
+    raw(
+        "200 OK",
+        &[("content-type", content_type), ("x-app", "checks")],
+        body.as_bytes(),
+    )
+}
+
+pub fn raw(status: &str, headers: &[(&str, &str)], body: &[u8]) -> (Duration, Vec<u8>) {
+    let mut answer = format!("HTTP/1.1 {status}\r\n").into_bytes();
+    for (name, value) in headers {
+        answer.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+    }
+    answer.extend_from_slice(
+        format!(
+            "content-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        )
+        .as_bytes(),
+    );
+    answer.extend_from_slice(body);
+    (Duration::ZERO, answer)
 }

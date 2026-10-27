@@ -69,10 +69,17 @@ still list `purchase.*-discount.run`, flagged "deprecated".
 
 ### Targets that are not run
 
-`*.fetch` targets (discounts, cart and checkout validation: network access, enterprise only),
-fulfillment constraints (`cart.fulfillment-constraints.generate.run`), order routing
+The `.fetch` targets of the pickup point and local pickup generators, fulfillment constraints (`cart.fulfillment-constraints.generate.run`), order routing
 (`cart.fulfillment-groups.location-rankings.generate.run`), pickup point and local pickup delivery option
 generators (both only exist in `unstable`). Listed, not run, as before.
+
+### Targets with network access
+
+`cart.lines.discounts.generate.fetch`, `cart.delivery-options.discounts.generate.fetch` and
+`cart.validations.generate.fetch` are in the 2026-10 and 2027-01 schemas (`MutationRoot` has their
+`…GenerateFetch` field, `Input` has `fetchResult` in the discount and validation APIs only) and are run.
+The two schemas are identical there. The delivery customization, payment customization, cart transform
+and the three legacy discount APIs have no `fetch` target.
 
 ### Documentation quirks, for the next reader
 

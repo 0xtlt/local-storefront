@@ -126,8 +126,15 @@ pub enum TargetKind {
     PaymentCustomization,
     /// `cart.validations.generate.run` and `purchase.validation.run`.
     Validation,
-    /// A target the local checkout does not run: fulfillment constraints, order routing,
-    /// pickup generators, the `.fetch` targets of discounts.
+    /// `cart.lines.discounts.generate.fetch`: the HTTP request the lines discount `run` reads
+    /// the response of (`fetchResult`).
+    LinesDiscountsFetch,
+    /// `cart.delivery-options.discounts.generate.fetch`.
+    DeliveryDiscountsFetch,
+    /// `cart.validations.generate.fetch`.
+    ValidationFetch,
+    /// A target the local checkout does not run: fulfillment constraints, order routing, the
+    /// pickup point and local pickup generators (and their `.fetch` targets).
     Unsupported,
 }
 
@@ -147,7 +154,20 @@ impl TargetKind {
                 TargetKind::PaymentCustomization
             }
             "cart.validations.generate.run" | "purchase.validation.run" => TargetKind::Validation,
+            "cart.lines.discounts.generate.fetch" => TargetKind::LinesDiscountsFetch,
+            "cart.delivery-options.discounts.generate.fetch" => TargetKind::DeliveryDiscountsFetch,
+            "cart.validations.generate.fetch" => TargetKind::ValidationFetch,
             _ => TargetKind::Unsupported,
+        }
+    }
+
+    /// The `.fetch` target whose response a `.run` target reads, if it has one.
+    pub fn fetch_target(self) -> Option<TargetKind> {
+        match self {
+            TargetKind::LinesDiscounts => Some(TargetKind::LinesDiscountsFetch),
+            TargetKind::DeliveryDiscounts => Some(TargetKind::DeliveryDiscountsFetch),
+            TargetKind::Validation => Some(TargetKind::ValidationFetch),
+            _ => None,
         }
     }
 }
@@ -1200,6 +1220,46 @@ handle = "{handle}"
         let error = Selection::resolve(&app, &["nope".to_string()]).unwrap_err();
         assert!(error.contains("`nope`") && error.contains("a"), "{error}");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fetch_targets_are_run_and_the_pickup_ones_are_not() {
+        for (run, fetch) in [
+            (
+                TargetKind::LinesDiscounts,
+                "cart.lines.discounts.generate.fetch",
+            ),
+            (
+                TargetKind::DeliveryDiscounts,
+                "cart.delivery-options.discounts.generate.fetch",
+            ),
+            (TargetKind::Validation, "cart.validations.generate.fetch"),
+        ] {
+            let kind = TargetKind::parse(fetch);
+            assert_ne!(kind, TargetKind::Unsupported, "{fetch}");
+            assert_eq!(run.fetch_target(), Some(kind), "{fetch}");
+            assert!(run.fetch_target().unwrap().fetch_target().is_none());
+        }
+        // Only the targets of the three Function APIs that have network access in the checkout.
+        for target in [
+            TargetKind::CartTransform,
+            TargetKind::DeliveryCustomization,
+            TargetKind::PaymentCustomization,
+            TargetKind::ProductDiscount,
+        ] {
+            assert_eq!(target.fetch_target(), None);
+        }
+        for pickup in [
+            "cart.pickup-point-delivery-option-generator.fetch",
+            "cart.local-pickup-delivery-option-generator.fetch",
+            "cart.pickup-point-delivery-option-generator.run",
+        ] {
+            assert_eq!(
+                TargetKind::parse(pickup),
+                TargetKind::Unsupported,
+                "{pickup}"
+            );
+        }
     }
 
     #[test]
