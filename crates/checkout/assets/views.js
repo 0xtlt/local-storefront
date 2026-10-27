@@ -178,7 +178,11 @@ function contactSection(ctx) {
   const customer = state.buyer?.customer;
   // Logged in with a contact email that is not the account's: the account, and the email the
   // order is for, which the buyer can still correct or give back to the account's.
-  const other = customer && otherContactEmail(state);
+  // An email the buyer is typing keeps its field, even if the server answers in between with
+  // the account's: the field goes only once nothing newer than the server's email is typed.
+  const typed = ui.draft?.email?.trim();
+  const typing = customer && typed && typed.toLowerCase() !== (customer.email ?? '').trim().toLowerCase() ? ui.draft.email : null;
+  const other = customer && (typing ?? otherContactEmail(state));
   return h(
     'section',
     { class: 'lsf-section', 'data-section': 'contact' },

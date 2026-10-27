@@ -261,6 +261,29 @@ test('emptying the email for this order gives it back to the account, and does n
   assert.equal(paid.query('[data-field="email"] [aria-invalid="true"]'), null, 'no "Enter an email"');
 });
 
+test('typing a new email while the fallback to the account is on its way keeps the field', async () => {
+  const start = [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }];
+  const page = app({ start });
+  const input = page.query('input[name="email"]');
+  input.focus();
+  input.value = '';
+  page.checkout.actions.draft('email', '');
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  // Before the server answers, the buyer types again in the same field.
+  input.value = 're';
+  page.checkout.actions.draft('email', 're');
+  await flush();
+  assert.equal(page.checkout.getState().buyer.email, AVA, 'the server fell back to the account');
+  assert.equal(page.query('input[name="email"]'), input, 'the field the buyer types in stays');
+  assert.equal(page.query('.lsf-contact-email').getAttribute('data-contact-email'), 're');
+  input.value = 'replacement@example.com';
+  page.checkout.actions.draft('email', 'replacement@example.com');
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  await flush();
+  assert.deepEqual(page.operations().at(-1), { type: 'email', value: 'replacement@example.com' });
+  assert.equal(page.checkout.getState().buyer.email, 'replacement@example.com');
+});
+
 test('a guest who empties the email still has to enter one', async () => {
   const page = app();
   page.checkout.actions.draft('email', '');
