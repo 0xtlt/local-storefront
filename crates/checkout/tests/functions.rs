@@ -2555,7 +2555,7 @@ fn discounts_seen_by_each_step() -> Vec<(lsf_checkout::input::OwnerKind, serde_j
 }
 
 #[test]
-fn each_function_sees_the_discounts_of_the_steps_before_it() {
+fn customizations_and_validation_see_the_discounts_applied_before_them() {
     use lsf_checkout::input::OwnerKind::*;
     let seen = discounts_seen_by_each_step();
     let kinds: Vec<_> = seen.iter().map(|(kind, _)| *kind).collect();
@@ -2586,22 +2586,18 @@ fn each_function_sees_the_discounts_of_the_steps_before_it() {
         seen[0].1["cart"]["lines"][0]["discountAllocations"],
         json!([])
     );
-    // The first discount sees nothing: Functions of a step see the ones that ran before.
+    // Discount Functions run concurrently and know nothing of each other: the product and the
+    // order discount both see a cart without any discount.
     assert_eq!(applications(1), json!([]));
-    // The order discount sees the product discount: half price, 64.00 across the line.
+    assert_eq!(applications(2), json!([]));
+    assert_eq!(allocated(2, "lines"), [json!([])]);
+    // What they took off: half price, 64.00 across the line.
     let half = json!({
         "allocationMethod": "EACH", "targetSelection": "EXPLICIT", "targetType": "LINE_ITEM",
         "totalAllocatedAmount": {"amount": "64.0"},
         "value": {"__typename": "PricingPercentageValue", "value": "50.0"},
         "metafield": {"jsonValue": {"minimumQuantity": 1, "percentage": 50}},
     });
-    assert_eq!(applications(2), json!([half]));
-    assert_eq!(
-        allocated(2, "lines"),
-        [
-            json!([{"discountedAmount": {"amount": "64.0"}, "discountApplication": {"targetType": "LINE_ITEM"}}])
-        ]
-    );
 
     // The delivery customization sees both, on the line, and no shipping discount yet.
     let ten = json!({
@@ -2613,7 +2609,11 @@ fn each_function_sees_the_discounts_of_the_steps_before_it() {
     assert_eq!(applications(3), json!([half, ten]));
     assert_eq!(allocated(3, "lines")[0].as_array().unwrap().len(), 2);
     assert_eq!(allocated(3, "deliveryGroups"), [json!([])]);
-    assert_eq!(applications(4), json!([half, ten]));
+
+    // The shipping discount is a discount Function too: it sees none of the line discounts, nor
+    // the lines they cut.
+    assert_eq!(applications(4), json!([]));
+    assert_eq!(allocated(4, "lines"), [json!([])]);
     assert_eq!(allocated(4, "deliveryGroups"), [json!([])]);
 
     // Payment customization and validation see the shipping discount too, on the delivery group.
@@ -2638,6 +2638,82 @@ fn each_function_sees_the_discounts_of_the_steps_before_it() {
             "step {step}"
         );
     }
+}
+
+/// The discounts two discount Functions saw, and the result, whatever the order they are
+/// configured in.
+#[test]
+fn discount_functions_do_not_depend_on_their_order() {
+    use lsf_checkout::input::OwnerKind::Discount as Owner;
+    let run = |swap: bool| {
+        let app = app();
+        let store = store();
+        let session = session(&store, &[(TEE, 4)]);
+        let mut config = config();
+        let mut discounts = vec![
+            discount(
+                "volume-discount",
+                "Half price",
+                None,
+                &[Product],
+                json!({"minimumQuantity": 1, "percentage": 50}),
+            ),
+            discount(
+                "volume-discount",
+                "Ten percent",
+                None,
+                &[Order],
+                json!({"orderPercentage": 10}),
+            ),
+        ];
+        if swap {
+            discounts.reverse();
+        }
+        config.discounts = discounts;
+        let seen = std::cell::RefCell::new(Vec::new());
+        let build = |query: &str,
+                     variables: Option<&serde_json::Value>,
+                     ctx: &lsf_checkout::input::InputContext| {
+            if ctx.owner.kind == Owner {
+                seen.borrow_mut()
+                    .push(lsf_checkout::input::build(DISCOUNTS_SEEN, None, ctx)?);
+            }
+            lsf_checkout::input::build(query, variables, ctx)
+        };
+        let result = compute_with(
+            &app,
+            &Selection::only(["volume-discount"]),
+            &store,
+            &session,
+            &CheckoutState::default(),
+            &config,
+            &build,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        (result, seen.into_inner())
+    };
+    let (first, first_seen) = run(false);
+    let (second, second_seen) = run(true);
+    // Both Functions saw a cart without discounts, in both orders.
+    for seen in first_seen.iter().chain(&second_seen) {
+        assert_eq!(seen["cart"]["discountApplications"], json!([]));
+        assert_eq!(seen["cart"]["lines"][0]["discountAllocations"], json!([]));
+    }
+    assert_eq!(first_seen.len(), 2);
+    assert_eq!(second_seen.len(), 2);
+    // 128.00 - 64.00 - 6.40: the same total, the same amount per discount.
+    assert_eq!(first.cost.total, second.cost.total);
+    let amounts = |result: &lsf_checkout::CheckoutResult| {
+        let mut amounts: Vec<_> = result
+            .discounts
+            .iter()
+            .map(|d| (d.title.clone(), d.amount))
+            .collect();
+        amounts.sort();
+        amounts
+    };
+    assert_eq!(amounts(&first), amounts(&second));
+    assert_eq!(first.lines[0].total, second.lines[0].total);
 }
 
 // ---- the placements of payment methods ----

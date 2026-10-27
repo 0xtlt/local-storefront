@@ -144,6 +144,7 @@ pub fn compute_with_fetcher(
             .collect(),
         errors: Vec::new(),
         runs: Vec::new(),
+        blind: None,
     };
     pipeline.run()
 }
@@ -170,6 +171,34 @@ struct Pipeline<'a> {
     payment_methods: Vec<PaymentMethod>,
     errors: Vec<CheckoutError>,
     runs: Vec<FunctionRun>,
+    /// While discount Functions run: the cart they all see, whatever the ones before them did.
+    blind: Option<Blind>,
+}
+
+/// What the discount Functions of one stage see: Shopify runs them concurrently, with no
+/// knowledge of one another, so none of them reads the discounts applied before the stage or by
+/// the Functions of the same stage.
+struct Blind {
+    lines: Vec<ResultLine>,
+    groups: Vec<DeliveryGroup>,
+}
+
+/// The two rounds in which the answers of the line discounts are applied.
+#[derive(Clone, Copy, PartialEq)]
+enum Pass {
+    /// Product discounts, and the entered codes the Functions took or turned down.
+    Product,
+    Order,
+}
+
+/// What a discount Function answered, kept until every Function of the stage has run.
+struct Collected<'a> {
+    function: &'a FunctionExtension,
+    discount: &'a DiscountConfig,
+    code: Option<String>,
+    kind: TargetKind,
+    classes: Vec<DiscountClass>,
+    output: Value,
 }
 
 /// What owns a Function run: the object whose metafields configure it.
@@ -184,10 +213,11 @@ struct OwnerSpec<'a> {
 impl<'a> Pipeline<'a> {
     fn run(mut self) -> CheckoutResult {
         self.cart_transforms();
-        self.line_discounts();
+        let before_discounts = self.lines.clone();
+        self.line_discounts(&before_discounts);
         self.build_delivery_groups();
         self.delivery_customizations();
-        self.shipping_discounts();
+        self.shipping_discounts(&before_discounts);
         self.payment_customizations();
         self.validations();
         self.finish()
@@ -323,15 +353,19 @@ impl<'a> Pipeline<'a> {
         };
         let entered_codes: Vec<String> = self.state.discount_codes.clone();
         let input = {
+            let (lines, discounts, delivery_groups): (&[_], &[_], &[_]) = match &self.blind {
+                Some(blind) => (&blind.lines, &[], &blind.groups),
+                None => (&self.lines, &self.discounts, &self.groups),
+            };
             let context = InputContext {
                 version,
                 api: spec.api,
                 store: self.store,
                 session: self.session,
                 state: self.state,
-                lines: &self.lines,
-                discounts: &self.discounts,
-                delivery_groups: &self.groups,
+                lines,
+                discounts,
+                delivery_groups,
                 payment_methods: &self.payment_methods,
                 owner: Owner {
                     kind: owner.kind,
@@ -866,7 +900,14 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    fn line_discounts(&mut self) {
+    /// Runs every discount Function on the cart as it was before the stage, then applies what
+    /// they answered, one after the other, in the order of the configuration.
+    fn line_discounts(&mut self, before: &[ResultLine]) {
+        self.blind = Some(Blind {
+            lines: before.to_vec(),
+            groups: self.groups.clone(),
+        });
+        let mut collected = Vec::new();
         for (index, discount, code) in self.active_discounts() {
             let Some(function) = self.discount_function(discount) else {
                 continue;
@@ -919,27 +960,36 @@ impl<'a> Pipeline<'a> {
                 ) else {
                     continue;
                 };
-                self.apply_line_discounts(
+                collected.push(Collected {
                     function,
                     discount,
-                    code.as_deref(),
-                    target.kind,
-                    &classes,
-                    &output,
-                );
+                    code: code.clone(),
+                    kind: target.kind,
+                    classes: classes.clone(),
+                    output,
+                });
+            }
+        }
+        self.blind = None;
+        // Product discounts cut the lines first, order discounts are shared on what is left,
+        // whatever the order of the discounts.
+        for pass in [Pass::Product, Pass::Order] {
+            for run in &collected {
+                self.apply_line_discounts(run, pass);
             }
         }
     }
 
-    fn apply_line_discounts(
-        &mut self,
-        function: &FunctionExtension,
-        discount: &DiscountConfig,
-        code: Option<&str>,
-        kind: TargetKind,
-        classes: &[DiscountClass],
-        output: &Value,
-    ) {
+    fn apply_line_discounts(&mut self, run: &Collected, pass: Pass) {
+        let Collected {
+            function,
+            discount,
+            kind,
+            classes,
+            output,
+            ..
+        } = run;
+        let code = run.code.as_deref();
         let context = DiscountContext {
             function: &function.handle,
             title: &discount.title,
@@ -950,7 +1000,7 @@ impl<'a> Pipeline<'a> {
             TargetKind::LinesDiscounts => {
                 for operation in array(output, "operations") {
                     if let Some(op) = operation.get("productDiscountsAdd") {
-                        if classes.contains(&DiscountClass::Product) {
+                        if pass == Pass::Product && classes.contains(&DiscountClass::Product) {
                             let strategy = str_field(op, "selectionStrategy");
                             match self.product_candidates(op, "candidates") {
                                 Ok(candidates) => {
@@ -961,7 +1011,7 @@ impl<'a> Pipeline<'a> {
                             }
                         }
                     } else if let Some(op) = operation.get("orderDiscountsAdd") {
-                        if classes.contains(&DiscountClass::Order) {
+                        if pass == Pass::Order && classes.contains(&DiscountClass::Order) {
                             let strategy = str_field(op, "selectionStrategy");
                             match candidates_of(op, "candidates") {
                                 Ok(candidates) => self.apply_order(&context, strategy, candidates),
@@ -969,13 +1019,17 @@ impl<'a> Pipeline<'a> {
                                     .function_error(function, format!("order discount: {error}")),
                             }
                         }
-                    } else if let Some(op) = operation.get("enteredDiscountCodesAccept") {
+                    } else if pass == Pass::Product
+                        && let Some(op) = operation.get("enteredDiscountCodesAccept")
+                    {
                         for entry in array(op, "codes") {
                             if let Some(code) = str_field(entry, "code") {
                                 self.accepted_codes.push(code.to_lowercase());
                             }
                         }
-                    } else if let Some(op) = operation.get("enteredDiscountCodesReject") {
+                    } else if pass == Pass::Product
+                        && let Some(op) = operation.get("enteredDiscountCodesReject")
+                    {
                         for entry in array(op, "codes") {
                             if let Some(code) = str_field(entry, "code") {
                                 self.rejected_codes.push(code.to_lowercase());
@@ -984,6 +1038,8 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
+            TargetKind::ProductDiscount if pass == Pass::Order => {}
+            TargetKind::OrderDiscount if pass == Pass::Product => {}
             TargetKind::ProductDiscount => {
                 let strategy = str_field(output, "discountApplicationStrategy");
                 match self.product_candidates(output, "discounts") {
@@ -1208,15 +1264,22 @@ impl<'a> Pipeline<'a> {
         Ok(())
     }
 
-    fn shipping_discounts(&mut self) {
+    /// Like the line discounts: the Functions see the cart as it was before any discount, with
+    /// the delivery options the customizations left.
+    fn shipping_discounts(&mut self, before: &[ResultLine]) {
+        self.blind = Some(Blind {
+            lines: before.to_vec(),
+            groups: self.groups.clone(),
+        });
+        let mut collected = Vec::new();
         for (index, discount, code) in self.active_discounts() {
             let Some(function) = self.discount_function(discount) else {
                 continue;
             };
-            if !classes_of(discount).contains(&DiscountClass::Shipping) {
+            let classes = classes_of(discount);
+            if !classes.contains(&DiscountClass::Shipping) {
                 continue;
             }
-            let classes = classes_of(discount);
             for target in self.targets_of(
                 function,
                 &[TargetKind::DeliveryDiscounts, TargetKind::ShippingDiscount],
@@ -1247,45 +1310,61 @@ impl<'a> Pipeline<'a> {
                 ) else {
                     continue;
                 };
-                let context = DiscountContext {
-                    function: &function.handle,
-                    title: &discount.title,
-                    code: code.as_deref(),
-                    metafields: &discount.metafields,
-                };
-                if legacy {
-                    let strategy = str_field(&output, "discountApplicationStrategy");
-                    match candidates_of(&output, "discounts") {
+                collected.push(Collected {
+                    function,
+                    discount,
+                    code: code.clone(),
+                    kind: target.kind,
+                    classes: classes.clone(),
+                    output,
+                });
+            }
+        }
+        self.blind = None;
+        for run in collected {
+            self.apply_shipping_run(&run);
+        }
+    }
+
+    fn apply_shipping_run(&mut self, run: &Collected) {
+        let Collected {
+            function,
+            discount,
+            output,
+            ..
+        } = run;
+        let context = DiscountContext {
+            function: &function.handle,
+            title: &discount.title,
+            code: run.code.as_deref(),
+            metafields: &discount.metafields,
+        };
+        if run.kind == TargetKind::ShippingDiscount {
+            let strategy = str_field(output, "discountApplicationStrategy");
+            match candidates_of(output, "discounts") {
+                Ok(candidates) => self.apply_shipping(&context, strategy, candidates),
+                Err(error) => self.function_error(function, format!("shipping discount: {error}")),
+            }
+        } else {
+            for operation in array(output, "operations") {
+                if let Some(op) = operation.get("deliveryDiscountsAdd") {
+                    let strategy = str_field(op, "selectionStrategy");
+                    match candidates_of(op, "candidates") {
                         Ok(candidates) => self.apply_shipping(&context, strategy, candidates),
                         Err(error) => {
                             self.function_error(function, format!("shipping discount: {error}"))
                         }
                     }
-                } else {
-                    for operation in array(&output, "operations") {
-                        if let Some(op) = operation.get("deliveryDiscountsAdd") {
-                            let strategy = str_field(op, "selectionStrategy");
-                            match candidates_of(op, "candidates") {
-                                Ok(candidates) => {
-                                    self.apply_shipping(&context, strategy, candidates)
-                                }
-                                Err(error) => self.function_error(
-                                    function,
-                                    format!("shipping discount: {error}"),
-                                ),
-                            }
-                        } else if let Some(op) = operation.get("enteredDiscountCodesAccept") {
-                            for entry in array(op, "codes") {
-                                if let Some(code) = str_field(entry, "code") {
-                                    self.accepted_codes.push(code.to_lowercase());
-                                }
-                            }
-                        } else if let Some(op) = operation.get("enteredDiscountCodesReject") {
-                            for entry in array(op, "codes") {
-                                if let Some(code) = str_field(entry, "code") {
-                                    self.rejected_codes.push(code.to_lowercase());
-                                }
-                            }
+                } else if let Some(op) = operation.get("enteredDiscountCodesAccept") {
+                    for entry in array(op, "codes") {
+                        if let Some(code) = str_field(entry, "code") {
+                            self.accepted_codes.push(code.to_lowercase());
+                        }
+                    }
+                } else if let Some(op) = operation.get("enteredDiscountCodesReject") {
+                    for entry in array(op, "codes") {
+                        if let Some(code) = str_field(entry, "code") {
+                            self.rejected_codes.push(code.to_lowercase());
                         }
                     }
                 }

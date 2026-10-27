@@ -128,6 +128,12 @@ What each step shows of the discounts: `AppliedDiscount::details` (a `DiscountAp
 allocation method, target selection and type, metafields of the discount) and, on lines and delivery
 groups, `DiscountAllocation { discount }` (index in `InputContext::discounts`). The pipeline fills
 them as it applies the candidates, so a Function only sees what the steps before it applied.
+Discount Functions are the exception: Shopify runs them concurrently, with no knowledge of one
+another (https://shopify.dev/docs/api/functions/latest/discount), so every one of them, line and
+delivery alike, gets its input from a snapshot (`Blind`: the lines before any discount, the
+delivery groups as the customizations left them, no applications). The answers are collected, then
+applied: product candidates of all discounts first, then order candidates, then shipping, so the
+result does not depend on the order of `config.discounts`.
 `PaymentMethod::placements` is what `PaymentCustomizationPaymentMethod.placements` reads; a hide
 operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists
 the methods still in `PAYMENT_METHOD`.

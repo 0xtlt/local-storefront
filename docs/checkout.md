@@ -185,8 +185,13 @@ Each Function sees the checkout as the steps before it left it, as on Shopify. A
 asks for `cart.discountApplications`, `CartLine.discountAllocations` or
 `CartDeliveryGroup.discountAllocations` reads the discounts applied so far: the cart transform
 sees none, the delivery customization the product and order discounts, the payment
-customization and the validation all of them, shipping included. Discounts run one after the
-other, so a discount sees the ones that ran before it. An application has the value of the
+customization and the validation all of them, shipping included. The discount Functions are the
+exception: Shopify runs them concurrently, with no knowledge of one another, so none of them
+(`cart.lines.discounts.generate.run`, `cart.delivery-options.discounts.generate.run` and the
+legacy ones) sees a discount, whether it comes from another discount or an earlier stage. Their
+answers are applied once all of them have run: product discounts first, then order discounts on
+what is left of the lines, then shipping, so the order of the discounts in the configuration
+changes nothing. An application has the value of the
 discount (`PricingPercentageValue` or `MoneyV2`), its allocation method (`EACH` for a percentage,
 `ACROSS` for a fixed amount shared between the lines), what it targets (`EXPLICIT` for the lines
 the Function named, `ALL` for the whole order, `ENTITLED` when an order discount leaves lines
