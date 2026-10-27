@@ -2868,3 +2868,285 @@ fn hiding_without_placements_hides_them_all() {
     assert_eq!(method_names(&result), ["Cash on Delivery", "Bank Deposit"]);
     assert_eq!(placements_of(&seen, "card"), None);
 }
+
+// ---- how the discounts of a class stack ----
+//
+// Shopify takes the classes one after the other, product, order, then shipping. Every
+// percentage of an order discount is a share of the subtotal the product discounts left,
+// the fixed amounts come off afterwards.
+// https://help.shopify.com/en/manual/discounts/discount-combinations
+
+/// 100.00: a tee, a tote and two mugs.
+const HUNDRED: [(u64, u32); 3] = [(TEE, 1), (TOTE, 1), (MUG, 2)];
+
+fn order_candidate(value: serde_json::Value) -> serde_json::Value {
+    json!({
+        "targets": [{"orderSubtotal": {"excludedCartLineIds": []}}],
+        "value": value,
+        "message": value.to_string(),
+    })
+}
+
+fn percentage(value: &str) -> serde_json::Value {
+    json!({"percentage": {"value": value}})
+}
+
+fn fixed(amount: &str) -> serde_json::Value {
+    json!({"fixedAmount": {"amount": amount}})
+}
+
+/// The order discounts `values` (in this order, one operation each: the selection strategy of
+/// an order discount cannot be ALL), answered by one Function on [`HUNDRED`].
+fn order_discounts(values: &[serde_json::Value]) -> lsf_checkout::CheckoutResult {
+    let operations: Vec<_> = values
+        .iter()
+        .cloned()
+        .map(|value| {
+            json!({"orderDiscountsAdd": {
+                "selectionStrategy": "FIRST",
+                "candidates": [order_candidate(value)],
+            }})
+        })
+        .collect();
+    answer_on(
+        "volume-discount",
+        "cart_lines_discounts_generate_run",
+        0,
+        json!({ "operations": operations }),
+        |_, store| session(store, &HUNDRED),
+        |config| {
+            config.discounts = vec![discount(
+                "volume-discount",
+                "Answer",
+                None,
+                &[Order],
+                json!({}),
+            )];
+        },
+    )
+}
+
+/// What the discounts took off the lines, in the order they were applied, and the lines' total.
+fn taken(result: &lsf_checkout::CheckoutResult) -> (Vec<i64>, i64) {
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    (
+        result.discounts.iter().map(|d| d.amount).collect(),
+        result.lines.iter().map(|line| line.total).sum(),
+    )
+}
+
+/// Every discount is on the lines as the allocations of the lines add up to it.
+fn assert_allocations_add_up(result: &lsf_checkout::CheckoutResult) {
+    for (index, discount) in result.discounts.iter().enumerate() {
+        let shared: i64 = result
+            .lines
+            .iter()
+            .flat_map(|line| &line.discount_allocations)
+            .filter(|allocation| allocation.discount == index)
+            .map(|allocation| allocation.amount)
+            .sum();
+        assert_eq!(shared, discount.amount, "{}", discount.title);
+    }
+}
+
+#[test]
+fn two_percentage_order_discounts_are_both_a_share_of_the_subtotal() {
+    let result = order_discounts(&[percentage("10"), percentage("20")]);
+    // 10.00 and 20.00 of 100.00, not 10.00 and 18.00.
+    assert_eq!(taken(&result), (vec![1000, 2000], 7000));
+    assert_allocations_add_up(&result);
+}
+
+#[test]
+fn a_percentage_order_discount_comes_before_a_fixed_amount() {
+    // 10 % of 100.00, then 20.00 off what is left: 70.00.
+    let result = order_discounts(&[percentage("10"), fixed("20.00")]);
+    assert_eq!(taken(&result), (vec![1000, 2000], 7000));
+    assert_allocations_add_up(&result);
+}
+
+#[test]
+fn the_order_of_the_order_discounts_does_not_matter() {
+    let forward = order_discounts(&[percentage("10"), fixed("20.00"), percentage("20")]);
+    let reversed = order_discounts(&[percentage("20"), fixed("20.00"), percentage("10")]);
+    assert_eq!(taken(&forward).1, 5000);
+    assert_eq!(taken(&reversed).1, 5000);
+    // Whatever the order, the same lines end at the same price.
+    let prices = |result: &lsf_checkout::CheckoutResult| -> Vec<i64> {
+        result.lines.iter().map(|line| line.total).collect()
+    };
+    assert_eq!(prices(&forward), prices(&reversed));
+    assert_allocations_add_up(&forward);
+    assert_allocations_add_up(&reversed);
+    // The fixed amount is applied after both percentages.
+    assert_eq!(
+        forward
+            .discounts
+            .iter()
+            .map(|d| d.amount)
+            .collect::<Vec<_>>(),
+        [1000, 2000, 2000]
+    );
+}
+
+#[test]
+fn a_fixed_amount_never_takes_the_order_below_zero() {
+    let result = order_discounts(&[fixed("30.00"), percentage("50"), fixed("80.00")]);
+    // 50.00 for the percentage, then 30.00, then the 20.00 that is left of the 80.00.
+    assert_eq!(taken(&result), (vec![5000, 3000, 2000], 0));
+    assert_allocations_add_up(&result);
+}
+
+#[test]
+fn the_discounts_of_two_functions_stack_as_those_of_one() {
+    // The same 10 % and 20 %, from two discounts of the app: Functions that do not know
+    // one another, and an order that does not matter.
+    let app = app();
+    let store = store();
+    let session = session(&store, &HUNDRED);
+    for order in [[10, 20], [20, 10]] {
+        let mut config = config();
+        config.discounts = order
+            .iter()
+            .map(|percent| {
+                discount(
+                    "volume-discount",
+                    &format!("{percent}%"),
+                    None,
+                    &[Order],
+                    json!({"orderPercentage": percent}),
+                )
+            })
+            .collect();
+        let result = compute(
+            &app,
+            &Selection::only(["volume-discount"]),
+            &store,
+            &session,
+            &CheckoutState::default(),
+            &config,
+        );
+        let (mut amounts, total) = taken(&result);
+        amounts.sort();
+        assert_eq!((amounts, total), (vec![1000, 2000], 7000));
+        assert_allocations_add_up(&result);
+    }
+}
+
+#[test]
+fn order_discounts_are_a_share_of_the_subtotal_the_product_discounts_left() {
+    // 3 tees: 96.00. 10 % off the tees (9.60), then 10 % and 20 % of the 86.40 that is left.
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(TEE, 3)]);
+    let mut config = config();
+    config.discounts = vec![
+        discount(
+            "volume-discount",
+            "Order 20",
+            None,
+            &[Order],
+            json!({"orderPercentage": 20}),
+        ),
+        discount(
+            "volume-discount",
+            "Order 10",
+            None,
+            &[Order],
+            json!({"orderPercentage": 10}),
+        ),
+        discount(
+            "volume-discount",
+            "Product",
+            None,
+            &[Product],
+            json!({"minimumQuantity": 3, "percentage": 10}),
+        ),
+    ];
+    let result = compute(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let amounts = |class| -> Vec<i64> {
+        result
+            .discounts
+            .iter()
+            .filter(|discount| discount.class == class)
+            .map(|discount| discount.amount)
+            .collect()
+    };
+    assert_eq!(amounts(Product), [960]);
+    // 20 % and 10 % of 86.40: 17.28 and 8.64, whatever their order in the configuration.
+    assert_eq!(amounts(Order), [1728, 864]);
+    assert_eq!(result.lines[0].total, 9600 - 960 - 1728 - 864);
+    assert_allocations_add_up(&result);
+    assert_eq!(result.cost.discounts, 960 + 1728 + 864);
+}
+
+#[test]
+fn a_percentage_product_discount_comes_before_a_fixed_amount_on_a_line() {
+    // 20.00 off, answered before 25 % off: the percentage is taken first.
+    let result = answer(
+        "volume-discount",
+        "cart_lines_discounts_generate_run",
+        0,
+        json!({"operations": [{"productDiscountsAdd": {
+            "selectionStrategy": "ALL",
+            "candidates": [
+                {"targets": [{"cartLine": {"id": LINE_1}}], "value": fixed("20.00")},
+                {"targets": [{"cartLine": {"id": LINE_1}}], "value": percentage("25")},
+            ],
+        }}]}),
+        |config| {
+            config.discounts = vec![discount(
+                "volume-discount",
+                "Answer",
+                None,
+                &[Product],
+                json!({}),
+            )];
+        },
+    );
+    // CART is two tees (64.00): 25 % is 16.00, then 20.00.
+    assert_eq!(
+        result.lines[0]
+            .discount_allocations
+            .iter()
+            .map(|allocation| allocation.amount)
+            .collect::<Vec<_>>(),
+        [1600, 2000]
+    );
+    assert_eq!(result.lines[0].total, 6400 - 1600 - 2000);
+}
+
+#[test]
+fn two_percentage_product_discounts_are_both_a_share_of_the_price_of_the_line() {
+    let result = answer(
+        "volume-discount",
+        "cart_lines_discounts_generate_run",
+        0,
+        json!({"operations": [{"productDiscountsAdd": {
+            "selectionStrategy": "ALL",
+            "candidates": [
+                {"targets": [{"cartLine": {"id": LINE_1}}], "value": percentage("10")},
+                {"targets": [{"cartLine": {"id": LINE_1}}], "value": percentage("20")},
+            ],
+        }}]}),
+        |config| {
+            config.discounts = vec![discount(
+                "volume-discount",
+                "Answer",
+                None,
+                &[Product],
+                json!({}),
+            )];
+        },
+    );
+    // 64.00: 6.40 and 12.80, not 6.40 and 11.52.
+    assert_eq!(result.lines[0].total, 6400 - 640 - 1280);
+}

@@ -183,13 +183,9 @@ struct Blind {
     groups: Vec<DeliveryGroup>,
 }
 
-/// The two rounds in which the answers of the line discounts are applied.
-#[derive(Clone, Copy, PartialEq)]
-enum Pass {
-    /// Product discounts, and the entered codes the Functions took or turned down.
-    Product,
-    Order,
-}
+/// What a run answered for one class of line discounts: the discount, the selection strategy of
+/// the answer and its candidates.
+type Pending<'r> = (DiscountContext<'r>, Option<&'r str>, Vec<Candidate>);
 
 /// What a discount Function answered, kept until every Function of the stage has run.
 struct Collected<'a> {
@@ -971,16 +967,25 @@ impl<'a> Pipeline<'a> {
             }
         }
         self.blind = None;
-        // Product discounts cut the lines first, order discounts are shared on what is left,
-        // whatever the order of the discounts.
-        for pass in [Pass::Product, Pass::Order] {
-            for run in &collected {
-                self.apply_line_discounts(run, pass);
-            }
+        // Shopify takes the discounts class after class, each on what the one before left,
+        // whatever the order of the discounts: the product discounts cut the lines, then the
+        // order discounts are taken off the subtotal that is left.
+        let (mut products, mut orders) = (Vec::new(), Vec::new());
+        for run in &collected {
+            self.read_line_discounts(run, &mut products, &mut orders);
         }
+        self.apply_product_discounts(products);
+        self.apply_order_discounts(orders);
     }
 
-    fn apply_line_discounts(&mut self, run: &Collected, pass: Pass) {
+    /// Applies the codes a run accepted or turned down, reports its invalid candidates and
+    /// hands over the others: `products` and `orders` get what the run answered for each class.
+    fn read_line_discounts<'r>(
+        &mut self,
+        run: &'r Collected,
+        products: &mut Vec<Pending<'r>>,
+        orders: &mut Vec<Pending<'r>>,
+    ) {
         let Collected {
             function,
             discount,
@@ -989,47 +994,42 @@ impl<'a> Pipeline<'a> {
             output,
             ..
         } = run;
-        let code = run.code.as_deref();
         let context = DiscountContext {
             function: &function.handle,
             title: &discount.title,
-            code,
+            code: run.code.as_deref(),
             metafields: &discount.metafields,
         };
+        let product = classes.contains(&DiscountClass::Product);
+        let order = classes.contains(&DiscountClass::Order);
         match kind {
             TargetKind::LinesDiscounts => {
                 for operation in array(output, "operations") {
                     if let Some(op) = operation.get("productDiscountsAdd") {
-                        if pass == Pass::Product && classes.contains(&DiscountClass::Product) {
+                        if product {
                             let strategy = str_field(op, "selectionStrategy");
                             match self.product_candidates(op, "candidates") {
-                                Ok(candidates) => {
-                                    self.apply_product(&context, strategy, candidates)
-                                }
+                                Ok(candidates) => products.push((context, strategy, candidates)),
                                 Err(error) => self
                                     .function_error(function, format!("product discount: {error}")),
                             }
                         }
                     } else if let Some(op) = operation.get("orderDiscountsAdd") {
-                        if pass == Pass::Order && classes.contains(&DiscountClass::Order) {
+                        if order {
                             let strategy = str_field(op, "selectionStrategy");
                             match candidates_of(op, "candidates") {
-                                Ok(candidates) => self.apply_order(&context, strategy, candidates),
+                                Ok(candidates) => orders.push((context, strategy, candidates)),
                                 Err(error) => self
                                     .function_error(function, format!("order discount: {error}")),
                             }
                         }
-                    } else if pass == Pass::Product
-                        && let Some(op) = operation.get("enteredDiscountCodesAccept")
-                    {
+                    } else if let Some(op) = operation.get("enteredDiscountCodesAccept") {
                         for entry in array(op, "codes") {
                             if let Some(code) = str_field(entry, "code") {
                                 self.accepted_codes.push(code.to_lowercase());
                             }
                         }
-                    } else if pass == Pass::Product
-                        && let Some(op) = operation.get("enteredDiscountCodesReject")
-                    {
+                    } else if let Some(op) = operation.get("enteredDiscountCodesReject") {
                         for entry in array(op, "codes") {
                             if let Some(code) = str_field(entry, "code") {
                                 self.rejected_codes.push(code.to_lowercase());
@@ -1038,12 +1038,10 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
-            TargetKind::ProductDiscount if pass == Pass::Order => {}
-            TargetKind::OrderDiscount if pass == Pass::Product => {}
             TargetKind::ProductDiscount => {
                 let strategy = str_field(output, "discountApplicationStrategy");
                 match self.product_candidates(output, "discounts") {
-                    Ok(candidates) => self.apply_product(&context, strategy, candidates),
+                    Ok(candidates) => products.push((context, strategy, candidates)),
                     Err(error) => {
                         self.function_error(function, format!("product discount: {error}"))
                     }
@@ -1052,7 +1050,7 @@ impl<'a> Pipeline<'a> {
             TargetKind::OrderDiscount => {
                 let strategy = str_field(output, "discountApplicationStrategy");
                 match candidates_of(output, "discounts") {
-                    Ok(candidates) => self.apply_order(&context, strategy, candidates),
+                    Ok(candidates) => orders.push((context, strategy, candidates)),
                     Err(error) => self.function_error(function, format!("order discount: {error}")),
                 }
             }
@@ -1073,39 +1071,46 @@ impl<'a> Pipeline<'a> {
         Ok(candidates)
     }
 
-    fn apply_product(
-        &mut self,
-        context: &DiscountContext,
-        strategy: Option<&str>,
-        candidates: Vec<Candidate>,
-    ) {
-        let chosen = select(strategy, candidates, |candidate| {
-            plan_product(&self.lines, candidate)
-                .iter()
-                .map(|(_, cents)| cents)
-                .sum()
-        });
-        for candidate in chosen {
+    /// Shopify takes the percentages off before the fixed amounts, so that the customer gets
+    /// the best deal. A percentage is on the price of the line before any discount.
+    fn apply_product_discounts(&mut self, runs: Vec<Pending>) {
+        let mut chosen = Vec::new();
+        for (context, strategy, candidates) in runs {
+            let candidates = select(strategy, candidates, |candidate| {
+                plan_product(&self.lines, candidate)
+                    .iter()
+                    .map(|(_, cents)| cents)
+                    .sum()
+            });
+            chosen.extend(candidates.into_iter().map(|candidate| (context, candidate)));
+        }
+        chosen.sort_by_key(|(_, candidate)| candidate.is_fixed());
+        for (context, candidate) in chosen {
             let plan = plan_product(&self.lines, &candidate);
-            self.allocate(context, &candidate, DiscountClass::Product, plan);
+            self.allocate(&context, &candidate, DiscountClass::Product, plan);
         }
     }
 
-    fn apply_order(
-        &mut self,
-        context: &DiscountContext,
-        strategy: Option<&str>,
-        candidates: Vec<Candidate>,
-    ) {
-        let chosen = select(strategy, candidates, |candidate| {
-            plan_order(&self.lines, candidate)
-                .iter()
-                .map(|(_, cents)| cents)
-                .sum()
-        });
-        for candidate in chosen {
-            let plan = plan_order(&self.lines, &candidate);
-            self.allocate(context, &candidate, DiscountClass::Order, plan);
+    /// Order discounts all start from the subtotal the product discounts left: every percentage
+    /// is a share of that subtotal, whatever the discounts taken before it, and the fixed
+    /// amounts come off afterwards, up to what is left of the lines (Shopify:
+    /// help.shopify.com/en/manual/discounts/discount-combinations).
+    fn apply_order_discounts(&mut self, runs: Vec<Pending>) {
+        let frozen: Vec<Cents> = self.lines.iter().map(|line| line.total).collect();
+        let mut chosen = Vec::new();
+        for (context, strategy, candidates) in runs {
+            let candidates = select(strategy, candidates, |candidate| {
+                plan_order(&self.lines, &frozen, candidate)
+                    .iter()
+                    .map(|(_, cents)| cents)
+                    .sum()
+            });
+            chosen.extend(candidates.into_iter().map(|candidate| (context, candidate)));
+        }
+        chosen.sort_by_key(|(_, candidate)| candidate.is_fixed());
+        for (context, candidate) in chosen {
+            let plan = plan_order(&self.lines, &frozen, &candidate);
+            self.allocate(&context, &candidate, DiscountClass::Order, plan);
         }
     }
 
@@ -1612,6 +1617,7 @@ impl<'a> Pipeline<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
 struct DiscountContext<'a> {
     function: &'a str,
     title: &'a str,
@@ -1911,6 +1917,12 @@ struct Candidate {
     value: Amount,
 }
 
+impl Candidate {
+    fn is_fixed(&self) -> bool {
+        matches!(self.value, Amount::Fixed { .. })
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Target {
     Line {
@@ -2123,11 +2135,21 @@ fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cent
 }
 
 /// What an order candidate takes off each line: the amount is shared between the lines it
-/// covers in proportion to what they cost after the line discounts. An `orderSubtotal` target
-/// covers every line but the excluded ones; a `productVariant` target covers the lines of the
-/// variant, for as many items as its quantity says (one budget for the variant), at what those
-/// items cost after the discounts.
-fn plan_order(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cents)> {
+/// covers in proportion to what they cost. A percentage is a share of `frozen`, what the lines
+/// cost after the product discounts and before any order discount; a fixed amount is taken off
+/// what the lines cost now, so that the discounts together never go below zero. An
+/// `orderSubtotal` target covers every line but the excluded ones; a `productVariant` target
+/// covers the lines of the variant, for as many items as its quantity says (one budget for the
+/// variant).
+fn plan_order(
+    lines: &[ResultLine],
+    frozen: &[Cents],
+    candidate: &Candidate,
+) -> Vec<(usize, Cents)> {
+    let totals: Vec<Cents> = match candidate.value {
+        Amount::Percentage(_) => frozen.to_vec(),
+        _ => lines.iter().map(|line| line.total).collect(),
+    };
     // (line index, what the candidate covers of it)
     let mut covered: Vec<(usize, Cents)> = Vec::new();
     let mut cover = |index: usize, base: Cents| match covered.iter_mut().find(|(i, _)| *i == index)
@@ -2145,16 +2167,15 @@ fn plan_order(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cents)
                     if !excluded_lines.contains(&line.id)
                         && !excluded_variants.contains(&line.variant_id)
                     {
-                        cover(index, line.total);
+                        cover(index, totals[index]);
                     }
                 }
             }
             Target::Variant { id, quantity } => {
                 for (index, take) in variant_coverage(lines, *id, *quantity) {
-                    let line = &lines[index];
-                    let base = i128::from(line.total) * i128::from(take)
-                        / i128::from(line.quantity.max(1));
-                    cover(index, Cents::try_from(base).unwrap_or(line.total));
+                    let base = i128::from(totals[index]) * i128::from(take)
+                        / i128::from(lines[index].quantity.max(1));
+                    cover(index, Cents::try_from(base).unwrap_or(totals[index]));
                 }
             }
             _ => {}
@@ -2382,6 +2403,11 @@ mod tests {
         line
     }
 
+    /// What the lines cost now, the base of the percentages of an order discount that comes first.
+    fn totals(lines: &[ResultLine]) -> Vec<Cents> {
+        lines.iter().map(|line| line.total).collect()
+    }
+
     fn product_candidate(raw: Value) -> Candidate {
         candidate(&raw).unwrap()
     }
@@ -2525,10 +2551,13 @@ mod tests {
             }))
         };
         // All the items of the variant: 10 % of 4 x 32.00, shared 1:3. Not the other variant.
-        assert_eq!(plan_order(&lines, &target(None)), vec![(0, 320), (1, 960)]);
+        assert_eq!(
+            plan_order(&lines, &totals(&lines), &target(None)),
+            vec![(0, 320), (1, 960)]
+        );
         // Two items in all: the line of one, then one of the other. One budget, not one per line.
         assert_eq!(
-            plan_order(&lines, &target(Some(2))),
+            plan_order(&lines, &totals(&lines), &target(Some(2))),
             vec![(0, 320), (1, 320)]
         );
         // A fixed amount is shared between the items, up to what they cost.
@@ -2536,13 +2565,16 @@ mod tests {
             "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 2}}],
             "value": {"fixedAmount": {"value": "10.00"}},
         }));
-        assert_eq!(plan_order(&lines, &fixed), vec![(0, 500), (1, 500)]);
+        assert_eq!(
+            plan_order(&lines, &totals(&lines), &fixed),
+            vec![(0, 500), (1, 500)]
+        );
         // A variant the cart does not hold covers nothing.
         let none = product_candidate(json!({
             "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/99"}}],
             "value": {"percentage": {"value": "10"}},
         }));
-        assert!(plan_order(&lines, &none).is_empty());
+        assert!(plan_order(&lines, &totals(&lines), &none).is_empty());
     }
 
     #[test]
@@ -2554,19 +2586,19 @@ mod tests {
             "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42"}}],
             "value": {"percentage": {"value": "10"}},
         }));
-        assert_eq!(plan_order(&lines, &whole), vec![(0, 500)]);
+        assert_eq!(plan_order(&lines, &totals(&lines), &whole), vec![(0, 500)]);
         // One item of the two is half of what is left.
         let one = product_candidate(json!({
             "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}}],
             "value": {"percentage": {"value": "10"}},
         }));
-        assert_eq!(plan_order(&lines, &one), vec![(0, 250)]);
+        assert_eq!(plan_order(&lines, &totals(&lines), &one), vec![(0, 250)]);
         // A fixed amount never takes more than that.
         let fixed = product_candidate(json!({
             "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}}],
             "value": {"fixedAmount": {"value": "100.00"}},
         }));
-        assert_eq!(plan_order(&lines, &fixed), vec![(0, 2500)]);
+        assert_eq!(plan_order(&lines, &totals(&lines), &fixed), vec![(0, 2500)]);
     }
 
     #[test]
@@ -2581,7 +2613,54 @@ mod tests {
             "value": {"percentage": {"value": 10}},
         }));
         // 10 % of 40.00, shared 1:3.
-        assert_eq!(plan_order(&lines, &candidate), vec![(0, 100), (1, 300)]);
+        assert_eq!(
+            plan_order(&lines, &totals(&lines), &candidate),
+            vec![(0, 100), (1, 300)]
+        );
+    }
+
+    #[test]
+    fn the_percentages_of_order_discounts_are_a_share_of_the_frozen_subtotal() {
+        let order = |value: serde_json::Value| {
+            product_candidate(json!({
+                "targets": [{"orderSubtotal": {"excludedCartLineIds": []}}],
+                "value": value,
+            }))
+        };
+        let mut lines = vec![line(1, 10, 2500, 1), line(2, 11, 7500, 1)];
+        let frozen = totals(&lines);
+        let ten = order(json!({"percentage": {"value": "10"}}));
+        let twenty = order(json!({"percentage": {"value": "20"}}));
+        assert_eq!(plan_order(&lines, &frozen, &ten), vec![(0, 250), (1, 750)]);
+        // Once the 10 % is off the lines, the 20 % is still 20 % of 100.00, not of 90.00.
+        lines[0].total -= 250;
+        lines[1].total -= 750;
+        assert_eq!(
+            plan_order(&lines, &frozen, &twenty),
+            vec![(0, 500), (1, 1500)]
+        );
+        // A fixed amount is a share of what is left, and never takes more.
+        let fixed = |amount: &str| order(json!({"fixedAmount": {"amount": amount}}));
+        assert_eq!(
+            plan_order(&lines, &frozen, &fixed("9.00")),
+            vec![(0, 225), (1, 675)]
+        );
+        assert_eq!(
+            plan_order(&lines, &frozen, &fixed("500.00")),
+            vec![(0, 2250), (1, 6750)]
+        );
+    }
+
+    #[test]
+    fn percentages_sort_before_fixed_amounts() {
+        let value = |raw: serde_json::Value| {
+            product_candidate(json!({
+                "targets": [{"orderSubtotal": {"excludedCartLineIds": []}}],
+                "value": raw,
+            }))
+        };
+        assert!(!value(json!({"percentage": {"value": "10"}})).is_fixed());
+        assert!(value(json!({"fixedAmount": {"amount": "10"}})).is_fixed());
     }
 
     #[test]
