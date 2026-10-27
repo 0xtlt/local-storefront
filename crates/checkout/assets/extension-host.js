@@ -125,7 +125,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     });
   }
 
-  function create(el, target, ext, ctx) {
+  function create(el, target, ext, ctx, before = null) {
     const frame = document.createElement('div');
     frame.className = 'lsf-ext';
     frame.setAttribute('data-extension', ext.handle);
@@ -136,7 +136,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     iframe.setAttribute('src', sandboxUrl);
     iframe.className = 'lsf-ext-frame';
     frame.appendChild(iframe);
-    el.appendChild(frame);
+    el.insertBefore(frame, before);
     const instance = {
       id: ++counter, ext, target, ctx, frame, iframe, ready: false, interceptors: 0, pending: new Map(),
       error: null,
@@ -145,23 +145,69 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     return instance;
   }
 
+  /** Stops an instance: its frame leaves the page, and the buyer journey no longer asks it. */
+  function drop(instance) {
+    instances.delete(instance);
+    instance.frame.remove?.();
+    instance.iframe.remove?.();
+    for (const resolve of instance.pending.values()) resolve([]);
+    instance.pending.clear();
+  }
+
+  /** What makes an extension another one for a frame: its handle, its bundle and how it is set up. */
+  const identityOf = (ext) => JSON.stringify(ext);
+
+  /** The extensions that belong in `el`, in order. */
+  const wanted = (target) => extensions().filter((ext) => ext.targets?.includes(target));
+
   function attach(el, target, ctx = {}) {
-    const created = extensions()
-      .filter((ext) => ext.targets?.includes(target))
-      .map((ext) => create(el, target, ext, ctx));
-    slots.set(el, created);
+    const created = wanted(target).map((ext) => create(el, target, ext, ctx));
+    slots.set(el, { el, target, ctx, created });
   }
 
   function detach(el) {
-    for (const instance of slots.get(el) ?? []) {
-      instances.delete(instance);
-      instance.iframe.remove?.();
-      for (const resolve of instance.pending.values()) resolve([]);
-    }
+    for (const instance of slots.get(el)?.created ?? []) drop(instance);
     slots.delete(el);
   }
 
+  /**
+   * Makes every slot hold the extensions the state selects now. A slot outlives a change of the
+   * selection when another extension takes the target of the one that left, so the frames of an
+   * extension that is no longer selected are removed (with their buyer journey interceptors),
+   * the frames of one that is still selected stay as they are, and the new ones are mounted.
+   */
+  function reconcile() {
+    for (const slot of slots.values()) {
+      const { target, ctx } = slot;
+      const current = new Map(slot.created.map((instance) => [identityOf(instance.ext), instance]));
+      const next = [];
+      for (const ext of wanted(target)) {
+        const key = identityOf(ext);
+        const kept = current.get(key);
+        if (kept) {
+          current.delete(key);
+          next.push(kept);
+        } else {
+          next.push({ ext });
+        }
+      }
+      for (const gone of current.values()) drop(gone);
+      // New frames go before the next frame that stays, so that the order is the selection's.
+      let before = null;
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].frame) {
+          before = next[i].frame;
+        } else {
+          next[i] = create(slot.el, target, next[i].ext, ctx, before);
+          before = next[i].frame;
+        }
+      }
+      slot.created = next;
+    }
+  }
+
   function update(state) {
+    reconcile();
     const visible = stateForExtensions(state);
     for (const instance of instances) {
       if (instance.ready) post(instance, { type: 'state', state: visible, ctx: instance.ctx });

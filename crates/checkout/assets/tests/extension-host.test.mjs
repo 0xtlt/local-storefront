@@ -403,6 +403,50 @@ test('removes the frames when their slot goes', () => {
   assert.equal(frame.iframe.parentNode, null);
 });
 
+test('a new selection of extensions replaces the frames of the one that left, in the slots that stay', () => {
+  const ext = (handle, targets = [BLOCK]) => ({ handle, apiVersion: '2026-10', script: `/${handle}.js`, targets });
+  const { host, slot, connect, from, setState, state } = setup({ extensions: [ext('a'), ext('b')] });
+  host.attach(slot, BLOCK);
+  connect();
+  const [a, b] = host.instances();
+  from(a, { type: 'ready' });
+  from(a, { type: 'interceptors', count: 1 });
+
+  // `a` is replaced by `c`, `b` stays: the frame of `a` goes, the one of `b` is not rebuilt.
+  setState({ ...state(), extensions: [ext('b'), ext('c')] });
+  host.update(state());
+  assert.deepEqual(host.instances().map((instance) => instance.ext.handle), ['b', 'c']);
+  assert.equal(a.iframe.parentNode, null);
+  assert.equal(a.frame.parentNode, null);
+  assert.equal(b.iframe.parentNode?.parentNode, slot, 'the frame of an extension that stays is kept');
+  assert.deepEqual([...slot.childNodes].map((frame) => frame.getAttribute('data-extension')), ['b', 'c']);
+
+  // The extension that left is not asked about the buyer journey any more.
+  return host.intercept().then(({ blocks }) => {
+    assert.deepEqual(blocks, []);
+    assert.equal(a.iframe.contentWindow.posted.some((message) => message.type === 'intercept'), false);
+  });
+});
+
+test('a new extension mounts before the frames that follow it, and one whose bundle changed is rebuilt', () => {
+  const ext = (handle, script = `/${handle}.js`) => ({ handle, apiVersion: '2026-10', script, targets: [BLOCK] });
+  const { host, slot, connect, setState, state } = setup({ extensions: [ext('b')] });
+  host.attach(slot, BLOCK);
+  connect();
+  const [b] = host.instances();
+  setState({ ...state(), extensions: [ext('a'), ext('b')] });
+  host.update(state());
+  assert.deepEqual([...slot.childNodes].map((frame) => frame.getAttribute('data-extension')), ['a', 'b']);
+  assert.equal(host.instances().find((instance) => instance.ext.handle === 'b'), b);
+
+  setState({ ...state(), extensions: [ext('a'), ext('b', '/b2.js')] });
+  host.update(state());
+  const rebuilt = host.instances().find((instance) => instance.ext.handle === 'b');
+  assert.notEqual(rebuilt, b);
+  assert.equal(b.iframe.parentNode, null);
+  assert.deepEqual([...slot.childNodes].map((frame) => frame.getAttribute('data-extension')), ['a', 'b']);
+});
+
 test('reloads a frame on request and opens only safe links', () => {
   const { host, slot, connect, from, window } = setup();
   host.attach(slot, BLOCK);

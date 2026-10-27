@@ -358,6 +358,40 @@ test('keeps its frames when the page is drawn again', async () => {
   for (const iframe of before) assert.ok(after.includes(iframe) && iframe.parentNode, 'a frame is never rebuilt: that would reload it');
 });
 
+test('an extension a reloaded scenario no longer selects loses its frame and its say over the payment', async () => {
+  const page = app();
+  await fillIn(page);
+  const frames = connect(page);
+  const gift = frames.find((frame) => frame.ext.handle === 'gift-message' && frame.target === 'purchase.checkout.block.render');
+  const slot = page.query('.lsf-slot[data-target="purchase.checkout.block.render"]');
+  say(page, gift, { type: 'ready' });
+  say(page, gift, { type: 'interceptors', count: 1 });
+  gift.iframe.contentWindow.postMessage = (message) => {
+    gift.iframe.contentWindow.posted.push(message);
+    if (message.type === 'intercept') {
+      queueMicrotask(() => say(page, gift, { type: 'intercepted', id: message.id, results: [{ behavior: 'block', reason: 'Blocked by the old selection.' }] }));
+    }
+  };
+
+  // The scenario now selects another extension for the same target: the slot stays, the frame does not.
+  const engine = page.engine();
+  const gone = engine.extensions.find((ext) => ext.handle === 'gift-message');
+  engine.extensions = engine.extensions
+    .filter((ext) => ext !== gone)
+    .concat({ ...gone, handle: 'replacement', script: '/__lsf/extensions/replacement/replacement.js', targets: ['purchase.checkout.block.render'] });
+  await page.checkout.actions.commit('email', 'other@b.c');
+  assert.deepEqual(
+    [...slot.childNodes].map((frame) => frame.getAttribute('data-extension')),
+    ['replacement'],
+  );
+  assert.equal(gift.iframe.parentNode, null);
+  assert.ok(!page.checkout.host.instances().includes(gift));
+
+  await page.checkout.actions.pay();
+  assert.equal(page.query('[data-banner="blocked"]'), null, 'the extension that left cannot block the order');
+  assert.equal(page.location.assigned.length, 1);
+});
+
 test('tells every frame about the new state', async () => {
   const page = app();
   const frames = connect(page);
