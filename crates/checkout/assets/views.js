@@ -514,6 +514,29 @@ function thankYouPage(ctx) {
 
 const json = (value) => JSON.stringify(value, null, 2);
 
+// A string with its colon when it is a key, a number, or a literal of JSON text.
+const JSON_TOKEN = /("(?:[^"\\]|\\.)*")(\s*:)?|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b/g;
+// Past this size, the text is shown plain: thousands of spans would slow the panel down.
+const HIGHLIGHT_LIMIT = 200_000;
+
+/** `value` as indented JSON, its keys, strings, numbers and literals in their colors. */
+export function jsonCode(value) {
+  const text = json(value);
+  if (text === undefined || text.length > HIGHLIGHT_LIMIT) return h('pre', null, text ?? String(value));
+  const parts = [];
+  let last = 0;
+  for (const match of text.matchAll(JSON_TOKEN)) {
+    const [token, string, colon] = match;
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    const kind = string ? (colon ? 'key' : 'string') : token === 'null' ? 'null' : token === 'true' || token === 'false' ? 'boolean' : 'number';
+    parts.push(h('span', { class: `lsf-json-${kind}` }, string ?? token));
+    if (colon) parts.push(colon);
+    last = match.index + token.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return h('pre', { class: 'lsf-json' }, parts);
+}
+
 function run(ctx, entry, index) {
   const { ui, actions } = ctx;
   const open = ui.openRuns?.has(index) ?? false;
@@ -530,11 +553,11 @@ function run(ctx, entry, index) {
     open && h('div', { class: 'lsf-run-body' },
       failed && h('div', null, h('h4', null, 'Error'), h('pre', { class: 'is-error' }, entry.error)),
       entry.logs && h('div', null, h('h4', null, 'Logs'), h('pre', null, entry.logs)),
-      h('div', null, h('h4', null, 'Input'), h('pre', null, json(entry.input))),
-      h('div', null, h('h4', null, 'Output'), h('pre', null, entry.output === null || entry.output === undefined ? '(none)' : json(entry.output))),
+      h('div', null, h('h4', null, 'Input'), jsonCode(entry.input)),
+      h('div', null, h('h4', null, 'Output'), entry.output === null || entry.output === undefined ? h('pre', null, '(none)') : jsonCode(entry.output)),
       // A `.fetch` target: the request it asked for and the response its `.run` target reads.
-      entry.exchange && h('div', null, h('h4', null, 'HTTP request'), h('pre', null, json(entry.exchange.request))),
-      entry.exchange && h('div', null, h('h4', null, 'HTTP response'), h('pre', null, json(entry.exchange.response)))));
+      entry.exchange && h('div', null, h('h4', null, 'HTTP request'), jsonCode(entry.exchange.request)),
+      entry.exchange && h('div', null, h('h4', null, 'HTTP response'), jsonCode(entry.exchange.response))));
 }
 
 function functionsPanel(ctx) {

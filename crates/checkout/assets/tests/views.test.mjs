@@ -6,7 +6,7 @@ import { withCurrency } from '../format.js';
 import { update } from '../preview/mock-engine.mjs';
 import { RENDERED_TARGETS } from '../extension-host.js';
 import { h } from '../vdom.js';
-import { renderPage } from '../views.js';
+import { jsonCode, renderPage } from '../views.js';
 import { checkoutState, engineCheckout, pageState } from './harness.mjs';
 
 const walk = (node, visit) => {
@@ -446,3 +446,23 @@ test('the card row shows the brands it takes as three chips', () => {
   const tree = page(checkoutState());
   assert.deepEqual(byClass(tree, 'lsf-card-brand').map(text), ['VISA', 'MC', 'AMEX']);
 });
+
+test('the JSON of the Functions panel is colored by kind, and reads the same as plain JSON', () => {
+  const value = { id: 'gid://shopify/CartLine/1', 'say \"hi\"': 'a \"quoted\": 2', quantity: -1.5e3, ok: true, no: false, none: null, list: [1, 'x'] };
+  const pre = jsonCode(value);
+  assert.equal(pre.tag, 'pre');
+  assert.equal(text(pre), JSON.stringify(value, null, 2));
+  const kinds = (kind) => byClass(pre, `lsf-json-${kind}`).map(text);
+  assert.deepEqual(kinds('key'), ['"id"', '"say \\"hi\\""', '"quantity"', '"ok"', '"no"', '"none"', '"list"']);
+  assert.deepEqual(kinds('string'), ['"gid://shopify/CartLine/1"', '"a \\"quoted\\": 2"', '"x"']);
+  assert.deepEqual(kinds('number'), ['-1500', '1']);
+  assert.deepEqual(kinds('boolean'), ['true', 'false']);
+  assert.deepEqual(kinds('null'), ['null']);
+});
+
+test('a very large JSON is shown plain', () => {
+  const pre = jsonCode({ big: 'x'.repeat(250_000) });
+  assert.equal(pre.children.length, 1);
+  assert.equal(pre.children[0].tag, '#text');
+});
+

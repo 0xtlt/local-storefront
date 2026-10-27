@@ -396,10 +396,14 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
   padding: .6rem;
   overflow: auto;
   border-radius: 4px;
-  background: #1e1e1e;
-  color: #e6e6e6;
+  background: var(--lsf-code-bg);
+  color: var(--lsf-code-text);
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.lsf-json-key { color: var(--lsf-code-key); }
+.lsf-json-string { color: var(--lsf-code-string); }
+.lsf-json-number { color: var(--lsf-code-number); }
+.lsf-json-boolean, .lsf-json-null { color: var(--lsf-code-literal); }
 .lsf-run pre.is-error { background: var(--lsf-color-critical-wash-1); color: var(--lsf-color-critical-text); }
 .lsf-chip { padding: 0 var(--lsf-space-m); border-radius: 999px; font-size: var(--lsf-size-s); font-weight: var(--lsf-font-weight-bold); }
 .lsf-chip.is-ok { background: var(--lsf-color-success-wash-3); color: var(--lsf-color-success-text); }

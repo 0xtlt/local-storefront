@@ -109,6 +109,14 @@
   --lsf-ease: ease-in-out;
   --lsf-ease-out: cubic-bezier(0.3, 0.5, 0.5, 1);
   --lsf-duration-spin: 0.7s;
+
+  /* --- Code: the inputs and outputs of the Functions panel, on a dark block ------------------- */
+  --lsf-code-bg: #1e1e1e;
+  --lsf-code-text: #e6e6e6;
+  --lsf-code-key: #9cdcfe;
+  --lsf-code-string: #ce9178;
+  --lsf-code-number: #b5cea8;
+  --lsf-code-literal: #569cd6;
 }
 
 /* Buyers who ask for less motion get the end state at once; spinners keep turning, slower, since
