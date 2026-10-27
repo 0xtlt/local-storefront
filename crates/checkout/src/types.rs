@@ -193,8 +193,8 @@ pub struct DiscountAllocation {
     #[serde(serialize_with = "money")]
     pub amount: Cents,
     /// The class of the discount that made it: the cart cost of a Function input leaves out
-    /// the order discounts from its subtotal.
-    #[serde(skip)]
+    /// the order discounts from its subtotal, and the cost of a line of a UI extension leaves
+    /// them out of its total.
     pub class: DiscountClass,
 }
 

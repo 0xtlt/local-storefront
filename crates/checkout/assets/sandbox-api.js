@@ -86,12 +86,24 @@
     });
   }
 
+  /**
+   * The cost of a line as Shopify defines it: before order discounts, only the product
+   * discounts are taken off. The state's total is after every discount; the allocations tell
+   * the order ones apart by their class (an allocation without one counts as a product one).
+   */
+  function lineCost(line) {
+    const ordered = (line.discountAllocations || []).filter((entry) => entry.class === 'ORDER');
+    if (!ordered.length || !line.total) return line.total;
+    const cents = ordered.reduce((sum, entry) => sum + Math.round(entry.amount.amount * 100), 0);
+    return { ...line.total, amount: Math.round(line.total.amount * 100 + cents) / 100 };
+  }
+
   function mapLine(line) {
     return {
       id: line.id,
       merchandise: merchandise(line),
       quantity: line.quantity,
-      cost: { totalAmount: line.total },
+      cost: { totalAmount: lineCost(line) },
       attributes: line.attributes || [],
       discountAllocations: (line.discountAllocations || []).map(allocation),
       lineComponents: (line.components || []).map((component) => ({
@@ -99,7 +111,7 @@
         id: component.id,
         merchandise: merchandise(component),
         quantity: component.quantity,
-        cost: { totalAmount: component.total },
+        cost: { totalAmount: lineCost(component) },
         attributes: component.attributes || [],
       })),
       parentRelationship: null,

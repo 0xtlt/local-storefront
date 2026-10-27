@@ -143,6 +143,11 @@
    * `spec.shadow` is the template of the shadow root (none: light DOM); `spec.sync(el)` brings
    * the DOM in line with the attributes; `spec.connected(el)` runs once the element is in the
    * document.
+   *
+   * A custom element made with `document.createElement` must come out of its constructor
+   * without attributes, classes or children (Chromium turns it into an `HTMLUnknownElement`
+   * otherwise): the constructor only attaches the shadow root, fills it and listens. What the
+   * host itself looks like is set from `connected` and `sync`.
    */
   function define(tag, spec) {
     if (!registry || !global.HTMLElement) return;
@@ -187,6 +192,8 @@
           return flag ? this.hasAttribute(name) : this.getAttribute(name);
         },
         set(value) {
+          // A property written before the element joins the page beats its `default…`.
+          (this._written = this._written || new Set()).add(name);
           if (value === null || value === undefined || value === false) this.removeAttribute(name);
           else this.setAttribute(name, value === true ? '' : String(value));
         },
@@ -197,6 +204,20 @@
   }
 
   const $ = (el, selector) => el._root.querySelector(selector);
+
+  /**
+   * `defaultChecked`, `defaultOpen`, … : the state an element starts with. Applied once, when
+   * the element first joins the page (not at the first attribute that happens to be synced),
+   * and only when nobody wrote the state itself; the buyer's changes stay after that.
+   * `state` is the attribute that mirrors the state: the default turns it on.
+   */
+  function applyDefault(el, state, initial) {
+    if (el._defaulted) return;
+    el._defaulted = true;
+    if (el.hasAttribute(initial) && !el.hasAttribute(state) && !(el._written && el._written.has(state))) {
+      el.toggleAttribute(state, true);
+    }
+  }
   const fire = (el, type, init) => el.dispatchEvent(new global.Event(type, { bubbles: true, composed: true, ...init }));
 
   // --- Shared CSS (inside every shadow root) ----------------------------------------------
@@ -431,9 +452,12 @@
         fire(el, 'toggle', { composed: false });
       });
     },
+    connected(el) {
+      applyDefault(el, 'open', 'defaultopen');
+    },
     sync(el) {
       const details = $(el, 'details');
-      const open = el.hasAttribute('open') || el.hasAttribute('defaultopen');
+      const open = el.hasAttribute('open');
       if (details.open !== open) details.open = open;
     },
   });
@@ -462,6 +486,8 @@
       },
       init(el) {
         $(el, '.backdrop').hidden = true;
+        // Actions slotted after the overlay opened show up too.
+        $(el, 'footer').addEventListener('slotchange', () => footerVisibility(el));
         $(el, '.close').addEventListener('click', () => setOverlay(el, false));
         $(el, '.backdrop').addEventListener('click', (event) => {
           if (event.target === $(el, '.backdrop')) setOverlay(el, false);
@@ -469,18 +495,25 @@
       },
       sync(el) {
         $(el, '.heading').textContent = el.getAttribute('heading') || '';
+        // `open` written before the element joins the page takes effect when it does: an
+        // overlay nobody can see must not grow the frame.
+        if (el.isConnected === false) return;
         if (el.hasAttribute('open') === $(el, '.backdrop').hidden) setOverlay(el, el.hasAttribute('open'));
+        footerVisibility(el);
       },
       disconnected(el) {
         if (!$(el, '.backdrop').hidden) setOverlay(el, false);
       },
     });
   }
+  function footerVisibility(el) {
+    $(el, 'footer').hidden = !el.querySelector('[slot="primary-action"], [slot="secondary-actions"]');
+  }
   function setOverlay(el, open) {
     const backdrop = $(el, '.backdrop');
     if (backdrop.hidden !== open) return;
     backdrop.hidden = !open;
-    if (open) $(el, 'footer').hidden = !el.querySelector('[slot="primary-action"], [slot="secondary-actions"]');
+    footerVisibility(el);
     el.toggleAttribute('open', open);
     overlayChange(open ? 1 : -1);
     fire(el, open ? 'show' : 'hide', { composed: false });
@@ -563,6 +596,9 @@
         fire(el, 'change', { composed: false });
       });
     },
+    connected(el) {
+      applyDefault(el, 'pressed', 'defaultpressed');
+    },
     sync(el) {
       $(el, 'button').setAttribute('aria-pressed', el.hasAttribute('pressed') ? 'true' : 'false');
       $(el, 'button').disabled = el.hasAttribute('disabled');
@@ -600,7 +636,7 @@
 
   define('s-form', {
     props: [],
-    connected(el) {
+    init(el) {
       el.addEventListener('keydown', (event) => {
         const tag = event.target && event.target.localName;
         if (event.key === 'Enter' && tag && tag.endsWith('-field')) submit(event.target);
@@ -618,6 +654,16 @@
     :host([disabled]) .field{background:#f7f7f7;opacity:.7}`;
 
   const FIELD_PROPS = ['label', 'labelAccessibilityVisibility', 'name', 'value', 'defaultValue', 'placeholder', 'disabled', 'readOnly', 'required', 'error', 'details', 'autocomplete', 'minLength', 'maxLength', 'min', 'max', 'step', 'prefix', 'suffix', 'icon', 'rows', 'accessory'];
+
+  /**
+   * The attribute is the initial value; the property takes over once someone sets it, and the
+   * buyer once they typed. `defaultValue` fills a field nobody has written to yet.
+   */
+  function initialValue(el, control) {
+    if (el._valueSet || el._typed) return;
+    const wanted = el.hasAttribute('value') ? el.getAttribute('value') : el.getAttribute('defaultvalue');
+    if (wanted !== null && control.value !== wanted) control.value = wanted;
+  }
 
   function fieldTag(tag, inputType, { area = false, extra = [] } = {}) {
     define(tag, {
@@ -647,14 +693,7 @@
         control.required = el.hasAttribute('required');
         $(el, '.message:not(.error)').textContent = el.getAttribute('details') || '';
         $(el, '.message.error').textContent = el.getAttribute('error') || '';
-        // The attribute is the initial value; the property takes over once someone sets it.
-        if (!el._valueSet && el.hasAttribute('value') && control.value !== el.getAttribute('value')) {
-          control.value = el.getAttribute('value');
-        } else if (!el._valueSet && !el._typed && !el.hasAttribute('value') && el.hasAttribute('defaultvalue')
-          && control.value !== el.getAttribute('defaultvalue')) {
-          // `defaultValue` fills a field nobody has written to yet.
-          control.value = el.getAttribute('defaultvalue');
-        }
+        initialValue(el, control);
       },
       members: {
         value: {
@@ -682,31 +721,49 @@
     props: ['value', 'defaultValue', 'disabled', 'name'],
     shadow: '<input class="control" type="date">',
     css: ':host{display:inline-block}.control{padding:.5rem;border:1px solid #8a8a8a;border-radius:var(--lsf-radius,8px);font:inherit}',
-    init(el) { $(el, '.control').addEventListener('change', () => fire(el, 'change', { composed: false })); },
+    init(el) {
+      const control = $(el, '.control');
+      control.addEventListener('change', () => fire(el, 'change', { composed: false }));
+      control.addEventListener('input', () => { el._typed = true; });
+    },
+    sync(el) {
+      const control = $(el, '.control');
+      control.disabled = el.hasAttribute('disabled');
+      if (el.hasAttribute('name')) control.name = el.getAttribute('name');
+      initialValue(el, control);
+    },
     members: {
-      value: { configurable: true, get() { return $(this, '.control').value; }, set(v) { $(this, '.control').value = v || ''; } },
+      value: {
+        configurable: true,
+        get() { return $(this, '.control').value; },
+        set(v) { this._valueSet = true; $(this, '.control').value = v || ''; },
+      },
     },
   });
 
   const CHECK_CSS = `:host{display:block}label{display:flex;align-items:flex-start;gap:.6rem;cursor:pointer}input{position:absolute;opacity:0;pointer-events:none}.box{flex:none;display:grid;place-items:center;width:1.25rem;height:1.25rem;margin-top:.1rem;border:1px solid #8a8a8a;border-radius:4px;background:#fff;color:#fff}
     input:checked+.box{background:var(--lsf-accent,#005bd3);border-color:var(--lsf-accent,#005bd3)}input:focus-visible+.box{outline:2px solid var(--lsf-accent,#005bd3);outline-offset:2px}.box svg{width:.8rem;height:.8rem;visibility:hidden}input:checked+.box svg{visibility:visible}
     .text{display:flex;flex-direction:column}.message{font-size:.8rem;color:#616161}.message.error{color:#8e1f0b}.message:empty{display:none}:host([disabled]) label{opacity:.6;cursor:default}
-    :host(.switch) .box{width:2.25rem;border-radius:999px;position:relative}:host(.switch) .box::after{content:"";position:absolute;left:.15rem;width:.9rem;height:.9rem;border-radius:50%;background:#8a8a8a;transition:left .12s}:host(.switch) input:checked+.box::after{left:1.1rem;background:#fff}:host(.switch) .box svg{display:none}`;
+    .switch .box{width:2.25rem;border-radius:999px;position:relative}.switch .box::after{content:"";position:absolute;left:.15rem;width:.9rem;height:.9rem;border-radius:50%;background:#8a8a8a;transition:left .12s}.switch input:checked+.box::after{left:1.1rem;background:#fff}.switch .box svg{display:none}`;
 
   function checkTag(tag, { kind = 'checkbox', switchy = false } = {}) {
     define(tag, {
       props: ['label', 'name', 'value', 'checked', 'defaultChecked', 'disabled', 'required', 'error', 'details', 'accessibilityLabel', 'command', 'commandFor', 'indeterminate', 'policy'],
-      shadow: `<label><input type="${kind}"><span class="box"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>
+      shadow: `<label${switchy ? ' class="switch"' : ''}><input type="${kind}"><span class="box"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>
         <span class="text"><span class="lbl"><slot></slot></span><span class="message"></span><span class="message error"></span></span></label>`,
       css: CHECK_CSS,
+      // The switch look lives in the shadow root (`label.switch`): a constructor must not
+      // touch the host, and a class on it would not survive the extension's own `class`.
       init(el) {
-        if (switchy) el.classList.add('switch');
         const input = $(el, 'input');
         input.addEventListener('change', () => {
           el.toggleAttribute('checked', input.checked);
           fire(el, 'change', { composed: false });
           runCommand(el);
         });
+      },
+      connected(el) {
+        applyDefault(el, 'checked', 'defaultchecked');
       },
       sync(el) {
         const input = $(el, 'input');
@@ -721,9 +778,9 @@
           }
           text.textContent = label;
         }
-        const checked = el.hasAttribute('checked') || (!el._started && el.hasAttribute('defaultchecked'));
+        const checked = el.hasAttribute('checked');
         if (input.checked !== checked) input.checked = checked;
-        el._started = true;
+        input.indeterminate = el.hasAttribute('indeterminate');
         input.disabled = el.hasAttribute('disabled');
         input.required = el.hasAttribute('required');
         if (el.hasAttribute('name')) input.name = el.getAttribute('name');
@@ -734,7 +791,11 @@
         checked: {
           configurable: true,
           get() { return $(this, 'input').checked; },
-          set(value) { $(this, 'input').checked = Boolean(value); this.toggleAttribute('checked', Boolean(value)); },
+          set(value) {
+            (this._written = this._written || new Set()).add('checked');
+            $(this, 'input').checked = Boolean(value);
+            this.toggleAttribute('checked', Boolean(value));
+          },
         },
       },
     });
@@ -753,17 +814,32 @@
         fire(el, 'change', { composed: false });
       });
     },
-    sync(el) {
-      const input = $(el, 'input');
-      const selected = el.hasAttribute('selected') || (!el._started && el.hasAttribute('defaultselected'));
-      if (input.checked !== selected) input.checked = selected;
-      el._started = true;
-      input.disabled = el.hasAttribute('disabled');
+    connected(el) {
+      // A list that was told its `values` decides, not the choices' defaults.
       const list = el.closest && el.closest('s-choice-list');
-      input.type = list && list.hasAttribute('multiple') ? 'checkbox' : 'radio';
-      if (list && list.getAttribute('name')) input.name = list.getAttribute('name');
+      if (list && list._values) el._defaulted = true;
+      applyDefault(el, 'selected', 'defaultselected');
     },
+    sync: syncChoice,
   });
+
+  /** A choice follows its own attributes and those of the list it is in. */
+  function syncChoice(el) {
+    const input = $(el, 'input');
+    const selected = el.hasAttribute('selected');
+    if (input.checked !== selected) input.checked = selected;
+    const list = el.closest && el.closest('s-choice-list');
+    input.disabled = el.hasAttribute('disabled') || Boolean(list && list.hasAttribute('disabled'));
+    input.type = list && list.hasAttribute('multiple') ? 'checkbox' : 'radio';
+    if (list && list.getAttribute('name')) input.name = list.getAttribute('name');
+  }
+
+  /** `values` set on a list gives its choices the `selected` they should have. */
+  function applyValues(el) {
+    if (!el._values) return;
+    const wanted = new Set(el._values);
+    for (const choice of el.querySelectorAll('s-choice')) choice.toggleAttribute('selected', wanted.has(choice.getAttribute('value')));
+  }
 
   define('s-choice-list', {
     props: ['label', 'labelAccessibilityVisibility', 'name', 'multiple', 'disabled', 'error', 'details'],
@@ -777,21 +853,31 @@
         if (!el.hasAttribute('multiple')) {
           for (const other of choices) if (other !== choice) other.removeAttribute('selected');
         }
+        el._values = null; // the buyer took over
       });
+      // `values` is often written before the choices exist, and a choice's `value` after it.
+      if (global.MutationObserver) {
+        el._observer = new global.MutationObserver(() => applyValues(el));
+        el._observer.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['value'] });
+      }
     },
+    connected: applyValues,
     sync(el) {
       $(el, '.legend').textContent = el.getAttribute('label') || '';
       $(el, '.message').textContent = el.getAttribute('error') || '';
+      for (const choice of el.querySelectorAll('s-choice')) if (choice._root) syncChoice(choice);
     },
     members: {
       values: {
         configurable: true,
         get() {
-          return [...this.querySelectorAll('s-choice')].filter((c) => c.hasAttribute('selected')).map((c) => c.getAttribute('value'));
+          const choices = [...this.querySelectorAll('s-choice')];
+          if (this._values && !choices.length) return [...this._values];
+          return choices.filter((c) => c.hasAttribute('selected')).map((c) => c.getAttribute('value'));
         },
         set(values) {
-          const wanted = new Set(values || []);
-          for (const choice of this.querySelectorAll('s-choice')) choice.toggleAttribute('selected', wanted.has(choice.getAttribute('value')));
+          this._values = [...(values || [])];
+          applyValues(this);
         },
       },
     },
@@ -802,7 +888,11 @@
     shadow: '<div class="field"><select class="control"></select><span class="lbl"></span></div><div class="message error"></div>',
     css: FIELD_CSS + '.control{padding:1rem 0 .25rem;appearance:auto}.lbl{top:.55rem;transform:none;font-size:.7rem}',
     init(el) {
-      $(el, '.control').addEventListener('change', () => fire(el, 'change', { composed: false }));
+      $(el, '.control').addEventListener('change', () => {
+        el._value = $(el, '.control').value; // what the buyer picked survives a rebuild
+        el._valueSet = true;
+        fire(el, 'change', { composed: false });
+      });
       if (global.MutationObserver) {
         el._observer = new global.MutationObserver(() => rebuildOptions(el));
         el._observer.observe(el, { childList: true, subtree: true, characterData: true, attributes: true });
@@ -815,20 +905,30 @@
       $(el, '.message').textContent = el.getAttribute('error') || '';
       control.disabled = el.hasAttribute('disabled');
       if (el.hasAttribute('name')) control.name = el.getAttribute('name');
-      if (el.hasAttribute('value') && !el._valueSet) control.value = el.getAttribute('value');
+      applySelectValue(el);
     },
     members: {
       value: {
         configurable: true,
-        get() { return $(this, '.control').value; },
-        set(value) { this._valueSet = true; $(this, '.control').value = value === null || value === undefined ? '' : String(value); },
+        // Before its options exist a select has no value to give: it answers what was asked.
+        get() { return this._valueSet && !this._built ? this._value : $(this, '.control').value; },
+        set(value) {
+          this._valueSet = true;
+          this._value = value === null || value === undefined ? '' : String(value);
+          applySelectValue(this);
+        },
       },
     },
   });
+  /** The value asked for: the property if written, else the attribute. `undefined`: none. */
+  function applySelectValue(el) {
+    const wanted = el._valueSet ? el._value : el.hasAttribute('value') ? el.getAttribute('value') : undefined;
+    if (wanted !== undefined) $(el, '.control').value = wanted;
+  }
   function rebuildOptions(el) {
     const control = $(el, '.control');
-    const previous = control.value;
     control.textContent = '';
+    el._built = false;
     for (const option of el.querySelectorAll('s-option')) {
       const native = global.document.createElement('option');
       native.value = option.getAttribute('value') || option.textContent.trim();
@@ -836,8 +936,10 @@
       native.disabled = option.hasAttribute('disabled');
       native.selected = option.hasAttribute('selected') || option.hasAttribute('defaultselected');
       control.appendChild(native);
+      el._built = true;
     }
-    if (el._valueSet && previous) control.value = previous;
+    // The options are new: the value asked for (before they existed, or by the buyer) goes back.
+    applySelectValue(el);
   }
 
   define('s-drop-zone', {
@@ -847,8 +949,13 @@
     init(el) { $(el, 'input').addEventListener('change', () => fire(el, 'change', { composed: false })); },
     sync(el) {
       $(el, '.lbl').textContent = el.getAttribute('label') || 'Add file';
-      $(el, 'input').multiple = el.hasAttribute('multiple');
-      if (el.hasAttribute('accept')) $(el, 'input').accept = el.getAttribute('accept');
+      const input = $(el, 'input');
+      input.multiple = el.hasAttribute('multiple');
+      input.disabled = el.hasAttribute('disabled');
+      input.required = el.hasAttribute('required');
+      if (el.hasAttribute('name')) input.name = el.getAttribute('name');
+      if (el.hasAttribute('accept')) input.accept = el.getAttribute('accept');
+      else input.removeAttribute('accept');
     },
     members: { files: { configurable: true, get() { return $(this, 'input').files; } } },
   });

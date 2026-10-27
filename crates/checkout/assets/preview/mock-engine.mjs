@@ -43,7 +43,7 @@ function recompute(state) {
     let total = 0;
     for (const line of lines) {
       const off = Math.round(cents(line.subtotal) * 0.1);
-      line.discountAllocations.push({ title: code, code, amount: money(off) });
+      line.discountAllocations.push({ title: code, code, class: 'PRODUCT', amount: money(off) });
       line.total = money(cents(line.total) - off);
       total += off;
     }

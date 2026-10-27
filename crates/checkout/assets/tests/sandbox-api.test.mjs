@@ -87,6 +87,7 @@ test('discount codes, allocations and cart metafields', () => {
   assert.deepEqual(plain(shopify.discountCodes.value), [{ code: 'SAVE10' }]);
   const [line] = shopify.lines.value;
   assert.deepEqual(plain(line.discountAllocations), [{ type: 'code', code: 'SAVE10', discountedAmount: { amount: 4.9, currencyCode: 'EUR' } }]);
+  assert.equal(next({ type: 'discountCode', action: 'add', code: 'SAVE10' }).lines[0].discountAllocations[0].class, 'PRODUCT', 'the state tells the class of each allocation');
   assert.deepEqual(plain(shopify.appMetafields.value)[0].metafield, { namespace: 'n', key: 'k', value: 'true', type: 'boolean', valueType: 'boolean' });
 });
 
@@ -256,4 +257,47 @@ test('registers targets with extend and offers the rest of the global', () => {
 test('capabilities become names', () => {
   const { capabilityNames } = runtime().win.context.LsfSandbox;
   assert.deepEqual(plain(capabilityNames({ api_access: true, network_access: false, collect_buyer_consent: { sms_marketing: true, customer_personal_data: false } })), ['api_access', 'collect_buyer_consent.sms_marketing']);
+});
+
+test('the cost of a line is before order discounts, after product ones', () => {
+  const state = structuredClone(checkoutState());
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  // 49.00 - 2.00 (product) - 5.00 (order) = 42.00 in the state.
+  state.lines[0].total = eur(42);
+  state.lines[0].discountAllocations = [
+    { title: 'Summer', amount: eur(2), class: 'PRODUCT' },
+    { title: 'Welcome', code: 'WELCOME', amount: eur(5), class: 'ORDER' },
+  ];
+  // A line without any order discount keeps its total, and so does one that has no class at all.
+  state.lines[1].total = eur(22);
+  state.lines[1].discountAllocations = [{ title: 'Old', amount: eur(2) }];
+  const { shopify } = runtime({ state });
+  const [shirt, mug] = shopify.lines.value;
+  assert.deepEqual(plain(shirt.cost.totalAmount), eur(47), 'the order discount is not taken off');
+  assert.deepEqual(plain(mug.cost.totalAmount), eur(22));
+  assert.deepEqual(plain(shirt.discountAllocations).map((entry) => entry.discountedAmount.amount), [2, 5], 'the allocations still list both');
+  assert.equal(shopify.cost.totalAmount.value.amount, 73, 'the cart total is not a line cost');
+});
+
+test('the cost of a line adds order discounts up in cents', () => {
+  const state = structuredClone(checkoutState());
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  state.lines[0].total = eur(10.1);
+  state.lines[0].discountAllocations = [
+    { title: 'A', amount: eur(0.1), class: 'ORDER' },
+    { title: 'B', amount: eur(0.1), class: 'ORDER' },
+  ];
+  const { shopify } = runtime({ state });
+  assert.equal(shopify.lines.value[0].cost.totalAmount.amount, 10.3);
+});
+
+test('the components of a bundle line are costed the same way', () => {
+  const state = structuredClone(checkoutState());
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  state.lines[0].components = [{
+    id: 'c1', variantId: 1, productId: 1, title: 'Part', quantity: 1, total: eur(8),
+    discountAllocations: [{ title: 'Welcome', amount: eur(2), class: 'ORDER' }],
+  }];
+  const { shopify } = runtime({ state });
+  assert.equal(shopify.lines.value[0].lineComponents[0].cost.totalAmount.amount, 10);
 });

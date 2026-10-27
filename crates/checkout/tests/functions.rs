@@ -154,6 +154,10 @@ fn a_code_discount_runs_once_the_code_is_entered() {
     assert_eq!(with.discounts[0].code.as_deref(), Some("WELCOME10"));
     assert_eq!(with.lines[0].discount_allocations[0].amount, 320);
     assert_eq!(with.lines[1].discount_allocations[0].amount, 440);
+    assert_eq!(with.discounts[0].class, Order);
+    // The page tells order discounts from product ones by the class of a line's allocations.
+    let page = serde_json::to_value(&with.lines[0]).unwrap();
+    assert_eq!(page["discountAllocations"][0]["class"], "ORDER");
     assert_eq!(with.cost.discounts, 760);
     assert_eq!(
         with.discount_codes

@@ -232,3 +232,256 @@ test('a form submits when a submit button is pressed', () => {
   button.click();
   assert.deepEqual(submits, [true]);
 });
+
+// --- Custom element conformance and state written before the element is in the page ---------
+
+/** Plays the page putting an element in the document: connected, then synced. */
+const connect = (element) => element.connectedCallback();
+
+/** Makes the stand-in `<select>` of the fake shadow root choose like a real one: a value that
+ * matches no option selects nothing, and replacing the options selects the first again. */
+function nativeSelect(control) {
+  let chosen = null;
+  let none = false;
+  const options = () => control.childNodes;
+  Object.defineProperty(control, 'value', {
+    configurable: true,
+    get() {
+      if (none) return '';
+      return (chosen && options().includes(chosen) ? chosen : options()[0])?.value ?? '';
+    },
+    set(value) {
+      chosen = options().find((option) => option.value === value) ?? null;
+      none = chosen === null;
+    },
+  });
+  // Changing the options starts over, as for a browser.
+  const replace = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), 'textContent').set;
+  Object.defineProperty(control, 'textContent', {
+    configurable: true,
+    get: () => '',
+    set(value) {
+      replace.call(control, value);
+      chosen = null;
+      none = false;
+    },
+  });
+  return control;
+}
+
+test('no constructor touches its element: no attribute, no class, no child', () => {
+  const { make, Sandbox } = components();
+  for (const tag of Sandbox.components.TAGS) {
+    const element = make(tag);
+    assert.deepEqual([...element.attributes], [], `${tag} has attributes`);
+    assert.deepEqual(element.childNodes, [], `${tag} has children`);
+  }
+});
+
+test('a switch looks like one from its shadow root, not from a class of its own', () => {
+  const { make } = components();
+  const toggle = make('s-switch');
+  assert.equal(toggle.className, '');
+  assert.match(toggle._root.html, /<label class="switch">/);
+  assert.match(toggle._root.html, /\.switch \.box::after/);
+  assert.doesNotMatch(toggle._root.html, /:host\(\.switch\)/);
+  assert.doesNotMatch(make('s-checkbox')._root.html, /class="switch"/);
+  connect(toggle);
+  assert.equal(toggle.className, '');
+});
+
+test('a select keeps the value it was given before it had options', () => {
+  const { make } = components();
+  const select = make('s-select');
+  const control = nativeSelect(select._root.querySelector('.control'));
+  select.value = 'b';
+  assert.equal(select.value, 'b', 'it answers what it was asked');
+  for (const value of ['a', 'b', 'c']) {
+    const option = make('s-option');
+    option.setAttribute('value', value);
+    select.appendChild(option);
+  }
+  connect(select);
+  assert.equal(control.value, 'b', 'applied once the options are built');
+  assert.equal(select.value, 'b');
+  // The options are rebuilt: the value comes back.
+  const extra = make('s-option');
+  extra.setAttribute('value', 'd');
+  select.appendChild(extra);
+  connect(select);
+  assert.equal(control.value, 'b');
+  // What the buyer picks is the value from then on.
+  control.value = 'c';
+  control.dispatchEvent(new FakeEvent('change'));
+  connect(select);
+  assert.equal(select.value, 'c');
+  select.value = 'a';
+  assert.equal(control.value, 'a');
+});
+
+test('a select applies its value attribute when the options come', () => {
+  const { make } = components();
+  const select = make('s-select');
+  const control = nativeSelect(select._root.querySelector('.control'));
+  select.setAttribute('value', 'b');
+  for (const value of ['a', 'b']) {
+    const option = make('s-option');
+    option.setAttribute('value', value);
+    select.appendChild(option);
+  }
+  connect(select);
+  assert.equal(control.value, 'b');
+});
+
+test('defaultChecked starts a checkbox checked, even after other attributes synced', () => {
+  const { make } = components();
+  const box = make('s-checkbox');
+  box.label = 'Gift';
+  box.defaultChecked = true;
+  assert.equal(box.checked, false, 'nothing happens before the element is in the page');
+  connect(box);
+  assert.equal(box.checked, true);
+  assert.equal(box.hasAttribute('checked'), true);
+  // The buyer unchecks it: neither another attribute nor reconnecting checks it again.
+  const input = box._root.querySelector('input');
+  input.checked = false;
+  input.dispatchEvent(new FakeEvent('change'));
+  box.label = 'Gift wrap';
+  connect(box);
+  assert.equal(box.checked, false);
+  assert.equal(box.hasAttribute('checked'), false);
+});
+
+test('a checked written before connecting beats defaultChecked', () => {
+  const { make } = components();
+  const box = make('s-switch');
+  box.defaultChecked = true;
+  box.checked = false;
+  connect(box);
+  assert.equal(box.checked, false);
+  const attribute = make('s-checkbox');
+  attribute.setAttribute('checked', '');
+  attribute.defaultChecked = true;
+  connect(attribute);
+  assert.equal(attribute.checked, true);
+});
+
+test('defaultSelected, defaultPressed and defaultOpen start once', () => {
+  const { make } = components();
+  const choice = make('s-choice');
+  choice.setAttribute('value', 'x');
+  choice.defaultSelected = true;
+  connect(choice);
+  assert.equal(choice.selected, true);
+  assert.equal(choice._root.querySelector('input').checked, true);
+  choice._root.querySelector('input').checked = false;
+  choice._root.querySelector('input').dispatchEvent(new FakeEvent('change'));
+  choice.disabled = true;
+  assert.equal(choice.selected, false, 'a syncing attribute does not select the choice again');
+
+  const press = make('s-press-button');
+  press.defaultPressed = true;
+  connect(press);
+  assert.equal(press.hasAttribute('pressed'), true);
+  assert.equal(press._root.querySelector('button').getAttribute('aria-pressed'), 'true');
+
+  const details = make('s-details');
+  details.defaultOpen = true;
+  connect(details);
+  const inner = details._root.querySelector('details');
+  assert.equal(inner.open, true);
+  inner.open = false;
+  inner.dispatchEvent(new FakeEvent('toggle'));
+  assert.equal(inner.open, false, 'what the buyer closed stays closed');
+  assert.equal(details.hasAttribute('open'), false);
+});
+
+test('values written to a choice list before its choices exist are applied to them', () => {
+  const { make } = components();
+  const list = make('s-choice-list');
+  list.values = ['b'];
+  assert.deepEqual(plain(list.values), ['b']);
+  const choices = ['a', 'b'].map((value) => {
+    const choice = make('s-choice');
+    choice.setAttribute('value', value);
+    list.appendChild(choice);
+    return choice;
+  });
+  connect(list);
+  assert.deepEqual(plain(choices.map((choice) => choice.hasAttribute('selected'))), [false, true]);
+  assert.deepEqual(plain(list.values), ['b']);
+  // The buyer picks the other one: the values asked for are not applied again.
+  choices[0]._root.querySelector('input').checked = true;
+  choices[0]._root.querySelector('input').dispatchEvent(new FakeEvent('change'));
+  connect(list);
+  assert.deepEqual(plain(list.values), ['a']);
+});
+
+test('a choice follows the multiple and disabled of its list when they change', () => {
+  const { make } = components();
+  const list = make('s-choice-list');
+  const choice = make('s-choice');
+  list.appendChild(choice);
+  connect(choice);
+  const input = choice._root.querySelector('input');
+  assert.equal(input.type, 'radio');
+  list.setAttribute('multiple', '');
+  list.setAttribute('disabled', '');
+  assert.equal(input.type, 'checkbox');
+  assert.equal(input.disabled, true);
+});
+
+test('an overlay opened before it is in the page opens when it joins it', () => {
+  const { make, Sandbox } = components();
+  const states = [];
+  Sandbox.onOverlay = (open) => states.push(open);
+  const modal = make('s-modal');
+  let connected = false;
+  Object.defineProperty(modal, 'isConnected', { get: () => connected });
+  modal.open = true;
+  assert.deepEqual(states, [], 'an element nobody sees does not grow the frame');
+  assert.equal(modal._root.querySelector('.backdrop').hidden, true);
+  connected = true;
+  connect(modal);
+  assert.deepEqual(states, [true]);
+  assert.equal(modal._root.querySelector('.backdrop').hidden, false);
+});
+
+test('a form listens for Enter once, however often it is connected', () => {
+  const { make } = components();
+  const form = make('s-form');
+  const field = make('s-text-field');
+  form.appendChild(field);
+  const submits = [];
+  form.addEventListener('submit', () => submits.push(true));
+  connect(form);
+  connect(form);
+  form.dispatchEvent(new FakeEvent('keydown', { bubbles: true, data: { key: 'Enter', target: field } }));
+  assert.deepEqual(submits, [true]);
+});
+
+test('a date picker starts from its defaultValue until someone picks', () => {
+  const { make } = components();
+  const picker = make('s-date-picker');
+  picker.defaultValue = '2026-01-02';
+  const control = picker._root.querySelector('.control');
+  assert.equal(picker.value, '2026-01-02');
+  control.value = '2026-03-04';
+  control.dispatchEvent(new FakeEvent('input'));
+  picker.defaultValue = '2026-05-06';
+  assert.equal(picker.value, '2026-03-04');
+  picker.disabled = true;
+  assert.equal(control.disabled, true);
+});
+
+test('a field keeps what the buyer typed when its other attributes change', () => {
+  const { make } = components();
+  const field = make('s-text-field');
+  field.setAttribute('value', 'initial');
+  const control = field._root.querySelector('.control');
+  assert.equal(control.value, 'initial');
+  control.value = 'typed';
+  control.dispatchEvent(new FakeEvent('input'));
+  field.label = 'Name';
+  assert.equal(control.value, 'typed');
+});
