@@ -606,7 +606,7 @@ export function renderPage(ctx) {
         return node;
       },
     }
-    : ctx;
+    : { ...ctx, preview: null };
   const body = state.status === 'completed'
     ? thankYouPage(page)
     : [checkoutPage(page), preview && thankYouPreview(page)];

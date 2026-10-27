@@ -514,3 +514,15 @@ test('?targets=all shows the panel of the targets and the thank-you page, and no
   assert.match(every.text('[data-section="targets"]'), /purchase\.checkout\.block\.render/);
   assert.match(every.text('[data-section="targets"]'), /shown|needs/);
 });
+
+test('a checkout with nothing to ship has no address and no shipping method, unless every target is shown', () => {
+  const digital = (href) => app({ href, mutate: (engine) => engine.lines.forEach((line) => { line.requiresShipping = false; }) });
+  const plain = digital('http://localhost/checkouts/cn/preview');
+  assert.equal(plain.query('[data-section="delivery"]'), null);
+  assert.equal(plain.query('[data-section="shipping"]'), null);
+  assert.ok(plain.query('[data-section="contact"]'));
+
+  const every = digital('http://localhost/checkouts/cn/preview?targets=all');
+  assert.ok(every.query('[data-section="delivery"]'), 'every target needs the steps of a cart that ships');
+  assert.ok(every.query('[data-section="shipping"]'));
+});

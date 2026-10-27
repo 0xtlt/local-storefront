@@ -40,11 +40,10 @@ export function startCheckout({ root, initial, document, window, location, fetch
   const endpoint = (path) =>
     `${state.localization?.rootUrl ?? ''}/checkouts/cn/${encodeURIComponent(state.token)}${path}`;
 
-  // `?targets=all` asks for a page where every extension renders at every target it declares.
-  const preview = {
-    all: new URL(location.href ?? 'http://localhost/', 'http://localhost/').searchParams.get('targets') === 'all',
-    rendered: RENDERED_TARGETS,
-  };
+  // `?targets=all` asks for a page where every extension renders at every target it declares;
+  // without it there is no preview at all.
+  const showAll = new URL(location.href ?? 'http://localhost/', 'http://localhost/').searchParams.get('targets') === 'all';
+  const preview = showAll ? { all: true, rendered: RENDERED_TARGETS } : null;
 
   const host = createExtensionHost({
     document,
