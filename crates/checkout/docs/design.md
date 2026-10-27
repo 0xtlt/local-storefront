@@ -239,12 +239,13 @@ Cart lines, note and attributes live in the session cart (the same one the theme
 
 ## Page and extension host (`crates/checkout/assets/`)
 
-- `checkout.html`, `checkout.css`, `checkout.js`: renders the page from the state JSON (no
+- `checkout.html`, `checkout.css`, `tokens.css`, `checkout.js`: renders the page from the state JSON (no
   framework, ES modules, no build step), sends operations, re-renders from the reply.
   Standard skin = Shopify one-page checkout (contact, delivery address, shipping method,
   payment, order summary with discount field, "Pay now"). Shop skin (`data-variant="shop"`):
   Shop app / Shop Pay look. A collapsible "Functions" panel shows each run (input, output,
-  logs, instructions, error). Thank-you page when `status == "completed"`.
+  logs, instructions, error). Thank-you page when `status == "completed"`. `tokens.css` holds
+  the design tokens (colors, type, radii, spacing) that the page and the sandbox frame share.
 - `extension-host.js` + `sandbox.html` + `sandbox.js`: each (extension, target) renders in a
   sandboxed iframe (`sandbox="allow-scripts"`), placed at its target in the page
   (`purchase.checkout.block.render` in the main column, `…delivery-address.render-before`,

@@ -51,6 +51,29 @@ starts, and is in the `diagnostics` of the state.
 `checkout` takes the other options of [`serve`](cli.md#serve) (`--port`, `--host`, `--quiet`,
 `--static`, `--customer`, ...).
 
+## The look of the page
+
+The standard look follows Shopify's one-page checkout, in lsf's own CSS: a header with the name
+of the shop and a cart icon over a rule that runs the page's width; on a screen of 1000px or more
+two columns (the form on white, 500px wide, and the order summary on a grey panel as tall as the
+page, 400px wide, that stays in view while the form scrolls); below that one column with the
+summary folded into a bar under the header that shows the total. Fields have their label inside
+the box, which floats to the top once there is something to label; payment and shipping methods
+are one bordered box of rows, the chosen row tinted with its accent border; the order summary
+has 64px thumbnails with the quantity hanging off a corner, the discount field with its Apply
+button inside, and the Total row.
+
+Everything that sets the look is a CSS custom property in `crates/checkout/assets/tokens.css`,
+read by the page and by the frame of the extensions, so that an extension looks like the page
+around it. The defaults are those of a store with no branding: system fonts and a 14px base text
+(`--lsf-font`, `--lsf-font-size-base`, `--lsf-font-step`), black on white and a blue accent
+(`--lsf-color-accent`, `--lsf-color-text`, `--lsf-color-bg`, `--lsf-color-border`, ...), a grey
+order summary (`--lsf-summary-*`), corner radii of 8, 12 and 16px (`--lsf-radius-small`, `-base`,
+`-large`, or one `--lsf-radius-global` for all), spacing (`--lsf-space-*`) and control sizes. The
+hover color, the three light tints, the focus ring and the subdued text on a tint are derived
+from the accent, so one color brands the page. The Shop skin sets its own accent, page color and
+radii in the same file.
+
 ## The home page
 
 `GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the

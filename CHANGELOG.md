@@ -7,6 +7,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Added
 
+- **The checkout looks like Shopify's.** The standard look of the local checkout now follows
+  Shopify's one-page checkout: its header, the two columns with the grey order summary, floating
+  labels, grouped payment and shipping choices, the order summary with its quantity badges, and
+  a mobile layout with a folded summary. The checkout UI extensions use the same design tokens
+  (`tokens.css`), so they look native in it. See [the look of the page](docs/checkout.md#the-look-of-the-page).
 - **A local checkout for Shopify apps.** `lsf checkout --app <dir>` serves the checkout of an
   app without a theme, and `lsf serve --app <dir>` leads the `/checkout` of a theme to it. It
   runs the Shopify Functions of the app (cart transform, discounts, delivery and payment
