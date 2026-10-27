@@ -33,6 +33,32 @@ pub struct CheckoutState {
     /// the request, so it is neither kept nor read from the session.
     #[serde(skip)]
     pub language: Option<String>,
+    /// The step of the buyer journey the Functions run for (`buyerJourney.step`). The request
+    /// decides, so it is neither kept nor read from the session.
+    #[serde(skip)]
+    pub step: BuyerJourneyStep,
+}
+
+/// Where the buyer is when the Functions run: `buyerJourney.step` of the validation input.
+/// A validation Function branches on it, to check a rule only when the order is placed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BuyerJourneyStep {
+    /// The buyer is looking at or changing the checkout: loading the page, entering an address,
+    /// changing a line. The errors are shown, nothing is refused.
+    Interaction,
+    /// The buyer places the order: the errors of the Functions refuse it.
+    #[default]
+    Completion,
+}
+
+impl BuyerJourneyStep {
+    /// The value of the `BuyerJourneyStep` enum of the Functions API.
+    pub fn graphql(self) -> &'static str {
+        match self {
+            Self::Interaction => "CHECKOUT_INTERACTION",
+            Self::Completion => "CHECKOUT_COMPLETION",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]

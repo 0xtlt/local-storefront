@@ -444,6 +444,7 @@ fn cost_seen_by_validation(
             buyerIdentity { email }
             cost { subtotalAmount { amount } totalAmount { amount } }
         }
+        buyerJourney { step }
         validation { metafield(namespace: "$app:config", key: "settings") { value } }
     }"#;
     let app = app();

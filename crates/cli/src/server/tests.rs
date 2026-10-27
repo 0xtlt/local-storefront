@@ -4803,6 +4803,89 @@ fn the_functions_of_the_app_apply() {
 }
 
 #[test]
+fn a_validation_function_sees_the_step_of_the_buyer_journey() {
+    let state = checkout_server(&[], false);
+    // 3 in the cart, 2 allowed, but only when the order is placed.
+    let path = start_checkout(
+        &state,
+        "co-step",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+            "type": "json", "value": {"maxQuantity": 2, "onlyAtCompletion": true}
+        }}}}}}),
+    );
+    let step_of = |json: &Json| {
+        let run = json["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["handle"] == "quantity-limit")
+            .expect("the run");
+        run["input"]["buyerJourney"]["step"].clone()
+    };
+
+    // The page, the state and an update are interactions: the Function does not check yet.
+    let html = text(&get(&state, &path, "co-step"));
+    let page = page_state(&html);
+    assert_eq!(step_of(&page), "CHECKOUT_INTERACTION");
+    assert_eq!(page["errors"], json!([]));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-step"));
+    assert_eq!(step_of(&json), "CHECKOUT_INTERACTION");
+    assert_eq!(json["errors"], json!([]));
+    let reply = operations(&state, &path, "co-step", buyer_details());
+    assert_eq!(reply.status, 200);
+    let json = body_json(&reply);
+    assert_eq!(step_of(&json), "CHECKOUT_INTERACTION");
+    assert_eq!(json["errors"], json!([]));
+    // So is a change of a line.
+    let reply = operations(
+        &state,
+        &path,
+        "co-step",
+        json!([{"type": "cartLines", "change": {
+            "type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 3
+        }}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(step_of(&body_json(&reply)), "CHECKOUT_INTERACTION");
+
+    // Placing the order is the completion: the Function checks, and the order is refused.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-step");
+    assert_eq!(reply.status, 422, "{}", text(&reply));
+    let blocked = body_json(&reply);
+    assert_eq!(step_of(&blocked), "CHECKOUT_COMPLETION");
+    assert_eq!(
+        blocked["errors"][0]["message"],
+        "Not possible to order more than 2 of each"
+    );
+    // Nothing was bought, and the checkout is still an interaction.
+    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-step"));
+    assert_eq!(step_of(&json), "CHECKOUT_INTERACTION");
+    assert_eq!(json["errors"], json!([]));
+
+    // A Function that checks at every step shows its errors on the page, as it blocks at the end.
+    let path = start_checkout(
+        &state,
+        "co-step-all",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+            "type": "json", "value": {"maxQuantity": 2}
+        }}}}}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-step-all"));
+    assert_eq!(json["errors"][0]["function"], "quantity-limit");
+    operations(&state, &path, "co-step-all", buyer_details());
+    let reply = post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-step-all",
+    );
+    assert_eq!(reply.status, 422);
+}
+
+#[test]
 fn a_discount_code_triggers_its_discount() {
     let state = checkout_server(&["volume-discount"], false);
     let path = start_checkout(

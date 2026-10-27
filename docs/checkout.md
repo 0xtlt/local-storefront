@@ -109,6 +109,13 @@ them:
 6. payment customization (`cart.payment-methods.transform.run`, `purchase.payment-customization.run`)
 7. validation (`cart.validations.generate.run`, `purchase.validation.run`)
 
+A validation Function can check a rule at the placing of the order only: `buyerJourney.step` is
+`CHECKOUT_INTERACTION` when the page loads (and for `.json`) or changes (`update`, a line included),
+and `CHECKOUT_COMPLETION` for `complete` alone. The errors of an interaction show on the page and
+refuse nothing; `complete` runs the Functions again, as a completion, and only its errors refuse
+the order. (Shopify's documentation does not say which step blocks; this is how the local checkout
+treats them.)
+
 The input of each Function is the result of its input query, run against the cart, the buyer and
 the store data. A Function that fails to run adds an error that blocks the order. The
 "Functions" panel of the page shows each run: its input, its output, its logs and
@@ -155,6 +162,7 @@ instructions: 34977
 | `--session <file or JSON>` | The session to run for: a [session](data-reference.md#session) with a `cart`, a `customer`, a `country`. Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
 | `--locale <iso>` | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
+| `--step interaction\|completion` | The step of the buyer journey, which validation Functions read as `buyerJourney.step`: `completion` (default) is the placing of the order, `interaction` is the page and its updates. |
 | `--format json` | The checkout as the page reads it, with every run in `runs`. For tools. |
 | `--build` | Runs the build command of each Function first. |
 

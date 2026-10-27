@@ -10,7 +10,9 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use lsf_checkout::app::{App, Selection};
 use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
-use lsf_checkout::{Address, CheckoutResult, CheckoutState, Metafield, ResultLine};
+use lsf_checkout::{
+    Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
+};
 use lsf_core::drops::cart::line_key;
 use lsf_core::store::{CartLine, Customer, Language};
 use lsf_core::{Session, Store};
@@ -280,16 +282,19 @@ fn read(state: &ServerState, session_id: &str) -> (Session, Arc<Store>, Checkout
 /// Runs the Functions of the app on a cart: what the checkout looks like, with the app and the
 /// extensions selected. A logged-in customer does not have to type what the store knows.
 ///
-/// The Functions read the language of the buyer (`localization.language`), so every run takes it:
-/// the only way to run them is through here, with the language of the request.
+/// The Functions read the language of the buyer (`localization.language`) and the step of the
+/// buyer journey (`buyerJourney.step`), so every run takes them: the only way to run the
+/// Functions is through here, with the language and the step of the request.
 fn price(
     state: &ServerState,
     session: &Session,
     store: &Store,
     checkout: &mut CheckoutState,
     language: &Language,
+    step: BuyerJourneyStep,
 ) -> Result<(App, Selection, CheckoutResult), String> {
     checkout.language = Some(language.iso_code.clone());
+    checkout.step = step;
     let options = options(state);
     let app = lsf_checkout::app::load(&options.app_dir)?;
     let selection = Selection::resolve(&app, &options.extensions)?;
@@ -307,13 +312,20 @@ fn price(
     Ok((app, selection, result))
 }
 
-fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result<Computed, String> {
+/// The checkout as the Functions compute it for `step`: `Interaction` for everything the buyer
+/// does before the order (the page, the state, an update), `Completion` for placing the order.
+fn compute(
+    state: &ServerState,
+    session_id: &str,
+    incoming: &Incoming,
+    step: BuyerJourneyStep,
+) -> Result<Computed, String> {
     let variant = variant_of(state, session_id, incoming);
     // One read, so that the basis is what the result is computed from.
     let (session, store, mut checkout, basis) = read(state, session_id);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     let language = language_of(state, &store, incoming);
-    let (app, selection, result) = price(state, &session, &store, &mut checkout, language)?;
+    let (app, selection, result) = price(state, &session, &store, &mut checkout, language, step)?;
 
     let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
     let object = json.as_object_mut().expect("a result is an object");
@@ -541,7 +553,7 @@ fn current(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
     }
     // A cart again after an order: a new checkout.
     state.with_session(session_id, |entry| entry.checkout.completed = None);
-    compute(state, session_id, incoming)
+    compute(state, session_id, incoming, BuyerJourneyStep::Interaction)
         .map(|computed| computed.json)
         .map_err(|problem| error(500, problem))
 }
@@ -702,7 +714,7 @@ pub(super) fn apply_update(
     if !written {
         return conflict(state, incoming, id);
     }
-    match compute(state, id, incoming) {
+    match compute(state, id, incoming, BuyerJourneyStep::Interaction) {
         Ok(computed) => Reply::json(200, &computed.json).cached(cache::PRIVATE),
         Err(problem) => error(500, problem),
     }
@@ -939,7 +951,14 @@ fn checkout_line(
         .and_then(Json::as_str)
         .ok_or("the change needs the `id` of a line")?;
     let mut checkout = checkout.clone();
-    let (_, _, result) = price(state, session, store, &mut checkout, language)?;
+    let (_, _, result) = price(
+        state,
+        session,
+        store,
+        &mut checkout,
+        language,
+        BuyerJourneyStep::Interaction,
+    )?;
     result
         .lines
         .into_iter()
@@ -1236,7 +1255,7 @@ pub(super) fn place_order(
     if already_placed(state, id) {
         return redirect_to_thanks(state, incoming, id, token);
     }
-    let mut computed = match compute(state, id, incoming) {
+    let mut computed = match compute(state, id, incoming, BuyerJourneyStep::Completion) {
         Ok(computed) => computed,
         Err(problem) => return error(500, problem),
     };

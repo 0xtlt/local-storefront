@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use lsf_checkout::app::Selection;
 use lsf_checkout::pipeline;
-use lsf_checkout::{CheckoutResult, CheckoutState};
+use lsf_checkout::{BuyerJourneyStep, CheckoutResult, CheckoutState};
 use lsf_core::Session;
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::model::SessionInput;
@@ -38,6 +38,14 @@ enum Format {
     Json,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Step {
+    /// The buyer is looking at or changing the checkout (`CHECKOUT_INTERACTION`).
+    Interaction,
+    /// The buyer places the order (`CHECKOUT_COMPLETION`).
+    Completion,
+}
+
 #[derive(clap::Args)]
 struct RunArgs {
     /// The Functions to run, by handle. Every Function of the app when none is given.
@@ -69,6 +77,12 @@ struct RunArgs {
     #[arg(long, value_name = "ISO")]
     locale: Option<String>,
 
+    /// The step of the buyer journey the Functions run for: what a validation Function reads as
+    /// `buyerJourney.step`. `completion` is the placing of the order, `interaction` the page
+    /// and its updates.
+    #[arg(long, value_enum, default_value = "completion")]
+    step: Step,
+
     /// How to print the result.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
@@ -91,6 +105,41 @@ pub fn run(
     args: Args,
 ) -> Result<ExitCode, String> {
     let Subcommand::Run(args) = args.command;
+    let (shopify_app, result) = compute(theme, data, previews, &args)?;
+    let failed = result.runs.iter().any(|run| run.error.is_some());
+
+    match args.format {
+        Format::Json => {
+            let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+            json["diagnostics"] = Json::Array(
+                shopify_app
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| Json::String(diagnostic.to_string()))
+                    .collect(),
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
+            );
+        }
+        Format::Text => print_text(&result),
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// Builds the input of each Function from the store data and runs them, for the step, the
+/// language and the checkout the arguments say.
+fn compute(
+    theme: &Path,
+    data: Option<&Path>,
+    previews: &[lsf_core::Preview],
+    args: &RunArgs,
+) -> Result<(lsf_checkout::app::App, CheckoutResult), String> {
     let Some(app_dir) = &args.app else {
         return Err("`lsf function run` needs the app: `--app DIR` (or LSF_APP)".to_string());
     };
@@ -156,6 +205,10 @@ pub fn run(
             })?;
         state.language = Some(language.iso_code.clone());
     }
+    state.step = match args.step {
+        Step::Interaction => BuyerJourneyStep::Interaction,
+        Step::Completion => BuyerJourneyStep::Completion,
+    };
 
     let config = config_from_store(&store);
     let functions_only =
@@ -168,30 +221,7 @@ pub fn run(
         &state,
         &config,
     );
-    let failed = result.runs.iter().any(|run| run.error.is_some());
-
-    match args.format {
-        Format::Json => {
-            let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
-            json["diagnostics"] = Json::Array(
-                shopify_app
-                    .diagnostics
-                    .iter()
-                    .map(|diagnostic| Json::String(diagnostic.to_string()))
-                    .collect(),
-            );
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
-            );
-        }
-        Format::Text => print_text(&result),
-    }
-    Ok(if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    })
+    Ok((shopify_app, result))
 }
 
 fn money(cents: i64, currency: &str) -> String {
@@ -323,6 +353,7 @@ fn print_text(result: &CheckoutResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn json_comes_from_the_argument_or_from_a_file() {
@@ -369,6 +400,7 @@ mod tests {
                     session: None,
                     checkout: None,
                     locale: Some(locale.to_string()),
+                    step: Step::Completion,
                     format: Format::Json,
                 }),
             };
@@ -381,6 +413,69 @@ mod tests {
             "{error}"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_step_is_what_a_validation_function_reads() {
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let root = std::env::temp_dir().join(format!("lsf-function-step-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let data = root.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        // 4 in the cart, 3 allowed, but only when the order is placed.
+        let store = serde_json::json!({
+            "products": [{"title": "Thing", "price": 3200}],
+            "session": {"cart": {"items": [{"variant": "thing", "quantity": 4}]}},
+            "checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+                "type": "json", "value": {"maxQuantity": 3, "onlyAtCompletion": true}
+            }}}}},
+        });
+        std::fs::write(data.join("store.json"), store.to_string()).unwrap();
+        let errors_at = |step: Step| {
+            let args = RunArgs {
+                handles: vec!["quantity-limit".to_string()],
+                app: Some(app.clone()),
+                build: false,
+                session: None,
+                checkout: None,
+                locale: None,
+                step,
+                format: Format::Json,
+            };
+            let (_, result) = compute(&root, Some(&data), &[], &args).unwrap();
+            let seen = result.runs[0].input["buyerJourney"]["step"].clone();
+            (result.errors.len(), seen)
+        };
+        assert_eq!(
+            errors_at(Step::Interaction),
+            (0, serde_json::json!("CHECKOUT_INTERACTION"))
+        );
+        assert_eq!(
+            errors_at(Step::Completion),
+            (1, serde_json::json!("CHECKOUT_COMPLETION"))
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_step_defaults_to_the_completion() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: Args,
+        }
+        let step = |extra: &[&str]| {
+            let mut words = vec!["lsf", "run", "quantity-limit"];
+            words.extend_from_slice(extra);
+            let Subcommand::Run(run) = Cli::parse_from(words).args.command;
+            run.step
+        };
+        assert!(matches!(step(&[]), Step::Completion));
+        assert!(matches!(
+            step(&["--step", "interaction"]),
+            Step::Interaction
+        ));
+        assert!(matches!(step(&["--step", "completion"]), Step::Completion));
     }
 
     /// Runs `lsf function run` on the fixture app of lsf-checkout, for a store with one product
@@ -425,6 +520,7 @@ mod tests {
                 session: None,
                 checkout: None,
                 locale: None,
+                step: Step::Completion,
                 format: Format::Json,
             }),
         };

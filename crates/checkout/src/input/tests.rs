@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::version::{ApiVersion, FunctionApi};
-use crate::{Address, DeliveryKind, DeliveryOption, KeyValue};
+use crate::{Address, BuyerJourneyStep, DeliveryKind, DeliveryOption, KeyValue};
 
 struct Fixture {
     store: Store,
@@ -972,6 +972,17 @@ fn presentment_currency_rate_and_buyer_journey() {
         )
         .unwrap(),
         json!({"presentmentCurrencyRate": "1.0", "buyerJourney": {"step": "CHECKOUT_COMPLETION"}})
+    );
+}
+
+#[test]
+fn the_step_of_the_buyer_journey_is_the_one_of_the_state() {
+    let mut f = Fixture::new();
+    f.state.step = BuyerJourneyStep::Interaction;
+    assert_eq!(
+        f.run_as(OwnerKind::Validation, "{ buyerJourney { step } }", None)
+            .unwrap(),
+        json!({"buyerJourney": {"step": "CHECKOUT_INTERACTION"}})
     );
 }
 

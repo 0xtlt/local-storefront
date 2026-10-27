@@ -328,7 +328,7 @@ impl<'c> Graph for FunctionInput<'c> {
                 _ => None,
             },
             Node::BuyerJourney => match name {
-                "step" => leaf("CHECKOUT_COMPLETION"),
+                "step" => leaf(self.ctx.state.step.graphql()),
                 _ => None,
             },
             Node::HasTag(tag, has) => match name {
