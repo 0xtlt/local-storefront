@@ -310,6 +310,53 @@ test('the field stays while the buyer is in it, even when what they typed so far
   assert.ok(page.query('.lsf-contact-email'), 'not the account\'s email: the field stays');
 });
 
+test('an emptied field stays empty when the buyer leaves it before the server answers, and what they type next is all that is sent', async () => {
+  const start = [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }];
+  const page = app({ start });
+  const input = page.query('input[name="email"]');
+  input.focus();
+  input.dispatchEvent(new FakeEvent('focusin', { bubbles: true }));
+  input.value = '';
+  page.checkout.actions.draft('email', '');
+  // Leaves the field: the change goes to the server, and the page paints before it answers.
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  page.document.activeElement = null;
+  input.dispatchEvent(new FakeEvent('focusout', { bubbles: true }));
+  assert.equal(page.checkout.getState().buyer.email, 'orders@example.com', 'not answered yet');
+  assert.equal(page.query('input[name="email"]').value, '', 'the old email does not come back');
+
+  // Comes back and types the whole new email, the answer landing on the way.
+  input.focus();
+  input.dispatchEvent(new FakeEvent('focusin', { bubbles: true }));
+  input.value = AVA;
+  page.checkout.actions.draft('email', AVA);
+  await flush();
+  input.value = `${AVA}.au`;
+  page.checkout.actions.draft('email', `${AVA}.au`);
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  page.document.activeElement = null;
+  input.dispatchEvent(new FakeEvent('focusout', { bubbles: true }));
+  await flush();
+  assert.deepEqual(page.operations().filter((operation) => operation.type === 'email').slice(-2), [{ type: 'email', value: null }, { type: 'email', value: `${AVA}.au` }]);
+  assert.equal(page.checkout.getState().buyer.email, `${AVA}.au`);
+  assert.equal(page.query('input[name="email"]').value, `${AVA}.au`);
+});
+
+test('moving the focus inside the email block keeps it on the page', async () => {
+  const start = [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }];
+  const page = app({ start });
+  const block = page.query('.lsf-contact-email');
+  const input = page.query('input[name="email"]');
+  const button = page.query('.lsf-use-account-email');
+  input.dispatchEvent(new FakeEvent('focusin', { bubbles: true }));
+  // From the field to the "Use …" button: focusout with the button as where the focus goes.
+  input.dispatchEvent(new FakeEvent('focusout', { bubbles: true, data: { relatedTarget: button } }));
+  assert.equal(page.checkout.ui.emailEditing, true);
+  button.dispatchEvent(new FakeEvent('focusout', { bubbles: true, data: { relatedTarget: null } }));
+  assert.equal(page.checkout.ui.emailEditing, false);
+  assert.ok(block);
+});
+
 test('the field goes once the buyer leaves it with the account\'s email', async () => {
   const start = [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }];
   const page = app({ start });

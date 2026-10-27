@@ -312,7 +312,9 @@ export function startCheckout({ root, initial, document, window, location, fetch
 
     /** The buyer is in the "Email for this order" field, or left it: while they are in it, it
      * stays on the page. */
-    editEmail(editing) {
+    editEmail(editing, event) {
+      // From the field to the "Use …" button and back: still in it.
+      if (!editing && event?.currentTarget?.contains?.(event.relatedTarget)) return;
       if (ui.emailEditing === editing) return;
       ui.emailEditing = editing;
       if (!editing) paint();
@@ -321,7 +323,9 @@ export function startCheckout({ root, initial, document, window, location, fetch
     /** A logged-in checkout's contact email goes back to the account's: the checkout falls back
      * to it when none is entered. */
     useAccountEmail() {
-      delete ui.draft.email;
+      // Kept empty, not dropped, until the server has fallen back to the account's: dropped, the
+      // field would show the old email again in the meantime (see `accept`).
+      ui.draft.email = '';
       return run([op.email(null)]);
     },
 

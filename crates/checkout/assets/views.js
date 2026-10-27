@@ -194,8 +194,8 @@ function contactSection(ctx) {
           class: 'lsf-contact-email',
           key: 'contact-email',
           'data-contact-email': editing ? ui.draft?.email ?? other : other,
-          onFocusin: () => actions.editEmail(true),
-          onFocusout: () => actions.editEmail(false),
+          onFocusin: (event) => actions.editEmail(true, event),
+          onFocusout: (event) => actions.editEmail(false, event),
         },
         emailField('Email for this order'),
         h(
