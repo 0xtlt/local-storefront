@@ -154,6 +154,7 @@ instructions: 34977
 |---|---|
 | `--session <file or JSON>` | The session to run for: a [session](data-reference.md#session) with a `cart`, a `customer`, a `country`. Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
+| `--locale <iso>` | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--format json` | The checkout as the page reads it, with every run in `runs`. For tools. |
 | `--build` | Runs the build command of each Function first. |
 

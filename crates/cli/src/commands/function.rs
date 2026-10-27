@@ -63,6 +63,12 @@ struct RunArgs {
     #[arg(long, value_name = "FILE|JSON")]
     checkout: Option<String>,
 
+    /// The language of the buyer, by ISO code (`fr`, `pt-BR`): one of the languages of the
+    /// store data. The Functions read it as `localization.language`. Defaults to the primary
+    /// language.
+    #[arg(long, value_name = "ISO")]
+    locale: Option<String>,
+
     /// How to print the result.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
@@ -127,11 +133,29 @@ pub fn run(
             return Err("--session is not valid (see above)".to_string());
         }
     }
-    let state: CheckoutState = match &args.checkout {
+    let mut state: CheckoutState = match &args.checkout {
         Some(value) => serde_json::from_value(read_json("checkout", value)?)
             .map_err(|error| format!("--checkout: {error}"))?,
         None => CheckoutState::default(),
     };
+    if let Some(locale) = &args.locale {
+        let language = store
+            .languages
+            .iter()
+            .find(|language| language.iso_code.eq_ignore_ascii_case(locale))
+            .ok_or_else(|| {
+                let known: Vec<&str> = store
+                    .languages
+                    .iter()
+                    .map(|language| language.iso_code.as_str())
+                    .collect();
+                format!(
+                    "--locale {locale}: the store has no such language (it has {})",
+                    known.join(", ")
+                )
+            })?;
+        state.language = Some(language.iso_code.clone());
+    }
 
     let config = config_from_store(&store);
     let functions_only =
@@ -324,6 +348,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_locale_is_one_of_the_languages_of_the_store() {
+        let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");
+        let root = std::env::temp_dir().join(format!("lsf-function-locale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let data = root.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let store = serde_json::json!({
+            "products": [{"title": "Thing", "price": 3200}],
+            "session": {"cart": {"items": [{"variant": "thing", "quantity": 1}]}},
+        });
+        std::fs::write(data.join("store.json"), store.to_string()).unwrap();
+        let run_in = |locale: &str| {
+            let args = Args {
+                command: Subcommand::Run(RunArgs {
+                    handles: vec!["quantity-limit".to_string()],
+                    app: Some(app.clone()),
+                    build: false,
+                    session: None,
+                    checkout: None,
+                    locale: Some(locale.to_string()),
+                    format: Format::Json,
+                }),
+            };
+            run(&root, Some(&data), &[], args).map(|_| ())
+        };
+        assert_eq!(run_in("EN"), Ok(()), "the primary language, in any case");
+        let error = run_in("xx").unwrap_err();
+        assert!(
+            error.contains("--locale xx: the store has no such language"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// Runs `lsf function run` on the fixture app of lsf-checkout, for a store with one product
     /// (4 at 32.00 in the cart) and the given discount, and says whether it exits with 1.
     fn run_fails(discount: Json, handle: &str, function_settings: Option<Json>) -> bool {
@@ -365,6 +424,7 @@ mod tests {
                 build: false,
                 session: None,
                 checkout: None,
+                locale: None,
                 format: Format::Json,
             }),
         };
