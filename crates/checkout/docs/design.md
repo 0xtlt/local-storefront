@@ -113,6 +113,11 @@ legacy `purchase.validation.run`) → cost. Out of scope (listed, not run): fulf
 constraints, order routing, pickup point/local pickup generators, the `.fetch` targets, discount
 `conditions` and combinations (all discounts stack).
 
+The lines start as the cart lines of the session, priced by `lsf_core::drops::cart::resolve_line`:
+the same `ResolvedLine` the storefront cart (`/cart.js`, the `cart` drop) is computed from, so that
+the selling plan, the quantity price breaks and the compare-at price of a line cannot differ
+between the cart and the checkout. `lsf-checkout` reads them from it and keeps no copy of that logic.
+
 The delivery group is `group-1`. Outputs name a delivery group or a payment method by its
 handle or by a gid ending with it, so `input` must give them an `id` of that form. A Function
 whose run fails adds a blocking `CheckoutError`; a discount whose Function is not in the app

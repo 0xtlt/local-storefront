@@ -3112,6 +3112,72 @@ fn the_state_lists_the_countries_of_the_store() {
 }
 
 #[test]
+fn the_checkout_prices_the_lines_as_the_cart_does() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-pricing",
+        json!([
+            {"variant": "TEA", "quantity": 5},
+            {"variant": "TEA", "quantity": 4, "selling_plan": "Monthly"},
+            {"variant": "TEE-BLK-M", "quantity": 2},
+            {"variant": "TEA", "quantity": 2},
+        ]),
+        json!({
+            "products": [{
+                "title": "Volume Tea",
+                "price": 3200,
+                "compare_at_price": 4000,
+                "variants": [{
+                    "sku": "TEA",
+                    "quantity_price_breaks": [{"minimum_quantity": 3, "price": 2500}]
+                }],
+                "selling_plan_groups": ["Tea club"]
+            }],
+            "selling_plan_groups": [{
+                "name": "Tea club",
+                "selling_plans": [{
+                    "name": "Monthly",
+                    "price_adjustments": [{"value_type": "fixed_amount", "value": 500}]
+                }]
+            }]
+        }),
+    );
+    let cart = body_json(&get(&state, "/cart.js", "co-pricing"));
+    let checkout = body_json(&get(&state, &format!("{path}.json"), "co-pricing"));
+
+    // The volume price, the price of the plan (which the break does not lower), the price of
+    // the variant, and the quantity below the break.
+    let prices: Vec<i64> = cart["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["price"].as_i64().unwrap())
+        .collect();
+    assert_eq!(prices[0..2], [2500, 2700]);
+    assert_eq!(prices[3], 3200);
+
+    let lines = checkout["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), cart["items"].as_array().unwrap().len());
+    for (line, item) in lines.iter().zip(cart["items"].as_array().unwrap()) {
+        let cents = |amount: &Json| (amount["amount"].as_f64().unwrap() * 100.0).round() as i64;
+        assert_eq!(line["sku"], item["sku"]);
+        assert_eq!(line["quantity"], item["quantity"]);
+        assert_eq!(cents(&line["unitPrice"]), item["price"], "{}", item["sku"]);
+        assert_eq!(cents(&line["subtotal"]), item["line_price"]);
+        assert_eq!(cents(&line["total"]), item["final_line_price"]);
+        assert_eq!(
+            line.get("sellingPlan").is_some_and(|plan| !plan.is_null()),
+            item.get("selling_plan_allocation").is_some()
+        );
+    }
+    assert_eq!(
+        (checkout["cost"]["subtotal"]["amount"].as_f64().unwrap() * 100.0).round() as i64,
+        cart["items_subtotal_price"].as_i64().unwrap()
+    );
+}
+
+#[test]
 fn the_state_describes_the_checkout() {
     let state = checkout_server(&[], false);
     let path = start_checkout(
