@@ -82,7 +82,13 @@ impl App {
         previews: &[Preview],
     ) -> Result<App, String> {
         let source = data_source(theme_dir, data_dir)?;
-        let scratch = std::env::temp_dir().join(format!("lsf-no-theme-{}", std::process::id()));
+        // One folder per app: apps of one process (the tests) must not remove each other's.
+        static APPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let scratch = std::env::temp_dir().join(format!(
+            "lsf-no-theme-{}-{}",
+            std::process::id(),
+            APPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(scratch.join("layout"))
             .map_err(|error| format!("cannot create {}: {error}", scratch.display()))?;
         let scratch = Scratch(scratch);
