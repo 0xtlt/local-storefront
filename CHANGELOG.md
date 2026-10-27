@@ -26,6 +26,21 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   state, `/update` takes operations and `/complete` places the order, which `/thank-you` shows.
   `GET /__lsf/checkout?session=<id>` reads the state of a session for tests. Without `--app`,
   `/checkout` is the summary of the cart, as before.
+- **The Functions of the checkout can read the fields they could not.** An input query that asks
+  for `Cart.deliverableLines`, the discount applications and allocations of the cart, its lines
+  and its delivery groups (each Function sees the discounts the steps before it applied),
+  `PurchasingCompany.contact`, the dates, locale and totals of companies and their locations,
+  `MailingAddress.market`, `PaymentCustomizationPaymentMethod.placements` or `Shop.metaobject`
+  now runs instead of failing with the field's path. The store data sets them: `created_at`,
+  `updated_at`, `locale`, `orders_count` and `total_spent` on companies and locations, a
+  `company_contact` on a customer, `localization.markets`, `placements` on a payment method;
+  everything has a default. Metaobjects are the ones of the data.
+- **Network access for Functions.** The `.fetch` targets of the lines discounts, delivery
+  discounts and cart validation Functions run: the checkout sends the HTTP request they ask for
+  and gives the response to the `.run` target as `fetchResult`, with Shopify's limits (GET and
+  POST, HTTPS, a timeout of 100 to 2000 ms, 100 KB, no redirect; `http` is accepted for
+  `localhost`). The request and the response show in the Functions panel and in
+  `lsf function run`.
 
 ## 0.1.18 - 2026-10-21
 

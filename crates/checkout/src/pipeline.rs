@@ -2,10 +2,12 @@
 //! applies what they return.
 //!
 //! Cart transform → product and order discounts → delivery groups → delivery customization →
-//! shipping discounts → payment customization → validation → cost.
+//! shipping discounts → payment customization → validation → cost. A discount or validation
+//! Function with network access runs its `.fetch` target first, and its `.run` target reads
+//! the response ([`crate::fetch`]).
 //!
 //! What is not supported: fulfillment constraints, order routing and the pickup generators
-//! (listed by [`crate::app`], not run), the `.fetch` targets of discounts, discount
+//! (listed by [`crate::app`], not run), discount
 //! `conditions` on candidates (every candidate applies), combinations between discounts (they
 //! all stack), tax lines (one rate on the discounted subtotal) and prices by market.
 //!
