@@ -16,7 +16,7 @@ const publicState = (state) => {
 };
 
 /** A page on a checkout kept by the mock engine; `requests` is what it was asked. */
-function app({ variant = 'standard', mutate, hold, conflict, href = 'http://localhost/checkouts/cn/preview' } = {}) {
+function app({ variant = 'standard', mutate, hold, conflict, href = 'http://localhost/checkouts/cn/preview', window: more = {} } = {}) {
   let engine = engineCheckout();
   engine.variant = variant;
   if (mutate) mutate(engine);
@@ -25,7 +25,7 @@ function app({ variant = 'standard', mutate, hold, conflict, href = 'http://loca
   document.body.appendChild(root);
   const requests = [];
   const location = { href, assigned: [], assign(url) { this.assigned.push(url); } };
-  const window = { addEventListener() {}, removeEventListener() {}, open() {} };
+  const window = { addEventListener() {}, removeEventListener() {}, open() {}, ...more };
   const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body);
@@ -316,7 +316,7 @@ test('the summary opens and closes', () => {
   assert.equal(page.query('.lsf-summary').getAttribute('data-open'), 'false');
 });
 
-test('the badge opens the dialog of the Functions as a modal, and its close button closes it', () => {
+test('the badge opens the dialog of the Functions as a modal, and its close button closes it', async () => {
   const page = app();
   const { ui } = page.checkout;
   const dialog = page.query('.lsf-fn-dialog');
@@ -328,17 +328,20 @@ test('the badge opens the dialog of the Functions as a modal, and its close butt
   assert.equal(page.query('.lsf-fn-run').getAttribute('data-run'), 'volume-discount');
   page.query('.lsf-fn-close').click();
   assert.equal(dialog.open, false);
+  assert.equal(ui.functionsOpen, true, 'the page hears of it with `close`, a task later');
+  await settle();
   assert.equal(ui.functionsOpen, false);
   assert.equal(dialog.childNodes.length, 0);
   assert.equal(page.document.activeElement, page.query('.lsf-fn-badge'), 'the focus goes back to the badge');
 });
 
-test('the dialog closing by itself (Escape) resets the page, and the focus goes back to the badge', () => {
+test('the dialog closing by itself (Escape) resets the page, and the focus goes back to the badge', async () => {
   const page = app();
   page.checkout.actions.toggleFunctions(true);
   const dialog = page.query('.lsf-fn-dialog');
-  // What the browser does on Escape: the dialog closes and says so.
+  // What the browser does on Escape: the dialog closes and says so, a task later.
   dialog.close();
+  await settle();
   assert.equal(page.checkout.ui.functionsOpen, false);
   assert.equal(page.query('.lsf-fn-frame'), null);
   assert.equal(page.document.activeElement, page.query('.lsf-fn-badge'));
@@ -348,7 +351,7 @@ test('the dialog closing by itself (Escape) resets the page, and the focus goes 
   assert.equal(dialog.open, true);
 });
 
-test('a click on the backdrop closes the dialog, not one that started inside it', () => {
+test('a click on the backdrop closes the dialog, not one that started inside it', async () => {
   const page = app();
   page.checkout.actions.toggleFunctions(true);
   const dialog = page.query('.lsf-fn-dialog');
@@ -362,7 +365,101 @@ test('a click on the backdrop closes the dialog, not one that started inside it'
   dialog.dispatchEvent(new FakeEvent('pointerdown', { bubbles: true }));
   dialog.click();
   assert.equal(dialog.open, false);
+  await settle();
   assert.equal(page.checkout.ui.functionsOpen, false);
+});
+
+test('a dialog opened again before its `close` arrives stays open, with what is in it', async () => {
+  const page = app();
+  const { actions, ui } = page.checkout;
+  actions.toggleFunctions(true);
+  const dialog = page.query('.lsf-fn-dialog');
+  dialog.close();
+  actions.toggleFunctions(true);
+  assert.equal(dialog.open, true, 'opened again, though `close` has not arrived yet');
+  await settle();
+  assert.equal(dialog.open, true);
+  assert.equal(ui.functionsOpen, true);
+  assert.notEqual(page.query('.lsf-fn-frame'), null);
+});
+
+/** A `ResizeObserver` the test drives: `resize()` calls back the observers of an element. */
+function resizeObservers() {
+  const live = new Set();
+  class FakeResizeObserver {
+    constructor(callback) {
+      this.callback = callback;
+      this.targets = new Set();
+      live.add(this);
+    }
+    observe(target) {
+      this.targets.add(target);
+    }
+    disconnect() {
+      this.targets.clear();
+      live.delete(this);
+    }
+  }
+  const resize = (target, blockSize) => {
+    for (const observer of live) {
+      if (observer.targets.has(target)) observer.callback([{ target, borderBoxSize: [{ blockSize, inlineSize: 400 }] }], observer);
+    }
+  };
+  return { FakeResizeObserver, live, resize };
+}
+
+test('on the Shop skin, the badge knows how tall the bar is, and follows it', async () => {
+  const observers = resizeObservers();
+  const page = app({ variant: 'shop', window: { ResizeObserver: observers.FakeResizeObserver } });
+  const bar = page.query('.lsf-actions');
+  const lift = () => page.query('.lsf-fn-badge').style['--lsf-badge-lift'];
+  assert.equal(observers.live.size, 1);
+  assert.deepEqual([...[...observers.live][0].targets], [bar], 'it observes the bar');
+  assert.equal(lift(), '0px', 'measured at once (the fake DOM has no layout)');
+  observers.resize(bar, 151.4);
+  assert.equal(lift(), '152px');
+  // A banner makes the bar taller.
+  observers.resize(bar, 220);
+  assert.equal(lift(), '220px');
+  // A paint keeps the measure on the badge.
+  await page.checkout.actions.commit('email', 'a@b.c');
+  assert.equal(lift(), '220px');
+  assert.equal(observers.live.size, 1, 'the same bar: the same observer');
+});
+
+test('the bar observer goes with the bar, and a new bar is observed again', async () => {
+  const observers = resizeObservers();
+  // Someone completes the order meanwhile: the reply is the thank-you page.
+  let done = false;
+  const page = app({
+    variant: 'shop', window: { ResizeObserver: observers.FakeResizeObserver },
+    conflict: (engine) => (done ? null : ((done = true), { ...engine, status: 'completed', order: { number: '#1001' } })),
+  });
+  const first = [...observers.live][0];
+  observers.resize(page.query('.lsf-actions'), 100);
+  await assert.rejects(page.checkout.send([{ type: 'email', value: 'a@b.c' }]), /The checkout changed/);
+  // The thank-you page has no bar: no observer, no lift.
+  assert.equal(page.query('.lsf-actions'), null);
+  assert.equal(observers.live.size, 0);
+  assert.equal(first.targets.size, 0, 'disconnected');
+  assert.equal(page.query('.lsf-fn-badge').style['--lsf-badge-lift'], undefined);
+});
+
+test('the standard skin observes nothing: its actions are in the page', () => {
+  const observers = resizeObservers();
+  const page = app({ window: { ResizeObserver: observers.FakeResizeObserver } });
+  assert.notEqual(page.query('.lsf-actions'), null);
+  assert.equal(observers.live.size, 0);
+  assert.equal(page.query('.lsf-fn-badge').style['--lsf-badge-lift'], undefined);
+});
+
+test('without a ResizeObserver, each paint measures the bar', async () => {
+  const page = app({ variant: 'shop' });
+  const bar = page.query('.lsf-actions');
+  bar.heightForTests = 180.2;
+  await page.checkout.actions.commit('email', 'a@b.c');
+  assert.equal(page.query('.lsf-actions'), bar);
+  assert.equal(page.query('.lsf-fn-badge').style['--lsf-badge-lift'], '181px');
 });
 
 test('the run shown in the dialog stays across updates, and the dialog element with it', async () => {

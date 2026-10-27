@@ -701,7 +701,9 @@ function summaryChips({ failed, errors }) {
 }
 
 /** The badge in the bottom left corner of every page: how the Functions went, and the way into
- * the dialog. */
+ * the dialog. It holds two faces and the CSS shows one: the short one (the dot, ƒ and the number
+ * of runs) wherever the full one (its name, the runs, the chips) could reach the checkout. Its
+ * name always says it all. */
 function functionsBadge(ctx) {
   const { state, actions } = ctx;
   const summary = functionsSummary(state);
@@ -709,15 +711,18 @@ function functionsBadge(ctx) {
   const label = ['Functions', count, summary.failed > 0 && `${summary.failed} failed`, summary.errors > 0 && plural(summary.errors, 'checkout error')]
     .filter(Boolean).join(', ');
   return h('button', {
-      type: 'button', class: 'lsf-fn-badge', key: 'badge', 'aria-haspopup': 'dialog', 'aria-label': label,
+      type: 'button', class: 'lsf-fn-badge', key: 'badge', 'aria-haspopup': 'dialog', 'aria-label': label, title: label,
       'data-status': summary.ok ? 'ok' : 'failed',
       onClick: () => actions.toggleFunctions(true),
     },
     h('span', { class: 'lsf-fn-dot', 'aria-hidden': 'true' }),
-    h('span', { class: 'lsf-fn-badge-title' }, 'Functions'),
-    h('span', { class: 'lsf-fn-badge-count' }, count),
-    summary.failed > 0 && h('span', { class: 'lsf-chip is-error' }, `${summary.failed} failed`),
-    summary.errors > 0 && h('span', { class: 'lsf-chip is-error' }, plural(summary.errors, 'error')));
+    h('span', { class: 'lsf-fn-badge-short', 'aria-hidden': 'true' },
+      h('span', { class: 'lsf-fn-badge-mark' }, 'ƒ'), String(summary.runs.length)),
+    h('span', { class: 'lsf-fn-badge-full', 'aria-hidden': 'true' },
+      h('span', { class: 'lsf-fn-badge-title' }, 'Functions'),
+      h('span', { class: 'lsf-fn-badge-count' }, count),
+      summary.failed > 0 && h('span', { class: 'lsf-chip is-error' }, `${summary.failed} failed`),
+      summary.errors > 0 && h('span', { class: 'lsf-chip is-error' }, plural(summary.errors, 'error'))));
 }
 
 const okChip = (entry) => h('span', { class: `lsf-chip ${entry.error ? 'is-error' : 'is-ok'}` }, entry.error ? 'error' : 'ok');

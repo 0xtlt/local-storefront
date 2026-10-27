@@ -77,7 +77,42 @@ export function startCheckout({ root, initial, document, window, location, fetch
     document.body?.setAttribute?.('data-variant', state.variant);
     if (document.documentElement) document.documentElement.lang = languageOf(state);
     render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals(), preview }));
+    badgeLift();
     host.update(state);
+  }
+
+  // The bar of the Shop skin stays at the bottom of the screen, as tall as its errors make it: the
+  // page measures it and the CSS lifts the badge of the Functions above it (`--lsf-badge-lift`, on
+  // the badge alone) where the two would meet. A `ResizeObserver` follows the bar; without one,
+  // each paint measures it.
+  const Observer = window?.ResizeObserver;
+  let bar = null;
+  let barObserver = null;
+  let barHeight = null;
+  const liftBadge = () => {
+    const style = root.querySelector?.('.lsf-fn-badge')?.style;
+    if (barHeight === null) style?.removeProperty?.('--lsf-badge-lift');
+    else style?.setProperty?.('--lsf-badge-lift', `${barHeight}px`);
+  };
+  const measureBar = (entries) => {
+    const box = entries?.[0]?.borderBoxSize?.[0];
+    barHeight = Math.ceil(box ? box.blockSize : bar?.getBoundingClientRect?.().height ?? 0);
+    liftBadge();
+  };
+  function badgeLift() {
+    const now = root.querySelector?.(".lsf-app[data-variant='shop'] .lsf-actions") ?? null;
+    if (now !== bar) {
+      barObserver?.disconnect();
+      barObserver = null;
+      bar = now;
+      barHeight = null;
+      if (bar && Observer) {
+        barObserver = new Observer(measureBar);
+        barObserver.observe(bar);
+      }
+    }
+    if (bar && (!Observer || barHeight === null)) measureBar();
+    else liftBadge();
   }
 
   /** Moves the focus to the button of the customer menu (`trigger`) or to one of its items:
@@ -363,15 +398,17 @@ export function startCheckout({ root, initial, document, window, location, fetch
         else actions.functionsClosed();
         return;
       }
-      if (ui.functionsOpen) return;
+      if (dialog ? dialog.open : ui.functionsOpen) return;
       ui.functionsOpen = true;
       ui.functionsView = defaultRunView(state.runs ?? []);
       paint();
       if (dialog && !dialog.open) dialog.showModal?.();
     },
 
-    /** The dialog closed: what was in it goes, and the focus goes back to the badge. */
+    /** The dialog closed: what was in it goes, and the focus goes back to the badge. The browser
+     * says so a task later: a dialog opened again in between stays as it is. */
     functionsClosed() {
+      if (functionsDialog()?.open) return;
       const wasOpen = ui.functionsOpen;
       ui.functionsOpen = false;
       ui.copied = null;

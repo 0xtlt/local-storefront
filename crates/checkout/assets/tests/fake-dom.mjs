@@ -125,6 +125,9 @@ export class FakeElement extends Node {
       setProperty(name, value) {
         this[name] = value;
       },
+      removeProperty(name) {
+        delete this[name];
+      },
     };
     this.hidden = false;
   }
@@ -267,7 +270,8 @@ export class FakeElement extends Node {
   }
 }
 
-/** A `<dialog>`: `showModal()` opens it, `close()` closes it and says so with `close`. */
+/** A `<dialog>`: `showModal()` opens it, `close()` closes it and says so with `close`, a task
+ * later, like a browser (`settle()` waits for it). */
 export class FakeDialog extends FakeElement {
   constructor(doc, tag) {
     super(doc, tag);
@@ -284,7 +288,7 @@ export class FakeDialog extends FakeElement {
     this.open = false;
     this.modal = false;
     this.removeAttribute('open');
-    this.dispatchEvent(new FakeEvent('close'));
+    setImmediate(() => this.dispatchEvent(new FakeEvent('close')));
   }
 }
 

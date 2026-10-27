@@ -484,6 +484,18 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 .lsf-fn-badge:focus-visible { outline-offset: 2px; }
 .lsf-fn-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--lsf-color-success); box-shadow: 0 0 0 3px var(--lsf-color-success-wash-3); }
 .lsf-fn-badge[data-status='failed'] .lsf-fn-dot { background: var(--lsf-color-critical); box-shadow: 0 0 0 3px var(--lsf-color-critical-wash-3); }
+/* Two faces: the short one (ƒ and the number of runs) by default, the full one (the name, the
+ * runs, the chips: 290px at most with two-digit counts) only where it cannot reach the checkout.
+ * The column of the standard skin starts at 50vw - 490px (half of 580px + 480px, less the 50px
+ * the form takes from the summary, plus its 40px of padding); the badge needs 16px + 290px + 16px
+ * of it, so 1644px. The column of the Shop skin (520px, centered) leaves room long before. */
+.lsf-fn-badge-short { display: inline-flex; align-items: baseline; gap: 3px; font-weight: var(--lsf-font-weight-bold); font-variant-numeric: tabular-nums; }
+.lsf-fn-badge-mark { color: var(--lsf-color-text-subdued); font-style: italic; }
+.lsf-fn-badge-full { display: none; align-items: center; gap: var(--lsf-space-s); }
+@media (min-width: 1644px) {
+  .lsf-fn-badge-short { display: none; }
+  .lsf-fn-badge-full { display: inline-flex; }
+}
 .lsf-fn-badge-title { font-weight: var(--lsf-font-weight-bold); }
 .lsf-fn-badge-count { color: var(--lsf-color-text-subdued); }
 .lsf-fn-badge .lsf-chip { font-size: var(--lsf-size-xs); }
@@ -749,13 +761,10 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 }
 [data-variant='shop'] .lsf-actions-row { gap: .5rem; }
 /* The bar of the Shop skin is at the bottom of the screen: on a screen too narrow for the badge of
- * the Functions to sit beside it, the badge sits on top of it. */
+ * the Functions to sit beside it (the short badge fits beside it from 1000px), the badge sits on
+ * top of it. The page measures the bar, its safe area and its errors included: `--lsf-badge-lift`. */
 @media (max-width: 999.98px) {
-  .lsf-app[data-variant='shop']:has(.lsf-actions) .lsf-fn-badge { bottom: calc(9.5rem + env(safe-area-inset-bottom)); }
-  @supports (anchor-name: --lsf-shop-bar) {
-    [data-variant='shop'] .lsf-actions { anchor-name: --lsf-shop-bar; }
-    .lsf-app[data-variant='shop']:has(.lsf-actions) .lsf-fn-badge { position-anchor: --lsf-shop-bar; bottom: calc(anchor(top) + var(--lsf-space-m)); }
-  }
+  .lsf-app[data-variant='shop']:has(.lsf-actions) .lsf-fn-badge { bottom: calc(var(--lsf-badge-lift, 0px) + var(--lsf-space-m)); }
 }
 [data-variant='shop'] .lsf-return { text-align: center; }
 [data-variant='shop'] .lsf-thanks .lsf-actions-row { margin-top: 0; }

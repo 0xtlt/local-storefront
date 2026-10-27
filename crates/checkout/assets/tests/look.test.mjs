@@ -66,3 +66,17 @@ test('the Functions dialog holds the page still behind it and takes a narrow scr
   assert.match(narrow, /\.lsf-fn-panes[^{]*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
   assert.doesNotMatch(css, /\.lsf-functions\b/, 'the old panel is gone');
 });
+
+test('the badge of the Functions is short until the full one cannot reach the checkout, and rides on the Shop bar as tall as it is', () => {
+  const css = read('checkout.css');
+  assert.match(css, /\.lsf-fn-badge-full\s*\{[^}]*display: none;/, 'short by default');
+  const wide = css.match(/@media \(min-width: (\d+)px\)\s*\{\s*\.lsf-fn-badge-short \{ display: none; \}\s*\.lsf-fn-badge-full \{ display: inline-flex; \}/);
+  assert.ok(wide, 'the full badge on a wide screen');
+  // The column of the standard skin starts at 50vw - 490px: the full badge (290px at most, 16px
+  // from the edge and from the column) needs 1644px. The Shop column (520px) needs less.
+  assert.ok(Number(wide[1]) >= 2 * (490 + 16 + 290 + 16), `full badge from ${wide[1]}px`);
+  assert.ok(Number(wide[1]) >= 520 + 2 * (16 + 290 + 16));
+  const shop = css.match(/@media \(max-width: 999\.98px\)\s*\{\s*\.lsf-app\[data-variant='shop'\]:has\(\.lsf-actions\) \.lsf-fn-badge \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(shop, /bottom: calc\(var\(--lsf-badge-lift, 0px\) \+ var\(--lsf-space-m\)\)/, 'the measured bar lifts it');
+  assert.doesNotMatch(css, /anchor-name|position-anchor|9\.5rem/, 'one way for every browser, no guessed offset');
+});

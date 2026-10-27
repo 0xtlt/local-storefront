@@ -489,7 +489,8 @@ the store data. A Function that fails to run adds an error that blocks the order
 
 The "Functions" badge in the bottom left corner of every page (the checkout, the thank-you page,
 `?targets=all`) says how many Functions ran, and turns red when one failed or the checkout has
-errors. It opens the Functions dialog, which takes most of the window (all of it on a narrow
+errors. Below 1644px wide it is just "ƒ" and the number of runs, so that it stays clear of the
+checkout; its tooltip says the rest. It opens the Functions dialog, which takes most of the window (all of it on a narrow
 screen): the runs on the left, and for the one picked its error, its logs, its instructions
 (Shopify stops a Function past 11 million) and its input and output side by side, each with a
 Copy button; a `.fetch` run adds its HTTP request and response. It opens on the first run that

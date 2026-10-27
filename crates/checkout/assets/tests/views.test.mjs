@@ -295,6 +295,22 @@ test('the badge turns critical when a run failed or the checkout has errors', ()
   assert.match(text(none), /No runs/);
 });
 
+test('the badge has a short face (ƒ and the number of runs) and a full one, and its name says it all', () => {
+  const state = withRuns([{ handle: 'a', error: 'unreachable executed' }, { handle: 'b' }, { handle: 'c' }, { handle: 'd' }], {
+    errors: [{ message: 'No', target: '$.cart' }],
+  });
+  const button = badge(page(state));
+  const [short] = byClass(button, 'lsf-fn-badge-short');
+  const [full] = byClass(button, 'lsf-fn-badge-full');
+  assert.equal(text(short), 'ƒ4');
+  assert.equal(byClass(short, 'lsf-chip').length, 0, 'no chips on the short face');
+  assert.match(text(full), /^Functions4 runs1 failed1 error$/);
+  for (const face of [short, full]) assert.equal(face.props['aria-hidden'], 'true');
+  assert.equal(button.props['aria-label'], 'Functions, 4 runs, 1 failed, 1 checkout error');
+  assert.equal(button.props.title, button.props['aria-label'], 'the short face says it on hover');
+  assert.equal(text(byClass(badge(page({ ...checkoutState(), runs: [] })), 'lsf-fn-badge-short')[0]), 'ƒ0');
+});
+
 test('the dialog is empty while it is closed', () => {
   const closed = dialog(page(checkoutState()));
   assert.equal(closed.props.closedby, 'any');
