@@ -119,6 +119,22 @@ test('a text field has a label, a value and says when it changes', () => {
   assert.deepEqual(changes, [true], 'the change of the inner input is the field\'s');
 });
 
+test('defaultValue fills a field until someone writes to it', () => {
+  const { make } = components();
+  const field = make('s-text-field');
+  field.defaultValue = 'Happy birthday';
+  assert.equal(field.value, 'Happy birthday');
+  const control = field._root.querySelector('.control');
+  control.value = 'Hi';
+  control.dispatchEvent(new FakeEvent('input'));
+  field.defaultValue = 'Happy new year';
+  assert.equal(field.value, 'Hi', 'what the buyer typed stays');
+  const set = make('s-text-area');
+  set.value = 'Set';
+  set.defaultValue = 'Default';
+  assert.equal(set.value, 'Set', 'value wins over defaultValue');
+});
+
 test('a checkbox mirrors checked and says when it changes', () => {
   const { make } = components();
   const box = make('s-checkbox');

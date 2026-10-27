@@ -1768,10 +1768,12 @@ fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cent
         Amount::Fixed { cents, each: false } => distribute(cents.min(bases.iter().sum()), &bases),
         Amount::None => vec![0; covered.len()],
     };
+    // A discount takes at most the price of the items it covers: the other items of the line
+    // stay at their price.
     covered
         .iter()
-        .zip(amounts)
-        .map(|((index, _), cents)| (*index, cents.min(lines[*index].total)))
+        .zip(amounts.into_iter().zip(&bases))
+        .map(|((index, _), (cents, base))| (*index, cents.min(*base).min(lines[*index].total)))
         .collect()
 }
 
@@ -2071,6 +2073,31 @@ mod tests {
             "value": {"fixedAmount": {"amount": "5.00"}},
         }));
         assert_eq!(plan_product(&lines, &candidate), vec![(0, 300)]);
+    }
+
+    #[test]
+    fn a_fixed_amount_never_exceeds_the_items_it_covers() {
+        // Two items of 32.00 on one line; the discount covers one of them only.
+        let lines = vec![line(1, 42, 3200, 2)];
+        let each = |target: Value| {
+            product_candidate(json!({
+                "targets": [target],
+                "value": {"fixedAmount": {"amount": "50.00", "appliesToEachItem": true}},
+            }))
+        };
+        let by_line = each(json!({"cartLine": {"id": "gid://shopify/CartLine/1", "quantity": 1}}));
+        assert_eq!(plan_product(&lines, &by_line), vec![(0, 3200)]);
+        let by_variant = each(
+            json!({"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}}),
+        );
+        assert_eq!(plan_product(&lines, &by_variant), vec![(0, 3200)]);
+        // The legacy shape, the same.
+        let legacy = candidate(&json!({
+            "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}}],
+            "value": {"fixedAmount": {"value": "50.00", "appliesToEachItem": true}},
+        }))
+        .unwrap();
+        assert_eq!(plan_product(&lines, &legacy), vec![(0, 3200)]);
     }
 
     #[test]

@@ -627,6 +627,8 @@
       init(el) {
         const control = $(el, '.control');
         control.addEventListener('change', () => fire(el, 'change', { composed: false }));
+        // Once the buyer typed, `defaultValue` no longer resets the field.
+        control.addEventListener('input', () => { el._typed = true; });
         control.addEventListener('keydown', (event) => {
           if (event.key === 'Enter' && !area) submit(el);
         });
@@ -648,6 +650,10 @@
         // The attribute is the initial value; the property takes over once someone sets it.
         if (!el._valueSet && el.hasAttribute('value') && control.value !== el.getAttribute('value')) {
           control.value = el.getAttribute('value');
+        } else if (!el._valueSet && !el._typed && !el.hasAttribute('value') && el.hasAttribute('defaultvalue')
+          && control.value !== el.getAttribute('defaultvalue')) {
+          // `defaultValue` fills a field nobody has written to yet.
+          control.value = el.getAttribute('defaultvalue');
         }
       },
       members: {
