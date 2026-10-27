@@ -135,6 +135,23 @@ test('a discount code that applies is kept, one that does not is refused and rem
   assert.equal(page.root.querySelectorAll('.lsf-code').length, 0);
 });
 
+test('a code applied with Enter leaves the field empty and Apply disabled, though the field keeps the focus', async () => {
+  const page = app();
+  const field = page.query('.lsf-discount-form .lsf-input');
+  field.focus();
+  field.value = 'save10';
+  page.checkout.actions.draft('discount', 'save10');
+  await page.checkout.actions.addDiscount();
+  assert.equal(page.document.activeElement, field);
+  assert.equal(field.value, '');
+  assert.equal(page.query('.lsf-apply').hasAttribute('disabled'), true);
+
+  field.value = 'bogus';
+  page.checkout.actions.draft('discount', 'bogus');
+  await page.checkout.actions.addDiscount();
+  assert.equal(field.value, 'bogus', 'a refused code stays, to be corrected');
+});
+
 test('an empty discount field sends nothing', async () => {
   const page = app();
   await page.checkout.actions.addDiscount();

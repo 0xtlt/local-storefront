@@ -198,6 +198,12 @@ export function startCheckout({ root, initial, document, window, location, fetch
         ui.discountInput = '';
       }
       paint();
+      // The page does not write into the field that has the focus (the caret would jump), and
+      // Enter keeps the focus there: the code that was applied is cleared from it by hand.
+      if (!ui.discountInput) {
+        const field = root.querySelector?.('.lsf-discount-form .lsf-input');
+        if (field && field.value !== '') field.value = '';
+      }
     },
 
     removeDiscount: (code) => run([op.discountCode('remove', code)]),
