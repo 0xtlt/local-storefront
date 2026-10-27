@@ -171,7 +171,11 @@ gives the focus back to the button, Tab and a click elsewhere close it.
 Logged in, the checkout does what Shopify's does for a customer who has an account:
 
 - **Contact** shows the account (name and email) instead of the email field, with "Switch" (the
-  same menu) and "Log out". The email and the phone are the customer's.
+  same menu) and "Log out". The email and the phone are the customer's. A contact email that
+  is not the account's (a scenario's `entered.email`, or one typed later) is the one the
+  Functions, the extensions and the order get, so Contact shows it under the account, as "Email
+  for this order", where it can be corrected, with "Use <account email>" to go back to the
+  account's.
 - **Delivery** starts with the customer's default address (the first of their `addresses`) and
   offers the others in a "Saved addresses" select, with "Use a new address" for one they type.
   The fields below hold the chosen address and can be edited.

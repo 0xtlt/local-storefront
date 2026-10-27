@@ -224,7 +224,8 @@ function apply(state, operation) {
   };
   switch (operation.type) {
     case 'email':
-      state.buyer.email = operation.value || null;
+      // As the server: a logged-in checkout without an entered email has the account's.
+      state.buyer.email = operation.value || customerNamed(state.selection.customer)?.email || null;
       break;
     case 'phone':
       state.buyer.phone = operation.value || null;

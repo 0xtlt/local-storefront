@@ -203,6 +203,40 @@ test('logging out is a guest checkout again', async () => {
   assert.equal(page.checkout.getState().shippingAddress, null, 'the address was the customer\'s');
 });
 
+test('a logged-in checkout with another contact email shows it, and can give it back to the account', async () => {
+  // A scenario that logs in and enters its own contact email, or a buyer who typed one.
+  const page = app({ start: [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }] });
+  assert.equal(page.checkout.getState().buyer.email, 'orders@example.com', 'what the Functions and extensions read');
+  assert.equal(page.query('.lsf-account-card').getAttribute('data-account'), AVA, 'the account stays');
+  const contact = page.query('.lsf-contact-email');
+  assert.equal(contact.getAttribute('data-contact-email'), 'orders@example.com');
+  assert.equal(page.query('input[name="email"]').value, 'orders@example.com');
+  assert.equal(page.query('label[for="lsf-email"]').textContent, 'Email for this order');
+  assert.match(contact.textContent, /Not the email of the account/);
+
+  // Corrected while logged in.
+  const input = page.query('input[name="email"]');
+  input.value = 'billing@example.com';
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  await flush();
+  assert.deepEqual(page.operations().at(-1), { type: 'email', value: 'billing@example.com' });
+  assert.equal(page.query('.lsf-contact-email').getAttribute('data-contact-email'), 'billing@example.com');
+
+  // Given back to the account: the field goes, the account's email is the contact.
+  page.query('.lsf-use-account-email').click();
+  await flush();
+  assert.deepEqual(page.operations().at(-1), { type: 'email', value: null });
+  assert.equal(page.checkout.getState().buyer.email, AVA);
+  assert.equal(page.query('.lsf-contact-email'), null);
+  assert.equal(page.query('.lsf-field[data-field="email"]'), null);
+  assert.equal(page.checkout.ui.draft.email, undefined);
+});
+
+test('the account\'s email typed in another case is the account\'s', () => {
+  const page = app({ start: [{ type: 'customer', customer: AVA }, { type: 'email', value: 'Ava.Chen@Example.com' }] });
+  assert.equal(page.query('.lsf-contact-email'), null);
+});
+
 test('a B2B customer chooses the location they buy for, and ships there', async () => {
   const page = app();
   await page.checkout.actions.logIn(SAM);

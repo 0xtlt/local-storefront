@@ -9,7 +9,7 @@
 //   actions  what the buyer's gestures do
 //   refusals the extensions the host does not load, `[{handle, reason}]` (see `api-versions.js`)
 
-import { accountMenu, addressLabel, fullName, initials, savedAddressId } from './account.js';
+import { accountMenu, addressLabel, fullName, initials, otherContactEmail, savedAddressId } from './account.js';
 import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './format.js';
 import { missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
@@ -165,21 +165,37 @@ function accountCard(ctx, error) {
 function contactSection(ctx) {
   const { state, ui, actions, slot } = ctx;
   const errors = fieldErrors(ctx);
+  const emailField = (label) =>
+    field({
+      id: 'lsf-email',
+      label,
+      type: 'email',
+      autocomplete: 'email',
+      value: ui.draft?.email ?? state.buyer?.email ?? '',
+      error: firstError(errors, 'email'),
+      actions,
+    });
+  const customer = state.buyer?.customer;
+  // Logged in with a contact email that is not the account's: the account, and the email the
+  // order is for, which the buyer can still correct or give back to the account's.
+  const other = customer && otherContactEmail(state);
   return h(
     'section',
     { class: 'lsf-section', 'data-section': 'contact' },
     h('div', { class: 'lsf-section-head' }, h('h2', null, 'Contact'), accountMenu(ctx)),
-    state.buyer?.customer
-      ? accountCard(ctx, firstError(errors, 'email'))
-      : field({
-          id: 'lsf-email',
-          label: 'Email',
-          type: 'email',
-          autocomplete: 'email',
-          value: ui.draft?.email ?? state.buyer?.email ?? '',
-          error: firstError(errors, 'email'),
-          actions,
-        }),
+    customer ? accountCard(ctx, other ? null : firstError(errors, 'email')) : emailField('Email'),
+    other &&
+      h(
+        'div',
+        { class: 'lsf-contact-email', key: 'contact-email', 'data-contact-email': other },
+        emailField('Email for this order'),
+        h(
+          'p',
+          { class: 'lsf-muted lsf-contact-note' },
+          'Not the email of the account. ',
+          h('button', { type: 'button', class: 'lsf-link lsf-use-account-email', onClick: () => actions.useAccountEmail() }, `Use ${customer.email}`),
+        ),
+      ),
     slot('purchase.checkout.contact.render-after', { key: 'contact' }),
   );
 }

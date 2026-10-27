@@ -70,6 +70,16 @@ export function badges(profile) {
   return out;
 }
 
+/** The contact email of a logged-in checkout when it is not the account's (a scenario or the
+ * buyer entered another one), otherwise `null`. It is the one the Functions and the extensions
+ * read and the order confirmation goes to, so the page shows it. */
+export function otherContactEmail(state) {
+  const account = state.buyer?.customer?.email;
+  const contact = state.buyer?.email;
+  if (!account || !contact) return null;
+  return contact.trim().toLowerCase() === account.trim().toLowerCase() ? null : contact;
+}
+
 export const fullName = (customer) =>
   [customer?.firstName, customer?.lastName].filter(Boolean).join(' ') || customer?.email || '';
 

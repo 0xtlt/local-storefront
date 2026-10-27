@@ -91,7 +91,7 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 /* --- The account: the customers of the test data to log in as, and the one logged in ---- */
 
 .lsf-account { position: relative; }
-.lsf-account-trigger, .lsf-logout { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
+.lsf-account-trigger, .lsf-logout, .lsf-use-account-email { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
 /* The menu hangs under its button, on the right, over the page. */
 .lsf-account-menu {
   position: absolute;
@@ -164,6 +164,9 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 .lsf-account-row { display: flex; align-items: center; gap: var(--lsf-space-l); }
 .lsf-account-row .lsf-account-text { flex: 1; }
 .lsf-company { display: flex; flex-direction: column; gap: var(--lsf-space-m); padding-top: var(--lsf-space-l); border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
+/* A logged-in checkout whose contact email is not the account's: the email the order is for. */
+.lsf-contact-email { display: flex; flex-direction: column; gap: var(--lsf-space-m); }
+.lsf-contact-note { margin: 0; font-size: var(--lsf-size-s); }
 
 /* --- Fields --------------------------------------------------------------------------- */
 

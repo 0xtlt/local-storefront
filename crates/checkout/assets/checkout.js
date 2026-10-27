@@ -291,6 +291,13 @@ export function startCheckout({ root, initial, document, window, location, fetch
 
     chooseLocation: (id) => run([op.companyLocation(id)]),
 
+    /** A logged-in checkout's contact email goes back to the account's: the checkout falls back
+     * to it when none is entered. */
+    useAccountEmail() {
+      delete ui.draft.email;
+      return run([op.email(null)]);
+    },
+
     /** Ships to a saved address, or (`new`) to one the buyer types, in the same country. */
     chooseSavedAddress(id) {
       ui.draft.address = {};

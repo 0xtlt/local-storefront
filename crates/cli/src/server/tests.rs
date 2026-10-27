@@ -6188,6 +6188,51 @@ fn a_customer_in_the_query_of_a_scenario_logs_in_as_the_menu_does() {
 }
 
 #[test]
+fn a_logged_in_checkout_keeps_the_contact_email_a_scenario_entered() {
+    let data = ScenarioData::new(
+        "login-contact",
+        &[(
+            "jane-entered.json",
+            r#"{
+                "session": {"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+                "entered": {"email": "orders@example.com"}
+            }"#,
+        )],
+    );
+    let state = data.server(&[], false);
+    let reply = get(
+        &state,
+        "/checkout?scenario=jane-entered",
+        "co-login-contact",
+    );
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), &session));
+    // The contact is the scenario's; the account is Jane's: the page shows both.
+    assert_eq!(json["buyer"]["email"], "orders@example.com");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    // Emptying the contact email gives the account's back.
+    let reply = operations(
+        &state,
+        &path,
+        &session,
+        json!([{"type": "email", "value": Json::Null}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["buyer"]["email"], "jane.doe@example.com");
+    // And another one can be typed while logged in.
+    let reply = operations(
+        &state,
+        &path,
+        &session,
+        json!([{"type": "email", "value": "billing@example.com"}]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["buyer"]["email"], "billing@example.com");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+}
+
+#[test]
 fn the_functions_read_the_customer_the_checkout_switched_to() {
     // A copy of the fixture app whose payment Function also asks for the buyer.
     let root = std::env::temp_dir().join(format!("lsf-checkout-fn-buyer-{}", std::process::id()));
