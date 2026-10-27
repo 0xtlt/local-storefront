@@ -281,11 +281,17 @@ function banner(tone, children, extra = {}) {
   return h('div', { class: `lsf-banner is-${tone}`, role: tone === 'critical' ? 'alert' : 'status', ...extra }, icon('warning'), h('div', null, children));
 }
 
+/** What the buyer pays now. A state without the split (an older one) has all of it due now. */
+const dueNow = (state) => state.cost.dueNow ?? state.cost.total;
+
+/** What a selling plan leaves to pay later (a pre-order's balance), or null when nothing. */
+const dueLater = (state) => (state.cost.dueLater?.amount > 0 ? state.cost.dueLater : null);
+
 function actionsSection(ctx) {
   const { state, ui, actions, slot } = ctx;
   const placed = placeErrors(state.errors);
   const blockErrors = placeErrors(ui.block?.errors).general;
-  const total = price(state.cost.total, state.shop);
+  const total = price(dueNow(state), state.shop);
   const label = state.selectedPayment && state.selectedPayment !== 'card' ? 'Complete order' : 'Pay now';
   return h(
     'div',
@@ -318,6 +324,8 @@ function lineItem(ctx, line, { thankYou = false } = {}) {
       h('div', { class: 'lsf-line-info' },
         h('span', { class: 'lsf-line-title' }, line.title),
         line.variantTitle && h('span', { class: 'lsf-muted' }, line.variantTitle),
+        line.sellingPlan?.name && h('span', { class: 'lsf-muted lsf-plan' }, line.sellingPlan.name),
+        line.dueLater?.amount > 0 && h('span', { class: 'lsf-muted lsf-line-later' }, `Due later ${price(line.dueLater, state.shop)}`),
         (line.attributes ?? []).map((attribute) => h('span', { class: 'lsf-muted' }, `${attribute.key}: ${attribute.value}`)),
         (line.discountAllocations ?? []).map((allocation) =>
           h('span', { class: 'lsf-tag' }, allocation.code ?? allocation.title, ` (−${price(allocation.amount, state.shop)})`)),
@@ -332,6 +340,7 @@ function lineItem(ctx, line, { thankYou = false } = {}) {
 function costRows(ctx) {
   const { state } = ctx;
   const { cost } = state;
+  const later = dueLater(state);
   const count = state.lines.reduce((sum, line) => sum + line.quantity, 0);
   const hasShipping = state.deliveryGroups?.some((group) => group.selected);
   const shipping = state.status === 'completed' || hasShipping
@@ -345,9 +354,15 @@ function costRows(ctx) {
         h('dd', null, `−${price(discount.amount, state.shop)}`))),
     h('div', null, h('dt', null, 'Shipping'), h('dd', null, shipping)),
     cost.tax.amount > 0 && h('div', null, h('dt', null, 'Estimated taxes'), h('dd', null, price(cost.tax, state.shop))),
-    h('div', { class: 'lsf-total' },
-      h('dt', null, 'Total'),
-      h('dd', null, h('span', { class: 'lsf-muted lsf-currency' }, cost.currencyCode), h('strong', null, price(cost.total, state.shop)))),
+    // A selling plan that defers a part of the price: the order costs its total, and the buyer
+    // pays what is due today.
+    later
+      ? h('div', { class: 'lsf-cost-order-total' }, h('dt', null, 'Total'), h('dd', null, price(cost.total, state.shop)))
+      : null,
+    h('div', { class: 'lsf-total', ...(later ? { 'data-due': 'now' } : {}) },
+      h('dt', null, later ? 'Due today' : 'Total'),
+      h('dd', null, h('span', { class: 'lsf-muted lsf-currency' }, cost.currencyCode), h('strong', null, price(dueNow(state), state.shop)))),
+    later && h('div', { class: 'lsf-cost-later', 'data-due': 'later' }, h('dt', null, 'Due later'), h('dd', null, price(later, state.shop))),
   );
 }
 
@@ -446,6 +461,9 @@ function thankYouPage(ctx) {
   const name = state.shippingAddress?.firstName || state.buyer?.customer?.firstName;
   const selected = (state.deliveryGroups ?? []).flatMap((group) => group.options.filter((option) => option.handle === group.selected));
   const method = (state.paymentMethods ?? []).find((entry) => entry.handle === state.selectedPayment);
+  // What the order still owes: the one it recorded, the balance of its cost otherwise.
+  const owed = order.totalOutstanding ?? state.cost.dueLater;
+  const balance = owed?.amount > 0 ? owed : null;
   const detail = (title, lines) =>
     h('div', { class: 'lsf-detail' }, h('h3', null, title), lines.map((line) => h('p', null, line)));
   return h('div', { class: 'lsf-layout lsf-thanks' },
@@ -458,7 +476,8 @@ function thankYouPage(ctx) {
       slot('purchase.thank-you.header.render-after', { key: 'header' }),
       h('section', { class: 'lsf-section lsf-confirmed' },
         h('h2', null, 'Your order is confirmed'),
-        h('p', null, `You will receive a confirmation email at ${state.buyer?.email ?? 'your email address'}.`)),
+        h('p', null, `You will receive a confirmation email at ${state.buyer?.email ?? 'your email address'}.`),
+        balance && h('p', { 'data-test': 'balance' }, `The remaining balance of ${price(balance, state.shop)} is due later.`)),
       slot('purchase.thank-you.block.render', { key: 'block' }),
       h('section', { class: 'lsf-section' },
         h('h2', null, 'Order details'),
@@ -466,7 +485,8 @@ function thankYouPage(ctx) {
           detail('Contact information', [state.buyer?.email, state.buyer?.phone].filter(Boolean)),
           detail('Shipping address', addressLines(state.shippingAddress, countriesOf(state))),
           detail('Shipping method', selected.map((option) => `${option.title} · ${priceOrFree(option.cost, state.shop)}`)),
-          detail('Payment method', method ? [`${method.name} · ${price(state.cost.total, state.shop)}`] : []),
+          detail('Payment method', method ? [`${method.name} · ${price(order.totalReceived ?? dueNow(state), state.shop)}`] : []),
+          balance && detail('Remaining balance', [`${price(balance, state.shop)} due later`]),
           detail('Billing address', state.shippingAddress ? ['Same as shipping address'] : [])),
         slot('purchase.thank-you.customer-information.render-after', { key: 'customer' })),
       h('div', { class: 'lsf-actions-row' },

@@ -411,6 +411,24 @@ test('the cost of a line is before order discounts, after product ones', () => {
   assert.equal(shopify.cost.totalAmount.value.amount, 73, 'the cart total is not a line cost');
 });
 
+test('a deferred payment is not in the Cost API: shopify has no due-today amount, and the plan shows its id only', () => {
+  // Shopify's Cost API (2026-10, 2027-01) has the subtotal, shipping, tax and total, and a
+  // selling plan has `id` and `recurringDeliveries`: what the page shows as due today, the
+  // balance and the name of the plan stay out of the global.
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  const state = structuredClone(checkoutState());
+  state.cost = { ...state.cost, dueNow: eur(20), dueLater: eur(53), checkoutChargeAmount: eur(20) };
+  state.lines[0].sellingPlan = { id: 'gid://shopify/SellingPlan/5', name: 'Pre-order', recurringDeliveries: false };
+  state.lines[0].dueLater = eur(49);
+  const { shopify } = runtime({ state });
+  assert.deepEqual(Object.keys(shopify.cost).sort(), ['subtotalAmount', 'totalAmount', 'totalShippingAmount', 'totalTaxAmount']);
+  assert.equal(shopify.cost.totalAmount.value.amount, 73, 'the total is the whole order');
+  const [line] = shopify.lines.value;
+  assert.deepEqual(plain(line.merchandise.sellingPlan), { id: 'gid://shopify/SellingPlan/5', recurringDeliveries: false });
+  assert.deepEqual(Object.keys(line.cost), ['totalAmount']);
+  assert.equal(line.cost.totalAmount.amount, 49);
+});
+
 test('the cost of a line adds order discounts up in cents', () => {
   const state = structuredClone(checkoutState());
   const eur = (amount) => ({ amount, currencyCode: 'EUR' });

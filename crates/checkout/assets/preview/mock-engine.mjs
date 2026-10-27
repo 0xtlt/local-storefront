@@ -90,6 +90,10 @@ function recompute(state) {
     shipping: money(shipping),
     tax: money(0),
     total: money(subtotal - off + shipping),
+    // The preview has no selling plans: everything is due now.
+    dueNow: money(subtotal - off + shipping),
+    dueLater: money(0),
+    checkoutChargeAmount: money(subtotal),
     currencyCode: state.shop.currencyCode,
   };
 

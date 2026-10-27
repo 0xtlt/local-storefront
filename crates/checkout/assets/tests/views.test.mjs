@@ -189,6 +189,61 @@ test('the thank-you page shows the order and the thank-you targets', () => {
   assert.ok(!targets.some((target) => target.startsWith('purchase.checkout.')), 'no checkout target on the thank-you page');
 });
 
+/** The sample with its first line (49.00) sold as a pre-order whose deposit is 20.00. */
+function preorder(overrides = {}) {
+  const state = structuredClone(checkoutState(overrides));
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  state.lines[0].sellingPlan = { id: 'gid://shopify/SellingPlan/5', name: 'Pre-order with a deposit', recurringDeliveries: false };
+  state.lines[0].dueLater = eur(29);
+  state.cost = { ...state.cost, dueNow: eur(state.cost.total.amount - 29), dueLater: eur(29), checkoutChargeAmount: eur(state.cost.subtotal.amount - 29) };
+  return state;
+}
+
+test('a cart without a deferred payment shows one total, as before', () => {
+  const tree = page(checkoutState());
+  assert.equal(byClass(tree, 'lsf-cost-later').length, 0);
+  assert.equal(byClass(tree, 'lsf-cost-order-total').length, 0);
+  assert.match(text(byClass(tree, 'lsf-total')[0]), /^Total.*€73\.00$/);
+  assert.equal(byClass(tree, 'lsf-plan').length, 0);
+  // A state that predates the split is all due now.
+  const old = structuredClone(checkoutState());
+  delete old.cost.dueNow;
+  delete old.cost.dueLater;
+  assert.match(text(byClass(page(old), 'lsf-total')[0]), /€73\.00$/);
+});
+
+test('a deferred payment shows the total, what is due today and what is due later', () => {
+  const tree = page(preorder());
+  assert.match(text(byClass(tree, 'lsf-cost-order-total')[0]), /^Total€73\.00$/);
+  assert.match(text(byClass(tree, 'lsf-total')[0]), /^Due today.*€44\.00$/);
+  assert.match(text(byClass(tree, 'lsf-cost-later')[0]), /^Due later€29\.00$/);
+  const line = text(byClass(tree, 'lsf-line')[0]);
+  assert.match(line, /Pre-order with a deposit/);
+  assert.match(line, /Due later €29\.00/);
+  assert.doesNotMatch(text(byClass(tree, 'lsf-line')[1]), /Due later/);
+});
+
+test('the pay button of the Shop skin charges what is due today', () => {
+  assert.match(text(byClass(page(preorder({ variant: 'shop' })), 'lsf-pay')[0]), /^Pay now · €44\.00$/);
+  assert.match(text(byClass(page(preorder()), 'lsf-summary-toggle')[0]), /€73\.00/, 'the summary shows the order total');
+});
+
+test('the thank-you page shows the balance the order still owes', () => {
+  const eur = (amount) => ({ amount, currencyCode: 'EUR' });
+  const done = withCurrency({ ...preorder(), status: 'completed', selectedPayment: 'card', order: { id: 'gid://shopify/Order/1', number: '#1001', totalReceived: eur(44), totalOutstanding: eur(29) } });
+  const tree = page(done);
+  assert.match(text(findAll(tree, (node) => node.props['data-test'] === 'balance')[0]), /remaining balance of €29\.00 is due later/);
+  const details = text(byClass(tree, 'lsf-details')[0]);
+  assert.match(details, /Credit card · €44\.00/);
+  assert.match(details, /Remaining balance€29\.00 due later/);
+  assert.match(text(byClass(tree, 'lsf-total')[0]), /^Due today.*€44\.00$/);
+  // An order without a balance has none of it.
+  const paid = withCurrency({ ...checkoutState(), status: 'completed', selectedPayment: 'card', order: { id: 'gid://shopify/Order/2', number: '#1002' } });
+  const plain = page(paid);
+  assert.equal(findAll(plain, (node) => node.props['data-test'] === 'balance').length, 0);
+  assert.doesNotMatch(text(byClass(plain, 'lsf-details')[0]), /Remaining balance/);
+});
+
 test('the Functions panel lists the runs and opens them on demand', () => {
   const state = checkoutState();
   const closed = page(state);

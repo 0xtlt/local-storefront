@@ -245,6 +245,8 @@ a { color: var(--accent); }
 .lsf-costs { display: flex; flex-direction: column; gap: .5rem; margin: 0; }
 .lsf-costs > div { display: flex; justify-content: space-between; gap: 1rem; }
 .lsf-costs dt, .lsf-costs dd { margin: 0; }
+.lsf-cost-order-total { margin-top: .5rem; }
+.lsf-cost-later { color: var(--muted); }
 .lsf-total { margin-top: .5rem; align-items: baseline; font-size: 1.05rem; }
 .lsf-total dd { display: flex; align-items: baseline; gap: .5rem; }
 .lsf-total strong { font-size: 1.5rem; }

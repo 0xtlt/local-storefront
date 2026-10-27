@@ -76,6 +76,9 @@
     "shipping": { "amount": 0 },
     "tax": { "amount": 0 },
     "total": { "amount": 73.0 },
+    "dueNow": { "amount": 73.0 },
+    "dueLater": { "amount": 0 },
+    "checkoutChargeAmount": { "amount": 73.0 },
     "currencyCode": "EUR"
   },
   "runs": [],
