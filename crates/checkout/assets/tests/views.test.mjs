@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { withCurrency } from '../format.js';
 import { update } from '../preview/mock-engine.mjs';
+import { RENDERED_TARGETS } from '../extension-host.js';
+import { h } from '../vdom.js';
 import { renderPage } from '../views.js';
 import { checkoutState, engineCheckout, pageState } from './harness.mjs';
 
@@ -319,4 +321,85 @@ test('an extension the host does not load shows why, next to the problems with t
   const kept = findAll(tree, (node) => node.tag === 'li' && node.props.key === 'gift-message')[0];
   assert.doesNotMatch(text(kept), /not loaded/);
   assert.equal(byClass(page(checkoutState()), 'lsf-diagnostics').length, 0, 'nothing to say, nothing shown');
+});
+
+// --- Every extension target (?targets=all) ---
+
+/** The page with every target asked for, and a slot (a node) only at the `declared` targets. */
+function everyTarget(state, { declared = [], refusals } = {}) {
+  const asked = [];
+  const slot = (target, instance) => {
+    asked.push([target, instance]);
+    return declared.includes(target) ? h('div', { class: 'lsf-slot', 'data-target': target }) : null;
+  };
+  const actions = new Proxy({}, { get: () => () => {} });
+  const tree = renderPage({
+    state, ui: { draft: { address: {} }, openRuns: new Set() }, slot, actions, refusals,
+    location: 'http://localhost/checkouts/cn/preview?targets=all',
+    preview: { all: true, rendered: RENDERED_TARGETS },
+  });
+  return { tree, asked: asked.map(([target]) => target) };
+}
+
+const withExtensions = (state, extensions) => ({ ...state, extensions: extensions.map((ext) => ({ apiVersion: '2026-10', ...ext })) });
+
+test('showing every target shows the steps of a cart that does not ship, and the thank-you page under them', () => {
+  const state = checkoutState();
+  state.lines = state.lines.map((line) => ({ ...line, requiresShipping: false }));
+  // Without it, the steps of the delivery are left out of a cart that does not ship.
+  assert.deepEqual(findAll(page(state), (node) => node.tag === 'section').map((node) => node.props['data-section']), ['contact', 'payment']);
+
+  const { tree, asked } = everyTarget(state);
+  const sections = findAll(tree, (node) => node.tag === 'section').map((node) => node.props['data-section']);
+  assert.deepEqual(sections.filter(Boolean), ['targets', 'contact', 'delivery', 'shipping', 'payment', 'thank-you-preview']);
+  for (const target of ['purchase.checkout.delivery-address.render-before', 'purchase.checkout.shipping-option-list.render-after', 'purchase.checkout.block.render']) {
+    assert.ok(asked.includes(target), `${target} is asked for`);
+  }
+  // The thank-you page is there for its own targets, with the checkout's.
+  for (const target of ['purchase.thank-you.announcement.render', 'purchase.thank-you.block.render', 'purchase.thank-you.cart-line-item.render-after', 'purchase.thank-you.footer.render-after']) {
+    assert.ok(asked.includes(target), `${target} is asked for`);
+  }
+  assert.equal(text(findAll(tree, (node) => node.props['data-section'] === 'thank-you-preview')[0].children[0]), 'Thank-you page');
+});
+
+test('the targets panel says which targets are shown and why the others are not', () => {
+  const state = withExtensions(checkoutState(), [
+    { handle: 'gift', targets: ['purchase.checkout.block.render', 'purchase.thank-you.block.render'] },
+    { handle: 'chat', targets: ['purchase.checkout.chat.render', 'purchase.checkout.shipping-option-item.render-after', 'purchase.checkout.shipping-option-item.details.render'] },
+    { handle: 'old', targets: ['purchase.checkout.footer.render-after'] },
+  ]);
+  const { tree } = everyTarget(state, {
+    declared: ['purchase.checkout.block.render', 'purchase.thank-you.block.render', 'purchase.checkout.footer.render-after'],
+    refusals: [{ handle: 'old', reason: 'API version 2025-07 is not supported' }],
+  });
+  const panel = findAll(tree, (node) => node.props['data-section'] === 'targets')[0];
+  const row = (handle, target) => text(findAll(panel, (node) => node.tag === 'li' && node.props['data-for'] === handle && node.props['data-for-target'] === target)[0]);
+  assert.match(row('gift', 'purchase.checkout.block.render'), /gift.*purchase\.checkout\.block\.render.*shown/);
+  assert.match(row('gift', 'purchase.thank-you.block.render'), /shown/);
+  assert.match(row('chat', 'purchase.checkout.chat.render'), /no place on the page/);
+  assert.match(row('chat', 'purchase.checkout.shipping-option-item.render-after'), /needs shipping methods: enter a delivery address/);
+  assert.match(row('chat', 'purchase.checkout.shipping-option-item.details.render'), /needs a selected shipping method/);
+  assert.match(row('old', 'purchase.checkout.footer.render-after'), /not loaded/);
+  assert.equal(findAll(panel, (node) => node.tag === 'li').length, 6);
+});
+
+test('without the parameter there is no targets panel and no thank-you page under the checkout', () => {
+  const tree = page(checkoutState());
+  assert.equal(findAll(tree, (node) => ['targets', 'thank-you-preview'].includes(node.props['data-section'])).length, 0);
+  // Nor on the thank-you page itself.
+  const done = withCurrency({ ...checkoutState(), status: 'completed', order: { number: '#1001' } });
+  const { tree: thanks } = everyTarget(done);
+  assert.equal(findAll(thanks, (node) => ['targets', 'thank-you-preview'].includes(node.props['data-section'])).length, 0);
+});
+
+test('a checkout opened from a scenario names it and leads back to the list', () => {
+  const state = checkoutState({ scenario: { name: 'b2b', title: 'A hotel orders' }, home: '/__lsf/checkouts' });
+  const chip = byClass(page(state), 'lsf-scenario')[0];
+  assert.equal(chip.tag, 'a');
+  assert.equal(chip.props.href, '/__lsf/checkouts');
+  assert.equal(text(chip), 'Scenario: A hotel orders');
+  const panel = text(byClass(page(state, { functionsOpen: true }), 'lsf-functions')[0]);
+  assert.match(panel, /scenario A hotel orders/);
+  assert.match(panel, /All checkouts and extensions/);
+  assert.equal(byClass(page(checkoutState()), 'lsf-scenario').length, 0);
 });

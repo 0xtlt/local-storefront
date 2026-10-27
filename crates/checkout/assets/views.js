@@ -413,6 +413,7 @@ function header(ctx) {
   return h('header', { class: 'lsf-header' },
     h('a', { class: 'lsf-brand', href: storefrontLink(state) }, isShop(state) ? h('span', { class: 'lsf-shop-logo' }, 'shop') : state.shop.name),
     isShop(state) && h('span', { class: 'lsf-brand-sub' }, state.shop.name),
+    state.scenario && h('a', { class: 'lsf-chip lsf-scenario', href: state.home ?? '/', title: 'All checkouts and extensions', 'data-scenario': state.scenario.name }, `Scenario: ${state.scenario.title}`),
     h('span', { class: 'lsf-secure' }, icon('lock'), isShop(state) ? 'Shop Pay' : 'Secure checkout'));
 }
 
@@ -429,7 +430,8 @@ function diagnostics({ state, refusals = [] }) {
 
 function checkoutPage(ctx) {
   const { state, slot } = ctx;
-  const needsShipping = state.lines.some((line) => line.requiresShipping);
+  // Showing every target: the steps of a cart that ships are there, whatever the cart.
+  const needsShipping = state.lines.some((line) => line.requiresShipping) || Boolean(ctx.preview);
   return h('div', { class: 'lsf-layout' },
     h('main', { class: 'lsf-main' },
       slot('purchase.checkout.header.render-after', { key: 'header' }),
@@ -537,7 +539,9 @@ function functionsPanel(ctx) {
       (state.errors ?? []).length > 0 && h('span', { class: 'lsf-chip is-error' }, `${state.errors.length} checkout error${state.errors.length === 1 ? '' : 's'}`)),
     ui.functionsOpen && h('div', { class: 'lsf-functions-body' },
       h('p', { class: 'lsf-muted' }, h('a', { class: 'lsf-link', href: link.pathname + link.search }, `Switch to the ${other} skin`),
-        ` · ${state.extensions?.length ?? 0} checkout UI extension${state.extensions?.length === 1 ? '' : 's'}`),
+        ` · ${state.extensions?.length ?? 0} checkout UI extension${state.extensions?.length === 1 ? '' : 's'}`,
+        state.scenario && ` · scenario ${state.scenario.title}`,
+        state.home && ' · ', state.home && h('a', { class: 'lsf-link', href: state.home }, 'All checkouts and extensions')),
       (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
         h('ul', null, state.errors.map((error) => h('li', null, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
       (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
@@ -547,12 +551,69 @@ function functionsPanel(ctx) {
       runs.length === 0 ? h('p', { class: 'lsf-muted' }, 'No Function ran.') : runs.map((entry, index) => run(ctx, entry, index))));
 }
 
+// --- Every extension target --------------------------------------------------------------
+
+/** Why a target that has a place on the page is not on it right now. */
+function whyNotShown(target, state) {
+  if (target.includes('shipping-option-item.details')) return 'needs a selected shipping method: enter a delivery address and choose one';
+  if (target.includes('shipping-option-item')) return 'needs shipping methods: enter a delivery address';
+  if (target.includes('cart-line-item')) return 'needs a line in the cart';
+  return state.lines.length === 0 ? 'needs a cart with lines' : 'not on the page for this checkout';
+}
+
+/**
+ * The page asked to show every target (`?targets=all`): what each extension declares and
+ * whether it is on the page. `shown` is the targets the page placed a slot at.
+ */
+function targetsPanel({ state, preview, refusals = [] }) {
+  const refused = new Map(refusals.map((refusal) => [refusal.handle, refusal.reason]));
+  const extensions = state.extensions ?? [];
+  const rows = extensions.flatMap((ext) => (ext.targets ?? []).map((target) => {
+    let status;
+    if (refused.has(ext.handle)) status = h('span', { class: 'lsf-chip is-error' }, 'not loaded');
+    else if (preview.shown.has(target)) status = h('span', { class: 'lsf-chip is-ok' }, 'shown');
+    else if (!preview.rendered.includes(target)) status = h('span', { class: 'lsf-chip is-error' }, 'no place on the page');
+    else status = h('span', { class: 'lsf-muted' }, whyNotShown(target, state));
+    return h('li', { key: `${ext.handle}:${target}`, 'data-for': ext.handle, 'data-for-target': target }, h('strong', null, ext.handle), h('code', null, target), status);
+  }));
+  return h('section', { class: 'lsf-preview', 'data-section': 'targets' },
+    h('h2', null, 'Every extension target'),
+    h('p', { class: 'lsf-muted' },
+      'Each extension renders at every target it declares. The steps of a cart that ships are shown whatever the cart, and the thank-you page is shown under the checkout with the same cart: no order is placed. ',
+      state.home && h('a', { class: 'lsf-link', href: state.home }, 'All checkouts and extensions')),
+    rows.length === 0 ? h('p', { class: 'lsf-muted' }, 'No checkout UI extension is loaded.') : h('ul', { class: 'lsf-preview-targets' }, rows));
+}
+
+/** The thank-you page of the checkout as it is, for the targets it has. */
+function thankYouPreview(ctx) {
+  return h('section', { class: 'lsf-preview-thanks', 'data-section': 'thank-you-preview' },
+    h('h2', { class: 'lsf-preview-title' }, 'Thank-you page'),
+    thankYouPage(ctx));
+}
+
 /** The whole page. */
 export function renderPage(ctx) {
   const { state } = ctx;
+  // With `preview`, every target is asked for: note the slots that exist, which the panel lists.
+  const preview = ctx.preview?.all ? { shown: new Set(), rendered: ctx.preview.rendered ?? [] } : null;
+  const page = preview
+    ? {
+      ...ctx,
+      preview,
+      slot: (target, instance) => {
+        const node = ctx.slot(target, instance);
+        if (node) preview.shown.add(target);
+        return node;
+      },
+    }
+    : ctx;
+  const body = state.status === 'completed'
+    ? thankYouPage(page)
+    : [checkoutPage(page), preview && thankYouPreview(page)];
   return h('div', { class: `lsf-app lsf-${state.status}`, 'data-variant': state.variant, 'data-status': state.status },
     header(ctx),
     diagnostics(ctx),
-    state.status === 'completed' ? thankYouPage(ctx) : checkoutPage(ctx),
+    preview && state.status !== 'completed' && targetsPanel(page),
+    body,
     functionsPanel(ctx));
 }

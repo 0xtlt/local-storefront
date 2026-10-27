@@ -16,7 +16,7 @@ const publicState = (state) => {
 };
 
 /** A page on a checkout kept by the mock engine; `requests` is what it was asked. */
-function app({ variant = 'standard', mutate, hold, conflict } = {}) {
+function app({ variant = 'standard', mutate, hold, conflict, href = 'http://localhost/checkouts/cn/preview' } = {}) {
   let engine = engineCheckout();
   engine.variant = variant;
   if (mutate) mutate(engine);
@@ -24,7 +24,7 @@ function app({ variant = 'standard', mutate, hold, conflict } = {}) {
   const root = document.createElement('div');
   document.body.appendChild(root);
   const requests = [];
-  const location = { href: 'http://localhost/checkouts/cn/preview', assigned: [], assign(url) { this.assigned.push(url); } };
+  const location = { href, assigned: [], assign(url) { this.assigned.push(url); } };
   const window = { addEventListener() {}, removeEventListener() {}, open() {} };
   const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
   const fetch = async (url, init) => {
@@ -466,4 +466,17 @@ test('a buyer in French keeps the language in the requests, the links and the pa
   assert.equal(plain.document.documentElement.lang, 'en');
   await plain.checkout.actions.commit('email', 'a@b.c');
   assert.equal(plain.requests[0].url, '/checkouts/cn/preview/update');
+});
+
+test('?targets=all shows the panel of the targets and the thank-you page, and nothing else does', () => {
+  const plain = app();
+  assert.equal(plain.query('[data-section="targets"]'), null);
+  assert.equal(plain.query('[data-section="thank-you-preview"]'), null);
+
+  const every = app({ href: 'http://localhost/checkouts/cn/preview?targets=all' });
+  assert.ok(every.query('[data-section="targets"]'));
+  assert.ok(every.query('[data-section="thank-you-preview"]'));
+  // The sample extensions declare targets of the checkout page: each is listed.
+  assert.match(every.text('[data-section="targets"]'), /purchase\.checkout\.block\.render/);
+  assert.match(every.text('[data-section="targets"]'), /shown|needs/);
 });

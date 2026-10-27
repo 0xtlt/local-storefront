@@ -3,7 +3,7 @@
 // (`POST …/update`), and draws again from the state that comes back. The checkout UI
 // extensions are hosted by `extension-host.js`.
 
-import { createExtensionHost } from './extension-host.js';
+import { RENDERED_TARGETS, createExtensionHost } from './extension-host.js';
 import { languageOf, withCurrency } from './format.js';
 import { missingFields, op } from './operations.js';
 import { renderPage } from './views.js';
@@ -40,6 +40,12 @@ export function startCheckout({ root, initial, document, window, location, fetch
   const endpoint = (path) =>
     `${state.localization?.rootUrl ?? ''}/checkouts/cn/${encodeURIComponent(state.token)}${path}`;
 
+  // `?targets=all` asks for a page where every extension renders at every target it declares.
+  const preview = {
+    all: new URL(location.href ?? 'http://localhost/', 'http://localhost/').searchParams.get('targets') === 'all',
+    rendered: RENDERED_TARGETS,
+  };
+
   const host = createExtensionHost({
     document,
     window,
@@ -66,7 +72,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
   function paint() {
     document.body?.setAttribute?.('data-variant', state.variant);
     if (document.documentElement) document.documentElement.lang = languageOf(state);
-    render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals() }));
+    render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals(), preview }));
     host.update(state);
   }
 
