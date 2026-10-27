@@ -1072,7 +1072,8 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Shopify takes the percentages off before the fixed amounts, so that the customer gets
-    /// the best deal. A percentage is on the price of the line before any discount.
+    /// the best deal. A percentage is on the price of the line before any discount. Within
+    /// those, see [`stacking_key`] for the order.
     fn apply_product_discounts(&mut self, runs: Vec<Pending>) {
         let mut chosen = Vec::new();
         for (context, strategy, candidates) in runs {
@@ -1084,7 +1085,10 @@ impl<'a> Pipeline<'a> {
             });
             chosen.extend(candidates.into_iter().map(|candidate| (context, candidate)));
         }
-        chosen.sort_by_key(|(_, candidate)| candidate.is_fixed());
+        chosen.sort_by_cached_key(|(context, candidate)| {
+            let covered = plan_product(&self.lines, candidate);
+            stacking_key(context, candidate, covered)
+        });
         for (context, candidate) in chosen {
             let plan = plan_product(&self.lines, &candidate);
             self.allocate(&context, &candidate, DiscountClass::Product, plan);
@@ -1107,7 +1111,10 @@ impl<'a> Pipeline<'a> {
             });
             chosen.extend(candidates.into_iter().map(|candidate| (context, candidate)));
         }
-        chosen.sort_by_key(|(_, candidate)| candidate.is_fixed());
+        chosen.sort_by_cached_key(|(context, candidate)| {
+            let covered = plan_order(&self.lines, &frozen, candidate);
+            stacking_key(context, candidate, covered)
+        });
         for (context, candidate) in chosen {
             let plan = plan_order(&self.lines, &frozen, &candidate);
             self.allocate(&context, &candidate, DiscountClass::Order, plan);
@@ -1917,12 +1924,6 @@ struct Candidate {
     value: Amount,
 }
 
-impl Candidate {
-    fn is_fixed(&self) -> bool {
-        matches!(self.value, Amount::Fixed { .. })
-    }
-}
-
 #[derive(Clone, Debug)]
 enum Target {
     Line {
@@ -2246,6 +2247,53 @@ fn distribute_capped(total: Cents, weights: &[Cents], caps: &[Cents]) -> Vec<Cen
             .collect();
     }
     shares
+}
+
+/// The order in which the candidates of a class are applied: percentages first, then fixed
+/// amounts (Shopify), and within each the same order whatever the order of `[[extensions]]` in
+/// the app and of the discounts in the store's list, so that the same cart gets the same price.
+///
+/// Shopify documents none of it for amounts that overlap, so this is this checkout's choice:
+/// - percentages, the larger first. Each is a share of a price fixed beforehand, and what the
+///   lines have left only decides who is credited with the last cents.
+/// - fixed amounts, the candidate that covers fewer lines first. Fixed amounts come off the
+///   balance the ones before left, so the first of two overlapping ones can leave nothing to the
+///   second; the narrow one goes first because a general amount can take its cents from other
+///   lines, and a narrow one cannot (100.00 on lines A and B, then 100.00 on B alone, takes
+///   the whole 200.00 in that order, and only 150.00 in the other).
+///
+/// Candidates that tie are told apart by what they say (the lines they cover, the amount, the
+/// Function, the title, the code, the message), never by their position in the configuration.
+/// Two candidates that agree on all of it take the same from the same lines; only their
+/// metafields differ, and they keep the order of the configuration.
+/// `covered` is the plan of the candidate on the lines before any candidate of the class.
+fn stacking_key(
+    context: &DiscountContext,
+    candidate: &Candidate,
+    covered: Vec<(usize, Cents)>,
+) -> impl Ord + use<> {
+    let mut lines: Vec<usize> = covered.into_iter().map(|(index, _)| index).collect();
+    lines.sort_unstable();
+    let (kind, rank, each, cents) = match candidate.value {
+        // Millionths of a percent, negated: the larger percentage sorts first.
+        Amount::Percentage(percentage) => (0u8, -((percentage * 1e6).round() as i64), false, 0),
+        Amount::Fixed { cents, each } => (1, lines.len() as i64, each, cents),
+        Amount::None => (2, 0, false, 0),
+    };
+    (
+        kind,
+        rank,
+        lines,
+        cents,
+        each,
+        context.function.to_string(),
+        context.title.to_string(),
+        candidate
+            .code
+            .clone()
+            .or_else(|| context.code.map(str::to_string)),
+        candidate.message.clone(),
+    )
 }
 
 /// Shares `total` between weights in proportion, to the cent (largest remainders first).
@@ -2817,15 +2865,45 @@ mod tests {
     }
 
     #[test]
-    fn percentages_sort_before_fixed_amounts() {
-        let value = |raw: serde_json::Value| {
-            product_candidate(json!({
-                "targets": [{"orderSubtotal": {"excludedCartLineIds": []}}],
-                "value": raw,
-            }))
+    fn candidates_stack_percentages_first_then_the_narrowest_fixed_amount() {
+        let lines = vec![line(1, 10, 10000, 1), line(2, 11, 10000, 1)];
+        let context = |title| DiscountContext {
+            function: "f",
+            title,
+            code: None,
+            metafields: &[],
         };
-        assert!(!value(json!({"percentage": {"value": "10"}})).is_fixed());
-        assert!(value(json!({"fixedAmount": {"amount": "10"}})).is_fixed());
+        let key = |title, raw: serde_json::Value| {
+            let candidate = product_candidate(raw);
+            stacking_key(
+                &context(title),
+                &candidate,
+                plan_product(&lines, &candidate),
+            )
+        };
+        let both = [
+            json!({"cartLine": {"id": "gid://shopify/CartLine/1"}}),
+            json!({"cartLine": {"id": "gid://shopify/CartLine/2"}}),
+        ];
+        let second = [json!({"cartLine": {"id": "gid://shopify/CartLine/2"}})];
+        let fixed = json!({"fixedAmount": {"amount": "100.00"}});
+        let across = key("a", json!({"targets": both, "value": fixed}));
+        let narrow = key("b", json!({"targets": second, "value": fixed}));
+        let ten = key(
+            "c",
+            json!({"targets": both, "value": {"percentage": {"value": "10"}}}),
+        );
+        let twenty = key(
+            "d",
+            json!({"targets": second, "value": {"percentage": {"value": "20"}}}),
+        );
+        // Whatever the names, the order is the same: 20 %, 10 %, the fixed amount on one line,
+        // the fixed amount on two.
+        assert!(twenty < ten && ten < narrow && narrow < across);
+        // The same candidates under other names keep the same order.
+        let across = key("z", json!({"targets": both, "value": fixed}));
+        let narrow = key("y", json!({"targets": second, "value": fixed}));
+        assert!(narrow < across);
     }
 
     #[test]

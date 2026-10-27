@@ -2952,8 +2952,8 @@ fn assert_allocations_add_up(result: &lsf_checkout::CheckoutResult) {
 #[test]
 fn two_percentage_order_discounts_are_both_a_share_of_the_subtotal() {
     let result = order_discounts(&[percentage("10"), percentage("20")]);
-    // 10.00 and 20.00 of 100.00, not 10.00 and 18.00.
-    assert_eq!(taken(&result), (vec![1000, 2000], 7000));
+    // 10.00 and 20.00 of 100.00, not 10.00 and 18.00. The larger percentage is applied first.
+    assert_eq!(taken(&result), (vec![2000, 1000], 7000));
     assert_allocations_add_up(&result);
 }
 
@@ -2978,15 +2978,18 @@ fn the_order_of_the_order_discounts_does_not_matter() {
     assert_eq!(prices(&forward), prices(&reversed));
     assert_allocations_add_up(&forward);
     assert_allocations_add_up(&reversed);
-    // The fixed amount is applied after both percentages.
-    assert_eq!(
-        forward
-            .discounts
-            .iter()
-            .map(|d| d.amount)
-            .collect::<Vec<_>>(),
-        [1000, 2000, 2000]
-    );
+    // The fixed amount is applied after both percentages, the larger one first, whatever the
+    // order of the answers.
+    for result in [&forward, &reversed] {
+        assert_eq!(
+            result
+                .discounts
+                .iter()
+                .map(|d| d.amount)
+                .collect::<Vec<_>>(),
+            [2000, 1000, 2000]
+        );
+    }
 }
 
 #[test]
@@ -3282,4 +3285,119 @@ fn a_shared_fixed_amount_that_every_line_can_take_stays_in_proportion() {
         [2400, 1800]
     );
     assert_allocations_add_up(&result);
+}
+
+/// What the lines cost, and what each discount took in the order the checkout applied them.
+fn prices_and_amounts(result: &lsf_checkout::CheckoutResult) -> (Vec<i64>, Vec<(String, i64)>) {
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    (
+        result.lines.iter().map(|line| line.total).collect(),
+        result
+            .discounts
+            .iter()
+            .map(|discount| (discount.title.clone(), discount.amount))
+            .collect(),
+    )
+}
+
+#[test]
+fn overlapping_fixed_product_amounts_give_the_same_price_in_any_order() {
+    // The tee is 32.00 and the tote 24.00. "General" takes 40.00 across both, "Tote" 24.00 off
+    // the tote alone. The narrow one is applied first whatever the configuration says: if the
+    // general one went first, it would take 17.14 from the tote and leave 9.14 on the tee.
+    let general = (
+        "General",
+        product_answer(&[LINE_1, LINE_2], shared_fixed_amount("40.00")),
+    );
+    let tote = (
+        "Tote",
+        product_answer(&[LINE_2], shared_fixed_amount("24.00")),
+    );
+    let forward = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Product],
+        &[general.clone(), tote.clone()],
+    );
+    let reversed = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Product],
+        &[tote, general],
+    );
+    assert_eq!(
+        prices_and_amounts(&forward),
+        (
+            vec![0, 0],
+            vec![("Tote".to_string(), 2400), ("General".to_string(), 3200)]
+        )
+    );
+    assert_eq!(prices_and_amounts(&forward), prices_and_amounts(&reversed));
+    assert_allocations_add_up(&forward);
+    assert_allocations_add_up(&reversed);
+}
+
+#[test]
+fn overlapping_fixed_order_amounts_give_the_same_price_in_any_order() {
+    let order = |excluded: &[&str], amount: &str| {
+        json!({"operations": [{"orderDiscountsAdd": {
+            "selectionStrategy": "FIRST",
+            "candidates": [{
+                "targets": [{"orderSubtotal": {"excludedCartLineIds": excluded}}],
+                "value": fixed(amount),
+            }],
+        }}]})
+    };
+    let general = ("General", order(&[], "40.00"));
+    // 24.00 off everything but the tee: the tote.
+    let tote = ("Tote", order(&[LINE_1], "24.00"));
+    let forward = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Order],
+        &[general.clone(), tote.clone()],
+    );
+    let reversed = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Order],
+        &[tote, general],
+    );
+    assert_eq!(
+        prices_and_amounts(&forward),
+        (
+            vec![0, 0],
+            vec![("Tote".to_string(), 2400), ("General".to_string(), 3200)]
+        )
+    );
+    assert_eq!(prices_and_amounts(&forward), prices_and_amounts(&reversed));
+    assert_allocations_add_up(&forward);
+}
+
+#[test]
+fn overlapping_percentages_that_exceed_the_line_are_credited_in_any_order() {
+    // 70 % and 60 % of the tee: 130 % of it. The larger percentage is credited first, so the
+    // order of the configuration does not decide who is cut short.
+    let seventy = ("Seventy", product_answer(&[LINE_1], percentage("70")));
+    let sixty = ("Sixty", product_answer(&[LINE_1], percentage("60")));
+    let forward = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Product],
+        &[seventy.clone(), sixty.clone()],
+    );
+    let reversed = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Product],
+        &[sixty, seventy],
+    );
+    assert_eq!(
+        prices_and_amounts(&forward),
+        (
+            vec![0, 2400],
+            vec![("Seventy".to_string(), 2240), ("Sixty".to_string(), 960)]
+        )
+    );
+    assert_eq!(prices_and_amounts(&forward), prices_and_amounts(&reversed));
 }
