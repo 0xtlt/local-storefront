@@ -4,7 +4,7 @@
 // extensions are hosted by `extension-host.js`.
 
 import { createExtensionHost } from './extension-host.js';
-import { withCurrency } from './format.js';
+import { languageOf, withCurrency } from './format.js';
 import { missingFields, op } from './operations.js';
 import { renderPage } from './views.js';
 import { h, render } from './vdom.js';
@@ -35,7 +35,10 @@ export function startCheckout({ root, initial, document, window, location, fetch
     failure: null,
   };
 
-  const endpoint = (path) => `/checkouts/cn/${encodeURIComponent(state.token)}${path}`;
+  // Under the locale root of the buyer's language (`/fr`), so that every request of the page
+  // is made in that language too.
+  const endpoint = (path) =>
+    `${state.localization?.rootUrl ?? ''}/checkouts/cn/${encodeURIComponent(state.token)}${path}`;
 
   const host = createExtensionHost({
     document,
@@ -62,6 +65,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
 
   function paint() {
     document.body?.setAttribute?.('data-variant', state.variant);
+    if (document.documentElement) document.documentElement.lang = languageOf(state);
     render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals() }));
     host.update(state);
   }

@@ -81,3 +81,11 @@ export function countriesOf(state) {
 /** The name of a country: the store's, else the default list's, else the code. */
 export const countryName = (code, countries = COUNTRIES) =>
   countries.find(([iso]) => iso === code)?.[1] ?? COUNTRIES.find(([iso]) => iso === code)?.[1] ?? code ?? '';
+
+/** The language the buyer reads the checkout in: the one of the storefront they came from, which
+ * is not necessarily the primary language of the shop (`state.shop.locale`). */
+export const languageOf = (state) => state?.localization?.language?.isoCode ?? state?.shop?.locale ?? 'en';
+
+/** A link to the storefront, in the language of the buyer: `/fr/cart` for a buyer in French. */
+export const storefrontLink = (state, path = '') =>
+  `${state?.shop?.storefrontUrl ?? ''}${state?.localization?.rootUrl ?? ''}${path}`;

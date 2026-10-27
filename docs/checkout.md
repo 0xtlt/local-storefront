@@ -180,7 +180,7 @@ await request.post(`${path}/update`, {
 
 | Request | What it does | Answer |
 |---|---|---|
-| `GET /checkout` | Leads to the checkout of the session's cart. `?variant=shop` for the other look. | A redirect to `/checkouts/cn/<token>` |
+| `GET /checkout` | Leads to the checkout of the session's cart. `?variant=shop` for the other look. | A redirect to `/checkouts/cn/<token>` (`/fr/checkouts/cn/<token>` from `/fr/checkout`) |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
@@ -189,6 +189,32 @@ await request.post(`${path}/update`, {
 | `GET /__lsf/checkout?session=<id>` | The state of a session's checkout, from outside its browser. | JSON |
 
 The token is the one of the session's cart. Another session gets a `404`.
+
+### Language
+
+The checkout is in the language its URL names, as the storefront is: every path above also
+exists under a locale prefix (`/fr/checkout`, `/fr/checkouts/cn/<token>`,
+`/fr/checkouts/cn/<token>/update`, …). The cart form of a theme leads to `/fr/checkout` from the
+French storefront, the redirect keeps the prefix, and so do the page's own requests, the links
+back to the storefront and the way to the thank-you page. Without a prefix the checkout is in
+the primary language of the store. `/__lsf/checkout` has no prefix to read: it takes
+`?locale=fr`.
+
+The state tells both languages apart: `shop.locale` is the primary language of the store, and
+`localization.language` the one the buyer reads. Extensions get the latter as
+`shopify.localization.language`, translate and format numbers and money with it, and the page
+sets it as the `lang` of the document.
+
+### Buyer and localization
+
+`buyer` is what `shopify.buyerIdentity` reads: the `email` and `phone` the buyer typed or the
+logged-in customer has, `customer` (`id`, `email`, `phone`, `firstName`, `lastName`,
+`acceptsMarketing`, `ordersCount`) and, for a B2B customer, `purchasingCompany` (the `company`
+and the `location` they buy for, each with `id`, `name` and `externalId`). `localization` is what
+`shopify.localization` reads: `language` and `rootUrl` as above, the `country` (the one of the
+shipping address, otherwise the one the visitor selected on the storefront), the `currency` and
+the `market`. The store has no avatar, no consent to SMS marketing and no store credit for a
+customer, nor a time zone for a buyer (`timezone` is the one of the browser).
 
 The state has the lines, discounts, discount codes, delivery groups, payment methods, errors and
 cost that the Functions produced, `runs`, the buyer, the address, the note, the attributes and

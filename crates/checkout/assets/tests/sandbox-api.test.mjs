@@ -2,7 +2,9 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkoutState, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { assets, checkoutState, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
 import { update } from '../preview/mock-engine.mjs';
 
 function runtime(options = {}) {
@@ -424,4 +426,66 @@ test('the components of a bundle line are costed the same way', () => {
   }];
   const { shopify } = runtime({ state });
   assert.equal(shopify.lines.value[0].lineComponents[0].cost.totalAmount.amount, 10);
+});
+
+// The state the server wrote for a logged-in customer buying in French
+// (`crates/cli/src/server/tests.rs` checks the server still writes exactly this file).
+const SERVER = JSON.parse(readFileSync(join(assets, '..', 'tests', 'fixtures', 'server-buyer-state.json'), 'utf8'));
+
+function serverRuntime(name) {
+  const state = structuredClone(checkoutState());
+  state.buyer = { ...state.buyer, ...SERVER[name].buyer };
+  state.localization = SERVER[name].localization;
+  return runtime({ state }).shopify;
+}
+
+test('the Buyer Identity API reads the customer the server serialized', () => {
+  const { buyerIdentity } = serverRuntime('customer');
+  assert.equal(buyerIdentity.email.value, 'jane.doe@example.com');
+  assert.equal(buyerIdentity.phone.value, '+1 555 010 9988');
+  assert.deepEqual(plain(buyerIdentity.customer.value), {
+    id: 'gid://shopify/Customer/6523834743460',
+    email: 'jane.doe@example.com',
+    phone: '+1 555 010 9988',
+    fullName: 'Jane Doe',
+    firstName: 'Jane',
+    lastName: 'Doe',
+    image: { url: '' },
+    acceptsMarketing: true,
+    acceptsEmailMarketing: true,
+    acceptsSmsMarketing: false,
+    storeCreditAccounts: [],
+    ordersCount: 2,
+  });
+  assert.equal(buyerIdentity.purchasingCompany.value, undefined);
+});
+
+test('the Buyer Identity API reads the company a B2B customer buys for', () => {
+  const { buyerIdentity } = serverRuntime('company');
+  const customer = buyerIdentity.customer.value;
+  assert.equal(customer.phone, undefined, 'a customer without a phone has none');
+  assert.equal(customer.acceptsMarketing, false);
+  assert.equal(customer.ordersCount, 0);
+  assert.deepEqual(plain(buyerIdentity.purchasingCompany.value), {
+    company: { id: 'gid://shopify/Company/8662601194560', name: 'Northwind Hotels', externalId: 'NW-001' },
+    location: { id: 'gid://shopify/CompanyLocation/3095219877716', name: 'Northwind Seattle', externalId: 'NW-SEA' },
+  });
+});
+
+test('the Localization API reads the language, country, currency and market of the server', () => {
+  const { localization, i18n } = serverRuntime('customer');
+  // The shop is in English: the buyer reads French.
+  assert.equal(localization.language.value.isoCode, 'fr');
+  assert.equal(localization.extensionLanguage.value.isoCode, 'fr');
+  assert.equal(localization.country.value.isoCode, 'CA', 'the country the visitor selected');
+  assert.equal(localization.currency.value.isoCode, 'EUR', 'the currency of the checkout');
+  assert.deepEqual(plain(localization.market.value), { id: 'gid://shopify/Market/1', handle: 'primary' });
+  // Numbers follow the language of the buyer.
+  assert.equal(i18n.formatNumber(1234.5), '1\u202f234,5');
+});
+
+test('the country of the shipping address wins over the one the visitor selected', () => {
+  const state = structuredClone(checkoutState());
+  state.localization = { ...SERVER.customer.localization, country: { isoCode: 'GB', name: 'United Kingdom' } };
+  assert.equal(runtime({ state }).shopify.localization.country.value.isoCode, 'GB');
 });

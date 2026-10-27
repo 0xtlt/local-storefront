@@ -179,22 +179,32 @@
     return { type, handle: method.handle };
   }
 
+  /** The customer of the Buyer Identity API. The store knows no avatar, no consent for SMS and
+   * no store credit: those stay empty. */
   function mapCustomer(customer) {
     if (!customer) return undefined;
+    const accepts = Boolean(customer.acceptsMarketing);
     return clean({
       id: customer.id,
       email: customer.email,
-      phone: customer.phone,
+      phone: customer.phone || undefined,
       fullName: [customer.firstName, customer.lastName].filter(Boolean).join(' ') || undefined,
       firstName: customer.firstName,
       lastName: customer.lastName,
       image: { url: '' },
-      acceptsMarketing: false,
-      acceptsEmailMarketing: false,
+      acceptsMarketing: accepts,
+      acceptsEmailMarketing: accepts,
       acceptsSmsMarketing: false,
       storeCreditAccounts: [],
-      ordersCount: 0,
+      ordersCount: customer.ordersCount || 0,
     });
+  }
+
+  /** `buyerIdentity.purchasingCompany`: the company and the location a B2B customer buys for. */
+  function mapPurchasingCompany(purchasing) {
+    if (!purchasing || !purchasing.company) return undefined;
+    const entry = (value) => value && clean({ id: value.id, name: value.name, externalId: value.externalId || undefined });
+    return clean({ company: entry(purchasing.company), location: entry(purchasing.location) });
   }
 
   const METAFIELD_TYPES = { number_integer: 'integer', number_decimal: 'float', boolean: 'boolean', json: 'json_string' };
@@ -374,7 +384,11 @@
       });
     }
 
-    const locale = (state.shop && state.shop.locale) || 'en';
+    // The language of the buyer, which is the one of the storefront they came from: not
+    // necessarily the primary language of the shop.
+    const languageOf = (s) => (s.localization && s.localization.language && s.localization.language.isoCode)
+      || (s.shop && s.shop.locale) || 'en';
+    const locale = languageOf(state);
     const currency = (state.cost && state.cost.currencyCode) || (state.shop && state.shop.currencyCode) || 'USD';
     const capabilities = capabilityNames(ext.capabilities);
     const api = {};
@@ -415,13 +429,20 @@
         Promise.resolve(['firstName', 'lastName', 'company', 'address1', 'address2', 'city', 'zip', 'provinceCode', 'phone']),
     };
     signalProperty(api.localization, 'currency', (s) => ({ isoCode: (s.cost && s.cost.currencyCode) || currency }));
-    signalProperty(api.localization, 'language', (s) => ({ isoCode: (s.shop && s.shop.locale) || 'en' }));
+    signalProperty(api.localization, 'language', (s) => ({ isoCode: languageOf(s) }));
     // The language the extension is rendered in: the one of the strings it got, not the buyer's.
-    signalProperty(api.localization, 'extensionLanguage', (s) => ({ isoCode: extensionLanguage || (s.shop && s.shop.locale) || 'en' }));
+    signalProperty(api.localization, 'extensionLanguage', (s) => ({ isoCode: extensionLanguage || languageOf(s) }));
     signalProperty(api.localization, 'timezone', () => Intl.DateTimeFormat().resolvedOptions().timeZone);
-    signalProperty(api.localization, 'country', (s) =>
-      s.shippingAddress && s.shippingAddress.countryCode ? { isoCode: s.shippingAddress.countryCode } : undefined);
-    signalProperty(api.localization, 'market', () => ({ id: 'gid://shopify/Market/1', handle: 'local' }));
+    // The country of the shipping address, else the one the visitor selected on the storefront.
+    signalProperty(api.localization, 'country', (s) => {
+      const country = s.localization && s.localization.country;
+      if (country && country.isoCode) return { isoCode: country.isoCode };
+      return s.shippingAddress && s.shippingAddress.countryCode ? { isoCode: s.shippingAddress.countryCode } : undefined;
+    });
+    signalProperty(api.localization, 'market', (s) => {
+      const market = s.localization && s.localization.market;
+      return market ? { id: market.id, handle: market.handle } : { id: 'gid://shopify/Market/1', handle: 'primary' };
+    });
 
     // --- Checkout state, on every target
     signalProperty(api, 'lines', (s) => s.lines.map(mapLine));
@@ -467,7 +488,7 @@
     signalProperty(api.buyerIdentity, 'email', (s) => (s.buyer && s.buyer.email) || undefined);
     signalProperty(api.buyerIdentity, 'phone', (s) => (s.buyer && s.buyer.phone) || undefined);
     signalProperty(api.buyerIdentity, 'customer', (s) => mapCustomer(s.buyer && s.buyer.customer));
-    signalProperty(api.buyerIdentity, 'purchasingCompany', () => undefined);
+    signalProperty(api.buyerIdentity, 'purchasingCompany', (s) => mapPurchasingCompany(s.buyer && s.buyer.purchasingCompany));
     api.applyTrackingConsentChange = () => Promise.resolve({ type: 'success' });
 
     // --- The buyer journey

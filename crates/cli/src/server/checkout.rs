@@ -12,7 +12,7 @@ use lsf_checkout::app::{App, Selection};
 use lsf_checkout::pipeline::{self, DELIVERY_GROUP_HANDLE};
 use lsf_checkout::{Address, CheckoutResult, CheckoutState, Metafield, ResultLine};
 use lsf_core::drops::cart::line_key;
-use lsf_core::store::CartLine;
+use lsf_core::store::{CartLine, Customer, Language};
 use lsf_core::{Session, Store};
 use serde_json::{Value as Json, json};
 
@@ -176,14 +176,47 @@ fn token_of(state: &ServerState, session_id: &str) -> String {
     state.with_session(session_id, |entry| entry.session.cart_token.clone())
 }
 
-fn checkout_path(token: &str) -> String {
-    format!("/checkouts/cn/{token}")
+/// The path of a checkout under the locale root of the buyer's language (`/fr`, nothing for
+/// the primary language), as the storefront prefixes its own paths.
+fn checkout_path(root: &str, token: &str) -> String {
+    format!("{root}/checkouts/cn/{token}")
 }
 
-/// `/checkout`: a checkout for the cart of the visitor.
+/// The language the buyer reads the checkout in: the one the locale prefix of the URL names
+/// (`/fr/checkouts/cn/<token>`), otherwise the primary language of the store. The control API
+/// has no prefix to read, so it takes `?locale=`.
+fn language_of<'a>(state: &ServerState, store: &'a Store, incoming: &Incoming) -> &'a Language {
+    let (iso_code, _, _) = state.localize(store, &incoming.path);
+    let asked = incoming
+        .path
+        .starts_with("/__lsf")
+        .then(|| incoming.query_param("locale"))
+        .flatten();
+    store
+        .language(asked.unwrap_or(&iso_code))
+        .unwrap_or_else(|| store.primary_language())
+}
+
+/// The locale root of a language, which is empty for the primary one.
+fn root_of(language: &Language) -> &str {
+    if language.primary {
+        ""
+    } else {
+        language.root_url.trim_end_matches('/')
+    }
+}
+
+/// The locale root of the request, for a session.
+fn request_root(state: &ServerState, session_id: &str, incoming: &Incoming) -> String {
+    let (_, store) = state.snapshot(session_id);
+    root_of(language_of(state, &store, incoming)).to_string()
+}
+
+/// `/checkout`: a checkout for the cart of the visitor, in the language of the request.
 fn start(state: &ServerState, incoming: &Incoming) -> Reply {
     let (id, is_new) = state.session_id(incoming);
-    let mut location = checkout_path(&token_of(state, &id));
+    let root = request_root(state, &id, incoming);
+    let mut location = checkout_path(&root, &token_of(state, &id));
     if let Some(variant) = incoming.query_param("variant") {
         location.push_str(&format!("?variant={}", escape_query(variant)));
     }
@@ -273,6 +306,7 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
     // One read, so that the basis is what the result is computed from.
     let (session, store, mut checkout, basis) = read(state, session_id);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
+    let language = language_of(state, &store, incoming);
     let (app, selection, result) = price(state, &session, &store, &mut checkout)?;
 
     let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
@@ -286,6 +320,7 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
             "name": store.shop.name,
             "currencyCode": store.shop.currency,
             "moneyFormat": store.shop.money_format,
+            // The primary language of the store. The buyer's is `localization.language`.
             "locale": store.primary_language().iso_code,
             "storefrontUrl": origin_of(incoming),
             // The countries the store sells in, for the country selector.
@@ -299,13 +334,15 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
         json!({
             "email": checkout.email,
             "phone": checkout.phone,
-            "customer": customer.map(|customer| json!({
-                "id": format!("gid://shopify/Customer/{}", customer.id),
-                "email": customer.email,
-                "firstName": customer.first_name,
-                "lastName": customer.last_name,
-            })),
+            "customer": customer.map(customer_json),
+            "purchasingCompany": customer.and_then(|customer| {
+                purchasing_company_json(customer, &store, session.company_location)
+            }),
         }),
+    );
+    object.insert(
+        "localization".into(),
+        localization_json(&store, language, &session, &checkout),
     );
     object.insert("shippingAddress".into(), json!(checkout.shipping_address));
     object.insert(
@@ -352,6 +389,80 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
         result,
         checkout,
         basis,
+    })
+}
+
+/// The customer as the Buyer Identity API reads it, with what the store knows of them.
+fn customer_json(customer: &Customer) -> Json {
+    json!({
+        "id": format!("gid://shopify/Customer/{}", customer.id),
+        "email": customer.email,
+        "phone": (!customer.phone.is_empty()).then_some(&customer.phone),
+        "firstName": customer.first_name,
+        "lastName": customer.last_name,
+        "acceptsMarketing": customer.accepts_marketing,
+        "ordersCount": customer.orders.len(),
+    })
+}
+
+/// The company and location a B2B customer buys for.
+fn purchasing_company_json(
+    customer: &Customer,
+    store: &Store,
+    selected_location: Option<u64>,
+) -> Option<Json> {
+    let company = &store.companies[customer.company?];
+    let location = customer
+        .current_location(selected_location, store)
+        .map(|index| &company.locations[index]);
+    Some(json!({
+        "company": {
+            "id": format!("gid://shopify/Company/{}", company.id),
+            "name": company.name,
+            "externalId": company.external_id,
+        },
+        "location": location.map(|location| json!({
+            "id": format!("gid://shopify/CompanyLocation/{}", location.id),
+            "name": location.name,
+            "externalId": location.external_id,
+        })),
+    }))
+}
+
+fn language_json(language: &Language) -> Json {
+    json!({
+        "isoCode": language.iso_code,
+        "name": language.name,
+        "endonymName": language.endonym_name,
+    })
+}
+
+/// What the Localization API reads: the language of the buyer (not the primary one of the
+/// store), the country of the shipping address or else the one the visitor selected, the
+/// currency and the market.
+fn localization_json(
+    store: &Store,
+    language: &Language,
+    session: &Session,
+    checkout: &CheckoutState,
+) -> Json {
+    let country = checkout
+        .shipping_address
+        .as_ref()
+        .and_then(|address| address.country_code.clone())
+        .or_else(|| session.country.clone())
+        .map(|code| code.to_ascii_uppercase());
+    json!({
+        "language": language_json(language),
+        // Where the storefront of this language lives: `/fr`, nothing for the primary one.
+        "rootUrl": root_of(language),
+        "country": country.map(|code| json!({
+            "isoCode": code,
+            "name": store.country(&code).map_or(code.as_str(), |country| country.name.as_str()),
+        })),
+        "currency": {"isoCode": store.shop.currency},
+        // The same market as `localization.market` of the theme.
+        "market": {"id": "gid://shopify/Market/1", "handle": "primary"},
     })
 }
 
@@ -419,7 +530,12 @@ fn current(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
         let empty = entry.session.cart_lines.is_empty();
         entry.checkout.completed.clone().filter(|_| empty)
     });
-    if let Some(completed) = completed {
+    if let Some(mut completed) = completed {
+        // The order is the one that was placed; the language it is read in is the request's.
+        let (_, store) = state.snapshot(session_id);
+        let language = language_of(state, &store, incoming);
+        completed["localization"]["language"] = language_json(language);
+        completed["localization"]["rootUrl"] = json!(root_of(language));
         return Ok(completed);
     }
     // A cart again after an order: a new checkout.
@@ -465,7 +581,15 @@ fn shell(json: &Json) -> Reply {
         .replace('&', "\\u0026")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
+    // The page is in the language of the buyer.
+    let lang: String = json["localization"]["language"]["isoCode"]
+        .as_str()
+        .unwrap_or("en")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
     let html = template
+        .replacen("<html lang=\"en\">", &format!("<html lang=\"{lang}\">"), 1)
         .replace("<!--LSF_ASSETS-->", ASSETS)
         .replace("<!--LSF_STATE-->", &state);
     Reply::html(200, html).cached(cache::PRIVATE)
@@ -491,7 +615,7 @@ fn thank_you(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     let completed = state.with_session(&id, |entry| entry.checkout.completed.clone());
     let reply = match completed {
         Some(json) => shell(&json),
-        None => Reply::redirect(&checkout_path(token)),
+        None => Reply::redirect(&checkout_path(&request_root(state, &id, incoming), token)),
     };
     with_cookie(reply, &id, is_new)
 }
@@ -1051,11 +1175,12 @@ fn complete(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     with_cookie(reply, &id, is_new)
 }
 
-/// The way to the thank-you page.
-fn redirect_to_thanks(token: &str) -> Reply {
+/// The way to the thank-you page, in the language of the request.
+fn redirect_to_thanks(state: &ServerState, incoming: &Incoming, id: &str, token: &str) -> Reply {
+    let root = request_root(state, id, incoming);
     Reply::json(
         200,
-        &json!({"redirect": format!("{}/thank-you", checkout_path(token))}),
+        &json!({"redirect": format!("{}/thank-you", checkout_path(&root, token))}),
     )
     .cached(cache::PRIVATE)
 }
@@ -1080,7 +1205,7 @@ pub(super) fn place_order(
     between: impl FnOnce(),
 ) -> Reply {
     if already_placed(state, id) {
-        return redirect_to_thanks(token);
+        return redirect_to_thanks(state, incoming, id, token);
     }
     let mut computed = match compute(state, id, incoming) {
         Ok(computed) => computed,
@@ -1118,11 +1243,11 @@ pub(super) fn place_order(
         true
     });
     if taken {
-        return redirect_to_thanks(token);
+        return redirect_to_thanks(state, incoming, id, token);
     }
     // Another request placed the order meanwhile.
     if already_placed(state, id) {
-        return redirect_to_thanks(token);
+        return redirect_to_thanks(state, incoming, id, token);
     }
     // The cart changed while the order was being priced: nothing was bought, and the buyer
     // sees the cart as it is now.

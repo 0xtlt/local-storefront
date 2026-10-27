@@ -1,0 +1,83 @@
+{
+  "customer": {
+    "buyer": {
+      "email": "jane.doe@example.com",
+      "phone": "+1 555 010 9988",
+      "customer": {
+        "id": "gid://shopify/Customer/6523834743460",
+        "email": "jane.doe@example.com",
+        "phone": "+1 555 010 9988",
+        "firstName": "Jane",
+        "lastName": "Doe",
+        "acceptsMarketing": true,
+        "ordersCount": 2
+      },
+      "purchasingCompany": null
+    },
+    "localization": {
+      "language": {
+        "isoCode": "fr",
+        "name": "French",
+        "endonymName": "français"
+      },
+      "rootUrl": "/fr",
+      "country": {
+        "isoCode": "CA",
+        "name": "Canada"
+      },
+      "currency": {
+        "isoCode": "USD"
+      },
+      "market": {
+        "id": "gid://shopify/Market/1",
+        "handle": "primary"
+      }
+    }
+  },
+  "company": {
+    "buyer": {
+      "email": "alex.morgan@example.com",
+      "phone": null,
+      "customer": {
+        "id": "gid://shopify/Customer/5246542887442",
+        "email": "alex.morgan@example.com",
+        "phone": null,
+        "firstName": "Alex",
+        "lastName": "Morgan",
+        "acceptsMarketing": false,
+        "ordersCount": 0
+      },
+      "purchasingCompany": {
+        "company": {
+          "id": "gid://shopify/Company/8662601194560",
+          "name": "Northwind Hotels",
+          "externalId": "NW-001"
+        },
+        "location": {
+          "id": "gid://shopify/CompanyLocation/3095219877716",
+          "name": "Northwind Seattle",
+          "externalId": "NW-SEA"
+        }
+      }
+    },
+    "localization": {
+      "language": {
+        "isoCode": "fr",
+        "name": "French",
+        "endonymName": "français"
+      },
+      "rootUrl": "/fr",
+      "country": {
+        "isoCode": "FR",
+        "name": "France"
+      },
+      "currency": {
+        "isoCode": "USD"
+      },
+      "market": {
+        "id": "gid://shopify/Market/1",
+        "handle": "primary"
+      }
+    }
+  }
+}

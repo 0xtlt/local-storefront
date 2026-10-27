@@ -3327,6 +3327,180 @@ fn only_the_extensions_asked_for_are_used() {
     );
 }
 
+/// The state JSON the page of a checkout carries.
+fn page_state(html: &str) -> Json {
+    let start = html.find("id=\"lsf-checkout-state\">").expect("the state") + 24;
+    let end = start + html[start..].find("</script>").expect("its end");
+    serde_json::from_str(&html[start..end]).expect("JSON")
+}
+
+#[test]
+fn the_language_of_the_buyer_stays_through_the_whole_checkout() {
+    let state = checkout_server(&[], false);
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}),
+        "co-fr",
+    ));
+
+    // The cart form of the theme leads to `/fr/checkout`: the checkout is in French.
+    let reply = get(&state, "/fr/checkout", "co-fr");
+    assert_eq!(reply.status, 302);
+    let path = header(&reply, "location").expect("a location").to_string();
+    let bare = path.strip_prefix("/fr").expect("under the French root");
+    assert!(bare.starts_with("/checkouts/cn/c1-"), "{path}");
+    // Asking for the other look keeps the language.
+    let shop = get(&state, "/fr/checkout?variant=shop", "co-fr");
+    assert_eq!(
+        header(&shop, "location"),
+        Some(format!("{path}?variant=shop").as_str())
+    );
+
+    // The page and its state.
+    let page = get(&state, &path, "co-fr");
+    assert_eq!(page.status, 200);
+    let html = text(&page);
+    assert!(html.contains("<html lang=\"fr\">"), "{html}");
+    let json = page_state(&html);
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["rootUrl"], "/fr");
+    assert_eq!(
+        json["shop"]["locale"], "en",
+        "the primary language of the shop"
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-fr"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+
+    // An update, the way the page sends it (under the root of its language).
+    let reply = operations(&state, &path, "co-fr", buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["country"]["isoCode"], "GB");
+    assert_eq!(json["shop"]["locale"], "en");
+
+    // The order, and the way to its thank-you page.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fr");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    let thanks = get(&state, &format!("{path}/thank-you"), "co-fr");
+    assert_eq!(thanks.status, 200);
+    let html = text(&thanks);
+    assert!(html.contains("<html lang=\"fr\">"), "{html}");
+    let json = page_state(&html);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+
+    // The language is the one of the URL: the same checkout without the root is in the primary
+    // language, and a checkout of the primary language leads to its own thank-you page.
+    let json = body_json(&get(&state, &format!("{}.json", bare), "co-fr"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "en");
+    assert_eq!(json["localization"]["rootUrl"], "");
+    let again = start_checkout(
+        &state,
+        "co-fr",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert!(again.starts_with("/checkouts/cn/"), "{again}");
+    assert_eq!(
+        operations(&state, &again, "co-fr", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{again}/complete"), json!({}), "co-fr");
+    assert_eq!(body_json(&reply)["redirect"], format!("{again}/thank-you"));
+
+    // A thank-you page without an order leads back to the checkout in its language.
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        "co-fr-2",
+    ));
+    let path = header(&get(&state, "/fr/checkout", "co-fr-2"), "location")
+        .expect("a location")
+        .to_string();
+    let reply = get(&state, &format!("{path}/thank-you"), "co-fr-2");
+    assert_eq!(
+        (reply.status, header(&reply, "location")),
+        (302, Some(path.as_str()))
+    );
+
+    // The control API has no prefix to read: it takes the locale in the query.
+    let json = body_json(&get(&state, "/__lsf/checkout?locale=fr", "co-fr-2"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["rootUrl"], "/fr");
+    let json = body_json(&get(&state, "/__lsf/checkout?locale=xx", "co-fr-2"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "en");
+}
+
+/// The part of the state JSON that the Buyer Identity and Localization APIs read, for a
+/// logged-in customer of the demo data buying in French. The sandbox of the extensions reads the
+/// same file (`crates/checkout/assets/tests/sandbox-api.test.mjs`): when the server writes
+/// something else, both fail, so the two sides cannot drift apart. Run with `LSF_UPDATE_GOLDEN=1`
+/// to write the file again after a change meant to be.
+#[test]
+fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
+    let state = checkout_server(&[], false);
+    let mut seen = serde_json::Map::new();
+    for (name, email, location) in [
+        ("customer", "jane.doe@example.com", None),
+        (
+            "company",
+            "alex.morgan@example.com",
+            Some("Northwind Seattle"),
+        ),
+    ] {
+        // The country the visitor selected on the storefront.
+        let country = if name == "customer" { "CA" } else { "FR" };
+        let session = format!("co-buyer-{name}");
+        let mut body = json!({
+            "customer": email,
+            "country": country,
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+        });
+        if let Some(location) = location {
+            body["company_location"] = json!(location);
+        }
+        let set = state.dispatch(&request("PUT", "/__lsf/session", body, &session));
+        assert_eq!(set.status, 200, "{}", text(&set));
+        let path = header(&get(&state, "/fr/checkout", &session), "location")
+            .expect("a location")
+            .to_string();
+        let json = body_json(&get(&state, &format!("{path}.json"), &session));
+        seen.insert(
+            name.into(),
+            json!({"buyer": json["buyer"], "localization": json["localization"]}),
+        );
+    }
+    let seen = Json::Object(seen);
+
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../checkout/tests/fixtures/server-buyer-state.json");
+    if std::env::var_os("LSF_UPDATE_GOLDEN").is_some() {
+        std::fs::write(&golden, serde_json::to_string_pretty(&seen).unwrap() + "\n").unwrap();
+    }
+    let expected: Json =
+        serde_json::from_str(&std::fs::read_to_string(&golden).expect("the golden file"))
+            .expect("JSON");
+    assert_eq!(seen, expected);
+
+    // What the sandbox must be able to read, whatever the file says.
+    assert_eq!(
+        seen["customer"]["buyer"]["customer"]["phone"],
+        "+1 555 010 9988"
+    );
+    assert_eq!(
+        seen["customer"]["localization"]["language"]["isoCode"],
+        "fr"
+    );
+    assert_eq!(
+        seen["company"]["buyer"]["purchasingCompany"]["company"]["name"],
+        "Northwind Hotels"
+    );
+}
+
 #[test]
 fn operations_change_what_the_buyer_chose() {
     let state = checkout_server(&[], false);

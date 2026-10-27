@@ -9,7 +9,7 @@
 //   actions  what the buyer's gestures do
 //   refusals the extensions the host does not load, `[{handle, reason}]` (see `api-versions.js`)
 
-import { countriesOf, countryName, price, priceOrFree } from './format.js';
+import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './format.js';
 import { missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
 
@@ -118,7 +118,7 @@ function contactSection(ctx) {
     'section',
     { class: 'lsf-section', 'data-section': 'contact' },
     h('div', { class: 'lsf-section-head' }, h('h2', null, 'Contact'),
-      state.buyer?.customer ? h('span', { class: 'lsf-muted' }, state.buyer.customer.email) : h('a', { class: 'lsf-link', href: `${state.shop.storefrontUrl}/account/login` }, 'Log in')),
+      state.buyer?.customer ? h('span', { class: 'lsf-muted' }, state.buyer.customer.email) : h('a', { class: 'lsf-link', href: storefrontLink(state, '/account/login') }, 'Log in')),
     field({
       id: 'lsf-email',
       label: 'Email',
@@ -296,7 +296,7 @@ function actionsSection(ctx) {
     ui.failure && banner('critical', h('p', null, ui.failure), { 'data-banner': 'failure' }),
     slot('purchase.checkout.actions.render-before', { key: 'actions' }),
     h('div', { class: 'lsf-actions-row' },
-      h('a', { class: 'lsf-link lsf-return', href: `${state.shop.storefrontUrl}/cart` }, '‹ Return to cart'),
+      h('a', { class: 'lsf-link lsf-return', href: storefrontLink(state, '/cart') }, '‹ Return to cart'),
       h('button', {
         class: 'lsf-pay', type: 'button', disabled: ui.busy ? true : null, onClick: actions.pay,
       }, ui.busy ? 'Processing…' : isShop(state) ? `${label} · ${total}` : label)),
@@ -396,7 +396,7 @@ function summary(ctx, { thankYou = false } = {}) {
 function header(ctx) {
   const { state } = ctx;
   return h('header', { class: 'lsf-header' },
-    h('a', { class: 'lsf-brand', href: state.shop.storefrontUrl }, isShop(state) ? h('span', { class: 'lsf-shop-logo' }, 'shop') : state.shop.name),
+    h('a', { class: 'lsf-brand', href: storefrontLink(state) }, isShop(state) ? h('span', { class: 'lsf-shop-logo' }, 'shop') : state.shop.name),
     isShop(state) && h('span', { class: 'lsf-brand-sub' }, state.shop.name),
     h('span', { class: 'lsf-secure' }, icon('lock'), isShop(state) ? 'Shop Pay' : 'Secure checkout'));
 }
@@ -470,7 +470,7 @@ function thankYouPage(ctx) {
           detail('Billing address', state.shippingAddress ? ['Same as shipping address'] : [])),
         slot('purchase.thank-you.customer-information.render-after', { key: 'customer' })),
       h('div', { class: 'lsf-actions-row' },
-        h('a', { class: 'lsf-pay lsf-continue', href: state.shop.storefrontUrl, onClick: actions.continueShopping }, 'Continue shopping')),
+        h('a', { class: 'lsf-pay lsf-continue', href: storefrontLink(state), onClick: actions.continueShopping }, 'Continue shopping')),
       slot('purchase.thank-you.footer.render-after', { key: 'footer' })),
     summary(ctx, { thankYou: true }));
 }
