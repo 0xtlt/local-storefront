@@ -191,11 +191,39 @@ exception: Shopify runs them concurrently, with no knowledge of one another, so 
 legacy ones) sees a discount, whether it comes from another discount or an earlier stage. Their
 answers are applied once all of them have run: product discounts first, then order discounts on
 what is left of the lines, then shipping, so the order of the discounts in the configuration
-changes nothing. An application has the value of the
+changes nothing (see [how discounts stack](#how-discounts-stack)). An application has the value of the
 discount (`PricingPercentageValue` or `MoneyV2`), its allocation method (`EACH` for a percentage,
 `ACROSS` for a fixed amount shared between the lines), what it targets (`EXPLICIT` for the lines
 the Function named, `ALL` for the whole order, `ENTITLED` when an order discount leaves lines
 out) and what it took off in total; its `metafield` is one of the discount's.
+
+### How discounts stack
+
+Discounts apply class after class, as on Shopify: product discounts first, then order
+discounts on the subtotal they left, then shipping. Within a class:
+
+- **Order discounts.** Every percentage is a share of the subtotal after the product discounts,
+  not of what the order discounts before it left: 10% and 20% off 100.00 take 10.00 and 20.00,
+  70.00 is left. The fixed amounts come off afterwards, from what is left, and never take the
+  order below zero (a percentage and a $20 discount on 350.00: 10% leaves 315.00, then 295.00).
+  This is the same whatever the order of the discounts in the configuration and of the candidates
+  in an answer.
+- **Product discounts on one line.** The percentages come off before the fixed amounts. A
+  percentage is a share of the price of the line before any discount, so 10% and 20% off a line
+  of 100.00 take 10.00 and 20.00. A fixed amount never takes more than the line has left.
+- **Shipping discounts.** They are applied one after the other, each on what the one before
+  left (see the gaps below).
+
+An amount is shared between the lines in proportion to what they cost, to the cent, and the
+allocations of the lines (`discountAllocations`, in the page and for the Functions that run
+later) add up to the discount.
+
+Shopify documents the order of the classes, the percentages of order discounts being all
+calculated on the subtotal, the percentage before the fixed amount in the order and on a line, and
+the fixed amounts after (https://help.shopify.com/en/manual/discounts/discount-combinations).
+It does not say how two percentages on one line combine, how two fixed amounts combine, nor
+whether a fixed amount may exceed what is left: the rules above for those are this checkout's
+choices. It also allows one shipping discount per order, which this checkout does not enforce.
 
 ### Network access
 
@@ -374,7 +402,9 @@ an order that was placed already leads to the same thank-you page, never to a se
   prices by address: the rates are the same for every address.
 - Fulfillment constraints, order routing, and the pickup point and local pickup generators (with
   their `.fetch` targets) are listed and not run.
-- Discounts have no `conditions` and no combinations: all of them stack.
+- Discounts have no `conditions` and no combinations: all of them stack, as described in
+  [how discounts stack](#how-discounts-stack). Shopify applies one shipping discount per order and
+  the best of the discounts that cannot combine; here every shipping discount applies.
 - Tax is one rate on the discounted subtotal, with no tax lines.
 - The values of the `settings` of an extension are not set: the manifest declares them, and
   `shopify.settings.value` is empty.

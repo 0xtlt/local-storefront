@@ -132,8 +132,12 @@ Discount Functions are the exception: Shopify runs them concurrently, with no kn
 another (https://shopify.dev/docs/api/functions/latest/discount), so every one of them, line and
 delivery alike, gets its input from a snapshot (`Blind`: the lines before any discount, the
 delivery groups as the customizations left them, no applications). The answers are collected, then
-applied: product candidates of all discounts first, then order candidates, then shipping, so the
-result does not depend on the order of `config.discounts`.
+applied: product candidates of all discounts first (percentages, then fixed amounts), then order
+candidates, then shipping, so the result does not depend on the order of `config.discounts`. The
+order candidates are planned against the lines frozen after the product discounts
+(`plan_order`'s `frozen`): a percentage is a share of that subtotal, whatever was taken before it, a
+fixed amount comes off what is left, never below zero, after all the percentages (Shopify's
+discount combinations help page). Shipping candidates still apply one after the other.
 `PaymentMethod::placements` is what `PaymentCustomizationPaymentMethod.placements` reads; a hide
 operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists
 the methods still in `PAYMENT_METHOD`.
