@@ -310,6 +310,16 @@ test('problems with the app show as banners', () => {
   assert.match(text(byClass(tree, 'lsf-diagnostics')[0]), /shopify app build/);
 });
 
+test('the banners open the main column, so the summary panel starts under the header', () => {
+  const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle'] }));
+  const main = byClass(tree, 'lsf-main')[0];
+  assert.ok(has(main.children.find(Boolean), 'lsf-diagnostics'), 'the first thing of the main column');
+  assert.equal(byClass(tree, 'lsf-diagnostics').length, 1);
+  const thanks = page(checkoutState({ status: 'completed', diagnostics: ['gift-message: no bundle'] }));
+  assert.ok(has(byClass(thanks, 'lsf-main')[0].children.find(Boolean), 'lsf-diagnostics'), 'the thank-you page too');
+  assert.equal(byClass(thanks, 'lsf-diagnostics').length, 1);
+});
+
 test('an extension the host does not load shows why, next to the problems with the app', () => {
   const refusals = [{ handle: 'order-notice', apiVersion: '2025-07', reason: 'API version 2025-07 is not supported: the local checkout runs 2026-10 and 2027-01.' }];
   const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle'] }), { functionsOpen: true }, { refusals });

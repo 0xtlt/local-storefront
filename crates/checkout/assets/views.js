@@ -510,7 +510,8 @@ function header(ctx) {
       : h('a', { class: 'lsf-cart-link', href: storefrontLink(state, '/cart'), 'aria-label': 'Return to cart' }, icon('cart')));
 }
 
-/** What is wrong with the app: the server's diagnostics and the extensions the host does not load. */
+/** What is wrong with the app: the server's diagnostics and the extensions the host does not load.
+ * They open the main column, on its panel, so the order summary's panel starts under the header. */
 function diagnostics({ state, refusals = [] }) {
   const messages = [
     ...(state.diagnostics ?? []),
@@ -527,6 +528,7 @@ function checkoutPage(ctx) {
   const needsShipping = state.lines.some((line) => line.requiresShipping) || Boolean(ctx.preview);
   return h('div', { class: 'lsf-layout' },
     h('main', { class: 'lsf-main' },
+      diagnostics(ctx),
       slot('purchase.checkout.header.render-after', { key: 'header' }),
       contactSection(ctx),
       needsShipping && addressSection(ctx),
@@ -563,6 +565,8 @@ function thankYouPage(ctx) {
     h('div', { class: 'lsf-detail' }, h('h3', null, title), lines.map((line) => h('p', null, line)));
   return h('div', { class: 'lsf-layout lsf-thanks' },
     h('main', { class: 'lsf-main' },
+      // Shown once: the thank-you page under a checkout is not the page.
+      !ctx.underCheckout && diagnostics(ctx),
       slot('purchase.thank-you.announcement.render', { key: 'announcement' }),
       h('div', { class: 'lsf-confirmation' }, icon('check'),
         h('div', null,
@@ -704,7 +708,7 @@ function targetsPanel({ state, preview, refusals = [] }) {
 function thankYouPreview(ctx) {
   return h('section', { class: 'lsf-preview-thanks', 'data-section': 'thank-you-preview' },
     h('h2', { class: 'lsf-preview-title' }, 'Thank-you page'),
-    thankYouPage(ctx));
+    thankYouPage({ ...ctx, underCheckout: true }));
 }
 
 /** The whole page. */
@@ -728,7 +732,6 @@ export function renderPage(ctx) {
     : [checkoutPage(page), preview && thankYouPreview(page)];
   return h('div', { class: `lsf-app lsf-${state.status}`, 'data-variant': state.variant, 'data-status': state.status },
     header(ctx),
-    diagnostics(ctx),
     preview && state.status !== 'completed' && targetsPanel(page),
     body,
     functionsPanel(ctx));
