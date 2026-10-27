@@ -443,6 +443,14 @@ accounts otherwise. Set `shop.customer_accounts` to `"new"` or `"legacy"` to dec
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
 
+At the [checkout of an app](checkout.md#log-in-as-a-customer), the customers are the login
+profiles: "Log in" in the Contact section lists them, and picking one logs the checkout (and the
+session) in as them, with their saved addresses (the first one is the default) and, for a B2B
+customer, the locations they buy for. Give the data a customer of each kind you test: a new one
+(no orders, no addresses), a returning one (`addresses`, `orders`, `tags`, `metafields`), a B2B
+buyer with several `company_locations`, a customer in another country. The demo store has one of
+each.
+
 ### B2B customers
 
 A B2B customer buys for a **company**, at one of its **locations**. Describe the company, then

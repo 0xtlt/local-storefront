@@ -91,6 +91,9 @@ checkout and without any network:
 - **Every [scenario](#scenarios):** a summary of its cart, buyer, country and language, what the
   buyer entered, discounts, settings it overrides, look and extensions, and a link that opens a
   fresh checkout for it. A scenario with errors is listed with them and has no link.
+- **Every customer of the store data** ([login profiles](#log-in-as-a-customer)): name, email,
+  company, tags, orders, saved addresses and country, and a link that opens the checkout logged
+  in as them.
 - **A link that opens a checkout where every extension renders at every target it declares**
   ([`?targets=all`](#every-extension-target)), and one for the Shop look.
 
@@ -155,6 +158,67 @@ selling plan with a deposit for `pre-order`). When it exists, it uses the produc
 countries, languages and selling plans it has, and says which scenarios it skipped and why. It
 never overwrites a file without `--force`, and refreshes `schema/` so that editors complete the
 scenarios (`"$schema": "../schema/checkout-scenario.schema.json"`).
+
+## Log in as a customer
+
+The customers of the [store data](data-format.md#customers-and-sessions) are the login profiles
+of the checkout. "Log in", at the right of the Contact heading, opens a menu of them: name,
+email, and what tells them apart (B2B company and its locations, tags, orders, saved addresses,
+country). Pick one and the checkout is logged in as them; "Continue as a guest" logs it out. The
+menu is a menu button: the arrows, Home and End move between the customers, Escape closes it and
+gives the focus back to the button, Tab and a click elsewhere close it.
+
+Logged in, the checkout does what Shopify's does for a customer who has an account:
+
+- **Contact** shows the account (name and email) instead of the email field, with "Switch" (the
+  same menu) and "Log out". The email and the phone are the customer's.
+- **Delivery** starts with the customer's default address (the first of their `addresses`) and
+  offers the others in a "Saved addresses" select, with "Use a new address" for one they type.
+  The fields below hold the chosen address and can be edited.
+- **A B2B customer** shows their company and chooses the location they buy for, among the ones
+  they have access to; the order ships to the address of that location ("Ship to the location").
+- Everything that reads the buyer follows: the Functions (`buyerIdentity.customer` with `id`,
+  `email`, `displayName`, `hasTags`, `hasAnyTag`, `metafield`, `numberOfOrders`, `amountSpent`;
+  `buyerIdentity.purchasingCompany`; `isAuthenticated`), the checkout UI extensions
+  (`shopify.buyerIdentity.customer`, `email`, `phone`, `purchasingCompany`, whose subscribers are
+  called; the `sub` of the session token), the shipping rates (an address means rates), the
+  discounts and the payment methods the Functions decide on.
+
+A login changes the session, the way `session.customer` of the data, a scenario or
+`PUT /__lsf/session` set it: the theme (with `serve --app`) shows the same customer. The cart,
+the checkout token, the choices of delivery and payment, the codes and the scenario the checkout
+opened from stay. What belonged to the buyer before goes: the email and the phone they typed,
+and an address the customer before had saved (an address typed as a guest stays for a customer
+who has none). The checkout follows a login made anywhere else too (`/__lsf/login`, the control
+API, the login form of a theme with legacy accounts): the next time it is read, it is the new
+customer's.
+
+- `GET /checkout?customer=<email>` opens the checkout logged in as a customer (`default` for the
+  first one, `none` for a guest); `/checkout?scenario=<name>&customer=<email>` opens a scenario
+  as someone else. Someone the data does not have answers `404` with the list of customers.
+- The page sends the [operations](#operations) `customer` and `companyLocation`.
+- The state has `account`: `profiles` (the customers to log in as), `addresses` (the saved
+  addresses of the customer logged in, the default one first, each with an `id` and the
+  `address`; for a B2B customer, the one of their location) and `locations` (the locations a B2B
+  customer can buy for, with `current`). Extensions do not see it.
+
+The Shop skin has the same menu, account and select.
+
+The demo store (`lsf init`, `lsf checkout init`, and the built-in data) has a profile of each
+kind:
+
+| Customer | What for |
+|---|---|
+| `jane.doe@example.com` | A returning customer: two saved addresses, two orders, the tag `vip`, a `custom.loyalty_tier` metafield |
+| `new.customer@example.com` | A new customer: no order, no address |
+| `alex.morgan@example.com` | A B2B buyer of Northwind Hotels, with two locations (Portland, Seattle) |
+| `camille.martin@example.com` | A customer in France: an address in Lyon, one order |
+
+Not done: logging in with a password or a one-time code (any customer of the data, at once),
+Shop Pay, store credit, the customer's language (the checkout is in the language of its URL),
+and the B2B settings that depend on the location in Shopify (catalogs, price lists, payment
+terms, deposits, and whether a buyer may ship to another address): a B2B buyer pays what the
+store data says and may type an address.
 
 ### Every extension target
 
@@ -487,6 +551,7 @@ await request.post(`${path}/update`, {
 |---|---|---|
 | `GET /checkout` | Leads to the checkout of the session's cart. `?variant=shop` for the other look, `?targets=all` for [every extension target](#every-extension-target). | A redirect to `/checkouts/cn/<token>` (`/fr/checkouts/cn/<token>` from `/fr/checkout`) |
 | `GET /checkout?scenario=<name>` | Opens a checkout for a [scenario](#scenarios), in a new session. | A redirect to its checkout with a new session cookie, or `404`/`422` and a page that says why |
+| `GET /checkout?customer=<email>` | Logs the session in as a [customer of the data](#log-in-as-a-customer) (`default`, `none` too), then leads to its checkout. With `scenario=`, opens the scenario as them. | A redirect, or `404` and a page that lists the customers |
 | `GET /` (`lsf checkout`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says. | HTML, or JSON |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
@@ -535,6 +600,8 @@ the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount":
 
 | `type` | Fields | Does |
 |---|---|---|
+| `customer` | `customer`: an email, `default`, or `null` to log out; `location` (optional): a company location by id or name | Logs the checkout in as a [customer of the data](#log-in-as-a-customer). The session gets the customer; the contact and the address become theirs. |
+| `companyLocation` | `location`: a `gid://shopify/CompanyLocation/…`, its number or its name | Chooses the location the logged-in B2B customer buys for; the order ships there. |
 | `email`, `phone` | `value` | Sets the contact. An empty value clears it. |
 | `shippingAddress` | `address`: `firstName`, `lastName`, `company`, `address1`, `address2`, `city`, `countryCode`, `provinceCode`, `zip`, `phone` | Sets the address. A country of the store becomes the country of the session. |
 | `deliveryOption` | `group` (`group-1`), `handle` | Chooses a shipping rate. |
@@ -572,7 +639,8 @@ an order that was placed already leads to the same thank-you page, never to a se
   `totalSpent` (set them in the data); a `Market` is a country, or the group of countries that
   `localization.markets` declares, with no catalog or price list; the `id` of a `Metaobject`
   is made up from its type and handle.
-- Customer accounts hosted by Shopify, Shop Pay and express checkout.
+- Customer accounts hosted by Shopify, Shop Pay and express checkout. Logging in is picking a
+  customer of the data, see [log in as a customer](#log-in-as-a-customer).
 - With `checkout` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.
 - A scenario is one session per browser: opening another replaces it. The scenario cannot set

@@ -548,7 +548,9 @@ points to `#`.
 
 ## Customer
 
-A customer. Sessions log in as a customer by email (see `session.customer`).
+A customer. Sessions log in as a customer by email (see `session.customer`), and the checkout
+of an app lists the customers as login profiles: "Log in" logs the checkout in as one of them,
+with their addresses (the first is the default) and, for a B2B customer, their locations.
 
 | Field | Type | Description |
 |---|---|---|

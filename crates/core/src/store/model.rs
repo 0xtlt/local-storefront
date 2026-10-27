@@ -1013,7 +1013,9 @@ pub struct OrderInput {
     pub note: Option<String>,
 }
 
-/// A customer. Sessions log in as a customer by email (see `session.customer`).
+/// A customer. Sessions log in as a customer by email (see `session.customer`), and the checkout
+/// of an app lists the customers as login profiles: "Log in" logs the checkout in as one of them,
+/// with their addresses (the first is the default) and, for a B2B customer, their locations.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CustomerInput {

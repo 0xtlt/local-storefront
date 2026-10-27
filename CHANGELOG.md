@@ -7,6 +7,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Added
 
+- **Log in as a customer at the checkout.** "Log in" in the Contact section of the local
+  checkout opens a menu of the customers of the store data. Picking one logs the checkout (and
+  the session) in as them: the Contact section shows the account, Delivery offers their saved
+  addresses with the default one chosen, a B2B buyer picks the location they buy for, and the
+  Functions and extensions read the new buyer. `/checkout?customer=<email>` opens the checkout
+  logged in, and the home page lists the customers. The demo store has a profile of each kind
+  (new, returning, B2B, abroad). See [log in as a customer](docs/checkout.md#log-in-as-a-customer).
 - **The checkout looks like Shopify's.** The standard look of the local checkout now follows
   Shopify's one-page checkout: its header, the two columns with the grey order summary, floating
   labels, grouped payment and shipping choices, the order summary with its quantity badges, and
