@@ -86,8 +86,12 @@ export function startCheckout({ root, initial, document, window, location, fetch
     return request;
   }
 
+  /** `operations` is a list, or a function that makes it when its turn in the queue comes, from
+   * the state the changes before it left. Nothing is sent for an empty list. */
   function send(operations) {
     return enqueue(async () => {
+      if (typeof operations === 'function') operations = operations();
+      if (operations.length === 0) return state;
       const response = await fetch(endpoint('/update'), {
         method: 'POST',
         headers: JSON_HEADERS,
@@ -160,10 +164,13 @@ export function startCheckout({ root, initial, document, window, location, fetch
         return undefined;
       }
       ui.draft.address[name] = value;
-      const operations = [op.shippingAddress(addressToSend())];
-      if (name === 'phone' && value !== (state.buyer?.phone ?? '')) operations.push(op.phone(value));
       if (value === (state.shippingAddress?.[name] ?? '')) return undefined;
-      return run(operations);
+      // The rest of the address is read when the turn comes: an extension may have changed it.
+      return run(() => {
+        const operations = [op.shippingAddress(addressToSend())];
+        if (name === 'phone' && value !== (state.buyer?.phone ?? '')) operations.push(op.phone(value));
+        return operations;
+      });
     },
 
     chooseDelivery: (group, handle) => run([op.deliveryOption(group, handle)]),
@@ -220,8 +227,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
         // What the buyer typed and left no field for yet goes first, after what is already on
         // its way: the order is paid for the state the server holds, not the one on screen.
         await queue;
-        const drafted = draftOperations();
-        if (drafted.length > 0) await send(drafted);
+        await send(draftOperations);
         if (missingFields(state, ui.draft).length > 0) {
           ui.tried = true;
           return;

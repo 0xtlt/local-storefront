@@ -8,7 +8,7 @@ import { checkoutState, settle } from './harness.mjs';
 
 const SANDBOX = 'http://localhost/__lsf/checkout/assets/sandbox.html';
 
-function setup({ extensions, storage, state } = {}) {
+function setup({ extensions, storage, state, server = false } = {}) {
   const document = new FakeDocument();
   const listeners = [];
   const window = {
@@ -27,10 +27,12 @@ function setup({ extensions, storage, state } = {}) {
     window,
     sandboxUrl: SANDBOX,
     getState: () => current,
-    dispatch: async (operations) => {
-      dispatched.push(operations);
-      if (dispatched.failWith) throw new Error(dispatched.failWith);
-    },
+    dispatch: server
+      ? queuedServer(() => current, (next) => (current = next), dispatched)
+      : async (operations) => {
+          dispatched.push(typeof operations === 'function' ? operations() : operations);
+          if (dispatched.failWith) throw new Error(dispatched.failWith);
+        },
     storage,
     console: log,
   });
@@ -51,6 +53,28 @@ function setup({ extensions, storage, state } = {}) {
 }
 
 const BLOCK = 'purchase.checkout.block.render';
+const REDUCTIONS = 'purchase.checkout.reductions.render-after';
+
+/**
+ * The checkout as the page keeps it: one request at a time, each taking a moment, an address
+ * operation replacing the address, and the state of the reply taken when the request is done.
+ * A function is called when its turn comes.
+ */
+function queuedServer(get, set, dispatched) {
+  let queue = Promise.resolve();
+  return (operations) => {
+    const request = queue.then(async () => {
+      const list = typeof operations === 'function' ? operations() : operations;
+      dispatched.push(list);
+      await new Promise((resolve) => setImmediate(resolve));
+      for (const operation of list) {
+        if (operation.type === 'shippingAddress') set({ ...get(), shippingAddress: operation.address });
+      }
+    });
+    queue = request.catch(() => {});
+    return request;
+  };
+}
 
 test('shows extensions only where they target, one frame for each', () => {
   const { host, slot, connect } = setup();
@@ -187,6 +211,29 @@ test('answers address changes in the shape of their API', async () => {
   from(frame, { type: 'change', id: 1, method: 'applyShippingAddressChange', change: { type: 'updateShippingAddress', address: { city: 'Paris' } } });
   await settle();
   assert.deepEqual(frame.iframe.contentWindow.posted.at(-1).result, { type: 'success', errors: null });
+});
+
+test('partial address changes merge with the address of their turn, not of their request', async () => {
+  const state = { ...checkoutState(), shippingAddress: { firstName: 'Ada', lastName: 'Lovelace', city: 'Paris', zip: '75001', countryCode: 'FR' } };
+  const { host, slot, connect, from, state: current } = setup({ server: true, state });
+  host.attach(slot, BLOCK);
+  host.attach(slot, REDUCTIONS);
+  connect();
+  const [gift, notice] = host.instances();
+  const change = (frame, id, address) =>
+    from(frame, { type: 'change', id, method: 'applyShippingAddressChange', change: { type: 'updateShippingAddress', address } });
+  // Two changes of one extension, then one of another, all asked before the first is done.
+  change(gift, 1, { city: 'Lyon' });
+  change(gift, 2, { zip: '69001' });
+  change(notice, 1, { address1: '1 rue de la Paix' });
+  for (let turn = 0; turn < 6; turn += 1) await settle();
+  assert.deepEqual(current().shippingAddress, {
+    firstName: 'Ada', lastName: 'Lovelace', city: 'Lyon', zip: '69001', countryCode: 'FR', address1: '1 rue de la Paix',
+  });
+  for (const [frame, id] of [[gift, 1], [gift, 2], [notice, 1]]) {
+    const result = frame.iframe.contentWindow.posted.find((message) => message.type === 'result' && message.id === id);
+    assert.deepEqual(result.result, { type: 'success', errors: null });
+  }
 });
 
 test('sizes the frame, grows it for an overlay and shows its errors', () => {

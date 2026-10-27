@@ -75,7 +75,9 @@ const INTERCEPT_TIMEOUT_MS = 5000;
  * @param {Window} options.window       where the iframes post their messages
  * @param {string} options.sandboxUrl   `sandbox.html`
  * @param {() => object} options.getState
- * @param {(operations: object[]) => Promise<object>} options.dispatch  sends operations
+ * @param {(operations: object[] | (() => object[])) => Promise<object>} options.dispatch  sends
+ *   operations. A function is called when its turn in the queue comes, so that what it builds
+ *   follows the changes that were made before it.
  * @param {Storage} [options.storage]
  */
 export function createExtensionHost({ document, window, sandboxUrl, getState, dispatch, storage, console: log = console }) {
@@ -183,7 +185,14 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
       result = { type: 'error', message: planned.error };
     } else {
       try {
-        await dispatch(planned.operations);
+        // A partial address is merged with the address the checkout has when its turn comes, not
+        // the one it had when the extension asked: two changes in a row (`{city}` then `{zip}`)
+        // do not undo each other, nor a change of the buyer that came in between.
+        await dispatch(
+          method === 'applyShippingAddressChange'
+            ? () => operationsForChange(method, requested, getState()).operations
+            : planned.operations,
+        );
         result = { type: 'success' };
       } catch (error) {
         result = { type: 'error', message: error.message };

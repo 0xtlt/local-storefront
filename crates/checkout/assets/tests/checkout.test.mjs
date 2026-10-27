@@ -383,6 +383,26 @@ test('what an extension changes reaches the checkout and every other extension',
   assert.equal(notice.iframe.contentWindow.posted.filter((message) => message.type === 'state').at(-1).state.note, 'from an extension');
 });
 
+test('a field the buyer leaves does not undo an address change an extension has on its way', async () => {
+  let release;
+  let updates = 0;
+  const gate = new Promise((resolve) => (release = resolve));
+  const page = app({ hold: async (url) => { if (url.endsWith('/update') && ++updates === 2) await gate; } });
+  const [gift] = connect(page);
+  await page.checkout.send([{ type: 'shippingAddress', address: { lastName: 'Martin', address1: '1 rue', city: 'Paris', countryCode: 'FR', zip: '75001' } }]);
+  // The extension's change is at the server when the buyer leaves the zip field.
+  say(page, gift, { type: 'change', id: 1, method: 'applyShippingAddressChange', change: { type: 'updateShippingAddress', address: { city: 'Lyon' } } });
+  await settle();
+  const buyer = page.checkout.actions.commit('zip', '69001');
+  release();
+  await buyer;
+  await settle();
+  const address = page.checkout.getState().shippingAddress;
+  assert.equal(address.city, 'Lyon', 'the city of the extension stays');
+  assert.equal(address.zip, '69001', 'the zip of the buyer is sent');
+  assert.equal(address.address1, '1 rue');
+});
+
 test('an extension that blocks the buyer stops the payment', async () => {
   const page = app();
   await fillIn(page);
