@@ -516,3 +516,28 @@ scalar JSON
         })
     );
 }
+
+#[test]
+fn the_defaults_of_arguments_are_listed() {
+    let schema = Schema::parse(
+        "schema { query: Input }
+         type Input { tags(list: [String!]! = [\"a\"], n: Int = 3, flag: Boolean = true, key: String!, other: String): Int }",
+    )
+    .unwrap();
+    let mut defaults = schema.argument_defaults("Input", "tags");
+    defaults.sort_by_key(|(name, _)| *name);
+    assert_eq!(
+        defaults,
+        [
+            ("flag", json!(true)),
+            ("list", json!(["a"])),
+            ("n", json!(3)),
+        ]
+    );
+    assert!(schema.argument_defaults("Input", "nope").is_empty());
+    assert!(schema.argument_defaults("Nope", "tags").is_empty());
+    assert_eq!(
+        latest(FunctionApi::Discount).argument_defaults("ProductVariant", "inCollections"),
+        [("ids", json!([]))]
+    );
+}

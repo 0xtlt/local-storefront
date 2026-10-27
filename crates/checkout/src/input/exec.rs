@@ -31,6 +31,11 @@ pub(super) trait Graph {
     /// Whether a node is of the type (or interface, or union) a fragment names; `None` when the
     /// schema has no such type.
     fn applies(&self, node: &Self::Node, condition: &str) -> Option<bool>;
+    /// The arguments of a field that have a default value in the schema. One the query leaves
+    /// out, or gives a variable without a value, is worth its default.
+    fn defaults(&self, _node: &Self::Node, _field: &str) -> Vec<(String, Json)> {
+        Vec::new()
+    }
     /// Resolves a field. `Ok(None)` when the type has no such field. The arguments the field
     /// reads are taken out of `args`; those left over are reported as unknown.
     fn field(
@@ -300,6 +305,9 @@ impl<'q, G: Graph> Executor<'q, '_, G> {
                 Ok(None) => {}
                 Err(message) => return self.fail(path, first.position, message),
             }
+        }
+        for (arg, default) in self.graph.defaults(node, name) {
+            args.0.entry(arg).or_insert(default);
         }
         let resolved = match self.graph.field(node, name, &mut args) {
             Ok(Some(resolved)) => resolved,

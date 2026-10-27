@@ -454,6 +454,156 @@ fn collection_membership_reads_the_collections_of_the_product() {
 }
 
 #[test]
+fn a_variant_is_in_the_collections_of_its_product() {
+    let mut f = Fixture::new();
+    let shirt = &f.store.products[0];
+    let member = f.store.collections[shirt.collections[0]].id;
+    let other = f
+        .store
+        .collections
+        .iter()
+        .map(|collection| collection.id)
+        .find(|id| {
+            shirt
+                .collections
+                .iter()
+                .all(|index| f.store.collections[*index].id != *id)
+        })
+        .unwrap();
+    let vars = json!({
+        "in": [format!("gid://shopify/Collection/{member}")],
+        "out": [format!("gid://shopify/Collection/{other}")],
+        "both": [format!("gid://shopify/Collection/{other}"), format!("gid://shopify/Collection/{member}")],
+    });
+    for version in ApiVersion::all() {
+        f.version = version;
+        let out = f
+            .run_as(
+                OwnerKind::Discount,
+                r#"query Input($in: [ID!], $out: [ID!], $both: [ID!]) { cart { lines { merchandise {
+                    ... on ProductVariant {
+                      a: inAnyCollection(ids: $in) b: inAnyCollection(ids: $out)
+                      c: inCollections(ids: $both) { collectionId isMember }
+                      product { p: inAnyCollection(ids: $in) } } } } } }"#,
+                Some(&vars),
+            )
+            .unwrap_or_else(|error| panic!("{version}: {error}"));
+        let variant = &out["cart"]["lines"][0]["merchandise"];
+        assert_eq!(variant["a"], true, "{version}");
+        assert_eq!(variant["b"], false, "{version}");
+        assert_eq!(
+            variant["c"],
+            json!([
+                {"collectionId": format!("gid://shopify/Collection/{other}"), "isMember": false},
+                {"collectionId": format!("gid://shopify/Collection/{member}"), "isMember": true},
+            ]),
+            "{version}"
+        );
+        // Same answer as the product's.
+        assert_eq!(variant["product"]["p"], variant["a"], "{version}");
+        // Without ids the default `[]` applies: in no collection.
+        let out = f.run(
+            "{ cart { lines { merchandise { ... on ProductVariant { a: inAnyCollection c: inCollections { isMember } } } } } }",
+        );
+        let variant = &out["cart"]["lines"][0]["merchandise"];
+        assert_eq!(variant["a"], false, "{version}");
+        assert_eq!(variant["c"], json!([]), "{version}");
+    }
+}
+
+#[test]
+fn an_argument_left_out_is_worth_the_default_of_the_schema() {
+    let mut f = Fixture::new();
+    let jane = f.store.customer_by_email("jane.doe@example.com").unwrap();
+    f.session.customer_id = Some(jane.id);
+    for version in ApiVersion::all() {
+        f.version = version;
+        let out = f.run(
+            r#"{ cart {
+                buyerIdentity { customer { a: hasAnyTag t: hasTags { tag } } }
+                lines { merchandise { ... on ProductVariant { product {
+                    a: hasAnyTag t: hasTags { tag } c: inAnyCollection i: inCollections { collectionId } } } } }
+                localizedFields { key } } }"#,
+        );
+        let customer = &out["cart"]["buyerIdentity"]["customer"];
+        assert_eq!(customer["a"], false, "{version}");
+        assert_eq!(customer["t"], json!([]), "{version}");
+        let product = &out["cart"]["lines"][0]["merchandise"]["product"];
+        assert_eq!(product["a"], false, "{version}");
+        assert_eq!(product["t"], json!([]), "{version}");
+        assert_eq!(product["c"], false, "{version}");
+        assert_eq!(product["i"], json!([]), "{version}");
+        assert_eq!(out["cart"]["localizedFields"], json!([]), "{version}");
+    }
+}
+
+#[test]
+fn an_undefined_variable_leaves_the_argument_out() {
+    let f = Fixture::new();
+    let query = r#"query Input($tags: [String!], $with: [String!] = ["cotton"]) { cart { lines {
+        merchandise { ... on ProductVariant { product {
+            a: hasAnyTag(tags: $tags) b: hasAnyTag(tags: $with) t: hasTags(tags: $tags) { tag } } } } } } }"#;
+    // `$tags` has no value and no default of its own: the schema's `[]` applies. `$with` has
+    // a default of the operation.
+    let out = f.run_as(OwnerKind::Discount, query, None).unwrap();
+    let product = &out["cart"]["lines"][0]["merchandise"]["product"];
+    assert_eq!(product["a"], false);
+    assert_eq!(product["b"], true);
+    assert_eq!(product["t"], json!([]));
+    // Given a value, the variable wins over both defaults.
+    let vars = json!({"tags": ["Bestseller"], "with": ["nope"]});
+    let out = f.run_as(OwnerKind::Discount, query, Some(&vars)).unwrap();
+    let product = &out["cart"]["lines"][0]["merchandise"]["product"];
+    assert_eq!(product["a"], true);
+    assert_eq!(product["b"], false);
+    assert_eq!(product["t"], json!([{"tag": "Bestseller"}]));
+}
+
+#[test]
+fn type_names_are_the_ones_of_the_schema() {
+    let f = Fixture::new();
+    let out =
+        f.run("{ cart { buyerIdentity { __typename ... on BuyerIdentity { isAuthenticated } } } }");
+    assert_eq!(out["cart"]["buyerIdentity"]["__typename"], "BuyerIdentity");
+    let out = f
+        .run_as(
+            OwnerKind::PaymentCustomization,
+            "{ paymentMethods { __typename ... on PaymentCustomizationPaymentMethod { name } } }",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        out["paymentMethods"][0]["__typename"],
+        "PaymentCustomizationPaymentMethod"
+    );
+}
+
+#[test]
+fn the_small_fields_checkout_has_no_data_for_are_answered() {
+    let f = Fixture::new();
+    let out = f.run(
+        r#"{ cart { billingAddress { city } poNumber retailLocation { id }
+            buyerIdentity { shopUser { __typename } }
+            lines { parentRelationship { __typename } }
+            deliveryGroups { groupType } }
+          localization { market { regions { name } } } }"#,
+    );
+    assert_eq!(out["cart"]["billingAddress"], Value::Null);
+    assert_eq!(out["cart"]["poNumber"], Value::Null);
+    assert_eq!(out["cart"]["retailLocation"], Value::Null);
+    assert_eq!(out["cart"]["buyerIdentity"]["shopUser"], Value::Null);
+    assert_eq!(out["cart"]["lines"][0]["parentRelationship"], Value::Null);
+    assert_eq!(
+        out["cart"]["deliveryGroups"][0]["groupType"],
+        "ONE_TIME_PURCHASE"
+    );
+    assert_eq!(
+        out["localization"]["market"]["regions"],
+        json!([{"name": "Canada"}])
+    );
+}
+
+#[test]
 fn attributes_of_the_cart_and_of_a_line() {
     let f = Fixture::new();
     let out = f.run(

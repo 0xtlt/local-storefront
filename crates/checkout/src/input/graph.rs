@@ -84,7 +84,7 @@ const TYPES: &[&str] = &[
     "SellingPlanAllocationPriceAdjustment",
     "MoneyV2",
     "Attribute",
-    "CartBuyerIdentity",
+    "BuyerIdentity",
     "Customer",
     "PurchasingCompany",
     "Company",
@@ -92,7 +92,7 @@ const TYPES: &[&str] = &[
     "CartDeliveryGroup",
     "CartDeliveryOption",
     "MailingAddress",
-    "PaymentMethod",
+    "PaymentCustomizationPaymentMethod",
     "Localization",
     "Country",
     "Language",
@@ -139,7 +139,7 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::PriceAdjustment(_) => "SellingPlanAllocationPriceAdjustment",
             Node::Money(_) => "MoneyV2",
             Node::Attribute(..) => "Attribute",
-            Node::BuyerIdentity => "CartBuyerIdentity",
+            Node::BuyerIdentity => "BuyerIdentity",
             Node::Customer(_) => "Customer",
             Node::PurchasingCompany(_) => "PurchasingCompany",
             Node::Company(_) => "Company",
@@ -147,7 +147,7 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::DeliveryGroup(_) => "CartDeliveryGroup",
             Node::DeliveryOption(_) => "CartDeliveryOption",
             Node::Address(_) => "MailingAddress",
-            Node::PaymentMethod(_) => "PaymentMethod",
+            Node::PaymentMethod(_) => "PaymentCustomizationPaymentMethod",
             Node::Localization => "Localization",
             Node::Country(_) => "Country",
             Node::Language(_) => "Language",
@@ -175,6 +175,16 @@ impl<'c> Graph for FunctionInput<'c> {
         )
     }
 
+    fn defaults(&self, node: &Node<'c>, field: &str) -> Vec<(String, Json)> {
+        self.ctx
+            .version
+            .schema(self.ctx.api)
+            .argument_defaults(self.type_name(node), field)
+            .into_iter()
+            .map(|(arg, default)| (arg.to_string(), default))
+            .collect()
+    }
+
     fn field(
         &self,
         node: &Node<'c>,
@@ -200,7 +210,7 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::CartCost => self.cart_cost(name),
             Node::Line(line) => self.line(line, name, args)?,
             Node::LineCost(line) => self.line_cost(line, name),
-            Node::Variant(line) => self.variant(line, name),
+            Node::Variant(line) => self.variant(line, name, args)?,
             Node::Product(line) => self.product(line, name, args)?,
             Node::SellingPlanAllocation(plan, prices) => match name {
                 "sellingPlan" => object(Node::SellingPlan(plan)),
@@ -299,6 +309,12 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::Market => self.market(name),
             Node::MarketRegion(code) => match name {
                 "code" => leaf(code),
+                "name" => leaf(
+                    self.ctx
+                        .store
+                        .country(code)
+                        .map_or(code.as_str(), |c| &c.name),
+                ),
                 _ => None,
             },
             Node::Shop => match name {
@@ -432,6 +448,14 @@ impl<'c> FunctionInput<'c> {
                     .map(Node::DeliveryGroup)
                     .collect(),
             )),
+            // What checkout does not collect, or does not have locally: no billing address (the
+            // shipping one is the only address), purchase order number or point of sale
+            // location, and no localized fields (tax identifiers and the like).
+            "billingAddress" | "poNumber" | "retailLocation" => Some(Resolved::Null),
+            "localizedFields" => {
+                args.take("keys");
+                Some(Resolved::List(Vec::new()))
+            }
             "attribute" => {
                 let key = args.required_string("key")?;
                 Some(
@@ -498,6 +522,8 @@ impl<'c> FunctionInput<'c> {
                 )
             }
             "sellingPlanAllocation" => Some(self.selling_plan(line).unwrap_or(Resolved::Null)),
+            // A bundle is one line: its components are not lines of the cart a Function sees.
+            "parentRelationship" => Some(Resolved::Null),
             _ => None,
         })
     }
@@ -538,9 +564,14 @@ impl<'c> FunctionInput<'c> {
         self.ctx.store.variant(line.variant_id)
     }
 
-    fn variant(&self, line: &'c ResultLine, name: &str) -> Option<Resolved<Node<'c>>> {
+    fn variant(
+        &self,
+        line: &'c ResultLine,
+        name: &str,
+        args: &mut Args,
+    ) -> Result<Option<Resolved<Node<'c>>>, String> {
         let found = self.store_variant(line);
-        match name {
+        Ok(match name {
             "id" => leaf(format!("gid://shopify/ProductVariant/{}", line.variant_id)),
             "sku" => Some(nullable(
                 found
@@ -567,8 +598,12 @@ impl<'c> FunctionInput<'c> {
                 },
             ),
             "product" => object(Node::Product(line)),
+            // The collections of a variant are the ones of its product.
+            "inAnyCollection" | "inCollections" => {
+                self.collections(found.map(|(product, _)| product), name, args)?
+            }
             _ => None,
-        }
+        })
     }
 
     fn product(
@@ -603,21 +638,29 @@ impl<'c> FunctionInput<'c> {
                         .collect(),
                 ))
             }
-            "inAnyCollection" => {
-                let ids = args.string_list("ids")?;
-                leaf(ids.iter().any(|id| self.in_collection(product, id)))
-            }
-            "inCollections" => {
-                let ids = args.string_list("ids")?;
-                Some(Resolved::List(
-                    ids.into_iter()
-                        .map(|id| {
-                            let member = self.in_collection(product, &id);
-                            Node::Membership(id, member)
-                        })
-                        .collect(),
-                ))
-            }
+            "inAnyCollection" | "inCollections" => self.collections(product, name, args)?,
+            _ => None,
+        })
+    }
+
+    /// `inAnyCollection` and `inCollections`, which a product and its variants share.
+    fn collections(
+        &self,
+        product: Option<&Product>,
+        name: &str,
+        args: &mut Args,
+    ) -> Result<Option<Resolved<Node<'c>>>, String> {
+        let ids = args.string_list("ids")?;
+        Ok(match name {
+            "inAnyCollection" => leaf(ids.iter().any(|id| self.in_collection(product, id))),
+            "inCollections" => Some(Resolved::List(
+                ids.into_iter()
+                    .map(|id| {
+                        let member = self.in_collection(product, &id);
+                        Node::Membership(id, member)
+                    })
+                    .collect(),
+            )),
             _ => None,
         })
     }
@@ -655,6 +698,8 @@ impl<'c> FunctionInput<'c> {
             "customer" => customer.map_or(Some(Resolved::Null), |customer| {
                 object(Node::Customer(customer))
             }),
+            // The Shop app account of the buyer: there is none locally.
+            "shopUser" => Some(Resolved::Null),
             "purchasingCompany" => Some(
                 customer
                     .filter(|customer| customer.company.is_some())
@@ -747,6 +792,18 @@ impl<'c> FunctionInput<'c> {
         let ctx = self.ctx;
         match name {
             "id" => leaf(delivery_group_id(&group.handle)),
+            "groupType" => {
+                let subscription = ctx
+                    .lines
+                    .iter()
+                    .filter(|line| group.line_ids.contains(&line.id))
+                    .any(|line| self.selling_plan(line).is_some());
+                leaf(if subscription {
+                    "SUBSCRIPTION"
+                } else {
+                    "ONE_TIME_PURCHASE"
+                })
+            }
             "cartLines" => Some(Resolved::List(
                 ctx.lines
                     .iter()
@@ -890,6 +947,8 @@ impl<'c> FunctionInput<'c> {
             Node::Customer(customer) => Some(Source::Core(Some(&customer.metafields))),
             // Added in 2026-10. Shipping rates carry no metafields.
             Node::DeliveryOption(_) => Some(Source::Core(None)),
+            // The selling plans of the store carry no metafields.
+            Node::SellingPlan(_) => Some(Source::Core(None)),
             Node::Company(company) => Some(Source::Core(Some(&company.metafields))),
             Node::CompanyLocation(location) => Some(Source::Core(Some(&location.metafields))),
             Node::Shop => Some(Source::Core(Some(&store.shop.metafields))),

@@ -49,12 +49,13 @@ struct Field {
 struct InputField {
     name: String,
     ty: TypeRef,
-    has_default: bool,
+    /// The value of the `= default` of the schema, as JSON.
+    default: Option<Value>,
 }
 
 impl InputField {
     fn required(&self) -> bool {
-        matches!(self.ty, TypeRef::NonNull(_)) && !self.has_default
+        matches!(self.ty, TypeRef::NonNull(_)) && self.default.is_none()
     }
 }
 
@@ -129,6 +130,19 @@ impl Schema {
     }
 
     // ---- input queries ----
+
+    /// The arguments of a field that have a default value in the schema, with that value: what
+    /// an argument the query leaves out (or gives an undefined variable) is worth.
+    pub fn argument_defaults(&self, type_name: &str, field: &str) -> Vec<(&str, Value)> {
+        let Some(field) = self.field(type_name, field) else {
+            return Vec::new();
+        };
+        field
+            .args
+            .iter()
+            .filter_map(|arg| Some((arg.name.as_str(), arg.default.clone()?)))
+            .collect()
+    }
 
     /// Checks the fields, the arguments and the type conditions of an input query. The error
     /// lists every problem, each with the path of the field.
@@ -616,7 +630,27 @@ fn input_field(value: &s::InputValue<'_, String>) -> InputField {
     InputField {
         name: value.name.clone(),
         ty: TypeRef::from(&value.value_type),
-        has_default: value.default_value.is_some(),
+        default: value.default_value.as_ref().map(const_value),
+    }
+}
+
+/// A constant GraphQL value (the default of an argument) as JSON.
+fn const_value(value: &q::Value<'_, String>) -> Value {
+    match value {
+        q::Value::Variable(_) | q::Value::Null => Value::Null,
+        q::Value::Int(number) => number.as_i64().map_or(Value::Null, Value::from),
+        q::Value::Float(number) => {
+            serde_json::Number::from_f64(*number).map_or(Value::Null, Value::Number)
+        }
+        q::Value::String(text) | q::Value::Enum(text) => Value::String(text.clone()),
+        q::Value::Boolean(flag) => Value::Bool(*flag),
+        q::Value::List(items) => Value::Array(items.iter().map(const_value).collect()),
+        q::Value::Object(entries) => Value::Object(
+            entries
+                .iter()
+                .map(|(key, item)| (key.clone(), const_value(item)))
+                .collect(),
+        ),
     }
 }
 

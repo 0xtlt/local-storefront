@@ -83,7 +83,7 @@ input query and output are checked against the schema of its `api_version`.
 
 `input_query` (GraphQL) is executed against the local checkout: a GraphQL executor over a
 resolver of the Function input graph (`cart { lines { id quantity cost {...} merchandise
-{ __typename ... on ProductVariant { id sku title product { id handle title productType vendor
+{ __typename ... on ProductVariant { id sku title inAnyCollection(ids:) inCollections(ids:) product { id handle title productType vendor
 hasAnyTag(tags:) hasTags(tags:) inAnyCollection(ids:) inCollections(ids:) metafield(namespace:,key:) } metafield(...) } } attribute(key:) }
 cost buyerIdentity { email phone customer {...} } deliveryGroups { ... deliveryOptions { handle title cost ... } }
 attribute(key:) }`, `discount { discountClasses metafield }`, `deliveryCustomization { metafield }`,
@@ -92,6 +92,8 @@ attribute(key:) }`, `discount { discountClasses metafield }`, `deliveryCustomiza
 `presentmentCurrencyRate`, `enteredDiscountCodes { code rejectable }`, `triggeringDiscountCode`,
 aliases, fragments, variables from `[extensions.input.variables]`). Money in input is a
 decimal string (`"19.99"`), ids are GIDs, as Shopify sends them.
+An argument the query leaves out (or gives a variable without a value) is worth the default of
+the schema of its API version: `hasAnyTag` without `tags` tests the empty list.
 
 ## Pipeline (`pipeline::compute`)
 
