@@ -108,6 +108,17 @@
   --lsf-duration-base: 200ms;
   --lsf-ease: ease-in-out;
   --lsf-ease-out: cubic-bezier(0.3, 0.5, 0.5, 1);
+  --lsf-duration-spin: 0.7s;
+}
+
+/* Buyers who ask for less motion get the end state at once; spinners keep turning, slower, since
+ * they are the only sign that something is loading. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --lsf-duration-fast: 1ms;
+    --lsf-duration-base: 1ms;
+    --lsf-duration-spin: 2s;
+  }
 }
 
 /* --- Derived: everything that follows from the accent and the base size ----------------------

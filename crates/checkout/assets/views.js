@@ -380,11 +380,16 @@ function discountForm(ctx) {
       h('div', { class: `lsf-field${ui.discountError ? ' has-error' : ''}` },
         h('input', {
           id: 'lsf-discount', class: 'lsf-input', name: 'discount', placeholder: ' ', value: ui.discountInput ?? '', autocomplete: 'off',
-          onInput: (event) => actions.draft('discount', event.target.value),
+          onInput: (event) => {
+            actions.draft('discount', event.target.value);
+            // Typing does not render the page again: the button follows the field by hand.
+            const apply = event.target.parentElement?.querySelector('.lsf-apply');
+            if (apply) apply.disabled = ui.busy || event.target.value.trim() === '';
+          },
         }),
         h('label', { for: 'lsf-discount' }, 'Discount code'),
-        // Waits for a code: the style of the field dims it while the field is empty.
-        h('button', { class: 'lsf-apply', type: 'submit', disabled: ui.busy ? true : null }, 'Apply'),
+        // Waits for a code: disabled, for the mouse and the keyboard, while the field is empty.
+        h('button', { class: 'lsf-apply', type: 'submit', disabled: ui.busy || !(ui.discountInput ?? '').trim() ? true : null }, 'Apply'),
         ui.discountError && h('p', { class: 'lsf-field-error' }, icon('warning'), ui.discountError))),
     codes.length > 0 && h('ul', { class: 'lsf-codes' },
       codes.map((entry) =>

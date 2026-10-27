@@ -43,3 +43,15 @@ test('the page keeps its colors in the tokens', () => {
   const components = read('sandbox-components.js').match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
   assert.deepEqual(components, [], 'the components of the extensions use tokens');
 });
+
+test('less motion: transitions end at once and spinners turn slower, on the page and in the frame', () => {
+  const tokens = read('tokens.css');
+  const block = tokens.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.match(block, /--lsf-duration-fast:\s*1ms/);
+  assert.match(block, /--lsf-duration-base:\s*1ms/);
+  assert.match(block, /--lsf-duration-spin:/);
+  for (const name of ['checkout.css', 'sandbox-components.js']) {
+    const source = read(name);
+    assert.doesNotMatch(source, /(transition|animation)[^;{}]*\b\d*\.?\d+m?s\b/, `${name} writes a duration down`);
+  }
+});

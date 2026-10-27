@@ -655,7 +655,7 @@
     button:hover{background:var(--lsf-color-bg-subdued);box-shadow:inset 0 0 0 1px var(--lsf-color-border-emphasis)}button:focus-visible{outline:var(--lsf-ring-width) solid var(--lsf-color-focus-ring);outline-offset:0}
     :host([variant="primary"]) button{background:var(--lsf-color-accent);box-shadow:none;color:var(--lsf-color-on-accent)}:host([variant="primary"]) button:hover,:host([variant="primary"]) button:focus-visible{background:var(--lsf-color-accent-hover)}
     :host([tone="critical"]) button{color:var(--lsf-color-critical);box-shadow:inset 0 0 0 1px var(--lsf-color-critical)}:host([tone="critical"][variant="primary"]) button{background:var(--lsf-color-critical);box-shadow:none;color:var(--lsf-color-on-accent)}:host([tone="critical"][variant="primary"]) button:hover{background:var(--lsf-color-critical-hover)}
-    :host([disabled]) button,:host([loading]) button{opacity:var(--lsf-opacity-disabled);cursor:default}:host([loading]) button::before{content:"";width:.9em;height:.9em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+    :host([disabled]) button,:host([loading]) button{opacity:var(--lsf-opacity-disabled);cursor:default}:host([loading]) button::before{content:"";width:.9em;height:.9em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin var(--lsf-duration-spin) linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}`;
 
   define('s-button', {
@@ -1109,7 +1109,7 @@
     s-ordered-list > s-list-item, s-unordered-list > s-list-item { display: list-item; }
     s-divider { display: block; border: 0; border-block-start: 1px solid var(--lsf-color-border); margin: 0; }
     s-divider[direction="inline"] { display: inline-block; align-self: stretch; border-block-start: 0; border-inline-start: 1px solid var(--lsf-color-border); }
-    s-spinner { display: inline-block; width: 1.25rem; height: 1.25rem; border: 2px solid var(--lsf-color-accent); border-right-color: transparent; border-radius: 50%; animation: lsf-spin .7s linear infinite; }
+    s-spinner { display: inline-block; width: 1.25rem; height: 1.25rem; border: 2px solid var(--lsf-color-accent); border-right-color: transparent; border-radius: 50%; animation: lsf-spin var(--lsf-duration-spin) linear infinite; }
     s-spinner[size="small"] { width: .9rem; height: .9rem; }
     s-spinner[size="large"], s-spinner[size="large-100"] { width: 2rem; height: 2rem; }
     @keyframes lsf-spin { to { transform: rotate(360deg); } }

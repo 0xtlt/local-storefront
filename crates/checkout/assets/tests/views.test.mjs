@@ -426,6 +426,22 @@ test('the Apply button is inside the discount field, after its label', () => {
   assert.equal(field.children[2].props.class, 'lsf-apply');
 });
 
+test('the Apply button is disabled while the discount field is empty, and follows what is typed', () => {
+  const apply = (ui) => byClass(page(checkoutState(), ui), 'lsf-apply')[0];
+  assert.equal(apply({}).props.disabled, true);
+  assert.equal(apply({ discountInput: '   ' }).props.disabled, true);
+  assert.equal(apply({ discountInput: 'SAVE10' }).props.disabled, null);
+  assert.equal(apply({ discountInput: 'SAVE10', busy: true }).props.disabled, true);
+
+  const input = byClass(byClass(page(checkoutState()), 'lsf-discount-form')[0], 'lsf-input')[0];
+  const button = { disabled: true };
+  const target = (value) => ({ value, parentElement: { querySelector: (selector) => (selector === '.lsf-apply' ? button : null) } });
+  input.props.onInput({ target: target('SAVE10') });
+  assert.equal(button.disabled, false);
+  input.props.onInput({ target: target(' ') });
+  assert.equal(button.disabled, true);
+});
+
 test('the card row shows the brands it takes as three chips', () => {
   const tree = page(checkoutState());
   assert.deepEqual(byClass(tree, 'lsf-card-brand').map(text), ['VISA', 'MC', 'AMEX']);
