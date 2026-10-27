@@ -22,8 +22,8 @@
       },
       "rootUrl": "/fr",
       "country": {
-        "isoCode": "CA",
-        "name": "Canada"
+        "isoCode": "US",
+        "name": "United States"
       },
       "currency": {
         "isoCode": "USD"
@@ -68,8 +68,8 @@
       },
       "rootUrl": "/fr",
       "country": {
-        "isoCode": "FR",
-        "name": "France"
+        "isoCode": "US",
+        "name": "United States"
       },
       "currency": {
         "isoCode": "USD"

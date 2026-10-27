@@ -3965,7 +3965,8 @@ fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
             Some("Northwind Seattle"),
         ),
     ] {
-        // The country the visitor selected on the storefront.
+        // The country the visitor selected on the storefront: the address the customer ships
+        // to (their default one, the location's) wins over it.
         let country = if name == "customer" { "CA" } else { "FR" };
         let session = format!("co-buyer-{name}");
         let mut body = json!({
@@ -5781,6 +5782,415 @@ fn a_scenario_is_reloaded_when_its_file_changes() {
         9.9
     );
     assert_eq!(get(&state, "/checkout?scenario=new", "viewer").status, 302);
+}
+
+// --- Logging in at the checkout ---
+
+/// A checkout of one tee for a guest, in `session`.
+fn guest_checkout(state: &ServerState, session: &str) -> String {
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    header(&get(state, "/checkout", session), "location")
+        .expect("a location")
+        .to_string()
+}
+
+fn log_in_as(state: &ServerState, path: &str, session: &str, who: Json) -> Json {
+    let reply = operations(
+        state,
+        path,
+        session,
+        json!([{"type": "customer", "customer": who}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    body_json(&reply)
+}
+
+#[test]
+fn the_checkout_lists_the_customers_of_the_data_to_log_in_as() {
+    let state = checkout_server(&[], false);
+    let path = guest_checkout(&state, "co-login-list");
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-login-list"));
+    let profiles = json["account"]["profiles"].as_array().expect("profiles");
+    let emails: Vec<&str> = profiles
+        .iter()
+        .map(|profile| profile["email"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        emails,
+        [
+            "jane.doe@example.com",
+            "new.customer@example.com",
+            "alex.morgan@example.com",
+            "camille.martin@example.com"
+        ]
+    );
+    let jane = &profiles[0];
+    assert_eq!(jane["name"], "Jane Doe");
+    assert_eq!(jane["tags"], json!(["vip"]));
+    assert_eq!(jane["ordersCount"], 2);
+    assert_eq!(jane["addressesCount"], 2);
+    assert_eq!(jane["current"], false);
+    assert_eq!(profiles[2]["company"], "Northwind Hotels");
+    assert_eq!(profiles[2]["locationsCount"], 2);
+    assert_eq!(profiles[3]["countryCode"], "FR");
+    assert_eq!(json["account"]["addresses"], json!([]));
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+}
+
+#[test]
+fn logging_in_gives_the_checkout_the_contact_and_the_default_address_of_the_customer() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-jane";
+    let path = guest_checkout(&state, session);
+    let json = log_in_as(&state, &path, session, json!("jane.doe@example.com"));
+    assert_eq!(
+        json["token"],
+        path.rsplit('/').next().unwrap(),
+        "the same checkout"
+    );
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["phone"], "+1 555 010 9988");
+    assert_eq!(json["shippingAddress"]["address1"], "12 Maple Street");
+    assert_eq!(json["localization"]["country"]["isoCode"], "US");
+    // With an address, the shipping rates are there.
+    assert!(
+        !json["deliveryGroups"][0]["options"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let addresses = json["account"]["addresses"].as_array().unwrap();
+    assert_eq!(addresses.len(), 2);
+    assert_eq!(addresses[1]["address"]["address1"], "400 Pine Avenue");
+    assert_eq!(json["account"]["profiles"][0]["current"], true);
+    // The theme sees the same customer: the session is the browser's.
+    let session_json = body_json(&get(&state, "/__lsf/session", session));
+    assert_eq!(session_json["customer"], "jane.doe@example.com");
+
+    // Another saved address is a shipping address like any other.
+    let second = addresses[1]["address"].clone();
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "shippingAddress", "address": second}]),
+    );
+    assert_eq!(body_json(&reply)["shippingAddress"]["city"], "Seattle");
+
+    // Logging out is a guest checkout: nothing of Jane is left, the cart is.
+    let json = log_in_as(&state, &path, session, Json::Null);
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+    assert_eq!(json["buyer"]["email"], Json::Null);
+    assert_eq!(json["buyer"]["phone"], Json::Null);
+    assert_eq!(json["shippingAddress"], Json::Null);
+    assert_eq!(json["lines"].as_array().unwrap().len(), 1);
+    assert_eq!(json["account"]["addresses"], json!([]));
+    let session_json = body_json(&get(&state, "/__lsf/session", session));
+    assert_eq!(session_json["customer"], Json::Null);
+}
+
+#[test]
+fn an_address_the_guest_typed_stays_for_a_customer_without_one() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-typed";
+    let path = guest_checkout(&state, session);
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = log_in_as(&state, &path, session, json!("new.customer@example.com"));
+    assert_eq!(
+        json["buyer"]["email"], "new.customer@example.com",
+        "the account's, not the typed one"
+    );
+    assert_eq!(json["shippingAddress"]["address1"], "1 Analytical Way");
+    assert_eq!(json["selectedPayment"], "card", "the choices stay");
+    // A customer with an address of their own ships there instead.
+    let json = log_in_as(&state, &path, session, json!("camille.martin@example.com"));
+    assert_eq!(json["shippingAddress"]["city"], "Lyon");
+    assert_eq!(json["localization"]["country"]["isoCode"], "FR");
+}
+
+#[test]
+fn a_b2b_customer_buys_for_one_of_their_locations_and_ships_there() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-b2b";
+    let path = guest_checkout(&state, session);
+    let json = log_in_as(&state, &path, session, json!("alex.morgan@example.com"));
+    let purchasing = &json["buyer"]["purchasingCompany"];
+    assert_eq!(purchasing["company"]["name"], "Northwind Hotels");
+    assert_eq!(purchasing["location"]["name"], "Northwind Portland");
+    assert_eq!(json["shippingAddress"]["address1"], "815 Harbor Way");
+    let locations = json["account"]["locations"].as_array().unwrap();
+    assert_eq!(locations.len(), 2);
+    assert_eq!(locations[0]["current"], true);
+    assert_eq!(
+        json["account"]["addresses"][0]["location"],
+        "Northwind Portland"
+    );
+
+    // Another location, by its id: the order ships there.
+    let seattle = locations[1]["id"].clone();
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "companyLocation", "location": seattle}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(
+        json["buyer"]["purchasingCompany"]["location"]["name"],
+        "Northwind Seattle"
+    );
+    assert_eq!(json["shippingAddress"]["address1"], "2200 Alder Street");
+    assert_eq!(json["account"]["locations"][1]["current"], true);
+    let session_json = body_json(&get(&state, "/__lsf/session", session));
+    assert_eq!(session_json["company_location"], "Northwind Seattle");
+
+    // Logging in with a location, by its name.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "customer", "customer": Json::Null},
+               {"type": "customer", "customer": "alex.morgan@example.com", "location": "Northwind Seattle"}]),
+    );
+    assert_eq!(
+        body_json(&reply)["buyer"]["purchasingCompany"]["location"]["name"],
+        "Northwind Seattle"
+    );
+}
+
+#[test]
+fn a_login_the_data_does_not_allow_is_refused_and_changes_nothing() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-refused";
+    let path = guest_checkout(&state, session);
+    for (operations_json, message) in [
+        (
+            json!([{"type": "email", "value": "x@example.com"},
+                   {"type": "customer", "customer": "nobody@example.com"}]),
+            "there is no customer with the email",
+        ),
+        (
+            json!([{"type": "customer", "customer": 42}]),
+            "an email, or null",
+        ),
+        (
+            json!([{"type": "companyLocation", "location": "Northwind Seattle"}]),
+            "needs a logged-in customer",
+        ),
+        (
+            json!([{"type": "customer", "customer": "jane.doe@example.com", "location": "Northwind Seattle"}]),
+            "does not buy for a company",
+        ),
+        (
+            json!([{"type": "customer", "customer": "alex.morgan@example.com", "location": "Northwind Boston"}]),
+            "cannot buy for a location",
+        ),
+    ] {
+        let reply = operations(&state, &path, session, operations_json);
+        assert_eq!(reply.status, 400, "{}", text(&reply));
+        assert!(text(&reply).contains(message), "{}", text(&reply));
+    }
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+    assert_eq!(json["buyer"]["email"], Json::Null);
+}
+
+#[test]
+fn the_checkout_follows_a_login_made_elsewhere() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-elsewhere";
+    let path = guest_checkout(&state, session);
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // The login link of the control API, as the storefront's account page uses it.
+    let reply = get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/cart",
+        session,
+    );
+    assert_eq!(reply.status, 302);
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["shippingAddress"]["address1"], "12 Maple Street");
+    // And reading it again changes nothing more.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "shippingAddress", "address": {"lastName": "Doe", "address1": "1 Elsewhere", "city": "Ottawa", "countryCode": "CA"}}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["shippingAddress"]["address1"], "1 Elsewhere");
+}
+
+#[test]
+fn checkout_with_a_customer_in_the_query_opens_it_logged_in_as_them() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-query";
+    guest_checkout(&state, session);
+    let reply = get(
+        &state,
+        "/checkout?customer=camille.martin@example.com",
+        session,
+    );
+    assert_eq!(reply.status, 302);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(
+        json["buyer"]["customer"]["email"],
+        "camille.martin@example.com"
+    );
+    assert_eq!(json["shippingAddress"]["city"], "Lyon");
+    // `none` is a guest again.
+    let reply = get(&state, "/checkout?customer=none", session);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+    // Someone the data does not have.
+    let reply = get(&state, "/checkout?customer=nobody@example.com", session);
+    assert_eq!(reply.status, 404);
+    assert!(
+        text(&reply).contains("jane.doe@example.com"),
+        "{}",
+        text(&reply)
+    );
+}
+
+#[test]
+fn a_scenario_opens_logged_in_as_the_customer_of_the_query() {
+    let data = ScenarioData::new(
+        "login",
+        &[(
+            "tees.json",
+            r#"{"session": {"customer": "none", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+        )],
+    );
+    let state = data.server(&[], false);
+    let reply = get(
+        &state,
+        "/checkout?scenario=tees&customer=default",
+        "co-login-scenario",
+    );
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), &session));
+    assert_eq!(json["scenario"]["name"], "tees");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["lines"][0]["quantity"], 2);
+    // Switching customer changes the session, not the scenario it started from.
+    let json = log_in_as(&state, &path, &session, json!("new.customer@example.com"));
+    assert_eq!(json["scenario"]["name"], "tees");
+    assert_eq!(
+        json["buyer"]["customer"]["email"],
+        "new.customer@example.com"
+    );
+}
+
+#[test]
+fn the_functions_read_the_customer_the_checkout_switched_to() {
+    // A copy of the fixture app whose payment Function also asks for the buyer.
+    let root = std::env::temp_dir().join(format!("lsf-checkout-fn-buyer-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let query = root.join("extensions/payment-rules/src/run.graphql");
+    let source = std::fs::read_to_string(&query).unwrap();
+    std::fs::write(
+        &query,
+        source.replacen(
+            "  cart {",
+            r#"  cart {
+    buyerIdentity {
+      email
+      isAuthenticated
+      customer {
+        id email displayName numberOfOrders
+        amountSpent { amount currencyCode }
+        vip: hasAnyTag(tags: ["vip"])
+        tags: hasTags(tags: ["vip", "wholesale"]) { tag hasTag }
+        tier: metafield(namespace: "custom", key: "loyalty_tier") { value }
+      }
+      purchasingCompany { company { name } location { name } }
+    }"#,
+            1,
+        ),
+    )
+    .unwrap();
+    let state = checkout_server_of(root.clone(), &["payment-rules"], false);
+    let session = "co-fn-buyer";
+    let path = guest_checkout(&state, session);
+    let buyer = |json: &Json| {
+        let run = json["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["handle"] == "payment-rules")
+            .expect("the run of the payment Function")
+            .clone();
+        assert_eq!(run["error"], Json::Null, "{run}");
+        run["input"]["cart"]["buyerIdentity"].clone()
+    };
+
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(buyer(&json)["customer"], Json::Null);
+    assert_eq!(buyer(&json)["isAuthenticated"], false);
+
+    let identity = buyer(&log_in_as(
+        &state,
+        &path,
+        session,
+        json!("jane.doe@example.com"),
+    ));
+    assert_eq!(identity["isAuthenticated"], true);
+    assert_eq!(identity["email"], "jane.doe@example.com");
+    let customer = &identity["customer"];
+    assert_eq!(customer["email"], "jane.doe@example.com");
+    assert_eq!(customer["displayName"], "Jane Doe");
+    assert_eq!(customer["numberOfOrders"], 2);
+    assert_eq!(customer["vip"], true);
+    assert_eq!(
+        customer["tags"],
+        json!([{"tag": "vip", "hasTag": true}, {"tag": "wholesale", "hasTag": false}])
+    );
+    assert_eq!(customer["tier"]["value"], "gold");
+    assert!(
+        customer["amountSpent"]["amount"]
+            .as_str()
+            .is_some_and(|amount| amount != "0.0")
+    );
+    assert_eq!(identity["purchasingCompany"], Json::Null);
+
+    let identity = buyer(&log_in_as(
+        &state,
+        &path,
+        session,
+        json!("alex.morgan@example.com"),
+    ));
+    assert_eq!(identity["customer"]["vip"], false);
+    assert_eq!(identity["customer"]["numberOfOrders"], 0);
+    assert_eq!(
+        identity["purchasingCompany"]["company"]["name"],
+        "Northwind Hotels"
+    );
+    assert_eq!(
+        identity["purchasingCompany"]["location"]["name"],
+        "Northwind Portland"
+    );
+
+    let identity = buyer(&log_in_as(&state, &path, session, Json::Null));
+    assert_eq!(identity["customer"], Json::Null);
+    assert_eq!(identity["isAuthenticated"], false);
+    let _ = std::fs::remove_dir_all(root);
 }
 
 // --- The home page ---

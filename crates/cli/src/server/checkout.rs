@@ -19,6 +19,7 @@ use lsf_core::store::{CartLine, Customer, Language};
 use lsf_core::{Session, Store};
 use serde_json::{Value as Json, json};
 
+use super::checkout_account::{self, Identity};
 use super::reply::{Reply, cache, content_type};
 use super::{Incoming, SESSION_COOKIE, ServerState, SessionEntry, cart_token_of, home};
 use crate::checkout::{
@@ -40,6 +41,9 @@ pub struct CheckoutSession {
     /// How many orders this session placed: a completion that started before one finished
     /// must not place another.
     pub placed: u64,
+    /// Who the checkout was last prepared for: when the session has another customer, what the
+    /// checkout holds of the one before gives way (see `checkout_account::prepare`).
+    pub prepared: Option<Identity>,
 }
 
 /// A store, which is the same as another only if it is the very one that was loaded.
@@ -234,10 +238,56 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
         return open_scenario(state, incoming, name);
     }
     let (id, is_new) = state.session_id(incoming);
+    if let Some(who) = incoming.query_param("customer") {
+        let (_, store) = state.snapshot(&id);
+        let customer = match customer_of_query(state, &store, incoming, who) {
+            Ok(customer) => customer,
+            Err(reply) => return with_cookie(reply, &id, is_new),
+        };
+        state.with_session(&id, |entry| {
+            if entry.session.customer_id != customer {
+                entry.session.customer_id = customer;
+                entry.session.company_location = None;
+            }
+        });
+    }
     let root = request_root(state, &id, incoming);
     let mut location = checkout_path(&root, &token_of(state, &id));
     location.push_str(&carried_query(incoming, &["variant", "targets"]));
     with_cookie(Reply::redirect(&location), &id, is_new)
+}
+
+/// The customer `?customer=` logs the checkout in as: an email, `default`, or `none` for a guest.
+/// Someone the store data does not have is a page that lists who it has.
+fn customer_of_query(
+    state: &ServerState,
+    store: &Store,
+    incoming: &Incoming,
+    who: &str,
+) -> Result<Option<u64>, Reply> {
+    store
+        .customer_named(who)
+        .map(|customer| customer.map(|customer| customer.id))
+        .map_err(|problem| {
+            let known: Vec<&str> = store
+                .customers
+                .iter()
+                .map(|customer| customer.email.as_str())
+                .collect();
+            let hint = if known.is_empty() {
+                "The store data has no customers: add some to `customers.json`.".to_string()
+            } else {
+                format!("The customers are: {}.", known.join(", "))
+            };
+            let language = language_of(state, store, incoming);
+            home::notice(
+                404,
+                &format!("No customer {who}"),
+                &[problem, hint],
+                &[],
+                &home_path(state, root_of(language)),
+            )
+        })
 }
 
 /// The query parameters of the request that the checkout page keeps, as `?a=1&b=2`.
@@ -334,6 +384,17 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
             &details,
         );
     }
+    // `&customer=` logs the scenario's checkout in as someone else.
+    if let Some(who) = incoming.query_param("customer") {
+        match customer_of_query(state, store, incoming, who) {
+            Ok(customer) if customer != session.customer_id => {
+                session.customer_id = customer;
+                session.company_location = None;
+            }
+            Ok(_) => {}
+            Err(reply) => return reply,
+        }
+    }
     let entered = entered_by(scenario);
     // As entering the address does: markets decide on the country of the address.
     if let Some(code) = entered
@@ -413,6 +474,15 @@ struct Computed {
 fn read(state: &ServerState, session_id: &str) -> (Session, Arc<Store>, CheckoutState, Basis) {
     let loaded = state.loaded().store.clone();
     state.with_session(session_id, |entry| {
+        // Caught up with a customer that changed since (a login link, the control API, the
+        // login form of the theme), in the same step as the read.
+        let store = entry.store.clone().unwrap_or_else(|| loaded.clone());
+        checkout_account::prepare(
+            &store,
+            &mut entry.session,
+            &mut entry.checkout.state,
+            &mut entry.checkout.prepared,
+        );
         let basis = Basis::of(entry, &loaded);
         (
             entry.session.clone(),
@@ -515,6 +585,11 @@ fn compute(
                 purchasing_company_json(customer, &store, session.company_location)
             }),
         }),
+    );
+    // The customers of the store data to log in as, and what the logged-in one brings.
+    object.insert(
+        "account".into(),
+        checkout_account::account_json(&store, &session),
     );
     object.insert(
         "localization".into(),
@@ -856,6 +931,7 @@ pub(super) fn apply_update(
         }
     }
     between();
+    let identity = Identity::of(&store, &session);
     let written = state.with_session(id, |entry| {
         let unchanged = !is_placed(entry) && Basis::of(entry, &state.loaded().store) == basis;
         if unchanged {
@@ -863,6 +939,9 @@ pub(super) fn apply_update(
             entry.session.cart_note = session.cart_note;
             entry.session.cart_attributes = session.cart_attributes;
             entry.session.country = session.country;
+            entry.session.customer_id = session.customer_id;
+            entry.session.company_location = session.company_location;
+            entry.checkout.prepared = Some(identity);
             entry.checkout.state = checkout;
             // Changing a cart after an order starts another checkout.
             entry.checkout.completed = None;
@@ -918,6 +997,10 @@ fn apply(
         .and_then(Json::as_str)
         .ok_or("an operation needs a `type`")?;
     match kind {
+        "customer" => checkout_account::log_in(store, session, checkout, operation)?,
+        "companyLocation" => {
+            checkout_account::choose_location(store, session, checkout, operation)?
+        }
         "email" => checkout.email = text_of(operation, "value"),
         "phone" => checkout.phone = text_of(operation, "value"),
         "shippingAddress" => {

@@ -4,6 +4,7 @@ mod account;
 mod cart;
 mod cdn;
 mod checkout;
+mod checkout_account;
 mod compress;
 mod control;
 pub use control::{apply_session_input, routes};

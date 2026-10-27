@@ -83,7 +83,7 @@ pub fn switch_location(visit: &Visit<'_>) -> Reply {
     Reply::redirect(&target)
 }
 
-fn full_name(customer: &Customer) -> String {
+pub(super) fn full_name(customer: &Customer) -> String {
     let name = [customer.first_name.as_str(), customer.last_name.as_str()]
         .iter()
         .filter(|part| !part.is_empty())
