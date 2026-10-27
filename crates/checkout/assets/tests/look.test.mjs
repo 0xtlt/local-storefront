@@ -37,7 +37,7 @@ test('the page and the frame of the extensions read the same tokens', () => {
 
 test('the page keeps its colors in the tokens', () => {
   // The Shop skin and the thank-you page may still draw a few violet washes and the code blocks
-  // of the Functions panel are dark: everything else is a token.
+  // of the Functions dialog are dark: everything else is a token.
   const own = read('checkout.css').match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
   assert.ok(own.length <= 10, `colors written in checkout.css: ${own.join(', ')}`);
   const components = read('sandbox-components.js').match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
@@ -54,4 +54,15 @@ test('less motion: transitions end at once and spinners turn slower, on the page
     const source = read(name);
     assert.doesNotMatch(source, /(transition|animation)[^;{}]*\b\d*\.?\d+m?s\b/, `${name} writes a duration down`);
   }
+});
+
+test('the Functions dialog holds the page still behind it and takes a narrow screen whole', () => {
+  const css = read('checkout.css');
+  assert.match(css, /html:has\(\.lsf-fn-dialog\[open\]\)\s*\{\s*overflow: hidden;/);
+  assert.match(css, /\.lsf-fn-dialog::backdrop\s*\{[^}]*var\(--lsf-color-backdrop\)/);
+  assert.match(css, /\.lsf-fn-badge\s*\{[^}]*position: fixed;[^}]*env\(safe-area-inset-bottom\)/);
+  const narrow = css.match(/@media \(max-width: 899\.98px\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.match(narrow, /\.lsf-fn-dialog\s*\{[^}]*width: 100vw;[^}]*height: 100dvh;/);
+  assert.match(narrow, /\.lsf-fn-panes[^{]*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.doesNotMatch(css, /\.lsf-functions\b/, 'the old panel is gone');
 });

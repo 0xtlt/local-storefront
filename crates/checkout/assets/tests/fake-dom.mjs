@@ -267,6 +267,27 @@ export class FakeElement extends Node {
   }
 }
 
+/** A `<dialog>`: `showModal()` opens it, `close()` closes it and says so with `close`. */
+export class FakeDialog extends FakeElement {
+  constructor(doc, tag) {
+    super(doc, tag);
+    this.open = false;
+    this.modal = false;
+  }
+  showModal() {
+    this.open = true;
+    this.modal = true;
+    this.setAttribute('open', '');
+  }
+  close() {
+    if (!this.open) return;
+    this.open = false;
+    this.modal = false;
+    this.removeAttribute('open');
+    this.dispatchEvent(new FakeEvent('close'));
+  }
+}
+
 export class FakeDocument extends FakeElement {
   constructor() {
     super(null, '#document');
@@ -281,7 +302,8 @@ export class FakeDocument extends FakeElement {
   }
   createElement(tag) {
     const factory = this.elementFactory?.(tag.toLowerCase());
-    return factory ? factory(this, tag) : new FakeElement(this, tag);
+    if (factory) return factory(this, tag);
+    return tag.toLowerCase() === 'dialog' ? new FakeDialog(this, tag) : new FakeElement(this, tag);
   }
   // Preact makes every element with it; the namespace does not matter here.
   createElementNS(_namespace, tag) {

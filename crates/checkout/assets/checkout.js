@@ -7,7 +7,7 @@ import { MENU_ITEMS } from './account.js';
 import { RENDERED_TARGETS, createExtensionHost } from './extension-host.js';
 import { languageOf, withCurrency } from './format.js';
 import { missingFields, op } from './operations.js';
-import { renderPage } from './views.js';
+import { defaultRunView, renderPage } from './views.js';
 import { h, render } from './vdom.js';
 
 const ADDRESS_FIELDS = [
@@ -29,8 +29,11 @@ export function startCheckout({ root, initial, document, window, location, fetch
     discountError: null,
     summaryOpen: false,
     accountOpen: false,
+    // The dialog of the Functions, what it shows (`overview`, or a run: see `runView`) and the
+    // JSON just copied from it.
     functionsOpen: false,
-    openRuns: new Set(),
+    functionsView: null,
+    copied: null,
     tried: false,
     busy: false,
     block: null,
@@ -90,6 +93,12 @@ export function startCheckout({ root, initial, document, window, location, fetch
     const index = which === 'last' ? items.length - 1 : which === 'current' ? Math.max(0, checked) : 0;
     items[index].focus?.();
   }
+
+  const functionsDialog = () => root.querySelector?.('.lsf-fn-dialog');
+  // A click on the backdrop of the dialog closes it, if it also started there: not a selection
+  // of the JSON that ended outside.
+  let pressedBackdrop = false;
+  let copiedTimer = null;
 
   // A click anywhere but on the customer menu closes it, and leaves the focus where it went.
   document.addEventListener?.('click', (event) => {
@@ -344,17 +353,65 @@ export function startCheckout({ root, initial, document, window, location, fetch
       paint();
     },
 
+    /** Opens the dialog of the Functions, on its first failed run, or closes it. The page
+     * opens it as a modal (`showModal()`); whatever closes it (this, Escape, the backdrop)
+     * ends in `functionsClosed`. */
     toggleFunctions(open) {
-      if (open === ui.functionsOpen) return;
-      ui.functionsOpen = open;
+      const dialog = functionsDialog();
+      if (!open) {
+        if (dialog?.open) dialog.close();
+        else actions.functionsClosed();
+        return;
+      }
+      if (ui.functionsOpen) return;
+      ui.functionsOpen = true;
+      ui.functionsView = defaultRunView(state.runs ?? []);
+      paint();
+      if (dialog && !dialog.open) dialog.showModal?.();
+    },
+
+    /** The dialog closed: what was in it goes, and the focus goes back to the badge. */
+    functionsClosed() {
+      const wasOpen = ui.functionsOpen;
+      ui.functionsOpen = false;
+      ui.copied = null;
+      if (wasOpen) paint();
+      root.querySelector?.('.lsf-fn-badge')?.focus?.();
+    },
+
+    functionsPointer(event) {
+      pressedBackdrop = event.target === event.currentTarget;
+    },
+
+    functionsClick(event) {
+      const onBackdrop = pressedBackdrop && event.target === event.currentTarget;
+      pressedBackdrop = false;
+      if (onBackdrop) actions.toggleFunctions(false);
+    },
+
+    /** Shows the overview (`overview`) or a run (`runView`) in the dialog. */
+    showRun(view) {
+      ui.functionsView = view;
       paint();
     },
 
-    toggleRun(index, open) {
-      if (open === ui.openRuns.has(index)) return;
-      if (open) ui.openRuns.add(index);
-      else ui.openRuns.delete(index);
+    /** Copies a JSON of the dialog, and says so for a moment. Without a clipboard, nothing. */
+    async copyJson(id, text) {
+      const clipboard = window?.navigator?.clipboard;
+      if (!clipboard?.writeText) return;
+      try {
+        await clipboard.writeText(text);
+      } catch {
+        return;
+      }
+      ui.copied = id;
       paint();
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
+        if (ui.copied !== id) return;
+        ui.copied = null;
+        paint();
+      }, 1500);
     },
 
     async pay() {

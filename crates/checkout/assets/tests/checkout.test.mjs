@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { startCheckout } from '../checkout.js';
 import { op } from '../operations.js';
 import { complete, update } from '../preview/mock-engine.mjs';
-import { FakeDocument } from './fake-dom.mjs';
+import { FakeDocument, FakeEvent } from './fake-dom.mjs';
 import { engineCheckout, pageState, settle } from './harness.mjs';
 
 const SANDBOX = 'http://localhost/__lsf/checkout/assets/sandbox.html';
@@ -56,7 +56,7 @@ function app({ variant = 'standard', mutate, hold, conflict, href = 'http://loca
   };
   const checkout = startCheckout({ root, initial: publicState(engine), document, window, location, fetch, storage: undefined, sandboxUrl: SANDBOX });
   const query = (selector) => root.querySelector(selector);
-  return { checkout, document, root, requests, location, query, text: (selector) => query(selector)?.textContent, operations: () => requests.filter((r) => r.url.endsWith('/update')).flatMap((r) => r.body.operations), engine: () => engine };
+  return { checkout, document, window, root, requests, location, query, text: (selector) => query(selector)?.textContent, operations: () => requests.filter((r) => r.url.endsWith('/update')).flatMap((r) => r.body.operations), engine: () => engine };
 }
 
 const ADDRESS = { lastName: 'Martin', address1: '1 rue de Rivoli', city: 'Paris', countryCode: 'FR' };
@@ -306,20 +306,95 @@ test('a draft gives way once the server agrees, and to the server when it change
   assert.equal(page.query('[data-field="city"] input').value, 'Lyon');
 });
 
-test('the summary and the Functions panel open and close', () => {
+test('the summary opens and closes', () => {
   const page = app();
   const { actions } = page.checkout;
   assert.equal(page.query('.lsf-summary').getAttribute('data-open'), 'false');
   actions.toggleSummary();
   assert.equal(page.query('.lsf-summary').getAttribute('data-open'), 'true');
+  actions.toggleSummary();
+  assert.equal(page.query('.lsf-summary').getAttribute('data-open'), 'false');
+});
+
+test('the badge opens the dialog of the Functions as a modal, and its close button closes it', () => {
+  const page = app();
+  const { ui } = page.checkout;
+  const dialog = page.query('.lsf-fn-dialog');
+  assert.equal(dialog.open, false);
+  assert.equal(dialog.childNodes.length, 0, 'nothing in it while it is closed');
+  page.query('.lsf-fn-badge').click();
+  assert.equal(ui.functionsOpen, true);
+  assert.equal(dialog.modal, true, 'opened with showModal()');
+  assert.equal(page.query('.lsf-fn-run').getAttribute('data-run'), 'volume-discount');
+  page.query('.lsf-fn-close').click();
+  assert.equal(dialog.open, false);
+  assert.equal(ui.functionsOpen, false);
+  assert.equal(dialog.childNodes.length, 0);
+  assert.equal(page.document.activeElement, page.query('.lsf-fn-badge'), 'the focus goes back to the badge');
+});
+
+test('the dialog closing by itself (Escape) resets the page, and the focus goes back to the badge', () => {
+  const page = app();
+  page.checkout.actions.toggleFunctions(true);
+  const dialog = page.query('.lsf-fn-dialog');
+  // What the browser does on Escape: the dialog closes and says so.
+  dialog.close();
+  assert.equal(page.checkout.ui.functionsOpen, false);
+  assert.equal(page.query('.lsf-fn-frame'), null);
+  assert.equal(page.document.activeElement, page.query('.lsf-fn-badge'));
+  // It opens again, the same element.
+  page.checkout.actions.toggleFunctions(true);
+  assert.equal(page.query('.lsf-fn-dialog'), dialog);
+  assert.equal(dialog.open, true);
+});
+
+test('a click on the backdrop closes the dialog, not one that started inside it', () => {
+  const page = app();
+  page.checkout.actions.toggleFunctions(true);
+  const dialog = page.query('.lsf-fn-dialog');
+  const frame = page.query('.lsf-fn-frame');
+  // A selection of the JSON that ends on the backdrop: the click lands on the dialog.
+  frame.dispatchEvent(new FakeEvent('pointerdown', { bubbles: true }));
+  dialog.click();
+  assert.equal(dialog.open, true);
+  frame.click();
+  assert.equal(dialog.open, true, 'a click inside does nothing');
+  dialog.dispatchEvent(new FakeEvent('pointerdown', { bubbles: true }));
+  dialog.click();
+  assert.equal(dialog.open, false);
+  assert.equal(page.checkout.ui.functionsOpen, false);
+});
+
+test('the run shown in the dialog stays across updates, and the dialog element with it', async () => {
+  const page = app();
+  const { actions } = page.checkout;
   actions.toggleFunctions(true);
-  assert.ok(page.query('.lsf-functions-body'));
-  actions.toggleRun(0, true);
-  assert.ok(page.query('.lsf-run pre'));
-  actions.toggleRun(0, false);
-  assert.equal(page.query('.lsf-run pre'), null);
-  actions.toggleFunctions(false);
-  assert.equal(page.query('.lsf-functions-body'), null);
+  const dialog = page.query('.lsf-fn-dialog');
+  page.query('[data-run="order-rules"]').click();
+  assert.equal(page.query('.lsf-fn-run').getAttribute('data-run'), 'order-rules');
+  await actions.commit('email', 'a@b.c');
+  assert.equal(page.query('.lsf-fn-dialog'), dialog, 'an update does not replace the dialog');
+  assert.equal(dialog.open, true);
+  assert.equal(page.query('.lsf-fn-run').getAttribute('data-run'), 'order-rules');
+  assert.equal(page.query('[aria-current="true"]').getAttribute('data-run'), 'order-rules');
+  page.query('[data-view="overview"]').click();
+  assert.ok(page.query('.lsf-fn-overview'));
+  assert.equal(page.query('.lsf-fn-run'), null);
+});
+
+test('Copy puts the JSON on the clipboard and says so for a moment', async () => {
+  const page = app();
+  const written = [];
+  page.window.navigator = { clipboard: { writeText: async (text) => written.push(text) } };
+  page.checkout.actions.toggleFunctions(true);
+  page.query('.lsf-fn-copy').click();
+  await settle();
+  assert.equal(written[0], JSON.stringify(page.checkout.getState().runs[0].input, null, 2));
+  assert.equal(page.query('.lsf-fn-copy').textContent, 'Copied');
+  // No clipboard (a page that is not secure): nothing happens.
+  delete page.window.navigator;
+  await page.checkout.actions.copyJson('x', '{}');
+  assert.notEqual(page.checkout.ui.copied, 'x');
 });
 
 test('the Shop skin is drawn from the state', () => {

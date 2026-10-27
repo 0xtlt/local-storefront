@@ -6,7 +6,7 @@ import { withCurrency } from '../format.js';
 import { update } from '../preview/mock-engine.mjs';
 import { RENDERED_TARGETS } from '../extension-host.js';
 import { h } from '../vdom.js';
-import { jsonCode, renderPage } from '../views.js';
+import { defaultRunView, jsonCode, renderPage, runView, selectedRun } from '../views.js';
 import { checkoutState, engineCheckout, pageState } from './harness.mjs';
 
 const walk = (node, visit) => {
@@ -28,7 +28,7 @@ function page(state, ui = {}, { slots = [], refusals } = {}) {
     slots.push([target, instance]);
     return null;
   };
-  return renderPage({ state, ui: { draft: { address: {} }, openRuns: new Set(), ...ui }, slot, actions, refusals, location: 'http://localhost/checkouts/cn/preview' });
+  return renderPage({ state, ui: { draft: { address: {} }, ...ui }, slot, actions, refusals, location: 'http://localhost/checkouts/cn/preview' });
 }
 
 /** The sample checkout after `operations`, as the page gets it. */
@@ -246,39 +246,129 @@ test('the thank-you page shows the balance the order still owes', () => {
   assert.doesNotMatch(text(byClass(plain, 'lsf-details')[0]), /Remaining balance/);
 });
 
-test('the Functions panel lists the runs and opens them on demand', () => {
+// --- The Functions: the badge and the dialog ---
+
+const badge = (tree) => byClass(tree, 'lsf-fn-badge')[0];
+const dialog = (tree) => byClass(tree, 'lsf-fn-dialog')[0];
+const pres = (tree) => findAll(tree, (node) => node.tag === 'pre');
+const withRuns = (runs, overrides = {}) => {
+  const state = checkoutState(overrides);
+  state.runs = runs.map((run) => ({ ...state.runs[0], ...run }));
+  return state;
+};
+
+test('every page has the badge of the Functions, last, with the dialog after it', () => {
+  const done = withCurrency({ ...checkoutState(), status: 'completed', order: { number: '#1001' } });
+  const pages = {
+    checkout: page(checkoutState()),
+    shop: page(checkoutState({ variant: 'shop' })),
+    'thank-you': page(done),
+    'shop thank-you': page({ ...done, variant: 'shop' }),
+    'empty cart': page({ ...checkoutState(), lines: [] }),
+    'every target': everyTarget(checkoutState()).tree,
+  };
+  for (const [name, tree] of Object.entries(pages)) {
+    const last = tree.children.at(-1);
+    assert.equal(last.key, 'functions', `${name}: the badge and the dialog come last`);
+    assert.deepEqual(last.children.map((node) => node.tag), ['button', 'dialog'], name);
+    assert.equal(last.children[0].props['aria-haspopup'], 'dialog', name);
+  }
+  const button = badge(pages.checkout);
+  assert.match(text(button), /Functions.*2 runs/);
+  assert.equal(button.props['aria-label'], 'Functions, 2 runs');
+  assert.equal(button.props['data-status'], 'ok');
+});
+
+test('the badge turns critical when a run failed or the checkout has errors', () => {
+  const failed = badge(page(withRuns([{ handle: 'a', error: 'unreachable executed' }, { handle: 'b' }])));
+  assert.equal(failed.props['data-status'], 'failed');
+  assert.match(text(failed), /2 runs.*1 failed/);
+  assert.equal(failed.props['aria-label'], 'Functions, 2 runs, 1 failed');
+
+  const errors = badge(page(checkoutState({ errors: [{ message: 'No', target: '$.cart' }, { message: 'Never', target: '$.cart' }] })));
+  assert.equal(errors.props['data-status'], 'failed');
+  assert.match(text(errors), /2 errors/);
+  assert.equal(errors.props['aria-label'], 'Functions, 2 runs, 2 checkout errors');
+
+  const none = badge(page({ ...checkoutState(), runs: [] }));
+  assert.equal(none.props['data-status'], 'ok');
+  assert.match(text(none), /No runs/);
+});
+
+test('the dialog is empty while it is closed', () => {
+  const closed = dialog(page(checkoutState()));
+  assert.equal(closed.props.closedby, 'any');
+  assert.equal('open' in closed.props, false, 'the page opens it with showModal(), never with the attribute');
+  assert.equal(closed.children.length, 0);
+});
+
+test('the dialog shows the runs on the left and the JSON of the selected one only, side by side', () => {
   const state = checkoutState();
-  const closed = page(state);
-  const panel = byClass(closed, 'lsf-functions')[0];
-  assert.match(text(panel.children[0]), /Functions.*2 runs/);
-  assert.equal(byClass(closed, 'lsf-run').length, 0, 'nothing built while the panel is closed');
+  const tree = page(state, { functionsOpen: true, functionsView: runView(state.runs, 1) });
+  const open = dialog(tree);
+  assert.match(text(byClass(open, 'lsf-fn-head')[0]), /Functions.*2 runs/);
+  const entries = byClass(open, 'lsf-fn-entry');
+  assert.deepEqual(entries.map((node) => node.props['data-run'] ?? node.props['data-view']), ['overview', 'volume-discount', 'order-rules']);
+  assert.deepEqual(entries.map((node) => node.props['aria-current']), [null, null, 'true']);
+  assert.match(text(entries[1]), /volume-discount.*ok.*cart\.lines\.discounts\.generate\.run.*41,876 instructions/);
 
-  const open = page(state, { functionsOpen: true });
-  const runs = byClass(open, 'lsf-run');
-  assert.deepEqual(runs.map((run) => run.props['data-run']), ['volume-discount', 'order-rules']);
-  assert.equal(findAll(open, (node) => node.tag === 'pre').length, 0, 'inputs are built only for the runs that are open');
-
-  const withRun = page(state, { functionsOpen: true, openRuns: new Set([0]) });
-  const pres = findAll(withRun, (node) => node.tag === 'pre').map(text);
-  assert.equal(pres.length, 2);
-  assert.match(pres[0], /"cart"/);
-  assert.match(pres[1], /"operations"/);
+  const run = byClass(open, 'lsf-fn-run')[0];
+  assert.equal(run.props['data-run'], 'order-rules');
+  const panes = byClass(run, 'lsf-fn-panes');
+  assert.equal(panes.length, 1, 'no HTTP exchange for a run that is not a fetch');
+  assert.deepEqual(panes[0].children.map((node) => node.props['data-pane']), ['input', 'output']);
+  assert.deepEqual(panes[0].children.map((node) => text(node.children[0].children[0])), ['Input', 'Output']);
+  const json = pres(open).map(text);
+  assert.equal(json.length, 2, 'only the JSON of the selected run is built');
+  assert.equal(json[0], JSON.stringify(state.runs[1].input, null, 2));
+  assert.equal(json[1], JSON.stringify(state.runs[1].output, null, 2));
 });
 
-test('the Functions panel lists the discounts that were not applied, with why', () => {
-  const state = checkoutState({
-    skippedDiscounts: [{ title: 'Half', code: null, class: 'Shipping', amount: { amount: 2.45 }, function: 'volume-discount', reason: 'only one shipping discount applies per order: "Three off" takes 3.00 USD off the shipping' }],
-  });
-  const closed = page(state);
-  assert.equal(findAll(closed, (node) => node.props['data-test'] === 'skipped-discounts').length, 0, 'nothing built while the panel is closed');
-  const open = page(state, { functionsOpen: true });
-  const [skipped] = findAll(open, (node) => node.props['data-test'] === 'skipped-discounts');
-  assert.match(text(skipped), /Discounts not applied.*Half.*only one shipping discount applies per order.*Three off.*volume-discount/);
-  const none = page(checkoutState(), { functionsOpen: true });
-  assert.equal(findAll(none, (node) => node.props['data-test'] === 'skipped-discounts').length, 0);
+test('each JSON has a button that copies it, and says when it did', () => {
+  const state = checkoutState();
+  const copied = [];
+  const actions = new Proxy({}, { get: (_, name) => (name === 'copyJson' ? (...args) => copied.push(args) : () => {}) });
+  const tree = renderPage({ state, ui: { draft: { address: {} }, functionsOpen: true, functionsView: runView(state.runs, 0) }, slot: () => null, actions, location: 'http://localhost/' });
+  const buttons = byClass(tree, 'lsf-fn-copy');
+  assert.deepEqual(buttons.map(text), ['Copy', 'Copy']);
+  buttons[1].props.onClick();
+  assert.equal(copied[0][1], JSON.stringify(state.runs[0].output, null, 2));
+  const id = copied[0][0];
+  const after = page(state, { functionsOpen: true, functionsView: runView(state.runs, 0), copied: id });
+  assert.deepEqual(byClass(after, 'lsf-fn-copy').map(text), ['Copy', 'Copied']);
 });
 
-test('a fetch run shows the request it asked for and the response', () => {
+test('the dialog opens on the first run that failed, else on the first run, else on the overview', () => {
+  const state = withRuns([{ handle: 'a' }, { handle: 'b', error: 'boom' }, { handle: 'c', error: 'bang' }]);
+  assert.deepEqual(defaultRunView(state.runs), { handle: 'b', target: state.runs[0].target, occurrence: 0 });
+  assert.deepEqual(defaultRunView(withRuns([{ handle: 'a' }, { handle: 'b' }]).runs).handle, 'a');
+  assert.equal(defaultRunView([]), 'overview');
+  // With no choice made, the page shows the same.
+  const tree = page(state, { functionsOpen: true });
+  assert.equal(byClass(tree, 'lsf-fn-run')[0].props['data-run'], 'b');
+  const empty = page({ ...checkoutState(), runs: [] }, { functionsOpen: true, functionsView: 'overview' });
+  assert.match(text(byClass(empty, 'lsf-fn-overview')[0]), /No Function ran\./);
+});
+
+test('the run shown is found again by its handle and target after an update, else the default', () => {
+  const target = 'cart.lines.discounts.generate.run';
+  const before = withRuns([{ handle: 'a', target }, { handle: 'b', target }, { handle: 'b', target }]);
+  const view = runView(before.runs, 2);
+  assert.deepEqual(view, { handle: 'b', target, occurrence: 1 });
+  // A run before it went: the same run is now the second.
+  const after = withRuns([{ handle: 'b', target }, { handle: 'b', target, logs: 'second' }]);
+  assert.equal(selectedRun(after.runs, view), 1);
+  const tree = page(after, { functionsOpen: true, functionsView: view });
+  assert.deepEqual(byClass(tree, 'lsf-fn-entry').map((node) => node.props['aria-current']), [null, null, 'true']);
+  // It went: the first that failed, else the first.
+  const gone = withRuns([{ handle: 'a', target }, { handle: 'c', target, error: 'boom' }]);
+  assert.equal(selectedRun(gone.runs, view), 1);
+  assert.equal(selectedRun(withRuns([{ handle: 'a', target }]).runs, view), 0);
+  assert.equal(selectedRun([], view), -1);
+  assert.equal(selectedRun(after.runs, 'overview'), -1);
+});
+
+test('a fetch run shows the request it asked for and the response, side by side under its input and output', () => {
   const state = checkoutState();
   state.runs[0] = {
     ...state.runs[0],
@@ -288,21 +378,50 @@ test('a fetch run shows the request it asked for and the response', () => {
       response: { status: 200, headers: [], body: '{"ok":true}' },
     },
   };
-  const tree = page(state, { functionsOpen: true, openRuns: new Set([0, 1]) });
-  const titles = findAll(tree, (node) => node.tag === 'h4').map(text);
-  assert.equal(titles.filter((title) => title === 'HTTP request').length, 1, 'only the fetch run has an exchange');
-  assert.equal(titles.filter((title) => title === 'HTTP response').length, 1);
-  const pres = findAll(tree, (node) => node.tag === 'pre').map(text);
-  assert.ok(pres.some((pre) => /"url": "https:\/\/app\.example\/check"/.test(pre)));
-  assert.ok(pres.some((pre) => /"status": 200/.test(pre)));
+  const tree = page(state, { functionsOpen: true, functionsView: runView(state.runs, 0) });
+  const [run, exchange] = byClass(tree, 'lsf-fn-panes');
+  assert.equal(run.props['data-panes'], 'run');
+  assert.equal(exchange.props['data-panes'], 'exchange');
+  assert.deepEqual(exchange.children.map((node) => node.props['data-pane']), ['request', 'response']);
+  assert.match(text(exchange.children[0]), /HTTP request.*"url": "https:\/\/app\.example\/check"/s);
+  assert.match(text(exchange.children[1]), /HTTP response.*"status": 200/s);
+  const other = page(state, { functionsOpen: true, functionsView: runView(state.runs, 1) });
+  assert.equal(byClass(other, 'lsf-fn-panes').length, 1, 'only the fetch run has an exchange');
 });
 
 test('a failed run shows its error and counts as failed', () => {
   const state = checkoutState();
   state.runs[0] = { ...state.runs[0], error: 'unreachable executed', output: null };
-  const tree = page(state, { functionsOpen: true, openRuns: new Set([0]) });
-  assert.match(text(byClass(tree, 'lsf-chip').find((node) => has(node, 'is-error'))), /1 failed/);
+  const tree = page(state, { functionsOpen: true });
+  assert.match(text(byClass(dialog(tree), 'lsf-fn-head')[0]), /1 failed/);
   assert.match(text(findAll(tree, (node) => node.tag === 'pre' && has(node, 'is-error'))[0]), /unreachable executed/);
+  const output = byClass(tree, 'lsf-fn-pane').find((node) => node.props['data-pane'] === 'output');
+  assert.match(text(output), /Output\(none\)/);
+  assert.equal(byClass(output, 'lsf-fn-copy').length, 0, 'nothing to copy');
+});
+
+test('the overview has the skin switch, the extensions, the blocking errors and the discounts not applied', () => {
+  const state = checkoutState({
+    errors: [{ message: 'Too many', target: '$.cart', function: 'order-rules' }],
+    skippedDiscounts: [{ title: 'Half', code: null, class: 'Shipping', amount: { amount: 2.45 }, function: 'volume-discount', reason: 'only one shipping discount applies per order: "Three off" takes 3.00 USD off the shipping' }],
+  });
+  const closed = page(state);
+  assert.equal(findAll(closed, (node) => node.props['data-test'] === 'skipped-discounts').length, 0, 'nothing built while the dialog is closed');
+  const onRun = page(state, { functionsOpen: true, functionsView: runView(state.runs, 0) });
+  assert.equal(byClass(onRun, 'lsf-fn-overview').length, 0, 'the overview shows on its own');
+
+  const tree = page(state, { functionsOpen: true, functionsView: 'overview' });
+  assert.deepEqual(byClass(tree, 'lsf-fn-entry').map((node) => node.props['aria-current']), ['true', null, null]);
+  assert.equal(pres(tree).length, 0, 'no JSON on the overview');
+  const overview = byClass(tree, 'lsf-fn-overview')[0];
+  const link = byClass(overview, 'lsf-link')[0];
+  assert.equal(link.props.href, '/checkouts/cn/preview?variant=shop');
+  assert.equal(text(link), 'Switch to the shop skin');
+  assert.match(text(overview), /Errors that block the checkout.*Too many.*order-rules/);
+  const [skipped] = findAll(overview, (node) => node.props['data-test'] === 'skipped-discounts');
+  assert.match(text(skipped), /Discounts not applied.*Half.*only one shipping discount applies per order.*Three off.*volume-discount/);
+  const none = page(checkoutState(), { functionsOpen: true, functionsView: 'overview' });
+  assert.equal(findAll(none, (node) => node.props['data-test'] === 'skipped-discounts').length, 0);
 });
 
 test('problems with the app show as banners', () => {
@@ -322,7 +441,7 @@ test('the banners open the main column, so the summary panel starts under the he
 
 test('an extension the host does not load shows why, next to the problems with the app', () => {
   const refusals = [{ handle: 'order-notice', apiVersion: '2025-07', reason: 'API version 2025-07 is not supported: the local checkout runs 2026-10 and 2027-01.' }];
-  const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle'] }), { functionsOpen: true }, { refusals });
+  const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle'] }), { functionsOpen: true, functionsView: 'overview' }, { refusals });
   const banners = byClass(tree, 'lsf-diagnostics')[0];
   assert.match(text(banners), /gift-message: no bundle/);
   assert.match(text(banners), /order-notice: not loaded\. API version 2025-07 is not supported/);
@@ -344,7 +463,7 @@ function everyTarget(state, { declared = [], refusals } = {}) {
   };
   const actions = new Proxy({}, { get: () => () => {} });
   const tree = renderPage({
-    state, ui: { draft: { address: {} }, openRuns: new Set() }, slot, actions, refusals,
+    state, ui: { draft: { address: {} } }, slot, actions, refusals,
     location: 'http://localhost/checkouts/cn/preview?targets=all',
     preview: { all: true, rendered: RENDERED_TARGETS },
   });
@@ -408,7 +527,7 @@ test('a checkout opened from a scenario names it and leads back to the list', ()
   assert.equal(chip.tag, 'a');
   assert.equal(chip.props.href, '/__lsf/checkouts');
   assert.equal(text(chip), 'Scenario: A hotel orders');
-  const panel = text(byClass(page(state, { functionsOpen: true }), 'lsf-functions')[0]);
+  const panel = text(byClass(page(state, { functionsOpen: true, functionsView: 'overview' }), 'lsf-fn-overview')[0]);
   assert.match(panel, /scenario A hotel orders/);
   assert.match(panel, /All checkouts and extensions/);
   assert.equal(byClass(page(checkoutState()), 'lsf-scenario').length, 0);
@@ -457,7 +576,7 @@ test('the card row shows the brands it takes as three chips', () => {
   assert.deepEqual(byClass(tree, 'lsf-card-brand').map(text), ['VISA', 'MC', 'AMEX']);
 });
 
-test('the JSON of the Functions panel is colored by kind, and reads the same as plain JSON', () => {
+test('the JSON of the Functions dialog is colored by kind, and reads the same as plain JSON', () => {
   const value = { id: 'gid://shopify/CartLine/1', 'say \"hi\"': 'a \"quoted\": 2', quantity: -1.5e3, ok: true, no: false, none: null, list: [1, 'x'] };
   const pre = jsonCode(value);
   assert.equal(pre.tag, 'pre');
@@ -495,7 +614,7 @@ test('an empty cart says so, with the scenarios, instead of a checkout to pay fo
 
 test('every target still shows with an empty cart', () => {
   const state = { ...checkoutState(), lines: [] };
-  const tree = renderPage({ state, ui: { draft: { address: {} }, openRuns: new Set() }, slot: () => null, actions: new Proxy({}, { get: () => () => {} }), preview: { all: true, rendered: [] }, location: 'http://localhost/checkouts/cn/preview' });
+  const tree = renderPage({ state, ui: { draft: { address: {} } }, slot: () => null, actions: new Proxy({}, { get: () => () => {} }), preview: { all: true, rendered: [] }, location: 'http://localhost/checkouts/cn/preview' });
   assert.equal(findAll(tree, (node) => node.props['data-section'] === 'empty-cart').length, 0);
 });
 

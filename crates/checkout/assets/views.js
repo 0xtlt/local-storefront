@@ -1,5 +1,5 @@
 // The pages of the fake checkout as virtual DOM: the one-page checkout, the thank-you page and
-// the panel that shows the Functions. Both skins (`standard`, `shop`) share the markup; the CSS
+// the badge and dialog that show the Functions. Both skins (`standard`, `shop`) share the markup; the CSS
 // tells them apart (`[data-variant]`), apart from a few words and the order of the summary.
 //
 // A view takes `{state, ui, slot, actions, refusals}`:
@@ -26,6 +26,7 @@ const ICONS = {
   cart: outline(24, '<path d="M2 3.5h2.2l1.9 9.2a1 1 0 001 .8h7.6a1 1 0 001-.75L17.2 7H5"/><circle cx="8" cy="16.6" r="1.1"/><circle cx="14" cy="16.6" r="1.1"/>'),
   check: outline(28, '<circle cx="10" cy="10" r="8.5"/><path d="M6 10.5l3 3 5-6"/>').replace('stroke-width="1.4"', 'stroke-width="1.6"'),
   warning: outline(16, '<path d="M10 3l7.5 13.5h-15z"/><path d="M10 8.5v3.5M10 14.2v.1"/>'),
+  close: outline(16, '<path d="M5 5l10 10M15 5L5 15"/>'),
 };
 
 const icon = (name) => h('span', { class: 'lsf-icon', 'aria-hidden': 'true', html: ICONS[name] });
@@ -622,13 +623,13 @@ function thankYouPage(ctx) {
     summary(ctx, { thankYou: true }));
 }
 
-// --- The Functions panel -----------------------------------------------------------------
+// --- The Functions: a badge on every page, and a dialog with their runs ------------------
 
 const json = (value) => JSON.stringify(value, null, 2);
 
 // A string with its colon when it is a key, a number, or a literal of JSON text.
 const JSON_TOKEN = /("(?:[^"\\]|\\.)*")(\s*:)?|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b/g;
-// Past this size, the text is shown plain: thousands of spans would slow the panel down.
+// Past this size, the text is shown plain: thousands of spans would slow the page down.
 const HIGHLIGHT_LIMIT = 200_000;
 
 /** `value` as indented JSON, its keys, strings, numbers and literals in their colors. */
@@ -649,54 +650,187 @@ export function jsonCode(value) {
   return h('pre', { class: 'lsf-json' }, parts);
 }
 
-function run(ctx, entry, index) {
-  const { ui, actions } = ctx;
-  const open = ui.openRuns?.has(index) ?? false;
-  const failed = Boolean(entry.error);
-  return h('details', {
-      class: `lsf-run${failed ? ' is-failed' : ''}`, key: `${index}:${entry.handle}:${entry.target}`, open, 'data-run': entry.handle,
-      onToggle: (event) => actions.toggleRun(index, event.target.open),
-    },
-    h('summary', null,
-      h('strong', null, entry.handle), h('code', null, entry.target),
-      h('span', { class: `lsf-chip ${failed ? 'is-error' : 'is-ok'}` }, failed ? 'error' : 'ok'),
-      h('span', { class: 'lsf-muted' }, `${entry.instructions.toLocaleString('en-US')} instructions`)),
-    // The inputs are large: build them only for the runs that are open.
-    open && h('div', { class: 'lsf-run-body' },
-      failed && h('div', null, h('h4', null, 'Error'), h('pre', { class: 'is-error' }, entry.error)),
-      entry.logs && h('div', null, h('h4', null, 'Logs'), h('pre', null, entry.logs)),
-      h('div', null, h('h4', null, 'Input'), jsonCode(entry.input)),
-      h('div', null, h('h4', null, 'Output'), entry.output === null || entry.output === undefined ? h('pre', null, '(none)') : jsonCode(entry.output)),
-      // A `.fetch` target: the request it asked for and the response its `.run` target reads.
-      entry.exchange && h('div', null, h('h4', null, 'HTTP request'), jsonCode(entry.exchange.request)),
-      entry.exchange && h('div', null, h('h4', null, 'HTTP response'), jsonCode(entry.exchange.response))));
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/** A run of the dialog, as the page remembers it across updates: its handle, its target, and
+ * which of the runs with both it is (a Function may run twice for the same target). */
+export function runView(runs, index) {
+  const { handle, target } = runs[index];
+  const occurrence = runs.slice(0, index).filter((entry) => entry.handle === handle && entry.target === target).length;
+  return { handle, target, occurrence };
 }
 
-function functionsPanel(ctx) {
-  const { state, ui, actions } = ctx;
-  const refused = new Set((ctx.refusals ?? []).map((refusal) => refusal.handle));
+/** What the dialog shows when it opens: the first run that failed, else the first run, else
+ * the overview. */
+export function defaultRunView(runs = []) {
+  const failed = runs.findIndex((entry) => entry.error);
+  if (failed >= 0) return runView(runs, failed);
+  return runs.length > 0 ? runView(runs, 0) : 'overview';
+}
+
+/** The index of the run `view` names, `-1` for the overview. A run that is gone gives way to
+ * the default. */
+export function selectedRun(runs = [], view) {
+  if (view === 'overview') return -1;
+  if (view && typeof view === 'object') {
+    let seen = 0;
+    for (const [index, entry] of runs.entries()) {
+      if (entry.handle !== view.handle || entry.target !== view.target) continue;
+      if (seen === view.occurrence) return index;
+      seen += 1;
+    }
+  }
+  const fallback = defaultRunView(runs);
+  return fallback === 'overview' ? -1 : selectedRun(runs, fallback);
+}
+
+/** How the Functions went: the runs, those that failed, the errors that block the checkout. */
+function functionsSummary(state) {
   const runs = state.runs ?? [];
-  const failures = runs.filter((entry) => entry.error).length;
+  const failed = runs.filter((entry) => entry.error).length;
+  const errors = (state.errors ?? []).length;
+  return { runs, failed, errors, ok: failed === 0 && errors === 0 };
+}
+
+/** The chips of that summary, after the number of runs. */
+function summaryChips({ failed, errors }) {
+  return [
+    failed > 0 && h('span', { class: 'lsf-chip is-error' }, `${failed} failed`),
+    errors > 0 && h('span', { class: 'lsf-chip is-error' }, plural(errors, 'checkout error')),
+  ];
+}
+
+/** The badge in the bottom left corner of every page: how the Functions went, and the way into
+ * the dialog. */
+function functionsBadge(ctx) {
+  const { state, actions } = ctx;
+  const summary = functionsSummary(state);
+  const count = summary.runs.length === 0 ? 'No runs' : plural(summary.runs.length, 'run');
+  const label = ['Functions', count, summary.failed > 0 && `${summary.failed} failed`, summary.errors > 0 && plural(summary.errors, 'checkout error')]
+    .filter(Boolean).join(', ');
+  return h('button', {
+      type: 'button', class: 'lsf-fn-badge', key: 'badge', 'aria-haspopup': 'dialog', 'aria-label': label,
+      'data-status': summary.ok ? 'ok' : 'failed',
+      onClick: () => actions.toggleFunctions(true),
+    },
+    h('span', { class: 'lsf-fn-dot', 'aria-hidden': 'true' }),
+    h('span', { class: 'lsf-fn-badge-title' }, 'Functions'),
+    h('span', { class: 'lsf-fn-badge-count' }, count),
+    summary.failed > 0 && h('span', { class: 'lsf-chip is-error' }, `${summary.failed} failed`),
+    summary.errors > 0 && h('span', { class: 'lsf-chip is-error' }, plural(summary.errors, 'error')));
+}
+
+const okChip = (entry) => h('span', { class: `lsf-chip ${entry.error ? 'is-error' : 'is-ok'}` }, entry.error ? 'error' : 'ok');
+const instructions = (entry) => {
+  const count = entry.instructions ?? 0;
+  return `${count.toLocaleString('en-US')} instruction${count === 1 ? '' : 's'}`;
+};
+
+/** The list on the left of the dialog: the overview, then each run. */
+function functionsRail(ctx, runs, selected) {
+  const { actions } = ctx;
+  const entry = (key, current, props, ...children) =>
+    h('li', { key }, h('button', { type: 'button', class: 'lsf-fn-entry', 'aria-current': current ? 'true' : null, ...props }, children));
+  return h('nav', { class: 'lsf-fn-rail', 'aria-label': 'Functions' },
+    h('ul', null,
+      entry('overview', selected === -1, { 'data-view': 'overview', onClick: () => actions.showRun('overview') },
+        h('strong', null, 'Overview')),
+      runs.map((run, index) => entry(`${index}:${run.handle}:${run.target}`, selected === index, {
+          'data-run': run.handle,
+          onClick: () => actions.showRun(runView(runs, index)),
+        },
+        h('span', { class: 'lsf-fn-entry-head' }, h('strong', null, run.handle), okChip(run)),
+        h('code', null, run.target),
+        h('span', { class: 'lsf-muted' }, instructions(run))))));
+}
+
+/** One JSON of a run, with its title and a button that copies it. */
+function jsonPane(ctx, id, title, value) {
+  const { ui, actions } = ctx;
+  const none = value === null || value === undefined;
+  const copied = ui.copied === id;
+  return h('section', { class: 'lsf-fn-pane', 'data-pane': id.split(':').pop() },
+    h('div', { class: 'lsf-fn-pane-head' },
+      h('h4', null, title),
+      !none && h('button', {
+        type: 'button', class: `lsf-fn-copy${copied ? ' is-copied' : ''}`, 'aria-live': 'polite',
+        onClick: () => actions.copyJson(id, json(value)),
+      }, copied ? 'Copied' : 'Copy')),
+    none ? h('pre', null, '(none)') : jsonCode(value));
+}
+
+/** A run: what it is, its error and logs, its input and output side by side and, for a
+ * `.fetch` target, the HTTP request it asked for and the response its `.run` target reads. */
+function runDetail(ctx, runs, index) {
+  const entry = runs[index];
+  const key = `${index}:${entry.handle}:${entry.target}`;
+  return h('div', { class: 'lsf-fn-run', key: `run:${key}`, 'data-run': entry.handle },
+    h('div', { class: 'lsf-fn-run-head' },
+      h('h3', null, entry.handle), h('code', null, entry.target), okChip(entry),
+      h('span', { class: 'lsf-muted' }, instructions(entry))),
+    entry.error && h('div', { class: 'lsf-fn-note' }, h('h4', null, 'Error'), h('pre', { class: 'is-error' }, entry.error)),
+    entry.logs && h('div', { class: 'lsf-fn-note' }, h('h4', null, 'Logs'), h('pre', null, entry.logs)),
+    h('div', { class: 'lsf-fn-panes', 'data-panes': 'run' },
+      jsonPane(ctx, `${key}:input`, 'Input', entry.input),
+      jsonPane(ctx, `${key}:output`, 'Output', entry.output)),
+    entry.exchange && h('div', { class: 'lsf-fn-panes is-exchange', 'data-panes': 'exchange' },
+      jsonPane(ctx, `${key}:request`, 'HTTP request', entry.exchange.request),
+      jsonPane(ctx, `${key}:response`, 'HTTP response', entry.exchange.response)));
+}
+
+/** What the page and the app hold besides the runs: the other skin, the extensions, the errors
+ * that block the checkout and the discounts that were not applied. */
+function functionsOverview(ctx) {
+  const { state } = ctx;
+  const refused = new Set((ctx.refusals ?? []).map((refusal) => refusal.handle));
   const other = isShop(state) ? 'standard' : 'shop';
   const link = new URL(ctx.location ?? 'http://localhost/');
   link.searchParams.set('variant', other);
-  return h('details', { class: 'lsf-functions', open: ui.functionsOpen, onToggle: (event) => actions.toggleFunctions(event.target.open) },
-    h('summary', null, h('strong', null, 'Functions'),
-      h('span', { class: 'lsf-muted' }, `${runs.length} run${runs.length === 1 ? '' : 's'}`),
-      failures > 0 && h('span', { class: 'lsf-chip is-error' }, `${failures} failed`),
-      (state.errors ?? []).length > 0 && h('span', { class: 'lsf-chip is-error' }, `${state.errors.length} checkout error${state.errors.length === 1 ? '' : 's'}`)),
-    ui.functionsOpen && h('div', { class: 'lsf-functions-body' },
-      h('p', { class: 'lsf-muted' }, h('a', { class: 'lsf-link', href: link.pathname + link.search }, `Switch to the ${other} skin`),
-        ` · ${state.extensions?.length ?? 0} checkout UI extension${state.extensions?.length === 1 ? '' : 's'}`,
-        state.scenario && ` · scenario ${state.scenario.title}`,
-        state.home && ' · ', state.home && h('a', { class: 'lsf-link', href: state.home }, 'All checkouts and extensions')),
-      (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
-        h('ul', null, state.errors.map((error) => h('li', null, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
-      (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
-        h('ul', null, state.skippedDiscounts.map((skipped) => h('li', null, h('strong', null, skipped.title), skipped.code && h('code', null, skipped.code), ` ${skipped.reason}`, h('code', null, skipped.function))))),
-      (state.extensions ?? []).length > 0 && h('div', null, h('h4', null, 'Extensions'),
-        h('ul', null, state.extensions.map((ext) => h('li', { key: ext.handle }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), (ext.targets ?? []).map((target) => h('code', null, target)))))),
-      runs.length === 0 ? h('p', { class: 'lsf-muted' }, 'No Function ran.') : runs.map((entry, index) => run(ctx, entry, index))));
+  const extensions = state.extensions ?? [];
+  return h('div', { class: 'lsf-fn-overview', key: 'overview' },
+    h('p', { class: 'lsf-muted' }, h('a', { class: 'lsf-link', href: link.pathname + link.search }, `Switch to the ${other} skin`),
+      ` · ${plural(extensions.length, 'checkout UI extension')}`,
+      state.scenario && ` · scenario ${state.scenario.title}`,
+      state.home && ' · ', state.home && h('a', { class: 'lsf-link', href: state.home }, 'All checkouts and extensions')),
+    (state.runs ?? []).length === 0 && h('p', { class: 'lsf-muted' }, 'No Function ran.'),
+    (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
+      h('ul', null, state.errors.map((error) => h('li', null, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
+    (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
+      h('ul', null, state.skippedDiscounts.map((skipped) => h('li', null, h('strong', null, skipped.title), skipped.code && h('code', null, skipped.code), ` ${skipped.reason}`, h('code', null, skipped.function))))),
+    extensions.length > 0 && h('div', null, h('h4', null, 'Extensions'),
+      h('ul', null, extensions.map((ext) => h('li', { key: ext.handle }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), (ext.targets ?? []).map((target) => h('code', null, target)))))));
+}
+
+/**
+ * The dialog of the Functions. The element is always there, at the same place, so that the page
+ * can open it with `showModal()` and no update replaces it while it is open; what is in it is
+ * built only while it is open, and the JSON only for the run it shows.
+ */
+function functionsDialog(ctx) {
+  const { state, ui, actions } = ctx;
+  const summary = functionsSummary(state);
+  const selected = selectedRun(summary.runs, ui.functionsView);
+  return h('dialog', {
+      class: 'lsf-fn-dialog', key: 'dialog', 'aria-labelledby': 'lsf-fn-title', closedby: 'any',
+      onClose: () => actions.functionsClosed(),
+      onPointerdown: (event) => actions.functionsPointer(event),
+      onClick: (event) => actions.functionsClick(event),
+    },
+    ui.functionsOpen && h('div', { class: 'lsf-fn-frame' },
+      h('header', { class: 'lsf-fn-head' },
+        h('h2', { id: 'lsf-fn-title' }, 'Functions'),
+        h('span', { class: 'lsf-muted' }, plural(summary.runs.length, 'run')),
+        summaryChips(summary),
+        h('button', { type: 'button', class: 'lsf-fn-close', 'aria-label': 'Close', onClick: () => actions.toggleFunctions(false) }, icon('close'))),
+      h('div', { class: 'lsf-fn-body' },
+        functionsRail(ctx, summary.runs, selected),
+        h('div', { class: 'lsf-fn-main' },
+          selected === -1 ? functionsOverview(ctx) : runDetail(ctx, summary.runs, selected)))));
+}
+
+/** The badge and the dialog, last on every page. */
+function functions(ctx) {
+  return h('div', { class: 'lsf-fn', key: 'functions' }, functionsBadge(ctx), functionsDialog(ctx));
 }
 
 // --- Every extension target --------------------------------------------------------------
@@ -762,5 +896,5 @@ export function renderPage(ctx) {
     header(ctx),
     preview && state.status !== 'completed' && targetsPanel(page),
     body,
-    functionsPanel(ctx));
+    functions(ctx));
 }
