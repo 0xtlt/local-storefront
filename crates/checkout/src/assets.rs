@@ -32,6 +32,7 @@ embed!(
     "sandbox-components.js",
     "sandbox.html",
     "sandbox.js",
+    "tokens.css",
     "vdom.js",
     "views.js",
 );

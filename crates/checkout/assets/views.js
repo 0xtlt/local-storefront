@@ -13,12 +13,18 @@ import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './
 import { missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
 
+// Single-color outline icons that follow the text color (the tokens set it): 1.4px strokes,
+// round joins.
+const outline = (size, body) =>
+  `<svg viewBox="0 0 20 20" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+
 const ICONS = {
-  lock: '<svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor"><path d="M6 8V6a4 4 0 118 0v2h1a1 1 0 011 1v8a1 1 0 01-1 1H5a1 1 0 01-1-1V9a1 1 0 011-1h1zm2 0h4V6a2 2 0 10-4 0v2z"/></svg>',
-  chevron: '<svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor"><path d="M5.3 7.3a1 1 0 011.4 0L10 10.6l3.3-3.3a1 1 0 111.4 1.4l-4 4a1 1 0 01-1.4 0l-4-4a1 1 0 010-1.4z"/></svg>',
-  bag: '<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor"><path d="M6 6V5a4 4 0 118 0v1h2a1 1 0 011 1l1 10a1 1 0 01-1 1H3a1 1 0 01-1-1L3 7a1 1 0 011-1h2zm2 0h4V5a2 2 0 10-4 0v1z"/></svg>',
-  check: '<svg viewBox="0 0 20 20" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="8.5"/><path d="M6 10.5l3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  warning: '<svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor"><path d="M10 2l8.5 15h-17L10 2zm-1 6v4h2V8H9zm0 5v2h2v-2H9z"/></svg>',
+  lock: outline(16, '<rect x="4" y="9" width="12" height="8" rx="2"/><path d="M7 9V6.5a3 3 0 016 0V9"/>'),
+  chevron: outline(10, '<path d="M4 7.5l6 6 6-6"/>'),
+  bag: outline(18, '<path d="M4.5 6.5h11l1 10.5h-13z"/><path d="M7.5 8.5V6a2.5 2.5 0 015 0v2.5"/>'),
+  cart: outline(24, '<path d="M2 3.5h2.2l1.9 9.2a1 1 0 001 .8h7.6a1 1 0 001-.75L17.2 7H5"/><circle cx="8" cy="16.6" r="1.1"/><circle cx="14" cy="16.6" r="1.1"/>'),
+  check: outline(28, '<circle cx="10" cy="10" r="8.5"/><path d="M6 10.5l3 3 5-6"/>').replace('stroke-width="1.4"', 'stroke-width="1.6"'),
+  warning: outline(16, '<path d="M10 3l7.5 13.5h-15z"/><path d="M10 8.5v3.5M10 14.2v.1"/>'),
 };
 
 const icon = (name) => h('span', { class: 'lsf-icon', 'aria-hidden': 'true', html: ICONS[name] });
@@ -254,7 +260,7 @@ function paymentSection(ctx) {
     'section',
     { class: 'lsf-section', 'data-section': 'payment' },
     h('h2', null, 'Payment'),
-    h('p', { class: 'lsf-muted' }, 'All transactions are secure and encrypted.'),
+    h('p', { class: 'lsf-muted lsf-subtitle' }, 'All transactions are secure and encrypted.'),
     slot('purchase.checkout.payment-method-list.render-before', { key: 'payment-before' }),
     h(
       'div',
@@ -267,7 +273,7 @@ function paymentSection(ctx) {
           h('label', { class: 'lsf-radio' },
             h('input', { type: 'radio', name: 'payment', value: method.handle, checked: selected, onChange: () => actions.choosePayment(method.handle) }),
             h('span', { class: 'lsf-radio-text' }, h('span', { class: 'lsf-radio-title' }, method.name)),
-            method.handle === 'card' && h('span', { class: 'lsf-card-brands', 'aria-hidden': 'true' }, 'VISA · MC · AMEX')),
+            method.handle === 'card' && h('span', { class: 'lsf-card-brands', 'aria-hidden': 'true' }, ['VISA', 'MC', 'AMEX'].map((brand) => h('span', { class: 'lsf-card-brand', key: brand }, brand)))),
           selected && h('div', { class: 'lsf-radio-panel' }, method.handle === 'card' ? cardForm() : h('p', null, paymentNote(method))),
         );
       }),
@@ -302,11 +308,10 @@ function actionsSection(ctx) {
     ui.failure && banner('critical', h('p', null, ui.failure), { 'data-banner': 'failure' }),
     slot('purchase.checkout.actions.render-before', { key: 'actions' }),
     h('div', { class: 'lsf-actions-row' },
-      h('a', { class: 'lsf-link lsf-return', href: storefrontLink(state, '/cart') }, '‹ Return to cart'),
       h('button', {
         class: 'lsf-pay', type: 'button', disabled: ui.busy ? true : null, onClick: actions.pay,
-      }, ui.busy ? 'Processing…' : isShop(state) ? `${label} · ${total}` : label)),
-  );
+      }, ui.busy ? 'Processing…' : isShop(state) ? `${label} · ${total}` : label),
+      h('a', { class: 'lsf-link lsf-return', href: storefrontLink(state, '/cart') }, '‹ Return to cart')));
 }
 
 // --- The summary -------------------------------------------------------------------------
@@ -378,8 +383,9 @@ function discountForm(ctx) {
           onInput: (event) => actions.draft('discount', event.target.value),
         }),
         h('label', { for: 'lsf-discount' }, 'Discount code'),
-        ui.discountError && h('p', { class: 'lsf-field-error' }, icon('warning'), ui.discountError)),
-      h('button', { class: 'lsf-apply', type: 'submit', disabled: ui.busy ? true : null }, 'Apply')),
+        // Waits for a code: the style of the field dims it while the field is empty.
+        h('button', { class: 'lsf-apply', type: 'submit', disabled: ui.busy ? true : null }, 'Apply'),
+        ui.discountError && h('p', { class: 'lsf-field-error' }, icon('warning'), ui.discountError))),
     codes.length > 0 && h('ul', { class: 'lsf-codes' },
       codes.map((entry) =>
         h('li', { key: entry.code, class: `lsf-code${entry.applicable ? '' : ' is-ignored'}` },
@@ -414,7 +420,9 @@ function header(ctx) {
     h('a', { class: 'lsf-brand', href: storefrontLink(state) }, isShop(state) ? h('span', { class: 'lsf-shop-logo' }, 'shop') : state.shop.name),
     isShop(state) && h('span', { class: 'lsf-brand-sub' }, state.shop.name),
     state.scenario && h('a', { class: 'lsf-chip lsf-scenario', href: state.home ?? '/', title: 'All checkouts and extensions', 'data-scenario': state.scenario.name }, `Scenario: ${state.scenario.title}`),
-    h('span', { class: 'lsf-secure' }, icon('lock'), isShop(state) ? 'Shop Pay' : 'Secure checkout'));
+    isShop(state)
+      ? h('span', { class: 'lsf-secure' }, icon('lock'), 'Shop Pay')
+      : h('a', { class: 'lsf-cart-link', href: storefrontLink(state, '/cart'), 'aria-label': 'Return to cart' }, icon('cart')));
 }
 
 /** What is wrong with the app: the server's diagnostics and the extensions the host does not load. */

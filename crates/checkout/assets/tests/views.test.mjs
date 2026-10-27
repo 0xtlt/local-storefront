@@ -403,3 +403,30 @@ test('a checkout opened from a scenario names it and leads back to the list', ()
   assert.match(panel, /All checkouts and extensions/);
   assert.equal(byClass(page(checkoutState()), 'lsf-scenario').length, 0);
 });
+
+test('the header leads back to the cart with an icon, and the Shop skin says Shop Pay instead', () => {
+  const standard = page(checkoutState());
+  const cart = byClass(standard, 'lsf-cart-link')[0];
+  assert.match(cart.props.href, /\/cart$/);
+  assert.equal(cart.props['aria-label'], 'Return to cart');
+  assert.equal(byClass(standard, 'lsf-secure').length, 0);
+  const shop = page(checkoutState({ variant: 'shop' }));
+  assert.equal(byClass(shop, 'lsf-cart-link').length, 0);
+  assert.equal(text(byClass(shop, 'lsf-secure')[0]), 'Shop Pay');
+});
+
+test('the pay button comes first, the way back to the cart under it', () => {
+  const row = byClass(page(checkoutState()), 'lsf-actions-row')[0];
+  assert.deepEqual(row.children.map((node) => node.props.class.split(' ')[1] ?? node.props.class), ['lsf-pay', 'lsf-return']);
+});
+
+test('the Apply button is inside the discount field, after its label', () => {
+  const field = byClass(byClass(page(checkoutState()), 'lsf-discount-form')[0], 'lsf-field')[0];
+  assert.deepEqual(field.children.map((node) => node.tag), ['input', 'label', 'button']);
+  assert.equal(field.children[2].props.class, 'lsf-apply');
+});
+
+test('the card row shows the brands it takes as three chips', () => {
+  const tree = page(checkoutState());
+  assert.deepEqual(byClass(tree, 'lsf-card-brand').map(text), ['VISA', 'MC', 'AMEX']);
+});
