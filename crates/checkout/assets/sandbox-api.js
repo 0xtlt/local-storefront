@@ -74,8 +74,11 @@
       id: 'gid://shopify/ProductVariant/' + line.variantId,
       title: line.title,
       subtitle: line.variantTitle,
-      image: line.image ? { url: line.image } : undefined,
-      selectedOptions: line.selectedOptions || [],
+      image: line.image ? clean({ url: line.image, altText: line.imageAlt }) : undefined,
+      selectedOptions: (line.selectedOptions || []).map((option) => ({ name: option.name, value: option.value })),
+      sellingPlan: line.sellingPlan
+        ? { id: line.sellingPlan.id, recurringDeliveries: line.sellingPlan.recurringDeliveries === true }
+        : undefined,
       product: {
         id: 'gid://shopify/Product/' + line.productId,
         vendor: line.vendor || '',

@@ -14,8 +14,8 @@ export const RATES = [
 
 const CODES = { SAVE10: { class: 'PRODUCT', title: 'SAVE10' }, FREESHIP: { class: 'SHIPPING', title: 'FREESHIP' } };
 const VARIANTS = {
-  'gid://shopify/ProductVariant/101': { variantId: 101, productId: 11, title: 'Linen shirt', variantTitle: 'M / Sand', price: 4900, sku: 'LIN-SH-M-SAND' },
-  'gid://shopify/ProductVariant/202': { variantId: 202, productId: 22, title: 'Canvas tote', variantTitle: null, price: 1200, sku: 'TOTE-01' },
+  'gid://shopify/ProductVariant/101': { variantId: 101, productId: 11, title: 'Linen shirt', variantTitle: 'M / Sand', price: 4900, sku: 'LIN-SH-M-SAND', vendor: 'Northline', productType: 'Shirts', selectedOptions: [{ name: 'Size', value: 'M' }, { name: 'Color', value: 'Sand' }] },
+  'gid://shopify/ProductVariant/202': { variantId: 202, productId: 22, title: 'Canvas tote', variantTitle: null, price: 1200, sku: 'TOTE-01', vendor: 'Northline', productType: 'Bags', selectedOptions: [{ name: 'Title', value: 'Default Title' }] },
 };
 
 /** The checkout the page starts with: `sample` (sample-state.json) plus what the server adds. */
@@ -165,7 +165,8 @@ function apply(state, operation) {
         else {
           state.lines.push({
             id: `gid://shopify/CartLine/${state.lines.length + 1}`, variantId: variant.variantId, productId: variant.productId,
-            title: variant.title, variantTitle: variant.variantTitle, sku: variant.sku, image: null, quantity: change.quantity,
+            title: variant.title, variantTitle: variant.variantTitle, sku: variant.sku, image: null,
+            vendor: variant.vendor, productType: variant.productType, selectedOptions: variant.selectedOptions, sellingPlan: null, quantity: change.quantity,
             unitPrice: money(variant.price), subtotal: money(0), total: money(0), discountAllocations: [], attributes: [],
             components: [], transformedBy: null, requiresShipping: true,
           });

@@ -1334,6 +1334,71 @@ fn lines_take_the_price_of_their_selling_plan() {
     assert_eq!(result.cost.subtotal, 7800);
 }
 
+#[test]
+fn lines_carry_the_store_data_of_their_merchandise() {
+    let app = app();
+    let mut store = store();
+    add_monthly_plan(&mut store);
+    let mut session = session(&store, &[(TEE, 1), (TOTE, 1)]);
+    session.cart_lines[0].selling_plan = Some(42);
+    let result = compute(
+        &app,
+        &Selection::only(Vec::<String>::new()),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config(),
+    );
+    let (product, variant) = store.variant(TEE).unwrap();
+    assert!(!product.vendor.is_empty(), "the demo product has a vendor");
+    let line = &result.lines[0];
+    assert_eq!(line.vendor, product.vendor);
+    assert_eq!(line.product_type, product.product_type);
+    let options: Vec<_> = line
+        .selected_options
+        .iter()
+        .map(|option| (option.name.as_str(), option.value.as_str()))
+        .collect();
+    let expected: Vec<_> = product
+        .options
+        .iter()
+        .map(|option| option.name.as_str())
+        .zip(variant.options.iter().map(String::as_str))
+        .collect();
+    assert!(!options.is_empty());
+    assert_eq!(options, expected);
+    let plan = line.selling_plan.as_ref().expect("the plan of the line");
+    assert_eq!(plan.id, "gid://shopify/SellingPlan/42");
+    assert!(plan.recurring_deliveries);
+    assert_eq!(result.lines[1].selling_plan, None, "a line without a plan");
+
+    let json = serde_json::to_value(line).unwrap();
+    assert_eq!(json["vendor"], product.vendor.as_str());
+    assert_eq!(json["productType"], product.product_type.as_str());
+    assert_eq!(json["selectedOptions"][0]["name"], options[0].0);
+    assert_eq!(json["sellingPlan"]["recurringDeliveries"], true);
+    assert_eq!(json["sellingPlan"]["id"], "gid://shopify/SellingPlan/42");
+}
+
+#[test]
+fn the_components_of_a_bundle_carry_their_own_store_data() {
+    let result = expand(json!({
+        "type": "expand", "line": 1,
+        "items": [{"variant": MUG, "quantity": 1}, {"variant": TOTE, "quantity": 1}]
+    }));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let store = store();
+    let components = &result.lines[0].components;
+    assert_eq!(components.len(), 2);
+    for (component, id) in components.iter().zip([MUG, TOTE]) {
+        let (product, variant) = store.variant(id).unwrap();
+        assert_eq!(component.vendor, product.vendor);
+        assert_eq!(component.product_type, product.product_type);
+        assert_eq!(component.selected_options.len(), variant.options.len());
+        assert_eq!(component.selling_plan, None);
+    }
+}
+
 // ---- metafields written by UI extensions, read by Functions ----
 
 #[test]

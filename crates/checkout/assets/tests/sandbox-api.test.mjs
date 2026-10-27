@@ -38,6 +38,42 @@ test('reads the checkout as signals', () => {
   assert.deepEqual(plain(shopify.extension.capabilities.value), ['api_access', 'block_progress']);
 });
 
+test('merchandise carries what the Cart Lines API documents, for lines and bundle components', () => {
+  const base = checkoutState();
+  const component = {
+    ...base.lines[1],
+    id: 'gid://shopify/CartLine/9',
+    vendor: 'Acme',
+    productType: 'Gifts',
+    selectedOptions: [{ name: 'Size', value: 'L' }],
+    sellingPlan: { id: 'gid://shopify/SellingPlan/7', recurringDeliveries: true },
+    image: '/cdn/a.png',
+    imageAlt: 'A bag',
+    requiresShipping: false,
+  };
+  const state = { ...base, lines: [{ ...base.lines[0], components: [component] }, base.lines[1]] };
+  const { shopify } = runtime({ state });
+  const [shirt, tote] = shopify.lines.value;
+  assert.equal(shirt.merchandise.product.vendor, 'Northline');
+  assert.equal(shirt.merchandise.product.productType, 'Shirts');
+  assert.deepEqual(plain(shirt.merchandise.selectedOptions), [
+    { name: 'Size', value: 'M' },
+    { name: 'Color', value: 'Sand' },
+  ]);
+  assert.equal(shirt.merchandise.sellingPlan, undefined, 'no plan: no key');
+  assert.equal('sellingPlan' in tote.merchandise, false);
+  const part = shirt.lineComponents[0].merchandise;
+  assert.equal(part.product.vendor, 'Acme');
+  assert.equal(part.product.productType, 'Gifts');
+  assert.equal(part.product.id, 'gid://shopify/Product/22');
+  assert.deepEqual(plain(part.selectedOptions), [{ name: 'Size', value: 'L' }]);
+  assert.deepEqual(plain(part.sellingPlan), { id: 'gid://shopify/SellingPlan/7', recurringDeliveries: true });
+  assert.deepEqual(plain(part.image), { url: '/cdn/a.png', altText: 'A bag' });
+  assert.equal(part.requiresShipping, false);
+  assert.equal(part.sku, 'TOTE-01');
+  assert.equal(part.subtitle, undefined);
+});
+
 test('signals tell subscribers about changes, and only changes', () => {
   const { shopify, refresh } = runtime();
   const seen = [];

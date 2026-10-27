@@ -148,6 +148,15 @@ pub struct ResultLine {
     pub variant_title: Option<String>,
     pub sku: Option<String>,
     pub image: Option<String>,
+    /// The alt text of the image, when the store data has one.
+    pub image_alt: Option<String>,
+    /// The vendor and type of the product, and the option values of the variant, as the
+    /// `merchandise` of a cart line of a checkout UI extension reads them.
+    pub vendor: String,
+    pub product_type: String,
+    pub selected_options: Vec<SelectedOption>,
+    /// The selling plan the line is sold with, when the store knows it.
+    pub selling_plan: Option<LineSellingPlan>,
     pub quantity: u32,
     #[serde(serialize_with = "money")]
     pub unit_price: Cents,
@@ -169,6 +178,23 @@ pub struct ResultLine {
     #[serde(skip)]
     pub sources: Vec<SourceLine>,
     pub requires_shipping: bool,
+}
+
+/// An option of a product and the value a variant has for it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectedOption {
+    pub name: String,
+    pub value: String,
+}
+
+/// The selling plan of a line, as `merchandise.sellingPlan` of the Cart Lines API.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineSellingPlan {
+    /// `gid://shopify/SellingPlan/<n>`.
+    pub id: String,
+    pub recurring_deliveries: bool,
 }
 
 /// A part of a line of the cart: its index in the cart, and the quantity taken from it.

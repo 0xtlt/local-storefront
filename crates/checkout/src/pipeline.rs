@@ -28,7 +28,8 @@ use crate::version::ApiVersion;
 use crate::{
     AppliedDiscount, Cents, CheckoutConfig, CheckoutError, CheckoutResult, CheckoutState, Cost,
     DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass, DiscountCodeStatus,
-    DiscountConfig, FunctionRun, KeyValue, Metafield, PaymentMethod, ResultLine, SourceLine,
+    DiscountConfig, FunctionRun, KeyValue, LineSellingPlan, Metafield, PaymentMethod, ResultLine,
+    SelectedOption, SourceLine,
 };
 
 /// The handle of the delivery group: one group holds every line that needs shipping.
@@ -1434,13 +1435,20 @@ fn line_from_variant(
         .media_index
         .and_then(|index| product.media.get(index))
         .and_then(|media| media.preview.as_ref())
-        .or_else(|| product.images().next())
-        .map(|image| {
-            format!(
-                "/cdn/shop/files/{}",
-                lsf_core::urls::encode_path(&image.src)
-            )
-        });
+        .or_else(|| product.images().next());
+    let selling_plan = resolved.selling_plan.map(|(_, plan)| LineSellingPlan {
+        id: format!("gid://shopify/SellingPlan/{}", plan.id),
+        recurring_deliveries: plan.recurring_deliveries,
+    });
+    let selected_options = product
+        .options
+        .iter()
+        .zip(&variant.options)
+        .map(|(option, value)| SelectedOption {
+            name: option.name.clone(),
+            value: value.clone(),
+        })
+        .collect();
     let mut line = ResultLine {
         id: String::new(),
         variant_id,
@@ -1448,7 +1456,19 @@ fn line_from_variant(
         title: product.title.clone(),
         variant_title: (variant.title != "Default Title").then(|| variant.title.clone()),
         sku: (!variant.sku.is_empty()).then(|| variant.sku.clone()),
-        image,
+        image: image.map(|image| {
+            format!(
+                "/cdn/shop/files/{}",
+                lsf_core::urls::encode_path(&image.src)
+            )
+        }),
+        image_alt: image
+            .map(|image| image.alt.clone())
+            .filter(|alt| !alt.is_empty()),
+        vendor: product.vendor.clone(),
+        product_type: product.product_type.clone(),
+        selected_options,
+        selling_plan,
         quantity,
         unit_price: resolved.unit_price(),
         attributes,
@@ -1498,6 +1518,10 @@ fn override_presentation(line: &mut ResultLine, op: &Value) {
     }
     if let Some(url) = op.pointer("/image/url").and_then(Value::as_str) {
         line.image = Some(url.to_string());
+        line.image_alt = op
+            .pointer("/image/altText")
+            .and_then(Value::as_str)
+            .map(str::to_string);
     }
 }
 
