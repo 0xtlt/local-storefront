@@ -427,7 +427,7 @@ test('on the Shop skin, the badge knows how tall the bar is, and follows it', as
   assert.equal(observers.live.size, 1, 'the same bar: the same observer');
 });
 
-test('the bar observer goes with the bar, and a new bar is observed again', async () => {
+test('the bar observer goes with the bar', async () => {
   const observers = resizeObservers();
   // Someone completes the order meanwhile: the reply is the thank-you page.
   let done = false;
@@ -443,6 +443,38 @@ test('the bar observer goes with the bar, and a new bar is observed again', asyn
   assert.equal(observers.live.size, 0);
   assert.equal(first.targets.size, 0, 'disconnected');
   assert.equal(page.query('.lsf-fn-badge').style['--lsf-badge-lift'], undefined);
+});
+
+test('a bar that comes back is observed again, by one observer', async () => {
+  const observers = resizeObservers();
+  // Each reply moves the checkout to the next skin: standard (no bar to follow), then Shop again.
+  const skins = ['standard', 'shop'];
+  const page = app({
+    variant: 'shop', window: { ResizeObserver: observers.FakeResizeObserver },
+    conflict: (engine) => (skins.length > 0 ? { ...engine, variant: skins.shift() } : null),
+  });
+  const lift = () => page.query('.lsf-fn-badge').style['--lsf-badge-lift'];
+  const first = [...observers.live][0];
+  observers.resize(page.query('.lsf-actions'), 100);
+  assert.equal(lift(), '100px');
+  await assert.rejects(page.checkout.send([{ type: 'email', value: 'a@b.c' }]), /The checkout changed/);
+  assert.equal(page.query('.lsf-app').getAttribute('data-variant'), 'standard');
+  assert.equal(observers.live.size, 0, 'the standard skin: nothing to follow');
+  assert.equal(first.targets.size, 0, 'disconnected');
+  assert.equal(lift(), undefined, 'no lift left behind');
+  await assert.rejects(page.checkout.send([{ type: 'email', value: 'a@b.c' }]), /The checkout changed/);
+  const bar = page.query('.lsf-actions');
+  assert.equal(observers.live.size, 1);
+  const second = [...observers.live][0];
+  assert.notEqual(second, first, 'a new observer');
+  assert.deepEqual([...second.targets], [bar], 'on the bar now on the page');
+  observers.resize(bar, 140);
+  assert.equal(lift(), '140px');
+  // Later paints keep the same observer.
+  await page.checkout.actions.commit('email', 'a@b.c');
+  assert.equal(observers.live.size, 1);
+  assert.equal([...observers.live][0], second);
+  assert.equal(lift(), '140px');
 });
 
 test('the standard skin observes nothing: its actions are in the page', () => {
