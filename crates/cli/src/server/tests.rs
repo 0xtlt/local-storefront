@@ -3087,6 +3087,31 @@ fn the_checkout_page_is_a_shell_with_the_state_in_it() {
 }
 
 #[test]
+fn the_state_lists_the_countries_of_the_store() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-countries",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"localization": {"countries": [
+            {"iso_code": "fr"},
+            {"iso_code": "BE", "name": "Belgique"}
+        ]}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-countries"));
+    assert_eq!(
+        json["shop"]["countries"],
+        json!([
+            {"code": "FR", "name": "France"},
+            {"code": "BE", "name": "Belgique"}
+        ])
+    );
+    // The page carries them too.
+    let html = text(&get(&state, &path, "co-countries"));
+    assert!(html.contains("\"countries\":[{\"code\":\"FR\""), "{html}");
+}
+
+#[test]
 fn the_state_describes_the_checkout() {
     let state = checkout_server(&[], false);
     let path = start_checkout(

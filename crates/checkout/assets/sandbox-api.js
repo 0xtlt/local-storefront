@@ -230,28 +230,36 @@
 
   const LOCALE_KEY = /^[a-z]{2,3}([-_][A-Za-z0-9]+)?$/;
 
-  /** The strings of the locale and the language they are in: `translations` is
-   * `{en: {...}, fr: {...}}` or the strings of a single locale. The exact locale, then its
-   * language, then the default one of the extension (`defaultLocale`, the `.default.json` file),
-   * then, for the extensions that declare none, English or the first one. */
+  /** The dictionaries to read a string from, best first, each with the language it is in:
+   * `translations` is `{en: {...}, fr: {...}}` or the strings of a single locale. The exact
+   * locale, then its language, then the default one of the extension (`defaultLocale`, the
+   * `.default.json` file), then, for the extensions that declare none, English or the first one.
+   * The first one is the language the extension renders in. */
   function pickStrings(translations, locale, defaultLocale) {
     const keys = Object.keys(translations || {});
-    if (keys.length === 0) return { strings: {}, language: undefined };
+    if (keys.length === 0) return [];
     const byLocale = keys.every((key) => LOCALE_KEY.test(key) || key === 'default');
-    if (!byLocale) return { strings: translations, language: undefined };
+    if (!byLocale) return [{ strings: translations, language: undefined }];
     const tag = String(locale || 'en').replace('_', '-');
     const find = (wanted) => {
       const lower = String(wanted).replace('_', '-').toLowerCase();
       return keys.find((key) => key.replace('_', '-').toLowerCase() === lower);
     };
-    const language =
-      find(tag) ||
-      find(tag.split('-')[0]) ||
-      (defaultLocale && find(defaultLocale)) ||
-      find('en') ||
-      find('default') ||
-      keys[0];
-    return { strings: translations[language], language: language === 'default' ? undefined : language };
+    const chain = [];
+    for (const key of [
+      find(tag),
+      find(tag.split('-')[0]),
+      defaultLocale && find(defaultLocale),
+      find('en'),
+      find('default'),
+      keys[0],
+    ]) {
+      if (key !== undefined && !chain.includes(key)) chain.push(key);
+    }
+    return chain.map((key) => ({
+      strings: translations[key],
+      language: key === 'default' ? undefined : key.replace('_', '-'),
+    }));
   }
 
   function lookup(strings, key) {
@@ -265,18 +273,41 @@
   }
 
   function createI18n(locale, currency, translations, defaultLocale) {
-    const { strings } = pickStrings(translations, locale, defaultLocale);
+    const dictionaries = pickStrings(translations, locale, defaultLocale);
     const tag = String(locale || 'en').replace('_', '-');
+    // Plural rules are the ones of the language a string is in, not the buyer's: a French string
+    // shown to a German buyer is counted the French way.
+    const rules = new Map();
+    const pluralCategory = (language, count) => {
+      const wanted = language || tag;
+      if (!rules.has(wanted)) {
+        try {
+          rules.set(wanted, new Intl.PluralRules(wanted));
+        } catch {
+          rules.set(wanted, new Intl.PluralRules(tag));
+        }
+      }
+      return rules.get(wanted).select(count);
+    };
     return {
       formatNumber: (number, options) => new Intl.NumberFormat(tag, options).format(number),
       formatCurrency: (number, options) =>
         new Intl.NumberFormat(tag, { style: 'currency', currency, ...options }).format(number),
       formatDate: (date, options) => new Intl.DateTimeFormat(tag, options).format(date),
       translate(key, replacements) {
-        let value = lookup(strings, key);
+        // Each key is resolved on its own, so a partial dictionary falls back key by key.
+        let value;
+        let language;
+        for (const dictionary of dictionaries) {
+          value = lookup(dictionary.strings, key);
+          if (value !== undefined) {
+            language = dictionary.language;
+            break;
+          }
+        }
         if (value && typeof value === 'object') {
           const count = replacements && replacements.count;
-          const category = typeof count === 'number' ? new Intl.PluralRules(tag).select(count) : 'other';
+          const category = typeof count === 'number' ? pluralCategory(language, count) : 'other';
           value = value[category] !== undefined ? value[category] : value.other;
         }
         if (typeof value !== 'string') return key;
@@ -358,7 +389,7 @@
     signalProperty(api.extension, 'rendered', () => true);
     signalProperty(api, 'settings', () => ext.settings || {});
     api.i18n = createI18n(locale, currency, ext.translations, ext.defaultLocale);
-    const extensionLanguage = pickStrings(ext.translations, locale, ext.defaultLocale).language;
+    const extensionLanguage = (pickStrings(ext.translations, locale, ext.defaultLocale)[0] || {}).language;
     api.shop = {
       id: 'gid://shopify/Shop/1',
       name: (state.shop && state.shop.name) || '',

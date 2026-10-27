@@ -52,6 +52,27 @@ test('the Shop skin changes the words and the data attribute, not the steps', ()
   assert.equal(text(findAll(tree, (node) => node.tag === 'h2')[1]), 'Ship to');
 });
 
+const countryOptions = (tree) =>
+  findAll(tree, (node) => node.tag === 'select' && node.props.name === 'countryCode')[0]
+    .children.filter((node) => node.tag === 'option' && node.props.value)
+    .map((node) => [node.props.value, text(node)]);
+
+test('the country selector lists the countries of the store', () => {
+  const state = checkoutState();
+  state.shop = { ...state.shop, countries: [{ code: 'FR', name: 'France' }, { code: 'BE', name: 'Belgique' }] };
+  assert.deepEqual(countryOptions(page(state)), [['FR', 'France'], ['BE', 'Belgique']]);
+  // The country already on the address stays selectable.
+  state.shippingAddress = { ...ADDRESS, countryCode: 'JP' };
+  assert.deepEqual(countryOptions(page(state)).map(([code]) => code), ['FR', 'BE', 'JP']);
+  // Without countries, or with none, the default list.
+  for (const countries of [undefined, []]) {
+    const bare = checkoutState();
+    bare.shop = { ...bare.shop, countries };
+    assert.ok(countryOptions(page(bare)).length >= 20);
+    assert.ok(countryOptions(page(bare)).some(([code]) => code === 'US'));
+  }
+});
+
 test('shipping methods wait for the address', () => {
   const before = page(checkoutState());
   assert.match(text(byClass(before, 'lsf-placeholder')[0]), /Enter your shipping address/);

@@ -9,7 +9,7 @@
 //   actions  what the buyer's gestures do
 //   refusals the extensions the host does not load, `[{handle, reason}]` (see `api-versions.js`)
 
-import { COUNTRIES, countryName, price, priceOrFree } from './format.js';
+import { countriesOf, countryName, price, priceOrFree } from './format.js';
 import { missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
 
@@ -70,6 +70,14 @@ function selectField({ id, label, value, options, error, actions }) {
     icon('chevron'),
     error && h('p', { class: 'lsf-field-error', id: `${id}-error` }, icon('warning'), error),
   );
+}
+
+/** The countries of the store; the one already on the address stays, even if the store dropped it. */
+function countryOptions(state, current) {
+  const countries = countriesOf(state);
+  return current && !countries.some(([code]) => code === current)
+    ? [...countries, [current, countryName(current)]]
+    : countries;
 }
 
 /** What the buyer sees in a field: what they typed, else what the checkout holds. */
@@ -139,7 +147,7 @@ function addressSection(ctx) {
       id: 'lsf-countryCode',
       label: 'Country/Region',
       value: value('countryCode'),
-      options: COUNTRIES,
+      options: countryOptions(state, value('countryCode')),
       error: firstError(errors, 'countryCode'),
       actions,
     }),
@@ -420,7 +428,7 @@ function checkoutPage(ctx) {
     summary(ctx));
 }
 
-function addressLines(address) {
+function addressLines(address, countries) {
   if (!address) return [];
   return [
     [address.firstName, address.lastName].filter(Boolean).join(' '),
@@ -428,7 +436,7 @@ function addressLines(address) {
     address.address1,
     address.address2,
     [address.zip, address.city].filter(Boolean).join(' '),
-    countryName(address.countryCode),
+    countryName(address.countryCode, countries),
   ].filter(Boolean);
 }
 
@@ -456,7 +464,7 @@ function thankYouPage(ctx) {
         h('h2', null, 'Order details'),
         h('div', { class: 'lsf-details' },
           detail('Contact information', [state.buyer?.email, state.buyer?.phone].filter(Boolean)),
-          detail('Shipping address', addressLines(state.shippingAddress)),
+          detail('Shipping address', addressLines(state.shippingAddress, countriesOf(state))),
           detail('Shipping method', selected.map((option) => `${option.title} · ${priceOrFree(option.cost, state.shop)}`)),
           detail('Payment method', method ? [`${method.name} · ${price(state.cost.total, state.shop)}`] : []),
           detail('Billing address', state.shippingAddress ? ['Same as shipping address'] : [])),

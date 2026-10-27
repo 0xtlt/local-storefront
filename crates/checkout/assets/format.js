@@ -58,6 +58,7 @@ export function withCurrency(state) {
 /** `gid://shopify/ProductVariant/12` for `("ProductVariant", 12)`. */
 export const gid = (type, id) => `gid://shopify/${type}/${id}`;
 
+/** What the selector lists when the checkout does not say which countries the store sells in. */
 export const COUNTRIES = [
   ['AU', 'Australia'], ['AT', 'Austria'], ['BE', 'Belgium'], ['BR', 'Brazil'], ['CA', 'Canada'],
   ['DK', 'Denmark'], ['FI', 'Finland'], ['FR', 'France'], ['DE', 'Germany'], ['IE', 'Ireland'],
@@ -66,4 +67,17 @@ export const COUNTRIES = [
   ['SE', 'Sweden'], ['CH', 'Switzerland'], ['GB', 'United Kingdom'], ['US', 'United States'],
 ];
 
-export const countryName = (code) => COUNTRIES.find(([iso]) => iso === code)?.[1] ?? code ?? '';
+/** The countries of the store as `[code, name]`, in the order it configures them
+ * (`state.shop.countries`), else the default list. */
+export function countriesOf(state) {
+  const configured = state?.shop?.countries;
+  if (!Array.isArray(configured)) return COUNTRIES;
+  const countries = configured
+    .filter((country) => country && country.code)
+    .map((country) => [country.code, country.name || country.code]);
+  return countries.length > 0 ? countries : COUNTRIES;
+}
+
+/** The name of a country: the store's, else the default list's, else the code. */
+export const countryName = (code, countries = COUNTRIES) =>
+  countries.find(([iso]) => iso === code)?.[1] ?? COUNTRIES.find(([iso]) => iso === code)?.[1] ?? code ?? '';

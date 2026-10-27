@@ -305,6 +305,45 @@ test('translations fall back from the locale to its language to the declared def
   assert.equal(inLocale('de', {}).localization.extensionLanguage.value.isoCode, 'de');
 });
 
+test('translations are resolved key by key: locale, language, default, key', () => {
+  const translations = {
+    'fr-CA': { a: 'a fr-CA' },
+    fr: { a: 'a fr', b: 'b fr' },
+    en: { a: 'a en', b: 'b en', c: 'c en' },
+  };
+  const buyer = inLocale('fr-CA', translations, 'en');
+  assert.equal(buyer.i18n.translate('a'), 'a fr-CA');
+  assert.equal(buyer.i18n.translate('b'), 'b fr', 'only in the language');
+  assert.equal(buyer.i18n.translate('c'), 'c en', 'only in the default');
+  assert.equal(buyer.i18n.translate('d'), 'd');
+  // The extension is still rendered in the best dictionary.
+  assert.equal(buyer.localization.extensionLanguage.value.isoCode, 'fr-CA');
+  // A dictionary without the key does not hide it from the next one, nested keys included.
+  const nested = inLocale('fr-CA', { 'fr-CA': { x: { y: 'y fr-CA' } }, en: { x: { y: 'y en', z: 'z en' } } }, 'en');
+  assert.equal(nested.i18n.translate('x.y'), 'y fr-CA');
+  assert.equal(nested.i18n.translate('x.z'), 'z en');
+});
+
+test('plurals follow the language of the string, numbers the locale of the buyer', () => {
+  const translations = {
+    fr: { items: { one: '{{count}} article', other: '{{count}} articles' } },
+    en: { items: { one: '{{count}} item', other: '{{count}} items' } },
+  };
+  // French counts 0 as `one`, German and English as `other`.
+  const german = inLocale('de', translations, 'fr');
+  assert.equal(german.i18n.translate('items', { count: 0 }), '0 article');
+  assert.equal(german.i18n.translate('items', { count: 2 }), '2 articles');
+  assert.equal(german.i18n.formatNumber(1234.5), '1.234,5');
+  // The string of a partial dictionary that falls back to another language: that one's rules.
+  const partial = inLocale('de', { de: { hello: 'Hallo' }, ...translations }, 'fr');
+  assert.equal(partial.i18n.translate('items', { count: 0 }), '0 article');
+  const english = inLocale('en', translations, 'fr');
+  assert.equal(english.i18n.translate('items', { count: 0 }), '0 items');
+  // Strings with no locale at all use the rules of the buyer.
+  const flat = inLocale('fr', { items: { one: '{{count}} one', other: '{{count}} other' } });
+  assert.equal(flat.i18n.translate('items', { count: 0 }), '0 one');
+});
+
 test('the one-page checkout is the step `checkout`, the thank-you page `thank-you`', () => {
   const { shopify } = runtime();
   assert.equal(shopify.buyerJourney.activeStep.value.handle, 'checkout');

@@ -288,6 +288,10 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
             "moneyFormat": store.shop.money_format,
             "locale": store.primary_language().iso_code,
             "storefrontUrl": origin_of(incoming),
+            // The countries the store sells in, for the country selector.
+            "countries": store.countries.iter()
+                .map(|country| json!({"code": country.iso_code, "name": country.name}))
+                .collect::<Vec<_>>(),
         }),
     );
     object.insert(
