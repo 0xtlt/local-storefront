@@ -220,6 +220,7 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 
 /* An empty state: no controls yet, and the reason. */
 .lsf-placeholder { padding: var(--lsf-space-xl); border-radius: var(--lsf-radius-control); background: var(--lsf-color-bg-subdued); color: var(--lsf-color-text-subdued); }
+.lsf-empty-cart-links { display: flex; flex-wrap: wrap; gap: var(--lsf-space-xl); margin-top: var(--lsf-space-xl); }
 
 /* --- Option lists (shipping methods, payment) ------------------------------------------ */
 

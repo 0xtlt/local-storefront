@@ -531,8 +531,27 @@ function diagnostics({ state, refusals = [] }) {
     : null;
 }
 
+/** An empty cart has nothing to check out: Shopify sends the buyer back to the cart. The page
+ * says so and offers the scenarios, which come with a cart. */
+function emptyCart(ctx) {
+  const { state } = ctx;
+  return h('section', { class: 'lsf-section lsf-empty-cart', 'data-section': 'empty-cart' },
+    h('h2', null, 'Your cart is empty'),
+    h('p', { class: 'lsf-placeholder' },
+      'This checkout has no line to pay for. ',
+      state.home ? 'Open a checkout scenario, which comes with its cart, or add products from the store.' : 'Add products from the store.'),
+    h('div', { class: 'lsf-empty-cart-links' },
+      state.home && h('a', { class: 'lsf-link', href: state.home, 'data-link': 'scenarios' }, 'Checkout scenarios'),
+      h('a', { class: 'lsf-link lsf-return', href: storefrontLink(state, '/cart') }, '‹ Return to cart')));
+}
+
 function checkoutPage(ctx) {
   const { state, slot } = ctx;
+  if (state.lines.length === 0 && !ctx.preview) {
+    return h('div', { class: 'lsf-layout' },
+      h('main', { class: 'lsf-main' }, diagnostics(ctx), contactSection(ctx), emptyCart(ctx)),
+      summary(ctx));
+  }
   // Showing every target: the steps of a cart that ships are there, whatever the cart.
   const needsShipping = state.lines.some((line) => line.requiresShipping) || Boolean(ctx.preview);
   return h('div', { class: 'lsf-layout' },

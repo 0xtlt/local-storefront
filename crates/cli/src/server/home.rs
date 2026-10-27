@@ -455,12 +455,19 @@ pub fn build(
         "scenarios": store.scenarios.iter()
             .map(|scenario| scenario_json(&store, &app, options, scenario, root))
             .collect::<Vec<_>>(),
-        // The login profiles: the customers of the store data, each with the checkout of the
-        // session logged in as them.
+        // The login profiles: the customers of the store data, each with a checkout logged in as
+        // them. A scenario gives it a cart, the session's own may well be empty: the first that
+        // opens in the store's own language and country, the first that opens otherwise.
         "customers": store.customers.iter()
             .map(|customer| {
                 let mut profile = super::checkout_account::profile_json(customer, &store, false);
-                profile["open"] = json!(format!("{root}/checkout?customer={}", query_escape(&customer.email)));
+                let opens = || store.scenarios.iter().filter(|scenario| scenario.problems.is_empty());
+                let scenario = opens()
+                    .find(|scenario| scenario.language.is_none() && scenario.session.country.is_none())
+                    .or_else(|| opens().next())
+                    .map(|scenario| format!("scenario={}&", query_escape(&scenario.name)))
+                    .unwrap_or_default();
+                profile["open"] = json!(format!("{root}/checkout?{scenario}customer={}", query_escape(&customer.email)));
                 if let Some(profile) = profile.as_object_mut() {
                     profile.remove("current");
                 }

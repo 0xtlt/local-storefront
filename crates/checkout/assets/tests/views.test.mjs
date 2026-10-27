@@ -482,3 +482,20 @@ test('a very large JSON is shown plain', () => {
   assert.equal(pre.children[0].tag, '#text');
 });
 
+test('an empty cart says so, with the scenarios, instead of a checkout to pay for nothing', () => {
+  const state = { ...checkoutState(), lines: [], home: '/' };
+  const tree = page(state);
+  const empty = findAll(tree, (node) => node.props['data-section'] === 'empty-cart')[0];
+  assert.match(text(empty), /Your cart is empty/);
+  assert.equal(findAll(empty, (node) => node.props['data-link'] === 'scenarios')[0].props.href, '/');
+  assert.equal(byClass(tree, 'lsf-pay').length, 0, 'nothing to pay');
+  assert.equal(findAll(tree, (node) => node.props['data-section'] === 'payment').length, 0);
+  assert.equal(findAll(tree, (node) => node.props['data-section'] === 'contact').length, 1, 'the login stays');
+});
+
+test('every target still shows with an empty cart', () => {
+  const state = { ...checkoutState(), lines: [] };
+  const tree = renderPage({ state, ui: { draft: { address: {} }, openRuns: new Set() }, slot: () => null, actions: new Proxy({}, { get: () => () => {} }), preview: { all: true, rendered: [] }, location: 'http://localhost/checkouts/cn/preview' });
+  assert.equal(findAll(tree, (node) => node.props['data-section'] === 'empty-cart').length, 0);
+});
+

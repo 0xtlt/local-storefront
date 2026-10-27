@@ -93,7 +93,7 @@ checkout and without any network:
   fresh checkout for it. A scenario with errors is listed with them and has no link.
 - **Every customer of the store data** ([login profiles](#log-in-as-a-customer)): name, email,
   company, tags, orders, saved addresses and country, and a link that opens the checkout logged
-  in as them.
+  in as them: the first scenario's, for its cart, when there is one.
 - **A link that opens a checkout where every extension renders at every target it declares**
   ([`?targets=all`](#every-extension-target)), and one for the Shop look.
 

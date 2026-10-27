@@ -6637,6 +6637,39 @@ fn the_home_page_says_how_to_get_scenarios() {
 }
 
 #[test]
+fn the_customers_of_the_home_page_open_the_first_scenario_with_its_cart() {
+    // The session of the data may have an empty cart: the link gives the checkout one.
+    let data = ScenarioData::new(
+        "customer-links",
+        &[
+            ("a-abroad.json", TEES),
+            (
+                "b-home.json",
+                r#"{ "session": { "cart": { "items": [{ "variant": "TEE-BLK-M", "quantity": 3 }] } } }"#,
+            ),
+        ],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let jane = &json["customers"][0];
+    // Not the French one, though it comes first: the one in the store's own language.
+    assert_eq!(
+        jane["open"],
+        "/checkout?scenario=b-home&customer=jane.doe%40example.com"
+    );
+    let reply = get(&state, text_of_json(&jane["open"]), "customer-link");
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    let checkout = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(checkout["lines"][0]["quantity"], 3);
+    assert_eq!(
+        checkout["buyer"]["customer"]["email"],
+        "jane.doe@example.com"
+    );
+}
+
+#[test]
 fn the_home_page_lists_the_customers_to_log_in_as() {
     let state = checkout_server(&[], true);
     let json = body_json(&get(&state, "/?format=json", "home"));
