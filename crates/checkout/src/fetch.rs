@@ -239,6 +239,9 @@ fn send(request: &Request) -> Result<Response, Response> {
         .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .max_redirects(0)
+        // The headers and the body share the 100 KB: the default of 64 KiB for the headers alone
+        // would turn a response Shopify accepts into a failure. The size of both is checked below.
+        .max_response_header_size(MAX_RESPONSE_BYTES)
         .build()
         .into();
     let mut builder = ureq::http::Request::builder()
@@ -250,9 +253,10 @@ fn send(request: &Request) -> Result<Response, Response> {
     let http_request = builder
         .body(request.body.clone().unwrap_or_default())
         .map_err(|_| connection_failed())?;
-    let response = agent
-        .run(http_request)
-        .map_err(|error| failure_of(&error))?;
+    let response = agent.run(http_request).map_err(|error| match error {
+        ureq::Error::LargeResponseHeader(..) => too_big(),
+        error => failure_of(&error),
+    })?;
     let (parts, mut body) = response.into_parts();
 
     let headers: Vec<(String, String)> = parts
@@ -269,12 +273,6 @@ fn send(request: &Request) -> Result<Response, Response> {
         .iter()
         .map(|(name, value)| name.len() + value.len() + 4)
         .sum();
-    let too_big = || {
-        Response::failure(
-            BAD_GATEWAY,
-            "502 Bad Gateway (Headers and body exceed 100KB limit)",
-        )
-    };
     if header_bytes > MAX_RESPONSE_BYTES {
         return Err(too_big());
     }
@@ -320,6 +318,13 @@ fn charset_of(content_type: &str) -> Option<String> {
             .eq_ignore_ascii_case("charset")
             .then(|| value.trim().trim_matches('"').to_ascii_lowercase())
     })
+}
+
+fn too_big() -> Response {
+    Response::failure(
+        BAD_GATEWAY,
+        "502 Bad Gateway (Headers and body exceed 100KB limit)",
+    )
 }
 
 fn gateway_timeout() -> Response {

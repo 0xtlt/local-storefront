@@ -216,6 +216,53 @@ fn the_headers_count_in_the_limit_of_the_response() {
     );
 }
 
+/// Headers of about `total` bytes, in headers of 1000 bytes each.
+fn headers_of(total: usize) -> Vec<(String, String)> {
+    (0..total / 1010)
+        .map(|index| (format!("x-pad-{index:04}"), "h".repeat(1000)))
+        .collect()
+}
+
+fn with_headers(headers: &[(String, String)], body: &[u8]) -> (Duration, Vec<u8>) {
+    let mut all = vec![("content-type", "text/plain")];
+    all.extend(headers.iter().map(|(n, v)| (n.as_str(), v.as_str())));
+    raw("200 OK", &all, body)
+}
+
+#[test]
+fn headers_between_64_and_100_kib_are_accepted() {
+    // 70 KiB of headers (a loopback response of 71,749 bytes, body included, came back as a
+    // 502 when the headers had the default limit of 64 KiB), then nearly the whole 100 KB.
+    let server = serve(vec![
+        with_headers(&headers_of(70 * 1024), b"seventy"),
+        with_headers(&headers_of(98 * 1024), b"ninety-eight"),
+        // The headers and the body together reach the limit.
+        with_headers(&headers_of(80 * 1024), &vec![b'a'; 20 * 1024 - 2000]),
+    ]);
+    let mut bodies = Vec::new();
+    for _ in 0..3 {
+        let response = HttpFetcher.send(&request(&server, Method::Get, 2000));
+        assert_eq!(response.status, 200, "{}", response.body);
+        bodies.push(response.body.len());
+    }
+    assert_eq!(bodies, [7, 12, 20 * 1024 - 2000]);
+}
+
+#[test]
+fn headers_over_100_kb_are_a_bad_gateway() {
+    let server = serve(vec![
+        with_headers(&headers_of(101 * 1024), b""),
+        // Headers under the limit, with a body that takes the rest over it.
+        with_headers(&headers_of(80 * 1024), &vec![b'a'; 21 * 1024]),
+    ]);
+    for _ in 0..2 {
+        assert_eq!(
+            HttpFetcher.send(&request(&server, Method::Get, 2000)),
+            Response::failure(502, "502 Bad Gateway (Headers and body exceed 100KB limit)")
+        );
+    }
+}
+
 #[test]
 fn a_charset_other_than_utf_8_is_not_supported() {
     let server = serve(vec![
