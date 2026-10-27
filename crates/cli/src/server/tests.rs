@@ -5595,6 +5595,44 @@ fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
 }
 
 #[test]
+fn a_scenario_opened_with_a_look_and_every_target_keeps_both_and_the_url_wins() {
+    let data = ScenarioData::new("query", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+
+    // The scenario asks for the Shop look; the address asks for the standard one.
+    let reply = get(
+        &state,
+        "/checkout?scenario=tees&variant=standard&targets=all",
+        "viewer",
+    );
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    assert_eq!(
+        location,
+        format!(
+            "/fr/checkouts/cn/{}?variant=standard&targets=all",
+            super::cart_token_of(&id)
+        )
+    );
+
+    let (path, query) = location.split_once('?').unwrap();
+    let json = body_json(&get(&state, &format!("{path}.json?{query}"), &id));
+    assert_eq!(json["variant"], "standard");
+    // The session keeps it, as for any checkout opened with `?variant=`.
+    let again = body_json(&get(&state, &format!("{path}.json"), &id));
+    assert_eq!(again["variant"], "standard");
+
+    // Without it, the look is the scenario's.
+    let plain = get(&state, "/checkout?scenario=tees", "viewer");
+    let plain_id = session_cookie(&plain);
+    let plain_path = header(&plain, "location").unwrap().to_string();
+    assert!(!plain_path.contains('?'));
+    let json = body_json(&get(&state, &format!("{plain_path}.json"), &plain_id));
+    assert_eq!(json["variant"], "shop");
+}
+
+#[test]
 fn every_opening_of_a_scenario_is_a_new_session() {
     let data = ScenarioData::new("fresh", &[("tees.json", TEES)]);
     let state = data.server(&[], false);

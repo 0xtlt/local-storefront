@@ -366,7 +366,7 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         .and_then(|iso| store.language(iso))
         .unwrap_or(request_language);
     let mut location = checkout_path(root_of(language), &token);
-    location.push_str(&carried_query(incoming, &["targets"]));
+    location.push_str(&carried_query(incoming, &["variant", "targets"]));
     with_cookie(Reply::redirect(&location), &id, true)
 }
 
