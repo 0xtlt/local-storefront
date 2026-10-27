@@ -573,6 +573,12 @@ pub struct CompanyLocation {
     pub external_id: Option<String>,
     pub shipping_address: Option<Address>,
     pub tax_registration_id: Option<String>,
+    pub locale: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub orders_count: u32,
+    /// In minor units of the store currency.
+    pub total_spent: i64,
     pub metafields: Metafields,
 }
 
@@ -582,7 +588,18 @@ pub struct Company {
     pub name: String,
     pub external_id: Option<String>,
     pub locations: Vec<CompanyLocation>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub metafields: Metafields,
+}
+
+/// A customer as a contact of their company.
+#[derive(Clone, Debug)]
+pub struct CompanyContact {
+    pub title: Option<String>,
+    pub locale: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug)]
@@ -604,6 +621,8 @@ pub struct Customer {
     pub company: Option<usize>,
     /// The locations of that company the customer can buy for, as indexes into its locations.
     pub company_locations: Vec<usize>,
+    /// The customer as a contact of that company.
+    pub company_contact: Option<CompanyContact>,
 }
 
 impl Customer {
@@ -710,6 +729,15 @@ pub struct Country {
     pub popular: bool,
 }
 
+/// A group of countries sold as one market.
+#[derive(Clone, Debug)]
+pub struct Market {
+    pub handle: String,
+    /// ISO 3166-1 alpha-2 codes, upper case.
+    pub countries: Vec<String>,
+    pub metafields: Metafields,
+}
+
 #[derive(Clone, Debug)]
 pub struct Language {
     pub iso_code: String,
@@ -780,6 +808,8 @@ pub struct CheckoutShippingRate {
 pub struct CheckoutPaymentMethod {
     pub handle: String,
     pub name: String,
+    /// Never empty.
+    pub placements: Vec<model::CheckoutPaymentPlacement>,
 }
 
 #[derive(Clone, Debug)]
@@ -822,6 +852,7 @@ impl Default for CheckoutSettings {
             .map(|(handle, name)| CheckoutPaymentMethod {
                 handle: handle.to_string(),
                 name: name.to_string(),
+                placements: vec![model::CheckoutPaymentPlacement::PaymentMethod],
             })
             .collect(),
             discounts: Vec::new(),
@@ -845,6 +876,8 @@ pub struct Store {
     pub selling_plan_groups: Vec<SellingPlanGroup>,
     pub metaobjects: Vec<Metaobject>,
     pub countries: Vec<Country>,
+    /// The markets the data declares; a country in none of them is a market of its own.
+    pub markets: Vec<Market>,
     pub languages: Vec<Language>,
     pub files: IndexMap<String, FileMeta>,
     pub session_defaults: SessionDefaults,
@@ -1004,6 +1037,16 @@ impl Store {
         self.countries
             .iter()
             .find(|country| country.iso_code.eq_ignore_ascii_case(iso_code))
+    }
+
+    /// The market the data groups a country in, if it does.
+    pub fn market_of(&self, iso_code: &str) -> Option<&Market> {
+        self.markets.iter().find(|market| {
+            market
+                .countries
+                .iter()
+                .any(|country| country.eq_ignore_ascii_case(iso_code))
+        })
     }
 
     pub fn metaobject(&self, kind: &str, handle: &str) -> Option<&Metaobject> {

@@ -567,6 +567,7 @@ A customer. Sessions log in as a customer by email (see `session.customer`).
 | `password` | string | The password accepted by the local login form. Any password works when omitted. |
 | `company` | string | The name of a company in `companies`: the customer buys for it (B2B). |
 | `company_locations` | array of string | The names of the locations of the company the customer can buy for. Defaults to all of them. |
+| `company_contact` | [CompanyContact](#companycontact) | What the company knows of the customer as a buyer: their job title, language, dates. Checkout Functions read it as `purchasingCompany.contact`. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Order
@@ -607,6 +608,18 @@ One of:
 - integer
 - string
 
+## CompanyContact
+
+A customer as a contact of their company (B2B): `purchasingCompany.contact` of a checkout
+Function.
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | string | The job title of the contact, e.g. `"Purchasing manager"`. |
+| `locale` | string | The language of the contact, e.g. `"fr"`. None when absent. |
+| `created_at` | string | Defaults to the creation date of the company. |
+| `updated_at` | string | Defaults to `created_at`. |
+
 ## Company
 
 A company that buys from the store (B2B). A customer whose `company` names it is a B2B
@@ -618,6 +631,8 @@ customer: `customer.b2b?` is true, and `customer.current_company` is this compan
 | `name` | string | **Required.** The name customers refer to the company by. |
 | `external_id` | string | The id the merchant gives the company in its own systems. |
 | `locations` | array of [CompanyLocation](#companylocation) | The places the company buys for. The first one is selected when a customer logs in. |
+| `created_at` | string | Defaults to a fixed date, 2024-01-01 plus one day per company. |
+| `updated_at` | string | Defaults to `created_at`. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## CompanyLocation
@@ -631,6 +646,11 @@ A place a company buys for (`customer.current_location`): a branch, a shop, a wa
 | `external_id` | string | The id the merchant gives the location in its own systems. |
 | `shipping_address` | [Address](#address) | Where orders of this location ship to. |
 | `tax_registration_id` | string | The tax number of the location, e.g. a VAT number. |
+| `locale` | string | The preferred language of the location, e.g. `"fr"`. None when absent. |
+| `created_at` | string | Defaults to the creation date of the company. |
+| `updated_at` | string | Defaults to `created_at`. |
+| `orders_count` | integer | The number of orders placed at the location, which checkout Functions read as `ordersCount`. The orders of the customers are not counted: defaults to 0. |
+| `total_spent` | [Money](#money) | The amount spent at the location (`totalSpent`), e.g. `"1250.00"`. Defaults to 0. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## GiftCard
@@ -685,6 +705,7 @@ The first language is the primary one and is served at `/`; the others are serve
 |---|---|---|
 | `countries` | array of [Country](#country) |  |
 | `languages` | array of [Language](#language) |  |
+| `markets` | array of [Market](#market) | Groups of countries sold as one market. A country in none of them is a market of its own, named after the country. |
 
 ## Country
 
@@ -707,6 +728,17 @@ A language the store is published in.
 | `iso_code` | string | **Required.** Locale code, e.g. `"en"`, `"fr"`, `"pt-BR"`. |
 | `name` | string | The language's name in English. Defaults to a built-in name. |
 | `endonym_name` | string | The language's name in that language. Defaults to a built-in name. |
+
+## Market
+
+A market: the countries the store sells to as one, as checkout Functions see it in
+`localization.market` and `MailingAddress.market`.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | **Required.** What Functions call the market: `"europe"`. |
+| `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
+| `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Location
 
@@ -887,6 +919,16 @@ A payment method the local checkout offers.
 |---|---|---|
 | `handle` | string | **Required.** What payment customization Functions and the page call the method: `"card"`. |
 | `name` | string | What the buyer sees. Defaults to the handle. |
+| `placements` | array of [CheckoutPaymentPlacement](#checkoutpaymentplacement) | Where the method is offered, which payment customization Functions read as `placements`. Defaults to `["PAYMENT_METHOD"]`: the list of the checkout. |
+
+## CheckoutPaymentPlacement
+
+Where a payment method is offered.
+
+One of:
+
+- `"PAYMENT_METHOD"`: The list of payment methods of the checkout.
+- `"ACCELERATED_CHECKOUT"`: The express buttons (Shop Pay, Apple Pay, ...).
 
 ## CheckoutDiscount
 

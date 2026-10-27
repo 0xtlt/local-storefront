@@ -400,6 +400,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         selling_plan_groups: Vec::new(),
         metaobjects: Vec::new(),
         countries: Vec::new(),
+        markets: Vec::new(),
         languages: Vec::new(),
         files: IndexMap::new(),
         session_defaults: SessionDefaults::default(),
@@ -2261,6 +2262,12 @@ fn build_companies(
         let id = input
             .id
             .unwrap_or_else(|| stable_id("company", &input.name.to_lowercase()));
+        let created_at = builder.date(
+            &input.created_at,
+            &origin.child("created_at"),
+            epoch() + Duration::days(store.companies.len() as i64),
+        );
+        let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), created_at);
         let mut names = HashSet::new();
         let locations = input
             .locations
@@ -2283,8 +2290,25 @@ fn build_companies(
                         &format!("{id}/{}", location.name.to_lowercase()),
                     )
                 });
+                let location_origin = origin.child("locations").child(position);
+                let location_created = builder.date(
+                    &location.created_at,
+                    &location_origin.child("created_at"),
+                    created_at,
+                );
                 CompanyLocation {
                     id: location_id,
+                    locale: location.locale.clone(),
+                    updated_at: builder.date(
+                        &location.updated_at,
+                        &location_origin.child("updated_at"),
+                        location_created,
+                    ),
+                    created_at: location_created,
+                    orders_count: location.orders_count.unwrap_or(0),
+                    total_spent: location.total_spent.as_ref().map_or(0, |money| {
+                        builder.money(money, &location_origin.child("total_spent"))
+                    }),
                     name: location.name.clone(),
                     external_id: location.external_id.clone(),
                     shipping_address: location
@@ -2301,6 +2325,8 @@ fn build_companies(
             name: input.name.clone(),
             external_id: input.external_id.clone(),
             locations,
+            created_at,
+            updated_at,
             metafields: builder.metafields(&input.metafields),
         });
     }
@@ -2418,6 +2444,34 @@ fn build_customers(
             .id
             .unwrap_or_else(|| stable_id("customer", &input.email.to_lowercase()));
         let (company, company_locations) = customer_company(builder, store, input, origin);
+        let company_contact = input.company_contact.as_ref().map(|contact| {
+            let contact_origin = origin.child("company_contact");
+            let base = company.map_or_else(epoch, |index| store.companies[index].created_at);
+            let created_at = builder.date(
+                &contact.created_at,
+                &contact_origin.child("created_at"),
+                base,
+            );
+            CompanyContact {
+                title: contact.title.clone(),
+                locale: contact.locale.clone(),
+                updated_at: builder.date(
+                    &contact.updated_at,
+                    &contact_origin.child("updated_at"),
+                    created_at,
+                ),
+                created_at,
+            }
+        });
+        if input.company_contact.is_some() && company.is_none() {
+            builder
+                .error(
+                    "missing_company",
+                    &origin.child("company_contact"),
+                    "the customer has a company contact but names no company",
+                )
+                .hint("add \"company\" with the name of a company in \"companies\"");
+        }
         let orders = input
             .orders
             .iter()
@@ -2511,6 +2565,7 @@ fn build_customers(
             metafields: builder.metafields(&input.metafields),
             company,
             company_locations,
+            company_contact,
         });
     }
 }
@@ -2674,6 +2729,52 @@ fn build_localization(
             unit_system: reference::unit_system(&iso_code).to_string(),
             popular: false,
             iso_code,
+        });
+    }
+
+    let mut handles = HashSet::new();
+    let mut grouped: HashMap<String, String> = HashMap::new();
+    for (position, market) in input.markets.iter().enumerate() {
+        let market_origin = origin.child("markets").child(position);
+        if !handles.insert(market.handle.clone()) {
+            builder.error(
+                "duplicate_handle",
+                &market_origin.child("handle"),
+                format!("there are two markets called \"{}\"", market.handle),
+            );
+        }
+        let mut countries = Vec::new();
+        for (index, code) in market.countries.iter().enumerate() {
+            let code = code.to_uppercase();
+            let country_origin = market_origin.child("countries").child(index);
+            if store.country(&code).is_none() {
+                let known: Vec<&str> = store
+                    .countries
+                    .iter()
+                    .map(|country| country.iso_code.as_str())
+                    .collect();
+                builder
+                    .error(
+                        "unknown_country",
+                        &country_origin,
+                        format!(
+                            "\"{code}\" is not one of the countries in \"localization.countries\""
+                        ),
+                    )
+                    .hint(format!("countries: {}", known.join(", ")));
+            } else if let Some(other) = grouped.insert(code.clone(), market.handle.clone()) {
+                builder.error(
+                    "duplicate_market_country",
+                    &country_origin,
+                    format!("{code} is already in the market \"{other}\""),
+                );
+            }
+            countries.push(code);
+        }
+        store.markets.push(Market {
+            handle: market.handle.clone(),
+            countries,
+            metafields: builder.metafields(&market.metafields),
         });
     }
 
@@ -2914,6 +3015,11 @@ fn build_checkout(
             settings.payment_methods.push(CheckoutPaymentMethod {
                 handle: method.handle.clone(),
                 name: method.name.clone().unwrap_or_else(|| method.handle.clone()),
+                placements: if method.placements.is_empty() {
+                    vec![model::CheckoutPaymentPlacement::PaymentMethod]
+                } else {
+                    method.placements.clone()
+                },
             });
         }
     }

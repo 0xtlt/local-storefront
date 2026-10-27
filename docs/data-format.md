@@ -480,6 +480,37 @@ name it in the customer:
 - In Liquid, `customer.b2b?` is true, and `customer.current_company`,
   `customer.current_location` and `customer.company_available_locations` are filled.
 - `location.url_to_set_as_current` changes the location, as on Shopify.
+- The [local checkout](checkout.md) shows what Shopify's Functions read of a B2B buyer
+  (`purchasingCompany`), and you can set it. A company has `created_at` and `updated_at`, a
+  location the same plus `locale` (`"fr"`), `orders_count` and `total_spent` (`"1250.00"`). The
+  customer is the contact of their company: `company_contact` holds their `title`, `locale`,
+  `created_at` and `updated_at`.
+
+```json
+{
+  "companies": [
+    {
+      "name": "Northwind Hotels",
+      "created_at": "2023-06-01",
+      "locations": [
+        { "name": "Northwind Portland", "locale": "en", "orders_count": 12, "total_spent": "8450.00" }
+      ]
+    }
+  ],
+  "customers": [
+    {
+      "email": "alex.morgan@example.com",
+      "company": "Northwind Hotels",
+      "company_contact": { "title": "Purchasing manager", "locale": "en" }
+    }
+  ]
+}
+```
+
+  What is not set has a value: the dates are 2024-01-01 12:00 UTC plus one day per company,
+  the dates of a location and of a contact are those of their company (`updated_at` those of
+  `created_at`), the language is empty, and a location has no order and has spent nothing. The
+  orders of the customers are not counted in `orders_count`: it is what you write.
 
 Catalogs are not simulated: a B2B customer sees the same products and prices as everyone.
 
@@ -541,6 +572,10 @@ changes nothing for a theme.
 - `shipping_rates`: the delivery options offered to every address. Without it, one: "Standard"
   at 5.00.
 - `payment_methods`: without it, "Credit card", "Cash on Delivery" and "Bank Deposit".
+  `placements` says where a method is offered, which payment customization Functions read:
+  `["PAYMENT_METHOD"]` (the list of the checkout, the default) and/or `["ACCELERATED_CHECKOUT"]`
+  (the express buttons). A method that is only an express button is not in the list the page
+  shows.
 - `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
   code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
   what it may reduce, all three by default. `metafields` are those of the discount, by
@@ -564,6 +599,23 @@ The first language is the primary one, served at `/`. The others are served unde
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
 Names and currencies of countries default to built-in values. The localization form
 (`{% form 'localization' %}`) switches the session's country and language.
+
+`markets` groups countries the way Shopify's markets do. The checkout Functions read the
+market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
+
+```json
+{
+  "localization": {
+    "countries": [{ "iso_code": "FR" }, { "iso_code": "DE" }, { "iso_code": "US" }],
+    "markets": [
+      { "handle": "europe", "countries": ["FR", "DE"], "metafields": { "custom": { "tier": "gold" } } }
+    ]
+  }
+}
+```
+
+A country in no market is a market of its own, named after the country (`france`, `united-states`).
+An address in a country the store does not sell to has no market.
 
 ## Images and files
 
@@ -659,6 +711,10 @@ page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders i
 title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
 in a `url` setting leads to the page.
 
+The Functions of the [local checkout](checkout.md) read the same metaobjects as
+`shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
+
+
 ## Time and theme settings
 
 - `now` freezes the clock: `"now": "2025-01-15T10:00:00Z"`. `{{ 'now' | date: ... }}`, sale
@@ -683,7 +739,8 @@ in a `url` setting leads to the page.
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
 | `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data. The hint suggests the closest match. |
-| `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations without a company. |
+| `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
+| `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
 | `missing_price` | A product without a price on itself or on its variants. |
