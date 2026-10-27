@@ -60,8 +60,9 @@ enum Command {
     /// checkout UI extensions of a Shopify app.
     Serve(commands::serve::Args),
     /// Serve the checkout of a Shopify app alone, without a theme: `serve --app` without the
-    /// storefront. It takes the options of `serve`.
-    Checkout(commands::serve::Args),
+    /// storefront. It takes the options of `serve`. `checkout init` writes the checkout
+    /// scenarios to try the app with.
+    Checkout(commands::checkout::CheckoutArgs),
     /// Run the Shopify Functions of an app against the store data.
     Function(commands::function::Args),
     /// Render one URL and print the HTML.
@@ -103,7 +104,7 @@ fn main() -> ExitCode {
             commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, false)
         }
         Command::Checkout(args) => {
-            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, true)
+            commands::checkout::run(&cli.theme, cli.data.as_deref(), previews, args)
         }
         Command::Function(args) => {
             commands::function::run(&cli.theme, cli.data.as_deref(), previews, args)
@@ -130,5 +131,34 @@ fn main() -> ExitCode {
             eprintln!("error: {message}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn the_command_line_is_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn checkout_serves_and_checkout_init_writes_scenarios() {
+        let parse = |words: &[&str]| {
+            Cli::try_parse_from(std::iter::once("lsf").chain(words.iter().copied()))
+        };
+        assert!(matches!(
+            parse(&["checkout", "--app", "../my-app", "--port", "0"])
+                .unwrap()
+                .command,
+            Command::Checkout(_)
+        ));
+        assert!(parse(&["checkout", "init", "--app", "../my-app", "--force"]).is_ok());
+        assert!(parse(&["--data", "d", "checkout", "init"]).is_ok());
+        // Serving and initialising are not combined.
+        assert!(parse(&["checkout", "--port", "0", "init"]).is_err());
+        assert!(parse(&["checkout", "init", "--port", "0"]).is_err());
     }
 }

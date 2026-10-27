@@ -6098,3 +6098,40 @@ fn with_a_theme_the_home_page_is_under_the_control_api() {
     // Without an app there is nothing to list.
     assert_eq!(get(&server(), "/__lsf/checkouts", "home").status, 404);
 }
+
+#[test]
+fn every_scenario_that_init_writes_opens_and_runs_the_app() {
+    let root = std::env::temp_dir().join(format!("lsf-server-init-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let data = root.join("data");
+    crate::commands::checkout_init::run(
+        &root,
+        Some(&data),
+        crate::commands::checkout_init::InitArgs::for_app(fixture_app()),
+    )
+    .unwrap();
+    let state = checkout_server_with_data(fixture_app(), &[], true, Some(&data));
+    let home = body_json(&get(&state, "/?format=json", "init"));
+    let scenarios = home["scenarios"].as_array().unwrap();
+    assert!(scenarios.len() >= 12, "{}", scenarios.len());
+    for scenario in scenarios {
+        let name = scenario["name"].as_str().unwrap();
+        assert_eq!(scenario["problems"], json!([]), "{name}");
+        let opened = get(&state, scenario["open"].as_str().unwrap(), "init");
+        assert_eq!(opened.status, 302, "{name}: {}", text(&opened));
+        let id = session_cookie(&opened);
+        let location = header(&opened, "location").unwrap().to_string();
+        let json = body_json(&get(&state, &format!("{location}.json"), &id));
+        assert!(
+            !json["lines"].as_array().unwrap().is_empty(),
+            "{name} has a cart"
+        );
+        for run in json["runs"].as_array().unwrap() {
+            assert_eq!(run["error"], Json::Null, "{name}: {}", run["handle"]);
+        }
+        assert_eq!(json["scenario"]["name"], *name);
+        // The page itself, and with every target.
+        assert_eq!(get(&state, &location, &id).status, 200, "{name}");
+    }
+    std::fs::remove_dir_all(&root).ok();
+}
