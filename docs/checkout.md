@@ -109,6 +109,20 @@ them:
 6. payment customization (`cart.payment-methods.transform.run`, `purchase.payment-customization.run`)
 7. validation (`cart.validations.generate.run`, `purchase.validation.run`)
 
+A `linesMerge` of a cart transform takes `quantity` units of each cart line it names (no more than
+the line holds). The merged line is as many bundles as the greatest common divisor of those
+quantities, and each component is in a bundle as many times as its quantity says divided by that
+number: four tees and six totes are two bundles of two tees and three totes. The price of a bundle
+is the sum of the prices of its components, `percentageDecrease` applies to it, and the line costs
+the price of a bundle times its quantity. The discounts, the validation and the `shopify` global
+see that quantity (`lineComponents[].quantity` is the number of units of the component in the whole
+line, as for `lineExpand`). The units of a cart line that the merge does not take stay in a line of
+their own. Changing the quantity of a merged line in the checkout scales the lines it is made of,
+by bundles. Shopify's documentation gives the examples (every merged quantity is the smallest of
+the lines) and the units that stay as "a separate item", but does not say how the quantity of the
+merged line follows from the quantities: the greatest common divisor is the one rule that keeps
+every merged unit in a whole number of identical bundles.
+
 A validation Function can check a rule at the placing of the order only: `buyerJourney.step` is
 `CHECKOUT_INTERACTION` when the page loads (and for `.json`) or changes (`update`, a line included),
 and `CHECKOUT_COMPLETION` for `complete` alone. The errors of an interaction show on the page and
@@ -268,8 +282,7 @@ an order that was placed already leads to the same thank-you page, never to a se
   with the field's path: `fetchResult`, `Cart.deliverableLines`, the discount applications and
   allocations of the cart, its lines and its delivery groups, `PurchasingCompany.contact`, the
   dates, locale and totals of companies and their locations, `MailingAddress.market`,
-  `PaymentCustomizationPaymentMethod.placements` and `Shop.metaobject`. A merged bundle line
-  always has a quantity of 1.
+  `PaymentCustomizationPaymentMethod.placements` and `Shop.metaobject`.
 - Customer accounts hosted by Shopify, Shop Pay and express checkout.
 - With `checkout` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.

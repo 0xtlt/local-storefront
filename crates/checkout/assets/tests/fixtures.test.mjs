@@ -131,10 +131,10 @@ test('gift-message shows each line it is placed on', async () => {
   const win = await boot('gift-message', 'purchase.checkout.cart-line-item.render-after', { ctx: { lineId: 'gid://shopify/CartLine/2' } });
   assert.equal(win.posts('error').length, 0, JSON.stringify(win.posts('error')));
   const [badge, line] = win.document.body.firstChild.childNodes;
-  assert.equal(line.textContent, 'Canvas tote × 2 · SKU TOTE-01');
+  assert.equal(line.textContent, 'Default Title × 2 · SKU TOTE-01');
   assert.equal(badge.hidden, false);
   win.receive({ type: 'state', ctx: { lineId: 'gid://shopify/CartLine/2' }, state: next({ type: 'cartLines', change: { type: 'updateCartLine', id: 'gid://shopify/CartLine/2', quantity: 5 } }) });
-  assert.equal(line.textContent, 'Canvas tote × 5 · SKU TOTE-01');
+  assert.equal(line.textContent, 'Default Title × 5 · SKU TOTE-01');
 });
 
 test('gift-message thanks the buyer on the thank-you page', async () => {

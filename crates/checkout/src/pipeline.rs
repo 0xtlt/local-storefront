@@ -564,6 +564,9 @@ impl<'a> Pipeline<'a> {
         Ok(())
     }
 
+    /// A `linesMerge`: the parent line holds as many bundles as the greatest common divisor of
+    /// the quantities taken, a bundle costs the sum of its components (adjusted by the
+    /// operation), and the units of a line that are not taken stay in the cart.
     fn merge(&mut self, op: &Value) -> Result<(), String> {
         let parent_variant =
             str_field(op, "parentVariantId").ok_or("merge without `parentVariantId`")?;
@@ -589,17 +592,26 @@ impl<'a> Pipeline<'a> {
             return Err("merge of no cart line".to_string());
         }
 
+        // The merged units make bundles of the same components: as many as the greatest common
+        // divisor of the quantities taken, each component being in a bundle as many times as
+        // its quantity says divided by that. Four tees and six totes are two bundles of two
+        // tees and three totes.
+        let bundles = sources
+            .iter()
+            .fold(0, |divisor, (_, take)| gcd(divisor, *take))
+            .max(1);
+
         let parent_id = gid_number(parent_variant)
             .ok_or_else(|| format!("`{parent_variant}` is not a product variant id"))?;
         let mut parent = self
-            .new_line(parent_variant, 1, attributes(op.get("attributes")))
+            .new_line(parent_variant, bundles, attributes(op.get("attributes")))
             .or_else(|_| {
                 // A parent variant that is not in the store data still makes a line.
                 let mut line = ResultLine {
                     id: format!("gid://shopify/CartLine/{}", self.next_line_id),
                     variant_id: parent_id,
                     title: "Bundle".to_string(),
-                    quantity: 1,
+                    quantity: bundles,
                     attributes: attributes(op.get("attributes")),
                     ..ResultLine::default()
                 };
@@ -608,16 +620,19 @@ impl<'a> Pipeline<'a> {
                 Ok::<_, String>(line)
             })?;
 
-        // The price of the parent is checked before any line changes.
+        // The price of a bundle is the sum of the prices of its components (Shopify's rule of
+        // `linesMerge`); the adjustment of the operation applies to it, and the line costs as
+        // many bundles as it holds. Checked before any line changes.
         let mut sum: Cents = 0;
         for (index, take) in &sources {
-            let cost = line_total(self.lines[*index].unit_price, *take)?;
+            let cost = line_total(self.lines[*index].unit_price, take / bundles)?;
             sum = sum
                 .checked_add(cost)
                 .filter(|sum| *sum <= MAX_CENTS)
                 .ok_or(MONEY_OVERFLOW)?;
         }
         let parent_unit_price = parent_price(sum, op.get("price"))?.unwrap_or(sum);
+        line_total(parent_unit_price, bundles)?;
 
         let mut components = Vec::new();
         let mut cart_sources = Vec::new();
@@ -1959,6 +1974,10 @@ const MAX_QUANTITY: u64 = i32::MAX as u64;
 
 /// A quantity of a Function output (`what` says which, for the error): a whole number from 1 to
 /// the largest `Int`. A quantity is never corrected to fit.
+fn gcd(a: u32, b: u32) -> u32 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
 fn quantity_of(value: Option<&Value>, what: &str) -> Result<u32, String> {
     let value = value.ok_or_else(|| format!("{what} is missing"))?;
     value
@@ -2468,6 +2487,16 @@ mod tests {
 
     fn component(variant: u64, price: Cents, quantity: u32, per_unit: u32) -> (ResultLine, u32) {
         (line(variant, variant, price, quantity * per_unit), per_unit)
+    }
+
+    #[test]
+    fn bundles_are_the_greatest_common_divisor_of_the_merged_quantities() {
+        assert_eq!(gcd(0, 6), 6);
+        assert_eq!(gcd(4, 6), 2);
+        assert_eq!(gcd(6, 4), 2);
+        assert_eq!(gcd(5, 5), 5);
+        assert_eq!(gcd(2, 3), 1);
+        assert_eq!(gcd(12, 18), 6);
     }
 
     #[test]

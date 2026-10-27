@@ -4113,6 +4113,50 @@ fn a_merged_line_is_scaled_through_the_lines_it_is_made_of() {
     assert_eq!(cart_of(&state, "co-merge-update").len(), 3);
 }
 
+#[test]
+fn a_merged_line_of_several_bundles_is_scaled_by_bundles() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-merge-bundles",
+        json!([
+            {"variant": "TEE-BLK-M", "quantity": 2},
+            {"variant": "TOTE-NAT", "quantity": 4},
+            {"variant": "MUG-OAT", "quantity": 1}
+        ]),
+        json!([{"type": "merge", "lines": [1, 2], "parentVariant": variant_id(&state, "MUG-OAT")}]),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-merge-bundles"));
+    let bundle = &json["lines"][0];
+    assert_eq!(bundle["transformedBy"], "merge", "{json}");
+    assert_eq!(
+        bundle["quantity"], 2,
+        "two bundles of one tee and two totes"
+    );
+    assert_eq!(bundle["components"][0]["quantity"], 2);
+    assert_eq!(bundle["components"][1]["quantity"], 4);
+
+    // A third bundle takes one more tee and two more totes.
+    let reply = change_line(
+        &state,
+        &path,
+        "co-merge-bundles",
+        json!({"type": "updateCartLine", "id": bundle["id"], "quantity": 3}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-merge-bundles"),
+        [
+            ("TEE-BLK-M".to_string(), 3),
+            ("TOTE-NAT".to_string(), 6),
+            ("MUG-OAT".to_string(), 1)
+        ]
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["lines"][0]["quantity"], 3, "{json}");
+    assert_eq!(json["lines"][0]["components"][1]["quantity"], 6);
+}
+
 /// A cart of three T-shirts and a mug where one T-shirt and the mug were merged into a bundle
 /// (as a cart transform does with part of a line): the cart line of the T-shirts is shared by
 /// the bundle and by a line of two T-shirts. Returns the store, the cart, and the lines of the

@@ -951,6 +951,181 @@ fn a_cart_transform_merges_lines_into_a_bundle() {
     assert_eq!(result.cost.subtotal, 2300 + 3200);
 }
 
+/// Runs a `linesMerge` of the first two lines of `cart` (a tee at 32.00, a tote at 24.00, a mug
+/// at 22.00), each taking the quantity in `takes`, with the parent line at `price`.
+fn merged(
+    cart: &'static [(u64, u32)],
+    takes: [u32; 2],
+    price: Option<serde_json::Value>,
+) -> lsf_checkout::CheckoutResult {
+    let mut merge = json!({
+        "parentVariantId": format!("gid://shopify/ProductVariant/{MUG}"),
+        "cartLines": [
+            {"cartLineId": LINE_1, "quantity": takes[0]},
+            {"cartLineId": LINE_2, "quantity": takes[1]},
+        ],
+    });
+    if let Some(price) = price {
+        merge["price"] = price;
+    }
+    let result = answer_on(
+        "bundle-transform",
+        "run",
+        0,
+        json!({"operations": [{"linesMerge": merge}]}),
+        |_, store| session(store, cart),
+        |_| {},
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    result
+}
+
+#[test]
+fn a_merged_line_has_the_quantity_of_the_bundles_it_holds() {
+    // Four tees and four totes: four bundles of one each.
+    let result = merged(&[(TEE, 4), (TOTE, 4)], [4, 4], None);
+    assert_eq!(result.lines.len(), 1);
+    let bundle = &result.lines[0];
+    assert_eq!(bundle.quantity, 4);
+    assert_eq!(bundle.unit_price, 3200 + 2400, "the price of one bundle");
+    assert_eq!(bundle.subtotal, 4 * (3200 + 2400));
+    assert_eq!(bundle.total, bundle.subtotal);
+    assert_eq!(result.cost.subtotal, 4 * (3200 + 2400));
+    let quantities: Vec<_> = bundle.components.iter().map(|c| c.quantity).collect();
+    assert_eq!(
+        quantities,
+        [4, 4],
+        "the units of each component, in all the bundles"
+    );
+    let components: i64 = bundle.components.iter().map(|c| c.subtotal).sum();
+    assert_eq!(
+        components, bundle.subtotal,
+        "the components cost what the line costs"
+    );
+}
+
+#[test]
+fn a_merged_line_has_the_greatest_common_divisor_of_the_merged_quantities() {
+    // Four tees and six totes: two bundles of two tees and three totes.
+    let result = merged(&[(TEE, 4), (TOTE, 6)], [4, 6], None);
+    let bundle = &result.lines[0];
+    assert_eq!(result.lines.len(), 1);
+    assert_eq!(bundle.quantity, 2);
+    assert_eq!(bundle.unit_price, 2 * 3200 + 3 * 2400);
+    assert_eq!(bundle.subtotal, 4 * 3200 + 6 * 2400);
+    assert_eq!(result.cost.subtotal, 4 * 3200 + 6 * 2400);
+    let quantities: Vec<_> = bundle.components.iter().map(|c| c.quantity).collect();
+    assert_eq!(quantities, [4, 6]);
+    assert_eq!(bundle.sources.iter().map(|s| s.quantity).sum::<u32>(), 10);
+}
+
+#[test]
+fn merged_quantities_without_a_common_divisor_make_one_bundle() {
+    // Two tees and three totes: a single bundle holds them all.
+    let result = merged(&[(TEE, 2), (TOTE, 3)], [2, 3], None);
+    let bundle = &result.lines[0];
+    assert_eq!(bundle.quantity, 1);
+    assert_eq!(bundle.unit_price, 2 * 3200 + 3 * 2400);
+    assert_eq!(result.cost.subtotal, 2 * 3200 + 3 * 2400);
+}
+
+#[test]
+fn the_units_a_merge_does_not_take_stay_in_a_line_of_their_own() {
+    // Three tees and two totes, two of each merged: two bundles, and a tee left over.
+    let result = merged(&[(TEE, 3), (TOTE, 2)], [2, 2], None);
+    assert_eq!(result.lines.len(), 2);
+    let (bundle, left) = (&result.lines[0], &result.lines[1]);
+    assert_eq!(bundle.quantity, 2);
+    assert_eq!(bundle.unit_price, 3200 + 2400);
+    assert_eq!(left.variant_id, TEE);
+    assert_eq!(left.quantity, 1);
+    assert_eq!(
+        left.id, LINE_1,
+        "the cart line keeps its id and the units it still holds"
+    );
+    assert_eq!(left.transformed_by, None);
+    assert_eq!(result.cost.subtotal, 2 * (3200 + 2400) + 3200);
+    // The bundle components are lines of their own, with ids the cart line does not have.
+    assert!(bundle.components.iter().all(|c| c.id != LINE_1));
+}
+
+#[test]
+fn a_percentage_decrease_applies_to_every_bundle_of_a_merged_line() {
+    let result = merged(
+        &[(TEE, 4), (TOTE, 6)],
+        [4, 6],
+        Some(json!({"percentageDecrease": {"value": 50}})),
+    );
+    let bundle = &result.lines[0];
+    assert_eq!(bundle.quantity, 2);
+    // A bundle is 2 tees and 3 totes: 136.00, half price.
+    assert_eq!(bundle.unit_price, (2 * 3200 + 3 * 2400) / 2);
+    assert_eq!(bundle.subtotal, 2 * bundle.unit_price);
+    assert_eq!(result.cost.subtotal, bundle.subtotal);
+    // The components keep their own prices: the adjustment is the line's.
+    assert_eq!(bundle.components[0].unit_price, 3200);
+    assert_eq!(bundle.components[1].unit_price, 2400);
+}
+
+#[test]
+fn the_functions_after_a_merge_see_the_quantity_of_the_merged_line() {
+    let app = app();
+    let store = store();
+    // Two tees and two mugs merged into two bundles.
+    let session = session(&store, &[(TEE, 2), (MUG, 2)]);
+    let mut config = config();
+    config.function_metafields.insert(
+        "bundle-transform".to_string(),
+        settings(json!({"operations": [{
+            "type": "merge", "lines": [1, 2], "parentVariant": TOTE
+        }]})),
+    );
+    config.function_metafields.insert(
+        "quantity-limit".to_string(),
+        settings(json!({"maxQuantity": 1})),
+    );
+    config.discounts = vec![discount(
+        "volume-discount",
+        "Two or more",
+        None,
+        &[Product],
+        json!({"minimumQuantity": 2, "percentage": 50}),
+    )];
+    let result = compute(
+        &app,
+        &Selection::all(),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+    );
+    assert_eq!(result.lines.len(), 1);
+    let bundle = &result.lines[0];
+    assert_eq!(bundle.quantity, 2);
+    assert_eq!(bundle.subtotal, 2 * (3200 + 2200));
+    // The discount takes the line: it has two units. Half of the line, not of a unit.
+    assert_eq!(
+        bundle.discount_allocations.len(),
+        1,
+        "{:?}",
+        result.discounts
+    );
+    assert_eq!(bundle.discount_allocations[0].amount, bundle.subtotal / 2);
+    assert_eq!(bundle.total, bundle.subtotal / 2);
+    assert_eq!(result.cost.discounts, bundle.subtotal / 2);
+    // The validation takes it too: two units are more than the limit of one.
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.function.as_deref() == Some("quantity-limit")),
+        "{:?}",
+        result.errors
+    );
+    let input = &run_for(&result, "quantity-limit").input;
+    assert_eq!(input["cart"]["lines"][0]["quantity"], 2, "{input}");
+}
+
 #[test]
 fn discounts_apply_to_the_lines_a_cart_transform_made() {
     let app = app();
