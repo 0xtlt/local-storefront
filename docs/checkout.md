@@ -214,8 +214,16 @@ discounts on the subtotal they left, then shipping. Within a class:
   discount before it took its price) goes to the others, so the amount is taken in full as long
   as the lines have that much left. 30.00 across a free 32.00 line and a 24.00 line takes the
   24.00 of the second.
-- **Shipping discounts.** They are applied one after the other, each on what the one before
-  left (see the gaps below).
+- **Shipping discounts.** One applies per order, the best one: the one that takes the most off
+  the delivery option the buyer selected (then off all the options). The others are not applied
+  and are not dropped silently: the Functions panel lists them under "Discounts not applied"
+  (`skippedDiscounts` in the state, and a `discount not applied` line in `lsf function run`)
+  with their amount and why. 50% off a 4.90 Standard rate and 3.00 off it: the 3.00 applies,
+  the 50% (2.45) is listed. Free Express does not beat 1.00 off Standard while the buyer has
+  Standard selected, and wins when they select Express. The candidates of one discount are
+  one discount: they all apply, one after the other. A tie (the same amount) goes to the
+  discount that comes first by Function, title, message and code, not by its place in the
+  configuration.
 
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
@@ -240,7 +248,12 @@ calculated on the subtotal, the percentage before the fixed amount in the order 
 the fixed amounts after (https://help.shopify.com/en/manual/discounts/discount-combinations).
 It does not say how two percentages on one line combine, how two fixed amounts combine, nor
 whether a fixed amount may exceed what is left: the rules above for those are this checkout's
-choices. It also allows one shipping discount per order, which this checkout does not enforce.
+choices. It also says that only one shipping discount applies per order and that, when discounts
+cannot combine, "the best discount for the customer's cart is always applied". It does not say
+how the best shipping discount is measured, what happens to a tie, whether the rule holds for
+each delivery group of a split order (this checkout has one group), nor what to show about the
+others: measuring by the selected option, breaking ties as above and listing the others are
+this checkout's choices.
 
 ### Network access
 
@@ -277,7 +290,8 @@ treats them.)
 The input of each Function is the result of its input query, run against the cart, the buyer and
 the store data. A Function that fails to run adds an error that blocks the order. The
 "Functions" panel of the page shows each run: its input, its output, its logs and
-its instructions (Shopify stops a Function past 11 million).
+its instructions (Shopify stops a Function past 11 million), and the discounts a Function
+answered that were not applied.
 
 The checkout UI extensions render where their targets say: in the page, one sandboxed frame
 each. They read the checkout through the `shopify` global and change it with the `apply*Change`
@@ -420,8 +434,9 @@ an order that was placed already leads to the same thank-you page, never to a se
 - Fulfillment constraints, order routing, and the pickup point and local pickup generators (with
   their `.fetch` targets) are listed and not run.
 - Discounts have no `conditions` and no combinations: all of them stack, as described in
-  [how discounts stack](#how-discounts-stack). Shopify applies one shipping discount per order and
-  the best of the discounts that cannot combine; here every shipping discount applies.
+  [how discounts stack](#how-discounts-stack). Shopify lets the merchant choose which discounts
+  combine, and applies the best of those that cannot; here all the product and order discounts
+  combine, and of the shipping discounts the best one applies.
 - Tax is one rate on the discounted subtotal, with no tax lines.
 - The values of the `settings` of an extension are not set: the manifest declares them, and
   `shopify.settings.value` is empty.

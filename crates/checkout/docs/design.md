@@ -111,7 +111,8 @@ customization (`cart.delivery-options.transform.run`, legacy `purchase.delivery-
 legacy `purchase.payment-customization.run`) → validation (`cart.validations.generate.run`,
 legacy `purchase.validation.run`) → cost. Out of scope (listed, not run): fulfillment
 constraints, order routing, pickup point/local pickup generators (and their `.fetch` targets),
-discount `conditions` and combinations (all discounts stack).
+discount `conditions` and combinations (every product and order discount stacks; only one shipping
+discount applies).
 
 Network access (`fetch`): `cart.lines.discounts.generate`, `cart.delivery-options.discounts.generate`
 and `cart.validations.generate` may have a `.fetch` target (`TargetKind::*Fetch`). Right before its
@@ -137,7 +138,15 @@ candidates, then shipping, so the result does not depend on the order of `config
 order candidates are planned against the lines frozen after the product discounts
 (`plan_order`'s `frozen`): a percentage is a share of that subtotal, whatever was taken before it, a
 fixed amount comes off what is left, never below zero, after all the percentages (Shopify's
-discount combinations help page). Shipping candidates still apply one after the other.
+discount combinations help page). Within a class the candidates apply in the order of
+`stacking_key` (percentages, larger first, then fixed amounts, fewer covered lines first, then what
+the candidates say), never the one of the configuration. A fixed amount shared by several lines
+goes through `distribute_capped`: proportional to the prices, a line that has less left than its
+share gives the rest to the others. Shopify applies one shipping discount per order, the best for
+the cart: `apply_best_shipping` compares what each discount takes off the selected option (then off
+all the options) on the same groups, applies the best one, and puts the others in
+`CheckoutResult::skipped_discounts` with the reason (the Functions panel and `lsf function run`
+show them).
 `PaymentMethod::placements` is what `PaymentCustomizationPaymentMethod.placements` reads; a hide
 operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists
 the methods still in `PAYMENT_METHOD`.

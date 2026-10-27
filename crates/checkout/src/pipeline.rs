@@ -8,8 +8,9 @@
 //!
 //! What is not supported: fulfillment constraints, order routing and the pickup generators
 //! (listed by [`crate::app`], not run), discount
-//! `conditions` on candidates (every candidate applies), combinations between discounts (they
-//! all stack), tax lines (one rate on the discounted subtotal) and prices by market.
+//! `conditions` on candidates (every candidate applies), combinations between discounts (every
+//! product and order discount stacks; of the shipping discounts the best one applies), tax
+//! lines (one rate on the discounted subtotal) and prices by market.
 //!
 //! Each Function runs at the API version it declares: its input query is checked against the
 //! schema of that version, and its output has to fit the result type of its target in that
@@ -903,7 +904,7 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Runs every discount Function on the cart as it was before the stage, then applies what
-    /// they answered, one after the other, in the order of the configuration.
+    /// they answered, class after class (see [`stacking_key`] for the order within a class).
     fn line_discounts(&mut self, before: &[ResultLine]) {
         self.blind = Some(Blind {
             lines: before.to_vec(),
