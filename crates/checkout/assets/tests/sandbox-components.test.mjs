@@ -17,6 +17,9 @@ const SUPPORTED = [
   'Tooltip', 'UnorderedList', 'UrlField',
 ].map((name) => (name === 'QRCode' ? 's-qr-code' : 's-' + name.replace(/(?<=.)([A-Z])/g, '-$1').toLowerCase()));
 
+/** Lets the timers set to 0 run: the action of a click comes after the click listeners. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 function components() {
   const defined = new Map();
   const customElements = { define: (tag, constructor) => defined.set(tag, constructor), get: (tag) => defined.get(tag) };
@@ -195,7 +198,7 @@ test('an open overlay takes over the frame', () => {
   assert.deepEqual(events, ['show', 'hide']);
 });
 
-test('a button opens the overlay it commands', () => {
+test('a button opens the overlay it commands', async () => {
   const { make, document } = components();
   const modal = make('s-modal');
   modal.setAttribute('id', 'dialog');
@@ -205,23 +208,128 @@ test('a button opens the overlay it commands', () => {
   button.setAttribute('commandfor', 'dialog');
   document.body.appendChild(button);
   button.click();
+  await settle();
   assert.equal(modal.hasAttribute('open'), true);
   button.setAttribute('command', '--hide');
   button.click();
+  await settle();
   assert.equal(modal.hasAttribute('open'), false);
 });
 
-test('a button that is disabled or loading does not click', () => {
-  const { make } = components();
-  const button = make('s-button');
-  const clicks = [];
-  button.addEventListener('click', () => clicks.push('late'));
-  button.setAttribute('disabled', '');
-  button.click();
-  assert.deepEqual(clicks, [], 'the guard runs before what the extension listens to');
+test('without a command, commandFor means --auto: an overlay toggles, a clipboard item is copied', async () => {
+  const { make, document, win } = components();
+  const copied = [];
+  win.context.navigator = { clipboard: { writeText: (text) => (copied.push(text), Promise.resolve()) } };
+  const modal = make('s-modal');
+  modal.setAttribute('id', 'dialog');
+  const item = make('s-clipboard-item');
+  item.setAttribute('id', 'code');
+  item.setAttribute('text', 'SAVE10');
+  document.body.append(modal, item);
+  for (const tag of ['s-button', 's-link', 's-clickable']) {
+    const action = make(tag);
+    action.setAttribute('commandfor', 'dialog');
+    document.body.appendChild(action);
+    action.click();
+    await settle();
+    assert.equal(modal.hasAttribute('open'), true, `${tag} opens it`);
+    action.click();
+    await settle();
+    assert.equal(modal.hasAttribute('open'), false, `${tag} closes it`);
+  }
+  const copy = make('s-button');
+  copy.setAttribute('commandfor', 'code');
+  document.body.appendChild(copy);
+  copy.click();
+  await settle();
+  assert.deepEqual(copied, ['SAVE10']);
 });
 
-test('a form submits when a submit button is pressed', () => {
+/** An action component of each kind, with the attributes of the case. */
+const ACTIONS = ['s-button', 's-link', 's-clickable', 's-clickable-chip'];
+
+test('every action follows the same contract: click first, then command or href, then type', async () => {
+  for (const tag of ACTIONS) {
+    const { make, document, Sandbox } = components();
+    const modal = make('s-modal');
+    modal.setAttribute('id', 'dialog');
+    document.body.appendChild(modal);
+    const form = make('s-form');
+    document.body.appendChild(form);
+    const visited = [];
+    Sandbox.navigate = (url, target) => visited.push([url, target]);
+    const submits = [];
+    form.addEventListener('submit', () => submits.push(true));
+
+    const action = make(tag);
+    form.appendChild(action);
+    const order = [];
+    action.addEventListener('click', () => order.push(modal.hasAttribute('open') ? 'late' : 'click'));
+    action.setAttribute('href', '/cart');
+    action.setAttribute('target', '_blank');
+    action.setAttribute('type', 'submit');
+    action.click();
+    assert.deepEqual(visited, [], `${tag}: the extension hears the click before the page moves`);
+    await settle();
+    assert.deepEqual(visited, [['/cart', '_blank']], tag);
+    assert.deepEqual(submits, [], `${tag}: href makes type moot`);
+
+    action.setAttribute('commandfor', 'dialog');
+    action.setAttribute('command', '--show');
+    action.click();
+    await settle();
+    assert.equal(modal.hasAttribute('open'), true, `${tag}: the command runs`);
+    assert.equal(visited.length, 1, `${tag}: commandFor beats href`);
+    assert.deepEqual(order, ['click', 'click'], tag);
+
+    action.removeAttribute('commandfor');
+    action.removeAttribute('href');
+    action.click();
+    await settle();
+    assert.deepEqual(submits, [], `${tag}: type is ignored when a command is set`);
+    action.removeAttribute('command');
+    action.click();
+    await settle();
+    // Only a button and a clickable have a `type`.
+    const typed = tag === 's-button' || tag === 's-clickable';
+    assert.deepEqual(submits, typed ? [true] : [], `${tag}: type=submit submits the form`);
+  }
+});
+
+test('an extension that cancels the click keeps the action from happening', async () => {
+  for (const tag of ACTIONS) {
+    const { make, Sandbox } = components();
+    const visited = [];
+    Sandbox.navigate = (url) => visited.push(url);
+    const action = make(tag);
+    action.setAttribute('href', '/cart');
+    action.addEventListener('click', (event) => event.preventDefault());
+    action.click();
+    await settle();
+    assert.deepEqual(visited, [], tag);
+  }
+});
+
+test('an action that is disabled or loading does not click, nor act', async () => {
+  for (const tag of [...ACTIONS, 's-press-button']) {
+    for (const state of ['disabled', 'loading']) {
+      const { make, Sandbox } = components();
+      const visited = [];
+      Sandbox.navigate = (url) => visited.push(url);
+      const action = make(tag);
+      action.setAttribute('href', '/cart');
+      const clicks = [];
+      action.addEventListener('click', () => clicks.push('late'));
+      action.setAttribute(state, '');
+      action.click();
+      await settle();
+      assert.deepEqual(clicks, [], `${tag} ${state}: the guard runs before what the extension listens to`);
+      assert.deepEqual(visited, [], `${tag} ${state}`);
+    }
+  }
+});
+
+test('a form submits when a submit button is pressed', async () => {
   const { make } = components();
   const form = make('s-form');
   const button = make('s-button');
@@ -230,7 +338,147 @@ test('a form submits when a submit button is pressed', () => {
   const submits = [];
   form.addEventListener('submit', () => submits.push(true));
   button.click();
+  await settle();
   assert.deepEqual(submits, [true]);
+});
+
+test('a clickable is a button for the keyboard and for assistive technology', async () => {
+  const { make, document } = components();
+  const clickable = make('s-clickable');
+  document.body.appendChild(clickable);
+  connect(clickable);
+  assert.equal(clickable.getAttribute('role'), 'button');
+  assert.equal(clickable.getAttribute('tabindex'), '0');
+  clickable.setAttribute('href', '/cart');
+  assert.equal(clickable.getAttribute('role'), 'link');
+  clickable.setAttribute('accessibilityrole', 'listitem');
+  assert.equal(clickable.getAttribute('role'), 'listitem', 'a role the author chose stays');
+  clickable.removeAttribute('accessibilityrole');
+
+  const clicks = [];
+  clickable.addEventListener('click', () => clicks.push('click'));
+  const press = (type, key, target = clickable) => {
+    const event = new FakeEvent(type, { bubbles: true, cancelable: true, data: { key, target } });
+    clickable.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(press('keydown', 'Enter').defaultPrevented, true);
+  assert.deepEqual(clicks, ['click'], 'Enter clicks');
+  assert.equal(press('keydown', ' ').defaultPrevented, true, 'Space does not scroll the page');
+  assert.deepEqual(clicks, ['click'], 'Space waits for the release');
+  press('keyup', ' ');
+  assert.deepEqual(clicks, ['click', 'click']);
+  const inner = make('s-text-field');
+  clickable.appendChild(inner);
+  press('keydown', 'Enter', inner);
+  assert.deepEqual(clicks, ['click', 'click'], 'a key typed in a field inside is the field\'s');
+
+  clickable.setAttribute('disabled', '');
+  assert.equal(clickable.hasAttribute('tabindex'), false, 'a disabled clickable cannot be focused');
+  assert.equal(clickable.getAttribute('aria-disabled'), 'true');
+  press('keydown', 'Enter');
+  assert.deepEqual(clicks, ['click', 'click'], 'nor pressed');
+  clickable.removeAttribute('disabled');
+  clickable.setAttribute('loading', '');
+  assert.equal(clickable.getAttribute('aria-busy'), 'true');
+  assert.equal(clickable.hasAttribute('tabindex'), false);
+  clickable.removeAttribute('loading');
+  assert.equal(clickable.getAttribute('tabindex'), '0');
+  assert.equal(clickable.hasAttribute('aria-disabled'), false);
+});
+
+test('a link answers Enter even without an href, and labels its anchor', () => {
+  const { make } = components();
+  const link = make('s-link');
+  const anchor = link._root.querySelector('a');
+  link.setAttribute('accessibilitylabel', 'Open the terms');
+  link.setAttribute('lang', 'fr');
+  assert.equal(anchor.getAttribute('aria-label'), 'Open the terms');
+  assert.equal(anchor.getAttribute('lang'), 'fr');
+  const clicks = [];
+  anchor.addEventListener('click', () => clicks.push('click'));
+  const key = (name) => anchor.dispatchEvent(new FakeEvent('keydown', { bubbles: true, cancelable: true, data: { key: name } }));
+  key('Enter');
+  key(' ');
+  assert.deepEqual(clicks, ['click'], 'Enter only, as for a link');
+});
+
+test('a press button flips when clicked unless it is disabled or loading, and says so', async () => {
+  const { make } = components();
+  const button = make('s-press-button');
+  const changes = [];
+  button.addEventListener('change', () => changes.push(button.hasAttribute('pressed')));
+  button.click();
+  button.click();
+  assert.deepEqual(changes, [true, false]);
+  button.setAttribute('loading', '');
+  button.click();
+  assert.deepEqual(changes, [true, false], 'a loading button does not flip');
+  assert.equal(button._root.querySelector('button').disabled, true, 'loading disables it');
+  assert.equal(button._root.querySelector('button').getAttribute('aria-busy'), 'true');
+  button.removeAttribute('loading');
+  button.setAttribute('accessibilitylabel', 'Gift wrap');
+  assert.equal(button._root.querySelector('button').getAttribute('aria-label'), 'Gift wrap');
+});
+
+test('a clickable chip acts as a whole, and removing it is not clicking it', async () => {
+  const { make, Sandbox } = components();
+  const visited = [];
+  Sandbox.navigate = (url) => visited.push(url);
+  const chip = make('s-clickable-chip');
+  chip.setAttribute('href', '/collections/all');
+  chip.setAttribute('removable', '');
+  const clicks = [];
+  const removed = [];
+  chip.addEventListener('click', () => clicks.push('click'));
+  chip.addEventListener('remove', () => removed.push('remove'));
+  const remove = chip._root.querySelector('.remove');
+  remove.dispatchEvent(new FakeEvent('click', { bubbles: true }));
+  assert.deepEqual(removed, ['remove']);
+  chip.dispatchEvent(new FakeEvent('click', { bubbles: true }));
+  await settle();
+  assert.deepEqual(visited, ['/collections/all']);
+  chip.setAttribute('disabled', '');
+  assert.equal(remove.disabled, true);
+  assert.equal(chip._root.querySelector('.body').disabled, true);
+  remove.dispatchEvent(new FakeEvent('click', { bubbles: true }));
+  assert.deepEqual(removed, ['remove'], 'a disabled chip cannot be removed');
+});
+
+test('Enter in a field submits its form once, however the keydown travels', async () => {
+  const { make } = components();
+  const form = make('s-form');
+  const field = make('s-text-field');
+  form.appendChild(field);
+  const submits = [];
+  form.addEventListener('submit', () => submits.push(true));
+  connect(form);
+  connect(field);
+  const control = field._root.querySelector('.control');
+  const keydown = (target, data = {}) => {
+    const event = new FakeEvent('keydown', { bubbles: true, cancelable: true, composed: true, data: { key: 'Enter', ...data } });
+    target.dispatchEvent(event);
+  };
+  keydown(control);
+  // In a browser the same keydown goes on, composed, through the field and the form.
+  keydown(field);
+  assert.deepEqual(submits, [true], 'the form does not submit again for the key that reached it');
+  keydown(control, { isComposing: true });
+  assert.deepEqual(submits, [true], 'Enter that picks an IME candidate submits nothing');
+  const area = make('s-text-area');
+  form.appendChild(area);
+  keydown(area._root.querySelector('.control'));
+  assert.deepEqual(submits, [true], 'Enter in a text area adds a line');
+});
+
+test('hidden hides every component, whatever display rule its tag has', () => {
+  const { Sandbox } = components();
+  const { LIGHT_CSS, TAGS } = Sandbox.components;
+  const rule = LIGHT_CSS.match(/([^{}]*\[hidden\][^{}]*)\{\s*display:\s*none\s*!important/);
+  assert.ok(rule, 'one rule hides them');
+  const hidden = rule[1].split(',').map((entry) => entry.trim());
+  for (const tag of TAGS) assert.ok(hidden.includes(tag + '[hidden]'), tag);
+  assert.ok(LIGHT_CSS.indexOf('s-text { display: inline; }') < LIGHT_CSS.indexOf(rule[0]), 'after the tags it overrides');
 });
 
 // --- Custom element conformance and state written before the element is in the page ---------
@@ -445,19 +693,6 @@ test('an overlay opened before it is in the page opens when it joins it', () => 
   connect(modal);
   assert.deepEqual(states, [true]);
   assert.equal(modal._root.querySelector('.backdrop').hidden, false);
-});
-
-test('a form listens for Enter once, however often it is connected', () => {
-  const { make } = components();
-  const form = make('s-form');
-  const field = make('s-text-field');
-  form.appendChild(field);
-  const submits = [];
-  form.addEventListener('submit', () => submits.push(true));
-  connect(form);
-  connect(form);
-  form.dispatchEvent(new FakeEvent('keydown', { bubbles: true, data: { key: 'Enter', target: field } }));
-  assert.deepEqual(submits, [true]);
 });
 
 test('a date picker starts from its defaultValue until someone picks', () => {

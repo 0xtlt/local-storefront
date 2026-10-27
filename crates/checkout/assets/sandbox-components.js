@@ -247,12 +247,14 @@
     gridcolumn: 'gridColumn', gridrow: 'gridRow', flex: 'flex',
   };
 
-  function layout(tag, extra) {
+  /** `hooks.init(el)` and `hooks.sync(el)` add to the ones every layout element has. */
+  function layout(tag, extra, hooks = {}) {
     define(tag, {
       props: [
         ...Object.values(CAMEL), 'border', 'borderWidth', 'borderStyle', 'borderColor', 'direction',
         'accessibilityLabel', 'accessibilityRole', 'accessibilityVisibility', ...(extra || []),
       ],
+      init: hooks.init,
       sync(el) {
         const attrs = el.attrs;
         const css = boxStyle(attrs);
@@ -262,6 +264,7 @@
         if (role && role !== 'generic' && role !== 'none') el.setAttribute('role', role);
         if (attrs.accessibilitylabel) el.setAttribute('aria-label', attrs.accessibilitylabel);
         if (attrs.accessibilityvisibility === 'hidden') el.setAttribute('aria-hidden', 'true');
+        if (hooks.sync) hooks.sync(el);
       },
     });
   }
@@ -272,7 +275,6 @@
   layout('s-grid-item');
   layout('s-scroll-box');
   layout('s-query-container');
-  layout('s-clickable', ['href', 'target', 'download', 'command', 'commandFor', 'interestFor', 'disabled', 'loading', 'type', 'lang']);
 
   // --- Text and media ----------------------------------------------------------------------
 
@@ -527,19 +529,28 @@
 
   // --- Actions -----------------------------------------------------------------------------
 
-  /** `command="--show"` on a button opens the overlay `commandFor` names. */
+  /**
+   * `command="--show"` on an action opens the overlay `commandFor` names. Without `command` it
+   * is `--auto`: what the target does by default, toggling an overlay, copying a clipboard item.
+   */
   function runCommand(el) {
     const id = el.getAttribute('commandfor');
-    const command = el.getAttribute('command');
-    if (!id || !command) return;
+    if (!id) return;
+    const command = el.getAttribute('command') || '--auto';
     const target = global.document.getElementById(id);
     if (!target) return;
+    const copy = () => {
+      if (target.text && global.navigator && global.navigator.clipboard) {
+        global.navigator.clipboard.writeText(target.text).catch(() => {});
+      }
+    };
     if (command === '--show' && target.showOverlay) target.showOverlay();
     else if (command === '--hide' && target.hideOverlay) target.hideOverlay();
     else if (command === '--toggle' && target.toggleOverlay) target.toggleOverlay();
-    else if (command === '--auto' && target.toggleOverlay) target.toggleOverlay();
-    else if (command === '--copy' && target.text && global.navigator && global.navigator.clipboard) {
-      global.navigator.clipboard.writeText(target.text).catch(() => {});
+    else if (command === '--copy') copy();
+    else if (command === '--auto') {
+      if (target.toggleOverlay) target.toggleOverlay();
+      else if (target.localName === 's-clipboard-item') copy();
     }
   }
 
@@ -553,17 +564,90 @@
     if (form) form.dispatchEvent(new global.Event('submit', { bubbles: true, cancelable: true }));
   }
 
-  function clickable(el) {
+  /** `disabled` and `loading` both stop an action component: no click, no focus. */
+  const inactive = (el) => el.hasAttribute('disabled') || el.hasAttribute('loading');
+
+  /**
+   * What an action component does once it was clicked: a command wins over a link, and either
+   * makes `type` moot (Shopify: "ignored if `href` or `command`/`commandFor` is set").
+   */
+  function act(el, typed) {
+    if (el.getAttribute('commandfor')) runCommand(el);
+    else if (el.getAttribute('href')) navigate(el);
+    else if (typed && el.getAttribute('type') === 'submit' && !el.hasAttribute('command')) submit(el);
+  }
+
+  /**
+   * The click of an action component (button, link, press button, clickable, clickable chip):
+   * stopped while it is disabled or loading, before what the extension listens to; otherwise
+   * `spec.press` runs at once (a press button flips) and the action (`act`) comes after the
+   * click listeners of the extension, which can cancel it, as the docs promise ("the `click`
+   * event fires first, then navigation occurs"). `spec.typed`: the component has a `type`
+   * (button, clickable).
+   */
+  function actionable(el, spec = {}) {
     el.addEventListener('click', (event) => {
-      if (el.hasAttribute('disabled') || el.hasAttribute('loading')) {
+      if (inactive(el)) {
         event.stopImmediatePropagation();
         return;
       }
-      runCommand(el);
-      navigate(el);
-      if (el.getAttribute('type') === 'submit') submit(el);
+      if (spec.press) spec.press(el);
+      global.setTimeout(() => {
+        if (!event.defaultPrevented) act(el, spec.typed);
+      }, 0);
     });
   }
+
+  /**
+   * Keys for a surface that is not a native button: Enter clicks it, and so does Space (on
+   * release, as a button does) when `space` is set. The native `<button>` of `s-button` needs none.
+   */
+  function keyboard(surface, { space = false } = {}) {
+    surface.addEventListener('keydown', (event) => {
+      if (event.target !== surface || event.isComposing) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        surface.click();
+      } else if (event.key === ' ' && space) {
+        event.preventDefault();
+      }
+    });
+    if (!space) return;
+    surface.addEventListener('keyup', (event) => {
+      if (event.target === surface && event.key === ' ') surface.click();
+    });
+  }
+
+  /** `inlineSize="fill"` makes a button take the whole line. */
+  function inlineSize(el) {
+    el.style.display = el.getAttribute('inlinesize') === 'fill' ? 'flex' : '';
+  }
+
+  /** The state of an action component for assistive technology. */
+  function actionState(el, target) {
+    target.setAttribute('aria-busy', el.hasAttribute('loading') ? 'true' : 'false');
+    if (el.hasAttribute('accessibilitylabel')) target.setAttribute('aria-label', el.getAttribute('accessibilitylabel'));
+    else target.removeAttribute('aria-label');
+  }
+
+  layout('s-clickable', ['href', 'target', 'download', 'command', 'commandFor', 'interestFor', 'disabled', 'loading', 'type', 'lang'], {
+    init(el) {
+      actionable(el, { typed: true });
+      keyboard(el, { space: true });
+    },
+    // A light DOM element has no native button inside: it is the button.
+    sync(el) {
+      const role = el.getAttribute('accessibilityrole');
+      if (!role || role === 'generic' || role === 'none') el.setAttribute('role', el.getAttribute('href') ? 'link' : 'button');
+      const off = inactive(el);
+      if (off) el.removeAttribute('tabindex');
+      else el.setAttribute('tabindex', '0');
+      if (off) el.setAttribute('aria-disabled', 'true');
+      else el.removeAttribute('aria-disabled');
+      if (el.hasAttribute('loading')) el.setAttribute('aria-busy', 'true');
+      else el.removeAttribute('aria-busy');
+    },
+  });
 
   const BUTTON_CSS = `:host{display:inline-flex}button{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;width:100%;min-height:2.25rem;padding:.4rem .9rem;border:1px solid #c9c9c9;border-radius:var(--lsf-radius,8px);background:#fff;color:#303030;font-weight:550;cursor:pointer}
     button:hover{background:#f7f7f7}:host([variant="primary"]) button{border-color:transparent;background:var(--lsf-accent,#005bd3);color:#fff}:host([variant="primary"]) button:hover{filter:brightness(.92)}
@@ -575,33 +659,38 @@
     props: ['variant', 'tone', 'disabled', 'loading', 'href', 'target', 'type', 'command', 'commandFor', 'interestFor', 'inlineSize', 'accessibilityLabel', 'download'],
     shadow: '<button part="button" type="button"><slot></slot></button><slot name="fragments"></slot>',
     css: BUTTON_CSS,
-    init: clickable,
+    init: (el) => actionable(el, { typed: true }),
     sync(el) {
       const button = $(el, 'button');
-      button.disabled = el.hasAttribute('disabled');
-      button.setAttribute('aria-busy', el.hasAttribute('loading') ? 'true' : 'false');
-      if (el.hasAttribute('accessibilitylabel')) button.setAttribute('aria-label', el.getAttribute('accessibilitylabel'));
-      const inline = el.getAttribute('inlinesize');
-      el.style.display = inline === 'fill' ? 'flex' : '';
+      button.disabled = inactive(el);
+      actionState(el, button);
+      inlineSize(el);
     },
   });
 
   define('s-press-button', {
-    props: ['pressed', 'defaultPressed', 'disabled', 'loading', 'variant', 'tone', 'accessibilityLabel'],
+    props: ['pressed', 'defaultPressed', 'disabled', 'loading', 'variant', 'tone', 'inlineSize', 'lang', 'accessibilityLabel'],
     shadow: '<button part="button" type="button" aria-pressed="false"><slot></slot></button>',
     css: BUTTON_CSS + ':host([pressed]) button{background:#303030;color:#fff}',
     init(el) {
-      $(el, 'button').addEventListener('click', () => {
-        el.toggleAttribute('pressed');
-        fire(el, 'change', { composed: false });
+      actionable(el, {
+        press() {
+          el.toggleAttribute('pressed');
+          fire(el, 'change', { composed: false });
+        },
       });
     },
     connected(el) {
       applyDefault(el, 'pressed', 'defaultpressed');
     },
     sync(el) {
-      $(el, 'button').setAttribute('aria-pressed', el.hasAttribute('pressed') ? 'true' : 'false');
-      $(el, 'button').disabled = el.hasAttribute('disabled');
+      const button = $(el, 'button');
+      button.setAttribute('aria-pressed', el.hasAttribute('pressed') ? 'true' : 'false');
+      button.disabled = inactive(el);
+      actionState(el, button);
+      if (el.hasAttribute('lang')) button.setAttribute('lang', el.getAttribute('lang'));
+      else button.removeAttribute('lang');
+      inlineSize(el);
     },
   });
 
@@ -609,18 +698,36 @@
     props: ['href', 'target', 'command', 'commandFor', 'interestFor', 'tone', 'lang', 'accessibilityLabel', 'download'],
     shadow: '<a part="link" role="link" tabindex="0"><slot></slot></a><slot name="fragments"></slot>',
     css: ':host{display:inline}a{color:var(--lsf-link,#005bd3);text-decoration:underline;cursor:pointer}:host([tone="critical"]) a{color:#8e1f0b}',
-    init: clickable,
+    init(el) {
+      actionable(el);
+      // An `<a>` without `href` does not answer Enter by itself.
+      keyboard($(el, 'a'));
+    },
+    sync(el) {
+      const link = $(el, 'a');
+      actionState(el, link);
+      if (el.hasAttribute('lang')) link.setAttribute('lang', el.getAttribute('lang'));
+      else link.removeAttribute('lang');
+    },
   });
 
   define('s-clickable-chip', {
-    props: ['removable', 'hidden', 'href', 'accessibilityLabel', 'color'],
-    shadow: '<span class="chip"><slot name="graphic"></slot><slot></slot><button class="remove" type="button" aria-label="Remove" hidden>×</button></span>',
-    css: ':host{display:inline-flex}.chip{display:inline-flex;align-items:center;gap:.35rem;padding:.2rem .6rem;border:1px solid #d4d4d4;border-radius:999px;background:#f7f7f7;font-size:.85rem}.remove{border:0;background:none;cursor:pointer}',
+    props: ['removable', 'hidden', 'disabled', 'href', 'accessibilityLabel', 'color'],
+    shadow: '<span class="chip"><button class="body" part="button" type="button"><slot name="graphic"></slot><slot></slot></button><button class="remove" type="button" aria-label="Remove" hidden>×</button></span>',
+    css: ':host{display:inline-flex}.chip{display:inline-flex;align-items:center;gap:.35rem;padding:.2rem .6rem;border:1px solid #d4d4d4;border-radius:999px;background:#f7f7f7;font-size:.85rem}.body{display:inline-flex;align-items:center;gap:.35rem;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer}.remove{border:0;background:none;cursor:pointer}:host([disabled]) .chip{opacity:.6}:host([disabled]) .body,:host([disabled]) .remove{cursor:default}',
     init(el) {
-      $(el, '.remove').addEventListener('click', () => fire(el, 'remove', { composed: false }));
+      actionable(el);
+      $(el, '.remove').addEventListener('click', (event) => {
+        // Removing is not clicking the chip: the click stops here.
+        event.stopImmediatePropagation();
+        if (!inactive(el)) fire(el, 'remove', { composed: false });
+      });
     },
     sync(el) {
       $(el, '.remove').hidden = !el.hasAttribute('removable');
+      $(el, '.remove').disabled = inactive(el);
+      actionState(el, $(el, '.body'));
+      $(el, '.body').disabled = inactive(el);
     },
   });
   define('s-chip', {
@@ -634,15 +741,9 @@
     members: { text: { get() { return this.getAttribute('text') || ''; }, set(v) { this.setAttribute('text', v); }, configurable: true } },
   });
 
-  define('s-form', {
-    props: [],
-    init(el) {
-      el.addEventListener('keydown', (event) => {
-        const tag = event.target && event.target.localName;
-        if (event.key === 'Enter' && tag && tag.endsWith('-field')) submit(event.target);
-      });
-    },
-  });
+  // Implicit submission (Enter in a field) is the field's: its keydown reaches the form too,
+  // so the form listening as well would submit twice.
+  define('s-form', { props: [] });
 
   // --- Fields ------------------------------------------------------------------------------
 
@@ -676,7 +777,7 @@
         // Once the buyer typed, `defaultValue` no longer resets the field.
         control.addEventListener('input', () => { el._typed = true; });
         control.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter' && !area) submit(el);
+          if (event.key === 'Enter' && !area && !event.isComposing && !event.defaultPrevented) submit(el);
         });
       },
       sync(el) {
@@ -969,6 +1070,7 @@
     s-scroll-box { overflow: auto; }
     s-query-container { container-type: inline-size; }
     s-clickable { cursor: pointer; }
+    s-clickable:focus-visible { outline: 2px solid var(--lsf-accent, #005bd3); outline-offset: 2px; }
     s-clickable[disabled] { opacity: .6; cursor: default; }
     s-text { display: inline; }
     s-text[type="strong"] { font-weight: 650; }
@@ -1013,6 +1115,7 @@
     s-option, s-tooltip { display: none; }
     s-summary { display: block; }
     s-modal, s-popover, s-sheet { display: contents; }
+    ${TAGS.map((tag) => tag + '[hidden]').join(', ')} { display: none !important; }
   `;
 
   function install(doc) {
@@ -1020,13 +1123,15 @@
     style.setAttribute('data-lsf', 'components');
     style.textContent = LIGHT_CSS;
     doc.head.appendChild(style);
-    // Hovering what a tooltip describes shows its text.
-    doc.addEventListener('mouseover', (event) => {
+    // Hovering or focusing what a tooltip describes shows its text.
+    const describe = (event) => {
       const target = event.target && event.target.closest && event.target.closest('[interestfor]');
       if (!target || target.title) return;
       const tip = doc.getElementById(target.getAttribute('interestfor'));
       if (tip) target.title = tip.textContent.trim();
-    });
+    };
+    doc.addEventListener('mouseover', describe);
+    doc.addEventListener('focusin', describe);
   }
 
   Sandbox.components = { TAGS, spacing, boxStyle, border, direction, cssText, install, LIGHT_CSS };
