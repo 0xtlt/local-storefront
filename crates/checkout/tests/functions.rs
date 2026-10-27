@@ -3401,3 +3401,141 @@ fn overlapping_percentages_that_exceed_the_line_are_credited_in_any_order() {
     );
     assert_eq!(prices_and_amounts(&forward), prices_and_amounts(&reversed));
 }
+
+// ---- one shipping discount per order ----
+//
+// Shopify: "only one shipping discount can apply per order", and when discounts cannot combine,
+// the best one for the cart. The shipping of the test config is Standard 4.90 (selected) and
+// Express 12.90. https://help.shopify.com/en/manual/discounts/discount-combinations
+
+/// A shipping discount that cuts the options `options` (handles) by `value`.
+fn shipping_answer(options: &[&str], value: serde_json::Value) -> serde_json::Value {
+    json!({"operations": [{"deliveryDiscountsAdd": {
+        "selectionStrategy": "ALL",
+        "candidates": [{
+            "targets": options
+                .iter()
+                .map(|handle| json!({"deliveryOption": {"handle": handle}}))
+                .collect::<Vec<_>>(),
+            "value": value,
+        }],
+    }}]})
+}
+
+fn shipping_discounts(answers: &[(&str, serde_json::Value)]) -> lsf_checkout::CheckoutResult {
+    answer_discounts(
+        "cart_delivery_options_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Shipping],
+        answers,
+    )
+}
+
+#[test]
+fn only_the_best_shipping_discount_applies_in_any_order() {
+    // 50 % of Standard is 2.45, 3.00 off is more.
+    let half = ("Half", shipping_answer(&["standard"], percentage("50")));
+    let three = ("Three off", shipping_answer(&["standard"], fixed("3.00")));
+    for answers in [[half.clone(), three.clone()], [three, half]] {
+        let result = shipping_discounts(&answers);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.cost.shipping, 190, "4.90 less 3.00");
+        assert_eq!(
+            result
+                .discounts
+                .iter()
+                .map(|d| (d.title.as_str(), d.amount))
+                .collect::<Vec<_>>(),
+            [("Three off", 300)]
+        );
+        let group = &result.delivery_groups[0];
+        assert_eq!(group.options[0].cost, 190);
+        assert_eq!(group.options[1].cost, 1290, "the loser cut nothing");
+        assert_eq!(group.discount_allocations.len(), 1);
+    }
+}
+
+#[test]
+fn the_shipping_discount_that_lost_is_reported_with_why() {
+    let result = shipping_discounts(&[
+        ("Half", shipping_answer(&["standard"], percentage("50"))),
+        ("Three off", shipping_answer(&["standard"], fixed("3.00"))),
+    ]);
+    assert_eq!(result.skipped_discounts.len(), 1);
+    let skipped = &result.skipped_discounts[0];
+    assert_eq!(skipped.title, "Half");
+    assert_eq!(skipped.class, Shipping);
+    assert_eq!(skipped.amount, 245, "what it would have taken on its own");
+    assert_eq!(skipped.function, "volume-discount");
+    assert!(
+        skipped
+            .reason
+            .contains("only one shipping discount applies per order")
+            && skipped.reason.contains("\"Three off\"")
+            && skipped.reason.contains("3.00"),
+        "{}",
+        skipped.reason
+    );
+    // The page and the control API get it too.
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["skippedDiscounts"][0]["title"], "Half");
+    assert_eq!(json["skippedDiscounts"][0]["amount"]["amount"], 2.45);
+}
+
+#[test]
+fn a_tie_between_shipping_discounts_goes_to_the_same_one_in_any_order() {
+    // 50 % of 4.90 and 2.45 off: the same.
+    let a = ("Alpha", shipping_answer(&["standard"], percentage("50")));
+    let b = ("Beta", shipping_answer(&["standard"], fixed("2.45")));
+    for answers in [[a.clone(), b.clone()], [b, a]] {
+        let result = shipping_discounts(&answers);
+        assert_eq!(result.cost.shipping, 245);
+        assert_eq!(result.discounts.len(), 1);
+        assert_eq!(result.discounts[0].title, "Alpha");
+        assert_eq!(result.skipped_discounts.len(), 1);
+        assert_eq!(result.skipped_discounts[0].title, "Beta");
+        assert!(result.skipped_discounts[0].reason.contains("as much"));
+    }
+}
+
+#[test]
+fn the_best_shipping_discount_is_the_one_that_cuts_the_selected_option() {
+    // Free Express is a bigger discount, but the buyer pays Standard: 1.00 off wins.
+    let result = shipping_discounts(&[
+        (
+            "Free express",
+            shipping_answer(&["express"], percentage("100")),
+        ),
+        ("One off", shipping_answer(&["standard"], fixed("1.00"))),
+    ]);
+    assert_eq!(result.cost.shipping, 390);
+    assert_eq!(result.discounts.len(), 1);
+    assert_eq!(result.discounts[0].title, "One off");
+    let group = &result.delivery_groups[0];
+    assert_eq!(group.options[1].cost, 1290, "Express is not discounted");
+    assert_eq!(result.skipped_discounts.len(), 1);
+    assert_eq!(result.skipped_discounts[0].title, "Free express");
+}
+
+#[test]
+fn the_candidates_of_one_shipping_discount_all_apply() {
+    // One discount, two candidates (strategy ALL): it is one discount, not two.
+    let answer = json!({"operations": [{"deliveryDiscountsAdd": {
+        "selectionStrategy": "ALL",
+        "candidates": [
+            {"targets": [{"deliveryOption": {"handle": "standard"}}], "value": fixed("1.00")},
+            {"targets": [{"deliveryOption": {"handle": "standard"}}], "value": fixed("0.50")},
+        ],
+    }}]});
+    let result = shipping_discounts(&[("Two cuts", answer)]);
+    assert_eq!(result.cost.shipping, 340);
+    assert_eq!(result.discounts.len(), 2);
+    assert!(result.skipped_discounts.is_empty());
+}
+
+#[test]
+fn a_shipping_discount_alone_is_not_reported_as_skipped() {
+    let result = shipping_discounts(&[("Half", shipping_answer(&["standard"], percentage("50")))]);
+    assert_eq!(result.cost.shipping, 245);
+    assert!(result.skipped_discounts.is_empty());
+}

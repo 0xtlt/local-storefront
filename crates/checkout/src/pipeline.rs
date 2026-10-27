@@ -33,7 +33,7 @@ use crate::{
     CheckoutState, Cost, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass,
     DiscountCodeStatus, DiscountConfig, DiscountDetails, DiscountTarget, DiscountValue,
     FunctionRun, KeyValue, LineSellingPlan, Metafield, PaymentMethod, PaymentPlacement, ResultLine,
-    SelectedOption, SourceLine, TargetSelection,
+    SelectedOption, SkippedDiscount, SourceLine, TargetSelection,
 };
 
 /// The handle of the delivery group: one group holds every line that needs shipping.
@@ -126,6 +126,7 @@ pub fn compute_with_fetcher(
         lines: initial_lines(store, session),
         next_line_id: session.cart_lines.len() as u64 + 1,
         discounts: Vec::new(),
+        skipped_discounts: Vec::new(),
         accepted_codes: Vec::new(),
         rejected_codes: Vec::new(),
         groups: Vec::new(),
@@ -163,6 +164,8 @@ struct Pipeline<'a> {
     lines: Vec<ResultLine>,
     next_line_id: u64,
     discounts: Vec<AppliedDiscount>,
+    /// Discounts a Function answered that were not applied.
+    skipped_discounts: Vec<SkippedDiscount>,
     /// Entered codes a Function took (lowercase).
     accepted_codes: Vec<String>,
     /// Entered codes a Function turned down (lowercase).
@@ -186,6 +189,9 @@ struct Blind {
 /// What a run answered for one class of line discounts: the discount, the selection strategy of
 /// the answer and its candidates.
 type Pending<'r> = (DiscountContext<'r>, Option<&'r str>, Vec<Candidate>);
+
+/// A shipping discount a run offers: the discount and the candidates its strategy selected.
+type Contender<'r> = (DiscountContext<'r>, Vec<Candidate>);
 
 /// What a discount Function answered, kept until every Function of the stage has run.
 struct Collected<'a> {
@@ -1333,12 +1339,16 @@ impl<'a> Pipeline<'a> {
             }
         }
         self.blind = None;
-        for run in collected {
-            self.apply_shipping_run(&run);
+        let mut contenders = Vec::new();
+        for run in &collected {
+            self.read_shipping_run(run, &mut contenders);
         }
+        self.apply_best_shipping(contenders);
     }
 
-    fn apply_shipping_run(&mut self, run: &Collected) {
+    /// Applies the codes a run accepted or turned down, reports its invalid candidates and
+    /// hands over the discount it offers, if any: the candidates it selected.
+    fn read_shipping_run<'r>(&mut self, run: &'r Collected, contenders: &mut Vec<Contender<'r>>) {
         let Collected {
             function,
             discount,
@@ -1354,7 +1364,7 @@ impl<'a> Pipeline<'a> {
         if run.kind == TargetKind::ShippingDiscount {
             let strategy = str_field(output, "discountApplicationStrategy");
             match candidates_of(output, "discounts") {
-                Ok(candidates) => self.apply_shipping(&context, strategy, candidates),
+                Ok(candidates) => self.contend(context, strategy, candidates, contenders),
                 Err(error) => self.function_error(function, format!("shipping discount: {error}")),
             }
         } else {
@@ -1362,7 +1372,7 @@ impl<'a> Pipeline<'a> {
                 if let Some(op) = operation.get("deliveryDiscountsAdd") {
                     let strategy = str_field(op, "selectionStrategy");
                     match candidates_of(op, "candidates") {
-                        Ok(candidates) => self.apply_shipping(&context, strategy, candidates),
+                        Ok(candidates) => self.contend(context, strategy, candidates, contenders),
                         Err(error) => {
                             self.function_error(function, format!("shipping discount: {error}"))
                         }
@@ -1384,17 +1394,88 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    fn apply_shipping(
-        &mut self,
-        context: &DiscountContext,
+    /// Keeps the candidates of a run that its selection strategy picks: the shipping discount
+    /// that run offers.
+    fn contend<'r>(
+        &self,
+        context: DiscountContext<'r>,
         strategy: Option<&str>,
         candidates: Vec<Candidate>,
+        contenders: &mut Vec<Contender<'r>>,
     ) {
         let chosen = select(strategy, candidates, |candidate| {
-            let mut groups = self.groups.clone();
-            reduce_shipping(&mut groups, candidate).iter().sum()
+            shipping_gain(&self.groups, std::slice::from_ref(candidate)).0
         });
-        for candidate in chosen {
+        if !chosen.is_empty() {
+            contenders.push((context, chosen));
+        }
+    }
+
+    /// Shopify applies one shipping discount per order, and when discounts cannot combine, the
+    /// best one for the customer's cart
+    /// (https://help.shopify.com/en/manual/discounts/discount-combinations). The best is the one
+    /// that takes the most off the delivery option the buyer selected, then off all the options.
+    /// A tie goes to the discount that comes first by Function, title, message and code, not by
+    /// its place in the configuration, so that the order of the discounts changes nothing.
+    /// The others are not applied: they are in `skipped_discounts`, with why.
+    ///
+    /// The Functions all ran on the same snapshot, so a discount does not know what the others
+    /// would take; the choice is made here, on the delivery groups the customizations left.
+    /// All of them are compared on the same groups: only the winner is applied.
+    fn apply_best_shipping(&mut self, contenders: Vec<Contender>) {
+        let mut offers: Vec<(Contender, (Cents, Cents))> = contenders
+            .into_iter()
+            .map(|contender| {
+                let gain = shipping_gain(&self.groups, &contender.1);
+                (contender, gain)
+            })
+            .collect();
+        // The first of the best: stable, so that discounts that tell nothing apart keep the
+        // order of the configuration.
+        offers.sort_by_cached_key(|((context, candidates), gain)| {
+            (
+                std::cmp::Reverse(*gain),
+                context.function.to_string(),
+                context.title.to_string(),
+                shipping_name(context, candidates),
+            )
+        });
+        let mut offers = offers.into_iter();
+        let Some(((context, candidates), best)) = offers.next() else {
+            return;
+        };
+        if best == (0, 0) {
+            return;
+        }
+        let winner = shipping_name(&context, &candidates).0;
+        self.apply_shipping(&context, candidates);
+        for ((context, candidates), gain) in offers.filter(|(_, gain)| *gain != (0, 0)) {
+            let (title, code) = shipping_name(&context, &candidates);
+            let reason = if gain == best {
+                format!(
+                    "only one shipping discount applies per order: \"{winner}\" takes as much off the shipping ({}) and comes first",
+                    money_text(best.0, &self.currency)
+                )
+            } else {
+                format!(
+                    "only one shipping discount applies per order, the best one: \"{winner}\" takes {} off the shipping, this one {}",
+                    money_text(best.0, &self.currency),
+                    money_text(gain.0, &self.currency)
+                )
+            };
+            self.skipped_discounts.push(SkippedDiscount {
+                title,
+                code: code.filter(|code| !code.is_empty()),
+                class: DiscountClass::Shipping,
+                amount: gain.0,
+                function: context.function.to_string(),
+                reason,
+            });
+        }
+    }
+
+    fn apply_shipping(&mut self, context: &DiscountContext, candidates: Vec<Candidate>) {
+        for candidate in candidates {
             let cuts = reduce_shipping(&mut self.groups, &candidate);
             let reduced: Cents = cuts.iter().sum();
             if reduced > 0 {
@@ -1599,6 +1680,7 @@ impl<'a> Pipeline<'a> {
         CheckoutResult {
             lines: self.lines,
             discounts: self.discounts,
+            skipped_discounts: self.skipped_discounts,
             discount_codes,
             delivery_groups: self.groups,
             // Offered in the list of the checkout, not only as an express button.
@@ -2320,6 +2402,41 @@ fn distribute(total: Cents, weights: &[Cents]) -> Vec<Cents> {
         left -= 1;
     }
     shares
+}
+
+/// What shipping candidates, applied one after the other, take off the delivery groups:
+/// first off the option the buyer selected, then off all the options.
+fn shipping_gain(groups: &[DeliveryGroup], candidates: &[Candidate]) -> (Cents, Cents) {
+    let cost = |groups: &[DeliveryGroup]| -> Cents {
+        groups
+            .iter()
+            .flat_map(|group| &group.options)
+            .map(|option| option.cost)
+            .sum()
+    };
+    let mut after = groups.to_vec();
+    let selected = candidates
+        .iter()
+        .map(|candidate| reduce_shipping(&mut after, candidate).iter().sum::<Cents>())
+        .sum();
+    (selected, cost(groups) - cost(&after))
+}
+
+/// How the checkout calls a shipping discount: the message of its first candidate or the title
+/// of the discount, and its code.
+fn shipping_name(context: &DiscountContext, candidates: &[Candidate]) -> (String, Option<String>) {
+    let first = candidates.first();
+    let title = first
+        .and_then(|candidate| candidate.message.clone())
+        .unwrap_or_else(|| context.title.to_string());
+    let code = first
+        .and_then(|candidate| candidate.code.clone())
+        .or_else(|| context.code.map(str::to_string));
+    (title, code)
+}
+
+fn money_text(cents: Cents, currency: &str) -> String {
+    format!("{}.{:02} {currency}", cents / 100, cents % 100)
 }
 
 /// Lowers the cost of the options a shipping candidate targets. Returns, for each group, what

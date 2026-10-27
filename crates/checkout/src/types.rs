@@ -180,6 +180,9 @@ pub enum DiscountClass {
 pub struct CheckoutResult {
     pub lines: Vec<ResultLine>,
     pub discounts: Vec<AppliedDiscount>,
+    /// Discounts a Function answered that were not applied, and why (a shipping discount that
+    /// another one beat: only one applies per order).
+    pub skipped_discounts: Vec<SkippedDiscount>,
     pub discount_codes: Vec<DiscountCodeStatus>,
     pub delivery_groups: Vec<DeliveryGroup>,
     pub payment_methods: Vec<PaymentMethod>,
@@ -308,6 +311,21 @@ pub struct AppliedDiscount {
     /// What a Function input shows of the discount: its `DiscountApplication`.
     #[serde(skip)]
     pub details: DiscountDetails,
+}
+
+/// A discount that a Function answered and that the checkout did not apply.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedDiscount {
+    pub title: String,
+    pub code: Option<String>,
+    pub class: DiscountClass,
+    /// What it would have taken off on its own.
+    #[serde(serialize_with = "money")]
+    pub amount: Cents,
+    /// The Function that produced it.
+    pub function: String,
+    pub reason: String,
 }
 
 /// `DiscountApplication` of the Functions API: how a discount is spread and what it targets.
