@@ -102,7 +102,10 @@ export function startCheckout({ root, initial, document, window, location, fetch
    * no longer a draft. */
   function accept(next) {
     state = withCurrency(next);
-    if (ui.draft.email === (state.buyer?.email ?? '')) delete ui.draft.email;
+    // An emptied email of a logged-in checkout is done with once the server fell back to the
+    // account's.
+    const fellBack = emailGoesToAccount() && (state.buyer?.email ?? '').toLowerCase() === (state.buyer?.customer?.email ?? '').toLowerCase();
+    if (ui.draft.email === (state.buyer?.email ?? '') || fellBack) delete ui.draft.email;
     for (const [name, value] of Object.entries(ui.draft.address)) {
       if (value === (state.shippingAddress?.[name] ?? '')) delete ui.draft.address[name];
     }
@@ -165,10 +168,25 @@ export function startCheckout({ root, initial, document, window, location, fetch
     return address;
   }
 
+  /** Logged in, an emptied contact email is not missing: the checkout falls back to the
+   * account's, as "Use <account email>" asks. */
+  function emailGoesToAccount() {
+    return Boolean(state.buyer?.customer) && ui.draft.email !== undefined && ui.draft.email.trim() === '';
+  }
+
+  /** The drafts as the checks before paying read them: an emptied email of a logged-in
+   * checkout is the account's. */
+  function draftToCheck() {
+    if (!emailGoesToAccount()) return ui.draft;
+    const { email, ...rest } = ui.draft;
+    return rest;
+  }
+
   /** The operations for what the buyer typed and the server does not know yet. */
   function draftOperations() {
     const operations = [];
-    if (ui.draft.email !== undefined && ui.draft.email !== (state.buyer?.email ?? '')) {
+    if (emailGoesToAccount()) operations.push(op.email(null));
+    else if (ui.draft.email !== undefined && ui.draft.email !== (state.buyer?.email ?? '')) {
       operations.push(op.email(ui.draft.email));
     }
     const typedAddress = Object.entries(ui.draft.address).some(
@@ -192,6 +210,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
     commit(name, value) {
       if (name === 'email') {
         ui.draft.email = value;
+        if (emailGoesToAccount()) return actions.useAccountEmail();
         if (value !== (state.buyer?.email ?? '')) return run([op.email(value)]);
         return undefined;
       }
@@ -331,7 +350,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
       ui.tried = true;
       ui.block = null;
       ui.failure = null;
-      if (missingFields(state, ui.draft).length > 0) {
+      if (missingFields(state, draftToCheck()).length > 0) {
         paint();
         document.querySelector?.('[aria-invalid="true"]')?.focus?.();
         return;
@@ -343,7 +362,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
         // its way: the order is paid for the state the server holds, not the one on screen.
         await queue;
         await send(draftOperations);
-        if (missingFields(state, ui.draft).length > 0) {
+        if (missingFields(state, draftToCheck()).length > 0) {
           ui.tried = true;
           return;
         }

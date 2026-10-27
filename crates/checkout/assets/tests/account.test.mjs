@@ -232,6 +232,43 @@ test('a logged-in checkout with another contact email shows it, and can give it 
   assert.equal(page.checkout.ui.draft.email, undefined);
 });
 
+test('emptying the email for this order gives it back to the account, and does not block paying', async () => {
+  const start = [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }];
+
+  // Emptied, then the field is left.
+  const left = app({ start });
+  const input = left.query('input[name="email"]');
+  input.value = '';
+  left.checkout.actions.draft('email', '');
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  await flush();
+  assert.deepEqual(left.operations().at(-1), { type: 'email', value: null });
+  assert.equal(left.checkout.getState().buyer.email, AVA);
+  assert.equal(left.checkout.ui.draft.email, undefined);
+  assert.equal(left.query('.lsf-contact-email'), null);
+
+  // Emptied, and Pay right away: the email goes back to the account first, nothing is missing.
+  const paid = app({ start });
+  await paid.checkout.actions.chooseDelivery('shipping', 'standard');
+  await paid.checkout.actions.choosePayment('cod');
+  assert.deepEqual(paid.checkout.getState().buyer.email, 'orders@example.com');
+  paid.checkout.actions.draft('email', ' ');
+  await paid.checkout.actions.pay().catch(() => {});
+  await flush();
+  assert.deepEqual(paid.operations().find((operation) => operation.type === 'email'), { type: 'email', value: null });
+  assert.equal(paid.checkout.getState().buyer.email, AVA);
+  assert.equal(paid.checkout.ui.draft.email, undefined);
+  assert.equal(paid.query('[data-field="email"] [aria-invalid="true"]'), null, 'no "Enter an email"');
+});
+
+test('a guest who empties the email still has to enter one', async () => {
+  const page = app();
+  page.checkout.actions.draft('email', '');
+  await page.checkout.actions.pay();
+  assert.equal(page.operations().some((operation) => operation.type === 'email'), false);
+  assert.equal(page.checkout.ui.tried, true);
+});
+
 test('the account\'s email typed in another case is the account\'s', () => {
   const page = app({ start: [{ type: 'customer', customer: AVA }, { type: 'email', value: 'Ava.Chen@Example.com' }] });
   assert.equal(page.query('.lsf-contact-email'), null);
