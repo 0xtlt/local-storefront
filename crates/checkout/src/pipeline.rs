@@ -22,7 +22,8 @@ use lsf_core::store::CartLine;
 use serde_json::Value;
 
 use crate::app::{App, FunctionExtension, FunctionTarget, Selection, TargetKind};
-use crate::input::{InputContext, Owner, OwnerKind};
+use crate::fetch::{self, Exchange, Fetcher, HttpFetcher};
+use crate::input::{FetchInput, InputContext, Owner, OwnerKind};
 use crate::runner;
 use crate::version::ApiVersion;
 use crate::{
@@ -79,6 +80,31 @@ pub fn compute_with(
     config: &CheckoutConfig,
     build: &InputBuilder,
 ) -> CheckoutResult {
+    compute_with_fetcher(
+        app,
+        enabled,
+        store,
+        session,
+        state,
+        config,
+        build,
+        &HttpFetcher,
+    )
+}
+
+/// [`compute_with`] with another way to send the HTTP requests of the `.fetch` targets: tests
+/// answer them without the network.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_with_fetcher(
+    app: &App,
+    enabled: &Selection,
+    store: &lsf_core::Store,
+    session: &lsf_core::Session,
+    state: &CheckoutState,
+    config: &CheckoutConfig,
+    build: &InputBuilder,
+    fetcher: &dyn Fetcher,
+) -> CheckoutResult {
     let now = store
         .now
         .unwrap_or_else(Utc::now)
@@ -92,6 +118,7 @@ pub fn compute_with(
         state,
         config,
         build,
+        fetcher,
         currency: store.shop.currency.clone(),
         now,
         lines: initial_lines(store, session),
@@ -127,6 +154,7 @@ struct Pipeline<'a> {
     state: &'a CheckoutState,
     config: &'a CheckoutConfig,
     build: &'a InputBuilder<'a>,
+    fetcher: &'a dyn Fetcher,
     currency: String,
     now: DateTime<FixedOffset>,
     lines: Vec<ResultLine>,
@@ -143,6 +171,7 @@ struct Pipeline<'a> {
 }
 
 /// What owns a Function run: the object whose metafields configure it.
+#[derive(Clone)]
 struct OwnerSpec<'a> {
     kind: OwnerKind,
     id: String,
@@ -209,6 +238,71 @@ impl<'a> Pipeline<'a> {
         owner: OwnerSpec,
         triggering_code: Option<&str>,
     ) -> Option<Value> {
+        self.execute_with(
+            function,
+            target,
+            owner,
+            triggering_code,
+            FetchInput::Response(None),
+        )
+    }
+
+    /// The HTTP response a `.run` target reads as `fetchResult`: runs the `.fetch` target of
+    /// the Function, if it has one, and sends the request it asks for. `Ok(None)` when there is
+    /// nothing to fetch, `Err` when the `.fetch` target failed (the failure is in the checkout
+    /// errors, and the `.run` target does not run).
+    fn fetch_for(
+        &mut self,
+        function: &FunctionExtension,
+        run: &FunctionTarget,
+        owner: &OwnerSpec,
+        triggering_code: Option<&str>,
+    ) -> Result<Option<fetch::Response>, ()> {
+        let Some(fetch_kind) = run.kind.fetch_target() else {
+            return Ok(None);
+        };
+        let Some(target) = function
+            .targets
+            .iter()
+            .find(|target| target.kind == fetch_kind)
+        else {
+            return Ok(None);
+        };
+        let output = self
+            .execute_with(
+                function,
+                target,
+                owner.clone(),
+                triggering_code,
+                FetchInput::Unavailable,
+            )
+            .ok_or(())?;
+        let request = match fetch::request_from_output(&output) {
+            Ok(Some(request)) => request,
+            Ok(None) => return Ok(None),
+            Err(message) => {
+                self.function_error(function, format!("fetch request: {message}"));
+                return Err(());
+            }
+        };
+        let response = self.fetcher.send(&request);
+        if let Some(run) = self.runs.last_mut() {
+            run.exchange = Some(Exchange {
+                request,
+                response: response.clone(),
+            });
+        }
+        Ok(Some(response))
+    }
+
+    fn execute_with(
+        &mut self,
+        function: &FunctionExtension,
+        target: &FunctionTarget,
+        owner: OwnerSpec,
+        triggering_code: Option<&str>,
+        fetch: FetchInput,
+    ) -> Option<Value> {
         let (Some(version), Some(spec)) = (function.version, target.spec()) else {
             self.record_failure(
                 function,
@@ -245,6 +339,7 @@ impl<'a> Pipeline<'a> {
                 },
                 entered_codes: &entered_codes,
                 triggering_code,
+                fetch,
                 currency: &self.currency,
                 now: self.now,
             };
@@ -305,6 +400,7 @@ impl<'a> Pipeline<'a> {
             logs: execution.logs,
             error: execution.error.clone(),
             instructions: execution.instructions,
+            exchange: None,
         };
         if failed {
             self.errors.push(CheckoutError {
@@ -342,6 +438,7 @@ impl<'a> Pipeline<'a> {
             logs: String::new(),
             error: Some(error),
             instructions: 0,
+            exchange: None,
         });
     }
 
@@ -801,7 +898,16 @@ impl<'a> Pipeline<'a> {
                     metafields: &discount.metafields,
                     classes: &classes,
                 };
-                let Some(output) = self.execute(function, target, owner, code.as_deref()) else {
+                let Ok(fetched) = self.fetch_for(function, target, &owner, code.as_deref()) else {
+                    continue;
+                };
+                let Some(output) = self.execute_with(
+                    function,
+                    target,
+                    owner,
+                    code.as_deref(),
+                    FetchInput::Response(fetched.as_ref()),
+                ) else {
                     continue;
                 };
                 self.apply_line_discounts(
@@ -1120,7 +1226,16 @@ impl<'a> Pipeline<'a> {
                     metafields: &discount.metafields,
                     classes: &classes,
                 };
-                let Some(output) = self.execute(function, target, owner, code.as_deref()) else {
+                let Ok(fetched) = self.fetch_for(function, target, &owner, code.as_deref()) else {
+                    continue;
+                };
+                let Some(output) = self.execute_with(
+                    function,
+                    target,
+                    owner,
+                    code.as_deref(),
+                    FetchInput::Response(fetched.as_ref()),
+                ) else {
                     continue;
                 };
                 let context = DiscountContext {
@@ -1297,7 +1412,16 @@ impl<'a> Pipeline<'a> {
                     metafields: self.function_metafields(&function.handle),
                     classes: &[],
                 };
-                let Some(output) = self.execute(function, target, owner, None) else {
+                let Ok(fetched) = self.fetch_for(function, target, &owner, None) else {
+                    continue;
+                };
+                let Some(output) = self.execute_with(
+                    function,
+                    target,
+                    owner,
+                    None,
+                    FetchInput::Response(fetched.as_ref()),
+                ) else {
                     continue;
                 };
                 // `purchase.validation.run` returns `{ errors }`, `cart.validations.generate.run`

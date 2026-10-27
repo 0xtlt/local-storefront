@@ -22,6 +22,10 @@ struct Fixture {
     metafields: Vec<Metafield>,
     classes: Vec<DiscountClass>,
     codes: Vec<String>,
+    /// The response of the `.fetch` target, if the Function has one.
+    fetch: Option<crate::fetch::Response>,
+    /// Whether the input is the one of a `.fetch` target, which has no `fetchResult`.
+    fetching: bool,
     version: ApiVersion,
 }
 
@@ -162,6 +166,8 @@ impl Fixture {
             ],
             classes: vec![DiscountClass::Product, DiscountClass::Order],
             codes: vec!["SAVE10".to_string()],
+            fetch: None,
+            fetching: false,
             version: ApiVersion::latest(),
         }
     }
@@ -208,6 +214,11 @@ impl Fixture {
             },
             entered_codes: &self.codes,
             triggering_code: Some("SAVE10"),
+            fetch: if self.fetching {
+                FetchInput::Unavailable
+            } else {
+                FetchInput::Response(self.fetch.as_ref())
+            },
             currency: "EUR",
             now: chrono::DateTime::parse_from_rfc3339("2026-03-14T23:30:00+00:00").unwrap(),
         };
@@ -2059,4 +2070,114 @@ fn a_shop_metaobject_needs_one_way_to_find_it() {
         assert!(error.contains("either"), "{error}");
         assert!(error.contains("shop.metaobject"), "{error}");
     }
+}
+
+// ---- fetchResult ----
+
+fn response() -> crate::fetch::Response {
+    crate::fetch::Response {
+        status: 200,
+        headers: vec![
+            ("content-type".to_string(), "application/json".to_string()),
+            ("x-check".to_string(), "ok".to_string()),
+        ],
+        body: r#"{"allowed": true, "codes": ["A", "B"]}"#.to_string(),
+    }
+}
+
+const FETCH_RESULT: &str = r#"{ fetchResult {
+    __typename status body jsonBody
+    type: header(name: "Content-TYPE") { __typename name value }
+    missing: header(name: "x-nope") { value }
+    headers { name value } } }"#;
+
+#[test]
+fn the_fetch_result_is_the_response_to_the_request() {
+    let mut f = Fixture::new();
+    f.fetch = Some(response());
+    let out = f.run(FETCH_RESULT);
+    assert_eq!(
+        out["fetchResult"],
+        json!({
+            "__typename": "HttpResponse",
+            "status": 200,
+            "body": r#"{"allowed": true, "codes": ["A", "B"]}"#,
+            "jsonBody": {"allowed": true, "codes": ["A", "B"]},
+            "type": {"__typename": "HttpResponseHeader", "name": "content-type", "value": "application/json"},
+            "missing": null,
+            "headers": [
+                {"name": "content-type", "value": "application/json"},
+                {"name": "x-check", "value": "ok"},
+            ],
+        })
+    );
+}
+
+#[test]
+fn a_body_that_is_not_json_is_the_json_body_as_a_string() {
+    let mut f = Fixture::new();
+    f.fetch = Some(crate::fetch::Response::failure(
+        502,
+        "502 Bad Gateway (Connection Failed)",
+    ));
+    let out = f.run("{ fetchResult { status body jsonBody headers { name } } }");
+    assert_eq!(
+        out["fetchResult"],
+        json!({
+            "status": 502,
+            "body": "502 Bad Gateway (Connection Failed)",
+            "jsonBody": "502 Bad Gateway (Connection Failed)",
+            "headers": [],
+        })
+    );
+}
+
+#[test]
+fn without_a_response_there_is_no_fetch_result() {
+    let f = Fixture::new();
+    let out = f.run("{ fetchResult { status } }");
+    assert!(out["fetchResult"].is_null());
+}
+
+#[test]
+fn the_fetch_result_exists_in_the_apis_that_have_network_access() {
+    let mut f = Fixture::new();
+    f.fetch = Some(response());
+    for kind in [OwnerKind::Discount, OwnerKind::Validation] {
+        let out = f
+            .run_as(kind, "{ fetchResult { status } }", None)
+            .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
+        assert_eq!(out["fetchResult"]["status"], 200, "{kind:?}");
+    }
+    // The other APIs do not have the field, whatever the graph could answer.
+    for kind in [
+        OwnerKind::CartTransform,
+        OwnerKind::DeliveryCustomization,
+        OwnerKind::PaymentCustomization,
+        OwnerKind::DiscountNode,
+    ] {
+        let error = f
+            .run_as(kind, "{ fetchResult { status } }", None)
+            .unwrap_err();
+        assert!(error.contains("fetchResult"), "{kind:?}: {error}");
+    }
+}
+
+#[test]
+fn a_fetch_target_cannot_read_the_fetch_result() {
+    let mut f = Fixture::new();
+    f.fetching = true;
+    let error = f
+        .run_as(OwnerKind::Discount, "{ fetchResult { status } }", None)
+        .unwrap_err();
+    assert!(
+        error.contains("only available to the input query of a run target"),
+        "{error}"
+    );
+    assert!(error.contains("fetchResult"), "{error}");
+    // The rest of the input is the same.
+    let out = f
+        .run_as(OwnerKind::Discount, "{ cart { lines { id } } }", None)
+        .unwrap();
+    assert_eq!(out["cart"]["lines"].as_array().unwrap().len(), 2);
 }

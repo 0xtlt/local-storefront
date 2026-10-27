@@ -433,6 +433,9 @@ fn every_target_names_a_result_type_of_its_schema() {
         "purchase.payment-customization.run",
         "cart.validations.generate.run",
         "purchase.validation.run",
+        "cart.lines.discounts.generate.fetch",
+        "cart.delivery-options.discounts.generate.fetch",
+        "cart.validations.generate.fetch",
     ] {
         let spec = crate::version::target_spec(target).unwrap_or_else(|| panic!("{target}"));
         for version in ApiVersion::all() {
@@ -444,7 +447,46 @@ fn every_target_names_a_result_type_of_its_schema() {
         }
         assert_eq!(spec.legacy, target.starts_with("purchase."), "{target}");
     }
-    assert!(crate::version::target_spec("cart.lines.discounts.generate.fetch").is_none());
+    // The pickup point and local pickup generators, and their fetch targets, are not run.
+    for target in [
+        "cart.pickup-point-delivery-option-generator.fetch",
+        "cart.local-pickup-delivery-option-generator.run",
+    ] {
+        assert!(crate::version::target_spec(target).is_none(), "{target}");
+    }
+}
+
+#[test]
+fn a_fetch_result_is_a_request_and_the_other_targets_are_not() {
+    let version = ApiVersion::latest();
+    let schema = version.schema(FunctionApi::Discount);
+    let fetch = crate::version::target_spec("cart.lines.discounts.generate.fetch").unwrap();
+    assert!(
+        schema
+            .validate_output(
+                fetch.result,
+                &serde_json::json!({"request": {
+                "method": "GET", "url": "https://app.example/", "headers": [],
+                "policy": {"readTimeoutMs": 500}}})
+            )
+            .is_ok()
+    );
+    // A method outside GET and POST, and operations (the output of a run target), do not fit.
+    assert!(
+        schema
+            .validate_output(
+                fetch.result,
+                &serde_json::json!({"request": {
+                "method": "DELETE", "url": "https://app.example/", "headers": [],
+                "policy": {"readTimeoutMs": 500}}})
+            )
+            .is_err()
+    );
+    assert!(
+        schema
+            .validate_output(fetch.result, &serde_json::json!({"operations": []}))
+            .is_err()
+    );
 }
 
 /// Accepts the output, then normalizes it.

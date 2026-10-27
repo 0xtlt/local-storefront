@@ -20,3 +20,7 @@ wasmtime = { version = "=39.0.1", default-features = false, features = ["runtime
 toml = "0.9"
 # Parses the input queries of Functions.
 graphql-parser = "0.4"
+# Network access for Functions: the requests of the `.fetch` targets. `rustls` is the one ureq
+# already uses; it is named here to tell its errors from other I/O errors.
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }

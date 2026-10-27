@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod assets;
+pub mod fetch;
 pub mod input;
 pub mod pipeline;
 pub mod runner;

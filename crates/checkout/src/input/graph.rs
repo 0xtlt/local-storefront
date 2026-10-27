@@ -9,7 +9,7 @@ use lsf_core::store::{
 use serde_json::{Value as Json, json};
 
 use super::exec::{Args, Graph, Resolved};
-use super::{InputContext, OwnerKind, decimal, delivery_group_id, payment_method_id};
+use super::{FetchInput, InputContext, OwnerKind, decimal, delivery_group_id, payment_method_id};
 use crate::{
     Address, AppliedDiscount, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass,
     DiscountValue, Metafield, PaymentMethod, ResultLine,
@@ -68,6 +68,10 @@ pub(super) enum Node<'c> {
     Shop,
     Metaobject(&'c Metaobject),
     MetaobjectField(&'c str, &'c lsf_core::store::Metafield),
+    /// The response to the request of the `.fetch` target (`fetchResult`).
+    HttpResponse(&'c crate::fetch::Response),
+    /// A header of that response: its name and value.
+    HttpResponseHeader(&'c str, &'c str),
     LocalTime,
     EnteredCode(&'c str),
     BuyerJourney,
@@ -120,6 +124,8 @@ const TYPES: &[&str] = &[
     "Shop",
     "Metaobject",
     "MetaobjectField",
+    "HttpResponse",
+    "HttpResponseHeader",
     "LocalTime",
     "EnteredDiscountCode",
     "BuyerJourney",
@@ -183,6 +189,8 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::Shop => "Shop",
             Node::Metaobject(_) => "Metaobject",
             Node::MetaobjectField(..) => "MetaobjectField",
+            Node::HttpResponse(_) => "HttpResponse",
+            Node::HttpResponseHeader(..) => "HttpResponseHeader",
             Node::LocalTime => "LocalTime",
             Node::EnteredCode(_) => "EnteredDiscountCode",
             Node::BuyerJourney => "BuyerJourney",
@@ -415,6 +423,34 @@ impl<'c> Graph for FunctionInput<'c> {
                 "metaobject" => Some(self.metaobject(args)?),
                 _ => None,
             },
+            Node::HttpResponse(response) => match name {
+                "status" => leaf(response.status),
+                "body" => leaf(&response.body),
+                "jsonBody" => Some(Resolved::Leaf(response.json_body())),
+                "header" => {
+                    let wanted = args.required_string("name")?;
+                    Some(
+                        response
+                            .header(&wanted)
+                            .map_or(Resolved::Null, |(name, value)| {
+                                Resolved::Object(Node::HttpResponseHeader(name, value))
+                            }),
+                    )
+                }
+                "headers" => Some(Resolved::List(
+                    response
+                        .headers
+                        .iter()
+                        .map(|(name, value)| Node::HttpResponseHeader(name, value))
+                        .collect(),
+                )),
+                _ => None,
+            },
+            Node::HttpResponseHeader(header, value) => match name {
+                "name" => leaf(*header),
+                "value" => leaf(*value),
+                _ => None,
+            },
             Node::Metaobject(entry) => match name {
                 "handle" => leaf(&entry.handle),
                 "type" => leaf(&entry.kind),
@@ -526,6 +562,17 @@ impl<'c> FunctionInput<'c> {
             "shop" => object(Node::Shop),
             "buyerJourney" => object(Node::BuyerJourney),
             "presentmentCurrencyRate" => leaf("1.0"),
+            "fetchResult" => match ctx.fetch {
+                FetchInput::Response(Some(response)) => object(Node::HttpResponse(response)),
+                FetchInput::Response(None) => Some(Resolved::Null),
+                FetchInput::Unavailable => {
+                    return Err(
+                        "`fetchResult` is only available to the input query of a run target, \
+                         not to the one of a fetch target"
+                            .to_string(),
+                    );
+                }
+            },
             "triggeringDiscountCode" => Some(match ctx.triggering_code {
                 Some(code) => Resolved::Leaf(Json::String(code.to_string())),
                 None => Resolved::Null,

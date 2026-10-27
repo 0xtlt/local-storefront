@@ -208,6 +208,25 @@ test('the Functions panel lists the runs and opens them on demand', () => {
   assert.match(pres[1], /"operations"/);
 });
 
+test('a fetch run shows the request it asked for and the response', () => {
+  const state = checkoutState();
+  state.runs[0] = {
+    ...state.runs[0],
+    target: 'cart.lines.discounts.generate.fetch',
+    exchange: {
+      request: { method: 'POST', url: 'https://app.example/check', headers: [], body: null, readTimeoutMs: 500 },
+      response: { status: 200, headers: [], body: '{"ok":true}' },
+    },
+  };
+  const tree = page(state, { functionsOpen: true, openRuns: new Set([0, 1]) });
+  const titles = findAll(tree, (node) => node.tag === 'h4').map(text);
+  assert.equal(titles.filter((title) => title === 'HTTP request').length, 1, 'only the fetch run has an exchange');
+  assert.equal(titles.filter((title) => title === 'HTTP response').length, 1);
+  const pres = findAll(tree, (node) => node.tag === 'pre').map(text);
+  assert.ok(pres.some((pre) => /"url": "https:\/\/app\.example\/check"/.test(pre)));
+  assert.ok(pres.some((pre) => /"status": 200/.test(pre)));
+});
+
 test('a failed run shows its error and counts as failed', () => {
   const state = checkoutState();
   state.runs[0] = { ...state.runs[0], error: 'unreachable executed', output: null };

@@ -45,8 +45,20 @@ pub struct InputContext<'a> {
     pub owner: Owner<'a>,
     pub entered_codes: &'a [String],
     pub triggering_code: Option<&'a str>,
+    /// `fetchResult`: what the `.fetch` target of the Function got.
+    pub fetch: FetchInput<'a>,
     pub currency: &'a str,
     pub now: chrono::DateTime<chrono::FixedOffset>,
+}
+
+/// The `fetchResult` of the input of a target.
+#[derive(Clone, Copy, Debug)]
+pub enum FetchInput<'a> {
+    /// The input of a `.fetch` target: `fetchResult` is only there for the `.run` target.
+    Unavailable,
+    /// The input of a `.run` target: the response to the request of the `.fetch` target of the
+    /// Function, `None` when the Function has none or asked for no request.
+    Response(Option<&'a crate::fetch::Response>),
 }
 
 /// The object that owns a Function (a discount, a cart transform, ...): it holds the

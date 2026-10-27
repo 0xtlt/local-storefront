@@ -198,7 +198,7 @@ pub struct TargetSpec {
 }
 
 /// The targets the checkout runs. `None` for the others (fulfillment constraints, order
-/// routing, pickup generators, the `.fetch` targets).
+/// routing, pickup generators and their `.fetch` targets).
 pub fn target_spec(target: &str) -> Option<TargetSpec> {
     use FunctionApi::*;
     let (api, result, legacy) = match target {
@@ -233,6 +233,20 @@ pub fn target_spec(target: &str) -> Option<TargetSpec> {
             false,
         ),
         "purchase.validation.run" => (CartCheckoutValidation, "FunctionRunResult", true),
+        // The targets that ask for an HTTP request: their result is the request.
+        "cart.lines.discounts.generate.fetch" => {
+            (Discount, "CartLinesDiscountsGenerateFetchResult", false)
+        }
+        "cart.delivery-options.discounts.generate.fetch" => (
+            Discount,
+            "CartDeliveryOptionsDiscountsGenerateFetchResult",
+            false,
+        ),
+        "cart.validations.generate.fetch" => (
+            CartCheckoutValidation,
+            "CartValidationsGenerateFetchResult",
+            false,
+        ),
         _ => return None,
     };
     Some(TargetSpec {

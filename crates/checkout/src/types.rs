@@ -484,6 +484,9 @@ pub struct FunctionRun {
     pub error: Option<String>,
     /// Wasm instructions executed. Shopify stops a Function past 11 million.
     pub instructions: u64,
+    /// For a `.fetch` target: the HTTP request it asked for and the response it got.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exchange: Option<crate::fetch::Exchange>,
 }
 
 /// Money as checkout UI extensions see it: `{"amount": 19.99, "currencyCode": "EUR"}`. The
