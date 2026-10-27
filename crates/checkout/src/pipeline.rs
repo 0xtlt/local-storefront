@@ -2122,7 +2122,17 @@ fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cent
             .iter()
             .map(|(_, quantity)| cents.saturating_mul(Cents::from(*quantity)))
             .collect(),
-        Amount::Fixed { cents, each: false } => distribute(cents.min(bases.iter().sum()), &bases),
+        // Shopify applies the amount once across the entitled items. It is shared in
+        // proportion to the prices of the items, but an item that has less left than its share
+        // (an earlier discount took it) gives the rest to the others.
+        Amount::Fixed { cents, each: false } => {
+            let left: Vec<Cents> = covered
+                .iter()
+                .zip(&bases)
+                .map(|((index, _), base)| (*base).min(lines[*index].total))
+                .collect();
+            distribute_capped(cents, &bases, &left)
+        }
         Amount::None => vec![0; covered.len()],
     };
     // A discount takes at most the price of the items it covers: the other items of the line
@@ -2184,16 +2194,58 @@ fn plan_order(
     covered.sort_by_key(|(index, _)| *index);
     let weights: Vec<Cents> = covered.iter().map(|(_, base)| *base).collect();
     let base: Cents = weights.iter().sum();
-    let amount = match candidate.value {
-        Amount::Percentage(percentage) => (base as f64 * percentage / 100.0).round() as Cents,
-        Amount::Fixed { cents, .. } => cents.min(base),
-        Amount::None => 0,
+    let shares = match candidate.value {
+        Amount::Percentage(percentage) => distribute(
+            (base as f64 * percentage / 100.0).round() as Cents,
+            &weights,
+        ),
+        // The weights of a fixed amount are what the lines cost now, so no line is asked for
+        // more than it has, and the amount is taken in full up to the order total.
+        Amount::Fixed { cents, .. } => distribute_capped(cents, &weights, &weights),
+        Amount::None => vec![0; weights.len()],
     };
     covered
         .into_iter()
-        .zip(distribute(amount, &weights))
+        .zip(shares)
         .map(|((index, _), cents)| (index, cents))
         .collect()
+}
+
+/// Shares `total` between the weights in proportion, to the cent, but gives item `i` no more
+/// than `caps[i]`: what an item cannot take goes to the others, in proportion to their weights,
+/// until the caps are reached. The shares add up to `total` or, when the caps are lower, to
+/// their sum.
+fn distribute_capped(total: Cents, weights: &[Cents], caps: &[Cents]) -> Vec<Cents> {
+    let mut shares = vec![0; weights.len()];
+    let mut open: Vec<usize> = (0..weights.len())
+        .filter(|&index| weights[index] > 0 && caps[index] > 0)
+        .collect();
+    let mut left = total.min(open.iter().map(|&index| caps[index]).sum());
+    while left > 0 && !open.is_empty() {
+        let proposal = distribute(left, &open.iter().map(|&i| weights[i]).collect::<Vec<_>>());
+        let over: Vec<usize> = (0..open.len())
+            .filter(|&at| proposal[at] > caps[open[at]])
+            .collect();
+        if over.is_empty() {
+            for (at, &index) in open.iter().enumerate() {
+                shares[index] = proposal[at];
+            }
+            break;
+        }
+        // The items that cannot take their share are full: the rest is shared again between
+        // the others (`left` never exceeds what the open items can still take).
+        for &at in &over {
+            shares[open[at]] = caps[open[at]];
+            left -= caps[open[at]];
+        }
+        open = open
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !over.contains(at))
+            .map(|(_, &index)| index)
+            .collect();
+    }
+    shares
 }
 
 /// Shares `total` between weights in proportion, to the cent (largest remainders first).
@@ -2450,6 +2502,95 @@ mod tests {
         assert_eq!(plan_product(&lines, &candidate), vec![(0, 300)]);
     }
 
+    fn shared_fixed(amount: &str, lines: &[&str]) -> Candidate {
+        product_candidate(json!({
+            "targets": lines
+                .iter()
+                .map(|id| json!({"cartLine": {"id": format!("gid://shopify/CartLine/{id}")}}))
+                .collect::<Vec<_>>(),
+            "value": {"fixedAmount": {"amount": amount, "appliesToEachItem": false}},
+        }))
+    }
+
+    #[test]
+    fn a_shared_fixed_amount_gives_what_a_line_cannot_take_to_the_others() {
+        // 100.00 each. An earlier discount took the whole of the first line.
+        let mut lines = vec![line(1, 10, 10000, 1), line(2, 11, 10000, 1)];
+        lines[0].total = 0;
+        let plan = plan_product(&lines, &shared_fixed("100.00", &["1", "2"]));
+        // The 100.00 is taken once, from the line that has something left.
+        assert_eq!(plan, vec![(0, 0), (1, 10000)]);
+
+        // Half of the second line is gone as well: 50.00 of the 100.00 is all there is.
+        lines[1].total = 5000;
+        let plan = plan_product(&lines, &shared_fixed("100.00", &["1", "2"]));
+        assert_eq!(plan, vec![(0, 0), (1, 5000)]);
+    }
+
+    #[test]
+    fn a_shared_fixed_amount_stays_in_proportion_while_every_line_can_take_its_share() {
+        let lines = vec![line(1, 10, 2000, 1), line(2, 11, 3000, 1)];
+        // 10.00 shared by 20.00 and 30.00: 4.00 and 6.00, as before.
+        let plan = plan_product(&lines, &shared_fixed("10.00", &["1", "2"]));
+        assert_eq!(plan, vec![(0, 400), (1, 600)]);
+    }
+
+    #[test]
+    fn a_shared_fixed_amount_is_redistributed_between_three_lines() {
+        // 10.00, 20.00 and 30.00; the first has 1.00 left and the second 5.00.
+        let mut lines = vec![
+            line(1, 10, 1000, 1),
+            line(2, 11, 2000, 1),
+            line(3, 12, 3000, 1),
+        ];
+        lines[0].total = 100;
+        lines[1].total = 500;
+        let plan = plan_product(&lines, &shared_fixed("30.00", &["1", "2", "3"]));
+        // The shares by price (5.00, 10.00, 15.00) are too high for the first two lines: they
+        // give 1.00 and 5.00, and the third takes the rest.
+        assert_eq!(plan, vec![(0, 100), (1, 500), (2, 2400)]);
+        assert_eq!(plan.iter().map(|(_, cents)| cents).sum::<Cents>(), 3000);
+    }
+
+    #[test]
+    fn a_shared_fixed_amount_takes_no_more_than_the_lines_have_left() {
+        let mut lines = vec![line(1, 10, 1000, 1), line(2, 11, 1000, 1)];
+        lines[0].total = 300;
+        lines[1].total = 200;
+        let plan = plan_product(&lines, &shared_fixed("100.00", &["1", "2"]));
+        assert_eq!(plan, vec![(0, 300), (1, 200)]);
+    }
+
+    #[test]
+    fn a_shared_fixed_amount_adds_up_to_the_cent_when_it_is_redistributed() {
+        // 1.01 over three lines of 10.00, one of them full: the cent that does not divide goes
+        // to one of the others, and nothing is lost with the share of the full line.
+        let mut lines = vec![
+            line(1, 10, 1000, 1),
+            line(2, 11, 1000, 1),
+            line(3, 12, 1000, 1),
+        ];
+        lines[0].total = 0;
+        let plan = plan_product(&lines, &shared_fixed("1.01", &["1", "2", "3"]));
+        let taken: Cents = plan.iter().map(|(_, cents)| cents).sum();
+        assert_eq!(taken, 101);
+        assert_eq!(plan[0].1, 0);
+    }
+
+    #[test]
+    fn capped_distribution_never_exceeds_a_cap_nor_the_total() {
+        assert_eq!(distribute_capped(100, &[1, 1], &[0, 100]), vec![0, 100]);
+        assert_eq!(distribute_capped(100, &[1, 1], &[30, 30]), vec![30, 30]);
+        assert_eq!(distribute_capped(90, &[1, 2], &[10, 100]), vec![10, 80]);
+        assert_eq!(distribute_capped(0, &[1, 1], &[5, 5]), vec![0, 0]);
+        assert_eq!(distribute_capped(10, &[0, 0], &[5, 5]), vec![0, 0]);
+        for total in 0..60 {
+            let shares = distribute_capped(total, &[3, 5, 7, 11], &[4, 0, 9, 20]);
+            assert!(shares.iter().zip([4, 0, 9, 20]).all(|(s, cap)| *s <= cap));
+            assert_eq!(shares.iter().sum::<Cents>(), total.min(33));
+        }
+    }
+
     #[test]
     fn a_fixed_amount_never_exceeds_the_items_it_covers() {
         // Two items of 32.00 on one line; the discount covers one of them only.
@@ -2648,6 +2789,30 @@ mod tests {
         assert_eq!(
             plan_order(&lines, &frozen, &fixed("500.00")),
             vec![(0, 2250), (1, 6750)]
+        );
+    }
+
+    #[test]
+    fn a_fixed_order_amount_is_taken_in_full_from_lines_with_unequal_balances() {
+        let order = product_candidate(json!({
+            "targets": [{"orderSubtotal": {"excludedCartLineIds": []}}],
+            "value": {"fixedAmount": {"amount": "100.00"}},
+        }));
+        // 100.00 each; an earlier discount took 60.00 off the first line.
+        let mut lines = vec![line(1, 10, 10000, 1), line(2, 11, 10000, 1)];
+        let frozen = totals(&lines);
+        lines[0].total = 4000;
+        let plan = plan_order(&lines, &frozen, &order);
+        assert_eq!(plan, vec![(0, 2857), (1, 7143)]);
+        assert_eq!(plan.iter().map(|(_, cents)| cents).sum::<Cents>(), 10000);
+        // More than what is left: all of it.
+        let all = product_candidate(json!({
+            "targets": [{"orderSubtotal": {"excludedCartLineIds": []}}],
+            "value": {"fixedAmount": {"amount": "500.00"}},
+        }));
+        assert_eq!(
+            plan_order(&lines, &frozen, &all),
+            vec![(0, 4000), (1, 10000)]
         );
     }
 

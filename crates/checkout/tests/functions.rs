@@ -3150,3 +3150,136 @@ fn two_percentage_product_discounts_are_both_a_share_of_the_price_of_the_line() 
     // 64.00: 6.40 and 12.80, not 6.40 and 11.52.
     assert_eq!(result.lines[0].total, 6400 - 640 - 1280);
 }
+
+// ---- discounts that overlap ----
+
+/// Several discounts of the app, each answering its own output (`answers`: the title of the
+/// discount, then what its Function answers), on the cart `cart`. The discounts are in the
+/// configuration in the order of `answers`. The module only echoes the output that the input
+/// builder of the test gives it, picked by the title the discount carries in its metafield.
+fn answer_discounts(
+    export: &str,
+    cart: &[(u64, u32)],
+    classes: &[DiscountClass],
+    answers: &[(&str, serde_json::Value)],
+) -> lsf_checkout::CheckoutResult {
+    static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let copy = AppCopy::new(&format!(
+        "overlap-{}",
+        COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(
+        copy.file("volume-discount", "dist/function.wasm"),
+        answering_module(export, 0),
+    )
+    .unwrap();
+    let store = store();
+    let session = session(&store, cart);
+    let app = copy.load();
+    let mut config = config();
+    config.discounts = answers
+        .iter()
+        .map(|(title, _)| {
+            discount(
+                "volume-discount",
+                title,
+                None,
+                classes,
+                json!({ "title": title }),
+            )
+        })
+        .collect();
+    compute_with(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+        &|_, _, ctx| {
+            let title = ctx
+                .owner
+                .metafields
+                .iter()
+                .filter_map(|metafield| {
+                    serde_json::from_str::<serde_json::Value>(&metafield.value).ok()
+                })
+                .find_map(|value| value["title"].as_str().map(str::to_string))
+                .ok_or("no title in the metafield of the discount")?;
+            answers
+                .iter()
+                .find(|(candidate, _)| *candidate == title)
+                .map(|(_, output)| output.clone())
+                .ok_or_else(|| format!("no answer for {title}"))
+        },
+    )
+}
+
+/// A product discount that targets the lines `lines` (ids of [`LINE_1`] and [`LINE_2`]).
+fn product_answer(lines: &[&str], value: serde_json::Value) -> serde_json::Value {
+    json!({"operations": [{"productDiscountsAdd": {
+        "selectionStrategy": "FIRST",
+        "candidates": [{
+            "targets": lines.iter().map(|id| json!({"cartLine": {"id": id}})).collect::<Vec<_>>(),
+            "value": value,
+        }],
+    }}]})
+}
+
+/// The tee (32.00) and the tote (24.00): lines 1 and 2.
+const TEE_AND_TOTE: [(u64, u32); 2] = [(TEE, 1), (TOTE, 1)];
+
+fn shared_fixed_amount(amount: &str) -> serde_json::Value {
+    json!({"fixedAmount": {"amount": amount, "appliesToEachItem": false}})
+}
+
+#[test]
+fn a_shared_fixed_amount_is_taken_once_across_the_lines_that_can_take_it() {
+    // The tee goes free; 30.00 shared by both lines used to lose the share of the tee, and take
+    // 12.86 off the tote instead of the 24.00 it has.
+    let result = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Product],
+        &[
+            ("Free tee", product_answer(&[LINE_1], percentage("100"))),
+            (
+                "Thirty off",
+                product_answer(&[LINE_1, LINE_2], shared_fixed_amount("30.00")),
+            ),
+        ],
+    );
+    assert_eq!(
+        result
+            .lines
+            .iter()
+            .map(|line| line.total)
+            .collect::<Vec<_>>(),
+        [0, 0]
+    );
+    assert_eq!(taken(&result).0, [3200, 2400]);
+    assert_allocations_add_up(&result);
+}
+
+#[test]
+fn a_shared_fixed_amount_that_every_line_can_take_stays_in_proportion() {
+    // 14.00 shared by 32.00 and 24.00 (4:3): 8.00 and 6.00.
+    let result = answer_discounts(
+        "cart_lines_discounts_generate_run",
+        &TEE_AND_TOTE,
+        &[Product],
+        &[(
+            "Fourteen off",
+            product_answer(&[LINE_1, LINE_2], shared_fixed_amount("14.00")),
+        )],
+    );
+    assert_eq!(
+        result
+            .lines
+            .iter()
+            .map(|line| line.total)
+            .collect::<Vec<_>>(),
+        [2400, 1800]
+    );
+    assert_allocations_add_up(&result);
+}
