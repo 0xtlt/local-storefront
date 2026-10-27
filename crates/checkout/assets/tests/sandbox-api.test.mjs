@@ -324,6 +324,17 @@ test('translations are resolved key by key: locale, language, default, key', () 
   assert.equal(nested.i18n.translate('x.z'), 'z en');
 });
 
+test('a declared default ends the fallback, and no default is what the server sends as null', () => {
+  const translations = { fr: { hello: 'Bonjour' }, en: { hello: 'Hello', only: 'English only' } };
+  // French is the default: a key it lacks is the key, not the English string.
+  const german = inLocale('de', translations, 'fr');
+  assert.equal(german.i18n.translate('only'), 'only');
+  // No `.default.json`: the server sends `defaultLocale: null`, and English stands in.
+  const none = inLocale('de', { en: { hello: 'Hello' } }, null);
+  assert.equal(none.i18n.translate('hello'), 'Hello');
+  assert.equal(none.localization.extensionLanguage.value.isoCode, 'en');
+});
+
 test('plurals follow the language of the string, numbers the locale of the buyer', () => {
   const translations = {
     fr: { items: { one: '{{count}} article', other: '{{count}} articles' } },

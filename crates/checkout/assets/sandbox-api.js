@@ -245,16 +245,15 @@
       const lower = String(wanted).replace('_', '-').toLowerCase();
       return keys.find((key) => key.replace('_', '-').toLowerCase() === lower);
     };
+    // A declared default ends the chain: a key it lacks shows as the key, as on Shopify, so a
+    // missing translation is seen. Without one, English or the first file stands in for it.
+    const declared = defaultLocale ? find(defaultLocale) : undefined;
+    const candidates = [find(tag), find(tag.split('-')[0])];
+    if (declared !== undefined) candidates.push(declared);
+    else candidates.push(find('en'), find('default'), keys[0]);
     const chain = [];
-    for (const key of [
-      find(tag),
-      find(tag.split('-')[0]),
-      defaultLocale && find(defaultLocale),
-      find('en'),
-      find('default'),
-      keys[0],
-    ]) {
-      if (key !== undefined && !chain.includes(key)) chain.push(key);
+    for (const key of candidates) {
+      if (typeof key === 'string' && !chain.includes(key)) chain.push(key);
     }
     return chain.map((key) => ({
       strings: translations[key],
