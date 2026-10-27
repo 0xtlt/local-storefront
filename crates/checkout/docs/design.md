@@ -137,6 +137,16 @@ the same `ResolvedLine` the storefront cart (`/cart.js`, the `cart` drop) is com
 the selling plan, the quantity price breaks and the compare-at price of a line cannot differ
 between the cart and the checkout. `lsf-checkout` reads them from it and keeps no copy of that logic.
 
+Deferred payments: `resolve_line` also gives the checkout charge of a line, so `ResultLine::deferred`
+(the price of the line less its checkout charge, before discounts) comes from the same code as
+`cart.checkout_charge_amount`. A cart transform cannot touch a line with a selling plan (Shopify
+refuses it), so `deferred` never goes stale. `finish` turns it into `ResultLine::due_later`
+(discounts come off the balance first) and into `Cost::{due_now, due_later, checkout_charge_amount}`;
+shipping is due now, the tax of the balance is due later, `total` stays the whole order. `Cost` is
+state only: the `shopify` global (`cost`) and the Function input have no field for it because the
+Cost API and the Function schemas of 2026-10 and 2027-01 have none. The server keeps
+`order.totalReceived` and `order.totalOutstanding` on the order it places.
+
 The delivery group is `group-1`. Outputs name a delivery group or a payment method by its
 handle or by a gid ending with it, so `input` must give them an `id` of that form. A Function
 whose run fails adds a blocking `CheckoutError`; a discount whose Function is not in the app

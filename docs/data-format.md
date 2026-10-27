@@ -219,7 +219,9 @@ Plans come in groups, which is what a subscription app creates.
   value per option. They default to one option, `Delivery frequency`, whose value is the
   plan's name.
 - `checkout_charge` is what is paid at checkout, for a deposit:
-  `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price.
+  `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price. The checkout
+  of an [app](checkout.md#deferred-payments) charges only that today, and shows the rest as due
+  later.
 - `recurring_deliveries` defaults to `true`. Ids are generated and stable; set `id` on a plan
   to reproduce a Shopify id.
 

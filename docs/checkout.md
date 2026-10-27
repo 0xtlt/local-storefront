@@ -92,6 +92,8 @@ settings of your other Functions, and a tax rate.
   The input query of a Function reads it; `[extensions.input.variables]` of the Function says
   which one.
 - `tax_rate` is a percentage added to the discounted subtotal.
+- A line bought with a [selling plan](data-format.md#selling-plans) that defers a part of the
+  price is [paid in two times](#deferred-payments).
 
 Without the section: one shipping rate, "Standard" at 5.00, the payment methods "Credit card",
 "Cash on Delivery" and "Bank Deposit", and no tax.
@@ -110,6 +112,46 @@ The rest of what a Function reads comes from the other sections of the store dat
   by default). A payment customization that hides a method for one placement only keeps the
   other, and a method left in no placement is removed.
 - `cart.deliverableLines` is the lines that ship: the ones the delivery group holds.
+
+## Deferred payments
+
+A selling plan whose `checkout_charge` is less than the price (a pre-order with a deposit, `0`
+for try before you buy) is paid in part at checkout, and the rest later. The storefront cart
+reports the part paid at checkout as `cart.checkout_charge_amount`; the checkout does the same
+and splits what the buyer owes:
+
+```text
+Subtotal · 3 items          96.00
+Shipping                     4.90
+Total                      100.90
+Due today                   38.50
+Due later                   62.40
+```
+
+- `total` is what the order costs in all, as without a plan. *Due today* (`cost.dueNow`) is
+  what the buyer pays, and *due later* (`cost.dueLater`) what the plan defers. The page, the
+  Pay button of the Shop skin and the payment line of the thank-you page charge `dueNow`.
+- A discount comes off the balance first: it only reduces the deposit once the balance is gone.
+  A line with a balance has `dueLater` in the state, and what it owes today is its `total` less
+  that.
+- Shipping is due today. Tax follows the amount it is on: the tax of the balance is due later.
+- `cost.checkoutChargeAmount` is the subtotal less the balances, before discounts, shipping and
+  tax: the `cart.checkout_charge_amount` of the cart, for the same lines.
+- The order keeps `order.totalReceived` (what was due today) and `order.totalOutstanding` (what
+  is due later), named as the `totalReceivedSet` and `totalOutstandingSet` of Shopify's `Order`.
+  The thank-you page says the remaining balance is due later. Nothing is charged later.
+- A cart transform cannot change a line with a selling plan, as on Shopify.
+
+Shopify documents none of this split in the places an app can read. The Cost API of checkout UI
+extensions (2026-10 and 2027-01) has the subtotal, shipping, tax and total (`totalAmount`, the
+whole order) and no due-today amount; a line's `merchandise.sellingPlan` has `id` and
+`recurringDeliveries`; the input of a Function has the selling plan (`id`, `name`,
+`description`, `recurringDeliveries`) and its price adjustments, no checkout charge or balance.
+The `shopify` global and the Function input are the same as without a plan, and an extension
+reads what is due today from `cost.dueNow` of the page state only, not from the API. What
+Shopify's help center says is that the deposit due at checkout shows in the order summary, and
+that the remaining payment is collected later. How discounts, shipping and tax split between
+today and later, and the labels, are not documented: those above are this checkout's choices.
 
 ## What runs
 
@@ -321,7 +363,8 @@ an order that was placed already leads to the same thank-you page, never to a se
 
 ## What it does not do
 
-- Payments, gift cards, and payment method attributes. Choosing a payment method pays nothing.
+- Payments, gift cards, and payment method attributes. Choosing a payment method pays nothing,
+  and the balance of a [deferred payment](#deferred-payments) is never collected.
 - One delivery group holds every line that ships. No pickup points, no split shipments, no
   prices by address: the rates are the same for every address.
 - Fulfillment constraints, order routing, and the pickup point and local pickup generators (with

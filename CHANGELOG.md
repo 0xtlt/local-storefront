@@ -41,6 +41,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   POST, HTTPS, a timeout of 100 to 2000 ms, 100 KB, no redirect; `http` is accepted for
   `localhost`). The request and the response show in the Functions panel and in
   `lsf function run`.
+- **A deferred payment in the checkout.** A line sold with a selling plan that takes a deposit
+  (a pre-order, try before you buy: `checkout_charge` in the store data) is no longer charged in
+  full. The order summary shows the total, what is **due today** and what is **due later**; the
+  state (`.json`) has `cost.dueNow`, `cost.dueLater` and `cost.checkoutChargeAmount` (the
+  `cart.checkout_charge_amount` of the storefront cart) and `dueLater` on the lines; the order
+  records `totalReceived` and `totalOutstanding`, and the thank-you page shows the remaining
+  balance. `lsf function run` prints it. Shipping is due today and tax follows the amount it is
+  on. The `shopify` global and the Function input do not change: Shopify exposes no deferred
+  amount there.
 
 ## 0.1.18 - 2026-10-21
 
