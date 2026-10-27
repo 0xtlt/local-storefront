@@ -88,6 +88,83 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 .lsf-section[data-section='shipping'] { margin-top: calc(-1 * var(--lsf-space-m)); }
 .lsf-section[data-section='shipping'] > h2 { font-size: var(--lsf-size-l); line-height: 1.2; }
 
+/* --- The account: the customers of the test data to log in as, and the one logged in ---- */
+
+.lsf-account { position: relative; }
+.lsf-account-trigger, .lsf-logout { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
+/* The menu hangs under its button, on the right, over the page. */
+.lsf-account-menu {
+  position: absolute;
+  top: calc(100% + var(--lsf-space-s));
+  right: 0;
+  z-index: 20;
+  width: min(380px, calc(100vw - 2 * var(--lsf-space-xl)));
+  max-height: min(460px, 70vh);
+  overflow-y: auto;
+  padding: var(--lsf-space-s);
+  border: var(--lsf-border-width) solid var(--lsf-color-border);
+  border-radius: var(--lsf-radius-panel);
+  background: var(--lsf-color-bg);
+  box-shadow: var(--lsf-shadow-xl);
+}
+.lsf-account-menu-title { padding: var(--lsf-space-s) var(--lsf-space-m) var(--lsf-space-xs); color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); }
+.lsf-account-empty { padding: var(--lsf-space-m); }
+.lsf-account-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--lsf-space-l);
+  width: 100%;
+  padding: var(--lsf-space-m);
+  border: 0;
+  border-radius: var(--lsf-radius-small);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--lsf-duration-fast) var(--lsf-ease-out);
+}
+.lsf-account-option:hover { background: var(--lsf-color-accent-tint-2); }
+.lsf-account-option:focus-visible { outline: none; background: var(--lsf-color-accent-tint-2); box-shadow: inset 0 0 0 2px var(--lsf-color-accent); }
+.lsf-account-option[aria-checked='true'] { background: var(--lsf-color-accent-tint-3); }
+.lsf-account-option.is-guest { color: var(--lsf-color-accent); }
+.lsf-account-separator { height: var(--lsf-border-width); margin: var(--lsf-space-xs) var(--lsf-space-m); background: var(--lsf-color-border); }
+.lsf-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--lsf-color-accent-tint-3);
+  color: var(--lsf-color-accent);
+  font-size: var(--lsf-size-s);
+  font-weight: var(--lsf-font-weight-bold);
+}
+.lsf-account-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.lsf-account-text .lsf-muted { font-size: var(--lsf-size-s); overflow-wrap: anywhere; }
+.lsf-account-name { font-weight: var(--lsf-font-weight-bold); }
+.lsf-badges { display: flex; flex-wrap: wrap; gap: var(--lsf-space-xs); margin-top: var(--lsf-space-xs); }
+.lsf-badge { padding: 0 var(--lsf-space-s); border-radius: var(--lsf-radius-badge); background: var(--lsf-color-bg-subdued); color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); line-height: 1.6; white-space: nowrap; }
+.lsf-badge.is-b2b { background: var(--lsf-color-accent-tint-3); color: var(--lsf-color-accent); }
+.lsf-badge.is-tag { background: var(--lsf-color-warning-wash-2); color: var(--lsf-color-warning-text); }
+
+/* The customer logged in, where a guest has the email field. */
+.lsf-account-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lsf-space-l);
+  padding: var(--lsf-space-base);
+  border: var(--lsf-border-width) solid var(--lsf-color-border);
+  border-radius: var(--lsf-radius-control);
+}
+.lsf-account-card.has-error { border-color: var(--lsf-color-critical); }
+.lsf-account-card > .lsf-field-error { margin-top: 0; }
+.lsf-account-row { display: flex; align-items: center; gap: var(--lsf-space-l); }
+.lsf-account-row .lsf-account-text { flex: 1; }
+.lsf-company { display: flex; flex-direction: column; gap: var(--lsf-space-m); padding-top: var(--lsf-space-l); border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
+
 /* --- Fields --------------------------------------------------------------------------- */
 
 .lsf-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--lsf-space-l); }
@@ -506,6 +583,8 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
   background: #fff;
 }
 [data-variant='shop'] .lsf-section[data-section='shipping'] { margin-top: 0; }
+/* The menu of customers stays inside the card on a narrow screen: the page and the card pad it. */
+[data-variant='shop'] .lsf-account-menu { width: min(380px, calc(100vw - 4.5rem)); }
 [data-variant='shop'] .lsf-section[data-section='shipping'] > h2 { font-size: var(--lsf-size-l); }
 [data-variant='shop'] h2 { font-size: var(--lsf-size-l); font-weight: 700; }
 [data-variant='shop'] .lsf-row { grid-template-columns: 1fr; }

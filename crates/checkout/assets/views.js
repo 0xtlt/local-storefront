@@ -9,6 +9,7 @@
 //   actions  what the buyer's gestures do
 //   refusals the extensions the host does not load, `[{handle, reason}]` (see `api-versions.js`)
 
+import { accountMenu, addressLabel, fullName, initials, savedAddressId } from './account.js';
 import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './format.js';
 import { missingFields, placeErrors } from './operations.js';
 import { h } from './vdom.js';
@@ -56,7 +57,9 @@ function field({ id, label, value, type = 'text', autocomplete, error, actions }
   );
 }
 
-function selectField({ id, label, value, options, error, actions }) {
+/** A select with its label inside. `onChange` replaces committing the value as a field of the
+ * address; `blank: false` leaves out the empty choice. */
+function selectField({ id, label, value, options, error, actions, onChange, blank = true }) {
   return h(
     'div',
     { class: `lsf-field lsf-field-select${error ? ' has-error' : ''}`, key: id, 'data-field': id.replace(/^lsf-/, '') },
@@ -67,9 +70,9 @@ function selectField({ id, label, value, options, error, actions }) {
         class: 'lsf-input',
         name: id.replace(/^lsf-/, ''),
         value: value ?? '',
-        onChange: (event) => actions.commit(id.replace(/^lsf-/, ''), event.target.value),
+        onChange: (event) => (onChange ? onChange(event.target.value) : actions.commit(id.replace(/^lsf-/, ''), event.target.value)),
       },
-      h('option', { value: '' }, ''),
+      blank && h('option', { value: '' }, ''),
       options.map(([code, name]) => h('option', { value: code }, name)),
     ),
     h('label', { for: id }, label),
@@ -117,25 +120,85 @@ const firstError = (errors, name) => errors[name]?.[0] ?? null;
 
 // --- The steps ---------------------------------------------------------------------------
 
+/** The customer the checkout is logged in as, where a guest has the email field: who they are,
+ * a way out, and for a B2B customer the company and the location they buy for. */
+function accountCard(ctx, error) {
+  const { state, actions } = ctx;
+  const customer = state.buyer.customer;
+  const name = fullName(customer);
+  const purchasing = state.buyer.purchasingCompany;
+  const locations = state.account?.locations ?? [];
+  const current = locations.find((location) => location.current);
+  return h(
+    'div',
+    { class: `lsf-account-card${error ? ' has-error' : ''}`, key: 'account-card', 'data-account': customer.email },
+    h(
+      'div',
+      { class: 'lsf-account-row' },
+      h('span', { class: 'lsf-avatar', 'aria-hidden': 'true' }, initials(name)),
+      h('span', { class: 'lsf-account-text' },
+        h('span', { class: 'lsf-account-name' }, name),
+        name !== customer.email && h('span', { class: 'lsf-muted' }, customer.email)),
+      h('button', { type: 'button', class: 'lsf-link lsf-logout', onClick: () => actions.logIn(null) }, 'Log out'),
+    ),
+    purchasing?.company &&
+      h(
+        'div',
+        { class: 'lsf-company', 'data-company': purchasing.company.name },
+        h('p', null, h('span', { class: 'lsf-muted' }, 'Company '), h('strong', null, purchasing.company.name)),
+        locations.length > 1
+          ? selectField({
+              id: 'lsf-companyLocation',
+              label: 'Buying for',
+              value: current?.id ?? '',
+              options: locations.map((location) => [location.id, location.name]),
+              blank: false,
+              onChange: (id) => actions.chooseLocation(id),
+              actions,
+            })
+          : purchasing.location && h('p', null, h('span', { class: 'lsf-muted' }, 'Buying for '), purchasing.location.name),
+      ),
+    error && h('p', { class: 'lsf-field-error' }, icon('warning'), error),
+  );
+}
+
 function contactSection(ctx) {
   const { state, ui, actions, slot } = ctx;
   const errors = fieldErrors(ctx);
   return h(
     'section',
     { class: 'lsf-section', 'data-section': 'contact' },
-    h('div', { class: 'lsf-section-head' }, h('h2', null, 'Contact'),
-      state.buyer?.customer ? h('span', { class: 'lsf-muted' }, state.buyer.customer.email) : h('a', { class: 'lsf-link', href: storefrontLink(state, '/account/login') }, 'Log in')),
-    field({
-      id: 'lsf-email',
-      label: 'Email',
-      type: 'email',
-      autocomplete: 'email',
-      value: ui.draft?.email ?? state.buyer?.email ?? '',
-      error: firstError(errors, 'email'),
-      actions,
-    }),
+    h('div', { class: 'lsf-section-head' }, h('h2', null, 'Contact'), accountMenu(ctx)),
+    state.buyer?.customer
+      ? accountCard(ctx, firstError(errors, 'email'))
+      : field({
+          id: 'lsf-email',
+          label: 'Email',
+          type: 'email',
+          autocomplete: 'email',
+          value: ui.draft?.email ?? state.buyer?.email ?? '',
+          error: firstError(errors, 'email'),
+          actions,
+        }),
     slot('purchase.checkout.contact.render-after', { key: 'contact' }),
   );
+}
+
+/** The addresses the logged-in customer saved, to ship to one without typing it. */
+function savedAddresses(ctx) {
+  const { state, actions } = ctx;
+  const saved = state.buyer?.customer ? state.account?.addresses ?? [] : [];
+  if (saved.length === 0) return null;
+  const countries = countriesOf(state);
+  return selectField({
+    id: 'lsf-savedAddress',
+    label: state.buyer.purchasingCompany ? 'Ship to the location' : 'Saved addresses',
+    value: savedAddressId(state),
+    options: [...saved.map((entry) => [entry.id, addressLabel(entry, countries)]), ['new', 'Use a new address']],
+    blank: false,
+    onChange: (id) => actions.chooseSavedAddress(id),
+    actions,
+  });
 }
 
 function addressSection(ctx) {
@@ -149,6 +212,7 @@ function addressSection(ctx) {
     { class: 'lsf-section', 'data-section': 'delivery' },
     h('h2', null, isShop(state) ? 'Ship to' : 'Delivery'),
     slot('purchase.checkout.delivery-address.render-before', { key: 'address-before' }),
+    savedAddresses(ctx),
     selectField({
       id: 'lsf-countryCode',
       label: 'Country/Region',

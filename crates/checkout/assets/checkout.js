@@ -3,6 +3,7 @@
 // (`POST …/update`), and draws again from the state that comes back. The checkout UI
 // extensions are hosted by `extension-host.js`.
 
+import { MENU_ITEMS } from './account.js';
 import { RENDERED_TARGETS, createExtensionHost } from './extension-host.js';
 import { languageOf, withCurrency } from './format.js';
 import { missingFields, op } from './operations.js';
@@ -27,6 +28,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
     discountInput: '',
     discountError: null,
     summaryOpen: false,
+    accountOpen: false,
     functionsOpen: false,
     openRuns: new Set(),
     tried: false,
@@ -74,6 +76,27 @@ export function startCheckout({ root, initial, document, window, location, fetch
     render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals(), preview }));
     host.update(state);
   }
+
+  /** Moves the focus to the button of the customer menu (`trigger`) or to one of its items:
+   * `first`, `last`, or `current` (the customer logged in, else the first). */
+  function focusAccount(which) {
+    if (which === 'trigger') {
+      root.querySelector?.('.lsf-account-trigger')?.focus?.();
+      return;
+    }
+    const items = [...(root.querySelectorAll?.(MENU_ITEMS) ?? [])];
+    if (items.length === 0) return;
+    const checked = items.findIndex((item) => item.getAttribute('aria-checked') === 'true' && item.getAttribute('data-customer'));
+    const index = which === 'last' ? items.length - 1 : which === 'current' ? Math.max(0, checked) : 0;
+    items[index].focus?.();
+  }
+
+  // A click anywhere but on the customer menu closes it, and leaves the focus where it went.
+  document.addEventListener?.('click', (event) => {
+    if (!ui.accountOpen || event.target?.closest?.('.lsf-account')) return;
+    ui.accountOpen = false;
+    paint();
+  });
 
   /** Takes a new state from the server. What the buyer typed and the server now agrees with is
    * no longer a draft. */
@@ -207,6 +230,76 @@ export function startCheckout({ root, initial, document, window, location, fetch
     },
 
     removeDiscount: (code) => run([op.discountCode('remove', code)]),
+
+    /** Opens or closes the menu of the customers to log in as, and moves the focus (`focus`:
+     * where, see `focusAccount`; the button when it closes). */
+    toggleAccount(open, focus = open ? 'current' : 'trigger') {
+      if (open === ui.accountOpen) return;
+      ui.accountOpen = open;
+      paint();
+      if (focus) focusAccount(focus);
+    },
+
+    /** The arrows on the closed button open the menu on its first or its last item. */
+    accountTriggerKey(event) {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault?.();
+      ui.accountOpen = true;
+      paint();
+      focusAccount(event.key === 'ArrowUp' ? 'last' : 'first');
+    },
+
+    /** The keys of a menu: the arrows, Home and End move between the items, Escape closes it
+     * and gives the focus back to its button, Tab closes it and moves on. */
+    accountMenuKey(event) {
+      const items = [...(root.querySelectorAll?.(MENU_ITEMS) ?? [])];
+      const index = items.indexOf(document.activeElement);
+      const move = (to) => {
+        event.preventDefault?.();
+        items[(to + items.length) % items.length]?.focus?.();
+      };
+      switch (event.key) {
+        case 'ArrowDown':
+          return move(index + 1);
+        case 'ArrowUp':
+          return move(index < 0 ? items.length - 1 : index - 1);
+        case 'Home':
+          return move(0);
+        case 'End':
+          return move(items.length - 1);
+        case 'Escape':
+          event.preventDefault?.();
+          return actions.toggleAccount(false, 'trigger');
+        case 'Tab':
+          // From the button, the browser moves the focus on to what follows it.
+          return actions.toggleAccount(false, 'trigger');
+        default:
+          return undefined;
+      }
+    },
+
+    /** Logs the checkout in as the customer with this email, or out (`null`). What was typed
+     * belonged to the buyer before. */
+    async logIn(email) {
+      ui.accountOpen = false;
+      ui.draft = { address: {} };
+      ui.tried = false;
+      ui.block = null;
+      await run([op.customer(email)]);
+      focusAccount('trigger');
+    },
+
+    chooseLocation: (id) => run([op.companyLocation(id)]),
+
+    /** Ships to a saved address, or (`new`) to one the buyer types, in the same country. */
+    chooseSavedAddress(id) {
+      ui.draft.address = {};
+      if (id === 'new') {
+        return run(() => [op.shippingAddress({ countryCode: state.shippingAddress?.countryCode ?? null })]);
+      }
+      const entry = state.account?.addresses?.find((candidate) => candidate.id === id);
+      return entry ? run([op.shippingAddress(entry.address)]) : undefined;
+    },
 
     toggleSummary() {
       ui.summaryOpen = !ui.summaryOpen;

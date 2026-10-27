@@ -21,6 +21,7 @@ macro_rules! embed {
 }
 
 embed!(
+    "account.js",
     "api-versions.js",
     "checkout.css",
     "checkout.html",

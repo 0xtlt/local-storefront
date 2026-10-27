@@ -8,6 +8,9 @@ export const op = {
   deliveryOption: (group, handle) => ({ type: 'deliveryOption', group, handle }),
   paymentMethod: (handle) => ({ type: 'paymentMethod', handle }),
   discountCode: (action, code) => ({ type: 'discountCode', action, code }),
+  /** Logs the checkout in as the customer of the store data with this email, or out (`null`). */
+  customer: (email) => ({ type: 'customer', customer: email ?? null }),
+  companyLocation: (location) => ({ type: 'companyLocation', location }),
 };
 
 const fail = (message) => ({ error: message });

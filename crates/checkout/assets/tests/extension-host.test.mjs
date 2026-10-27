@@ -472,5 +472,5 @@ test('reloads a frame on request and opens only safe links', () => {
 test('shows what extensions see of the state', () => {
   const state = { ...checkoutState(), diagnostics: ['x'] };
   const visible = stateForExtensions(state);
-  assert.deepEqual(Object.keys(state).filter((key) => !(key in visible)).sort(), ['diagnostics', 'extensions', 'runs']);
+  assert.deepEqual(Object.keys(state).filter((key) => !(key in visible)).sort(), ['account', 'diagnostics', 'extensions', 'runs']);
 });

@@ -38,7 +38,8 @@ export const RENDERED_TARGETS = [
 
 /** The part of the state extensions see: the runs of Functions are the page's business. */
 export function stateForExtensions(state) {
-  const { runs, diagnostics, extensions, ...visible } = state;
+  // `account` is the page's: the customers of the store data to log in as.
+  const { runs, diagnostics, extensions, account, ...visible } = state;
   return visible;
 }
 

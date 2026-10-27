@@ -18,16 +18,108 @@ const VARIANTS = {
   'gid://shopify/ProductVariant/202': { variantId: 202, productId: 22, title: 'Canvas tote', variantTitle: null, price: 1200, sku: 'TOTE-01', vendor: 'Northline', productType: 'Bags', selectedOptions: [{ name: 'Title', value: 'Default Title' }] },
 };
 
+// The customers of the preview's store, the ones the page can log in as: a returning customer
+// with two addresses, a new one, and a B2B buyer with two locations. As the server says them in
+// `buyer` and `account`.
+export const CUSTOMERS = [
+  {
+    id: 'gid://shopify/Customer/1', email: 'ava.chen@example.com', firstName: 'Ava', lastName: 'Chen',
+    phone: '+33 6 12 34 56 78', acceptsMarketing: true, ordersCount: 3, tags: ['vip'],
+    addresses: [
+      { firstName: 'Ava', lastName: 'Chen', address1: '5 rue Oberkampf', city: 'Paris', zip: '75011', countryCode: 'FR' },
+      { firstName: 'Ava', lastName: 'Chen', company: 'Studio Chen', address1: '20 quai Perrache', city: 'Lyon', zip: '69002', countryCode: 'FR' },
+    ],
+  },
+  { id: 'gid://shopify/Customer/2', email: 'leo.martin@example.com', firstName: 'Léo', lastName: 'Martin', ordersCount: 0, tags: [], addresses: [] },
+  {
+    id: 'gid://shopify/Customer/3', email: 'sam.okafor@example.com', firstName: 'Sam', lastName: 'Okafor', ordersCount: 0, tags: ['wholesale'],
+    addresses: [],
+    company: { id: 'gid://shopify/Company/1', name: 'Harbor Cafés', externalId: 'HC-1' },
+    locations: [
+      { id: 'gid://shopify/CompanyLocation/11', name: 'Harbor Cafés Nantes', address: { company: 'Harbor Cafés', address1: '3 quai de la Fosse', city: 'Nantes', zip: '44000', countryCode: 'FR' } },
+      { id: 'gid://shopify/CompanyLocation/12', name: 'Harbor Cafés Bordeaux', address: { company: 'Harbor Cafés', address1: '9 cours du Médoc', city: 'Bordeaux', zip: '33300', countryCode: 'FR' } },
+    ],
+  },
+];
+
+const customerNamed = (email) => CUSTOMERS.find((customer) => customer.email === email) ?? null;
+
+/** The addresses a customer ships to without typing them, the default one first: the location
+ * a B2B customer buys for, otherwise the ones they saved. */
+function savedOf(customer, locationId) {
+  if (!customer) return [];
+  if (customer.company) {
+    const location = customer.locations.find((entry) => entry.id === locationId) ?? customer.locations[0];
+    return location ? [{ id: `location-${location.id.split('/').pop()}`, location: location.name, address: location.address }] : [];
+  }
+  return customer.addresses.map((address, index) => ({ id: `address-${index + 1}`, location: null, address }));
+}
+
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/** What logging in as `email` (or out, `null`) does to the checkout: the contact is theirs, the
+ * address their default one (a typed one stays for a customer who has none). */
+function logIn(state, email, locationId) {
+  const before = customerNamed(state.selection.customer);
+  const after = email === null ? null : customerNamed(email);
+  if (email !== null && !after) throw new Error(`there is no customer with the email "${email}"`);
+  const previous = savedOf(before, state.selection.location).map((entry) => entry.address);
+  if (before?.email !== after?.email) state.selection.location = null;
+  if (locationId !== undefined) {
+    if (!after?.locations?.some((location) => location.id === locationId)) throw new Error(`cannot buy for the location ${locationId}`);
+    state.selection.location = locationId;
+  }
+  state.selection.customer = after?.email ?? null;
+  const theirs = previous.some((address) => same(address, state.shippingAddress));
+  const fallback = savedOf(after, state.selection.location)[0]?.address ?? null;
+  if (before?.email !== after?.email) {
+    state.buyer.email = after?.email ?? null;
+    state.buyer.phone = after?.phone ?? null;
+    if (fallback || theirs) state.shippingAddress = fallback ? structuredClone(fallback) : null;
+  } else if (fallback && (theirs || !state.shippingAddress)) {
+    state.shippingAddress = structuredClone(fallback);
+  }
+}
+
+/** `buyer.customer`, `buyer.purchasingCompany` and `account`, as the server writes them. */
+function identify(state) {
+  const customer = customerNamed(state.selection.customer);
+  const location = customer?.locations?.find((entry) => entry.id === state.selection.location) ?? customer?.locations?.[0] ?? null;
+  state.buyer.customer = customer && {
+    id: customer.id, email: customer.email, phone: customer.phone ?? null, firstName: customer.firstName,
+    lastName: customer.lastName, acceptsMarketing: Boolean(customer.acceptsMarketing), ordersCount: customer.ordersCount,
+  };
+  state.buyer.purchasingCompany = customer?.company
+    ? { company: customer.company, location: location && { id: location.id, name: location.name, externalId: null } }
+    : null;
+  state.account = {
+    profiles: CUSTOMERS.map((entry) => ({
+      email: entry.email,
+      name: `${entry.firstName} ${entry.lastName}`,
+      tags: entry.tags,
+      ordersCount: entry.ordersCount,
+      addressesCount: entry.addresses.length,
+      company: entry.company?.name ?? null,
+      locationsCount: entry.locations?.length ?? 0,
+      countryCode: savedOf(entry, null)[0]?.address.countryCode ?? null,
+      current: entry.email === customer?.email,
+    })),
+    addresses: savedOf(customer, state.selection.location),
+    locations: (customer?.locations ?? []).map((entry) => ({ id: entry.id, name: entry.name, current: entry === location })),
+  };
+}
+
 /** The checkout the page starts with: `sample` (sample-state.json) plus what the server adds. */
 export function createCheckout(sample, { origin, variant = 'standard' } = {}) {
   const state = structuredClone(sample);
   state.variant = variant;
   if (origin) state.shop.storefrontUrl = origin;
-  state.selection = { delivery: {}, codes: [] };
+  state.selection = { delivery: {}, codes: [], customer: null, location: null };
   return recompute(state);
 }
 
 function recompute(state) {
+  identify(state);
   const lines = state.lines;
   for (const line of lines) {
     line.subtotal = money(cents(line.unitPrice) * line.quantity);
@@ -193,6 +285,13 @@ function apply(state, operation) {
     }
     case 'note':
       state.note = operation.change.type === 'removeNote' ? null : operation.change.note;
+      break;
+    case 'customer':
+      logIn(state, operation.customer ?? null);
+      break;
+    case 'companyLocation':
+      need(customerNamed(state.selection.customer)?.company, 'a company location needs a logged-in B2B customer');
+      logIn(state, state.selection.customer, operation.location);
       break;
     case 'metafield': {
       const change = operation.change;
