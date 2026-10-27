@@ -3599,6 +3599,133 @@ fn the_functions_read_the_language_of_the_buyer() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A copy of the fixture app whose cart transform merges the first two lines into a bundle in
+/// French only: a Function written by hand (the text format of Wasm, which the runner reads as
+/// well) that looks for `"FR"` in its input, the `localization.language` it asks for.
+fn app_with_a_bundle_in_french(name: &str, parent_variant: u64) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-checkout-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let extension = root.join("extensions/bundle-transform");
+    std::fs::write(
+        extension.join("src/run.graphql"),
+        "query Input {\n  localization {\n    language {\n      isoCode\n    }\n  }\n  cart {\n    lines {\n      id\n      quantity\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    let merge = json!({"operations": [{"linesMerge": {
+        "cartLines": [
+            {"cartLineId": "gid://shopify/CartLine/1", "quantity": 1},
+            {"cartLineId": "gid://shopify/CartLine/2", "quantity": 1}
+        ],
+        "parentVariantId": format!("gid://shopify/ProductVariant/{parent_variant}"),
+        "title": "Set"
+    }}]})
+    .to_string();
+    let nothing = r#"{"operations":[]}"#;
+    let text = |json: &str| json.replace('"', "\\\"");
+    let module = format!(
+        r#"(module
+  (import "wasi_snapshot_preview1" "fd_read" (func $fd_read (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 100) "{merge_text}")
+  (data (i32.const 700) "{nothing_text}")
+  (func (export "run")
+    (local $at i32) (local $end i32) (local $out i32) (local $length i32)
+    (i32.store (i32.const 0) (i32.const 1024))
+    (i32.store (i32.const 4) (i32.const 32768))
+    (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))
+    (local.set $at (i32.const 1024))
+    (local.set $end (i32.add (i32.const 1024) (i32.load (i32.const 8))))
+    (local.set $out (i32.const 700))
+    (local.set $length (i32.const {nothing_length}))
+    (block $found
+      (loop $scan
+        (br_if $found (i32.gt_u (i32.add (local.get $at) (i32.const 4)) (local.get $end)))
+        ;; The bytes of "FR" with its quotes, read as one number.
+        (if (i32.eq (i32.load (local.get $at)) (i32.const 0x22524622))
+          (then
+            (local.set $out (i32.const 100))
+            (local.set $length (i32.const {merge_length}))
+            (br $found)))
+        (local.set $at (i32.add (local.get $at) (i32.const 1)))
+        (br $scan)))
+    (i32.store (i32.const 16) (local.get $out))
+    (i32.store (i32.const 20) (local.get $length))
+    (drop (call $fd_write (i32.const 1) (i32.const 16) (i32.const 1) (i32.const 24)))))
+"#,
+        merge_text = text(&merge),
+        nothing_text = text(nothing),
+        merge_length = merge.len(),
+        nothing_length = nothing.len(),
+    );
+    std::fs::write(extension.join("dist/function.wasm"), module).unwrap();
+    root
+}
+
+/// The checkout of a cart of a T-shirt and a tote, which the cart transform of `root` merges
+/// into a bundle in French only.
+fn bundle_in_french_checkout(state: &ServerState, session: &str) -> String {
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [
+            {"variant": "TEE-BLK-M", "quantity": 1},
+            {"variant": "TOTE-NAT", "quantity": 1}
+        ]}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(state, "/fr/checkout", session), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(state, &format!("{path}.json"), session));
+    let lines = json["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 1, "{json}");
+    assert_eq!(lines[0]["transformedBy"], "merge");
+    assert_eq!(lines[0]["id"], "gid://shopify/CartLine/3");
+    path
+}
+
+#[test]
+fn a_line_the_cart_transform_merges_in_french_is_changed_in_french() {
+    let parent = variant_id(&checkout_server(&[], false), "MUG-OAT");
+    let root = app_with_a_bundle_in_french("bundle-in-french", parent);
+    let state = checkout_server_of(root.clone(), &["bundle-transform"], false);
+
+    // The bundle is a line of the French checkout only.
+    let path = bundle_in_french_checkout(&state, "co-fr-update");
+    let english = header(&get(&state, "/checkout", "co-fr-update"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{english}.json"), "co-fr-update"));
+    assert_eq!(json["lines"].as_array().unwrap().len(), 2, "{json}");
+
+    // The change names the line of the French checkout, so the Functions run in French again.
+    let reply = change_line(
+        &state,
+        &path,
+        "co-fr-update",
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/3", "quantity": 3}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-fr-update"),
+        [("TEE-BLK-M".to_string(), 3), ("TOTE-NAT".to_string(), 3)]
+    );
+
+    let path = bundle_in_french_checkout(&state, "co-fr-remove");
+    let reply = change_line(
+        &state,
+        &path,
+        "co-fr-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/3", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(cart_of(&state, "co-fr-remove"), []);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// The part of the state JSON that the Buyer Identity and Localization APIs read, for a
 /// logged-in customer of the demo data buying in French. The sandbox of the extensions reads the
 /// same file (`crates/checkout/assets/tests/sandbox-api.test.mjs`): when the server writes

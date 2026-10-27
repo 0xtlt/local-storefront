@@ -279,12 +279,17 @@ fn read(state: &ServerState, session_id: &str) -> (Session, Arc<Store>, Checkout
 
 /// Runs the Functions of the app on a cart: what the checkout looks like, with the app and the
 /// extensions selected. A logged-in customer does not have to type what the store knows.
+///
+/// The Functions read the language of the buyer (`localization.language`), so every run takes it:
+/// the only way to run them is through here, with the language of the request.
 fn price(
     state: &ServerState,
     session: &Session,
     store: &Store,
     checkout: &mut CheckoutState,
+    language: &Language,
 ) -> Result<(App, Selection, CheckoutResult), String> {
+    checkout.language = Some(language.iso_code.clone());
     let options = options(state);
     let app = lsf_checkout::app::load(&options.app_dir)?;
     let selection = Selection::resolve(&app, &options.extensions)?;
@@ -308,9 +313,7 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
     let (session, store, mut checkout, basis) = read(state, session_id);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     let language = language_of(state, &store, incoming);
-    // The Functions read the language of the request too.
-    checkout.language = Some(language.iso_code.clone());
-    let (app, selection, result) = price(state, &session, &store, &mut checkout)?;
+    let (app, selection, result) = price(state, &session, &store, &mut checkout, language)?;
 
     let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
     let object = json.as_object_mut().expect("a result is an object");
@@ -667,6 +670,8 @@ pub(super) fn apply_update(
     }
     let (mut session, store, mut checkout, basis) = read(state, id);
     let config = config_from_store(&store);
+    // The operations that run the Functions (a change of a line) see the checkout the buyer sees.
+    let language = language_of(state, &store, incoming);
     for (position, operation) in operations.iter().enumerate() {
         if let Err(problem) = apply(
             state,
@@ -675,6 +680,7 @@ pub(super) fn apply_update(
             &mut checkout,
             &store,
             &config,
+            language,
         ) {
             return error(400, format!("operation {position}: {problem}"));
         }
@@ -735,6 +741,7 @@ fn apply(
     checkout: &mut CheckoutState,
     store: &Store,
     config: &lsf_checkout::CheckoutConfig,
+    language: &Language,
 ) -> Result<(), String> {
     let kind = operation
         .get("type")
@@ -841,7 +848,14 @@ fn apply(
                 _ => return Err("the `action` of a `discountCode` is `add` or `remove`".into()),
             }
         }
-        "cartLines" => cart_lines(state, change_of(operation, kind)?, session, checkout, store)?,
+        "cartLines" => cart_lines(
+            state,
+            change_of(operation, kind)?,
+            session,
+            checkout,
+            store,
+            language,
+        )?,
         "attribute" => {
             let change = change_of(operation, kind)?;
             let key = text_of(change, "key").ok_or("an attribute change needs a `key`")?;
@@ -918,13 +932,14 @@ fn checkout_line(
     session: &Session,
     checkout: &CheckoutState,
     store: &Store,
+    language: &Language,
 ) -> Result<ResultLine, String> {
     let id = change
         .get("id")
         .and_then(Json::as_str)
         .ok_or("the change needs the `id` of a line")?;
     let mut checkout = checkout.clone();
-    let (_, _, result) = price(state, session, store, &mut checkout)?;
+    let (_, _, result) = price(state, session, store, &mut checkout, language)?;
     result
         .lines
         .into_iter()
@@ -1079,6 +1094,7 @@ fn cart_lines(
     session: &mut Session,
     checkout: &CheckoutState,
     store: &Store,
+    language: &Language,
 ) -> Result<(), String> {
     match change.get("type").and_then(Json::as_str) {
         Some("addCartLine") => {
@@ -1114,12 +1130,12 @@ fn cart_lines(
             }
         }
         Some("removeCartLine") => {
-            let line = checkout_line(state, change, session, checkout, store)?;
+            let line = checkout_line(state, change, session, checkout, store, language)?;
             let removed = quantity(change)?.ok_or("removeCartLine needs a `quantity`")?;
             requantify(session, &line, line.quantity.saturating_sub(removed))?;
         }
         Some("updateCartLine") => {
-            let line = checkout_line(state, change, session, checkout, store)?;
+            let line = checkout_line(state, change, session, checkout, store, language)?;
             update_line(session, &line, change, store)?;
         }
         other => return Err(format!("unknown cart line change {other:?}")),
