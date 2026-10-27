@@ -3438,7 +3438,7 @@ fn the_language_of_the_buyer_stays_through_the_whole_checkout() {
 /// The part of the state JSON that the Buyer Identity and Localization APIs read, for a
 /// logged-in customer of the demo data buying in French. The sandbox of the extensions reads the
 /// same file (`crates/checkout/assets/tests/sandbox-api.test.mjs`): when the server writes
-/// something else, both fail, so the two sides cannot drift apart. Run with `LSF_UPDATE_GOLDEN=1`
+/// something else, both fail, so the two sides cannot drift apart. Run with `UPDATE_SNAPSHOTS=1`
 /// to write the file again after a change meant to be.
 #[test]
 fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
@@ -3478,7 +3478,7 @@ fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
 
     let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../checkout/tests/fixtures/server-buyer-state.json");
-    if std::env::var_os("LSF_UPDATE_GOLDEN").is_some() {
+    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
         std::fs::write(&golden, serde_json::to_string_pretty(&seen).unwrap() + "\n").unwrap();
     }
     let expected: Json =
