@@ -6642,6 +6642,10 @@ fn the_customers_of_the_home_page_open_the_first_scenario_with_its_cart() {
     let data = ScenarioData::new(
         "customer-links",
         &[
+            (
+                "00-broken.json",
+                r#"{ "session": { "cart": { "items": [{ "variant": "TEE-BLK-M", "quantity": 1 }] } }, "extensions": ["ghost"] }"#,
+            ),
             ("a-abroad.json", TEES),
             (
                 "b-home.json",
@@ -6652,7 +6656,8 @@ fn the_customers_of_the_home_page_open_the_first_scenario_with_its_cart() {
     let state = data.server(&[], true);
     let json = body_json(&get(&state, "/?format=json", "home"));
     let jane = &json["customers"][0];
-    // Not the French one, though it comes first: the one in the store's own language.
+    // Not the one that names an extension the app does not have, nor the French one, though
+    // they come first: the first that opens in the store's own language.
     assert_eq!(
         jane["open"],
         "/checkout?scenario=b-home&customer=jane.doe%40example.com"

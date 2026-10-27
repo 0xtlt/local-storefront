@@ -461,7 +461,13 @@ pub fn build(
         "customers": store.customers.iter()
             .map(|customer| {
                 let mut profile = super::checkout_account::profile_json(customer, &store, false);
-                let opens = || store.scenarios.iter().filter(|scenario| scenario.problems.is_empty());
+                // Opens: no problem of its own, and the extensions it names are the app's.
+                let opens = || {
+                    store.scenarios.iter().filter(|scenario| {
+                        scenario.problems.is_empty()
+                            && crate::checkout::selection_for(&app, &options.extensions, Some(scenario)).is_ok()
+                    })
+                };
                 let scenario = opens()
                     .find(|scenario| scenario.language.is_none() && scenario.session.country.is_none())
                     .or_else(|| opens().next())
