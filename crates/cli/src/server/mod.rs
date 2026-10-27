@@ -336,10 +336,21 @@ impl ServerState {
         })
     }
 
+    /// The store a request sees: the one of its session when the session has its own, the loaded
+    /// one otherwise. Unlike [`ServerState::snapshot`], this never starts a session, so that
+    /// routing can ask it of any request.
+    pub fn store_of(&self, incoming: &Incoming) -> Arc<Store> {
+        let of_session = self.named_session(incoming).and_then(|id| {
+            let sessions = self.sessions.lock().expect("sessions poisoned");
+            sessions.get(&id).and_then(|entry| entry.store.clone())
+        });
+        of_session.unwrap_or_else(|| self.loaded().store.clone())
+    }
+
     /// How long to hold a request before answering it: the throttle of its session when it
     /// has one, the server's otherwise.
     pub fn delay_for(&self, incoming: &Incoming) -> Duration {
-        let (_, _, path) = self.localize(&self.loaded().store, &incoming.path);
+        let (_, _, path) = self.localize(&self.store_of(incoming), &incoming.path);
         let wants_sections = incoming.query_param("section_id").is_some()
             || incoming.query_param("sections").is_some();
         let Some(kind) = throttle::classify(&incoming.method, &path, wants_sections) else {

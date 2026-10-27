@@ -203,7 +203,10 @@ the primary language of the store. `/__lsf/checkout` has no prefix to read: it t
 The state tells both languages apart: `shop.locale` is the primary language of the store, and
 `localization.language` the one the buyer reads. Extensions get the latter as
 `shopify.localization.language`, translate and format numbers and money with it, and the page
-sets it as the `lang` of the document.
+sets it as the `lang` of the document. The Functions read it too, as `localization.language` of
+their input. A thank-you page is read in the language of its URL, not the one the order was
+placed in. A language that a session adds with `data.localization.languages` is a locale of that
+session's checkout.
 
 ### Buyer and localization
 

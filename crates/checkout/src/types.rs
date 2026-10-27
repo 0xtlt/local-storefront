@@ -28,6 +28,11 @@ pub struct CheckoutState {
     /// Metafields set by checkout UI extensions (`applyMetafieldChange`).
     #[serde(default)]
     pub metafields: Vec<Metafield>,
+    /// The language the buyer reads the checkout in (`fr`, `pt-BR`), which the Functions see as
+    /// `localization.language`; the primary language of the store when `None`. It comes from
+    /// the request, so it is neither kept nor read from the session.
+    #[serde(skip)]
+    pub language: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]

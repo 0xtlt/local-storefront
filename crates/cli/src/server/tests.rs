@@ -3397,6 +3397,15 @@ fn the_language_of_the_buyer_stays_through_the_whole_checkout() {
     let json = body_json(&get(&state, &format!("{}.json", bare), "co-fr"));
     assert_eq!(json["localization"]["language"]["isoCode"], "en");
     assert_eq!(json["localization"]["rootUrl"], "");
+    // So is its thank-you page, though the order was placed in French.
+    let thanks = get(&state, &format!("{bare}/thank-you"), "co-fr");
+    assert_eq!(thanks.status, 200);
+    let html = text(&thanks);
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
+    let json = page_state(&html);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["localization"]["language"]["isoCode"], "en");
+    assert_eq!(json["localization"]["rootUrl"], "");
     let again = start_checkout(
         &state,
         "co-fr",
@@ -3433,6 +3442,161 @@ fn the_language_of_the_buyer_stays_through_the_whole_checkout() {
     assert_eq!(json["localization"]["rootUrl"], "/fr");
     let json = body_json(&get(&state, "/__lsf/checkout?locale=xx", "co-fr-2"));
     assert_eq!(json["localization"]["language"]["isoCode"], "en");
+}
+
+/// A language that only a session has, added to its store with the control API, is a locale of
+/// the checkout like the ones of the data files: `/de/checkout` is the German checkout of the
+/// session (and nothing is, for a visitor whose store has no German).
+fn an_overlay_locale_is_a_locale_of_the_checkout(standalone: bool) {
+    let state = checkout_server(&[], standalone);
+    let session = if standalone { "co-de-alone" } else { "co-de" };
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+            "data": {"localization": {"languages": [{"iso_code": "en"}, {"iso_code": "de"}]}}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    let reply = get(&state, "/de/checkout", session);
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let path = header(&reply, "location").expect("a location").to_string();
+    let bare = path.strip_prefix("/de").expect("under the German root");
+    assert!(bare.starts_with("/checkouts/cn/"), "{path}");
+
+    let page = get(&state, &path, session);
+    assert_eq!(page.status, 200, "{}", text(&page));
+    let html = text(&page);
+    assert!(html.contains("<html lang=\"de\">"), "{html}");
+    assert_eq!(page_state(&html)["localization"]["rootUrl"], "/de");
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["localization"]["language"]["isoCode"], "de");
+
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        body_json(&reply)["localization"]["language"]["isoCode"],
+        "de"
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    let thanks = get(&state, &format!("{path}/thank-you"), session);
+    assert_eq!(thanks.status, 200);
+    assert!(text(&thanks).contains("<html lang=\"de\">"));
+
+    // Another visitor's store has no German.
+    let other = get(&state, "/de/checkout", "co-without-de");
+    assert_ne!(header(&other, "location"), Some(path.as_str()));
+    assert_ne!(
+        header(&other, "location").map(|location| location.starts_with("/de/")),
+        Some(true)
+    );
+}
+
+#[test]
+fn a_locale_added_to_a_session_is_a_locale_of_its_checkout() {
+    an_overlay_locale_is_a_locale_of_the_checkout(false);
+}
+
+#[test]
+fn a_locale_added_to_a_session_is_a_locale_of_its_standalone_checkout() {
+    an_overlay_locale_is_a_locale_of_the_checkout(true);
+}
+
+/// Copies a directory, without the `target` of a build.
+fn copy_directory(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() == "target" {
+            continue;
+        }
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_directory(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// The language the payment Function of `run` was given, as `LanguageCode`.
+fn function_language(json: &Json) -> Json {
+    let run = json["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["handle"] == "payment-rules")
+        .expect("the run of the payment Function");
+    assert_eq!(run["error"], Json::Null, "{run}");
+    run["input"]["localization"]["language"]["isoCode"].clone()
+}
+
+#[test]
+fn the_functions_read_the_language_of_the_buyer() {
+    // A copy of the fixture app whose payment Function also asks for the language.
+    let root =
+        std::env::temp_dir().join(format!("lsf-checkout-fn-language-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let query = root.join("extensions/payment-rules/src/run.graphql");
+    let source = std::fs::read_to_string(&query).unwrap();
+    std::fs::write(
+        &query,
+        source.replacen(
+            "query Input {",
+            "query Input {\n  localization {\n    language {\n      isoCode\n    }\n  }",
+            1,
+        ),
+    )
+    .unwrap();
+
+    let state = checkout_server_of(root.clone(), &["payment-rules"], false);
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        "co-fn-fr",
+    ));
+    let path = header(&get(&state, "/fr/checkout", "co-fn-fr"), "location")
+        .expect("a location")
+        .to_string();
+
+    // The page.
+    let page = page_state(&text(&get(&state, &path, "co-fn-fr")));
+    assert_eq!(function_language(&page), "FR");
+    // An update.
+    let reply = operations(&state, &path, "co-fn-fr", buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(function_language(&body_json(&reply)), "FR");
+    // The order and its thank-you page: the Functions ran in French when it was placed.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fn-fr");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let thanks = page_state(&text(&get(
+        &state,
+        &format!("{path}/thank-you"),
+        "co-fn-fr",
+    )));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(function_language(&thanks), "FR");
+
+    // Without the root, the Functions are run in the primary language.
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        "co-fn-en",
+    ));
+    let path = header(&get(&state, "/checkout", "co-fn-en"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&operations(&state, &path, "co-fn-en", buyer_details()));
+    assert_eq!(function_language(&json), "EN");
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// The part of the state JSON that the Buyer Identity and Localization APIs read, for a

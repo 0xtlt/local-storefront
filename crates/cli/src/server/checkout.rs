@@ -87,7 +87,8 @@ impl Basis {
 pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
     let options = state.options.checkout.as_ref()?;
     // The theme's cart form leads to `/fr/checkout` in French.
-    let (_, _, path) = state.localize(&state.loaded().store, &incoming.path);
+    // With the languages of the store the session sees, as the storefront does.
+    let (_, _, path) = state.localize(&state.store_of(incoming), &incoming.path);
     let path = path.trim_matches('/');
     let segments: Vec<&str> = if path.is_empty() {
         Vec::new()
@@ -307,6 +308,8 @@ fn compute(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
     let (session, store, mut checkout, basis) = read(state, session_id);
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     let language = language_of(state, &store, incoming);
+    // The Functions read the language of the request too.
+    checkout.language = Some(language.iso_code.clone());
     let (app, selection, result) = price(state, &session, &store, &mut checkout)?;
 
     let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
@@ -530,19 +533,29 @@ fn current(state: &ServerState, session_id: &str, incoming: &Incoming) -> Result
         let empty = entry.session.cart_lines.is_empty();
         entry.checkout.completed.clone().filter(|_| empty)
     });
-    if let Some(mut completed) = completed {
-        // The order is the one that was placed; the language it is read in is the request's.
-        let (_, store) = state.snapshot(session_id);
-        let language = language_of(state, &store, incoming);
-        completed["localization"]["language"] = language_json(language);
-        completed["localization"]["rootUrl"] = json!(root_of(language));
-        return Ok(completed);
+    if let Some(completed) = completed {
+        return Ok(in_request_language(state, session_id, incoming, completed));
     }
     // A cart again after an order: a new checkout.
     state.with_session(session_id, |entry| entry.checkout.completed = None);
     compute(state, session_id, incoming)
         .map(|computed| computed.json)
         .map_err(|problem| error(500, problem))
+}
+
+/// An order that was placed, read in the language of the request: the order is the one that was
+/// placed, the language it is read in is not the one it was placed in.
+fn in_request_language(
+    state: &ServerState,
+    session_id: &str,
+    incoming: &Incoming,
+    mut completed: Json,
+) -> Json {
+    let (_, store) = state.snapshot(session_id);
+    let language = language_of(state, &store, incoming);
+    completed["localization"]["language"] = language_json(language);
+    completed["localization"]["rootUrl"] = json!(root_of(language));
+    completed
 }
 
 fn state_json(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
@@ -614,7 +627,7 @@ fn thank_you(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     };
     let completed = state.with_session(&id, |entry| entry.checkout.completed.clone());
     let reply = match completed {
-        Some(json) => shell(&json),
+        Some(json) => shell(&in_request_language(state, &id, incoming, json)),
         None => Reply::redirect(&checkout_path(&request_root(state, &id, incoming), token)),
     };
     with_cookie(reply, &id, is_new)

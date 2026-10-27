@@ -860,6 +860,18 @@ fn payment_methods_and_discount_codes() {
 }
 
 #[test]
+fn localization_language_is_the_buyers() {
+    let mut f = Fixture::new();
+    let query = "{ localization { language { isoCode } } }";
+    // No language asked: the primary one of the store.
+    assert_eq!(f.run(query)["localization"]["language"]["isoCode"], "EN");
+    f.state.language = Some("fr".to_string());
+    assert_eq!(f.run(query)["localization"]["language"]["isoCode"], "FR");
+    f.state.language = Some("pt-BR".to_string());
+    assert_eq!(f.run(query)["localization"]["language"]["isoCode"], "PT_BR");
+}
+
+#[test]
 fn localization_follows_the_session_country() {
     let mut f = Fixture::new();
     let query = "{ localization { country { isoCode } language { isoCode } market { id handle regions { __typename ... on MarketRegionCountry { code } } } } }";

@@ -850,15 +850,23 @@ impl<'c> FunctionInput<'c> {
             .to_ascii_uppercase()
     }
 
-    /// `LanguageCode` is the upper-case code with `_` for `-`: `PT_BR`.
+    /// The language of the buyer, else the primary one of the store. `LanguageCode` is the
+    /// upper-case code with `_` for `-`: `PT_BR`.
     fn language(&self) -> String {
         let store = self.ctx.store;
-        store
-            .languages
-            .iter()
-            .find(|language| language.primary)
-            .or_else(|| store.languages.first())
-            .map_or("EN", |language| language.iso_code.as_str())
+        self.ctx
+            .state
+            .language
+            .as_deref()
+            .or_else(|| {
+                store
+                    .languages
+                    .iter()
+                    .find(|language| language.primary)
+                    .or_else(|| store.languages.first())
+                    .map(|language| language.iso_code.as_str())
+            })
+            .unwrap_or("EN")
             .replace('-', "_")
             .to_ascii_uppercase()
     }
