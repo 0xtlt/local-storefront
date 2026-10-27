@@ -829,6 +829,45 @@ fn selling_plan_allocation_follows_the_session_cart_line() {
 }
 
 #[test]
+fn a_selling_plan_line_shows_the_compare_at_price_its_allocation_has() {
+    let mut f = Fixture::new();
+    let group = f.store.selling_plan_groups.len();
+    f.store.selling_plan_groups.push(SellingPlanGroup {
+        id: "abc".to_string(),
+        name: "Subscribe".to_string(),
+        app_id: None,
+        options: vec!["Delivery".to_string()],
+        plans: vec![SellingPlan {
+            id: 42,
+            name: "Monthly".to_string(),
+            description: None,
+            options: vec!["Monthly".to_string()],
+            price_adjustments: vec![PriceAdjustment {
+                adjustment: Adjustment::FixedAmount(100),
+                order_count: None,
+            }],
+            recurring_deliveries: true,
+            checkout_charge: CheckoutCharge::Percentage(100),
+        }],
+    });
+    f.store.products[0].selling_plan_groups = vec![group];
+    f.session.cart_lines[0].selling_plan = Some(42);
+    // The variant has no compare-at price of its own: the plan lowers the price, so that the
+    // price without the plan is the one to cross out, as in `selling_plan_allocation` of the cart.
+    let price = f.store.products[0].variants[0].price;
+    f.lines[0].unit_price = price - 100;
+    let out = f.run("{ cart { lines { cost { compareAtAmountPerQuantity { amount } } } } }");
+    assert_eq!(
+        out["cart"]["lines"][0]["cost"]["compareAtAmountPerQuantity"]["amount"],
+        decimal(price)
+    );
+    assert_eq!(
+        out["cart"]["lines"][1]["cost"]["compareAtAmountPerQuantity"],
+        Value::Null
+    );
+}
+
+#[test]
 fn payment_methods_and_discount_codes() {
     let f = Fixture::new();
     let methods = f

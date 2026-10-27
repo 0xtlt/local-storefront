@@ -2,6 +2,7 @@
 //! reachable from it, answered from the checkout context.
 
 use chrono::{NaiveDateTime, NaiveTime};
+use lsf_core::drops::cart::{ResolvedLine, resolve_line};
 use lsf_core::store::{
     Company, CompanyLocation, Customer, Metafields, Product, SellingPlan, Variant,
 };
@@ -528,19 +529,25 @@ impl<'c> FunctionInput<'c> {
         })
     }
 
-    /// The selling plan of the line: the session cart line the id (`CartLine/<n>`) points to.
-    fn selling_plan(&self, line: &ResultLine) -> Option<Resolved<Node<'c>>> {
-        let store = self.ctx.store;
+    /// The line as the storefront cart resolves it: the session cart line the id
+    /// (`CartLine/<n>`) points to. `None` for a line a cart transform made, which is not a line
+    /// of the cart.
+    fn resolved(&self, line: &ResultLine) -> Option<ResolvedLine<'c>> {
         let position = line.id.rsplit('/').next()?.parse::<usize>().ok()?;
         let cart_line = self.ctx.session.cart_lines.get(position.checked_sub(1)?)?;
         if cart_line.variant_id != line.variant_id {
             return None;
         }
-        let (product, variant) = store.variant(line.variant_id)?;
-        let (_, plan) = store.selling_plan_of(product, cart_line.selling_plan?)?;
+        resolve_line(self.ctx.store, cart_line)
+    }
+
+    /// The selling plan of the line.
+    fn selling_plan(&self, line: &ResultLine) -> Option<Resolved<Node<'c>>> {
+        let resolved = self.resolved(line)?;
+        let (_, plan) = resolved.selling_plan?;
         Some(Resolved::Object(Node::SellingPlanAllocation(
             plan,
-            plan.allocation(variant).adjusted_prices,
+            resolved.allocation()?.adjusted_prices,
         )))
     }
 
@@ -548,10 +555,15 @@ impl<'c> FunctionInput<'c> {
         match name {
             "amountPerQuantity" => object(Node::Money(line.unit_price)),
             "compareAtAmountPerQuantity" => Some(
-                self.store_variant(line)
-                    .and_then(|(_, variant)| variant.compare_at_price)
-                    .filter(|price| *price > line.unit_price)
-                    .map_or(Resolved::Null, |price| Resolved::Object(Node::Money(price))),
+                // A line a cart transform made has no plan: the compare-at price of its variant.
+                match self.resolved(line) {
+                    Some(resolved) => resolved.compare_at_price(),
+                    None => self
+                        .store_variant(line)
+                        .and_then(|(_, variant)| variant.compare_at_price),
+                }
+                .filter(|price| *price > line.unit_price)
+                .map_or(Resolved::Null, |price| Resolved::Object(Node::Money(price))),
             ),
             // Before any discount, then after the ones applied so far.
             "subtotalAmount" => object(Node::Money(line.subtotal)),

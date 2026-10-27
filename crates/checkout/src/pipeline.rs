@@ -17,7 +17,7 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, FixedOffset, Utc};
-use lsf_core::drops::cart::ResolvedLine;
+use lsf_core::drops::cart::resolve_line;
 use lsf_core::store::CartLine;
 use serde_json::Value;
 
@@ -424,19 +424,11 @@ impl<'a> Pipeline<'a> {
     /// plan that priced it).
     fn has_selling_plan(&self, line: &ResultLine) -> bool {
         line.sources.iter().any(|source| {
-            let Some(cart_line) = self.session.cart_lines.get(source.index) else {
-                return false;
-            };
-            let Some(plan) = cart_line.selling_plan else {
-                return false;
-            };
-            self.store
-                .variant_location(cart_line.variant_id)
-                .is_some_and(|(product, _)| {
-                    self.store
-                        .selling_plan_of(&self.store.products[product], plan)
-                        .is_some()
-                })
+            self.session
+                .cart_lines
+                .get(source.index)
+                .and_then(|cart_line| resolve_line(self.store, cart_line))
+                .is_some_and(|resolved| resolved.selling_plan.is_some())
         })
     }
 
@@ -1416,26 +1408,10 @@ fn line_from_variant(
     cart_line: &CartLine,
     attributes: Vec<KeyValue>,
 ) -> Option<ResultLine> {
-    let variant_id = cart_line.variant_id;
-    let (product_index, variant_index) = store.variant_location(variant_id)?;
-    let product = &store.products[product_index];
-    let variant = &product.variants[variant_index];
-    let resolved = ResolvedLine {
-        line: cart_line,
-        product_index,
-        variant_index,
-        product,
-        variant,
-        selling_plan: cart_line
-            .selling_plan
-            .and_then(|id| store.selling_plan_of(product, id)),
-    };
+    let resolved = resolve_line(store, cart_line)?;
+    let (product, variant) = (resolved.product, resolved.variant);
     let quantity = cart_line.quantity;
-    let image = variant
-        .media_index
-        .and_then(|index| product.media.get(index))
-        .and_then(|media| media.preview.as_ref())
-        .or_else(|| product.images().next());
+    let image = resolved.image();
     let selling_plan = resolved.selling_plan.map(|(_, plan)| LineSellingPlan {
         id: format!("gid://shopify/SellingPlan/{}", plan.id),
         recurring_deliveries: plan.recurring_deliveries,
@@ -1451,7 +1427,7 @@ fn line_from_variant(
         .collect();
     let mut line = ResultLine {
         id: String::new(),
-        variant_id,
+        variant_id: cart_line.variant_id,
         product_id: product.id,
         title: product.title.clone(),
         variant_title: (variant.title != "Default Title").then(|| variant.title.clone()),
