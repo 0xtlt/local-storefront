@@ -119,6 +119,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         settings: ext.settings ?? {},
         capabilities: ext.capabilities ?? {},
         translations: ext.translations ?? {},
+        defaultLocale: ext.defaultLocale ?? null,
       },
       state: stateForExtensions(state),
     });

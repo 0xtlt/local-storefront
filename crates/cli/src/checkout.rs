@@ -190,11 +190,22 @@ pub fn config_from_store(store: &Store) -> CheckoutConfig {
 }
 
 /// The translations of a checkout UI extension: `locales/<language>.json`, or
-/// `locales/<language>.default.json` for the default one. Language → the file's content.
-pub fn translations(extension_dir: &Path) -> Json {
-    let mut translations = serde_json::Map::new();
+/// `locales/<language>.default.json` for the default one.
+pub struct Translations {
+    /// Language → the file's content.
+    pub strings: Json,
+    /// The language of the `.default.json` file, if the extension declares one.
+    pub default_language: Option<String>,
+}
+
+pub fn translations(extension_dir: &Path) -> Translations {
+    let mut strings = serde_json::Map::new();
+    let mut default_language = None;
     let Ok(entries) = std::fs::read_dir(extension_dir.join("locales")) else {
-        return Json::Object(translations);
+        return Translations {
+            strings: Json::Object(strings),
+            default_language,
+        };
     };
     let mut files: Vec<_> = entries.filter_map(Result::ok).collect();
     files.sort_by_key(|entry| entry.file_name());
@@ -203,15 +214,22 @@ pub fn translations(extension_dir: &Path) -> Json {
         let Some(stem) = name.strip_suffix(".json") else {
             continue;
         };
-        let language = stem.strip_suffix(".default").unwrap_or(stem);
+        let language = stem.strip_suffix(".default");
+        let language = language.unwrap_or(stem);
         if let Some(content) = std::fs::read_to_string(entry.path())
             .ok()
             .and_then(|text| serde_json::from_str::<Json>(&text).ok())
         {
-            translations.insert(language.to_string(), content);
+            if stem.ends_with(".default") {
+                default_language = Some(language.to_string());
+            }
+            strings.insert(language.to_string(), content);
         }
     }
-    Json::Object(translations)
+    Translations {
+        strings: Json::Object(strings),
+        default_language,
+    }
 }
 
 #[cfg(test)]
@@ -255,6 +273,23 @@ mod tests {
             "strict"
         );
         assert_eq!(config.tax_rate_bps, 2000);
+    }
+
+    #[test]
+    fn the_default_locale_of_an_extension_is_kept() {
+        let dir = std::env::temp_dir().join(format!("lsf-translations-{}", std::process::id()));
+        let locales = dir.join("locales");
+        std::fs::create_dir_all(&locales).unwrap();
+        std::fs::write(locales.join("en.json"), r#"{"hello": "Hello"}"#).unwrap();
+        std::fs::write(locales.join("fr.default.json"), r#"{"hello": "Bonjour"}"#).unwrap();
+        std::fs::write(locales.join("broken.json"), "{").unwrap();
+        let found = translations(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(found.default_language.as_deref(), Some("fr"));
+        assert_eq!(
+            found.strings,
+            serde_json::json!({"en": {"hello": "Hello"}, "fr": {"hello": "Bonjour"}})
+        );
     }
 
     #[test]

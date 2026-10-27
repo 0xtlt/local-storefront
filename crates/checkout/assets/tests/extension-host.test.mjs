@@ -140,6 +140,7 @@ test('answers a frame that is ready with everything it needs', () => {
   assert.deepEqual(init.ext.settings, { max_length: 80 });
   assert.deepEqual(init.ext.capabilities, { api_access: true, block_progress: true });
   assert.equal(init.ext.translations.en.total, 'Order total: {{amount}}');
+  assert.equal(init.ext.defaultLocale, 'en', 'the default locale of the extension reaches the frame');
   assert.equal(init.variant, 'standard');
   assert.equal(init.state.token, 'preview');
   assert.equal('runs' in init.state, false, 'what Functions saw is not for extensions');

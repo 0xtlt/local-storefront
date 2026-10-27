@@ -92,7 +92,8 @@
       ],
       "capabilities": { "api_access": true, "block_progress": true },
       "settings": { "max_length": 80 },
-      "translations": { "en": { "total": "Order total: {{amount}}" } }
+      "translations": { "en": { "total": "Order total: {{amount}}" } },
+      "defaultLocale": "en"
     },
     {
       "handle": "order-notice",

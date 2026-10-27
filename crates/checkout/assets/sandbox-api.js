@@ -230,15 +230,28 @@
 
   const LOCALE_KEY = /^[a-z]{2,3}([-_][A-Za-z0-9]+)?$/;
 
-  /** The strings of the locale: `translations` is `{en: {...}, fr: {...}}` or the strings of
-   * a single locale. */
-  function pickStrings(translations, locale) {
+  /** The strings of the locale and the language they are in: `translations` is
+   * `{en: {...}, fr: {...}}` or the strings of a single locale. The exact locale, then its
+   * language, then the default one of the extension (`defaultLocale`, the `.default.json` file),
+   * then, for the extensions that declare none, English or the first one. */
+  function pickStrings(translations, locale, defaultLocale) {
     const keys = Object.keys(translations || {});
-    if (keys.length === 0) return {};
+    if (keys.length === 0) return { strings: {}, language: undefined };
     const byLocale = keys.every((key) => LOCALE_KEY.test(key) || key === 'default');
-    if (!byLocale) return translations;
-    const short = String(locale).split(/[-_]/)[0];
-    return translations[locale] || translations[short] || translations.en || translations.default || translations[keys[0]];
+    if (!byLocale) return { strings: translations, language: undefined };
+    const tag = String(locale || 'en').replace('_', '-');
+    const find = (wanted) => {
+      const lower = String(wanted).replace('_', '-').toLowerCase();
+      return keys.find((key) => key.replace('_', '-').toLowerCase() === lower);
+    };
+    const language =
+      find(tag) ||
+      find(tag.split('-')[0]) ||
+      (defaultLocale && find(defaultLocale)) ||
+      find('en') ||
+      find('default') ||
+      keys[0];
+    return { strings: translations[language], language: language === 'default' ? undefined : language };
   }
 
   function lookup(strings, key) {
@@ -251,8 +264,8 @@
     return node;
   }
 
-  function createI18n(locale, currency, translations) {
-    const strings = pickStrings(translations, locale);
+  function createI18n(locale, currency, translations, defaultLocale) {
+    const { strings } = pickStrings(translations, locale, defaultLocale);
     const tag = String(locale || 'en').replace('_', '-');
     return {
       formatNumber: (number, options) => new Intl.NumberFormat(tag, options).format(number),
@@ -344,7 +357,8 @@
     signalProperty(api.extension, 'capabilities', () => capabilities);
     signalProperty(api.extension, 'rendered', () => true);
     signalProperty(api, 'settings', () => ext.settings || {});
-    api.i18n = createI18n(locale, currency, ext.translations);
+    api.i18n = createI18n(locale, currency, ext.translations, ext.defaultLocale);
+    const extensionLanguage = pickStrings(ext.translations, locale, ext.defaultLocale).language;
     api.shop = {
       id: 'gid://shopify/Shop/1',
       name: (state.shop && state.shop.name) || '',
@@ -372,7 +386,8 @@
     };
     signalProperty(api.localization, 'currency', (s) => ({ isoCode: (s.cost && s.cost.currencyCode) || currency }));
     signalProperty(api.localization, 'language', (s) => ({ isoCode: (s.shop && s.shop.locale) || 'en' }));
-    signalProperty(api.localization, 'extensionLanguage', (s) => ({ isoCode: (s.shop && s.shop.locale) || 'en' }));
+    // The language the extension is rendered in: the one of the strings it got, not the buyer's.
+    signalProperty(api.localization, 'extensionLanguage', (s) => ({ isoCode: extensionLanguage || (s.shop && s.shop.locale) || 'en' }));
     signalProperty(api.localization, 'timezone', () => Intl.DateTimeFormat().resolvedOptions().timeZone);
     signalProperty(api.localization, 'country', (s) =>
       s.shippingAddress && s.shippingAddress.countryCode ? { isoCode: s.shippingAddress.countryCode } : undefined);
@@ -430,11 +445,11 @@
     let requests = [];
     api.buyerJourney = {};
     signalProperty(api.buyerJourney, 'completed', (s) => s.status === 'completed');
-    signalProperty(api.buyerJourney, 'activeStep', (s) => ({ handle: s.status === 'completed' ? 'thank-you' : 'information' }));
+    signalProperty(api.buyerJourney, 'activeStep', (s) => ({ handle: s.status === 'completed' ? 'thank-you' : 'checkout' }));
     signalProperty(api.buyerJourney, 'steps', (s) =>
       s.status === 'completed'
         ? [{ handle: 'thank-you', label: 'Thank you', to: '', disabled: false }]
-        : [{ handle: 'information', label: 'Checkout', to: '', disabled: false }]);
+        : [{ handle: 'checkout', label: 'Checkout', to: '', disabled: false }]);
     api.buyerJourney.intercept = (interceptor) => {
       interceptors.push(interceptor);
       post({ type: 'interceptors', count: interceptors.length });

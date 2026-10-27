@@ -369,6 +369,7 @@ fn extensions_json(app: &App, selection: &Selection) -> Json {
                         targets.push(&target.target);
                     }
                 }
+                let translations = translations(&extension.dir);
                 json!({
                     "handle": extension.handle,
                     "apiVersion": extension.api_version,
@@ -383,7 +384,8 @@ fn extensions_json(app: &App, selection: &Selection) -> Json {
                         }
                         entry
                     }).collect::<Vec<_>>(),
-                    "translations": translations(&extension.dir),
+                    "translations": translations.strings,
+                    "defaultLocale": translations.default_language,
                 })
             })
             .collect(),

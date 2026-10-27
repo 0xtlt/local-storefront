@@ -277,6 +277,44 @@ test('settings and translations', () => {
   assert.equal(shopify.i18n.formatNumber(1234.5), '1,234.5');
 });
 
+function inLocale(locale, translations, defaultLocale) {
+  const state = structuredClone(checkoutState());
+  state.shop = { ...state.shop, locale };
+  return runtime({ state, ext: { translations, defaultLocale } }).shopify;
+}
+
+test('translations fall back from the locale to its language to the declared default', () => {
+  const translations = { fr: { hello: 'Bonjour' }, en: { hello: 'Hello' }, 'pt-BR': { hello: 'Oi' } };
+  // fr.default.json, en.json and a buyer in German: the default is French, not English.
+  const german = inLocale('de', translations, 'fr');
+  assert.equal(german.i18n.translate('hello'), 'Bonjour');
+  assert.equal(german.localization.extensionLanguage.value.isoCode, 'fr');
+  assert.equal(german.localization.language.value.isoCode, 'de', 'the language of the buyer is still theirs');
+  // The exact locale, then the language of the locale.
+  const brazil = inLocale('pt-BR', translations, 'fr');
+  assert.equal(brazil.i18n.translate('hello'), 'Oi');
+  assert.equal(brazil.localization.extensionLanguage.value.isoCode, 'pt-BR');
+  const english = inLocale('en-GB', translations, 'fr');
+  assert.equal(english.i18n.translate('hello'), 'Hello');
+  assert.equal(english.localization.extensionLanguage.value.isoCode, 'en');
+  // A key that no locale has is the key.
+  assert.equal(german.i18n.translate('missing'), 'missing');
+  // No declared default: English, as before.
+  assert.equal(inLocale('de', translations).localization.extensionLanguage.value.isoCode, 'en');
+  // No translations at all: the language of the buyer.
+  assert.equal(inLocale('de', {}).localization.extensionLanguage.value.isoCode, 'de');
+});
+
+test('the one-page checkout is the step `checkout`, the thank-you page `thank-you`', () => {
+  const { shopify } = runtime();
+  assert.equal(shopify.buyerJourney.activeStep.value.handle, 'checkout');
+  assert.deepEqual(plain(shopify.buyerJourney.steps.value).map((step) => step.handle), ['checkout']);
+  const state = pageState({ ...engineCheckout(), status: 'completed', order: { id: 'gid://shopify/Order/9', number: '#1001' } });
+  const done = runtime({ target: 'purchase.thank-you.block.render', state }).shopify;
+  assert.equal(done.buyerJourney.activeStep.value.handle, 'thank-you');
+  assert.deepEqual(plain(done.buyerJourney.steps.value).map((step) => step.handle), ['thank-you']);
+});
+
 test('registers targets with extend and offers the rest of the global', () => {
   const { shopify, registered, posted } = runtime();
   const render = () => {};
