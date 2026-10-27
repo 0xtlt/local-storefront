@@ -86,6 +86,7 @@ npx local-storefront function run volume-discount --app ../my-app --session '{"c
 | `[handle]...` | | The Functions to run. Every Function of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Required. |
 | `--build` | | Runs the build command of each Function first. |
+| `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
 | `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it. Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
 | `--locale <iso>` | | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |

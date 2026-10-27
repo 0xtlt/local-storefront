@@ -5,13 +5,13 @@ use lsf_checkout::app::Selection;
 use lsf_checkout::pipeline;
 use lsf_checkout::{BuyerJourneyStep, CheckoutResult, CheckoutState};
 use lsf_core::Session;
-use lsf_core::diagnostics::Diagnostics;
+use lsf_core::diagnostics::{Diagnostics, Severity};
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, validate};
 use serde_json::Value as Json;
 
 use crate::app::App;
-use crate::checkout::{self, config_from_store};
+use crate::checkout;
 use crate::output::print_diagnostics;
 use crate::server::apply_session_input;
 
@@ -66,6 +66,12 @@ struct RunArgs {
     #[arg(long, value_name = "FILE|JSON")]
     session: Option<String>,
 
+    /// The checkout scenario to run for: the name of a file of `checkouts/` in the store data.
+    /// Its cart, buyer, language and settings are used, and the Functions it names. `--session`,
+    /// `--checkout` and `--locale` are applied on top of it.
+    #[arg(long, value_name = "NAME")]
+    scenario: Option<String>,
+
     /// What the buyer entered, as a file or as JSON: `email`, `phone`, `shippingAddress`,
     /// `selectedDelivery`, `selectedPayment`, `discountCodes` and `metafields`.
     #[arg(long, value_name = "FILE|JSON")]
@@ -105,12 +111,20 @@ pub fn run(
     args: Args,
 ) -> Result<ExitCode, String> {
     let Subcommand::Run(args) = args.command;
-    let (shopify_app, result) = compute(theme, data, previews, &args)?;
+    let Ran {
+        app: shopify_app,
+        result,
+        scenario,
+    } = compute(theme, data, previews, &args)?;
     let failed = result.runs.iter().any(|run| run.error.is_some());
 
     match args.format {
         Format::Json => {
             let mut json = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+            json["scenario"] = scenario.clone().map_or(
+                Json::Null,
+                |(name, title)| serde_json::json!({"name": name, "title": title}),
+            );
             json["diagnostics"] = Json::Array(
                 shopify_app
                     .diagnostics
@@ -123,13 +137,26 @@ pub fn run(
                 serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
             );
         }
-        Format::Text => print_text(&result),
+        Format::Text => {
+            if let Some((name, title)) = &scenario {
+                println!("== scenario {name}: {title}\n");
+            }
+            print_text(&result);
+        }
     }
     Ok(if failed {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// What a run of the Functions comes to.
+struct Ran {
+    app: lsf_checkout::app::App,
+    result: CheckoutResult,
+    /// The name and the title of the scenario it ran for.
+    scenario: Option<(String, String)>,
 }
 
 /// Builds the input of each Function from the store data and runs them, for the step, the
@@ -139,7 +166,7 @@ fn compute(
     data: Option<&Path>,
     previews: &[lsf_core::Preview],
     args: &RunArgs,
-) -> Result<(lsf_checkout::app::App, CheckoutResult), String> {
+) -> Result<Ran, String> {
     let Some(app_dir) = &args.app else {
         return Err("`lsf function run` needs the app: `--app DIR` (or LSF_APP)".to_string());
     };
@@ -163,11 +190,37 @@ fn compute(
     let local = App::open_without_theme(theme, data, previews)?;
     let (store, diagnostics) = local.load_store();
     print_diagnostics(&diagnostics);
-    if diagnostics.has_errors() {
+    // A scenario with errors is reported, and refused when it is the one asked for; the others
+    // do not matter to this run.
+    if diagnostics
+        .items
+        .iter()
+        .any(|item| item.severity == Severity::Error && !item.file.starts_with("checkouts/"))
+    {
         return Err("the store data has errors (see above)".to_string());
     }
 
+    let scenario = match &args.scenario {
+        Some(name) => Some(scenario_to_run(&store, name)?),
+        None => None,
+    };
+    let selection = match scenario {
+        Some(scenario) => checkout::narrow_to_scenario(&shopify_app, selection, scenario)?,
+        None => selection,
+    };
+
     let mut session = Session::initial(&store);
+    if let Some(scenario) = scenario {
+        let mut problems = Diagnostics::new();
+        apply_scenario_session(&store, scenario, &mut session, &mut problems);
+        if problems.has_errors() {
+            print_diagnostics(&problems);
+            return Err(format!(
+                "the scenario {} is not valid (see above)",
+                scenario.name
+            ));
+        }
+    }
     if let Some(value) = &args.session {
         let mut problems = Diagnostics::new();
         let json = read_json("session", value)?;
@@ -182,11 +235,21 @@ fn compute(
             return Err("--session is not valid (see above)".to_string());
         }
     }
-    let mut state: CheckoutState = match &args.checkout {
-        Some(value) => serde_json::from_value(read_json("checkout", value)?)
-            .map_err(|error| format!("--checkout: {error}"))?,
-        None => CheckoutState::default(),
-    };
+    // What the scenario had the buyer enter, with what `--checkout` says on top.
+    let mut state = scenario.map_or_else(CheckoutState::default, checkout::entered_by);
+    if let Some(value) = &args.checkout {
+        let mut merged = serde_json::to_value(&state).map_err(|error| error.to_string())?;
+        match (read_json("checkout", value)?, merged.as_object_mut()) {
+            (Json::Object(given), Some(merged)) => merged.extend(given),
+            (_, _) => return Err("--checkout: must be a JSON object".to_string()),
+        }
+        let scenario_name = state.scenario.clone();
+        state = serde_json::from_value(merged).map_err(|error| format!("--checkout: {error}"))?;
+        state.scenario = scenario_name;
+    }
+    if let (None, Some(language)) = (&args.locale, scenario.and_then(|s| s.language.clone())) {
+        state.language = Some(language);
+    }
     if let Some(locale) = &args.locale {
         let language = store
             .languages
@@ -210,7 +273,7 @@ fn compute(
         Step::Completion => BuyerJourneyStep::Completion,
     };
 
-    let config = config_from_store(&store);
+    let config = checkout::config_for(&store, scenario.map(|scenario| scenario.name.as_str()));
     let functions_only =
         Selection::only(selection.functions(&shopify_app).map(|f| f.handle.clone()));
     let result = pipeline::compute(
@@ -221,7 +284,68 @@ fn compute(
         &state,
         &config,
     );
-    Ok((shopify_app, result))
+    let scenario = scenario.map(|scenario| (scenario.name.clone(), scenario.title.clone()));
+    Ok(Ran {
+        app: shopify_app,
+        result,
+        scenario,
+    })
+}
+
+/// The scenario `--scenario` names, which must exist and be valid.
+fn scenario_to_run<'a>(
+    store: &'a lsf_core::Store,
+    name: &str,
+) -> Result<&'a lsf_core::store::CheckoutScenario, String> {
+    let scenario = store.scenario(name).ok_or_else(|| {
+        let known: Vec<&str> = store.scenarios.iter().map(|s| s.name.as_str()).collect();
+        if known.is_empty() {
+            format!(
+                "--scenario {name}: the store data has no scenario (`lsf checkout init` writes a set in `checkouts/`)"
+            )
+        } else {
+            format!(
+                "--scenario {name}: no such scenario (the store data has {})",
+                known.join(", ")
+            )
+        }
+    })?;
+    if !scenario.problems.is_empty() {
+        for problem in &scenario.problems {
+            eprintln!("{problem}");
+        }
+        return Err(format!(
+            "--scenario {name}: {} has errors (see above)",
+            scenario.file
+        ));
+    }
+    Ok(scenario)
+}
+
+/// Applies the cart, buyer and country of a scenario on `session`.
+fn apply_scenario_session(
+    store: &lsf_core::Store,
+    scenario: &lsf_core::store::CheckoutScenario,
+    session: &mut Session,
+    problems: &mut Diagnostics,
+) {
+    lsf_core::store::build::apply_session_input(
+        store,
+        &scenario.session,
+        session,
+        problems,
+        &scenario.file,
+        "/session",
+    );
+    // As entering the address does: markets decide on the country of the address.
+    let state = checkout::entered_by(scenario);
+    if let Some(country) = state
+        .shipping_address
+        .and_then(|address| address.country_code)
+        .and_then(|code| store.country(&code).map(|country| country.iso_code.clone()))
+    {
+        session.country = Some(country);
+    }
 }
 
 fn money(cents: i64, currency: &str) -> String {
@@ -429,6 +553,7 @@ mod tests {
                     app: Some(app.clone()),
                     build: false,
                     session: None,
+                    scenario: None,
                     checkout: None,
                     locale: Some(locale.to_string()),
                     step: Step::Completion,
@@ -468,12 +593,13 @@ mod tests {
                 app: Some(app.clone()),
                 build: false,
                 session: None,
+                scenario: None,
                 checkout: None,
                 locale: None,
                 step,
                 format: Format::Json,
             };
-            let (_, result) = compute(&root, Some(&data), &[], &args).unwrap();
+            let result = compute(&root, Some(&data), &[], &args).unwrap().result;
             let seen = result.runs[0].input["buyerJourney"]["step"].clone();
             (result.errors.len(), seen)
         };
@@ -549,6 +675,7 @@ mod tests {
                 app: Some(app),
                 build: false,
                 session: None,
+                scenario: None,
                 checkout: None,
                 locale: None,
                 step: Step::Completion,
@@ -651,6 +778,138 @@ mod tests {
         .replace("TURNS", &turns.to_string());
         std::fs::write(extension.join("dist/function.wasm"), module).unwrap();
         root
+    }
+
+    /// A data directory of the demo store with the scenarios `(file, content)` in `checkouts/`.
+    fn scenario_root(label: &str, scenarios: &[(&str, &str)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "lsf-function-scenario-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let data = root.join("data");
+        for (name, content) in lsf_core::store::demo::FILES {
+            let path = data.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+        std::fs::create_dir_all(data.join("checkouts")).unwrap();
+        for (name, content) in scenarios {
+            std::fs::write(data.join("checkouts").join(name), content).unwrap();
+        }
+        root
+    }
+
+    fn run_args(handles: &[&str], scenario: Option<&str>) -> RunArgs {
+        RunArgs {
+            handles: handles.iter().map(|handle| handle.to_string()).collect(),
+            app: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")),
+            build: false,
+            session: None,
+            scenario: scenario.map(str::to_string),
+            checkout: None,
+            locale: None,
+            step: Step::Completion,
+            format: Format::Json,
+        }
+    }
+
+    #[test]
+    fn a_scenario_sets_up_the_run() {
+        let strict = r#"{
+            "title": "Too many tees",
+            "session": {"country": "FR", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 4}]}},
+            "entered": {"discount_codes": ["SAVE"], "shipping_address": {"country_code": "FR"}},
+            "language": "fr",
+            "checkout": {
+                "shipping_rates": [{"handle": "pallet", "price": "45.00"}],
+                "discounts": [{"function": "volume-discount", "code": "SAVE", "classes": ["PRODUCT"],
+                    "metafields": {"$app:config.settings": {"type": "json", "value": {"minimumQuantity": 1, "percentage": 50}}}}],
+                "functions": {"quantity-limit": {"metafields": {"$app:config.settings": {"type": "json", "value": {"maxQuantity": 3}}}}}
+            }
+        }"#;
+        let narrow = r#"{
+            "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 4}]}},
+            "extensions": ["quantity-limit"]
+        }"#;
+        let root = scenario_root("run", &[("strict.json", strict), ("narrow.json", narrow)]);
+        let data = root.join("data");
+
+        let Ran {
+            result, scenario, ..
+        } = compute(&root, Some(&data), &[], &run_args(&[], Some("strict"))).unwrap();
+        assert_eq!(
+            scenario,
+            Some(("strict".to_string(), "Too many tees".to_string()))
+        );
+        // The cart, the settings, the code and the language are the scenario's.
+        assert_eq!(result.lines[0].quantity, 4);
+        assert_eq!(result.delivery_groups[0].options[0].handle, "pallet");
+        assert_eq!(result.discounts[0].code.as_deref(), Some("SAVE"));
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+
+        // The Functions the scenario names are the ones that run.
+        let result = compute(&root, Some(&data), &[], &run_args(&[], Some("narrow")))
+            .unwrap()
+            .result;
+        let ran: Vec<&str> = result.runs.iter().map(|run| run.handle.as_str()).collect();
+        assert_eq!(ran, ["quantity-limit"]);
+
+        // `--session` and `--checkout` go on top, `--locale` wins.
+        let mut args = run_args(&["quantity-limit"], Some("strict"));
+        args.session =
+            Some(r#"{"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}"#.into());
+        args.checkout = Some(r#"{"email": "me@example.com"}"#.into());
+        args.locale = Some("xx".into());
+        let wrong = compute(&root, Some(&data), &[], &args)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            wrong.contains("--locale xx: the store has no such language"),
+            "{wrong}"
+        );
+        args.locale = None;
+        let result = compute(&root, Some(&data), &[], &args).unwrap().result;
+        assert_eq!(result.lines[0].quantity, 2);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let seen = &result.runs[0].input;
+        assert_eq!(seen["cart"]["buyerIdentity"]["email"], "me@example.com");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_scenario_that_cannot_run_is_explained() {
+        let root = scenario_root(
+            "refused",
+            &[("typo.json", r#"{"titel": "x"}"#), ("ok.json", "{}")],
+        );
+        let data = root.join("data");
+        let error = |name: &str| {
+            compute(&root, Some(&data), &[], &run_args(&[], Some(name)))
+                .map(|_| ())
+                .unwrap_err()
+        };
+        let missing = error("nope");
+        assert!(
+            missing.contains("--scenario nope: no such scenario (the store data has ok, typo)"),
+            "{missing}"
+        );
+        let broken = error("typo");
+        assert!(
+            broken.contains("--scenario typo: checkouts/typo.json has errors"),
+            "{broken}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+
+        // Without any scenario the message says where they come from.
+        let root = scenario_root("none", &[]);
+        let data = root.join("data");
+        let none = compute(&root, Some(&data), &[], &run_args(&[], Some("x")))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(none.contains("has no scenario"), "{none}");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

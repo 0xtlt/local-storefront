@@ -231,7 +231,19 @@ pub fn selection_for(
     scenario: Option<&CheckoutScenario>,
 ) -> Result<Selection, String> {
     let selection = Selection::resolve(app, requested)?;
-    match scenario.and_then(|scenario| scenario.extensions.as_ref()) {
+    match scenario {
+        Some(scenario) => narrow_to_scenario(app, selection, scenario),
+        None => Ok(selection),
+    }
+}
+
+/// `selection` narrowed to the extensions a scenario names, which must be ones of the app.
+pub fn narrow_to_scenario(
+    app: &App,
+    selection: Selection,
+    scenario: &CheckoutScenario,
+) -> Result<Selection, String> {
+    match &scenario.extensions {
         Some(handles) => {
             Selection::resolve(app, handles).map_err(|problem| {
                 format!("the scenario names an extension the app lacks: {problem}")
