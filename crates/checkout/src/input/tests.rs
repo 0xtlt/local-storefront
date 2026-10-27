@@ -8,13 +8,15 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::version::{ApiVersion, FunctionApi};
-use crate::{Address, BuyerJourneyStep, DeliveryKind, DeliveryOption, KeyValue};
+use crate::{Address, AppliedDiscount, BuyerJourneyStep, DeliveryKind, DeliveryOption, KeyValue};
 
 struct Fixture {
     store: Store,
     session: Session,
     state: CheckoutState,
     lines: Vec<ResultLine>,
+    /// The discounts applied so far.
+    discounts: Vec<AppliedDiscount>,
     groups: Vec<DeliveryGroup>,
     methods: Vec<PaymentMethod>,
     metafields: Vec<Metafield>,
@@ -92,6 +94,7 @@ impl Fixture {
         let group = DeliveryGroup {
             handle: "group-1".to_string(),
             line_ids: lines.iter().map(|line| line.id.clone()).collect(),
+            discount_allocations: Vec::new(),
             options: vec![
                 DeliveryOption {
                     handle: "standard".to_string(),
@@ -129,15 +132,18 @@ impl Fixture {
                 ..CheckoutState::default()
             },
             lines,
+            discounts: Vec::new(),
             groups: vec![group],
             methods: vec![
                 PaymentMethod {
                     handle: "card".to_string(),
                     name: "Credit card".to_string(),
+                    placements: vec![crate::PaymentPlacement::PaymentMethod],
                 },
                 PaymentMethod {
                     handle: "cod".to_string(),
                     name: "Cash on Delivery".to_string(),
+                    placements: vec![crate::PaymentPlacement::PaymentMethod],
                 },
             ],
             metafields: vec![
@@ -191,6 +197,7 @@ impl Fixture {
             session: &self.session,
             state: &self.state,
             lines: &self.lines,
+            discounts: &self.discounts,
             delivery_groups: &self.groups,
             payment_methods: &self.methods,
             owner: Owner {
@@ -306,6 +313,7 @@ fn costs_follow_the_discounts_applied_so_far() {
             code: None,
             amount,
             class,
+            discount: 0,
         });
         line.total -= amount;
     };
@@ -1439,4 +1447,616 @@ fn an_empty_cart_has_no_lines() {
         out,
         json!({"cart": {"lines": [], "deliveryGroups": [], "cost": {"subtotalAmount": {"amount": "0.0"}}}, "enteredDiscountCodes": []})
     );
+}
+
+// ---- deliverable lines, discount applications and allocations ----
+
+#[test]
+fn deliverable_lines_are_the_lines_that_ship() {
+    let mut f = Fixture::new();
+    f.lines[1].requires_shipping = false;
+    let shipping_id = f.lines[0].id.clone();
+    let out = f.run(
+        r#"{ cart {
+            lines { id }
+            deliverableLines { __typename id quantity
+                merchandise { __typename ... on ProductVariant { id } }
+                attribute(key: "engraving") { value } } } }"#,
+    );
+    assert_eq!(out["cart"]["lines"].as_array().unwrap().len(), 2);
+    let deliverable = out["cart"]["deliverableLines"].as_array().unwrap();
+    assert_eq!(deliverable.len(), 1, "{deliverable:?}");
+    assert_eq!(deliverable[0]["__typename"], "DeliverableCartLine");
+    assert_eq!(deliverable[0]["id"], shipping_id);
+    assert_eq!(deliverable[0]["quantity"], f.lines[0].quantity);
+    assert_eq!(
+        deliverable[0]["merchandise"]["__typename"],
+        "ProductVariant"
+    );
+    assert_eq!(deliverable[0]["attribute"], json!({"value": "JD"}));
+
+    // The field exists in every Function API that has it.
+    f.lines[1].requires_shipping = true;
+    for kind in [
+        OwnerKind::DeliveryCustomization,
+        OwnerKind::PaymentCustomization,
+        OwnerKind::Validation,
+        OwnerKind::DiscountNode,
+    ] {
+        let out = f
+            .run_as(kind, "{ cart { deliverableLines { id } } }", None)
+            .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
+        assert_eq!(out["cart"]["deliverableLines"].as_array().unwrap().len(), 2);
+    }
+}
+
+/// Two discounts applied: 10 % off a line (50 of its 3200), and 20 off the order, spread over
+/// both lines and taking 10 off the second one; the first one has a metafield.
+fn with_discounts(f: &mut Fixture) {
+    use crate::{
+        AllocationMethod, DiscountAllocation, DiscountDetails, DiscountTarget, DiscountValue,
+        TargetSelection,
+    };
+    f.discounts = vec![
+        AppliedDiscount {
+            title: "Ten percent".to_string(),
+            code: Some("SAVE10".to_string()),
+            class: DiscountClass::Product,
+            amount: 320,
+            function: "volume".to_string(),
+            details: DiscountDetails {
+                allocation_method: AllocationMethod::Each,
+                target_selection: TargetSelection::Explicit,
+                target_type: DiscountTarget::LineItem,
+                value: DiscountValue::Percentage(10.0),
+                metafields: vec![Metafield {
+                    namespace: "custom".to_string(),
+                    key: "campaign".to_string(),
+                    kind: "single_line_text_field".to_string(),
+                    value: "spring".to_string(),
+                }],
+            },
+        },
+        AppliedDiscount {
+            title: "Twenty off".to_string(),
+            code: None,
+            class: DiscountClass::Order,
+            amount: 20,
+            function: "volume".to_string(),
+            details: DiscountDetails {
+                allocation_method: AllocationMethod::Across,
+                target_selection: TargetSelection::All,
+                target_type: DiscountTarget::LineItem,
+                value: DiscountValue::Fixed(20),
+                metafields: Vec::new(),
+            },
+        },
+        AppliedDiscount {
+            title: "Cheaper shipping".to_string(),
+            code: None,
+            class: DiscountClass::Shipping,
+            amount: 100,
+            function: "volume".to_string(),
+            details: DiscountDetails {
+                allocation_method: AllocationMethod::Each,
+                target_selection: TargetSelection::Explicit,
+                target_type: DiscountTarget::ShippingLine,
+                value: DiscountValue::Percentage(12.5),
+                metafields: Vec::new(),
+            },
+        },
+    ];
+    let allocation = |discount: usize, amount, class| DiscountAllocation {
+        title: String::new(),
+        code: None,
+        amount,
+        class,
+        discount,
+    };
+    f.lines[0]
+        .discount_allocations
+        .push(allocation(0, 320, DiscountClass::Product));
+    f.lines[0]
+        .discount_allocations
+        .push(allocation(1, 10, DiscountClass::Order));
+    f.lines[1]
+        .discount_allocations
+        .push(allocation(1, 10, DiscountClass::Order));
+    f.groups[0]
+        .discount_allocations
+        .push(allocation(2, 100, DiscountClass::Shipping));
+}
+
+const APPLICATIONS: &str = r#"{ cart {
+    discountApplications {
+        allocationMethod targetSelection targetType
+        totalAllocatedAmount { amount currencyCode }
+        value { __typename ... on MoneyV2 { amount } ... on PricingPercentageValue { value } }
+        metafield(namespace: "custom", key: "campaign") { value }
+    }
+    lines { discountAllocations {
+        discountedAmount { amount currencyCode }
+        discountApplication { targetType totalAllocatedAmount { amount } } } }
+    deliveryGroups { discountAllocations {
+        discountedAmount { amount }
+        discountApplication { targetType value { __typename } } } }
+} }"#;
+
+#[test]
+fn the_cart_lists_the_discounts_applied_so_far() {
+    let mut f = Fixture::new();
+    // None applied yet: empty lists, not null.
+    let out = f.run(APPLICATIONS);
+    assert_eq!(out["cart"]["discountApplications"], json!([]));
+    assert_eq!(out["cart"]["lines"][0]["discountAllocations"], json!([]));
+    assert_eq!(
+        out["cart"]["deliveryGroups"][0]["discountAllocations"],
+        json!([])
+    );
+
+    with_discounts(&mut f);
+    let out = f.run(APPLICATIONS);
+    assert_eq!(
+        out["cart"]["discountApplications"],
+        json!([
+            {
+                "allocationMethod": "EACH", "targetSelection": "EXPLICIT", "targetType": "LINE_ITEM",
+                "totalAllocatedAmount": {"amount": "3.2", "currencyCode": "EUR"},
+                "value": {"__typename": "PricingPercentageValue", "value": "10.0"},
+                "metafield": {"value": "spring"},
+            },
+            {
+                "allocationMethod": "ACROSS", "targetSelection": "ALL", "targetType": "LINE_ITEM",
+                "totalAllocatedAmount": {"amount": "0.2", "currencyCode": "EUR"},
+                "value": {"__typename": "MoneyV2", "amount": "0.2"},
+                "metafield": null,
+            },
+            {
+                "allocationMethod": "EACH", "targetSelection": "EXPLICIT", "targetType": "SHIPPING_LINE",
+                "totalAllocatedAmount": {"amount": "1.0", "currencyCode": "EUR"},
+                "value": {"__typename": "PricingPercentageValue", "value": "12.5"},
+                "metafield": null,
+            },
+        ])
+    );
+}
+
+#[test]
+fn lines_and_delivery_groups_point_to_their_discount_applications() {
+    let mut f = Fixture::new();
+    with_discounts(&mut f);
+    let out = f.run(APPLICATIONS);
+    let first = &out["cart"]["lines"][0]["discountAllocations"];
+    assert_eq!(
+        first,
+        &json!([
+            {
+                "discountedAmount": {"amount": "3.2", "currencyCode": "EUR"},
+                "discountApplication": {"targetType": "LINE_ITEM", "totalAllocatedAmount": {"amount": "3.2"}},
+            },
+            {
+                "discountedAmount": {"amount": "0.1", "currencyCode": "EUR"},
+                "discountApplication": {"targetType": "LINE_ITEM", "totalAllocatedAmount": {"amount": "0.2"}},
+            },
+        ])
+    );
+    // The order discount is on both lines, with the same application.
+    assert_eq!(
+        out["cart"]["lines"][1]["discountAllocations"][0]["discountApplication"],
+        first[1]["discountApplication"]
+    );
+    assert_eq!(
+        out["cart"]["deliveryGroups"][0]["discountAllocations"],
+        json!([{
+            "discountedAmount": {"amount": "1.0"},
+            "discountApplication": {"targetType": "SHIPPING_LINE", "value": {"__typename": "PricingPercentageValue"}},
+        }])
+    );
+}
+
+#[test]
+fn discount_fields_exist_in_every_api_that_has_them() {
+    let mut f = Fixture::new();
+    with_discounts(&mut f);
+    for kind in [
+        OwnerKind::Discount,
+        OwnerKind::DiscountNode,
+        OwnerKind::DeliveryCustomization,
+        OwnerKind::PaymentCustomization,
+        OwnerKind::Validation,
+    ] {
+        let out = f
+            .run_as(
+                kind,
+                "{ cart { discountApplications { targetType } lines { discountAllocations { discountedAmount { amount } } } } }",
+                None,
+            )
+            .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
+        assert_eq!(
+            out["cart"]["discountApplications"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+    // The cart transform only has the allocations of the lines (it runs before any discount).
+    let out = f
+        .run_as(
+            OwnerKind::CartTransform,
+            "{ cart { lines { discountAllocations { discountedAmount { amount } } } } }",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        out["cart"]["lines"][0]["discountAllocations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn a_percentage_is_written_as_a_decimal() {
+    assert_eq!(super::graph::percentage_decimal(10.0), "10.0");
+    assert_eq!(super::graph::percentage_decimal(12.5), "12.5");
+    assert_eq!(super::graph::percentage_decimal(0.0), "0.0");
+    assert_eq!(super::graph::percentage_decimal(100.0), "100.0");
+}
+
+// ---- B2B: the contact, and the dates, locale and totals of companies and locations ----
+
+fn b2b_fixture() -> Fixture {
+    let mut f = Fixture::new();
+    let alex = f
+        .store
+        .customer_by_email("alex.morgan@example.com")
+        .unwrap();
+    f.session.customer_id = Some(alex.id);
+    f
+}
+
+const COMPANY: &str = r#"{ cart { buyerIdentity { purchasingCompany {
+    contact { __typename id title locale createdAt updatedAt }
+    company { createdAt updatedAt }
+    location { name locale createdAt updatedAt ordersCount totalSpent { amount currencyCode } } } } } }"#;
+
+#[test]
+fn a_company_buyer_is_a_contact_with_defaults() {
+    let f = b2b_fixture();
+    let out = f.run(COMPANY);
+    let company = &out["cart"]["buyerIdentity"]["purchasingCompany"];
+    let contact = &company["contact"];
+    assert_eq!(contact["__typename"], "CompanyContact");
+    assert!(
+        contact["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("gid://shopify/CompanyContact/")
+    );
+    // Nothing is set: no title, no language, and the dates of the company.
+    assert!(contact["title"].is_null() && contact["locale"].is_null());
+    assert_eq!(contact["createdAt"], company["company"]["createdAt"]);
+    assert_eq!(contact["updatedAt"], company["company"]["createdAt"]);
+    // The dates of the data format: fixed, ISO 8601, in UTC.
+    let created = company["company"]["createdAt"].as_str().unwrap();
+    assert!(created.starts_with("2024-01-"), "{created}");
+    assert!(created.ends_with("Z"), "{created}");
+    assert_eq!(
+        company["company"]["updatedAt"],
+        company["company"]["createdAt"]
+    );
+    let location = &company["location"];
+    assert_eq!(location["createdAt"], company["company"]["createdAt"]);
+    assert_eq!(location["updatedAt"], location["createdAt"]);
+    assert!(location["locale"].is_null());
+    assert_eq!(location["ordersCount"], 0);
+    assert_eq!(
+        location["totalSpent"],
+        json!({"amount": "0.0", "currencyCode": "EUR"})
+    );
+}
+
+#[test]
+fn the_data_sets_the_contact_the_dates_the_locale_and_the_totals() {
+    use chrono::TimeZone;
+    let mut f = b2b_fixture();
+    let date = |day| {
+        chrono::Utc
+            .with_ymd_and_hms(2025, 3, day, 8, 30, 0)
+            .unwrap()
+    };
+    let customer = f.session.customer_id.unwrap();
+    let index = f
+        .store
+        .customers
+        .iter()
+        .position(|c| c.id == customer)
+        .unwrap();
+    f.store.customers[index].company_contact = Some(lsf_core::store::CompanyContact {
+        title: Some("Purchasing manager".to_string()),
+        locale: Some("fr".to_string()),
+        created_at: date(1),
+        updated_at: date(2),
+    });
+    let company = f.store.customers[index].company.unwrap();
+    f.store.companies[company].created_at = date(3);
+    f.store.companies[company].updated_at = date(4);
+    let location = f.store.companies[company].locations[0].clone();
+    let slot = &mut f.store.companies[company].locations[0];
+    slot.locale = Some("de".to_string());
+    slot.created_at = date(5);
+    slot.updated_at = date(6);
+    slot.orders_count = 12;
+    slot.total_spent = 123_450;
+
+    let out = f.run(COMPANY);
+    let company = &out["cart"]["buyerIdentity"]["purchasingCompany"];
+    assert_eq!(
+        company["contact"],
+        json!({
+            "__typename": "CompanyContact",
+            "id": company["contact"]["id"],
+            "title": "Purchasing manager",
+            "locale": "fr",
+            "createdAt": "2025-03-01T08:30:00Z",
+            "updatedAt": "2025-03-02T08:30:00Z",
+        })
+    );
+    assert_eq!(
+        company["company"],
+        json!({"createdAt": "2025-03-03T08:30:00Z", "updatedAt": "2025-03-04T08:30:00Z"})
+    );
+    assert_eq!(
+        company["location"],
+        json!({
+            "name": location.name,
+            "locale": "de",
+            "createdAt": "2025-03-05T08:30:00Z",
+            "updatedAt": "2025-03-06T08:30:00Z",
+            "ordersCount": 12,
+            "totalSpent": {"amount": "1234.5", "currencyCode": "EUR"},
+        })
+    );
+}
+
+#[test]
+fn a_buyer_without_company_has_no_contact() {
+    let f = Fixture::new();
+    let out = f.run("{ cart { buyerIdentity { purchasingCompany { contact { id } } } } }");
+    assert!(out["cart"]["buyerIdentity"]["purchasingCompany"].is_null());
+}
+
+// ---- the market of an address ----
+
+const ADDRESS_MARKET: &str = r#"{ cart { deliveryGroups { deliveryAddress { countryCode market {
+    __typename id handle metafield(namespace: "custom", key: "tier") { value }
+    regions { __typename ... on MarketRegionCountry { code name } } } } } } }"#;
+
+fn sells_to(f: &mut Fixture, codes: &[&str]) {
+    f.store.countries = codes
+        .iter()
+        .map(|code| lsf_core::store::Country {
+            iso_code: code.to_string(),
+            name: lsf_core::store::reference::country_name(code)
+                .unwrap()
+                .to_string(),
+            currency: "EUR".to_string(),
+            unit_system: "metric".to_string(),
+            popular: false,
+        })
+        .collect();
+}
+
+#[test]
+fn the_market_of_an_address_is_the_one_of_its_country() {
+    let mut f = Fixture::new();
+    sells_to(&mut f, &["CA", "FR", "DE"]);
+    // The address of the fixture is in France; no market is declared, so the country is a
+    // market of its own, named after it.
+    let out = f.run(ADDRESS_MARKET);
+    let market = &out["cart"]["deliveryGroups"][0]["deliveryAddress"]["market"];
+    assert_eq!(market["__typename"], "Market");
+    assert_eq!(market["handle"], "france");
+    assert_eq!(
+        market["regions"],
+        json!([{"__typename": "MarketRegionCountry", "code": "FR", "name": "France"}])
+    );
+    assert!(market["metafield"].is_null());
+    assert!(
+        market["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("gid://shopify/Market/")
+    );
+
+    // The same market as `localization.market` of a buyer in France.
+    f.session.country = Some("FR".to_string());
+    let localization = f.run("{ localization { market { id handle } } }");
+    assert_eq!(localization["localization"]["market"]["id"], market["id"]);
+    assert_eq!(
+        localization["localization"]["market"]["handle"],
+        market["handle"]
+    );
+}
+
+#[test]
+fn a_declared_market_groups_countries_and_carries_metafields() {
+    let mut f = Fixture::new();
+    sells_to(&mut f, &["CA", "FR", "DE"]);
+    f.store.markets.push(lsf_core::store::Market {
+        handle: "europe".to_string(),
+        countries: vec!["FR".to_string(), "DE".to_string()],
+        metafields: [(
+            "custom".to_string(),
+            [(
+                "tier".to_string(),
+                StoreMetafield {
+                    kind: "single_line_text_field".to_string(),
+                    value: json!("gold"),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        )]
+        .into_iter()
+        .collect(),
+    });
+    let out = f.run(ADDRESS_MARKET);
+    let market = &out["cart"]["deliveryGroups"][0]["deliveryAddress"]["market"];
+    assert_eq!(market["handle"], "europe");
+    assert_eq!(
+        market["regions"],
+        json!([
+            {"__typename": "MarketRegionCountry", "code": "FR", "name": "France"},
+            {"__typename": "MarketRegionCountry", "code": "DE", "name": "Germany"},
+        ])
+    );
+    assert_eq!(market["metafield"], json!({"value": "gold"}));
+
+    // A buyer in Germany is in the same market, with the same id.
+    f.session.country = Some("DE".to_string());
+    let localization = f.run("{ localization { market { id handle regions { __typename } } } }");
+    assert_eq!(localization["localization"]["market"]["id"], market["id"]);
+    assert_eq!(localization["localization"]["market"]["handle"], "europe");
+    assert_eq!(
+        localization["localization"]["market"]["regions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn an_address_in_a_country_the_store_does_not_sell_to_has_no_market() {
+    let mut f = Fixture::new();
+    sells_to(&mut f, &["CA"]);
+    let out = f.run(ADDRESS_MARKET);
+    let address = &out["cart"]["deliveryGroups"][0]["deliveryAddress"];
+    assert_eq!(address["countryCode"], "FR");
+    assert!(address["market"].is_null());
+    // And an address without a country has none either.
+    f.state.shipping_address.as_mut().unwrap().country_code = None;
+    let out = f.run(ADDRESS_MARKET);
+    assert!(out["cart"]["deliveryGroups"][0]["deliveryAddress"]["market"].is_null());
+}
+
+// ---- placements of payment methods ----
+
+#[test]
+fn payment_methods_say_where_they_are_offered() {
+    let mut f = Fixture::new();
+    f.methods[1].placements = vec![
+        crate::PaymentPlacement::PaymentMethod,
+        crate::PaymentPlacement::AcceleratedCheckout,
+    ];
+    let out = f
+        .run_as(
+            OwnerKind::PaymentCustomization,
+            "{ paymentMethods { name placements } }",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        out["paymentMethods"],
+        json!([
+            {"name": "Credit card", "placements": ["PAYMENT_METHOD"]},
+            {"name": "Cash on Delivery", "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]},
+        ])
+    );
+}
+
+// ---- Shop.metaobject ----
+
+fn with_metaobject(f: &mut Fixture) -> String {
+    let field = |kind: &str, value: serde_json::Value| StoreMetafield {
+        kind: kind.to_string(),
+        value,
+    };
+    f.store.metaobjects.push(lsf_core::store::Metaobject {
+        kind: "size_guide".to_string(),
+        handle: "tees".to_string(),
+        fields: [
+            (
+                "title".to_string(),
+                field("single_line_text_field", json!("Tee sizes")),
+            ),
+            ("rows".to_string(), field("number_integer", json!(5))),
+            (
+                "chart".to_string(),
+                field("json", json!({"S": 36, "M": 38})),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        template_suffix: None,
+    });
+    format!(
+        "gid://shopify/Metaobject/{}",
+        lsf_core::util::stable_id("metaobject", "size_guide/tees")
+    )
+}
+
+#[test]
+fn a_shop_metaobject_is_found_by_type_and_handle() {
+    let mut f = Fixture::new();
+    with_metaobject(&mut f);
+    let out = f.run(
+        r#"{ shop { metaobject(handle: {type: "size_guide", handle: "tees"}) {
+            __typename handle type
+            title: field(key: "title") { __typename key type value jsonValue }
+            rows: field(key: "rows") { value jsonValue }
+            chart: field(key: "chart") { value jsonValue }
+            missing: field(key: "nope") { value } } } }"#,
+    );
+    assert_eq!(
+        out["shop"]["metaobject"],
+        json!({
+            "__typename": "Metaobject", "handle": "tees", "type": "size_guide",
+            "title": {"__typename": "MetaobjectField", "key": "title", "type": "single_line_text_field", "value": "Tee sizes", "jsonValue": "Tee sizes"},
+            "rows": {"value": "5", "jsonValue": 5},
+            "chart": {"value": "{\"S\":36,\"M\":38}", "jsonValue": {"S": 36, "M": 38}},
+            "missing": null,
+        })
+    );
+}
+
+#[test]
+fn a_shop_metaobject_is_found_by_id_and_may_be_missing() {
+    let mut f = Fixture::new();
+    let id = with_metaobject(&mut f);
+    let out = f.run(&format!(
+        r#"{{ shop {{ metaobject(id: "{id}") {{ handle }} }} }}"#
+    ));
+    assert_eq!(out["shop"]["metaobject"], json!({"handle": "tees"}));
+    // The arguments can come from the variables of the query.
+    let ok = f
+        .run_as(
+            OwnerKind::Discount,
+            r#"query Input($handle: MetaobjectHandleInput) { shop { metaobject(handle: $handle) { handle } } }"#,
+            Some(&json!({"handle": {"type": "size_guide", "handle": "nope"}})),
+        )
+        .unwrap();
+    assert!(ok["shop"]["metaobject"].is_null());
+    let other_type =
+        f.run(r#"{ shop { metaobject(handle: {type: "other", handle: "tees"}) { handle } } }"#);
+    assert!(other_type["shop"]["metaobject"].is_null());
+}
+
+#[test]
+fn a_shop_metaobject_needs_one_way_to_find_it() {
+    let f = Fixture::new();
+    for arguments in ["", r#"(id: "a", handle: {type: "t", handle: "h"})"#] {
+        let error = f
+            .run_as(
+                OwnerKind::Discount,
+                &format!("{{ shop {{ metaobject{arguments} {{ handle }} }} }}"),
+                None,
+            )
+            .unwrap_err();
+        assert!(error.contains("either"), "{error}");
+        assert!(error.contains("shop.metaobject"), "{error}");
+    }
 }

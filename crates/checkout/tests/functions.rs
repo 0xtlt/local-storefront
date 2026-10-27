@@ -2121,3 +2121,324 @@ fn a_cart_transform_operation_given_as_a_single_object_is_applied() {
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert_eq!(result.lines[1].transformed_by.as_deref(), Some("update"));
 }
+
+// ---- what each step of the pipeline shows of the discounts ----
+
+const DISCOUNTS_SEEN: &str = r#"query Spy {
+    cart {
+        discountApplications {
+            allocationMethod targetSelection targetType
+            totalAllocatedAmount { amount }
+            value { __typename ... on MoneyV2 { amount } ... on PricingPercentageValue { value } }
+            metafield(namespace: "$app:config", key: "settings") { jsonValue }
+        }
+        lines { discountAllocations { discountedAmount { amount } discountApplication { targetType } } }
+        deliveryGroups { discountAllocations { discountedAmount { amount } discountApplication { targetType } } }
+    }
+}"#;
+
+const ALLOCATIONS_SEEN: &str =
+    "query Spy { cart { lines { discountAllocations { discountedAmount { amount } } } } }";
+
+/// Runs a cart of four tees through a product discount (half price), an order discount (10 %)
+/// and a shipping discount (free), in the order the pipeline runs them, and gives what the
+/// input of each Function showed of the discounts: `(owner kind, what DISCOUNTS_SEEN read)`.
+fn discounts_seen_by_each_step() -> Vec<(lsf_checkout::input::OwnerKind, serde_json::Value)> {
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(TEE, 4)]);
+    let mut config = config();
+    config.discounts = vec![
+        discount(
+            "volume-discount",
+            "Half price",
+            None,
+            &[Product],
+            json!({"minimumQuantity": 1, "percentage": 50}),
+        ),
+        discount(
+            "volume-discount",
+            "Ten percent",
+            None,
+            &[Order],
+            json!({"orderPercentage": 10}),
+        ),
+        discount(
+            "volume-discount",
+            "Free shipping",
+            None,
+            &[Shipping],
+            json!({"freeShippingAbove": 50}),
+        ),
+    ];
+    let seen = std::cell::RefCell::new(Vec::new());
+    let build = |query: &str,
+                 variables: Option<&serde_json::Value>,
+                 ctx: &lsf_checkout::input::InputContext| {
+        let spy = match ctx.owner.kind {
+            lsf_checkout::input::OwnerKind::CartTransform => ALLOCATIONS_SEEN,
+            _ => DISCOUNTS_SEEN,
+        };
+        let observed = lsf_checkout::input::build(spy, None, ctx)?;
+        seen.borrow_mut().push((ctx.owner.kind, observed));
+        lsf_checkout::input::build(query, variables, ctx)
+    };
+    let result = compute_with(
+        &app,
+        &Selection::only([
+            "bundle-transform",
+            "volume-discount",
+            "delivery-rules",
+            "payment-rules",
+            "quantity-limit",
+        ]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+        &build,
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    // 128.00 - 64.00 - 6.40, and the shipping is free.
+    assert_eq!(result.cost.total, 5760);
+    seen.into_inner()
+}
+
+#[test]
+fn each_function_sees_the_discounts_of_the_steps_before_it() {
+    use lsf_checkout::input::OwnerKind::*;
+    let seen = discounts_seen_by_each_step();
+    let kinds: Vec<_> = seen.iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            CartTransform,
+            Discount,
+            Discount,
+            DeliveryCustomization,
+            Discount,
+            PaymentCustomization,
+            Validation
+        ]
+    );
+    let applications = |step: usize| seen[step].1["cart"]["discountApplications"].clone();
+    let allocated = |step: usize, key: &str| {
+        seen[step].1["cart"][key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["discountAllocations"].clone())
+            .collect::<Vec<_>>()
+    };
+
+    // The cart transform runs before any discount.
+    assert_eq!(
+        seen[0].1["cart"]["lines"][0]["discountAllocations"],
+        json!([])
+    );
+    // The first discount sees nothing: Functions of a step see the ones that ran before.
+    assert_eq!(applications(1), json!([]));
+    // The order discount sees the product discount: half price, 64.00 across the line.
+    let half = json!({
+        "allocationMethod": "EACH", "targetSelection": "EXPLICIT", "targetType": "LINE_ITEM",
+        "totalAllocatedAmount": {"amount": "64.0"},
+        "value": {"__typename": "PricingPercentageValue", "value": "50.0"},
+        "metafield": {"jsonValue": {"minimumQuantity": 1, "percentage": 50}},
+    });
+    assert_eq!(applications(2), json!([half]));
+    assert_eq!(
+        allocated(2, "lines"),
+        [
+            json!([{"discountedAmount": {"amount": "64.0"}, "discountApplication": {"targetType": "LINE_ITEM"}}])
+        ]
+    );
+
+    // The delivery customization sees both, on the line, and no shipping discount yet.
+    let ten = json!({
+        "allocationMethod": "EACH", "targetSelection": "ALL", "targetType": "LINE_ITEM",
+        "totalAllocatedAmount": {"amount": "6.4"},
+        "value": {"__typename": "PricingPercentageValue", "value": "10.0"},
+        "metafield": {"jsonValue": {"orderPercentage": 10}},
+    });
+    assert_eq!(applications(3), json!([half, ten]));
+    assert_eq!(allocated(3, "lines")[0].as_array().unwrap().len(), 2);
+    assert_eq!(allocated(3, "deliveryGroups"), [json!([])]);
+    assert_eq!(applications(4), json!([half, ten]));
+    assert_eq!(allocated(4, "deliveryGroups"), [json!([])]);
+
+    // Payment customization and validation see the shipping discount too, on the delivery group.
+    let free = json!({
+        "allocationMethod": "EACH", "targetSelection": "ALL", "targetType": "SHIPPING_LINE",
+        "totalAllocatedAmount": {"amount": "4.9"},
+        "value": {"__typename": "PricingPercentageValue", "value": "100.0"},
+        "metafield": {"jsonValue": {"freeShippingAbove": 50}},
+    });
+    for step in [5, 6] {
+        assert_eq!(applications(step), json!([half, ten, free]), "step {step}");
+        assert_eq!(
+            allocated(step, "deliveryGroups"),
+            [
+                json!([{"discountedAmount": {"amount": "4.9"}, "discountApplication": {"targetType": "SHIPPING_LINE"}}])
+            ],
+            "step {step}"
+        );
+        assert_eq!(
+            allocated(step, "lines")[0].as_array().unwrap().len(),
+            2,
+            "step {step}"
+        );
+    }
+}
+
+// ---- the placements of payment methods ----
+
+const CARD: &str = "gid://shopify/PaymentCustomizationPaymentMethod/card";
+
+/// Hides `card` (offered in the list and as an express button) with a payment customization
+/// that answers `hide`, and gives the checkout with what a Function after it sees:
+/// `(handle, placements)` of the methods of the validation Function.
+fn hide_placements(
+    hide: serde_json::Value,
+) -> (lsf_checkout::CheckoutResult, Vec<(String, Vec<String>)>) {
+    let copy = AppCopy::new(&format!("placements-{}", hide));
+    for handle in ["payment-rules", "quantity-limit"] {
+        std::fs::write(
+            copy.file(handle, "dist/function.wasm"),
+            answering_module("run", 0),
+        )
+        .unwrap();
+    }
+    let store = store();
+    let session = session(&store, &CART);
+    let app = copy.load();
+    let mut config = config();
+    config.payment_methods[0].placements = vec![
+        lsf_checkout::PaymentPlacement::PaymentMethod,
+        lsf_checkout::PaymentPlacement::AcceleratedCheckout,
+    ];
+    config
+        .function_metafields
+        .insert("payment-rules".into(), settings(json!({})));
+    config
+        .function_metafields
+        .insert("quantity-limit".into(), settings(json!({})));
+    let seen = std::cell::RefCell::new(Vec::new());
+    let build = |_: &str,
+                 _: Option<&serde_json::Value>,
+                 ctx: &lsf_checkout::input::InputContext| {
+        match ctx.owner.kind {
+            lsf_checkout::input::OwnerKind::PaymentCustomization => {
+                // What the payment customization itself sees.
+                let input =
+                    lsf_checkout::input::build("{ paymentMethods { id placements } }", None, ctx)?;
+                seen.borrow_mut().push(input["paymentMethods"].clone());
+                Ok(json!({"operations": [{"paymentMethodHide": hide.clone()}]}))
+            }
+            _ => {
+                // The validation input has no payment methods: read them from the context.
+                let methods: Vec<_> = ctx
+                    .payment_methods
+                    .iter()
+                    .map(|method| {
+                        json!({
+                            "id": lsf_checkout::input::payment_method_id(&method.handle),
+                            "placements": method
+                                .placements
+                                .iter()
+                                .map(|placement| placement.graphql())
+                                .collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect();
+                seen.borrow_mut().push(json!(methods));
+                // The validation of the fixture app is a `purchase.validation.run` one.
+                Ok(json!({"errors": []}))
+            }
+        }
+    };
+    let result = compute_with(
+        &app,
+        &Selection::only(["payment-rules", "quantity-limit"]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+        &build,
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let seen = seen.into_inner();
+    let validation = seen[1]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|method| {
+            (
+                method["id"]
+                    .as_str()
+                    .unwrap()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_string(),
+                method["placements"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.as_str().unwrap().to_string())
+                    .collect(),
+            )
+        })
+        .collect();
+    // The payment customization sees every method with the placements of the data.
+    assert_eq!(
+        seen[0],
+        json!([
+            {"id": CARD, "placements": ["PAYMENT_METHOD", "ACCELERATED_CHECKOUT"]},
+            {"id": "gid://shopify/PaymentCustomizationPaymentMethod/cod", "placements": ["PAYMENT_METHOD"]},
+            {"id": "gid://shopify/PaymentCustomizationPaymentMethod/bank", "placements": ["PAYMENT_METHOD"]},
+        ])
+    );
+    (result, validation)
+}
+
+fn placements_of(seen: &[(String, Vec<String>)], handle: &str) -> Option<Vec<String>> {
+    seen.iter()
+        .find(|(method, _)| method == handle)
+        .map(|(_, placements)| placements.clone())
+}
+
+#[test]
+fn hiding_the_list_placement_keeps_the_express_button() {
+    let (result, seen) = hide_placements(json!({
+        "paymentMethodId": CARD, "placements": ["PAYMENT_METHOD"]
+    }));
+    // Not in the list of the checkout any more...
+    assert_eq!(method_names(&result), ["Cash on Delivery", "Bank Deposit"]);
+    // ...but the Functions after it still see the method, offered as an express button.
+    assert_eq!(
+        placements_of(&seen, "card"),
+        Some(vec!["ACCELERATED_CHECKOUT".to_string()])
+    );
+}
+
+#[test]
+fn hiding_the_express_placement_keeps_the_method_in_the_list() {
+    let (result, seen) = hide_placements(json!({
+        "paymentMethodId": CARD, "placements": ["ACCELERATED_CHECKOUT"]
+    }));
+    assert_eq!(
+        method_names(&result),
+        ["Credit card", "Cash on Delivery", "Bank Deposit"]
+    );
+    assert_eq!(
+        placements_of(&seen, "card"),
+        Some(vec!["PAYMENT_METHOD".to_string()])
+    );
+}
+
+#[test]
+fn hiding_without_placements_hides_them_all() {
+    let (result, seen) = hide_placements(json!({"paymentMethodId": CARD}));
+    assert_eq!(method_names(&result), ["Cash on Delivery", "Bank Deposit"]);
+    assert_eq!(placements_of(&seen, "card"), None);
+}

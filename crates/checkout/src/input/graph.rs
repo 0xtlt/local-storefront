@@ -1,16 +1,18 @@
 //! The graph a Function input query runs against: the root `Input` type and everything
 //! reachable from it, answered from the checkout context.
 
-use chrono::{NaiveDateTime, NaiveTime};
+use chrono::{DateTime, NaiveDateTime, NaiveTime, Utc};
 use lsf_core::store::{
-    Company, CompanyLocation, Customer, Metafields, Product, SellingPlan, Variant,
+    Company, CompanyLocation, Customer, Market, Metafields, Metaobject, Product, SellingPlan,
+    Variant,
 };
 use serde_json::{Value as Json, json};
 
 use super::exec::{Args, Graph, Resolved};
 use super::{InputContext, OwnerKind, decimal, delivery_group_id, payment_method_id};
 use crate::{
-    Address, DeliveryGroup, DeliveryOption, DiscountClass, Metafield, PaymentMethod, ResultLine,
+    Address, AppliedDiscount, DeliveryGroup, DeliveryOption, DiscountAllocation, DiscountClass,
+    DiscountValue, Metafield, PaymentMethod, ResultLine,
 };
 
 pub(super) struct FunctionInput<'c> {
@@ -30,6 +32,13 @@ pub(super) enum Node<'c> {
     Cart,
     CartCost,
     Line(&'c ResultLine),
+    /// A line that ships: `Cart.deliverableLines`.
+    DeliverableLine(&'c ResultLine),
+    /// A discount applied so far, by its index in `InputContext::discounts`.
+    DiscountApplication(usize),
+    DiscountAllocation(&'c DiscountAllocation),
+    /// The percentage of a discount (`PricingPercentageValue`).
+    Percentage(f64),
     LineCost(&'c ResultLine),
     Variant(&'c ResultLine),
     Product(&'c ResultLine),
@@ -42,6 +51,8 @@ pub(super) enum Node<'c> {
     BuyerIdentity,
     Customer(&'c Customer),
     PurchasingCompany(&'c Customer),
+    /// The customer as a contact of their company.
+    CompanyContact(&'c Customer, &'c Company),
     Company(&'c Company),
     CompanyLocation(&'c CompanyLocation),
     DeliveryGroup(&'c DeliveryGroup),
@@ -51,9 +62,12 @@ pub(super) enum Node<'c> {
     Localization,
     Country(String),
     Language(String),
-    Market,
+    /// The market of a country (its upper-case ISO code).
+    Market(String),
     MarketRegion(String),
     Shop,
+    Metaobject(&'c Metaobject),
+    MetaobjectField(&'c str, &'c lsf_core::store::Metafield),
     LocalTime,
     EnteredCode(&'c str),
     BuyerJourney,
@@ -75,6 +89,10 @@ const TYPES: &[&str] = &[
     "Cart",
     "CartCost",
     "CartLine",
+    "DeliverableCartLine",
+    "DiscountApplication",
+    "DiscountAllocation",
+    "PricingPercentageValue",
     "CartLineCost",
     "ProductVariant",
     "CustomProduct",
@@ -88,6 +106,7 @@ const TYPES: &[&str] = &[
     "Customer",
     "PurchasingCompany",
     "Company",
+    "CompanyContact",
     "CompanyLocation",
     "CartDeliveryGroup",
     "CartDeliveryOption",
@@ -99,6 +118,8 @@ const TYPES: &[&str] = &[
     "Market",
     "MarketRegionCountry",
     "Shop",
+    "Metaobject",
+    "MetaobjectField",
     "LocalTime",
     "EnteredDiscountCode",
     "BuyerJourney",
@@ -108,6 +129,7 @@ const TYPES: &[&str] = &[
     // Unions.
     "Merchandise",
     "MarketRegion",
+    "PricingValue",
 ];
 
 impl<'c> Graph for FunctionInput<'c> {
@@ -131,6 +153,10 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::Cart => "Cart",
             Node::CartCost => "CartCost",
             Node::Line(_) => "CartLine",
+            Node::DeliverableLine(_) => "DeliverableCartLine",
+            Node::DiscountApplication(_) => "DiscountApplication",
+            Node::DiscountAllocation(_) => "DiscountAllocation",
+            Node::Percentage(_) => "PricingPercentageValue",
             Node::LineCost(_) => "CartLineCost",
             Node::Variant(_) => "ProductVariant",
             Node::Product(_) => "Product",
@@ -142,6 +168,7 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::BuyerIdentity => "BuyerIdentity",
             Node::Customer(_) => "Customer",
             Node::PurchasingCompany(_) => "PurchasingCompany",
+            Node::CompanyContact(..) => "CompanyContact",
             Node::Company(_) => "Company",
             Node::CompanyLocation(_) => "CompanyLocation",
             Node::DeliveryGroup(_) => "CartDeliveryGroup",
@@ -151,9 +178,11 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::Localization => "Localization",
             Node::Country(_) => "Country",
             Node::Language(_) => "Language",
-            Node::Market => "Market",
+            Node::Market(_) => "Market",
             Node::MarketRegion(_) => "MarketRegionCountry",
             Node::Shop => "Shop",
+            Node::Metaobject(_) => "Metaobject",
+            Node::MetaobjectField(..) => "MetaobjectField",
             Node::LocalTime => "LocalTime",
             Node::EnteredCode(_) => "EnteredDiscountCode",
             Node::BuyerJourney => "BuyerJourney",
@@ -171,7 +200,9 @@ impl<'c> Graph for FunctionInput<'c> {
         Some(
             name == condition
                 || (condition == "Merchandise" && name == "ProductVariant")
-                || (condition == "MarketRegion" && name == "MarketRegionCountry"),
+                || (condition == "MarketRegion" && name == "MarketRegionCountry")
+                || (condition == "PricingValue"
+                    && matches!(name, "MoneyV2" | "PricingPercentageValue")),
         )
     }
 
@@ -209,6 +240,23 @@ impl<'c> Graph for FunctionInput<'c> {
             Node::Cart => self.cart(name, args)?,
             Node::CartCost => self.cart_cost(name),
             Node::Line(line) => self.line(line, name, args)?,
+            Node::DeliverableLine(line) => match name {
+                "id" => leaf(&line.id),
+                "quantity" => leaf(line.quantity),
+                "merchandise" => object(Node::Variant(line)),
+                "attribute" => self.line(line, name, args)?,
+                _ => None,
+            },
+            Node::DiscountApplication(index) => self.application(*index, name),
+            Node::DiscountAllocation(allocation) => match name {
+                "discountApplication" => object(Node::DiscountApplication(allocation.discount)),
+                "discountedAmount" => object(Node::Money(allocation.amount)),
+                _ => None,
+            },
+            Node::Percentage(percentage) => match name {
+                "value" => leaf(percentage_decimal(*percentage)),
+                _ => None,
+            },
             Node::LineCost(line) => self.line_cost(line, name),
             Node::Variant(line) => self.variant(line, name, args)?,
             Node::Product(line) => self.product(line, name, args)?,
@@ -250,6 +298,10 @@ impl<'c> Graph for FunctionInput<'c> {
                     .company
                     .map(|index| Node::Company(&self.ctx.store.companies[index]))
                     .map_or(Some(Resolved::Null), object),
+                "contact" => customer
+                    .company
+                    .map(|index| Node::CompanyContact(customer, &self.ctx.store.companies[index]))
+                    .map_or(Some(Resolved::Null), object),
                 "location" => {
                     let session = self.ctx.session;
                     customer
@@ -264,16 +316,40 @@ impl<'c> Graph for FunctionInput<'c> {
                 }
                 _ => None,
             },
+            // Every buyer of a company is one of its contacts. What the data does not say
+            // defaults to the company: its creation date, no title, no language.
+            Node::CompanyContact(customer, company) => {
+                let contact = customer.company_contact.as_ref();
+                match name {
+                    "id" => leaf(format!("gid://shopify/CompanyContact/{}", customer.id)),
+                    "title" => Some(nullable(contact.and_then(|c| c.title.as_ref()))),
+                    "locale" => Some(nullable(contact.and_then(|c| c.locale.as_ref()))),
+                    "createdAt" => leaf(date_time(
+                        contact.map_or(company.created_at, |contact| contact.created_at),
+                    )),
+                    "updatedAt" => leaf(date_time(
+                        contact.map_or(company.created_at, |c| c.updated_at),
+                    )),
+                    _ => None,
+                }
+            }
             Node::Company(company) => match name {
                 "id" => leaf(format!("gid://shopify/Company/{}", company.id)),
                 "name" => leaf(&company.name),
                 "externalId" => Some(nullable(company.external_id.as_ref())),
+                "createdAt" => leaf(date_time(company.created_at)),
+                "updatedAt" => leaf(date_time(company.updated_at)),
                 _ => None,
             },
             Node::CompanyLocation(location) => match name {
                 "id" => leaf(format!("gid://shopify/CompanyLocation/{}", location.id)),
                 "name" => leaf(&location.name),
                 "externalId" => Some(nullable(location.external_id.as_ref())),
+                "locale" => Some(nullable(location.locale.as_ref())),
+                "createdAt" => leaf(date_time(location.created_at)),
+                "updatedAt" => leaf(date_time(location.updated_at)),
+                "ordersCount" => leaf(location.orders_count),
+                "totalSpent" => object(Node::Money(location.total_spent)),
                 _ => None,
             },
             Node::DeliveryGroup(group) => self.delivery_group(group, name),
@@ -286,16 +362,33 @@ impl<'c> Graph for FunctionInput<'c> {
                 "code" => Some(Resolved::Null),
                 _ => None,
             },
+            Node::Address(address) if name == "market" => {
+                // The market that sells to the country of the address; none when the store
+                // does not sell there.
+                let code = address.country_code.as_deref().unwrap_or_default();
+                Some(if self.ctx.store.country(code).is_some() {
+                    Resolved::Object(Node::Market(code.to_ascii_uppercase()))
+                } else {
+                    Resolved::Null
+                })
+            }
             Node::Address(address) => address_field(address, name),
             Node::PaymentMethod(method) => match name {
                 "id" => leaf(payment_method_id(&method.handle)),
                 "name" => leaf(&method.name),
+                "placements" => leaf(
+                    method
+                        .placements
+                        .iter()
+                        .map(|placement| placement.graphql())
+                        .collect::<Vec<_>>(),
+                ),
                 _ => None,
             },
             Node::Localization => match name {
                 "country" => object(Node::Country(self.country())),
                 "language" => object(Node::Language(self.language())),
-                "market" => object(Node::Market),
+                "market" => object(Node::Market(self.country())),
                 _ => None,
             },
             Node::Country(code) => match name {
@@ -306,7 +399,7 @@ impl<'c> Graph for FunctionInput<'c> {
                 "isoCode" => leaf(code),
                 _ => None,
             },
-            Node::Market => self.market(name),
+            Node::Market(code) => self.market(code, name),
             Node::MarketRegion(code) => match name {
                 "code" => leaf(code),
                 "name" => leaf(
@@ -319,8 +412,35 @@ impl<'c> Graph for FunctionInput<'c> {
             },
             Node::Shop => match name {
                 "localTime" => object(Node::LocalTime),
+                "metaobject" => Some(self.metaobject(args)?),
                 _ => None,
             },
+            Node::Metaobject(entry) => match name {
+                "handle" => leaf(&entry.handle),
+                "type" => leaf(&entry.kind),
+                "field" => {
+                    let key = args.required_string("key")?;
+                    Some(
+                        entry
+                            .fields
+                            .get_key_value(&key)
+                            .map_or(Resolved::Null, |(key, field)| {
+                                Resolved::Object(Node::MetaobjectField(key, field))
+                            }),
+                    )
+                }
+                _ => None,
+            },
+            Node::MetaobjectField(key, field) => {
+                let value = source_text(&field.value);
+                match name {
+                    "key" => leaf(*key),
+                    "type" => leaf(&field.kind),
+                    "value" => leaf(&value),
+                    "jsonValue" => Some(Resolved::Leaf(json_value(&field.kind, &value))),
+                    _ => None,
+                }
+            }
             Node::LocalTime => self.local_time(name, args)?,
             Node::EnteredCode(code) => match name {
                 "code" => leaf(*code),
@@ -440,6 +560,19 @@ impl<'c> FunctionInput<'c> {
         let ctx = self.ctx;
         Ok(match name {
             "lines" => Some(Resolved::List(ctx.lines.iter().map(Node::Line).collect())),
+            // The lines that ship: the ones the delivery groups hold.
+            "deliverableLines" => Some(Resolved::List(
+                ctx.lines
+                    .iter()
+                    .filter(|line| line.requires_shipping)
+                    .map(Node::DeliverableLine)
+                    .collect(),
+            )),
+            "discountApplications" => Some(Resolved::List(
+                (0..ctx.discounts.len())
+                    .map(Node::DiscountApplication)
+                    .collect(),
+            )),
             "cost" => object(Node::CartCost),
             "buyerIdentity" => object(Node::BuyerIdentity),
             "deliveryGroups" => Some(Resolved::List(
@@ -521,6 +654,12 @@ impl<'c> FunctionInput<'c> {
                         }),
                 )
             }
+            "discountAllocations" => Some(Resolved::List(
+                line.discount_allocations
+                    .iter()
+                    .map(Node::DiscountAllocation)
+                    .collect(),
+            )),
             "sellingPlanAllocation" => Some(self.selling_plan(line).unwrap_or(Resolved::Null)),
             // A bundle is one line: its components are not lines of the cart a Function sees.
             "parentRelationship" => Some(Resolved::Null),
@@ -811,6 +950,13 @@ impl<'c> FunctionInput<'c> {
                     .map(Node::Line)
                     .collect(),
             )),
+            "discountAllocations" => Some(Resolved::List(
+                group
+                    .discount_allocations
+                    .iter()
+                    .map(Node::DiscountAllocation)
+                    .collect(),
+            )),
             "deliveryAddress" => Some(
                 ctx.state
                     .shipping_address
@@ -871,18 +1017,76 @@ impl<'c> FunctionInput<'c> {
             .to_ascii_uppercase()
     }
 
-    fn market(&self, name: &str) -> Option<Resolved<Node<'c>>> {
-        let code = self.country();
+    /// The market that sells to a country: the one the data groups it in, else one of its own.
+    fn market(&self, code: &str, name: &str) -> Option<Resolved<Node<'c>>> {
+        let store = self.ctx.store;
+        let declared = store.market_of(code);
         match name {
             "id" => leaf(format!(
                 "gid://shopify/Market/{}",
-                lsf_core::util::stable_id("market", &code)
+                lsf_core::util::stable_id("market", declared.map_or(code, |m| m.handle.as_str()))
             )),
-            "handle" => leaf(match self.ctx.store.country(&code) {
-                Some(country) => lsf_core::util::handleize(&country.name),
-                None => code.to_ascii_lowercase(),
+            "handle" => leaf(match (declared, store.country(code)) {
+                (Some(market), _) => market.handle.clone(),
+                (None, Some(country)) => lsf_core::util::handleize(&country.name),
+                (None, None) => code.to_ascii_lowercase(),
             }),
-            "regions" => Some(Resolved::List(vec![Node::MarketRegion(code)])),
+            "regions" => Some(Resolved::List(match declared {
+                Some(market) => market
+                    .countries
+                    .iter()
+                    .cloned()
+                    .map(Node::MarketRegion)
+                    .collect(),
+                None => vec![Node::MarketRegion(code.to_string())],
+            })),
+            _ => None,
+        }
+    }
+
+    /// `Shop.metaobject(handle: {type, handle})` or `(id:)`.
+    fn metaobject(&self, args: &mut Args) -> Result<Resolved<Node<'c>>, String> {
+        let store = self.ctx.store;
+        let handle = args.take("handle");
+        let id = args.string("id")?;
+        let found = match (handle, id) {
+            (Some(handle), None) => {
+                let part = |key: &str| {
+                    handle
+                        .get(key)
+                        .and_then(Json::as_str)
+                        .ok_or_else(|| format!("argument `handle` needs a string `{key}`"))
+                };
+                store.metaobject(part("type")?, part("handle")?)
+            }
+            (None, Some(id)) => store
+                .metaobjects
+                .iter()
+                .find(|entry| metaobject_id(entry) == id),
+            _ => {
+                return Err(
+                    "give the metaobject either as `handle: {type:, handle:}` or as `id:`".into(),
+                );
+            }
+        };
+        Ok(found.map_or(Resolved::Null, |entry| {
+            Resolved::Object(Node::Metaobject(entry))
+        }))
+    }
+
+    /// A discount applied so far, as `DiscountApplication`.
+    fn application(&self, index: usize, name: &str) -> Option<Resolved<Node<'c>>> {
+        let discount: &AppliedDiscount = &self.ctx.discounts[index];
+        let details = &discount.details;
+        match name {
+            "allocationMethod" => leaf(details.allocation_method.graphql()),
+            "targetSelection" => leaf(details.target_selection.graphql()),
+            "targetType" => leaf(details.target_type.graphql()),
+            "totalAllocatedAmount" => object(Node::Money(discount.amount)),
+            "value" => object(match details.value {
+                DiscountValue::Percentage(percentage) => Node::Percentage(percentage),
+                DiscountValue::Fixed(cents) => Node::Money(cents),
+            }),
             _ => None,
         }
     }
@@ -960,8 +1164,48 @@ impl<'c> FunctionInput<'c> {
             Node::Company(company) => Some(Source::Core(Some(&company.metafields))),
             Node::CompanyLocation(location) => Some(Source::Core(Some(&location.metafields))),
             Node::Shop => Some(Source::Core(Some(&store.shop.metafields))),
+            // The metafields of the discount that made the application.
+            Node::DiscountApplication(index) => Some(Source::Owned(
+                &self.ctx.discounts[*index].details.metafields,
+            )),
+            Node::Market(code) => Some(Source::Core(
+                store
+                    .market_of(code)
+                    .map(|market: &Market| &market.metafields),
+            )),
             _ => None,
         }
+    }
+}
+
+/// A date as GraphQL `DateTime`: `2024-01-01T12:00:00Z`.
+fn date_time(date: DateTime<Utc>) -> String {
+    date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// A percentage as the `Decimal` Shopify sends: `10.0`, `12.5`.
+pub(super) fn percentage_decimal(percentage: f64) -> String {
+    let text = percentage.to_string();
+    if text.contains('.') {
+        text
+    } else {
+        format!("{text}.0")
+    }
+}
+
+/// The id of a metaobject, which the store data does not give: stable for its type and handle.
+fn metaobject_id(entry: &Metaobject) -> String {
+    format!(
+        "gid://shopify/Metaobject/{}",
+        lsf_core::util::stable_id("metaobject", &format!("{}/{}", entry.kind, entry.handle))
+    )
+}
+
+/// The text a metafield value is kept as: JSON for everything that is not a string.
+fn source_text(value: &Json) -> String {
+    match value {
+        Json::String(text) => text.clone(),
+        other => other.to_string(),
     }
 }
 
@@ -1018,11 +1262,7 @@ impl Source<'_> {
                     .iter()
                     .find(|(candidate, _)| canonical_namespace(candidate) == wanted)?;
                 let metafield = entries.get(key)?;
-                let value = match &metafield.value {
-                    Json::String(text) => text.clone(),
-                    other => other.to_string(),
-                };
-                Some((metafield.kind.clone(), value))
+                Some((metafield.kind.clone(), source_text(&metafield.value)))
             }
             Source::Owned(metafields) => metafields
                 .iter()

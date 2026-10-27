@@ -18,7 +18,10 @@ mod tests;
 use serde_json::Value as Json;
 
 use crate::version::{ApiVersion, FunctionApi};
-use crate::{CheckoutState, DeliveryGroup, DiscountClass, Metafield, PaymentMethod, ResultLine};
+use crate::{
+    AppliedDiscount, CheckoutState, DeliveryGroup, DiscountClass, Metafield, PaymentMethod,
+    ResultLine,
+};
 
 /// Everything a Function input can show about the checkout at one step of the pipeline.
 pub struct InputContext<'a> {
@@ -33,6 +36,9 @@ pub struct InputContext<'a> {
     pub state: &'a CheckoutState,
     /// The lines as they are at this step.
     pub lines: &'a [ResultLine],
+    /// The discounts applied so far (by the earlier steps and Functions): the discount
+    /// applications of the cart, which the allocations of lines and delivery groups point to.
+    pub discounts: &'a [AppliedDiscount],
     pub delivery_groups: &'a [DeliveryGroup],
     pub payment_methods: &'a [PaymentMethod],
     /// The object that owns the Function.

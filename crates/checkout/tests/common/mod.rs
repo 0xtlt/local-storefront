@@ -51,6 +51,7 @@ pub fn config() -> CheckoutConfig {
     let method = |handle: &str, name: &str| PaymentMethodConfig {
         handle: handle.to_string(),
         name: name.to_string(),
+        placements: Vec::new(),
     };
     CheckoutConfig {
         shipping_rates: vec![
