@@ -1275,13 +1275,11 @@ fn lines_take_the_quantity_price_breaks_of_the_variant() {
     assert_eq!(priced(12), (2000, 24000, 24000));
 }
 
-#[test]
-fn lines_take_the_price_of_their_selling_plan() {
+/// A selling plan (42, 5.00 off) on the product of the tee.
+fn add_monthly_plan(store: &mut lsf_core::Store) {
     use lsf_core::store::{
         Adjustment, CheckoutCharge, PriceAdjustment, SellingPlan, SellingPlanGroup,
     };
-    let app = app();
-    let mut store = store();
     let group = store.selling_plan_groups.len();
     store.selling_plan_groups.push(SellingPlanGroup {
         id: "subscribe".to_string(),
@@ -1301,8 +1299,16 @@ fn lines_take_the_price_of_their_selling_plan() {
             checkout_charge: CheckoutCharge::Percentage(100),
         }],
     });
-    let (product, variant) = store.variant_location(TEE).unwrap();
+    let (product, _) = store.variant_location(TEE).unwrap();
     store.products[product].selling_plan_groups = vec![group];
+}
+
+#[test]
+fn lines_take_the_price_of_their_selling_plan() {
+    let app = app();
+    let mut store = store();
+    add_monthly_plan(&mut store);
+    let (product, variant) = store.variant_location(TEE).unwrap();
     // A quantity price break does not stack with the plan: the cart takes the plan's price.
     store.products[product].variants[variant].quantity_price_breaks = vec![(2, 1000)];
     let mut session = session(&store, &[(TEE, 2), (TOTE, 1)]);
@@ -1426,6 +1432,26 @@ fn answer(
     output: serde_json::Value,
     configure: impl FnOnce(&mut lsf_checkout::CheckoutConfig),
 ) -> lsf_checkout::CheckoutResult {
+    answer_on(
+        handle,
+        export,
+        spin,
+        output,
+        |_, store| session(store, &CART),
+        configure,
+    )
+}
+
+/// [`answer`] on the cart that `cart` makes of the store (and the files of the app copy, that
+/// it can edit first).
+fn answer_on(
+    handle: &str,
+    export: &str,
+    spin: u32,
+    output: serde_json::Value,
+    cart: impl FnOnce(&AppCopy, &mut lsf_core::Store) -> lsf_core::Session,
+    configure: impl FnOnce(&mut lsf_checkout::CheckoutConfig),
+) -> lsf_checkout::CheckoutResult {
     static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let copy = AppCopy::new(&format!(
         "answer-{handle}-{}",
@@ -1436,9 +1462,9 @@ fn answer(
         answering_module(export, spin),
     )
     .unwrap();
+    let mut store = store();
+    let session = cart(&copy, &mut store);
     let app = copy.load();
-    let store = store();
-    let session = session(&store, &CART);
     let mut config = config();
     config
         .function_metafields
@@ -1764,4 +1790,264 @@ fn a_payment_method_moves_to_a_valid_index_only() {
         assert_refused(&result, "payment-rules", "index");
         assert_eq!(handles(&result), ["card", "cod", "bank"]);
     }
+}
+
+// ---- discount targets that name a variant ----
+
+/// Makes the discount Function of the copy a legacy one (`purchase.product-discount.run`,
+/// `purchase.order-discount.run`), the only generation whose targets name variants.
+fn make_legacy_discount(copy: &AppCopy, target: &str) {
+    copy.replace(
+        "volume-discount",
+        "shopify.extension.toml",
+        "target = \"cart.lines.discounts.generate.run\"",
+        &format!("target = \"{target}\""),
+    );
+    copy.replace(
+        "volume-discount",
+        "shopify.extension.toml",
+        "export = \"cart_lines_discounts_generate_run\"",
+        "export = \"legacy_run\"",
+    );
+    std::fs::write(
+        copy.file("volume-discount", "src/run.graphql"),
+        "query Input { cart { lines { id } } }",
+    )
+    .unwrap();
+}
+
+/// Two lines of the tee, told apart by a line property, 32.00 each.
+fn two_tee_lines(copy: &AppCopy, store: &mut lsf_core::Store) -> lsf_core::Session {
+    make_legacy_discount(copy, "purchase.product-discount.run");
+    let mut session = session(store, &[(TEE, 1), (TEE, 1)]);
+    session.cart_lines[1]
+        .properties
+        .insert("Engraving".to_string(), "Hello".to_string());
+    session
+}
+
+fn variant_discount(quantity: serde_json::Value) -> lsf_checkout::CheckoutResult {
+    let mut target = json!({"id": format!("gid://shopify/ProductVariant/{TEE}")});
+    if !quantity.is_null() {
+        target["quantity"] = quantity;
+    }
+    answer_on(
+        "volume-discount",
+        "legacy_run",
+        0,
+        json!({
+            "discountApplicationStrategy": "ALL",
+            "discounts": [{
+                "targets": [{"productVariant": target}],
+                "value": {"percentage": {"value": "10"}},
+            }],
+        }),
+        two_tee_lines,
+        |config| {
+            config.discounts = vec![discount(
+                "volume-discount",
+                "Answer",
+                None,
+                &[Product],
+                json!({}),
+            )];
+        },
+    )
+}
+
+#[test]
+fn the_quantity_of_a_variant_target_is_one_budget_for_all_the_lines_of_the_variant() {
+    // The control: without a quantity, both lines are discounted whole.
+    let result = variant_discount(json!(null));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.lines.len(), 2);
+    assert_eq!(result.cost.discounts, 640);
+
+    // One item in all, not one per line: the first line only.
+    let result = variant_discount(json!(1));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.cost.discounts, 320);
+    assert_eq!(result.lines[0].total, 2880);
+    assert_eq!(result.lines[1].total, 3200);
+
+    // More than the cart holds takes what there is.
+    assert_eq!(variant_discount(json!(5)).cost.discounts, 640);
+}
+
+#[test]
+fn a_legacy_order_discount_can_target_a_variant() {
+    let target = |quantity: Option<u32>| {
+        let mut variant = json!({"id": format!("gid://shopify/ProductVariant/{TEE}")});
+        if let Some(quantity) = quantity {
+            variant["quantity"] = json!(quantity);
+        }
+        json!({"productVariant": variant})
+    };
+    let run = |targets: serde_json::Value| {
+        answer_on(
+            "volume-discount",
+            "legacy_run",
+            0,
+            json!({
+                "discountApplicationStrategy": "FIRST",
+                "discounts": [{
+                    "message": "Tees",
+                    "targets": targets,
+                    "value": {"percentage": {"value": "10"}},
+                }],
+            }),
+            |copy, store| {
+                make_legacy_discount(copy, "purchase.order-discount.run");
+                // The tote is in the cart too, and stays whole.
+                session(store, &[(TEE, 2), (TOTE, 1)])
+            },
+            |config| {
+                config.discounts = vec![discount(
+                    "volume-discount",
+                    "Answer",
+                    None,
+                    &[Order],
+                    json!({}),
+                )];
+            },
+        )
+    };
+
+    // Both tees: 10 % of 64.00.
+    let result = run(json!([target(None)]));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.cost.discounts, 640);
+    assert_eq!(result.lines[0].total, 5760);
+    assert_eq!(result.lines[1].total, 2400);
+    // One tee out of two: 10 % of 32.00.
+    let result = run(json!([target(Some(1))]));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.cost.discounts, 320);
+    assert_eq!(result.lines[0].total, 6080);
+    assert_eq!(result.lines[1].total, 2400);
+}
+
+// ---- cart transforms and selling plans ----
+
+/// A cart of [`CART`] whose first line (two tees) has a selling plan.
+fn plan_cart(_: &AppCopy, store: &mut lsf_core::Store) -> lsf_core::Session {
+    add_monthly_plan(store);
+    let mut session = session(store, &CART);
+    session.cart_lines[0].selling_plan = Some(42);
+    session
+}
+
+fn transform_plan_cart(operation: serde_json::Value) -> lsf_checkout::CheckoutResult {
+    answer_on(
+        "bundle-transform",
+        "run",
+        0,
+        json!({"operations": [operation]}),
+        plan_cart,
+        |_| {},
+    )
+}
+
+/// The cart as the plan made it, before any Function ran: 27.00 a tee.
+fn assert_plan_cart_untouched(result: &lsf_checkout::CheckoutResult) {
+    assert_eq!(result.lines.len(), 2);
+    assert_eq!(result.lines[0].id, LINE_1);
+    assert_eq!(result.lines[0].quantity, 2);
+    assert_eq!(result.lines[0].unit_price, 2700);
+    assert!(result.lines[0].components.is_empty());
+    assert_eq!(result.lines[0].transformed_by, None);
+    assert_eq!(result.lines[1].id, LINE_2);
+    assert_eq!(result.lines[1].quantity, 1);
+    assert_eq!(result.lines[1].unit_price, 2400);
+    assert_eq!(result.cost.subtotal, 7800);
+}
+
+#[test]
+fn a_cart_transform_cannot_expand_a_line_with_a_selling_plan() {
+    let result = transform_plan_cart(json!({"lineExpand": {
+        "cartLineId": LINE_1,
+        "expandedCartItems": [{"merchandiseId": format!("gid://shopify/ProductVariant/{MUG}"), "quantity": 1}],
+    }}));
+    assert_refused(&result, "bundle-transform", "it has a selling plan");
+    assert_plan_cart_untouched(&result);
+}
+
+#[test]
+fn a_cart_transform_cannot_merge_a_line_with_a_selling_plan() {
+    let result = transform_plan_cart(json!({"linesMerge": {
+        "parentVariantId": format!("gid://shopify/ProductVariant/{MUG}"),
+        "cartLines": [
+            {"cartLineId": LINE_2, "quantity": 1},
+            {"cartLineId": LINE_1, "quantity": 1},
+        ],
+    }}));
+    assert_refused(&result, "bundle-transform", "it has a selling plan");
+    assert_plan_cart_untouched(&result);
+}
+
+#[test]
+fn a_cart_transform_cannot_update_a_line_with_a_selling_plan() {
+    let result = transform_plan_cart(json!({"lineUpdate": {
+        "cartLineId": LINE_1,
+        "title": "Renamed",
+    }}));
+    assert_refused(&result, "bundle-transform", "it has a selling plan");
+    assert_plan_cart_untouched(&result);
+
+    // The control: the line without a plan can be updated.
+    let result = transform_plan_cart(json!({"lineUpdate": {
+        "cartLineId": LINE_2,
+        "title": "Renamed",
+    }}));
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.lines[1].transformed_by.as_deref(), Some("update"));
+    assert_eq!(result.lines[0].transformed_by, None);
+}
+
+// ---- outputs that name a single value where the schema has a list ----
+
+#[test]
+fn a_validation_error_given_as_a_single_object_blocks_the_checkout() {
+    let single = json!({"errors": {"localizedMessage": "No", "target": "$.cart"}});
+    let result = answer("quantity-limit", "run", 0, single, |_| {});
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.errors[0].message, "No");
+    assert_eq!(result.errors[0].target.as_deref(), Some("$.cart"));
+    assert!(run_for(&result, "quantity-limit").error.is_none());
+}
+
+#[test]
+fn a_validation_add_given_single_objects_blocks_the_checkout() {
+    let result = answer_on(
+        "quantity-limit",
+        "run",
+        0,
+        json!({"operations": {"validationAdd": {"errors": {"message": "No", "target": "$.cart"}}}}),
+        |copy, store| {
+            copy.replace(
+                "quantity-limit",
+                "shopify.extension.toml",
+                "target = \"purchase.validation.run\"",
+                "target = \"cart.validations.generate.run\"",
+            );
+            session(store, &CART)
+        },
+        |_| {},
+    );
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.errors[0].message, "No");
+    assert_eq!(result.errors[0].target.as_deref(), Some("$.cart"));
+}
+
+#[test]
+fn a_cart_transform_operation_given_as_a_single_object_is_applied() {
+    let result = answer(
+        "bundle-transform",
+        "run",
+        0,
+        json!({"operations": {"lineUpdate": {"cartLineId": LINE_2, "title": "Renamed"}}}),
+        |_| {},
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.lines[1].transformed_by.as_deref(), Some("update"));
 }

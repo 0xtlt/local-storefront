@@ -227,6 +227,44 @@ impl Schema {
         }
     }
 
+    /// Gives the output the shape GraphQL input coercion would: a single value where the schema
+    /// has a list becomes a list of one, at any depth. Validation accepts both forms, readers
+    /// of the output only want the lists. Call it on an output that [`validate_output`]
+    /// accepted.
+    ///
+    /// [`validate_output`]: Schema::validate_output
+    pub fn normalize_output(&self, result: &str, output: &mut Value) {
+        self.coerce(&TypeRef::Named(result.to_string()), output);
+    }
+
+    fn coerce(&self, ty: &TypeRef, value: &mut Value) {
+        match ty {
+            TypeRef::NonNull(inner) => self.coerce(inner, value),
+            _ if value.is_null() => {}
+            TypeRef::List(inner) => {
+                if !value.is_array() {
+                    *value = Value::Array(vec![value.take()]);
+                }
+                if let Some(items) = value.as_array_mut() {
+                    for item in items {
+                        self.coerce(inner, item);
+                    }
+                }
+            }
+            TypeRef::Named(name) => {
+                if let Some(TypeDef::Input { fields, .. }) = self.types.get(name)
+                    && let Some(object) = value.as_object_mut()
+                {
+                    for field in fields {
+                        if let Some(value) = object.get_mut(&field.name) {
+                            self.coerce(&field.ty, value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn check_value(
         &self,
         ty: &TypeRef,

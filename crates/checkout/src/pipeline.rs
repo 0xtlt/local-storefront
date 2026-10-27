@@ -280,6 +280,14 @@ impl<'a> Pipeline<'a> {
             });
         }
         let failed = execution.error.is_some() || execution.output.is_none();
+        // What is applied has the lists the schema asks for; the run keeps what the Function
+        // answered.
+        let mut applied = execution.output.clone();
+        if !failed && let Some(output) = &mut applied {
+            version
+                .schema(spec.api)
+                .normalize_output(spec.result, output);
+        }
         let run = FunctionRun {
             handle: function.handle.clone(),
             target: target.target.clone(),
@@ -302,7 +310,7 @@ impl<'a> Pipeline<'a> {
             });
         }
         self.runs.push(run);
-        if failed { None } else { execution.output }
+        if failed { None } else { applied }
     }
 
     fn record_failure(
@@ -399,6 +407,38 @@ impl<'a> Pipeline<'a> {
             .ok_or_else(|| format!("no cart line `{id}`"))
     }
 
+    /// The index of a line a cart transform operation changes. Shopify rejects expand, merge
+    /// and update on a line with a selling plan.
+    fn transformable_line(&self, id: &str, operation: &str) -> Result<usize, String> {
+        let index = self.line_index(id)?;
+        if self.has_selling_plan(&self.lines[index]) {
+            return Err(format!(
+                "cannot {operation} the cart line `{id}`: it has a selling plan"
+            ));
+        }
+        Ok(index)
+    }
+
+    /// Whether a cart line the line is made of is sold with a selling plan the store knows (the
+    /// plan that priced it).
+    fn has_selling_plan(&self, line: &ResultLine) -> bool {
+        line.sources.iter().any(|source| {
+            let Some(cart_line) = self.session.cart_lines.get(source.index) else {
+                return false;
+            };
+            let Some(plan) = cart_line.selling_plan else {
+                return false;
+            };
+            self.store
+                .variant_location(cart_line.variant_id)
+                .is_some_and(|(product, _)| {
+                    self.store
+                        .selling_plan_of(&self.store.products[product], plan)
+                        .is_some()
+                })
+        })
+    }
+
     fn new_line(
         &mut self,
         merchandise_id: &str,
@@ -428,7 +468,7 @@ impl<'a> Pipeline<'a> {
     /// proportion to their variant prices.
     fn expand(&mut self, op: &Value) -> Result<(), String> {
         let id = str_field(op, "cartLineId").ok_or("expand without `cartLineId`")?;
-        let index = self.line_index(id)?;
+        let index = self.transformable_line(id, "expand")?;
         let quantity = self.lines[index].quantity;
 
         let items: Vec<&Value> = array(op, "expandedCartItems").collect();
@@ -539,7 +579,7 @@ impl<'a> Pipeline<'a> {
         let mut sources: Vec<(usize, u32)> = Vec::new();
         for source in array(op, "cartLines") {
             let id = str_field(source, "cartLineId").ok_or("merged line without `cartLineId`")?;
-            let index = self.line_index(id)?;
+            let index = self.transformable_line(id, "merge")?;
             if sources.iter().any(|(seen, _)| *seen == index) {
                 return Err(format!("the cart line `{id}` is merged more than once"));
             }
@@ -641,7 +681,7 @@ impl<'a> Pipeline<'a> {
 
     fn update(&mut self, op: &Value) -> Result<(), String> {
         let id = str_field(op, "cartLineId").ok_or("update without `cartLineId`")?;
-        let index = self.line_index(id)?;
+        let index = self.transformable_line(id, "update")?;
         let amount = op
             .pointer("/price/adjustment/fixedPricePerUnit/amount")
             .map(|amount| money_of(amount, "the `fixedPricePerUnit` of an update"))
@@ -1660,6 +1700,28 @@ fn select(
     }
 }
 
+/// The lines a `productVariant` target covers, `(line index, quantity)`. The quantity of the
+/// target is one budget for the variant, spent line after line (two lines of a variant with
+/// different properties are two lines of the same budget); without one, every line is covered
+/// whole.
+fn variant_coverage(lines: &[ResultLine], id: u64, quantity: Option<u32>) -> Vec<(usize, u32)> {
+    let mut budget = quantity;
+    let mut covered = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if line.variant_id != id {
+            continue;
+        }
+        let take = budget.map_or(line.quantity, |left| left.min(line.quantity));
+        if let Some(left) = &mut budget {
+            *left -= take;
+        }
+        if take > 0 {
+            covered.push((index, take));
+        }
+    }
+    covered
+}
+
 /// What a product candidate takes off each line it targets: `(line index, cents)`.
 fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cents)> {
     // (line, quantity covered)
@@ -1672,11 +1734,9 @@ fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cent
                 .map(|index| (index, *quantity))
                 .into_iter()
                 .collect(),
-            Target::Variant { id, quantity } => lines
-                .iter()
-                .enumerate()
-                .filter(|(_, line)| line.variant_id == *id)
-                .map(|(index, _)| (index, *quantity))
+            Target::Variant { id, quantity } => variant_coverage(lines, *id, *quantity)
+                .into_iter()
+                .map(|(index, covered)| (index, Some(covered)))
                 .collect(),
             _ => Vec::new(),
         };
@@ -1715,52 +1775,56 @@ fn plan_product(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cent
         .collect()
 }
 
-/// What an order candidate takes off each line: the amount is shared between the lines in
-/// proportion to what they cost after the line discounts.
+/// What an order candidate takes off each line: the amount is shared between the lines it
+/// covers in proportion to what they cost after the line discounts. An `orderSubtotal` target
+/// covers every line but the excluded ones; a `productVariant` target covers the lines of the
+/// variant, for as many items as its quantity says (one budget for the variant), at what those
+/// items cost after the discounts.
 fn plan_order(lines: &[ResultLine], candidate: &Candidate) -> Vec<(usize, Cents)> {
-    let (excluded_lines, excluded_variants): (Vec<&String>, Vec<u64>) = candidate
-        .targets
-        .iter()
-        .filter_map(|target| match target {
+    // (line index, what the candidate covers of it)
+    let mut covered: Vec<(usize, Cents)> = Vec::new();
+    let mut cover = |index: usize, base: Cents| match covered.iter_mut().find(|(i, _)| *i == index)
+    {
+        Some(entry) => entry.1 = entry.1.max(base),
+        None => covered.push((index, base)),
+    };
+    for target in &candidate.targets {
+        match target {
             Target::Order {
                 excluded_lines,
                 excluded_variants,
-            } => Some((excluded_lines, excluded_variants)),
-            _ => None,
-        })
-        .fold(
-            (Vec::new(), Vec::new()),
-            |(mut lines, mut variants), (l, v)| {
-                lines.extend(l);
-                variants.extend(v);
-                (lines, variants)
-            },
-        );
-    if !candidate
-        .targets
-        .iter()
-        .any(|target| matches!(target, Target::Order { .. }))
-    {
-        return Vec::new();
+            } => {
+                for (index, line) in lines.iter().enumerate() {
+                    if !excluded_lines.contains(&line.id)
+                        && !excluded_variants.contains(&line.variant_id)
+                    {
+                        cover(index, line.total);
+                    }
+                }
+            }
+            Target::Variant { id, quantity } => {
+                for (index, take) in variant_coverage(lines, *id, *quantity) {
+                    let line = &lines[index];
+                    let base = i128::from(line.total) * i128::from(take)
+                        / i128::from(line.quantity.max(1));
+                    cover(index, Cents::try_from(base).unwrap_or(line.total));
+                }
+            }
+            _ => {}
+        }
     }
-    let included: Vec<usize> = lines
-        .iter()
-        .enumerate()
-        .filter(|(_, line)| {
-            !excluded_lines.contains(&&line.id) && !excluded_variants.contains(&line.variant_id)
-        })
-        .map(|(index, _)| index)
-        .collect();
-    let weights: Vec<Cents> = included.iter().map(|index| lines[*index].total).collect();
+    covered.sort_by_key(|(index, _)| *index);
+    let weights: Vec<Cents> = covered.iter().map(|(_, base)| *base).collect();
     let base: Cents = weights.iter().sum();
     let amount = match candidate.value {
         Amount::Percentage(percentage) => (base as f64 * percentage / 100.0).round() as Cents,
         Amount::Fixed { cents, .. } => cents.min(base),
         Amount::None => 0,
     };
-    included
+    covered
         .into_iter()
         .zip(distribute(amount, &weights))
+        .map(|((index, _), cents)| (index, cents))
         .collect()
 }
 
@@ -2020,6 +2084,113 @@ mod tests {
         .unwrap();
         assert_eq!(candidate.message.as_deref(), Some("Ten off"));
         assert_eq!(plan_product(&lines, &candidate), vec![(0, 400)]);
+    }
+
+    #[test]
+    fn a_variant_quantity_is_one_budget_for_all_the_lines_of_the_variant() {
+        // Two lines of the same variant, 32.00 each, told apart by their properties.
+        let lines = vec![
+            line(1, 42, 3200, 1),
+            line(2, 42, 3200, 1),
+            line(3, 43, 500, 1),
+        ];
+        let target = |quantity: Value| {
+            product_candidate(json!({
+                "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": quantity}}],
+                "value": {"percentage": {"value": "10"}},
+            }))
+        };
+        assert_eq!(plan_product(&lines, &target(json!(1))), vec![(0, 320)]);
+        assert_eq!(
+            plan_product(&lines, &target(json!(2))),
+            vec![(0, 320), (1, 320)]
+        );
+        assert_eq!(
+            plan_product(&lines, &target(json!(9))),
+            vec![(0, 320), (1, 320)]
+        );
+        // Each target has its own budget.
+        let two = product_candidate(json!({
+            "targets": [
+                {"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}},
+                {"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}},
+            ],
+            "value": {"percentage": {"value": "10"}},
+        }));
+        assert_eq!(plan_product(&lines, &two), vec![(0, 320)]);
+    }
+
+    #[test]
+    fn a_variant_budget_spans_the_lines_in_order() {
+        let lines = vec![line(1, 42, 1000, 2), line(2, 42, 1000, 3)];
+        let candidate = product_candidate(json!({
+            "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 3}}],
+            "value": {"fixedAmount": {"amount": "1.00", "appliesToEachItem": true}},
+        }));
+        // 2 items of the first line, 1 of the second.
+        assert_eq!(plan_product(&lines, &candidate), vec![(0, 200), (1, 100)]);
+    }
+
+    #[test]
+    fn an_order_discount_can_target_variants_and_their_quantity() {
+        let lines = vec![
+            line(1, 42, 3200, 1),
+            line(2, 42, 3200, 3),
+            line(3, 43, 1000, 1),
+        ];
+        let target = |quantity: Option<u32>| {
+            let mut variant = json!({"id": "gid://shopify/ProductVariant/42"});
+            if let Some(quantity) = quantity {
+                variant["quantity"] = json!(quantity);
+            }
+            product_candidate(json!({
+                "targets": [{"productVariant": variant}],
+                "value": {"percentage": {"value": "10"}},
+            }))
+        };
+        // All the items of the variant: 10 % of 4 x 32.00, shared 1:3. Not the other variant.
+        assert_eq!(plan_order(&lines, &target(None)), vec![(0, 320), (1, 960)]);
+        // Two items in all: the line of one, then one of the other. One budget, not one per line.
+        assert_eq!(
+            plan_order(&lines, &target(Some(2))),
+            vec![(0, 320), (1, 320)]
+        );
+        // A fixed amount is shared between the items, up to what they cost.
+        let fixed = product_candidate(json!({
+            "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 2}}],
+            "value": {"fixedAmount": {"value": "10.00"}},
+        }));
+        assert_eq!(plan_order(&lines, &fixed), vec![(0, 500), (1, 500)]);
+        // A variant the cart does not hold covers nothing.
+        let none = product_candidate(json!({
+            "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/99"}}],
+            "value": {"percentage": {"value": "10"}},
+        }));
+        assert!(plan_order(&lines, &none).is_empty());
+    }
+
+    #[test]
+    fn a_variant_target_of_an_order_discount_costs_what_the_discounts_left() {
+        let mut lines = vec![line(1, 42, 3200, 2)];
+        // A line discount took 14.00 off: the two items cost 50.00.
+        lines[0].total = 5000;
+        let whole = product_candidate(json!({
+            "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42"}}],
+            "value": {"percentage": {"value": "10"}},
+        }));
+        assert_eq!(plan_order(&lines, &whole), vec![(0, 500)]);
+        // One item of the two is half of what is left.
+        let one = product_candidate(json!({
+            "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}}],
+            "value": {"percentage": {"value": "10"}},
+        }));
+        assert_eq!(plan_order(&lines, &one), vec![(0, 250)]);
+        // A fixed amount never takes more than that.
+        let fixed = product_candidate(json!({
+            "targets": [{"productVariant": {"id": "gid://shopify/ProductVariant/42", "quantity": 1}}],
+            "value": {"fixedAmount": {"value": "100.00"}},
+        }));
+        assert_eq!(plan_order(&lines, &fixed), vec![(0, 2500)]);
     }
 
     #[test]

@@ -446,3 +446,73 @@ fn every_target_names_a_result_type_of_its_schema() {
     }
     assert!(crate::version::target_spec("cart.lines.discounts.generate.fetch").is_none());
 }
+
+/// Accepts the output, then normalizes it.
+fn normalized(schema: &Schema, result: &str, mut value: serde_json::Value) -> serde_json::Value {
+    schema.validate_output(result, &value).unwrap();
+    schema.normalize_output(result, &mut value);
+    value
+}
+
+#[test]
+fn a_single_value_where_the_schema_has_a_list_becomes_a_list_of_one() {
+    use FunctionApi::*;
+    let schema = latest(CartCheckoutValidation);
+    let out = normalized(
+        schema,
+        "CartValidationsGenerateRunResult",
+        json!({"operations": {"validationAdd": {"errors": {"message": "No", "target": "$.cart"}}}}),
+    );
+    assert_eq!(
+        out,
+        json!({"operations": [{"validationAdd": {"errors": [{"message": "No", "target": "$.cart"}]}}]})
+    );
+    // Lists stay what they are, so does the legacy shape.
+    let list = json!({"operations": [{"validationAdd": {"errors": [{"message": "No", "target": "$.cart"}]}}]});
+    assert_eq!(
+        normalized(schema, "CartValidationsGenerateRunResult", list.clone()),
+        list
+    );
+    let legacy = normalized(
+        schema,
+        "FunctionRunResult",
+        json!({"errors": {"localizedMessage": "No", "target": "$.cart"}}),
+    );
+    assert_eq!(
+        legacy,
+        json!({"errors": [{"localizedMessage": "No", "target": "$.cart"}]})
+    );
+}
+
+#[test]
+fn nested_lists_and_null_are_normalized_level_by_level() {
+    let schema = Schema::parse(
+        "
+schema { query: Input }
+type Input { id: ID }
+input Result { grid: [[Cell!]!], names: [String!], any: JSON, next: Result }
+input Cell { values: [Int!] }
+scalar JSON
+",
+    )
+    .unwrap();
+    let out = normalized(
+        &schema,
+        "Result",
+        json!({
+            "grid": {"values": 1},
+            "names": "a",
+            "any": {"keep": 1},
+            "next": {"grid": [{"values": [1, 2]}, [{"values": 3}]], "names": null},
+        }),
+    );
+    assert_eq!(
+        out,
+        json!({
+            "grid": [[{"values": [1]}]],
+            "names": ["a"],
+            "any": {"keep": 1},
+            "next": {"grid": [[{"values": [1, 2]}], [{"values": [3]}]], "names": null},
+        })
+    );
+}
