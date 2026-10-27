@@ -7,14 +7,16 @@ use std::process::Command;
 
 use clap::ValueEnum;
 use lsf_checkout::app::{self, App, Selection};
+use lsf_checkout::pipeline::DELIVERY_GROUP_HANDLE;
 use lsf_checkout::{
-    CheckoutConfig, DeliveryKind, DiscountClass, DiscountConfig, Metafield, PaymentMethodConfig,
-    PaymentPlacement, ShippingRate,
+    Address, CheckoutConfig, CheckoutState, DeliveryKind, DiscountClass, DiscountConfig, Metafield,
+    PaymentMethodConfig, PaymentPlacement, ShippingRate,
 };
 use lsf_core::Store;
 use lsf_core::store::model::{
     CheckoutDeliveryKind, CheckoutDiscountClass, CheckoutPaymentPlacement,
 };
+use lsf_core::store::{CheckoutScenario, CheckoutSettings};
 use serde_json::Value as Json;
 
 /// Which look the checkout page takes.
@@ -127,7 +129,12 @@ pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
 
 /// The checkout settings of the store data, as the checkout library takes them.
 pub fn config_from_store(store: &Store) -> CheckoutConfig {
-    let settings = &store.checkout;
+    config_from_settings(&store.checkout)
+}
+
+/// The settings of a checkout, as the checkout library takes them: those of the store data, or
+/// those of a scenario.
+pub fn config_from_settings(settings: &CheckoutSettings) -> CheckoutConfig {
     let metafields = |fields: &[lsf_core::store::CheckoutMetafield]| -> Vec<Metafield> {
         fields
             .iter()
@@ -198,6 +205,73 @@ pub fn config_from_store(store: &Store) -> CheckoutConfig {
             .map(|(handle, fields)| (handle.clone(), metafields(fields)))
             .collect(),
         tax_rate_bps: settings.tax_rate_bps,
+    }
+}
+
+/// The scenario a checkout was opened from, when it still exists and can run.
+pub fn scenario_named<'a>(store: &'a Store, name: Option<&str>) -> Option<&'a CheckoutScenario> {
+    store
+        .scenario(name?)
+        .filter(|scenario| scenario.problems.is_empty())
+}
+
+/// The settings a checkout runs with: those of its scenario, otherwise those of the store.
+pub fn config_for(store: &Store, scenario: Option<&str>) -> CheckoutConfig {
+    match scenario_named(store, scenario) {
+        Some(scenario) => config_from_settings(&scenario.checkout),
+        None => config_from_store(store),
+    }
+}
+
+/// The extensions a checkout uses: those `--extension` selects, narrowed to the ones its
+/// scenario names. The scenario must name extensions the app has.
+pub fn selection_for(
+    app: &App,
+    requested: &[String],
+    scenario: Option<&CheckoutScenario>,
+) -> Result<Selection, String> {
+    let selection = Selection::resolve(app, requested)?;
+    match scenario.and_then(|scenario| scenario.extensions.as_ref()) {
+        Some(handles) => {
+            Selection::resolve(app, handles).map_err(|problem| {
+                format!("the scenario names an extension the app lacks: {problem}")
+            })?;
+            Ok(selection.narrowed_to(handles))
+        }
+        None => Ok(selection),
+    }
+}
+
+/// What the buyer has entered when a scenario opens: its `entered` section as the checkout
+/// keeps it. The language is the request's business, not part of it.
+pub fn entered_by(scenario: &CheckoutScenario) -> CheckoutState {
+    let entered = &scenario.entered;
+    let text = |value: &Option<String>| value.clone().filter(|text| !text.trim().is_empty());
+    let address = entered.shipping_address.as_ref().map(|address| Address {
+        first_name: text(&address.first_name),
+        last_name: text(&address.last_name),
+        company: text(&address.company),
+        address1: text(&address.address1),
+        address2: text(&address.address2),
+        city: text(&address.city),
+        country_code: text(&address.country_code).map(|code| code.to_ascii_uppercase()),
+        province_code: text(&address.province_code),
+        zip: text(&address.zip),
+        phone: text(&address.phone),
+    });
+    CheckoutState {
+        email: text(&entered.email),
+        phone: text(&entered.phone),
+        shipping_address: address.filter(|address| *address != Address::default()),
+        selected_delivery: entered
+            .delivery
+            .iter()
+            .map(|handle| (DELIVERY_GROUP_HANDLE.to_string(), handle.clone()))
+            .collect(),
+        selected_payment: entered.payment.clone(),
+        discount_codes: entered.discount_codes.clone(),
+        scenario: Some(scenario.name.clone()),
+        ..CheckoutState::default()
     }
 }
 

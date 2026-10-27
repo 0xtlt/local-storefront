@@ -8,6 +8,7 @@ mod compress;
 mod control;
 pub use control::{apply_session_input, routes};
 mod forms;
+mod home;
 mod live_reload;
 mod minify;
 pub mod params;
@@ -294,7 +295,7 @@ impl ServerState {
         token
     }
 
-    fn new_session_id(&self) -> String {
+    pub(crate) fn new_session_id(&self) -> String {
         let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
         hasher.write_u64(self.session_counter.fetch_add(1, Ordering::Relaxed));
         hasher.write_u128(self.started.elapsed().as_nanos());

@@ -3238,6 +3238,48 @@ fn resolve_scenario(
             scenario.overrides.push("tax_rate");
         }
     }
+    // What the buyer chose must be offered by the checkout the scenario sets up.
+    let rates: Vec<&str> = scenario
+        .checkout
+        .shipping_rates
+        .iter()
+        .map(|rate| rate.handle.as_str())
+        .collect();
+    let methods: Vec<&str> = scenario
+        .checkout
+        .payment_methods
+        .iter()
+        .map(|method| method.handle.as_str())
+        .collect();
+    for (field, chosen, offered, what) in [
+        (
+            "delivery",
+            scenario.entered.delivery.clone(),
+            rates,
+            "shipping rate",
+        ),
+        (
+            "payment",
+            scenario.entered.payment.clone(),
+            methods,
+            "payment method",
+        ),
+    ] {
+        if let Some(handle) = chosen.filter(|handle| !offered.contains(&handle.as_str())) {
+            let diagnostic = builder.error(
+                "unknown_reference",
+                &origin.child("entered").child(field),
+                format!("there is no {what} \"{handle}\""),
+            );
+            match closest_match(&handle, offered.iter().copied()) {
+                Some(suggestion) => diagnostic.hint(format!(
+                    "did you mean \"{suggestion}\"? The checkout offers: {}",
+                    offered.join(", ")
+                )),
+                None => diagnostic.hint(format!("the checkout offers: {}", offered.join(", "))),
+            };
+        }
+    }
 }
 
 /// The metafields of a checkout setting, written `"namespace.key"`.

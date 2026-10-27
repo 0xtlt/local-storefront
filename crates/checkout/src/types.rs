@@ -37,6 +37,10 @@ pub struct CheckoutState {
     /// decides, so it is neither kept nor read from the session.
     #[serde(skip)]
     pub step: BuyerJourneyStep,
+    /// The checkout scenario this checkout was opened from. The Functions do not read it: the
+    /// server picks the settings and the extensions with it.
+    #[serde(skip)]
+    pub scenario: Option<String>,
 }
 
 /// Where the buyer is when the Functions run: `buyerJourney.step` of the validation input.

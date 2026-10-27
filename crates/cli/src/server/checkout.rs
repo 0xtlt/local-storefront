@@ -14,13 +14,16 @@ use lsf_checkout::{
     Address, BuyerJourneyStep, CheckoutResult, CheckoutState, Metafield, ResultLine,
 };
 use lsf_core::drops::cart::line_key;
+use lsf_core::store::model::ScenarioLook;
 use lsf_core::store::{CartLine, Customer, Language};
 use lsf_core::{Session, Store};
 use serde_json::{Value as Json, json};
 
 use super::reply::{Reply, cache, content_type};
-use super::{Incoming, SESSION_COOKIE, ServerState, SessionEntry};
-use crate::checkout::{CheckoutOptions, Variant, config_from_store, translations};
+use super::{Incoming, SESSION_COOKIE, ServerState, SessionEntry, cart_token_of, home};
+use crate::checkout::{
+    CheckoutOptions, Variant, config_for, entered_by, scenario_named, selection_for, translations,
+};
 
 /// Where the files of the page are served from.
 const ASSETS: &str = "/__lsf/checkout/assets";
@@ -215,15 +218,147 @@ fn request_root(state: &ServerState, session_id: &str, incoming: &Incoming) -> S
     root_of(language_of(state, &store, incoming)).to_string()
 }
 
-/// `/checkout`: a checkout for the cart of the visitor, in the language of the request.
+/// `/checkout`: a checkout for the cart of the visitor, in the language of the request. With
+/// `?scenario=<name>`, a new one set up as that scenario says.
 fn start(state: &ServerState, incoming: &Incoming) -> Reply {
+    if let Some(name) = incoming.query_param("scenario") {
+        return open_scenario(state, incoming, name);
+    }
     let (id, is_new) = state.session_id(incoming);
     let root = request_root(state, &id, incoming);
     let mut location = checkout_path(&root, &token_of(state, &id));
-    if let Some(variant) = incoming.query_param("variant") {
-        location.push_str(&format!("?variant={}", escape_query(variant)));
-    }
+    location.push_str(&carried_query(incoming, &["variant", "targets"]));
     with_cookie(Reply::redirect(&location), &id, is_new)
+}
+
+/// The query parameters of the request that the checkout page keeps, as `?a=1&b=2`.
+fn carried_query(incoming: &Incoming, names: &[&str]) -> String {
+    let pairs: Vec<String> = names
+        .iter()
+        .filter_map(|name| {
+            incoming
+                .query_param(name)
+                .map(|value| format!("{name}={}", escape_query(value)))
+        })
+        .collect();
+    if pairs.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", pairs.join("&"))
+    }
+}
+
+/// The page that lists the scenarios, for the notices to lead back to.
+fn home_path(state: &ServerState, root: &str) -> String {
+    if options(state).standalone {
+        format!("{root}/")
+    } else {
+        "/__lsf/checkouts".to_string()
+    }
+}
+
+/// `/checkout?scenario=<name>`: a new session set up as the scenario says, and a redirect to
+/// its checkout. The session is a new one, with a token of its own, so that nothing the buyer
+/// did in the checkout before (what the extensions stored, an order) is in it; the browser
+/// keeps that session instead of the one it had.
+fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
+    let loaded = state.loaded();
+    let store = &loaded.store;
+    let options = options(state);
+    let request_language = language_of(state, store, incoming);
+    let home = home_path(state, root_of(request_language));
+    let notice = |status, title: &str, paragraphs: &[String], details: &[String]| {
+        home::notice(status, title, paragraphs, details, &home)
+    };
+
+    let Some(scenario) = store.scenario(name) else {
+        let known: Vec<&str> = store
+            .scenarios
+            .iter()
+            .map(|scenario| scenario.name.as_str())
+            .collect();
+        let hint = if known.is_empty() {
+            "There are no scenarios: `lsf checkout init` writes a set in the `checkouts` folder of the store data.".to_string()
+        } else {
+            format!("The scenarios are: {}.", known.join(", "))
+        };
+        return notice(404, &format!("No scenario named {name}"), &[hint], &[]);
+    };
+    if !scenario.problems.is_empty() {
+        return notice(
+            422,
+            &format!("The scenario {name} has errors"),
+            &[format!("Fix {} and reload.", scenario.file)],
+            &scenario.problems,
+        );
+    }
+    let app = match lsf_checkout::app::load(&options.app_dir) {
+        Ok(app) => app,
+        Err(problem) => return notice(500, "The app cannot be read", &[problem], &[]),
+    };
+    if let Err(problem) = selection_for(&app, &options.extensions, Some(scenario)) {
+        return notice(
+            422,
+            &format!("The scenario {name} has errors"),
+            &[format!("{}: {problem}", scenario.file)],
+            &[],
+        );
+    }
+
+    let id = state.new_session_id();
+    let mut session = state.initial_session(store);
+    let mut problems = lsf_core::diagnostics::Diagnostics::new();
+    lsf_core::store::build::apply_session_input(
+        store,
+        &scenario.session,
+        &mut session,
+        &mut problems,
+        &scenario.file,
+        "/session",
+    );
+    if problems.has_errors() {
+        let details: Vec<String> = problems.items.iter().map(ToString::to_string).collect();
+        return notice(
+            422,
+            &format!("The scenario {name} has errors"),
+            &[],
+            &details,
+        );
+    }
+    let entered = entered_by(scenario);
+    // As entering the address does: markets decide on the country of the address.
+    if let Some(code) = entered
+        .shipping_address
+        .as_ref()
+        .and_then(|address| address.country_code.as_deref())
+        .and_then(|code| store.country(code))
+    {
+        session.country = Some(code.iso_code.clone());
+    }
+    let token = cart_token_of(&id);
+    session.cart_token = token.clone();
+    let look = scenario.look.map(|look| match look {
+        ScenarioLook::Standard => Variant::Standard,
+        ScenarioLook::Shop => Variant::Shop,
+    });
+    state.with_session(&id, |entry| {
+        entry.session = session;
+        entry.checkout = CheckoutSession {
+            state: entered,
+            variant: look,
+            ..CheckoutSession::default()
+        };
+    });
+
+    // Under the locale root of the scenario's language, otherwise of the request's.
+    let language = scenario
+        .language
+        .as_deref()
+        .and_then(|iso| store.language(iso))
+        .unwrap_or(request_language);
+    let mut location = checkout_path(root_of(language), &token);
+    location.push_str(&carried_query(incoming, &["targets"]));
+    with_cookie(Reply::redirect(&location), &id, true)
 }
 
 fn escape_query(value: &str) -> String {
@@ -297,7 +432,9 @@ fn price(
     checkout.step = step;
     let options = options(state);
     let app = lsf_checkout::app::load(&options.app_dir)?;
-    let selection = Selection::resolve(&app, &options.extensions)?;
+    // The scenario the checkout opened from sets it up, as long as it exists and is valid.
+    let scenario = scenario_named(store, checkout.scenario.as_deref());
+    let selection = selection_for(&app, &options.extensions, scenario)?;
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     if checkout.email.is_none() {
         checkout.email = customer.map(|customer| customer.email.clone());
@@ -307,7 +444,7 @@ fn price(
             .map(|customer| customer.phone.clone())
             .filter(|phone| !phone.is_empty());
     }
-    let config = config_from_store(store);
+    let config = config_for(store, checkout.scenario.as_deref());
     let result = pipeline::compute(&app, &selection, store, session, checkout, &config);
     Ok((app, selection, result))
 }
@@ -335,6 +472,15 @@ fn compute(
     // How many orders the session placed before this checkout: what tells it from the next one
     // of the same session (the token is the one of the cart), as scope of the extensions' storage.
     object.insert("orderGeneration".into(), json!(basis.placed));
+    // The scenario the checkout was opened from, and where the list of them is.
+    object.insert(
+        "scenario".into(),
+        json!(
+            scenario_named(&store, checkout.scenario.as_deref())
+                .map(|scenario| json!({"name": scenario.name, "title": scenario.title}))
+        ),
+    );
+    object.insert("home".into(), json!(home_path(state, root_of(language))));
     object.insert(
         "shop".into(),
         json!({
@@ -684,7 +830,7 @@ pub(super) fn apply_update(
         return conflict(state, incoming, id);
     }
     let (mut session, store, mut checkout, basis) = read(state, id);
-    let config = config_from_store(&store);
+    let config = config_for(&store, checkout.scenario.as_deref());
     // The operations that run the Functions (a change of a line) see the checkout the buyer sees.
     let language = language_of(state, &store, incoming);
     for (position, operation) in operations.iter().enumerate() {
@@ -1295,7 +1441,11 @@ pub(super) fn place_order(
         });
         entry.checkout.completed = Some(order);
         entry.checkout.placed += 1;
-        entry.checkout.state = CheckoutState::default();
+        // The next checkout of the session is still the one of the scenario.
+        entry.checkout.state = CheckoutState {
+            scenario: entry.checkout.state.scenario.clone(),
+            ..CheckoutState::default()
+        };
         entry.session.cart_lines.clear();
         entry.session.cart_note.clear();
         entry.session.cart_attributes.clear();

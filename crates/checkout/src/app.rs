@@ -296,6 +296,16 @@ impl Selection {
         Ok(Selection::only(requested.iter().cloned()))
     }
 
+    /// Only the extensions of `self` that are also in `handles`.
+    pub fn narrowed_to(&self, handles: &[String]) -> Selection {
+        Selection::only(
+            handles
+                .iter()
+                .filter(|handle| self.contains(handle))
+                .cloned(),
+        )
+    }
+
     pub fn contains(&self, handle: &str) -> bool {
         self.handles
             .as_ref()

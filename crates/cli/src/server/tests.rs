@@ -2983,6 +2983,17 @@ fn checkout_server_of(
     extensions: &[&str],
     standalone: bool,
 ) -> ServerState {
+    checkout_server_with_data(app_dir, extensions, standalone, None)
+}
+
+/// A server whose checkout runs the app in `app_dir`, with the store data in `data` (the
+/// built-in demo store without).
+fn checkout_server_with_data(
+    app_dir: std::path::PathBuf,
+    extensions: &[&str],
+    standalone: bool,
+    data: Option<&Path>,
+) -> ServerState {
     let options = |app: App| {
         ServerState::new(
             app,
@@ -3006,11 +3017,57 @@ fn checkout_server_of(
         .0
     };
     if standalone {
-        options(App::open_without_theme(Path::new("."), None, &[]).expect("no theme"))
+        options(App::open_without_theme(Path::new("."), data, &[]).expect("no theme"))
     } else {
         let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
-        options(App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme"))
+        options(App::open(&theme, data, Revalidate::Never, &[]).expect("fixture theme"))
     }
+}
+
+/// A data directory of the demo store with `checkouts/`: the scenarios as (file, content).
+struct ScenarioData(std::path::PathBuf);
+
+impl ScenarioData {
+    fn new(label: &str, scenarios: &[(&str, &str)]) -> ScenarioData {
+        let directory = std::env::temp_dir().join(format!(
+            "lsf-server-scenarios-{label}-{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&directory).ok();
+        for (name, content) in lsf_core::store::demo::FILES {
+            let path = directory.join(name);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("directory");
+            std::fs::write(path, content).expect("demo file");
+        }
+        std::fs::create_dir_all(directory.join("checkouts")).expect("checkouts");
+        for (name, content) in scenarios {
+            std::fs::write(directory.join("checkouts").join(name), content).expect("scenario");
+        }
+        ScenarioData(directory)
+    }
+
+    fn server(&self, extensions: &[&str], standalone: bool) -> ServerState {
+        checkout_server_with_data(fixture_app(), extensions, standalone, Some(&self.0))
+    }
+}
+
+impl Drop for ScenarioData {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).ok();
+    }
+}
+
+/// The session a reply set the cookie of.
+fn session_cookie(reply: &Reply) -> String {
+    let cookie = cookies(reply)
+        .into_iter()
+        .find(|cookie| cookie.starts_with("_lsf_session="))
+        .unwrap_or_else(|| panic!("no session cookie in {:?}", reply.headers));
+    cookie["_lsf_session=".len()..]
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 /// Puts `session` in a cart of `items` (SKU, quantity) and the store data `data` on top of the
@@ -5461,4 +5518,225 @@ fn a_standalone_checkout_serves_nothing_else() {
     let mut incoming = request("GET", "/checkout", json!({}), "ignored");
     incoming.headers.remove(SESSION_HEADER);
     assert_eq!(cookies(&state.dispatch(&incoming)).len(), 1);
+}
+
+// --- Checkout scenarios ---
+
+const TEES: &str = r#"{
+    "title": "Three tees in French",
+    "session": {
+        "customer": "jane.doe@example.com",
+        "country": "FR",
+        "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 3}], "note": "A gift"}
+    },
+    "entered": {
+        "email": "gift@example.com",
+        "shipping_address": {"last_name": "Dupont", "address1": "1 rue de Rivoli", "city": "Paris", "country_code": "fr"},
+        "delivery": "express",
+        "payment": "cod",
+        "discount_codes": ["WELCOME"]
+    },
+    "language": "fr",
+    "variant": "shop",
+    "checkout": {
+        "shipping_rates": [
+            {"handle": "standard", "title": "Standard", "price": "4.90"},
+            {"handle": "express", "title": "Express", "price": "12.90"}
+        ],
+        "tax_rate": 20
+    }
+}"#;
+
+#[test]
+fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
+    let data = ScenarioData::new("opens", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+
+    let reply = get(&state, "/checkout?scenario=tees", "viewer");
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    assert_ne!(id, "viewer");
+    // Under the locale root of the scenario's language.
+    let location = header(&reply, "location").unwrap().to_string();
+    assert_eq!(
+        location,
+        format!("/fr/checkouts/cn/{}", super::cart_token_of(&id))
+    );
+
+    let json = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(json["lines"][0]["quantity"], 3);
+    assert_eq!(
+        json["scenario"],
+        json!({"name": "tees", "title": "Three tees in French"})
+    );
+    assert_eq!(json["variant"], "shop");
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["country"]["isoCode"], "FR");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["email"], "gift@example.com");
+    assert_eq!(json["note"], "A gift");
+    assert_eq!(json["shippingAddress"]["countryCode"], "FR");
+    assert_eq!(json["selectedPayment"], "cod");
+    assert_eq!(json["deliveryGroups"][0]["selected"], "express");
+    assert_eq!(json["cost"]["shipping"]["amount"], 12.9);
+    let subtotal = json["cost"]["subtotal"]["amount"].as_f64().unwrap();
+    assert!((json["cost"]["tax"]["amount"].as_f64().unwrap() - subtotal * 0.2).abs() < 0.02);
+    // The discount code was entered, and no discount has it.
+    assert_eq!(json["discountCodes"][0]["code"], "WELCOME");
+    assert_eq!(json["discountCodes"][0]["applicable"], false);
+    // The page asks for nothing the scenario did not fill.
+    let page = get(&state, &location, &id);
+    assert_eq!(page.status, 200);
+    assert!(text(&page).contains("<html lang=\"fr\">"));
+}
+
+#[test]
+fn every_opening_of_a_scenario_is_a_new_session() {
+    let data = ScenarioData::new("fresh", &[("tees.json", TEES)]);
+    let state = data.server(&[], false);
+    let first = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    let second = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    assert_ne!(first, second);
+
+    // Changing one checkout leaves the other, and the session that opened them, alone.
+    let path = format!("/fr/checkouts/cn/{}", super::cart_token_of(&first));
+    let reply = operations(
+        &state,
+        &path,
+        &first,
+        json!([{"type": "email", "value": "other@example.com"}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let other = format!("/fr/checkouts/cn/{}.json", super::cart_token_of(&second));
+    assert_eq!(
+        body_json(&get(&state, &other, &second))["buyer"]["email"],
+        "gift@example.com"
+    );
+    let viewer = body_json(&get(&state, "/__lsf/session", "viewer"));
+    assert_eq!(viewer["cart"]["items"], json!([]));
+    assert_eq!(viewer["customer"], Json::Null);
+}
+
+#[test]
+fn a_scenario_that_cannot_open_says_why() {
+    let data = ScenarioData::new(
+        "refused",
+        &[
+            ("tees.json", TEES),
+            ("typo.json", r#"{"titel": "x"}"#),
+            ("ghost.json", r#"{"extensions": ["gift-message", "ghost"]}"#),
+        ],
+    );
+    let state = data.server(&[], true);
+
+    let missing = get(&state, "/checkout?scenario=nope", "viewer");
+    assert_eq!(missing.status, 404);
+    let page = text(&missing);
+    assert!(page.contains("No scenario named nope"), "{page}");
+    assert!(page.contains("ghost, tees, typo"), "{page}");
+    assert!(cookies(&missing).is_empty());
+
+    let typo = get(&state, "/checkout?scenario=typo", "viewer");
+    assert_eq!(typo.status, 422);
+    let page = text(&typo);
+    assert!(page.contains("unknown_field"), "{page}");
+    assert!(page.contains("did you mean &quot;title&quot;?"), "{page}");
+    assert!(page.contains("checkouts/typo.json"), "{page}");
+    assert!(cookies(&typo).is_empty());
+
+    let ghost = get(&state, "/checkout?scenario=ghost", "viewer");
+    assert_eq!(ghost.status, 422);
+    assert!(
+        text(&ghost).contains("no extension named `ghost`"),
+        "{}",
+        text(&ghost)
+    );
+}
+
+#[test]
+fn a_scenario_picks_the_extensions_that_run() {
+    let scenario = r#"{
+        "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}},
+        "extensions": ["quantity-limit", "gift-message"]
+    }"#;
+    let data = ScenarioData::new("extensions", &[("few.json", scenario)]);
+    let state = data.server(&[], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=few", "viewer"));
+    let path = format!("/checkouts/cn/{}.json", super::cart_token_of(&id));
+    let json = body_json(&get(&state, &path, &id));
+    let handles = |key: &str, field: &str| -> Vec<String> {
+        json[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry[field].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(handles("extensions", "handle"), ["gift-message"]);
+    let mut ran = handles("runs", "handle");
+    ran.dedup();
+    assert_eq!(ran, ["quantity-limit"]);
+
+    // `--extension` is the limit: a scenario cannot widen it.
+    let state = data.server(&["gift-message"], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=few", "viewer"));
+    let path = format!("/checkouts/cn/{}.json", super::cart_token_of(&id));
+    let json = body_json(&get(&state, &path, &id));
+    assert_eq!(json["runs"], json!([]));
+    assert_eq!(json["extensions"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn the_scenario_stays_with_the_session_after_an_order() {
+    let data = ScenarioData::new("order", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    let path = format!("/fr/checkouts/cn/{}", super::cart_token_of(&id));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), &id);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        body_json(&get(&state, &format!("{path}.json"), &id))["status"],
+        "completed"
+    );
+
+    // A cart again: a new checkout, still set up as the scenario says.
+    let put = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        &id,
+    ));
+    assert_eq!(put.status, 200, "{}", text(&put));
+    let json = body_json(&get(&state, &format!("{path}.json"), &id));
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["scenario"]["name"], "tees");
+    assert_eq!(
+        json["deliveryGroups"][0]["options"][1]["cost"]["amount"],
+        12.9
+    );
+}
+
+#[test]
+fn a_scenario_is_reloaded_when_its_file_changes() {
+    let data = ScenarioData::new("reload", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    let path = format!("/fr/checkouts/cn/{}", super::cart_token_of(&id));
+    assert_eq!(
+        body_json(&get(&state, &format!("{path}.json"), &id))["cost"]["shipping"]["amount"],
+        12.9
+    );
+    std::fs::write(
+        data.0.join("checkouts/tees.json"),
+        TEES.replace("\"12.90\"", "\"9.90\""),
+    )
+    .unwrap();
+    std::fs::write(data.0.join("checkouts/new.json"), "{}").unwrap();
+    state.reload();
+    // The open checkout follows the scenario; a new file is a new scenario.
+    assert_eq!(
+        body_json(&get(&state, &format!("{path}.json"), &id))["cost"]["shipping"]["amount"],
+        9.9
+    );
+    assert_eq!(get(&state, "/checkout?scenario=new", "viewer").status, 302);
 }

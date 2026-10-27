@@ -1064,6 +1064,11 @@ impl Store {
             .find(|language| language.iso_code.eq_ignore_ascii_case(iso_code))
     }
 
+    /// The checkout scenario named so, by the name of its file.
+    pub fn scenario(&self, name: &str) -> Option<&CheckoutScenario> {
+        self.scenarios.iter().find(|scenario| scenario.name == name)
+    }
+
     pub fn country(&self, iso_code: &str) -> Option<&Country> {
         self.countries
             .iter()

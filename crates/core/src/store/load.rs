@@ -1455,6 +1455,36 @@ mod tests {
     }
 
     #[test]
+    fn what_a_scenario_has_the_buyer_choose_must_be_offered() {
+        let (store, _) = with_scenarios(
+            "choices",
+            None,
+            &[(
+                "choices.json",
+                r#"{
+                    "entered": {"delivery": "expres", "payment": "cod"},
+                    "checkout": {
+                        "shipping_rates": [{"handle": "standard", "price": 1}, {"handle": "express", "price": 2}],
+                        "payment_methods": [{"handle": "card"}]
+                    }
+                }"#,
+            )],
+        );
+        let problems = store.scenarios[0].problems.join("\n");
+        assert!(
+            problems.contains("there is no shipping rate \"expres\"")
+                && problems.contains("did you mean \"express\"?"),
+            "{problems}"
+        );
+        assert!(
+            problems.contains("there is no payment method \"cod\"")
+                && problems.contains("the checkout offers: card"),
+            "{problems}"
+        );
+        assert!(problems.contains("checkouts/choices.json at /entered/payment"));
+    }
+
+    #[test]
     fn a_store_without_a_checkouts_folder_has_no_scenarios() {
         let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
         assert!(store.scenarios.is_empty());
