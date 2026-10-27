@@ -51,6 +51,34 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   on. The `shopify` global and the Function input do not change: Shopify exposes no deferred
   amount there.
 
+- **A home page for the checkout.** `GET /` of `lsf checkout` (and `/__lsf/checkouts`, which
+  `lsf serve --app` prints when it starts, as the theme owns `/`) lists every Function of the
+  app (API, targets, build status, network access with a `.fetch` target, what is wrong with
+  it) and every checkout UI extension (API version, capabilities, targets, and the place each
+  target has on the page, or that it has none), and a card for every checkout scenario, with a
+  link that opens a checkout for it. `?format=json` answers what it says.
+- **Checkout scenarios.** A file of `checkouts/` in the store data (`checkouts/<name>.json`) is a
+  named checkout setup, on top of the store data: the cart (lines, quantities, selling plans,
+  note, attributes), the buyer (a guest, a customer, a company location), the country and
+  language, what the buyer entered (email, address, discount codes, delivery, payment),
+  overrides of the `checkout` section, the look and the extensions that run.
+  `/checkout?scenario=<name>` opens a fresh checkout for it, in a new session. Scenarios are
+  validated (`validate`, with the codes of the data guide), reloaded when they change, have a
+  JSON Schema (`schema checkout-scenario`, and `schema/` written by `init`), and one with errors
+  is listed with them, not hidden.
+- **`lsf checkout init [--app <dir>]`** writes the scenarios: for the Functions and checkout UI
+  extensions of the app (a cart a cart transform can merge or expand, a cart and a code for a
+  discount, several shipping rates or payment methods, a cart a validation refuses, one with
+  everything for the extensions), and always a guest, a customer, a B2B buyer, another country
+  and language, a subscription, a pre-order with a deposit, the Shop look and a large cart. It
+  creates the data folder with the demo store if there is none, uses the products of an existing
+  one, and never overwrites without `--force`.
+- **`/checkout?targets=all`** opens a checkout where every extension renders at every target it
+  declares: the steps of a cart that ships are always there, the thank-you page is shown under the
+  checkout, and a panel lists each target as shown, without a place on the page, or waiting for
+  something the cart lacks.
+- **`lsf function run --scenario <name>`** runs the Functions for a scenario.
+
 ## 0.1.18 - 2026-10-21
 
 ### Changed

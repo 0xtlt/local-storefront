@@ -12,15 +12,21 @@ Shopify's checkout.
 npx local-storefront checkout --app ../my-app
 ```
 
-Open <http://127.0.0.1:9292/checkout>. The checkout shows the cart of the session, which the
-store data defines (`session.cart`, see [data format](data-format.md#customers-and-sessions)).
-It needs no theme.
+Open <http://127.0.0.1:9292/>: the [home page](#the-home-page) lists the extensions of the app
+and the [checkout scenarios](#scenarios), and opens a checkout for each. <http://127.0.0.1:9292/checkout>
+is the checkout of the cart of the session, which the store data defines (`session.cart`, see
+[data format](data-format.md#customers-and-sessions)). It needs no theme.
 
-With a theme, `serve` does the same and the cart form of the theme leads to that checkout:
+With a theme, `serve` does the same and the cart form of the theme leads to that checkout. The
+theme owns `/`, so the home page is at <http://127.0.0.1:9292/__lsf/checkouts>, and the server
+prints its address when it starts:
 
 ```bash
 npx local-storefront serve --app ../my-app
 ```
+
+No scenarios yet? `npx local-storefront checkout init --app ../my-app` writes a set made for
+the extensions of the app, see [scenarios](#scenarios).
 
 The app is a directory with `shopify.app.toml` and `extensions/*/shopify.extension.toml`. API
 versions 2026-10 and 2027-01 are supported. Functions run from their built Wasm module and
@@ -44,6 +50,98 @@ starts, and is in the `diagnostics` of the state.
 
 `checkout` takes the other options of [`serve`](cli.md#serve) (`--port`, `--host`, `--quiet`,
 `--static`, `--customer`, ...).
+
+## The home page
+
+`GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
+page says, for tools) shows everything the checkout can do for the app, with the look of the
+checkout and without any network:
+
+- **Every Function:** its handle and name, the API version, the Function API of each target, whether
+  it is built (and the command that builds it), whether it has a `.fetch` target (network
+  access) and whether a target is legacy or not run by the local checkout. What is wrong with it
+  (a missing build, an unknown target, an API version that is not supported) shows as a banner.
+- **Every checkout UI extension:** its handle, API version, capabilities and targets, each with
+  the place it has on the page ("Checkout summary: under each line"). A target the page has no
+  place for (`purchase.checkout.chat.render`, the pickup point targets) is said to have none: the
+  extension does not render there.
+- **Every [scenario](#scenarios):** a summary of its cart, buyer, country and language, what the
+  buyer entered, discounts, settings it overrides, look and extensions, and a link that opens a
+  fresh checkout for it. A scenario with errors is listed with them and has no link.
+- **A link that opens a checkout where every extension renders at every target it declares**
+  ([`?targets=all`](#every-extension-target)), and one for the Shop look.
+
+An extension that `--extension` leaves out is listed and marked so. The page follows the locale
+prefix of its URL (`/fr/` links to `/fr/checkout`; `/__lsf/checkouts?locale=fr` does the same).
+
+## Scenarios
+
+A scenario is a named checkout setup: one file of `checkouts/` in the
+[store data](data-format.md#checkout-scenarios) (`<data>/checkouts/<name>.json`, the data folder
+being `--data`, `LSF_DATA` or `shopify-local/`). It sets what a checkout depends on, on top of
+the store data: the cart (lines, quantities, selling plans, note, attributes), the buyer (a guest,
+a customer, a company location), the country, the language, what the buyer already entered
+(email, address, discount codes, delivery and payment), overrides of the `checkout` section
+(shipping rates, payment methods, discounts, Function settings, tax), the look and the
+extensions that run. The files are reloaded when they change, and `validate` checks them.
+
+```json
+{
+  "title": "Three tees in French",
+  "session": { "customer": "jane.doe@example.com", "cart": { "items": [{ "variant": "TEE-BLK-M", "quantity": 3 }] } },
+  "entered": { "discount_codes": ["WELCOME"] },
+  "language": "fr",
+  "checkout": { "tax_rate": 20 },
+  "variant": "shop"
+}
+```
+
+- `GET /checkout?scenario=<name>` opens it: a **new session** (a new cookie, a new checkout token,
+  nothing kept from the checkout before, such as what the extensions stored) with the cart,
+  buyer and entries of the scenario, then a redirect to its checkout, under the locale root of its
+  language. The browser keeps that session, so the theme (with `serve --app`) shows its cart and
+  customer too. A scenario that does not exist answers `404`, and one with errors `422`, with a
+  page that says what is wrong.
+- The checkout keeps the settings and the extensions of its scenario for the whole session, an
+  order included, and follows the file when it changes. The state has `scenario`
+  (`{name, title}`) and the page names it in its header.
+- `lsf function run --scenario <name>` runs the Functions for a scenario.
+- Only one scenario is open per browser: the session is the cookie's.
+
+`npx local-storefront checkout init --app ../my-app` writes the scenarios, made for the app:
+
+| The app has | Scenarios |
+|---|---|
+| a cart transform | `cart-transform`: several lines of more than one unit and one of three, for a merge, an expand or an update |
+| a discount Function | `discount-automatic` (a cart of six, three and two units) and `discount-code` (the same cart with `SAVE10` entered; the code of a discount of the store data is kept) |
+| a delivery customization | `delivery-options`: standard, express, local delivery and store pickup |
+| a payment customization | `payment-methods`: card, PayPal, cash on delivery, bank deposit and two express buttons |
+| a validation Function | `validation`: a big cart, for the Function to refuse |
+| a checkout UI extension | `all-extensions`: a customer, several lines (one with a subscription), a code, shipping options |
+| (always) | `guest`, `customer` (with a note and an attribute), `b2b` (a company customer at another location), `abroad` (another country and language), `subscription`, `pre-order` (a deposit, the rest later), `shop-look`, `large-cart` |
+
+A scenario about one kind of Function runs that Function and the checkout UI extensions, and no
+other Function (`extensions`), so that its effect shows alone; `all-extensions` has no such
+list. The settings of your Functions are the store data's: the scenarios leave
+`checkout.functions` alone, and the `discount-*` scenarios list the discount Functions again with
+the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to start:
+edit them.
+
+`checkout init` creates the data folder with the demo store when it does not exist (and a
+selling plan with a deposit for `pre-order`). When it exists, it uses the products, customers,
+countries, languages and selling plans it has, and says which scenarios it skipped and why. It
+never overwrites a file without `--force`, and refreshes `schema/` so that editors complete the
+scenarios (`"$schema": "../schema/checkout-scenario.schema.json"`).
+
+### Every extension target
+
+`/checkout?targets=all` (or `&targets=all` after `?scenario=`) opens a checkout where each
+extension renders at every target it declares: the steps of a cart that ships are shown whatever
+the cart, and the thank-you page is shown under the checkout with the same cart (no order is
+placed), so the thank-you targets are there too. A panel at the top lists every target of every
+extension: shown, without a place on the page, or waiting for something the cart lacks (shipping
+methods need an address, a line target needs a line). The `all-extensions` scenario is made for
+it.
 
 ## Set up the checkout
 
@@ -333,6 +431,7 @@ instructions: 34977
 
 | Option | What it does |
 |---|---|
+| `--scenario <name>` | A [scenario](#scenarios) of the store data: its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
 | `--session <file or JSON>` | The session to run for: a [session](data-reference.md#session) with a `cart`, a `customer`, a `country`. Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
 | `--locale <iso>` | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
@@ -363,7 +462,9 @@ await request.post(`${path}/update`, {
 
 | Request | What it does | Answer |
 |---|---|---|
-| `GET /checkout` | Leads to the checkout of the session's cart. `?variant=shop` for the other look. | A redirect to `/checkouts/cn/<token>` (`/fr/checkouts/cn/<token>` from `/fr/checkout`) |
+| `GET /checkout` | Leads to the checkout of the session's cart. `?variant=shop` for the other look, `?targets=all` for [every extension target](#every-extension-target). | A redirect to `/checkouts/cn/<token>` (`/fr/checkouts/cn/<token>` from `/fr/checkout`) |
+| `GET /checkout?scenario=<name>` | Opens a checkout for a [scenario](#scenarios), in a new session. | A redirect to its checkout with a new session cookie, or `404`/`422` and a page that says why |
+| `GET /` (`lsf checkout`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says. | HTML, or JSON |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
@@ -451,3 +552,5 @@ an order that was placed already leads to the same thank-you page, never to a se
 - Customer accounts hosted by Shopify, Shop Pay and express checkout.
 - With `checkout` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.
+- A scenario is one session per browser: opening another replaces it. The scenario cannot set
+  what the theme shows outside the cart and the customer (`theme_settings`, a frozen clock).

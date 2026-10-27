@@ -47,7 +47,7 @@ the strict parser against the liquid-spec specs that run in `strict2` mode, and
 |---|---|
 | `store/model` | The input format, as serde types. Their doc comments are the user documentation: the JSON Schema and the field reference are generated from them. |
 | `store/validate` | JSON Schema validation, turned into diagnostics with a code, a JSON pointer and a hint. |
-| `store/load`, `store/build` | Read and merge the data files, then resolve them into a `Store`: defaults, ids, handles, references between entities, with semantic diagnostics. |
+| `store/load`, `store/build` | Read and merge the data files, then resolve them into a `Store`: defaults, ids, handles, references between entities, with semantic diagnostics. The files of `checkouts/` are not merged: each is a checkout scenario, resolved against the store (`Store::scenarios`) and kept with its errors when it has some. |
 | `theme/` | Access to a theme directory: cached and revalidated files, parsed Liquid, section schemas, JSON templates, locales. |
 | `drops/` | Shopify's Liquid objects, backed by the `Store`, the session and the request. Properties are computed on demand. |
 | `filters/`, `tags/` | Shopify's filters and tags (`section`, `sections`, `content_for`, `form`, `paginate`, `render` with blocks, ...). |
@@ -118,7 +118,7 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 
 ## `lsf`: commands and server
 
-`commands/` holds one file per subcommand (`checkout` is `serve` without a theme: `App::open_without_theme`; `function run` runs the pipeline once). `server/` is the HTTP side:
+`commands/` holds one file per subcommand (`checkout` is `serve` without a theme: `App::open_without_theme`, and `checkout init` (`checkout_init.rs`) writes the checkout scenarios for an app; `function run` runs the pipeline once). `server/` is the HTTP side:
 
 | Module | Role |
 |---|---|
@@ -130,7 +130,8 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 | `minify` | The stylesheets and the scripts of the theme, minified with a source map. |
 | `compress` | Brotli or gzip for the responses that gain from it, by what the client accepts. |
 | `control` | The `/__lsf` API. |
-| `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. |
+| `home` | `--app`: the home page (`/` of `lsf checkout`, `/__lsf/checkouts`) and the notices that say why a scenario did not open: HTML in the look of the checkout, drawn from the JSON of `?format=json`. |
+| `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, `/checkout?scenario=<name>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. |
 | `../profile` | Shared by `lsf profile` and `/__lsf/profile`: renders a page several times with the profiler, keeps the render in the middle, and writes it as a tree of text or in the format of speedscope, in time or in points. `lsf-core` adds the frames Liquid does not know (`render`, a JSON template, `section <id>`, `block <key>`) and the costs (`render/cost`): the objects charge for what they load where they are created. |
 | `speedscope` | The viewer of flame graphs, served from the binary for `/__lsf/profile?...&html=1`. Its files are in `assets/speedscope/`, with their licenses. |
 | `timing` | The `Server-Timing` header of each response, and the render times `/__lsf/timings` adds up: a histogram per template, per section and per theme block, so that they take the same room after a million pages. |

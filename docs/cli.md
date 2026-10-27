@@ -52,7 +52,9 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 
 When it is ready, the server prints a line to stderr that starts with
 `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. It runs
-until it is stopped.
+until it is stopped. With `--app`, it also prints how many checkout scenarios the data has and,
+with a theme, the address of the home page of the checkout
+(`home:   http://127.0.0.1:<port>/__lsf/checkouts`).
 
 While it runs, tests talk to it through the [control API](control-api.md).
 
@@ -61,13 +63,35 @@ While it runs, tests talk to it through the [control API](control-api.md).
 `npx local-storefront checkout --app <dir>`
 
 Serves the checkout of a Shopify app alone, without a theme: `serve --app` without the
-storefront. `/` leads to `/checkout`; the control API and `/cdn` are there, other pages answer
-`404`. It takes the options of [`serve`](#serve), and `--app` is required. Guide:
-[checkout](checkout.md).
+storefront. `/` is the [home page](checkout.md#the-home-page), which lists the extensions of the
+app and the checkout scenarios and opens a checkout for each; `/checkout` starts a checkout. The
+control API and `/cdn` are there, other pages answer `404`. It takes the options of
+[`serve`](#serve), and `--app` is required. Guide: [checkout](checkout.md).
 
 ```bash
 npx local-storefront checkout --app ../my-app --extension volume-discount --variant shop
 ```
+
+### checkout init
+
+`npx local-storefront checkout init [--app <dir>]`
+
+Writes checkout scenarios, the files of `checkouts/` in the store data, made for the Functions
+and checkout UI extensions of the app (a generic set without `--app`, or when nothing matches).
+It creates the data folder with the demo store when it does not exist, refreshes `schema/`, never
+overwrites a scenario or a data file without `--force`, and prints what it wrote, what it kept
+and what it skipped and why. It is a subcommand of `checkout` because the scenarios are the
+checkout's, and the same data folder as `init`, `--data` and `LSF_DATA` included. Guide:
+[checkout](checkout.md#scenarios).
+
+```bash
+npx local-storefront checkout init --app ../my-app
+```
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `--app <dir>` | `LSF_APP` | The app the scenarios are made for. |
+| `--force` | | Overwrites the scenarios that exist. |
 
 ## function run
 
@@ -314,7 +338,8 @@ the command exits with `2`.
 `npx local-storefront init`
 
 Creates the data folder with a demo store, JSON Schemas for editors, and the data guide as
-`README.md`.
+`README.md`. For the checkout of a Shopify app, [`checkout init`](#checkout-init) writes the
+scenarios.
 
 | Option | What it does |
 |---|---|
@@ -328,7 +353,7 @@ Prints the JSON Schema of the store data.
 
 | Option | What it does |
 |---|---|
-| `[kind]` | `store` (default, a root data file), `product`, `collection`, `page`, `blog`, `customer`, `menu` or `session`. |
+| `[kind]` | `store` (default, a root data file), `product`, `collection`, `page`, `blog`, `customer`, `menu`, `session` or `checkout-scenario` (a file of `checkouts/`). |
 | `--out <dir>` | Writes every schema into the folder as `<kind>.schema.json`. |
 
 ## routes

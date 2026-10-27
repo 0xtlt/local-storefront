@@ -79,8 +79,11 @@ npx local-storefront checkout --app ../my-app
 ```
 
 Runs the Shopify Functions of the app and shows its checkout UI extensions on a local checkout,
-without a store. `npx local-storefront function run --app ../my-app` runs the Functions once and
-prints their input and output. Guide: [checkout](docs/checkout.md).
+without a store. Its home page lists every Function and extension of the app and the checkout
+scenarios (carts, buyers, countries, settings), and opens a checkout for each:
+`npx local-storefront checkout init --app ../my-app` writes a set made for the app.
+`npx local-storefront function run --app ../my-app` runs the Functions once and prints their
+input and output. Guide: [checkout](docs/checkout.md).
 
 ### Get ready for Shopify's strict Liquid parser
 
@@ -130,7 +133,8 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 | `npx local-storefront check` | Checks every Liquid file, and what Shopify's strict parser rejects. `--fix` rewrites it. `--format json` for tools. |
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
 | `npx local-storefront checkout --app <dir>` | Serves the checkout of a Shopify app: its Functions run, its checkout UI extensions show. `serve --app` does it with the theme. |
-| `npx local-storefront function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--format json` for tools. |
+| `npx local-storefront checkout init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
+| `npx local-storefront function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--scenario <name>` runs a checkout scenario. `--format json` for tools. |
 | `npx local-storefront render <path>` | Prints the HTML of one page, without a server. |
 | `npx local-storefront profile <path>` | Shows what a page spends its time on, or what it would cost Shopify. |
 | `npx local-storefront routes` | Lists the pages the store data creates. |

@@ -173,7 +173,19 @@ too.
 
 ## Server routes (integration)
 
-- `GET /checkout` (and theme's cart form) → redirect `/checkouts/cn/<token>`.
+- `GET /checkout` (and theme's cart form) → redirect `/checkouts/cn/<token>`. `?variant=` and
+  `?targets=all` (the page shows every extension target, see below) are carried over.
+- `GET /checkout?scenario=<name>` → a new session (new cookie and token) set up from the
+  scenario (`Store::scenarios`, files of `checkouts/`), then the same redirect, under the locale
+  root of the scenario's language. 404 for an unknown scenario, 422 with its diagnostics for a
+  broken one. The scenario's name stays in `CheckoutState::scenario` (not serialized): `price`
+  takes the settings (`CheckoutScenario::checkout`, the store's with the overrides on top) and
+  the extensions (`Selection::narrowed_to`) from it, so a reload of the files reaches the open
+  checkout.
+- `GET /` of `lsf checkout` and `GET /__lsf/checkouts` → the home page (`server/home.rs`), HTML
+  drawn from the JSON that `?format=json` answers: the Functions and UI extensions of the app
+  (`placement.rs` says where the page renders each UI target; a test keeps it equal to
+  `RENDERED_TARGETS` of `extension-host.js`) and the scenarios with a summary.
 - `GET /checkouts/cn/<token>` → HTML shell: `crates/checkout/assets/checkout.html` with
   `<!--LSF_STATE-->` replaced by the state JSON (escaped for a `<script type="application/json"
   id="lsf-checkout-state">`), `<!--LSF_ASSETS-->` by the asset base `/__lsf/checkout/assets`.
@@ -250,6 +262,10 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   the number of orders the session placed before it, as the token is the one of the cart; the
   thank-you page of an order has a scope of its own), then to the extension, shared by its
   targets and not with the other extensions.
+- `?targets=all`: `checkout.js` passes `preview: {all, rendered}` to `renderPage`, which shows
+  the steps of a cart that ships whatever the cart, the thank-you page under the checkout and a
+  panel (`targetsPanel`) of every target of every loaded extension: `shown` (a slot exists),
+  without a place (not in `RENDERED_TARGETS`), or waiting for something (`whyNotShown`).
 - `api-versions.js`: the API releases the host runs, `2026-10` and the `2027-01` release
   candidate; an extension on another version, or declaring its metafields against the rules of
   its version, is not loaded and the page shows why. See `ui-api-versions.md`.
