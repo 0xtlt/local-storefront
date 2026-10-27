@@ -220,6 +220,16 @@ pub struct ResultLine {
     /// After line discounts.
     #[serde(serialize_with = "money")]
     pub total: Cents,
+    /// What the selling plan of the line leaves to pay later (a pre-order's remaining balance),
+    /// before line discounts: the price of the line less its `checkout_charge`. Zero for a line
+    /// without a plan, or whose plan takes the whole price at checkout.
+    #[serde(skip)]
+    pub deferred: Cents,
+    /// What is left to pay later, after the discounts: a discount comes off the balance first,
+    /// then off the deposit. What is due at checkout for the line is its `total` less this. Only
+    /// written for a line that has a balance.
+    #[serde(serialize_with = "money", skip_serializing_if = "is_zero")]
+    pub due_later: Cents,
     pub discount_allocations: Vec<DiscountAllocation>,
     pub attributes: Vec<KeyValue>,
     /// For a line a cart transform made from others (merge) or split (expand).
@@ -248,6 +258,9 @@ pub struct SelectedOption {
 pub struct LineSellingPlan {
     /// `gid://shopify/SellingPlan/<n>`.
     pub id: String,
+    /// What the checkout shows under the line, as the cart does. Not part of
+    /// `merchandise.sellingPlan`, which has the `id` and `recurringDeliveries` only.
+    pub name: String,
     pub recurring_deliveries: bool,
 }
 
@@ -464,8 +477,20 @@ pub struct Cost {
     pub shipping: Cents,
     #[serde(serialize_with = "money")]
     pub tax: Cents,
+    /// What the order costs in all, the part paid later included.
     #[serde(serialize_with = "money")]
     pub total: Cents,
+    /// What the buyer pays now: `total` less `due_later`.
+    #[serde(serialize_with = "money")]
+    pub due_now: Cents,
+    /// What the selling plans of the lines defer (the balance of a pre-order, a try before you
+    /// buy), with the tax on it. Zero when every line is paid at checkout.
+    #[serde(serialize_with = "money")]
+    pub due_later: Cents,
+    /// The amount to pay at checkout before discounts, taxes and shipping: the subtotal less
+    /// what the selling plans defer. The `checkout_charge_amount` of `/cart.js`.
+    #[serde(serialize_with = "money")]
+    pub checkout_charge_amount: Cents,
     pub currency_code: String,
 }
 
@@ -487,6 +512,10 @@ pub struct FunctionRun {
     /// For a `.fetch` target: the HTTP request it asked for and the response it got.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exchange: Option<crate::fetch::Exchange>,
+}
+
+fn is_zero(cents: &Cents) -> bool {
+    *cents == 0
 }
 
 /// Money as checkout UI extensions see it: `{"amount": 19.99, "currencyCode": "EUR"}`. The

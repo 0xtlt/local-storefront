@@ -1510,6 +1510,156 @@ fn lines_take_the_price_of_their_selling_plan() {
     assert_eq!(result.cost.subtotal, 7800);
 }
 
+/// A selling plan (43, no price change) on the product of the tee, that takes `charge` at
+/// checkout: a pre-order with a deposit, or a try before you buy.
+fn add_deferred_plan(store: &mut lsf_core::Store, charge: lsf_core::store::CheckoutCharge) {
+    use lsf_core::store::{SellingPlan, SellingPlanGroup};
+    let group = store.selling_plan_groups.len();
+    store.selling_plan_groups.push(SellingPlanGroup {
+        id: "preorder".to_string(),
+        name: "Pre-order".to_string(),
+        app_id: None,
+        options: vec!["Purchase".to_string()],
+        plans: vec![SellingPlan {
+            id: 43,
+            name: "Pre-order with a deposit".to_string(),
+            description: None,
+            options: vec!["Deposit".to_string()],
+            price_adjustments: vec![],
+            recurring_deliveries: false,
+            checkout_charge: charge,
+        }],
+    });
+    let (product, _) = store.variant_location(TEE).unwrap();
+    store.products[product].selling_plan_groups = vec![group];
+}
+
+fn deferred_checkout(
+    charge: lsf_core::store::CheckoutCharge,
+    quantity: u32,
+    discounts: Vec<DiscountConfig>,
+    tax_rate_bps: i64,
+) -> lsf_checkout::CheckoutResult {
+    let app = app();
+    let mut store = store();
+    add_deferred_plan(&mut store, charge);
+    let mut session = session(&store, &[(TEE, quantity), (TOTE, 1)]);
+    session.cart_lines[0].selling_plan = Some(43);
+    let mut config = config();
+    config.discounts = discounts;
+    config.tax_rate_bps = tax_rate_bps;
+    compute(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config,
+    )
+}
+
+#[test]
+fn a_deposit_is_due_now_and_the_balance_is_due_later() {
+    use lsf_core::store::CheckoutCharge::Percentage;
+    // Two tees at 32.00, a deposit of 25%: 16.00 now, 48.00 later. The tote is paid now.
+    let result = deferred_checkout(Percentage(25), 2, vec![], 0);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let cost = &result.cost;
+    assert_eq!(cost.subtotal, 6400 + 2400);
+    assert_eq!(cost.total, 6400 + 2400 + 490, "the order costs the whole price");
+    assert_eq!(cost.due_later, 4800);
+    assert_eq!(cost.due_now, cost.total - 4800, "shipping is due now");
+    assert_eq!(cost.checkout_charge_amount, 1600 + 2400);
+    assert_eq!(result.lines[0].due_later, 4800);
+    assert_eq!(result.lines[1].due_later, 0, "a line without a plan");
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["cost"]["dueLater"]["amount"], 48.0);
+    assert_eq!(json["cost"]["dueNow"]["amount"], 44.9);
+    assert_eq!(json["lines"][0]["dueLater"]["amount"], 48.0);
+    assert!(json["lines"][1].get("dueLater").is_none());
+    assert_eq!(json["lines"][0]["sellingPlan"]["name"], "Pre-order with a deposit");
+}
+
+#[test]
+fn a_try_before_you_buy_costs_nothing_but_the_rest_of_the_cart_and_the_shipping_now() {
+    use lsf_core::store::CheckoutCharge::Price;
+    let result = deferred_checkout(Price(0), 1, vec![], 0);
+    assert_eq!(result.cost.due_later, 3200);
+    assert_eq!(result.cost.due_now, 2400 + 490);
+    assert_eq!(result.cost.checkout_charge_amount, 2400);
+}
+
+#[test]
+fn the_tax_is_due_with_the_amount_it_is_on() {
+    use lsf_core::store::CheckoutCharge::Percentage;
+    // 20% on 32.00 + 24.00; the deposit is 50%, so half of the tee, 16.00, is deferred.
+    let result = deferred_checkout(Percentage(50), 1, vec![], 2000);
+    assert_eq!(result.cost.tax, 1120);
+    assert_eq!(result.cost.total, 5600 + 490 + 1120);
+    assert_eq!(result.cost.due_later, 1600 + 320, "the balance and its tax");
+    assert_eq!(result.cost.due_now, result.cost.total - 1920);
+}
+
+#[test]
+fn a_discount_comes_off_the_balance_before_the_deposit() {
+    use lsf_core::store::CheckoutCharge::Price;
+    // Three tees at 32.00 with a deposit of 10.00 each: 30.00 now, 66.00 later. 10% off the
+    // tees is 9.60, off the balance.
+    let volume = discount(
+        "volume-discount",
+        "Volume",
+        None,
+        &[Product],
+        json!({"minimumQuantity": 3, "percentage": 10}),
+    );
+    let result = deferred_checkout(Price(1000), 3, vec![volume], 0);
+    assert_eq!(result.lines[0].total, 8640);
+    assert_eq!(result.lines[0].due_later, 8640 - 3000);
+    assert_eq!(result.cost.due_later, 5640);
+    assert_eq!(result.cost.total, 8640 + 2400 + 490);
+    assert_eq!(result.cost.due_now, 3000 + 2400 + 490);
+    assert_eq!(
+        result.cost.checkout_charge_amount,
+        3000 + 2400,
+        "before the discounts, as /cart.js"
+    );
+
+    // A discount that eats the whole balance takes the rest off the deposit.
+    let free = discount(
+        "volume-discount",
+        "Almost free",
+        None,
+        &[Product],
+        json!({"minimumQuantity": 3, "percentage": 80}),
+    );
+    let result = deferred_checkout(Price(1000), 3, vec![free], 0);
+    assert_eq!(result.lines[0].total, 1920);
+    assert_eq!(result.lines[0].due_later, 0);
+    assert_eq!(result.cost.due_now, result.cost.total);
+}
+
+#[test]
+fn a_cart_without_a_deferred_plan_is_all_due_now() {
+    let app = app();
+    let store = store();
+    let session = session(&store, &[(TEE, 2)]);
+    let result = compute(
+        &app,
+        &Selection::only(Vec::<String>::new()),
+        &store,
+        &session,
+        &CheckoutState::default(),
+        &config(),
+    );
+    assert_eq!(result.cost.due_later, 0);
+    assert_eq!(result.cost.due_now, result.cost.total);
+    assert_eq!(result.cost.checkout_charge_amount, result.cost.subtotal);
+    assert!(serde_json::to_value(&result.lines[0])
+        .unwrap()
+        .get("dueLater")
+        .is_none());
+}
+
 #[test]
 fn lines_carry_the_store_data_of_their_merchandise() {
     let app = app();

@@ -358,6 +358,14 @@ fn print_text(result: &CheckoutResult) {
         money(cost.tax, currency),
         money(cost.total, currency)
     );
+    // Only a cart with a selling plan that defers a part of the price has a balance.
+    if cost.due_later > 0 {
+        println!(
+            "  due now {} · due later {}",
+            money(cost.due_now, currency),
+            money(cost.due_later, currency)
+        );
+    }
 }
 
 #[cfg(test)]

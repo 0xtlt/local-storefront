@@ -1457,8 +1457,16 @@ impl<'a> Pipeline<'a> {
 
     // ---- cost ----
 
-    fn finish(self) -> CheckoutResult {
+    fn finish(mut self) -> CheckoutResult {
+        // What each line leaves to pay later once its discounts are off: the discounts come off
+        // the balance of its selling plan first, and off the deposit only past it.
+        for line in &mut self.lines {
+            let deposit = line.subtotal - line.deferred;
+            line.due_later = (line.total - deposit).clamp(0, line.deferred);
+        }
         let subtotal: Cents = self.lines.iter().map(|line| line.subtotal).sum();
+        let deferred: Cents = self.lines.iter().map(|line| line.deferred).sum();
+        let balance: Cents = self.lines.iter().map(|line| line.due_later).sum();
         let discounts: Cents = self
             .discounts
             .iter()
@@ -1467,7 +1475,14 @@ impl<'a> Pipeline<'a> {
             .sum();
         let shipping: Cents = self.groups.iter().map(DeliveryGroup::selected_cost).sum();
         let taxable = (subtotal - discounts).max(0);
-        let tax = (taxable as f64 * self.config.tax_rate_bps as f64 / 10_000.0).round() as Cents;
+        let tax_on = |amount: Cents| {
+            (amount as f64 * self.config.tax_rate_bps as f64 / 10_000.0).round() as Cents
+        };
+        let tax = tax_on(taxable);
+        // The shipping is paid now, and the tax follows the amounts it is on.
+        let total = subtotal - discounts + shipping + tax;
+        let balance = balance.min(taxable);
+        let due_later = (balance + tax_on(balance).min(tax)).min(total);
 
         let discount_codes = self
             .state
@@ -1507,7 +1522,10 @@ impl<'a> Pipeline<'a> {
                 discounts,
                 shipping,
                 tax,
-                total: subtotal - discounts + shipping + tax,
+                total,
+                due_now: total - due_later,
+                due_later,
+                checkout_charge_amount: subtotal - deferred,
                 currency_code: self.currency,
             },
             runs: self.runs,
@@ -1660,6 +1678,7 @@ fn line_from_variant(
     let image = resolved.image();
     let selling_plan = resolved.selling_plan.map(|(_, plan)| LineSellingPlan {
         id: format!("gid://shopify/SellingPlan/{}", plan.id),
+        name: plan.name.clone(),
         recurring_deliveries: plan.recurring_deliveries,
     });
     let selected_options = product
@@ -1693,6 +1712,7 @@ fn line_from_variant(
         selling_plan,
         quantity,
         unit_price: resolved.unit_price(),
+        deferred: resolved.line_price() - resolved.checkout_charge(),
         attributes,
         requires_shipping: variant.requires_shipping,
         ..ResultLine::default()
