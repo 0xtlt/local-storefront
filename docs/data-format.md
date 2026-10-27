@@ -54,6 +54,7 @@ shopify-local/
   blogs/                blogs (with their articles),
   customers/            customers,
   menus/                and menus (the file name is the menu handle)
+  checkouts/            checkout scenarios, one named setup of the local checkout per file
   files/                images, videos, fonts: served under /cdn/shop/files/
   schema/               JSON Schemas for editors, written by `init` (not read back)
   README.md             this document
@@ -81,7 +82,7 @@ Point `$schema` at the schema of the file's kind to get completion and inline er
 ```
 
 `npx local-storefront schema <kind>` prints a schema (`store`, `product`, `collection`, `page`,
-`blog`, `customer`, `menu`, `session`), `npx local-storefront schema --out <dir>` writes them
+`blog`, `customer`, `menu`, `session`, `checkout-scenario`), `npx local-storefront schema --out <dir>` writes them
 all, and a running server serves them at `/__lsf/schema/<kind>`.
 
 ## Conventions
@@ -586,6 +587,73 @@ changes nothing for a theme.
   customization, validation), by the handle of the Function.
 - `tax_rate`: a percentage, added to the discounted subtotal.
 
+### Checkout scenarios
+
+A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
+scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
+them and opens a fresh checkout for each; `function run --scenario <name>` runs the Functions
+for one ([checkout](checkout.md#scenarios)). A scenario is a set of overrides on top of the
+store data: what it does not set stays as the data says.
+
+```json
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "B2B buyer at the Seattle location",
+  "description": "Four tees, a company customer, and a shipping rate for pallets.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "company_location": "Northwind Seattle",
+    "country": "US",
+    "cart": {
+      "items": [{ "variant": "TEE-BLK-M", "quantity": 4 }],
+      "note": "Deliver to dock B",
+      "attributes": { "po_number": "PO-1042" }
+    }
+  },
+  "entered": {
+    "email": "alex.morgan@example.com",
+    "shipping_address": { "last_name": "Morgan", "address1": "2200 Alder Street", "city": "Seattle", "country_code": "US" },
+    "discount_codes": ["SAVE10"],
+    "delivery": "pallet",
+    "payment": "bank"
+  },
+  "language": "en",
+  "checkout": {
+    "shipping_rates": [{ "handle": "pallet", "title": "Pallet", "price": "45.00" }],
+    "discounts": [{ "function": "volume-discount", "code": "SAVE10", "classes": ["ORDER"] }]
+  },
+  "variant": "standard",
+  "extensions": ["volume-discount", "gift-message"]
+}
+```
+
+Every field is optional.
+
+- `title` and `description` are for the home page. The title defaults to the file name.
+- `session` is a [session](#customers-and-sessions), applied on top of the `session` of the
+  store data: `customer`, `cart` (`items` with `variant`, `quantity`, `properties` and
+  `selling_plan`, `note`, `attributes`), `country` and `company_location`.
+- `entered` is what the buyer already typed and chose: `email`, `phone`, `shipping_address`
+  (`first_name`, `last_name`, `company`, `address1`, `address2`, `city`, `country_code`,
+  `province_code`, `zip`, `phone`), `delivery` (the handle of a shipping rate), `payment` (the
+  handle of a payment method) and `discount_codes`. A code that no discount has is entered all
+  the same, and refused.
+- `language` is a language of the store (`localization.languages`). The checkout opens under
+  its locale root (`/fr/checkouts/cn/...`).
+- `checkout` overrides the [`checkout` section](#checkout) of the store data. Every field that is
+  present replaces the store's: `shipping_rates`, `payment_methods`, `discounts` (`[]` runs no
+  discount), `tax_rate`. `functions` replaces the settings of the Functions it names and keeps
+  those of the others.
+- `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
+- `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
+  run. The others of the app are left out. It narrows what `--extension` allows.
+
+A scenario that does not validate is still listed, with its errors, and cannot be opened.
+`validate` reports it with the file `checkouts/<name>.json` and a pointer into it
+(`/session/cart/items/0/variant`). Files that are not `.json`, and folders, are ignored.
+Scenarios are reloaded when the files change, like the rest of the data. The built-in demo
+store has none: `npx local-storefront checkout init` writes a set.
+
 ## Localization
 
 ```json
@@ -740,7 +808,8 @@ The Functions of the [local checkout](checkout.md) read the same metaobjects as
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
 | `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data. The hint suggests the closest match. |
+| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. |
 | `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
 | `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |

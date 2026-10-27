@@ -6,7 +6,6 @@ use std::sync::Arc;
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::render::cost::Costs;
 use lsf_core::render::{ProfileOptions, Target};
-use lsf_core::store::build::{resolve_cart, resolve_company_location};
 use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, schema, validate};
@@ -324,49 +323,7 @@ pub fn apply_session_input(
     diagnostics: &mut Diagnostics,
     file: &str,
 ) {
-    if let Some(who) = &input.customer {
-        match store.customer_named(who) {
-            Ok(customer) => {
-                let customer = customer.map(|customer| customer.id);
-                if session.customer_id != customer {
-                    session.customer_id = customer;
-                    session.company_location = None;
-                }
-            }
-            Err(problem) => {
-                diagnostics
-                    .error("unknown_customer", file, "/customer", problem)
-                    .hint("add the customer to the store data, or to \"data\".\"customers\" in this request. \"default\" and \"none\" also work");
-            }
-        }
-    }
-    if let Some(name) = &input.company_location {
-        let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
-        match resolve_company_location(store, customer, name) {
-            Ok(location) => session.company_location = Some(location),
-            Err(problem) => {
-                diagnostics.error("unknown_location", file, "/company_location", problem);
-            }
-        }
-    }
-    if let Some(country) = &input.country {
-        match store.country(country) {
-            Some(country) => session.country = Some(country.iso_code.clone()),
-            None => {
-                diagnostics.error(
-                    "unknown_country",
-                    file,
-                    "/country",
-                    format!("\"{country}\" is not one of the store's countries"),
-                );
-            }
-        }
-    }
-    if let Some(cart) = &input.cart {
-        session.cart_lines = resolve_cart(store, cart, diagnostics, file);
-        session.cart_note = cart.note.clone().unwrap_or_default();
-        session.cart_attributes = cart.attributes.clone();
-    }
+    lsf_core::store::build::apply_session_input(store, input, session, diagnostics, file, "");
 }
 
 /// `PUT /__lsf/session`: replaces the session's state.

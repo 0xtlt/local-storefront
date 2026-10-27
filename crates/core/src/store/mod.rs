@@ -862,6 +862,35 @@ impl Default for CheckoutSettings {
     }
 }
 
+/// A named setup of the local checkout, read from `checkouts/<name>.json`. A scenario with
+/// `problems` cannot be opened: the rest of its fields hold what could be read.
+#[derive(Clone, Debug)]
+pub struct CheckoutScenario {
+    /// The name of the file without its extension.
+    pub name: String,
+    /// The file, relative to the data directory.
+    pub file: String,
+    /// What the file says, or the name.
+    pub title: String,
+    pub description: Option<String>,
+    /// Who buys and what is in the cart, as written. Applied with
+    /// [`build::apply_session_input`] on the session a checkout starts from.
+    pub session: model::SessionInput,
+    pub entered: model::ScenarioEnteredInput,
+    /// The ISO code of a language of the store.
+    pub language: Option<String>,
+    pub look: Option<model::ScenarioLook>,
+    /// The handles of the extensions that run, when the scenario names some.
+    pub extensions: Option<Vec<String>>,
+    /// The settings of the store with this scenario's overrides on top.
+    pub checkout: CheckoutSettings,
+    /// What the scenario overrides of the `checkout` section: `shipping_rates`,
+    /// `payment_methods`, `discounts`, `functions`, `tax_rate`.
+    pub overrides: Vec<&'static str>,
+    /// What stops the scenario from opening, as the diagnostics `validate` prints them.
+    pub problems: Vec<String>,
+}
+
 pub struct Store {
     pub shop: Shop,
     pub products: Vec<Product>,
@@ -883,6 +912,8 @@ pub struct Store {
     pub session_defaults: SessionDefaults,
     /// How the local checkout is set up.
     pub checkout: CheckoutSettings,
+    /// The named setups of the checkout (`checkouts/*.json`), by name.
+    pub scenarios: Vec<CheckoutScenario>,
     /// The frozen clock, if the data sets one.
     pub now: Option<DateTime<Utc>>,
     pub theme_settings: IndexMap<String, Json>,

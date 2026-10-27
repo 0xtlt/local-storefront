@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde_json::Value as Json;
 
-use super::build::{BuildOptions, MergedInput, Origin, Sourced, build};
+use super::build::{BuildOptions, MergedInput, MergedScenario, Origin, Sourced, build};
 use super::validate::{FileKind, validate};
 use super::{Store, demo, model};
 use crate::diagnostics::Diagnostics;
@@ -167,13 +167,23 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
         let json: Json = match serde_json::from_str(&strip_comments(&file.content)) {
             Ok(json) => json,
             Err(error) => {
-                diagnostics
+                let diagnostic = diagnostics
                     .error("invalid_json", name, "", format!("not valid JSON: {error}"))
                     .hint(format!(
                         "look at line {}, column {}",
                         error.line(),
                         error.column()
-                    ));
+                    ))
+                    .to_string();
+                // A scenario that cannot be read is listed with its error, not hidden.
+                if file.kind == FileKind::CheckoutScenario {
+                    merged.scenarios.push(MergedScenario {
+                        name: file_stem(name),
+                        file: name.to_string(),
+                        input: None,
+                        problems: vec![diagnostic],
+                    });
+                }
                 continue;
             }
         };
@@ -263,6 +273,24 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
                 }
             }
             FileKind::Session => {}
+            FileKind::CheckoutScenario => {
+                let mut problems = Diagnostics::new();
+                let input = entity::<model::CheckoutScenarioInput>(
+                    FileKind::CheckoutScenario,
+                    name,
+                    &json,
+                    "",
+                    &mut problems,
+                );
+                let problems_text = problems.items.iter().map(ToString::to_string).collect();
+                diagnostics.extend(problems);
+                merged.scenarios.push(MergedScenario {
+                    name: file_stem(name),
+                    file: name.to_string(),
+                    input,
+                    problems: problems_text,
+                });
+            }
         }
     }
     merged
@@ -1217,6 +1245,219 @@ mod tests {
             diagnostics.to_string().contains("EVERYWHERE"),
             "{diagnostics}"
         );
+    }
+
+    /// The demo store on disk, with `store_extra` as another data file and `scenarios` in
+    /// `checkouts/` (name of the file, content).
+    fn with_scenarios(
+        label: &str,
+        store_extra: Option<&str>,
+        scenarios: &[(&str, &str)],
+    ) -> (crate::store::Store, Diagnostics) {
+        let directory =
+            std::env::temp_dir().join(format!("lsf-scenarios-{label}-{}", std::process::id()));
+        std::fs::remove_dir_all(&directory).ok();
+        for (name, content) in demo::FILES {
+            let path = directory.join(name);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("directory");
+            std::fs::write(path, content).expect("demo file");
+        }
+        if let Some(content) = store_extra {
+            std::fs::write(directory.join("checkout.json"), content).expect("extra");
+        }
+        std::fs::create_dir_all(directory.join("checkouts")).expect("checkouts");
+        for (name, content) in scenarios {
+            std::fs::write(directory.join("checkouts").join(name), content).expect("scenario");
+        }
+        let loaded = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        loaded
+    }
+
+    #[test]
+    fn a_scenario_is_read_on_top_of_the_store_data() {
+        let (store, diagnostics) = with_scenarios(
+            "resolved",
+            Some(
+                r#"{"checkout": {
+                    "shipping_rates": [{"handle": "standard", "price": "4.90"}],
+                    "discounts": [{"function": "volume-discount", "code": "SAVE"}],
+                    "functions": {
+                        "delivery-rules": {"metafields": {"$app:config.mode": "strict"}},
+                        "payment-rules": {"metafields": {"$app:config.mode": "loose"}}
+                    },
+                    "tax_rate": 20
+                }}"#,
+            ),
+            &[
+                (
+                    "b2b.json",
+                    r#"{
+                        "title": "A hotel orders",
+                        "description": "Buys for its Seattle location.",
+                        "session": {
+                            "customer": "alex.morgan@example.com",
+                            "company_location": "Northwind Seattle",
+                            "country": "US",
+                            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 4}], "note": "Dock B"}
+                        },
+                        "entered": {
+                            "shipping_address": {"last_name": "Morgan", "country_code": "us"},
+                            "discount_codes": ["SAVE"],
+                            "payment": "cod"
+                        },
+                        "language": "FR",
+                        "variant": "shop",
+                        "extensions": ["gift-message"],
+                        "checkout": {
+                            "payment_methods": [{"handle": "cod"}],
+                            "discounts": [],
+                            "functions": {"delivery-rules": {"metafields": {"$app:config.mode": "off"}}}
+                        }
+                    }"#,
+                ),
+                ("plain.json", "{}"),
+                ("notes.txt", "not a scenario"),
+            ],
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let names: Vec<&str> = store.scenarios.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["b2b", "plain"]);
+
+        let b2b = &store.scenarios[0];
+        assert_eq!(b2b.file, "checkouts/b2b.json");
+        assert_eq!(b2b.title, "A hotel orders");
+        assert!(b2b.problems.is_empty(), "{:?}", b2b.problems);
+        assert_eq!(b2b.language.as_deref(), Some("fr"));
+        assert_eq!(b2b.look, Some(model::ScenarioLook::Shop));
+        assert_eq!(
+            b2b.extensions.as_deref(),
+            Some(&["gift-message".to_string()][..])
+        );
+        assert_eq!(b2b.entered.discount_codes, ["SAVE"]);
+        assert_eq!(b2b.overrides, ["payment_methods", "discounts", "functions"]);
+        // What the scenario sets replaces the store's, the rest is the store's.
+        assert_eq!(b2b.checkout.payment_methods.len(), 1);
+        assert!(b2b.checkout.discounts.is_empty());
+        assert_eq!(b2b.checkout.shipping_rates[0].price, 490);
+        assert_eq!(b2b.checkout.tax_rate_bps, 2000);
+        assert_eq!(b2b.checkout.functions["delivery-rules"][0].value, "off");
+        assert_eq!(b2b.checkout.functions["payment-rules"][0].value, "loose");
+        // The store itself is untouched.
+        assert_eq!(store.checkout.payment_methods.len(), 3);
+        assert_eq!(store.checkout.discounts.len(), 1);
+
+        // The session is the one a checkout opens with.
+        let mut session = crate::Session::initial(&store);
+        let mut problems = Diagnostics::new();
+        crate::store::build::apply_session_input(
+            &store,
+            &b2b.session,
+            &mut session,
+            &mut problems,
+            &b2b.file,
+            "/session",
+        );
+        assert!(problems.is_empty(), "{problems}");
+        assert_eq!(session.cart_lines[0].quantity, 4);
+        assert_eq!(session.cart_note, "Dock B");
+        assert!(session.customer_id.is_some() && session.company_location.is_some());
+
+        let plain = &store.scenarios[1];
+        assert_eq!(plain.title, "plain");
+        assert!(plain.overrides.is_empty());
+        assert_eq!(plain.checkout.tax_rate_bps, 2000);
+    }
+
+    #[test]
+    fn a_scenario_with_mistakes_is_kept_with_what_is_wrong() {
+        let (store, diagnostics) = with_scenarios(
+            "mistakes",
+            None,
+            &[
+                ("typo.json", r#"{"titel": "x"}"#),
+                (
+                    "unknown.json",
+                    r#"{
+                        "session": {
+                            "customer": "nobody@example.com",
+                            "country": "ZZ",
+                            "cart": {"items": [{"variant": "TEE-BLK-Q"}]}
+                        },
+                        "entered": {"shipping_address": {"country_code": "ZZ"}},
+                        "language": "de",
+                        "checkout": {"tax_rate": 120}
+                    }"#,
+                ),
+                ("broken.json", "{ nope"),
+                (
+                    "fine.json",
+                    r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}}"#,
+                ),
+            ],
+        );
+        let by_name = |name: &str| store.scenarios.iter().find(|s| s.name == name).expect(name);
+        assert!(by_name("fine").problems.is_empty());
+
+        let typo = by_name("typo");
+        assert_eq!(typo.problems.len(), 1);
+        assert!(
+            typo.problems[0].contains("unknown_field"),
+            "{:?}",
+            typo.problems
+        );
+        assert!(typo.problems[0].contains("did you mean \"title\"?"));
+
+        let broken = by_name("broken");
+        assert!(
+            broken.problems[0].contains("invalid_json"),
+            "{:?}",
+            broken.problems
+        );
+
+        let unknown = by_name("unknown").problems.join("\n");
+        for expected in [
+            "unknown_customer",
+            "unknown_country",
+            "unknown_variant",
+            "unknown_language",
+            "invalid_value",
+            "checkouts/unknown.json at /session/customer",
+            "checkouts/unknown.json at /session/cart/items/0/variant",
+            "checkouts/unknown.json at /entered/shipping_address/country_code",
+            "checkouts/unknown.json at /language",
+            "checkouts/unknown.json at /checkout/tax_rate",
+        ] {
+            assert!(
+                unknown.contains(expected),
+                "missing {expected:?} in:\n{unknown}"
+            );
+        }
+        // `validate` sees all of it.
+        for file in ["typo", "unknown", "broken"] {
+            assert!(
+                diagnostics
+                    .items
+                    .iter()
+                    .any(|item| item.file == format!("checkouts/{file}.json")),
+                "{file}: {diagnostics}"
+            );
+        }
+        assert!(
+            !diagnostics
+                .items
+                .iter()
+                .any(|item| item.file == "checkouts/fine.json")
+        );
+    }
+
+    #[test]
+    fn a_store_without_a_checkouts_folder_has_no_scenarios() {
+        let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(store.scenarios.is_empty());
     }
 
     #[test]

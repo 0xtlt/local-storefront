@@ -1587,7 +1587,7 @@ pub struct CheckoutInput {
     pub payment_methods: Option<Vec<CheckoutPaymentMethodInput>>,
     /// Discounts backed by discount Functions of the app.
     #[serde(default)]
-    pub discounts: Vec<CheckoutDiscountInput>,
+    pub discounts: Option<Vec<CheckoutDiscountInput>>,
     /// The settings of the other Functions, by the handle of the Function.
     #[serde(default)]
     pub functions: IndexMap<String, CheckoutFunctionInput>,
@@ -1595,6 +1595,109 @@ pub struct CheckoutInput {
     /// omitted.
     #[serde(default)]
     pub tax_rate: Option<f64>,
+}
+
+/// A postal address the buyer already entered.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioAddressInput {
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub company: Option<String>,
+    #[serde(default)]
+    pub address1: Option<String>,
+    #[serde(default)]
+    pub address2: Option<String>,
+    #[serde(default)]
+    pub city: Option<String>,
+    /// ISO 3166-1 alpha-2 code of one of the store's countries: `"US"`.
+    #[serde(default)]
+    pub country_code: Option<String>,
+    #[serde(default)]
+    pub province_code: Option<String>,
+    #[serde(default)]
+    pub zip: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+}
+
+/// What the buyer already typed and chose when a scenario opens.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioEnteredInput {
+    /// The contact email. A logged-in customer has theirs already.
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    /// The delivery address. Its country is the country of the checkout.
+    #[serde(default)]
+    pub shipping_address: Option<ScenarioAddressInput>,
+    /// The handle of the shipping rate chosen (`checkout.shipping_rates`). The first one
+    /// available is chosen when omitted.
+    #[serde(default)]
+    pub delivery: Option<String>,
+    /// The handle of the payment method chosen (`checkout.payment_methods`).
+    #[serde(default)]
+    pub payment: Option<String>,
+    /// The discount codes entered, in order. A code that no discount of `checkout.discounts`
+    /// has is entered all the same, and refused as on Shopify.
+    #[serde(default)]
+    pub discount_codes: Vec<String>,
+}
+
+/// The look of the checkout page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ScenarioLook {
+    /// Shopify's one-page checkout.
+    Standard,
+    /// The look of the Shop app and Shop Pay.
+    Shop,
+}
+
+/// A named setup of the local checkout: a file of `checkouts/`. It sets what a checkout
+/// depends on on top of the store data, and what it does not set stays as the store data says.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutScenarioInput {
+    /// Lets editors validate and autocomplete the file, e.g.
+    /// `"../schema/checkout-scenario.schema.json"`.
+    #[serde(default, rename = "$schema", skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// The name shown on the home page. Defaults to the name of the file.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What the scenario is for and what to look at, shown on the home page.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Who buys and what is in the cart, written as the `session` of the store data and applied
+    /// on top of it: `customer`, `cart` (lines, quantities, selling plans, note, attributes),
+    /// `country`, `company_location`.
+    #[serde(default)]
+    pub session: Option<SessionInput>,
+    /// What the buyer already entered: email, address, discount codes, delivery and payment.
+    #[serde(default)]
+    pub entered: Option<ScenarioEnteredInput>,
+    /// The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The
+    /// checkout opens under its locale root. Defaults to the primary language.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// Overrides of the `checkout` section of the store data: every field that is present
+    /// replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,
+    /// `tax_rate`), except `functions`, which replaces the settings of the Functions it names.
+    #[serde(default)]
+    pub checkout: Option<CheckoutInput>,
+    /// The look of the page. Defaults to the one of the server (`--variant`).
+    #[serde(default)]
+    pub variant: Option<ScenarioLook>,
+    /// The handles of the extensions (Functions and checkout UI extensions) that run, among
+    /// those of the app that `--extension` allows. Every one when omitted.
+    #[serde(default)]
+    pub extensions: Option<Vec<String>>,
 }
 
 /// A data file: any combination of the sections below. Every `*.json` file at the root of the

@@ -956,3 +956,59 @@ customization, validation.
 | Field | Type | Description |
 |---|---|---|
 | `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
+
+## Checkout scenario
+
+A named setup of the local checkout: a file of `checkouts/`. It sets what a checkout
+depends on on top of the store data, and what it does not set stays as the store data says.
+
+| Field | Type | Description |
+|---|---|---|
+| `$schema` | string | Lets editors validate and autocomplete the file, e.g. `"../schema/checkout-scenario.schema.json"`. |
+| `title` | string | The name shown on the home page. Defaults to the name of the file. |
+| `description` | string | What the scenario is for and what to look at, shown on the home page. |
+| `session` | [Session](#session) | Who buys and what is in the cart, written as the `session` of the store data and applied on top of it: `customer`, `cart` (lines, quantities, selling plans, note, attributes), `country`, `company_location`. |
+| `entered` | [ScenarioEntered](#scenarioentered) | What the buyer already entered: email, address, discount codes, delivery and payment. |
+| `language` | string | The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The checkout opens under its locale root. Defaults to the primary language. |
+| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
+| `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
+| `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. Every one when omitted. |
+
+## ScenarioEntered
+
+What the buyer already typed and chose when a scenario opens.
+
+| Field | Type | Description |
+|---|---|---|
+| `email` | string | The contact email. A logged-in customer has theirs already. |
+| `phone` | string |  |
+| `shipping_address` | [ScenarioAddress](#scenarioaddress) | The delivery address. Its country is the country of the checkout. |
+| `delivery` | string | The handle of the shipping rate chosen (`checkout.shipping_rates`). The first one available is chosen when omitted. |
+| `payment` | string | The handle of the payment method chosen (`checkout.payment_methods`). |
+| `discount_codes` | array of string | The discount codes entered, in order. A code that no discount of `checkout.discounts` has is entered all the same, and refused as on Shopify. |
+
+## ScenarioAddress
+
+A postal address the buyer already entered.
+
+| Field | Type | Description |
+|---|---|---|
+| `first_name` | string |  |
+| `last_name` | string |  |
+| `company` | string |  |
+| `address1` | string |  |
+| `address2` | string |  |
+| `city` | string |  |
+| `country_code` | string | ISO 3166-1 alpha-2 code of one of the store's countries: `"US"`. |
+| `province_code` | string |  |
+| `zip` | string |  |
+| `phone` | string |  |
+
+## ScenarioLook
+
+The look of the checkout page.
+
+One of:
+
+- `"standard"`: Shopify's one-page checkout.
+- `"shop"`: The look of the Shop app and Shop Pay.

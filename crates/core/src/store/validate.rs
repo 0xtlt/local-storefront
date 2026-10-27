@@ -27,10 +27,12 @@ pub enum FileKind {
     Menu,
     /// The state of one browser session (`PUT /__lsf/session`).
     Session,
+    /// A named setup of the local checkout (`checkouts/<name>.json`).
+    CheckoutScenario,
 }
 
 impl FileKind {
-    pub const ALL: [FileKind; 8] = [
+    pub const ALL: [FileKind; 9] = [
         FileKind::Store,
         FileKind::Product,
         FileKind::Collection,
@@ -39,6 +41,7 @@ impl FileKind {
         FileKind::Customer,
         FileKind::Menu,
         FileKind::Session,
+        FileKind::CheckoutScenario,
     ];
 
     /// The name used for schema files and in the documentation.
@@ -52,6 +55,7 @@ impl FileKind {
             FileKind::Customer => "customer",
             FileKind::Menu => "menu",
             FileKind::Session => "session",
+            FileKind::CheckoutScenario => "checkout-scenario",
         }
     }
 
@@ -64,6 +68,7 @@ impl FileKind {
             FileKind::Blog => Some("blogs"),
             FileKind::Customer => Some("customers"),
             FileKind::Menu => Some("menus"),
+            FileKind::CheckoutScenario => Some("checkouts"),
             FileKind::Store | FileKind::Session => None,
         }
     }
@@ -91,6 +96,7 @@ pub fn schema(kind: FileKind) -> Json {
         FileKind::Customer => schema_json::<model::CustomerInput>(),
         FileKind::Menu => schema_json::<model::MenuInput>(),
         FileKind::Session => schema_json::<model::SessionInput>(),
+        FileKind::CheckoutScenario => schema_json::<model::CheckoutScenarioInput>(),
     }
 }
 
