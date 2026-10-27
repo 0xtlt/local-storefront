@@ -226,6 +226,12 @@ an order that was placed already leads to the same thank-you page, never to a se
 - The values of the `settings` of an extension are not set: the manifest declares them, and
   `shopify.settings.value` is empty.
 - No Storefront API: `query` in an extension rejects.
+- A few fields of the Function input have no local data, and a query that asks for them fails
+  with the field's path: `fetchResult`, `Cart.deliverableLines`, the discount applications and
+  allocations of the cart, its lines and its delivery groups, `PurchasingCompany.contact`, the
+  dates, locale and totals of companies and their locations, `MailingAddress.market`,
+  `PaymentCustomizationPaymentMethod.placements` and `Shop.metaobject`. A merged bundle line
+  always has a quantity of 1.
 - Customer accounts hosted by Shopify, Shop Pay and express checkout.
 - With `checkout` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.
