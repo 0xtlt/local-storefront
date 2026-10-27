@@ -3178,6 +3178,105 @@ fn the_checkout_prices_the_lines_as_the_cart_does() {
 }
 
 #[test]
+fn the_checkout_charges_what_the_cart_says_is_due_at_checkout() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-deposit",
+        json!([
+            {"variant": "PRE", "quantity": 2, "selling_plan": "Pre-order"},
+            {"variant": "TEE-BLK-M", "quantity": 1},
+        ]),
+        json!({
+            "products": [{
+                "title": "Pre-order Tea",
+                "price": 4000,
+                "variants": [{"sku": "PRE"}],
+                "selling_plan_groups": ["Pre-order"]
+            }],
+            "selling_plan_groups": [{
+                "name": "Pre-order",
+                "selling_plans": [{
+                    "name": "Pre-order",
+                    "checkout_charge": {"value_type": "percentage", "value": 25}
+                }]
+            }],
+            "checkout": {"shipping_rates": [{"handle": "standard", "title": "Standard", "price": "5.00"}], "tax_rate": 10}
+        }),
+    );
+    let cents = |amount: &Json| (amount["amount"].as_f64().unwrap() * 100.0).round() as i64;
+    let cart = body_json(&get(&state, "/cart.js", "co-deposit"));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-deposit"));
+    let cost = &json["cost"];
+
+    // 2 × 40.00 with a 25% deposit: 20.00 now and 60.00 later; the tee is paid now.
+    // What the cart says is due at checkout (`cart.checkout_charge_amount` of Liquid, which
+    // /cart.js does not carry): 25% of 2 × 40.00 and the whole price of the tee.
+    let charged: i64 = 2000 + cart["items"][1]["line_price"].as_i64().unwrap();
+    assert_eq!(charged, 2000 + 3200);
+    assert_eq!(
+        cents(&cost["checkoutChargeAmount"]),
+        charged,
+        "the checkout charge of the cart"
+    );
+    assert_eq!(cents(&cost["subtotal"]), 8000 + 3200);
+    assert_eq!(cents(&json["lines"][0]["dueLater"]), 6000);
+    assert_eq!(json["lines"][1].get("dueLater"), None);
+    // The whole order costs its whole price; the tax follows what it is on.
+    assert_eq!(cents(&cost["tax"]), 1120);
+    assert_eq!(cents(&cost["total"]), 11200 + 500 + 1120);
+    assert_eq!(cents(&cost["dueLater"]), 6000 + 600);
+    assert_eq!(cents(&cost["dueNow"]), 2000 + 3200 + 500 + 520);
+    assert_eq!(json["lines"][0]["sellingPlan"]["name"], "Pre-order");
+
+    // The order records the balance, and the thank-you page shows it.
+    let reply = operations(&state, &path, "co-deposit", buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-deposit");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let thanks = page_state(&text(&get(
+        &state,
+        &format!("{path}/thank-you"),
+        "co-deposit",
+    )));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(cents(&thanks["order"]["totalOutstanding"]), 6600);
+    assert_eq!(cents(&thanks["order"]["totalReceived"]), 6220);
+    assert_eq!(cents(&thanks["cost"]["total"]), 12820);
+    let received = cents(&thanks["order"]["totalReceived"]);
+    let outstanding = cents(&thanks["order"]["totalOutstanding"]);
+    assert_eq!(received + outstanding, cents(&thanks["cost"]["total"]));
+}
+
+#[test]
+fn an_order_without_a_deferred_payment_has_no_balance() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-no-balance",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-no-balance"));
+    assert_eq!(json["cost"]["dueLater"]["amount"], 0.0);
+    assert_eq!(json["cost"]["dueNow"], json["cost"]["total"]);
+    operations(&state, &path, "co-no-balance", buyer_details());
+    post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-no-balance",
+    );
+    let thanks = page_state(&text(&get(
+        &state,
+        &format!("{path}/thank-you"),
+        "co-no-balance",
+    )));
+    assert_eq!(thanks["order"]["totalOutstanding"]["amount"], 0.0);
+    assert_eq!(thanks["order"]["totalReceived"], thanks["cost"]["total"]);
+}
+
+#[test]
 fn the_state_describes_the_checkout() {
     let state = checkout_server(&[], false);
     let path = start_checkout(

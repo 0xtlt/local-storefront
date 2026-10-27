@@ -1566,10 +1566,30 @@ fn a_deposit_is_due_now_and_the_balance_is_due_later() {
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     let cost = &result.cost;
     assert_eq!(cost.subtotal, 6400 + 2400);
-    assert_eq!(cost.total, 6400 + 2400 + 490, "the order costs the whole price");
+    assert_eq!(
+        cost.total,
+        6400 + 2400 + 490,
+        "the order costs the whole price"
+    );
     assert_eq!(cost.due_later, 4800);
     assert_eq!(cost.due_now, cost.total - 4800, "shipping is due now");
     assert_eq!(cost.checkout_charge_amount, 1600 + 2400);
+    // The same amount as `cart.checkout_charge_amount` of the storefront cart.
+    let session_lines = {
+        let mut store = store();
+        add_deferred_plan(&mut store, Percentage(25));
+        let mut session = session(&store, &[(TEE, 2), (TOTE, 1)]);
+        session.cart_lines[0].selling_plan = Some(43);
+        (store, session)
+    };
+    let cart: i64 = session_lines
+        .1
+        .cart_lines
+        .iter()
+        .filter_map(|line| lsf_core::drops::cart::resolve_line(&session_lines.0, line))
+        .map(|line| line.checkout_charge())
+        .sum();
+    assert_eq!(cost.checkout_charge_amount, cart);
     assert_eq!(result.lines[0].due_later, 4800);
     assert_eq!(result.lines[1].due_later, 0, "a line without a plan");
     let json = serde_json::to_value(&result).unwrap();
@@ -1577,7 +1597,10 @@ fn a_deposit_is_due_now_and_the_balance_is_due_later() {
     assert_eq!(json["cost"]["dueNow"]["amount"], 44.9);
     assert_eq!(json["lines"][0]["dueLater"]["amount"], 48.0);
     assert!(json["lines"][1].get("dueLater").is_none());
-    assert_eq!(json["lines"][0]["sellingPlan"]["name"], "Pre-order with a deposit");
+    assert_eq!(
+        json["lines"][0]["sellingPlan"]["name"],
+        "Pre-order with a deposit"
+    );
 }
 
 #[test]
@@ -1654,10 +1677,12 @@ fn a_cart_without_a_deferred_plan_is_all_due_now() {
     assert_eq!(result.cost.due_later, 0);
     assert_eq!(result.cost.due_now, result.cost.total);
     assert_eq!(result.cost.checkout_charge_amount, result.cost.subtotal);
-    assert!(serde_json::to_value(&result.lines[0])
-        .unwrap()
-        .get("dueLater")
-        .is_none());
+    assert!(
+        serde_json::to_value(&result.lines[0])
+            .unwrap()
+            .get("dueLater")
+            .is_none()
+    );
 }
 
 #[test]

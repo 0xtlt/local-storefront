@@ -1283,8 +1283,16 @@ pub(super) fn place_order(
         }
         let number = 1000 + state.next_order();
         order["status"] = json!("completed");
-        order["order"] =
-            json!({"id": format!("gid://shopify/Order/{number}"), "number": format!("#{number}")});
+        // The order costs the whole price: what is paid now is received, and what a selling
+        // plan defers is outstanding (`totalReceivedSet` and `totalOutstandingSet` of Shopify's
+        // Order).
+        let (received, outstanding) = (&order["cost"]["dueNow"], &order["cost"]["dueLater"]);
+        order["order"] = json!({
+            "id": format!("gid://shopify/Order/{number}"),
+            "number": format!("#{number}"),
+            "totalReceived": received,
+            "totalOutstanding": outstanding,
+        });
         entry.checkout.completed = Some(order);
         entry.checkout.placed += 1;
         entry.checkout.state = CheckoutState::default();
