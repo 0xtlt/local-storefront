@@ -425,8 +425,17 @@ impl Watchdog {
         let (cancel, cancelled) = mpsc::channel();
         let handle = std::thread::spawn(move || match cancelled.recv_timeout(timeout) {
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                engine.increment_epoch();
-                true
+                // function-runner sets the deadline one epoch after the current one when it
+                // creates the store, and again around the initialization of the input: a single
+                // tick that lands before one of those is absorbed, and an endless run never
+                // stops. Keep ticking until the run is over.
+                loop {
+                    engine.increment_epoch();
+                    match cancelled.recv_timeout(Duration::from_millis(10)) {
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        _ => break true,
+                    }
+                }
             }
             _ => false,
         });

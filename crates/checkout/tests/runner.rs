@@ -283,3 +283,24 @@ fn concurrent_runs_are_bounded_and_the_others_wait() {
     );
     assert!(runner.idle_engines() <= 1);
 }
+
+#[test]
+fn a_deadline_that_passes_before_the_run_starts_still_stops_it() {
+    // The timeout is over before function-runner has set up the store: the tick that moves the
+    // epoch lands before the deadline exists, and a single tick would be lost (the run would
+    // never stop). The run is on a thread of its own so that the test fails instead of hanging.
+    let dir = temp_dir("early");
+    let wasm = write(&dir, "forever.wasm", FOREVER);
+    for _ in 0..20 {
+        let (done, wait) = std::sync::mpsc::channel();
+        let wasm = wasm.clone();
+        std::thread::spawn(move || {
+            let runner = Runner::new().with_timeout(Duration::ZERO);
+            let _ = done.send(runner.run(&wasm, "_start", &json!({})));
+        });
+        let execution = wait
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the run was never stopped");
+        assert!(execution.error.unwrap().contains("was stopped"));
+    }
+}
