@@ -645,6 +645,8 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-home code { padding: 0 .3rem; border-radius: 4px; background: var(--lsf-color-info-wash-2); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .lsf-targets { display: flex; flex-direction: column; gap: .35rem; margin: 0; padding: 0; list-style: none; }
 .lsf-targets li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .5rem; }
+.lsf-people { gap: var(--lsf-space-m); }
+.lsf-people .lsf-badges { width: 100%; margin-top: 0; }
 .lsf-facts { display: flex; flex-direction: column; gap: .3rem; margin: 0; }
 .lsf-facts > div { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: .5rem; }
 .lsf-facts dt { color: var(--lsf-color-text-subdued); }

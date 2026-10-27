@@ -6502,6 +6502,39 @@ fn the_home_page_says_how_to_get_scenarios() {
 }
 
 #[test]
+fn the_home_page_lists_the_customers_to_log_in_as() {
+    let state = checkout_server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let customers = json["customers"].as_array().expect("customers");
+    assert_eq!(customers.len(), 4);
+    assert_eq!(customers[0]["email"], "jane.doe@example.com");
+    assert_eq!(
+        customers[0]["open"],
+        "/checkout?customer=jane.doe%40example.com"
+    );
+    assert_eq!(customers[2]["company"], "Northwind Hotels");
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("Log in as a customer"), "{html}");
+    assert!(
+        html.contains("<li data-customer=\"alex.morgan@example.com\">"),
+        "{html}"
+    );
+    assert!(html.contains("B2B · Northwind Hotels"), "{html}");
+    // The link opens the checkout logged in as them.
+    let reply = get(&state, text_of_json(&customers[3]["open"]), "home-login");
+    let path = header(&reply, "location").expect("a location").to_string();
+    let checkout = body_json(&get(&state, &format!("{path}.json"), "home-login"));
+    assert_eq!(
+        checkout["buyer"]["customer"]["email"],
+        "camille.martin@example.com"
+    );
+}
+
+fn text_of_json(value: &Json) -> &str {
+    value.as_str().expect("a string")
+}
+
+#[test]
 fn the_home_page_follows_the_language_of_the_url() {
     let data = ScenarioData::new("home-fr", &[("tees.json", TEES)]);
     let state = data.server(&[], true);

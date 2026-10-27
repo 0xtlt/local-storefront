@@ -288,8 +288,8 @@ fn location_of(store: &Store, customer: Option<&Customer>, wanted: &str) -> Resu
     lsf_core::store::build::resolve_company_location(store, customer, wanted)
 }
 
-/// One customer, as the picker of the page lists them.
-fn profile_json(customer: &Customer, store: &Store, current: bool) -> Json {
+/// One customer, as the picker of the page (and the home page) lists them.
+pub fn profile_json(customer: &Customer, store: &Store, current: bool) -> Json {
     let company = customer.company.map(|index| &store.companies[index]);
     let country = saved_addresses(customer, store, None)
         .first()

@@ -455,6 +455,18 @@ pub fn build(
         "scenarios": store.scenarios.iter()
             .map(|scenario| scenario_json(&store, &app, options, scenario, root))
             .collect::<Vec<_>>(),
+        // The login profiles: the customers of the store data, each with the checkout of the
+        // session logged in as them.
+        "customers": store.customers.iter()
+            .map(|customer| {
+                let mut profile = super::checkout_account::profile_json(customer, &store, false);
+                profile["open"] = json!(format!("{root}/checkout?customer={}", query_escape(&customer.email)));
+                if let Some(profile) = profile.as_object_mut() {
+                    profile.remove("current");
+                }
+                profile
+            })
+            .collect::<Vec<_>>(),
         "links": {
             "checkout": format!("{root}/checkout"),
             "allTargets": format!("{root}/checkout?targets=all"),
@@ -699,6 +711,60 @@ fn scenario_html(scenario: &Json) -> String {
     )
 }
 
+/// The short facts about a customer: their company, tags, orders, addresses and country.
+fn customer_facts(customer: &Json) -> Vec<(&'static str, String)> {
+    let count = |n: u64, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut facts = Vec::new();
+    if let Some(company) = customer["company"].as_str() {
+        facts.push(("b2b", format!("B2B · {company}")));
+        let locations = customer["locationsCount"].as_u64().unwrap_or(0);
+        if locations > 1 {
+            facts.push(("", count(locations, "location", "locations")));
+        }
+    }
+    for tag in customer["tags"].as_array().into_iter().flatten() {
+        facts.push(("tag", text_of(tag).to_string()));
+    }
+    let orders = customer["ordersCount"].as_u64().unwrap_or(0);
+    facts.push((
+        "",
+        if orders == 0 {
+            "No orders".to_string()
+        } else {
+            count(orders, "order", "orders")
+        },
+    ));
+    let addresses = customer["addressesCount"].as_u64().unwrap_or(0);
+    if addresses > 0 {
+        facts.push(("", count(addresses, "address", "addresses")));
+    }
+    if let Some(country) = customer["countryCode"].as_str() {
+        facts.push(("", country.to_string()));
+    }
+    facts
+}
+
+fn customer_html(customer: &Json) -> String {
+    let badges: String = customer_facts(customer)
+        .iter()
+        .map(|(kind, text)| {
+            let class = if kind.is_empty() {
+                "lsf-badge".to_string()
+            } else {
+                format!("lsf-badge is-{kind}")
+            };
+            format!("<span class=\"{class}\">{}</span>", esc(text))
+        })
+        .collect();
+    format!(
+        "<li data-customer=\"{email}\"><a class=\"lsf-link\" href=\"{}\">{}</a> \
+         <span class=\"lsf-muted\">{email}</span><span class=\"lsf-badges\">{badges}</span></li>",
+        esc(text_of(&customer["open"])),
+        esc(text_of(&customer["name"])),
+        email = esc(text_of(&customer["email"])),
+    )
+}
+
 /// The home page, drawn from what [`build`] says.
 pub fn render(home: &Json) -> String {
     if let Some(problem) = home["error"].as_str() {
@@ -760,6 +826,27 @@ pub fn render(home: &Json) -> String {
             main.push_str(&scenario_html(scenario));
         }
         main.push_str("</div>");
+    }
+    main.push_str("</section>");
+
+    // The login profiles.
+    let customers = home["customers"].as_array().cloned().unwrap_or_default();
+    main.push_str(
+        "<section class=\"lsf-section\" data-section=\"customers\"><h2>Log in as a customer</h2>",
+    );
+    if customers.is_empty() {
+        main.push_str(
+            "<p class=\"lsf-muted\">The store data has no customers: add some to <code>customers.json</code> to log the checkout in as them.</p>",
+        );
+    } else {
+        main.push_str(
+            "<p class=\"lsf-muted\">The customers of the store data. Each link opens the checkout logged in as them; \
+             the Log in of the Contact section switches between them too.</p><ul class=\"lsf-targets lsf-people\">",
+        );
+        for customer in &customers {
+            main.push_str(&customer_html(customer));
+        }
+        main.push_str("</ul>");
     }
     main.push_str("</section>");
 
