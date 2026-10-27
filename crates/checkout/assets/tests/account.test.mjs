@@ -266,6 +266,7 @@ test('typing a new email while the fallback to the account is on its way keeps t
   const page = app({ start });
   const input = page.query('input[name="email"]');
   input.focus();
+  input.dispatchEvent(new FakeEvent('focusin', { bubbles: true }));
   input.value = '';
   page.checkout.actions.draft('email', '');
   input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
@@ -282,6 +283,47 @@ test('typing a new email while the fallback to the account is on its way keeps t
   await flush();
   assert.deepEqual(page.operations().at(-1), { type: 'email', value: 'replacement@example.com' });
   assert.equal(page.checkout.getState().buyer.email, 'replacement@example.com');
+});
+
+test('the field stays while the buyer is in it, even when what they typed so far is the account\'s email', async () => {
+  const start = [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }];
+  const page = app({ start });
+  const input = page.query('input[name="email"]');
+  input.focus();
+  input.dispatchEvent(new FakeEvent('focusin', { bubbles: true }));
+  input.value = '';
+  page.checkout.actions.draft('email', '');
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  // The answer lands when the buyer has typed exactly the account's email, and goes on typing.
+  input.value = AVA;
+  page.checkout.actions.draft('email', AVA);
+  await flush();
+  assert.equal(page.checkout.getState().buyer.email, AVA);
+  assert.equal(page.query('input[name="email"]'), input, 'the field the buyer is in stays');
+  input.value = `${AVA}.au`;
+  page.checkout.actions.draft('email', `${AVA}.au`);
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  input.dispatchEvent(new FakeEvent('focusout', { bubbles: true }));
+  await flush();
+  assert.deepEqual(page.operations().at(-1), { type: 'email', value: `${AVA}.au` });
+  assert.equal(page.checkout.getState().buyer.email, `${AVA}.au`);
+  assert.ok(page.query('.lsf-contact-email'), 'not the account\'s email: the field stays');
+});
+
+test('the field goes once the buyer leaves it with the account\'s email', async () => {
+  const start = [{ type: 'customer', customer: AVA }, { type: 'email', value: 'orders@example.com' }];
+  const page = app({ start });
+  const input = page.query('input[name="email"]');
+  input.focus();
+  input.dispatchEvent(new FakeEvent('focusin', { bubbles: true }));
+  input.value = AVA.toUpperCase();
+  page.checkout.actions.draft('email', AVA.toUpperCase());
+  input.dispatchEvent(new FakeEvent('change', { bubbles: true }));
+  await flush();
+  assert.ok(page.query('.lsf-contact-email'), 'still in the field');
+  input.dispatchEvent(new FakeEvent('focusout', { bubbles: true }));
+  await flush();
+  assert.equal(page.query('.lsf-contact-email'), null);
 });
 
 test('a guest who empties the email still has to enter one', async () => {

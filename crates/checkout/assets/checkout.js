@@ -310,6 +310,14 @@ export function startCheckout({ root, initial, document, window, location, fetch
 
     chooseLocation: (id) => run([op.companyLocation(id)]),
 
+    /** The buyer is in the "Email for this order" field, or left it: while they are in it, it
+     * stays on the page. */
+    editEmail(editing) {
+      if (ui.emailEditing === editing) return;
+      ui.emailEditing = editing;
+      if (!editing) paint();
+    },
+
     /** A logged-in checkout's contact email goes back to the account's: the checkout falls back
      * to it when none is entered. */
     useAccountEmail() {
