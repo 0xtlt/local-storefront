@@ -4388,6 +4388,7 @@ fn a_checkout_is_completed_when_nothing_is_missing() {
         "the page reads the state of the reply"
     );
     assert_eq!(json["status"], "open");
+    assert_eq!(json["orderGeneration"], 0);
 
     assert_eq!(
         operations(&state, &path, "co-done", buyer_details()).status,
@@ -4420,6 +4421,10 @@ fn a_checkout_is_completed_when_nothing_is_missing() {
     );
     let json = body_json(&get(&state, &format!("{again}.json"), "co-done"));
     assert_eq!(json["status"], "open");
+    // The token is the one of the cart, so the checkout after an order is told by its generation:
+    // what the extensions stored for the first one is not for this one.
+    assert_eq!(again, path);
+    assert_eq!(json["orderGeneration"], 1);
     assert_eq!(json["buyer"]["email"], Json::Null);
     assert_eq!(
         operations(&state, &again, "co-done", buyer_details()).status,

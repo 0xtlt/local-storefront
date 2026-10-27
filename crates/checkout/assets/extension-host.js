@@ -207,8 +207,17 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     post(instance, { type: 'result', id, result });
   }
 
+  /**
+   * Where an extension's value lives, as Shopify scopes the Storage API: to the checkout (its
+   * token and the number of orders the session placed before it, as a new checkout after an
+   * order starts empty, and so does the thank-you page of the order), then to the extension,
+   * whatever the target, never to the other extensions.
+   */
   function storageKey(instance, key) {
-    return `lsf-extension:${instance.ext.handle}:${key}`;
+    const state = getState();
+    const checkout = `${encodeURIComponent(state.token ?? '')}.${state.orderGeneration ?? 0}`;
+    const stage = state.status === 'completed' ? 'thank-you' : 'checkout';
+    return `lsf-extension:${checkout}:${stage}:${instance.ext.handle}:${key}`;
   }
 
   function onStorage(instance, data) {

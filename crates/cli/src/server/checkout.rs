@@ -332,6 +332,9 @@ fn compute(
     object.insert("token".into(), json!(session.cart_token));
     object.insert("variant".into(), json!(variant.name()));
     object.insert("status".into(), json!("open"));
+    // How many orders the session placed before this checkout: what tells it from the next one
+    // of the same session (the token is the one of the cart), as scope of the extensions' storage.
+    object.insert("orderGeneration".into(), json!(basis.placed));
     object.insert(
         "shop".into(),
         json!({

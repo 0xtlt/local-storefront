@@ -157,7 +157,7 @@ Cart lines, note and attributes live in the session cart (the same one the theme
 
 ```json
 {
-  "token": "…", "variant": "standard"|"shop", "status": "open"|"completed",
+  "token": "…", "variant": "standard"|"shop", "status": "open"|"completed", "orderGeneration": 0,
   "shop": {"name": "…", "currencyCode": "EUR", "moneyFormat": "€{{amount}}", "locale": "en", "storefrontUrl": "http://127.0.0.1:9292"},
   "buyer": {"email": "…", "phone": "…", "customer": {"id": "gid://shopify/Customer/1", "email": "…", "firstName": "…", "lastName": "…"} | null},
   "shippingAddress": {…} | null,
@@ -193,6 +193,10 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   `query` (rejects: no Storefront API)), `shopify.extend(target, fn)` registration, Polaris
   web components (`s-banner`, `s-stack`, `s-text`, `s-button`, `s-text-field`, …) defined
   with `customElements.define`. The iframe resizes to its content.
+- `storage` is scoped as Shopify's Storage API is: to the checkout (`token` and `orderGeneration`,
+  the number of orders the session placed before it, as the token is the one of the cart; the
+  thank-you page of an order has a scope of its own), then to the extension, shared by its
+  targets and not with the other extensions.
 - `api-versions.js`: the API releases the host runs, `2026-10` and the `2027-01` release
   candidate; an extension on another version, or declaring its metafields against the rules of
   its version, is not loaded and the page shows why. See `ui-api-versions.md`.

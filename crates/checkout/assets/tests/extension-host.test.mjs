@@ -266,12 +266,76 @@ test('keeps storage apart for each extension', async () => {
   connect();
   const [frame] = host.instances();
   from(frame, { type: 'storage', id: 1, op: 'write', key: 'k', value: { a: 1 } });
-  assert.deepEqual([...items.keys()], ['lsf-extension:gift-message:k']);
+  assert.deepEqual([...items.keys()], ['lsf-extension:preview.0:checkout:gift-message:k']);
   from(frame, { type: 'storage', id: 2, op: 'read', key: 'k' });
   assert.deepEqual(frame.iframe.contentWindow.posted.at(-1).result, { a: 1 });
   from(frame, { type: 'storage', id: 3, op: 'delete', key: 'k' });
   from(frame, { type: 'storage', id: 4, op: 'read', key: 'k' });
   assert.equal(frame.iframe.contentWindow.posted.at(-1).result, null);
+});
+
+/** A storage in memory, and a host on it whose checkout the test changes with `setState`. */
+function storageSetup(options = {}) {
+  const items = new Map();
+  const storage = { getItem: (key) => items.get(key) ?? null, setItem: (key, value) => items.set(key, value), removeItem: (key) => items.delete(key) };
+  const created = setup({ storage, ...options });
+  const call = (instance, message) => {
+    created.from(instance, { type: 'storage', ...message });
+    return instance.iframe.contentWindow.posted.at(-1).result;
+  };
+  return { ...created, items, call };
+}
+
+test('keeps the storage of a checkout apart from the one of another checkout', () => {
+  const { host, slot, connect, setState, state, call } = storageSetup();
+  host.attach(slot, BLOCK);
+  connect();
+  const [frame] = host.instances();
+  call(frame, { id: 1, op: 'write', key: 'dismissed', value: true });
+  assert.equal(call(frame, { id: 2, op: 'read', key: 'dismissed' }), true);
+  // Another checkout (a parallel test session) does not see it, nor can it delete it.
+  const first = state();
+  setState({ ...first, token: 'other-checkout' });
+  assert.equal(call(frame, { id: 3, op: 'read', key: 'dismissed' }), null);
+  call(frame, { id: 4, op: 'delete', key: 'dismissed' });
+  call(frame, { id: 5, op: 'write', key: 'dismissed', value: false });
+  assert.equal(call(frame, { id: 6, op: 'read', key: 'dismissed' }), false);
+  setState(first);
+  assert.equal(call(frame, { id: 7, op: 'read', key: 'dismissed' }), true);
+});
+
+test('shares the storage of an extension between its targets, not between extensions', () => {
+  const extension = (handle) => ({ handle, apiVersion: '2026-10', script: `/${handle}.js`, targets: [BLOCK, REDUCTIONS] });
+  const { host, slot, connect, call } = storageSetup({ extensions: [extension('one'), extension('two')] });
+  host.attach(slot, BLOCK);
+  host.attach(slot, REDUCTIONS);
+  connect();
+  const frame = (handle, target) => host.instances().find((instance) => instance.ext.handle === handle && instance.target === target);
+  call(frame('one', BLOCK), { id: 1, op: 'write', key: 'seen', value: 'yes' });
+  assert.equal(call(frame('one', REDUCTIONS), { id: 2, op: 'read', key: 'seen' }), 'yes', 'the other target of the extension');
+  assert.equal(call(frame('two', BLOCK), { id: 3, op: 'read', key: 'seen' }), null, 'another extension');
+  assert.equal(call(frame('two', REDUCTIONS), { id: 4, op: 'read', key: 'seen' }), null, 'another extension, on the other target');
+});
+
+test('starts the storage again after an order', () => {
+  const { host, slot, connect, setState, state, call } = storageSetup();
+  host.attach(slot, BLOCK);
+  connect();
+  const [frame] = host.instances();
+  const checkout = state();
+  call(frame, { id: 1, op: 'write', key: 'dismissed', value: true });
+  // The order is placed: the thank-you page of the order does not carry what the checkout had.
+  setState({ ...checkout, status: 'completed' });
+  assert.equal(call(frame, { id: 2, op: 'read', key: 'dismissed' }), null);
+  call(frame, { id: 3, op: 'write', key: 'dismissed', value: 'thank-you' });
+  // A new checkout after the order (same token, the next generation) starts empty too.
+  setState({ ...checkout, orderGeneration: 1 });
+  assert.equal(call(frame, { id: 4, op: 'read', key: 'dismissed' }), null);
+  call(frame, { id: 5, op: 'write', key: 'dismissed', value: 'second' });
+  setState({ ...checkout, orderGeneration: 1, status: 'completed' });
+  assert.equal(call(frame, { id: 6, op: 'read', key: 'dismissed' }), null);
+  setState({ ...checkout, orderGeneration: 1 });
+  assert.equal(call(frame, { id: 7, op: 'read', key: 'dismissed' }), 'second');
 });
 
 test('hands out a session token that looks like the real one', () => {
