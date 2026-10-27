@@ -540,6 +540,8 @@ function functionsPanel(ctx) {
         ` · ${state.extensions?.length ?? 0} checkout UI extension${state.extensions?.length === 1 ? '' : 's'}`),
       (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
         h('ul', null, state.errors.map((error) => h('li', null, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
+      (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
+        h('ul', null, state.skippedDiscounts.map((skipped) => h('li', null, h('strong', null, skipped.title), skipped.code && h('code', null, skipped.code), ` ${skipped.reason}`, h('code', null, skipped.function))))),
       (state.extensions ?? []).length > 0 && h('div', null, h('h4', null, 'Extensions'),
         h('ul', null, state.extensions.map((ext) => h('li', { key: ext.handle }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), (ext.targets ?? []).map((target) => h('code', null, target)))))),
       runs.length === 0 ? h('p', { class: 'lsf-muted' }, 'No Function ran.') : runs.map((entry, index) => run(ctx, entry, index))));

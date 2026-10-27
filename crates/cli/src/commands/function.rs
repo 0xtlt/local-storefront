@@ -315,6 +315,19 @@ fn print_text(result: &CheckoutResult) {
             discount.function
         );
     }
+    for skipped in &result.skipped_discounts {
+        println!(
+            "  discount not applied {}{}: {} ({})",
+            skipped.title,
+            skipped
+                .code
+                .as_deref()
+                .map(|code| format!(" [{code}]"))
+                .unwrap_or_default(),
+            skipped.reason,
+            skipped.function
+        );
+    }
     for group in &result.delivery_groups {
         for option in &group.options {
             let mark = if group.selected.as_deref() == Some(option.handle.as_str()) {

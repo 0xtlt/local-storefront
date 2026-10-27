@@ -263,6 +263,19 @@ test('the Functions panel lists the runs and opens them on demand', () => {
   assert.match(pres[1], /"operations"/);
 });
 
+test('the Functions panel lists the discounts that were not applied, with why', () => {
+  const state = checkoutState({
+    skippedDiscounts: [{ title: 'Half', code: null, class: 'Shipping', amount: { amount: 2.45 }, function: 'volume-discount', reason: 'only one shipping discount applies per order: "Three off" takes 3.00 USD off the shipping' }],
+  });
+  const closed = page(state);
+  assert.equal(findAll(closed, (node) => node.props['data-test'] === 'skipped-discounts').length, 0, 'nothing built while the panel is closed');
+  const open = page(state, { functionsOpen: true });
+  const [skipped] = findAll(open, (node) => node.props['data-test'] === 'skipped-discounts');
+  assert.match(text(skipped), /Discounts not applied.*Half.*only one shipping discount applies per order.*Three off.*volume-discount/);
+  const none = page(checkoutState(), { functionsOpen: true });
+  assert.equal(findAll(none, (node) => node.props['data-test'] === 'skipped-discounts').length, 0);
+});
+
 test('a fetch run shows the request it asked for and the response', () => {
   const state = checkoutState();
   state.runs[0] = {
