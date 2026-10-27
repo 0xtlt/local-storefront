@@ -6097,6 +6097,96 @@ fn a_scenario_opens_logged_in_as_the_customer_of_the_query() {
     );
 }
 
+/// A guest scenario that enters a whole contact: email, phone and an address.
+const ENTERED_CONTACT: &str = r#"{
+    "session": {"customer": "none", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+    "entered": {
+        "email": "typed@example.com",
+        "phone": "+1 555 000 1111",
+        "shipping_address": {"last_name": "Typed", "address1": "1 Analytical Way", "city": "Ottawa", "country_code": "CA", "zip": "K1A 0B1"}
+    }
+}"#;
+
+/// What a login changes of the checkout, to compare one opened from a URL with one logged in
+/// from the menu.
+fn login_view(json: &Json) -> Json {
+    json!({
+        "buyer": json["buyer"],
+        "shippingAddress": json["shippingAddress"],
+        "country": json["localization"]["country"]["isoCode"],
+        "addresses": json["account"]["addresses"],
+        "scenario": json["scenario"],
+        "lines": json["lines"].as_array().map(Vec::len),
+    })
+}
+
+/// The checkout of `/checkout?scenario=<scenario>&customer=<who>`, and the one of
+/// `/checkout?scenario=<scenario>` logged in as `who` from the menu.
+fn url_and_menu_logins(state: &ServerState, scenario: &str, who: &str) -> (Json, Json) {
+    let reply = get(
+        state,
+        &format!("/checkout?scenario={scenario}&customer={who}"),
+        "co-login-url",
+    );
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    let by_url = body_json(&get(state, &format!("{path}.json"), &session));
+
+    let reply = get(
+        state,
+        &format!("/checkout?scenario={scenario}"),
+        "co-login-menu",
+    );
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    body_json(&get(state, &format!("{path}.json"), &session));
+    let by_menu = log_in_as(state, &path, &session, json!(who));
+    (by_url, by_menu)
+}
+
+#[test]
+fn a_customer_in_the_query_of_a_scenario_logs_in_as_the_menu_does() {
+    let data = ScenarioData::new(
+        "login-entered",
+        &[
+            ("entered.json", ENTERED_CONTACT),
+            (
+                "jane-entered.json",
+                r#"{
+                    "session": {"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+                    "entered": {"email": "orders@example.com"}
+                }"#,
+            ),
+        ],
+    );
+    let state = data.server(&[], false);
+
+    // Jane has addresses: the login brings her contact and her default address, whatever the
+    // scenario entered for the guest before.
+    let (by_url, by_menu) = url_and_menu_logins(&state, "entered", "jane.doe@example.com");
+    assert_eq!(login_view(&by_url), login_view(&by_menu));
+    assert_eq!(by_url["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(by_url["buyer"]["email"], "jane.doe@example.com");
+    assert_eq!(by_url["buyer"]["phone"], "+1 555 010 9988");
+    assert_eq!(by_url["shippingAddress"]["address1"], "12 Maple Street");
+    assert_eq!(by_url["localization"]["country"]["isoCode"], "US");
+
+    // A customer without an address keeps the one the scenario entered; the contact is theirs.
+    let (by_url, by_menu) = url_and_menu_logins(&state, "entered", "new.customer@example.com");
+    assert_eq!(login_view(&by_url), login_view(&by_menu));
+    assert_eq!(by_url["buyer"]["email"], "new.customer@example.com");
+    assert_eq!(by_url["buyer"]["phone"], Json::Null);
+    assert_eq!(by_url["shippingAddress"]["address1"], "1 Analytical Way");
+    assert_eq!(by_url["localization"]["country"]["isoCode"], "CA");
+
+    // The customer the scenario is already logged in as: nothing changes, its entries stay.
+    let (by_url, by_menu) = url_and_menu_logins(&state, "jane-entered", "jane.doe@example.com");
+    assert_eq!(login_view(&by_url), login_view(&by_menu));
+    assert_eq!(by_url["buyer"]["email"], "orders@example.com");
+    assert_eq!(by_url["shippingAddress"]["address1"], "12 Maple Street");
+}
+
 #[test]
 fn the_functions_read_the_customer_the_checkout_switched_to() {
     // A copy of the fixture app whose payment Function also asks for the buyer.

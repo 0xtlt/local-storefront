@@ -219,14 +219,37 @@ pub fn log_in(
         }
     };
     let customer = store.customer_named(who)?;
+    let location = location_param(operation)
+        .map(|wanted| location_of(store, customer, &wanted))
+        .transpose()?;
+    switch_to(
+        store,
+        session,
+        checkout,
+        customer.map(|customer| customer.id),
+        location,
+    );
+    Ok(())
+}
+
+/// Logs the checkout in as `customer` (`None`: out), at `location` for a B2B customer: what the
+/// `customer` operation, `/checkout?customer=` and `/checkout?scenario=…&customer=` all do, so
+/// that a login gives the same checkout wherever it comes from. A login from a URL is the login
+/// of the menu made on the checkout the URL opened: the scenario's entries first, then the login.
+pub fn switch_to(
+    store: &Store,
+    session: &mut Session,
+    checkout: &mut CheckoutState,
+    customer: Option<u64>,
+    location: Option<u64>,
+) {
     let before = Identity::of(store, session);
-    let id = customer.map(|customer| customer.id);
-    if session.customer_id != id {
-        session.customer_id = id;
+    if session.customer_id != customer {
+        session.customer_id = customer;
         session.company_location = None;
     }
-    if let Some(wanted) = location_param(operation) {
-        session.company_location = Some(location_of(store, customer, &wanted)?);
+    if location.is_some() {
+        session.company_location = location;
     }
     transition(
         store,
@@ -235,7 +258,6 @@ pub fn log_in(
         Some(before),
         Identity::of(store, session),
     );
-    Ok(())
 }
 
 /// `{"type": "companyLocation", "location": "<name or id>"}`: the location the logged-in B2B

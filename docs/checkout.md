@@ -196,6 +196,12 @@ customer's.
 - `GET /checkout?customer=<email>` opens the checkout logged in as a customer (`default` for the
   first one, `none` for a guest); `/checkout?scenario=<name>&customer=<email>` opens a scenario
   as someone else. Someone the data does not have answers `404` with the list of customers.
+- A login from a URL is the login of the menu: `?scenario=<name>&customer=<email>` gives the same
+  checkout as opening `?scenario=<name>` and picking the customer in the menu. The scenario is
+  set up first (its `entered` included), then the login applies what is written above: the
+  contact (email and phone) becomes the customer's, the address their default one, and the
+  scenario's address stays only for a customer without one. When `customer` is the one the
+  scenario already logs in as, nothing changes, and everything the scenario entered stays.
 - The page sends the [operations](#operations) `customer` and `companyLocation`.
 - The state has `account`: `profiles` (the customers to log in as), `addresses` (the saved
   addresses of the customer logged in, the default one first, each with an `id` and the

@@ -244,11 +244,23 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
             Ok(customer) => customer,
             Err(reply) => return with_cookie(reply, &id, is_new),
         };
+        // The login of the menu, on the checkout as it is.
         state.with_session(&id, |entry| {
-            if entry.session.customer_id != customer {
-                entry.session.customer_id = customer;
-                entry.session.company_location = None;
-            }
+            let checkout = &mut entry.checkout;
+            checkout_account::prepare(
+                &store,
+                &mut entry.session,
+                &mut checkout.state,
+                &mut checkout.prepared,
+            );
+            checkout_account::switch_to(
+                &store,
+                &mut entry.session,
+                &mut checkout.state,
+                customer,
+                None,
+            );
+            checkout.prepared = Some(Identity::of(&store, &entry.session));
         });
     }
     let root = request_root(state, &id, incoming);
@@ -384,18 +396,16 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
             &details,
         );
     }
-    // `&customer=` logs the scenario's checkout in as someone else.
-    if let Some(who) = incoming.query_param("customer") {
-        match customer_of_query(state, store, incoming, who) {
-            Ok(customer) if customer != session.customer_id => {
-                session.customer_id = customer;
-                session.company_location = None;
-            }
-            Ok(_) => {}
+    // `&customer=` logs the scenario's checkout in as someone else, as the menu would once it
+    // is open: checked before anything is set up.
+    let login = match incoming.query_param("customer") {
+        Some(who) => match customer_of_query(state, store, incoming, who) {
+            Ok(customer) => Some(customer),
             Err(reply) => return reply,
-        }
-    }
-    let entered = entered_by(scenario);
+        },
+        None => None,
+    };
+    let mut entered = entered_by(scenario);
     // As entering the address does: markets decide on the country of the address.
     if let Some(code) = entered
         .shipping_address
@@ -404,6 +414,13 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         .and_then(|code| store.country(code))
     {
         session.country = Some(code.iso_code.clone());
+    }
+    // The checkout of the scenario as the first read prepares it, then the login.
+    let mut prepared = None;
+    checkout_account::prepare(store, &mut session, &mut entered, &mut prepared);
+    if let Some(customer) = login {
+        checkout_account::switch_to(store, &mut session, &mut entered, customer, None);
+        prepared = Some(Identity::of(store, &session));
     }
     let token = cart_token_of(&id);
     session.cart_token = token.clone();
@@ -416,6 +433,7 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         entry.checkout = CheckoutSession {
             state: entered,
             variant: look,
+            prepared,
             ..CheckoutSession::default()
         };
     });
