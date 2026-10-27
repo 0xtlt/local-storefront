@@ -206,17 +206,34 @@ discounts on the subtotal they left, then shipping. Within a class:
   not of what the order discounts before it left: 10% and 20% off 100.00 take 10.00 and 20.00,
   70.00 is left. The fixed amounts come off afterwards, from what is left, and never take the
   order below zero (a percentage and a $20 discount on 350.00: 10% leaves 315.00, then 295.00).
-  This is the same whatever the order of the discounts in the configuration and of the candidates
-  in an answer.
 - **Product discounts on one line.** The percentages come off before the fixed amounts. A
   percentage is a share of the price of the line before any discount, so 10% and 20% off a line
   of 100.00 take 10.00 and 20.00. A fixed amount never takes more than the line has left.
+- **A fixed amount across several lines** (`appliesToEachItem: false`) is taken once: it is
+  shared between the lines in proportion to their prices, and what a line cannot take (a
+  discount before it took its price) goes to the others, so the amount is taken in full as long
+  as the lines have that much left. 30.00 across a free 32.00 line and a 24.00 line takes the
+  24.00 of the second.
 - **Shipping discounts.** They are applied one after the other, each on what the one before
   left (see the gaps below).
 
 An amount is shared between the lines in proportion to what they cost, to the cent, and the
 allocations of the lines (`discountAllocations`, in the page and for the Functions that run
 later) add up to the discount.
+
+**What is guaranteed, and what is not.** Product and order discounts come out the same whatever
+the order of the discounts in the configuration, of the `[[extensions]]` of the app and of the
+candidates in an answer: the checkout applies the candidates of a class in an order of its own.
+Percentages first, the larger one first; then the fixed amounts, the one that covers fewer lines
+first. The second rule is what makes overlapping fixed amounts predictable: two lines of 100.00,
+a fixed 100.00 across both and a fixed 100.00 on the second alone leave 0.00 in either
+configuration order (the narrow one first takes the second line, the general one takes the
+first), and not 50.00 in one and 0.00 in the other. Candidates that cover the same lines are
+told apart by their amount, Function, title, code and message; two that agree on all of these
+take the same from the same lines, and only their metafields tell them apart. The order is this
+checkout's choice, and so is the sharing of a fixed amount between lines: Shopify documents
+neither for overlapping amounts. It is a fixed order, not the one that takes the most in every
+case.
 
 Shopify documents the order of the classes, the percentages of order discounts being all
 calculated on the subtotal, the percentage before the fixed amount in the order and on a line, and
