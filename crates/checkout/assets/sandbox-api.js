@@ -68,12 +68,19 @@
       : { type: 'automatic', title: entry.title, discountedAmount: entry.amount };
   }
 
+  // The title Shopify gives the only variant of a product without options. The state leaves it
+  // out of `variantTitle` (the checkout page does not show it), the API does not.
+  const DEFAULT_VARIANT_TITLE = 'Default Title';
+
+  // The Cart Lines API of 2026-10 and 2027-01: `title` is the title of the variant ("Small",
+  // "Red / Large"), "not the parent product title", which `product` does not expose (`id`,
+  // `vendor` and `productType`). `subtitle` is a secondary description the store data does not
+  // have, so it is undefined.
   function merchandise(line) {
     return clean({
       type: 'variant',
       id: 'gid://shopify/ProductVariant/' + line.variantId,
-      title: line.title,
-      subtitle: line.variantTitle,
+      title: line.variantTitle || DEFAULT_VARIANT_TITLE,
       image: line.image ? clean({ url: line.image, altText: line.imageAlt }) : undefined,
       selectedOptions: (line.selectedOptions || []).map((option) => ({ name: option.name, value: option.value })),
       sellingPlan: line.sellingPlan

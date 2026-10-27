@@ -26,8 +26,8 @@ test('reads the checkout as signals', () => {
   const [shirt] = shopify.lines.value;
   assert.equal(shirt.id, 'gid://shopify/CartLine/1');
   assert.equal(shirt.merchandise.id, 'gid://shopify/ProductVariant/101');
-  assert.equal(shirt.merchandise.title, 'Linen shirt');
-  assert.equal(shirt.merchandise.subtitle, 'M / Sand');
+  assert.equal(shirt.merchandise.title, 'M / Sand', 'the title of the variant, not of the product');
+  assert.equal(shirt.merchandise.subtitle, undefined, 'the store has no secondary description of a variant');
   assert.equal(shirt.merchandise.sku, 'LIN-SH-M-SAND');
   assert.deepEqual(plain(shirt.cost.totalAmount), { amount: 49, currencyCode: 'EUR' });
   assert.deepEqual(plain(shopify.cost.totalAmount.value), { amount: 73, currencyCode: 'EUR' });
@@ -74,6 +74,12 @@ test('merchandise carries what the Cart Lines API documents, for lines and bundl
   assert.equal(part.requiresShipping, false);
   assert.equal(part.sku, 'TOTE-01');
   assert.equal(part.subtitle, undefined);
+  assert.equal(part.title, 'Default Title', 'a product with a single variant has the title of Shopify for it');
+  assert.equal(tote.merchandise.title, 'Default Title');
+  for (const merchandise of [shirt.merchandise, tote.merchandise, part]) {
+    assert.deepEqual(Object.keys(plain(merchandise.product)).sort(), ['id', 'productType', 'vendor'], 'a product has no title');
+  }
+  assert.equal(shirt.lineComponents[0].merchandise.title, 'Default Title', 'a component reads like a line');
 });
 
 test('signals tell subscribers about changes, and only changes', () => {
@@ -165,7 +171,7 @@ test('storage, session token and the Storefront API', async () => {
 test('targets add their own members', () => {
   const state = next({ type: 'shippingAddress', address: ADDRESS }, { type: 'deliveryOption', group: 'shipping', handle: 'standard' });
   const line = runtime({ target: 'purchase.checkout.cart-line-item.render-after', ctx: { lineId: 'gid://shopify/CartLine/2' }, state }).shopify;
-  assert.equal(line.target.value.merchandise.title, 'Canvas tote');
+  assert.equal(line.target.value.merchandise.title, 'Default Title');
   assert.equal(line.target.value.quantity, 2);
   assert.equal(typeof line.applyCartLinesChange, 'function');
 

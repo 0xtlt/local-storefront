@@ -16,12 +16,25 @@ Researched on 2026-10-26 with the `shopify-dev` MCP (`learn_shopify_api`, `searc
 | Targets | 31, as listed in the 2026-10 reference | same |
 | `shopify` API members (Addresses, Analytics, Attributes, Buyer Identity, Buyer Journey, Cart Instructions, Cart Lines, Checkout Token, Cost, Customer Privacy, Delivery, Discounts, Extension, Gift Cards, Localization, Localized Fields, Metafields, Note, Order, Payments, Storefront API, Session Token, Settings, Shop, Storage) | | same, nothing added or removed |
 | Polaris `s-*` components and their props | `@shopify/ui-extensions` 2026.10.x | same, nothing announced |
+| `Merchandise` of a cart line (and of a `lineComponents` entry) | `title` is the title of the variant, `subtitle` optional, `product` has `id`, `vendor`, `productType` | same types in `@shopify/ui-extensions` 2027.0.0-rc.5 |
 | Deprecations | none | none |
 
 `owner_type` names the resource the metafield is read from: `CART`, `COMPANY`, `COMPANY_LOCATION`,
 `CUSTOMER`, `PRODUCT`, `PRODUCTVARIANT` or `SHOP`. If the same `namespace` and `key` are needed on
 several resources, declare it once for each. Extensions without a metafield declaration are not
 affected.
+
+`Merchandise` follows the 2026-10 reference of the Cart Lines API, which is the same in both
+releases: `title` is "the display title of the product variant, such as "Small" or "Red / Large".
+This is the variant-specific label, not the parent product title"; `subtitle` is "a secondary
+description for the variant […] undefined if no subtitle is available"; `product` exposes the
+`id`, `vendor` and `productType` of the product, no title. So `shopify.lines` gives the variant
+title as `title` (`Default Title` for the only variant of a product without options, which is
+the title Shopify gives it) and no `subtitle`: the store data has no secondary description of a
+variant. Bundle components (`lineComponents[].merchandise`) and the lines of the thank-you page
+are built the same way. Earlier releases worded the field as "the product variant's title"; the
+reference does not say what a checkout returns at runtime, which this page could not check
+against a real store.
 
 That is the only change Shopify documents for checkout UI extensions between the two releases.
 The rest of the 2027-01 release notes (collections, discounts, markets, metaobjects, inventory,
