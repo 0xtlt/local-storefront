@@ -74,7 +74,7 @@ Sources: [owner_type changelog (2026-10-08)](https://shopify.dev/changelog/posts
   3. the version requires `owner_type` (2027-01) and a declared metafield has none.
 - `createExtensionHost` leaves those extensions out (no slot, no iframe) and lists them in
   `host.refusals()`. The page shows each as a warning banner, "`handle`: not loaded. `reason`",
-  and marks it "not loaded" in the Functions panel.
+  and marks it "not loaded" in the Functions dialog.
 - The `init` message carries `apiVersion`, which the sandbox exposes as
   `shopify.extension.apiVersion`. The two versions have the same `shopify` surface, so the
   sandbox has no version switch: it is one code path.

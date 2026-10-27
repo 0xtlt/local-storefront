@@ -25,8 +25,9 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   customization, validation) from their built Wasm modules, and shows its checkout UI
   extensions in the page, in the standard one-page look or in the Shop app's (`--variant shop`).
   `--extension <handle>` (repeatable) picks the extensions to use, `--build` runs the build
-  command of each Function first. API versions 2026-10 and 2027-01 are supported. Guide:
-  [checkout](docs/checkout.md).
+  command of each Function first. A badge in the corner of the page opens a dialog with the
+  input and output of each Function run side by side. API versions 2026-10 and 2027-01 are
+  supported. Guide: [checkout](docs/checkout.md).
 - **`lsf function run [handle]... --app <dir>`** runs the Functions once, without a server, and
   prints each input, output and log with the checkout that results. `--session` and
   `--checkout` set the cart and what the buyer entered, `--format json` is for tools. It exits
@@ -51,7 +52,7 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   discounts and cart validation Functions run: the checkout sends the HTTP request they ask for
   and gives the response to the `.run` target as `fetchResult`, with Shopify's limits (GET and
   POST, HTTPS, a timeout of 100 to 2000 ms, 100 KB, no redirect; `http` is accepted for
-  `localhost`). The request and the response show in the Functions panel and in
+  `localhost`). The request and the response show in the Functions dialog and in
   `lsf function run`.
 - **A deferred payment in the checkout.** A line sold with a selling plan that takes a deposit
   (a pre-order, try before you buy: `checkout_charge` in the store data) is no longer charged in

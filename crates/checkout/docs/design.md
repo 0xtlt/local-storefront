@@ -145,7 +145,7 @@ goes through `distribute_capped`: proportional to the prices, a line that has le
 share gives the rest to the others. Shopify applies one shipping discount per order, the best for
 the cart: `apply_best_shipping` compares what each discount takes off the selected option (then off
 all the options) on the same groups, applies the best one, and puts the others in
-`CheckoutResult::skipped_discounts` with the reason (the Functions panel and `lsf function run`
+`CheckoutResult::skipped_discounts` with the reason (the Functions dialog and `lsf function run`
 show them).
 `PaymentMethod::placements` is what `PaymentCustomizationPaymentMethod.placements` reads; a hide
 operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists

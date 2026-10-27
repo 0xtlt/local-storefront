@@ -411,7 +411,7 @@ discounts on the subtotal they left, then shipping. Within a class:
   24.00 of the second.
 - **Shipping discounts.** One applies per order, the best one: the one that takes the most off
   the delivery option the buyer selected (then off all the options). The others are not applied
-  and are not dropped silently: the Functions panel lists them under "Discounts not applied"
+  and are not dropped silently: the Functions dialog lists them under "Discounts not applied"
   (`skippedDiscounts` in the state, and a `discount not applied` line in `lsf function run`)
   with their amount and why. 50% off a 4.90 Standard rate and 3.00 off it: the 3.00 applies,
   the 50% (2.45) is listed. Free Express does not beat 1.00 off Standard while the buyer has
@@ -460,7 +460,7 @@ A Function with network access has a `.fetch` target next to its `.run` target:
 2026-10 and 2027-01). The checkout runs the `.fetch` target right before its `.run` target, sends
 the HTTP request it answers from your machine, and gives the response to the `.run` target as
 `fetchResult` (`status`, `body`, `jsonBody`, `header(name:)`). The request and the response
-show in the Functions panel and in `lsf function run`.
+show in the Functions dialog and in `lsf function run`.
 
 Shopify's limits apply: `GET` and `POST`; an HTTPS URL (an `http` URL is accepted for
 `localhost` and loopback addresses, so a server of the app under development can answer); a
@@ -485,10 +485,17 @@ the order. (Shopify's documentation does not say which step blocks; this is how 
 treats them.)
 
 The input of each Function is the result of its input query, run against the cart, the buyer and
-the store data. A Function that fails to run adds an error that blocks the order. The
-"Functions" panel of the page shows each run: its input, its output, its logs and
-its instructions (Shopify stops a Function past 11 million), and the discounts a Function
-answered that were not applied.
+the store data. A Function that fails to run adds an error that blocks the order.
+
+The "Functions" badge in the bottom left corner of every page (the checkout, the thank-you page,
+`?targets=all`) says how many Functions ran, and turns red when one failed or the checkout has
+errors. It opens the Functions dialog, which takes most of the window (all of it on a narrow
+screen): the runs on the left, and for the one picked its error, its logs, its instructions
+(Shopify stops a Function past 11 million) and its input and output side by side, each with a
+Copy button; a `.fetch` run adds its HTTP request and response. It opens on the first run that
+failed. Its Overview lists the errors that block the checkout, the discounts a Function answered
+that were not applied, the checkout UI extensions, and a link to the other skin. Escape, the
+close button or a click outside closes it.
 
 The checkout UI extensions render where their targets say: in the page, one sandboxed frame
 each. They read the checkout through the `shopify` global and change it with the `apply*Change`
