@@ -53,16 +53,16 @@ test('turns layout attributes into CSS', () => {
   assert.deepEqual(plain(boxStyle({ padding: 'base large', paddingblockstart: 'small', background: 'subdued', borderradius: 'base', inlinesize: 'fill', display: 'auto' })), {
     padding: '1rem 1.25rem',
     'padding-block-start': '0.875rem',
-    background: '#f7f7f7',
-    'border-radius': '8px',
+    background: 'var(--lsf-color-bg-subdued)',
+    'border-radius': 'var(--lsf-radius-small)',
     'inline-size': '100%',
   });
   assert.deepEqual(plain(boxStyle({ gap: 'small-200 base', gridtemplatecolumns: '1fr 2fr', alignitems: 'center', justifycontent: 'space-between' })), {
     gap: '0.5rem 1rem', 'grid-template-columns': '1fr 2fr', 'align-items': 'center', 'justify-content': 'space-between',
   });
-  assert.equal(boxStyle({ border: 'large dashed strong' }).border, '2px dashed #8a8a8a');
-  assert.equal(boxStyle({ border: 'base' }).border, '1px solid #d4d4d4');
-  assert.equal(boxStyle({ borderwidth: 'large', borderstyle: 'dotted' }).border, '1.25rem dotted #d4d4d4');
+  assert.equal(boxStyle({ border: 'large dashed strong' }).border, '2px dashed var(--lsf-color-border-emphasis)');
+  assert.equal(boxStyle({ border: 'base' }).border, '1px solid var(--lsf-color-border)');
+  assert.equal(boxStyle({ borderwidth: 'large', borderstyle: 'dotted' }).border, '1.25rem dotted var(--lsf-color-border)');
   assert.deepEqual(plain(boxStyle({ padding: '' })), {});
 });
 
