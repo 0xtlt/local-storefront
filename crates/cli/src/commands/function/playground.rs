@@ -10,7 +10,6 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lsf_checkout::{CheckoutResult, FunctionRun};
@@ -37,9 +36,19 @@ fn scenarios() -> Vec<String> {
 /// The URL of the mock server in the store data.
 const FAKE_API: &str = "http://localhost:8787";
 
+/// A copy of the store data in the temporary folder, removed with the value (a test that fails
+/// removes it too).
+struct DataCopy(PathBuf);
+
+impl Drop for DataCopy {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A copy of the store data of the playground whose network Functions call `base` instead of
 /// the mock server.
-fn data_calling(base: &str) -> PathBuf {
+fn data_calling(base: &str) -> DataCopy {
     static COPIES: AtomicUsize = AtomicUsize::new(0);
     let to = std::env::temp_dir().join(format!(
         "lsf-playground-{}-{}",
@@ -52,7 +61,7 @@ fn data_calling(base: &str) -> PathBuf {
     let text = std::fs::read_to_string(&store).unwrap();
     assert!(text.contains(FAKE_API), "the store data calls {FAKE_API}");
     std::fs::write(&store, text.replace(FAKE_API, base)).unwrap();
-    to
+    DataCopy(to)
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -67,17 +76,17 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// The store data the tests run on: the network Functions call a port nothing listens on.
-fn data() -> &'static Path {
-    static DATA: OnceLock<PathBuf> = OnceLock::new();
-    DATA.get_or_init(|| {
+thread_local! {
+    /// The store data the tests run on, one copy per test (each runs on a thread of its own,
+    /// which removes it when it ends): the network Functions call a port nothing listens on.
+    static DATA: DataCopy = {
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
             .unwrap()
             .port();
         data_calling(&format!("http://127.0.0.1:{port}"))
-    })
+    };
 }
 
 /// A server of the test that answers as the mock server does: 12% off, and the slate mug out of
@@ -132,7 +141,7 @@ fn serve_fake_api() -> String {
 }
 
 fn run_at(scenario: &str, step: Step) -> CheckoutResult {
-    run_on(data(), scenario, step)
+    DATA.with(|data| run_on(&data.0, scenario, step))
 }
 
 fn run_on(data: &Path, scenario: &str, step: Step) -> CheckoutResult {
@@ -401,7 +410,7 @@ fn the_network_functions_read_what_the_server_answers() {
     let base = serve_fake_api();
     let data = data_calling(&base);
 
-    let result = run_on(&data, "fn-discount-network", Step::Completion);
+    let result = run_on(&data.0, "fn-discount-network", Step::Completion);
     assert_ok(&result);
     let fetch = the_run(
         &result,
@@ -413,7 +422,7 @@ fn the_network_functions_read_what_the_server_answers() {
     assert_eq!(exchange.response.status, 200);
     assert_eq!(discount(&result, "Partner price: 12% off"), 768);
 
-    let result = run_on(&data, "fn-validation-network", Step::Completion);
+    let result = run_on(&data.0, "fn-validation-network", Step::Completion);
     assert_ok(&result);
     let fetch = the_run(
         &result,
@@ -427,7 +436,6 @@ fn the_network_functions_read_what_the_server_answers() {
     );
     assert_eq!(exchange.response.status, 200);
     assert_eq!(errors(&result), ["Ceramic Mug is out of stock"]);
-    let _ = std::fs::remove_dir_all(&data);
 }
 
 #[test]
