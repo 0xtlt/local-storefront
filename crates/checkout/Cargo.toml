@@ -18,6 +18,10 @@ chrono.workspace = true
 function-runner = { git = "https://github.com/Shopify/function-runner", tag = "v9.2.2" }
 wasmtime = { version = "=39.0.1", default-features = false, features = ["runtime", "cranelift", "std"] }
 toml = "0.9"
+# What `shopify app build` does to a Rust Function's module after its build command: Shopify's
+# own shopify-function-trampoline (MIT), as a library, at the version Shopify's CLI runs.
+shopify_function_trampoline = { git = "https://github.com/Shopify/shopify-function-wasm-api", tag = "shopify_function_trampoline/v2.0.1" }
+wasmparser = "0.240"
 # The build of JavaScript Functions (`javascript`): the module Javy writes, and the source it
 # embeds, compressed as Javy does.
 wasm-encoder = "0.240"

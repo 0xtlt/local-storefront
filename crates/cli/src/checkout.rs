@@ -124,6 +124,7 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
                         function.handle
                     ));
                 }
+                link(function)?;
             }
             Some(Build::JavaScript) => {
                 eprintln!("build:  {}: JavaScript, built by lsf", function.handle);
@@ -131,6 +132,25 @@ pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
                     .map_err(|error| format!("the build of {} failed: {error}", function.handle))?;
             }
         }
+    }
+    Ok(())
+}
+
+/// What `shopify app build` does after a Function's build command: a module that calls the
+/// Function Wasm API by name (a Rust Function's, as `cargo build` writes it) is linked to the
+/// host's provider with Shopify's trampoline. A module the command did not write is left to the
+/// diagnostics that say so.
+pub fn link(function: &app::FunctionExtension) -> Result<(), String> {
+    if !function.wasm_path.is_file() {
+        return Ok(());
+    }
+    if lsf_checkout::trampoline::apply(&function.wasm_path)
+        .map_err(|error| format!("the build of {} failed: {error}", function.handle))?
+    {
+        eprintln!(
+            "build:  {}: linked to the Function Wasm API (shopify-function-trampoline)",
+            function.handle
+        );
     }
     Ok(())
 }
@@ -563,6 +583,65 @@ mod tests {
             overrides: Vec::new(),
             problems: Vec::new(),
         }
+    }
+
+    /// A Rust Function's build command writes the module `cargo build` writes; the build links
+    /// it to the Function Wasm API, as `shopify app build` does, and it runs.
+    #[test]
+    fn a_build_links_what_a_build_command_wrote_with_shopify_s_trampoline() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures");
+        let root = std::env::temp_dir().join(format!("lsf-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("extensions/limit");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(root.join("shopify.app.toml"), "name = \"App\"\n").unwrap();
+        std::fs::copy(
+            fixtures.join("app/extensions/quantity-limit/src/run.graphql"),
+            dir.join("src/run.graphql"),
+        )
+        .unwrap();
+        let raw = fixtures.join("trampoline/quantity-limit.raw.wasm");
+        std::fs::write(
+            dir.join("shopify.extension.toml"),
+            format!(
+                r#"api_version = "2027-01"
+
+[[extensions]]
+name = "Limit"
+handle = "limit"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "purchase.validation.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "mkdir -p dist && cp '{}' dist/function.wasm"
+"#,
+                raw.display()
+            ),
+        )
+        .unwrap();
+        let shopify_app = app::load(&root).unwrap();
+        build_functions(&shopify_app, &Selection::all()).unwrap();
+        let module = dir.join("dist/function.wasm");
+        assert_eq!(
+            std::fs::read(&module).unwrap(),
+            std::fs::read(fixtures.join("app/extensions/quantity-limit/dist/function.wasm"))
+                .unwrap()
+        );
+        let execution = lsf_checkout::runner::run(
+            &module,
+            "run",
+            &serde_json::json!({
+                "cart": { "lines": [{ "quantity": 1 }], "buyerIdentity": null },
+                "buyerJourney": { "step": "CHECKOUT_COMPLETION" },
+                "validation": { "metafield": null }
+            }),
+        );
+        assert_eq!(execution.error, None, "{}", execution.logs);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

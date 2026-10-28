@@ -1094,6 +1094,40 @@ fn a_change_to_an_extension_without_a_build_reloads_the_pages_at_once() {
 }
 
 #[test]
+fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs() {
+    let raw = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../checkout/tests/fixtures/trampoline/quantity-limit.raw.wasm");
+    let app = TempApp::new("link");
+    // A Rust Function's build: the module `cargo build` writes.
+    app.function_with(
+        "rust",
+        &format!("mkdir -p dist && cp '{}' dist/function.wasm", raw.display()),
+    );
+    let watching = Watching::start(&app, |options| options.build_first = true);
+    let published = std::fs::read(watching.builds.module_path("rust").unwrap()).unwrap();
+    assert_eq!(
+        lsf_checkout::trampoline::unlinked(&published),
+        None,
+        "{}",
+        watching.said()
+    );
+    assert_eq!(
+        published,
+        std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../checkout/tests/fixtures/app/extensions/quantity-limit/dist/function.wasm"
+            )
+        )
+        .unwrap()
+    );
+    assert!(
+        watching.builds.failure("rust").is_none(),
+        "{}",
+        watching.said()
+    );
+}
+
+#[test]
 fn a_checkout_ui_extension_with_its_sources_is_bundled_when_they_change() {
     let app = TempApp::new("ui-build");
     app.ui_extension("ui-a");

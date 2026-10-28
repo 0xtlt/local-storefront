@@ -14,6 +14,7 @@ pub mod pipeline;
 pub mod placement;
 pub mod runner;
 pub mod schema;
+pub mod trampoline;
 pub mod types;
 pub mod version;
 

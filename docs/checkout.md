@@ -47,7 +47,7 @@ npx local-storefront checkout --app ../my-app --build
 
 | Extension | Built by lsf when | Output |
 |---|---|---|
-| A Function with a build command (Rust, …) | always: the command runs in its folder | its module |
+| A Function with a build command (Rust, …) | always: the command runs in its folder, then a module that calls the Function Wasm API by name is linked to it ([below](#rust-functions)) | its module |
 | A Function in JavaScript or TypeScript (`src/index.js`, `src/index.ts`), no build command | always ([below](#javascript-and-typescript-functions)) | `dist/function.wasm` |
 | A checkout UI extension whose targets name their sources (`module`), and the sources are there | always ([below](#checkout-ui-extensions)) | `dist/<handle>.js` |
 | A checkout UI extension with only its bundle | never: the bundle is used as it is | |
@@ -85,6 +85,20 @@ npx local-storefront function build discount --app ../my-app
 The module costs the instructions the CLI's would, within a few hundred. What lsf does not
 build: `import()`, a `require` of an ES module, and Functions written with
 `@shopify/shopify_function` 1.x (`shopify app build` builds those).
+
+### Rust Functions
+
+`cargo build` writes a module that calls the Function Wasm API of the host by name
+(`shopify_function_v2::shopify_function_input_get`); `shopify app build` links it to the host's
+provider with Shopify's `shopify-function-trampoline` after the build command. lsf runs that same
+trampoline, as a library, at the version Shopify's CLI 5.0.0 runs (2.0.1): after the build command
+of `--build`, `--watch` and `lsf function build`, the module is the one the CLI would write, to the
+byte. A module already linked is left as it is. Modules of the first version of the API
+(`shopify_function_v1`) are refused, as by the trampoline: update the `shopify_function` crate.
+
+lsf does not run `wasm-opt -Oz`, which the CLI runs on a module before it links it: on the
+playground's Rust Functions it takes 5 to 6% off the module's size, and 0.25 to 0.5% off the
+instructions a run costs.
 
 ### Checkout UI extensions
 

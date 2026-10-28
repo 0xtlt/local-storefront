@@ -389,8 +389,9 @@ impl Slot {
     }
 }
 
-/// A Rust Function calls the Function Wasm API of the host by name; the CLI links it to the
-/// host's provider (with `shopify-function-trampoline`) when it builds the app. function-runner
+/// A Rust Function calls the Function Wasm API of the host by name; lsf (`--build`,
+/// `lsf function build`) and Shopify's CLI link it to the host's provider with
+/// `shopify-function-trampoline` after its build command ([`crate::trampoline`]). function-runner
 /// only runs linked modules, and says so with an unhelpful "unknown import".
 fn untrampolined(module: &Module) -> Option<String> {
     module
@@ -403,7 +404,8 @@ fn untrampolined(module: &Module) -> Option<String> {
         .map(|import| {
             format!(
                 "the module calls `{}::{}` directly: it was not processed by \
-                 shopify-function-trampoline, which `shopify app build` runs after compiling a Rust Function",
+                 shopify-function-trampoline, which lsf (`lsf function build`, `--build`) and \
+                 `shopify app build` run after compiling a Rust Function",
                 import.module(),
                 import.name()
             )

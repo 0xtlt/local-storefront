@@ -1375,6 +1375,16 @@ fn build(
     let reason = match status {
         Some(status) if status.success() => {
             let module = job.module.strip_prefix(&job.dir).unwrap_or(&job.module);
+            // As `shopify app build`: a module that calls the Function Wasm API by name is linked
+            // to the provider, in place.
+            if job.module.is_file()
+                && let Err(error) = lsf_checkout::trampoline::apply(&job.module)
+            {
+                return Outcome::Failed(Failure {
+                    reason: error,
+                    output,
+                });
+            }
             match std::fs::read(&job.module) {
                 Ok(bytes) => match check_module(&bytes) {
                     Ok(()) => match modules.publish(&job.handle, &bytes) {

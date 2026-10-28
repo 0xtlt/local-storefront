@@ -106,6 +106,10 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   graphql-codegen writes them), `dist/function.js` (bundled as esbuild does, enums inlined and
   unused code left out), then its module, the bytes Javy writes. `--build` and `--watch` build
   it too.
+- **Rust Functions run as `cargo build` writes them**: after a Function's build command
+  (`--build`, `--watch`, `lsf function build`), a module that calls the Function Wasm API by name
+  is linked to it with Shopify's `shopify-function-trampoline` (2.0.1, as a library), as
+  `shopify app build` does, to the byte.
 - **`lsf checkout build`** builds the extensions of an app as `shopify app build` does, without
   Node: its Functions, and its checkout UI extensions whose targets name their sources, bundled
   (JSX with the `jsxImportSource` of their `tsconfig.json`, minified) into `dist/<handle>.js`.

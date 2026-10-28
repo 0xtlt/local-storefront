@@ -69,7 +69,8 @@ Findings from the implementation:
   engine's epoch after 10 seconds.
 - A Rust Function built for `wasm32-unknown-unknown` (`shopify_function` 2.x, Wasm API) only runs
   once `shopify-function-trampoline` linked it to the provider; the Shopify CLI does it when it
-  builds an app. An unlinked module fails with "unknown import", so `runner` says so instead.
+  builds an app, and so does lsf after a build command (`trampoline`, Shopify's trampoline as a
+  library). An unlinked module fails with "unknown import", so `runner` says so instead.
   `mise run fixtures:functions` does it for the test Functions.
 - Failures come back as one string: function-runner appends the trap or exit code to the logs.
   `runner` splits them again (a Rust panic message becomes the error).
