@@ -18,6 +18,8 @@
 //! The tests wait for what they can see (a file, what the watcher says it did), never for a
 //! guessed time.
 
+use std::io::Write as _;
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -59,6 +61,29 @@ fi
 echo "type Query" > schema.graphql
 rm -f "$ctl/running-$h-$n"
 "#;
+
+/// A build for the tests of the write lock: build `n` waits for `go-<handle>-<n>`, and writes
+/// `version-<handle>-<n>` (or `src/main.wasm`) as its module, after the wait, or before it with
+/// `write-first-<handle>-<n>`. It gives up once `ctl/` is gone (the test is over) or after 30 s:
+/// a build no watcher stops (its server "killed") ends on its own.
+const ORDER: &str = r#"h=$(basename "$PWD")
+ctl=../../../ctl
+echo build >> "$ctl/count-$h"
+n=$(wc -l < "$ctl/count-$h" | tr -d ' ')
+: > "$ctl/running-$h-$n"
+echo "compiling $h"
+mkdir -p dist
+made=src/main.wasm
+if [ -f "$ctl/version-$h-$n" ]; then made="$ctl/version-$h-$n"; fi
+if [ -f "$ctl/write-first-$h-$n" ]; then cp "$made" dist/function.wasm; fi
+i=0
+while [ ! -f "$ctl/go-$h-$n" ] && [ -d "$ctl" ] && [ $i -lt 3000 ]; do sleep 0.01; i=$((i + 1)); done
+if [ ! -f "$ctl/write-first-$h-$n" ]; then cp "$made" dist/function.wasm; fi
+rm -f "$ctl/running-$h-$n"
+"#;
+
+/// What a build that waits for the write lock of its Function says.
+const WAITING: &str = "waiting for another build of it to end";
 
 /// A module that exports a function, `f`, that does nothing.
 const EXPORTS_F: &[u8] = b"\0asm\x01\0\0\0\
@@ -105,6 +130,7 @@ impl TempApp {
         let app = TempApp(base.canonicalize().unwrap());
         app.write("shopify.app.toml", "name = \"Watch\"\nhandle = \"watch\"\n");
         app.ctl_write("build.sh", BUILD);
+        app.ctl_write("order.sh", ORDER);
         app.ctl_write(
             "build2.sh",
             "mkdir -p dist\ncp src/other.wasm dist/function.wasm\n",
@@ -282,6 +308,17 @@ const LONG: Duration = Duration::from_secs(30);
 
 impl Watching {
     fn start(app: &TempApp, tune: impl FnOnce(&mut Options)) -> Watching {
+        let watching = Watching::launch(app, tune);
+        assert!(
+            watching.watcher().wait_idle(LONG),
+            "the first builds did not end:\n{}",
+            watching.said()
+        );
+        watching
+    }
+
+    /// A watcher of `app`, whose first builds may still run.
+    fn launch(app: &TempApp, tune: impl FnOnce(&mut Options)) -> Watching {
         let mut options = Options::new(Vec::new(), false);
         options.poll = Duration::from_millis(10);
         // Polled, every 30 ms: the same on every system. Some tests follow the events.
@@ -302,18 +339,12 @@ impl Watching {
             }),
             Arc::new(move |line: &str| said.lock().unwrap().push(line.to_string())),
         );
-        let watching = Watching {
+        Watching {
             watcher: Some(watcher),
             builds,
             lines,
             reloads,
-        };
-        assert!(
-            watching.watcher().wait_idle(LONG),
-            "the first builds did not end:\n{}",
-            watching.said()
-        );
-        watching
+        }
     }
 
     fn watcher(&self) -> &Watcher {
@@ -1352,65 +1383,210 @@ fn a_watch_that_finds_what_it_recorded_writes_nothing() {
 }
 
 #[test]
-fn two_watches_of_one_app_trust_only_the_module_last_recorded() {
-    // Whichever build of the two is over first.
-    for first_over in [1, 2] {
-        let app = TempApp::new("two-watches");
-        app.function("fn-a");
-        let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
-        let mut watching = Watching::start(&app, options);
-        watching.stop();
+fn two_watches_of_one_app_build_a_function_one_after_the_other() {
+    let app = TempApp::new("two-watches");
+    app.function("fn-a");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
+    let mut watching = Watching::start(&app, options);
+    watching.stop();
 
-        // A builds fn-a, and waits. B starts meanwhile, and builds it too. From the same files,
-        // each makes other bytes.
-        app.ctl_write("gated-fn-a", "");
-        std::fs::write(app.ctl("version-fn-a-1"), module("one")).unwrap();
-        std::fs::write(app.ctl("version-fn-a-2"), module("two")).unwrap();
-        let mut a = Watching::start(&app, options);
-        app.source("fn-a", "a2");
-        wait_for("the build of A", || app.running("fn-a", 1));
-        let mut b_options = Options::new(Vec::new(), false);
-        b_options.events = false;
-        b_options.poll = Duration::from_millis(10);
-        b_options.record = Some(app.ctl("record/app"));
-        let b = Watcher::start(
-            &app.root(),
-            Arc::new(Builds::publishing(Modules::create().unwrap())),
-            b_options,
-            Box::new(|| {}),
-            Arc::new(|_: &str| {}),
-        );
-        wait_for("the build of B", || app.running("fn-a", 2));
+    // A builds fn-a, and waits. B starts meanwhile, and builds it too. From the same files,
+    // each makes other bytes.
+    app.ctl_write("gated-fn-a", "");
+    std::fs::write(app.ctl("version-fn-a-1"), module("one")).unwrap();
+    std::fs::write(app.ctl("version-fn-a-2"), module("two")).unwrap();
+    let mut a = Watching::start(&app, options);
+    app.source("fn-a", "a2");
+    wait_for("the build of A", || app.running("fn-a", 1));
+    let mut b = Watching::launch(&app, options);
 
-        let made = |n: usize| ["one", "two"][n - 1];
-        let last = 3 - first_over;
-        for n in [first_over, last] {
-            app.go("fn-a", n);
-            let output = module_hash(&module(made(n)));
-            wait_for("its record", || app.recorded("fn-a").1 == output);
-        }
-        a.settle();
-        assert!(b.wait_idle(LONG));
-        a.stop();
-        b.stop();
-        std::fs::remove_file(app.ctl("gated-fn-a")).unwrap();
-        assert_eq!(app.dist("fn-a"), made(last));
+    // B's build waits for A's to be over, and for A to record what it built.
+    wait_for("B to wait", || b.said().contains(WAITING));
+    assert!(!app.running("fn-a", 2));
+    assert_eq!(app.builds("fn-a"), 1);
+    app.go("fn-a", 1);
+    wait_for("the build of B", || app.running("fn-a", 2));
+    assert_eq!(app.recorded("fn-a").1, module_hash(&module("one")));
+    app.go("fn-a", 2);
+    a.settle();
+    assert!(b.watcher().wait_idle(LONG), "{}", b.said());
+    assert_eq!(a.served("fn-a"), "one");
+    assert_eq!(b.served("fn-a"), "two");
+    assert_eq!(app.recorded("fn-a").1, module_hash(&module("two")));
+    a.stop();
+    b.stop();
+    std::fs::remove_file(app.ctl("gated-fn-a")).unwrap();
+    assert_eq!(app.dist("fn-a"), "two");
 
-        // The module is the one last recorded: trusted.
-        let mut watching = Watching::start(&app, options);
-        assert_eq!(app.builds("fn-a"), 2, "{}", watching.said());
-        assert_eq!(watching.served("fn-a"), made(last));
-        watching.stop();
+    // The module is the one last recorded: trusted.
+    let mut watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 2, "{}", watching.said());
+    assert_eq!(watching.served("fn-a"), "two");
+    watching.stop();
 
-        // The module the other built, from the same files, is not: built again.
-        app.write_bytes(
-            "extensions/fn-a/dist/function.wasm",
-            &module(made(first_over)),
-        );
-        let watching = Watching::start(&app, options);
-        assert_eq!(app.builds("fn-a"), 3, "{}", watching.said());
-        assert_eq!(watching.served("fn-a"), "a2");
-    }
+    // The module the other built, from the same files, is not: built again.
+    app.write_bytes("extensions/fn-a/dist/function.wasm", &module("one"));
+    let watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 3, "{}", watching.said());
+    assert_eq!(watching.served("fn-a"), "a2");
+}
+
+/// The finding of the 7th review, as it was reproduced with three servers: A's build, from the
+/// files of then, is left running when A is killed; the files change, and B builds them; A's
+/// build overwrites `dist` before B's is over. B must not record what A's build wrote as what
+/// its own built, or C trusts it. B's build waits for A's to end, as the lock A's build holds
+/// says.
+#[test]
+fn a_build_left_running_by_a_killed_server_holds_the_lock_until_it_is_over() {
+    let app = TempApp::new("orphan-lock");
+    app.function_with("fn-a", "sh ../../../ctl/order.sh");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
+    // What is there is recorded.
+    let mut watching = Watching::start(&app, options);
+    watching.stop();
+
+    // A builds from the files of then: its build writes `old`, once let go.
+    std::fs::write(app.ctl("version-fn-a-1"), module("old")).unwrap();
+    let mut a = Watching::start(&app, options);
+    app.source("fn-a", "a2");
+    wait_for("A's build", || app.running("fn-a", 1));
+    // A is killed: its build goes on.
+    a.watcher.take().unwrap().abandon();
+    assert!(app.running("fn-a", 1));
+
+    // The files change; B builds them. Its build writes their module, then waits.
+    app.source("fn-a", "a3");
+    app.ctl_write("write-first-fn-a-2", "");
+    let mut b = Watching::launch(&app, options);
+    wait_for("B's build to wait or to start", || {
+        b.said().contains(WAITING) || app.running("fn-a", 2)
+    });
+    let waited = !app.running("fn-a", 2) && app.builds("fn-a") == 1;
+
+    // A's build is over: it writes what it built from the files of then.
+    app.go("fn-a", 1);
+    wait_for("A's build to end", || !app.running("fn-a", 1));
+    // B's build runs then, and is over.
+    wait_for("B's build", || app.running("fn-a", 2));
+    app.go("fn-a", 2);
+    assert!(b.watcher().wait_idle(LONG), "{}", b.said());
+    assert_eq!(b.served("fn-a"), "a3", "{}", b.said());
+    assert_eq!(app.dist("fn-a"), "a3");
+    assert_eq!(app.recorded("fn-a").1, module_hash(&module("a3")));
+    assert!(waited, "B's build did not wait for A's:\n{}", b.said());
+    b.stop();
+
+    // The next start trusts what B built.
+    let watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 2, "{}", watching.said());
+    assert_eq!(watching.served("fn-a"), "a3");
+}
+
+#[test]
+fn a_watch_does_not_trust_a_module_while_a_build_of_it_holds_its_lock() {
+    let app = TempApp::new("held-at-start");
+    app.function("fn-a");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
+    let mut watching = Watching::start(&app, options);
+    watching.stop();
+    assert_eq!(app.builds("fn-a"), 0);
+
+    // Another server's build of it holds the lock: its files and module are the recorded
+    // ones, but what the build writes is not known yet.
+    let locks = Locks::new(Some(&app.ctl("record/app")));
+    let held = locks.try_take("fn-a").unwrap().expect("a lock");
+    assert!(locks.try_take("fn-a").is_err());
+    let watching = Watching::launch(&app, options);
+    wait_for("its build to wait", || watching.said().contains(WAITING));
+    assert_eq!(app.builds("fn-a"), 0);
+    // Meanwhile the checkout runs what `dist` holds.
+    assert_eq!(watching.served("fn-a"), "v1");
+    drop(held);
+    assert!(watching.watcher().wait_idle(LONG), "{}", watching.said());
+    assert_eq!(app.builds("fn-a"), 1);
+    drop(watching);
+
+    // Let go of, the same files and module are trusted.
+    let watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
+}
+
+#[test]
+fn stopping_stops_a_build_that_waits_for_the_lock() {
+    let app = TempApp::new("stop-waiting");
+    app.function("fn-a");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
+    let mut watching = Watching::start(&app, options);
+    let held = Locks::new(Some(&app.ctl("record/app")))
+        .try_take("fn-a")
+        .unwrap()
+        .expect("a lock");
+    app.source("fn-a", "a2");
+    wait_for("the build to wait", || watching.said().contains(WAITING));
+
+    let stopping = Instant::now();
+    watching.stop();
+    assert!(
+        stopping.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        stopping.elapsed()
+    );
+    drop(held);
+    assert_eq!(app.builds("fn-a"), 0);
+}
+
+#[test]
+fn a_lock_only_what_a_build_started_still_holds_is_not_waited_for() {
+    let app = TempApp::new("helper-lock");
+    app.function("fn-a");
+    let record = app.ctl("record/app");
+    let locks = Locks::new(Some(&record));
+    let lock_file = record.join("locks/fn-a.lock");
+    // What a build started, and that outlives it (a compiler cache's server), holds the lock:
+    // a process that holds the same open file.
+    let helper = |said: &str| {
+        let lock = locks.try_take("fn-a").unwrap().expect("a lock");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&lock_file)
+            .unwrap()
+            .write_all(said.as_bytes())
+            .unwrap();
+        let file = lock.share();
+        (lock, file)
+    };
+
+    // Its server let go of it.
+    let (lock, kept) = helper("");
+    drop(lock);
+    let lock = locks.try_take("fn-a").unwrap().expect("not waited for");
+    drop(lock);
+    drop(kept);
+
+    // Its server is gone, and so is the build's process group.
+    let mut gone = std::process::Command::new("true").spawn().unwrap();
+    let pid = gone.id();
+    gone.wait().unwrap();
+    let (lock, kept) = helper(&format!("group {pid}\n"));
+    lock.abandon();
+    let lock = locks.try_take("fn-a").unwrap().expect("not waited for");
+    drop(lock);
+    drop(kept);
+
+    // The build's process group is still there: waited for.
+    let mut build = std::process::Command::new("sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let (lock, kept) = helper(&format!("group {}\n", build.id()));
+    lock.abandon();
+    assert!(locks.try_take("fn-a").is_err());
+    let _ = build.kill();
+    let _ = build.wait();
+    // Once it is gone, what is left is not.
+    assert!(locks.try_take("fn-a").unwrap().is_some());
+    drop(kept);
 }
 
 #[test]

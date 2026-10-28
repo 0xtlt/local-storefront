@@ -66,14 +66,28 @@ module. It works with `serve --app` too.
   (`[extensions.build] command`), the user's cache folder (`~/Library/Caches/lsf/watch/` on
   macOS, `~/.cache/lsf/watch/` on Linux, never the app) records what its last build was made
   from (its files, the files the builds share, its command) and a hash of the module it
-  published. A module is trusted only when both still match. Otherwise it is built: a Function
-  with no module a run can load, one whose files changed, and one whose module changed since,
-  whether a build was stopped halfway, failed after writing it, or another process wrote it (a
-  build left running by a server that was killed, another server of the same app). A Function
-  with nothing recorded, on the first watch of an app, keeps the module it has, and the
-  terminal says `using the existing builds; --build rebuilds them all at start`.
-  `--watch --build` builds every Function that has a build command. A build that fails does
-  not stop the server.
+  published. A module is trusted only when both still match, and no build of it runs (see the
+  write lock below). Otherwise it is built: a Function with no module a run can load, one whose
+  files changed, and one whose module changed since, whether a build was stopped halfway,
+  failed after writing it, or another process wrote it (a build left running by a server that
+  was killed, another server of the same app). A Function with nothing recorded, on the first
+  watch of an app, keeps the module it has, and the terminal says `using the existing builds;
+  --build rebuilds them all at start`. `--watch --build` builds every Function that has a build
+  command. A build that fails does not stop the server.
+- **One build at a time writes a Function's module**, across the servers of an app: each
+  Function has a write lock, next to the record (`locks/<handle>.lock`). A build takes it before
+  it starts, and the server lets go of it once it read, checked, published and recorded the
+  module. Another build of that Function waits meanwhile, and the terminal says
+  `↻ discount-codes: waiting for another build of it to end (another lsf, or one left running)`;
+  Ctrl-C still stops it at once. On macOS and Linux the build holds the lock too, and so does
+  what it starts (`cargo`, `rustc`): a build left running by a server that was killed holds it
+  until it is over, so what it writes is never taken for the module of another build. A lock
+  that only a process the build started still holds, once the build is over (a compiler cache's
+  server, such as sccache), is not waited for. Limits: a build that closes the descriptors it
+  inherits, or starts its writer apart from itself, does not hold the lock to its end; a
+  process that stays in a killed server's build's process group is waited for while it runs. On
+  Windows only the server holds the lock: a build that a killed server left running is not
+  waited for there (the next start still builds again a module that is not the one recorded).
 - **What is watched**: the folder of each extension (`src/`, the input queries, its
   `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension), the
   other files of the app (a Cargo workspace's `Cargo.toml` and `Cargo.lock`, `package.json` and
@@ -110,8 +124,10 @@ module. It works with `serve --app` too.
   build works, and the banner and the home page say `no module of it built yet`. The next build
   that works clears it.
 - **A build that hangs** does not hold the server: it is stopped after 10 minutes and fails.
-  Ctrl-C stops the builds that run, and so do `SIGTERM` and `SIGHUP` on macOS and Linux; one
-  stopped halfway is built again at the next start. On Windows, only Ctrl-C does.
+  Ctrl-C stops the builds that run, and so do `SIGTERM` and `SIGHUP` on macOS and Linux. One
+  stopped halfway is built again at the next start, unless what it left (its files and the bytes
+  of its module) is exactly what was last published and recorded. On Windows, only Ctrl-C
+  stops the builds.
 
 The files are watched through the system's events (FSEvents on macOS, inotify on Linux, folder
 by folder, without the tools' folders): at rest, watching an app of 90 extensions costs about

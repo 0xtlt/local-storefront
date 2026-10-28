@@ -39,6 +39,10 @@ use std::time::{Duration, Instant, SystemTime};
 use lsf_checkout::app::{self, App, Selection};
 use serde_json::{Value as Json, json};
 
+use lock::{Lock, Locks};
+
+mod lock;
+
 /// How many builds run at once. Functions of one Cargo workspace wait for each other on its
 /// lock anyway; more would only compete for the processor.
 pub const PARALLEL: usize = 3;
@@ -398,8 +402,9 @@ pub struct Watcher {
 
 /// What wakes the watcher's thread up.
 enum Event {
-    /// A build is over: the Function, how it ended, and a hash of what it was built from.
-    Finished(String, Outcome, u64),
+    /// A build is over: the Function, how it ended, a hash of what it was built from, and its
+    /// write lock, let go once what it built is recorded.
+    Finished(String, Outcome, u64, Option<Lock>),
     /// The system says that a file changed.
     Touched,
     Stop,
@@ -407,6 +412,10 @@ enum Event {
 
 struct Shared {
     stop: AtomicBool,
+    /// The watcher stops as a server that is killed does: its builds go on, and their locks
+    /// are let go without a word. For the tests.
+    #[cfg(test)]
+    abandon: AtomicBool,
     status: Mutex<Status>,
     changed: Condvar,
     /// The folders the system is asked about, for the tests.
@@ -439,6 +448,8 @@ impl Watcher {
     ) -> Watcher {
         let shared = Arc::new(Shared {
             stop: AtomicBool::new(false),
+            #[cfg(test)]
+            abandon: AtomicBool::new(false),
             status: Mutex::new(Status {
                 pending: true,
                 ..Status::default()
@@ -482,6 +493,7 @@ impl Watcher {
                 Selection::only(options.extensions.iter().cloned())
             },
             record: Record::open(options.record.clone(), &root),
+            locks: Locks::new(options.record.as_deref()),
             data,
             root,
             builds,
@@ -552,6 +564,13 @@ impl Watcher {
         self.wait_for(timeout, |status| {
             status.looked > started && !status.pending && !(builds && status.building)
         })
+    }
+
+    /// Stops as a server that is killed would: the builds that run go on, and the locks they
+    /// hold are let go without a word.
+    fn abandon(mut self) {
+        self.shared.abandon.store(true, Ordering::Relaxed);
+        self.halt();
     }
 
     /// The folders the system is asked about, when it says when files change.
@@ -1220,7 +1239,18 @@ impl Output {
 /// Runs the build of a Function in its folder, as `--build` does, and publishes the module it
 /// wrote when it built and the module is whole. The module of a build that fails is left as it
 /// is: the checkout runs the copy of the last one that built.
-fn build(job: &Job, timeout: Duration, stop: &AtomicBool, modules: &Modules) -> Outcome {
+///
+/// `lock` is the Function's write lock ([`lock`]), held by the caller until what it built is
+/// recorded. On macOS and Linux the build inherits it, and so does what it starts: a build that
+/// outlives its server (killed) still holds it. On Windows only the server holds it.
+fn build(
+    job: &Job,
+    timeout: Duration,
+    shared: &Shared,
+    modules: &Modules,
+    lock: Option<&Lock>,
+) -> Outcome {
+    let stop = &shared.stop;
     let started = Instant::now();
     let mut command = crate::checkout::build_command(&job.command, &job.dir);
     command
@@ -1230,6 +1260,18 @@ fn build(job: &Job, timeout: Duration, stop: &AtomicBool, modules: &Modules) -> 
     // A group of its own, to stop all it starts (`sh`, then `cargo`, then `rustc`) at once.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    // The lock's descriptor stays open in the build: cleared of close-on-exec in its process
+    // only, between `fork` and `exec`, so that the builds of other Functions, which start from
+    // other threads, never get it.
+    #[cfg(unix)]
+    if let Some(fd) = lock.map(Lock::fd) {
+        // SAFETY: `inherit` only makes calls that are safe between `fork` and `exec`.
+        unsafe {
+            std::os::unix::process::CommandExt::pre_exec(&mut command, move || lock::inherit(fd))
+        };
+    }
+    #[cfg(not(unix))]
+    let _ = lock;
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -1270,6 +1312,14 @@ fn build(job: &Job, timeout: Duration, stop: &AtomicBool, modules: &Modules) -> 
             Err(_) => break None,
         }
         if stop.load(Ordering::Relaxed) {
+            #[cfg(test)]
+            if shared.abandon.load(Ordering::Relaxed) {
+                // As if its server were killed: it goes on. Reaped once it is over.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return Outcome::Stopped;
+            }
             terminate(&mut child);
             return Outcome::Stopped;
         }
@@ -1349,8 +1399,15 @@ fn terminate(child: &mut Child) {
 /// At start, a module is trusted only when both still match: its Function's files are the
 /// ones recorded, and its bytes are the ones that build published. A module written since (a
 /// build stopped halfway, a build another process left running, another server of the app) has
-/// other bytes, and is built again. Two servers that build the same Function each write what
-/// they published: the last one stays, and a module that is not that one is built again.
+/// other bytes, and is built again. A Function with nothing recorded (the first watch of the
+/// app) is not built: its module, when a run can load it, is taken as built from its files as
+/// they are, and recorded so, without a build.
+///
+/// The hashes say what the bytes are, not which build wrote them: what makes a record true is
+/// the Function's write lock ([`lock`]). A build of it holds it while it writes `dist`, and the
+/// server until it read the module there and recorded it, so the bytes recorded are the ones
+/// that build wrote. A watch reads `dist` at start under it too, and builds a Function whose
+/// lock a build holds (another server's, or one a killed server left running).
 struct Record {
     /// `None`: nothing is recorded.
     dir: Option<PathBuf>,
@@ -1510,6 +1567,8 @@ struct Coordinator {
     started: u64,
     looked: u64,
     record: Record,
+    /// The write locks of the Functions, shared with the other servers of the app.
+    locks: Locks,
     /// A hash of the content of the shared files, by a hash of what the watcher saw of them.
     shared_content: Option<(u64, u64)>,
 }
@@ -1518,7 +1577,8 @@ impl Coordinator {
     /// Reads the app, publishes the modules that built before, and returns the Functions to
     /// build at start.
     fn prepare(&mut self) -> Vec<String> {
-        self.reload_app();
+        // Each `dist` is read below, under its lock.
+        self.reload_app(false);
         self.seen = Snapshot::take(&self.root, &self.rules, self.data.as_deref());
         if let Some(events) = &mut self.events {
             events.sync(&self.seen.folders, &self.log);
@@ -1534,7 +1594,17 @@ impl Coordinator {
         let mut first = Vec::new();
         let mut trusted = 0;
         for job in &jobs {
-            // The copy of what `dist` holds, when it is a module a run can load.
+            // Held while `dist` is read and recorded: no build of it writes `dist` meanwhile.
+            let lock = self.locks.try_take(&job.handle);
+            // The copy of what `dist` holds, when it is a module a run can load: what the
+            // checkout runs until a build of it is over.
+            modules.adopt(job);
+            let Ok(_lock) = lock else {
+                // A build of it runs (another server's, or one left running): what it writes is
+                // not known yet.
+                first.push(job.handle.clone());
+                continue;
+            };
             let published = match std::fs::read(modules.path(&job.handle)) {
                 Ok(bytes) if !self.options.build_first => bytes,
                 _ => {
@@ -1578,8 +1648,10 @@ impl Coordinator {
         while !self.shared.stop.load(Ordering::Relaxed) {
             let wait = self.interval().saturating_sub(last_look.elapsed());
             match receiver.recv_timeout(wait) {
-                Ok(Event::Finished(handle, outcome, inputs)) => {
-                    self.finished(&handle, outcome, inputs)
+                Ok(Event::Finished(handle, outcome, inputs, lock)) => {
+                    self.finished(&handle, outcome, inputs);
+                    // What it built is recorded: another build of it may write its module.
+                    drop(lock);
                 }
                 Ok(Event::Touched) => self.dirty = true,
                 Ok(Event::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -1642,9 +1714,9 @@ impl Coordinator {
     }
 
     /// Reads the app again, for which folder is what. Returns whether that changed. The
-    /// Functions it builds now run their published module; one that was built before it is
-    /// watched is published as it is, when its module is whole.
-    fn reload_app(&mut self) -> bool {
+    /// Functions it builds now run their published module; with `adopt`, one that was built
+    /// before it is watched is published as it is, when its module is whole.
+    fn reload_app(&mut self, adopt: bool) -> bool {
         let rules = match app::load(&self.root) {
             Ok(app) => rules_of(&app, &self.selection),
             // The app cannot be read: the pages say why. Its folders are watched as they were.
@@ -1661,7 +1733,7 @@ impl Coordinator {
         for gone in owned.iter().filter(|handle| !jobs.contains_key(*handle)) {
             modules.withdraw(gone);
         }
-        for (handle, job) in &jobs {
+        for (handle, job) in jobs.iter().filter(|_| adopt) {
             if !owned.contains(handle) && !self.scheduler.is_running(handle) {
                 modules.adopt(job);
             }
@@ -1693,7 +1765,7 @@ impl Coordinator {
     }
 
     fn apply(&mut self, changes: Changes) {
-        if self.reload_app() {
+        if self.reload_app(true) {
             // What is looked at in a folder depends on what the app says of it.
             self.seen = Snapshot::take(&self.root, &self.rules, self.data.as_deref());
         }
@@ -1822,11 +1894,31 @@ impl Coordinator {
         let shared = self.shared.clone();
         let builds = self.builds.clone();
         let timeout = self.options.timeout;
+        let locks = self.locks.clone();
+        let log = self.log.clone();
         let worker = std::thread::Builder::new()
             .name(format!("lsf-build-{handle}"))
             .spawn(move || {
-                let outcome = build(&job, timeout, &shared.stop, builds.modules());
-                let _ = sender.send(Event::Finished(handle, outcome, inputs));
+                // Another build of it may be writing its module: another server's, or one a
+                // server that was killed left running.
+                let Some(lock) = locks.take(&handle, &shared.stop, || {
+                    log(&format!(
+                        "↻ {handle}: waiting for another build of it to end (another lsf, or one left running)"
+                    ))
+                }) else {
+                    let _ = sender.send(Event::Finished(handle, Outcome::Stopped, inputs, None));
+                    return;
+                };
+                let outcome = build(&job, timeout, &shared, builds.modules(), lock.as_ref());
+                #[cfg(test)]
+                if shared.abandon.load(Ordering::Relaxed)
+                    && let Some(lock) = lock
+                {
+                    lock.abandon();
+                    let _ = sender.send(Event::Finished(handle, outcome, inputs, None));
+                    return;
+                }
+                let _ = sender.send(Event::Finished(handle, outcome, inputs, lock));
             })
             .expect("cannot start a build");
         self.workers.push(worker);
