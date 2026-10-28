@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-footer-links.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: footer links"
+handle = "ui-footer-links"
+type = "ui_extension"
+description = "In the footer: links that open in a new tab, and what the extension knows of itself."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.footer.render-after"

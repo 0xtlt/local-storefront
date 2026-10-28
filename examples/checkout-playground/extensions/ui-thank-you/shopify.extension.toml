@@ -1,0 +1,30 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-thank-you.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: thank-you page"
+handle = "ui-thank-you"
+type = "ui_extension"
+description = "Every target of the thank-you page, in one extension: the order confirmation, the customer, the lines."
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.announcement.render"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.header.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.block.render"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.customer-information.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.cart-line-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.cart-line-item.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.footer.render-after"

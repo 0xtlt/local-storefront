@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-reductions-codes.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: discount codes"
+handle = "ui-reductions-codes"
+type = "ui_extension"
+description = "Around the discount field: the codes entered, with a button to remove each, and buttons that enter codes."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.reductions.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.reductions.render-after"

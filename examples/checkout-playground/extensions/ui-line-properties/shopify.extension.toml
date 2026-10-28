@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-line-properties.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: line properties"
+handle = "ui-line-properties"
+type = "ui_extension"
+description = "Under each line of the order summary: what the extension reads of the line."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.cart-line-item.render-after"
