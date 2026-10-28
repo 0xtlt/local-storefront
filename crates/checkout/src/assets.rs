@@ -28,6 +28,7 @@ embed!(
     "checkout.js",
     "extension-host.js",
     "format.js",
+    "home.js",
     "operations.js",
     "sandbox-api.js",
     "sandbox-components.js",

@@ -9,8 +9,9 @@ lsf checkout --app .
 ```
 
 Or, from the root of the repository, `mise run playground:checkout`. Open
-<http://127.0.0.1:9292/>: the home page lists every extension (with what is wrong with it) and
-every scenario, and opens a checkout for each. The data folder is found from the current
+<http://127.0.0.1:9292/>: the home page lists what is wrong first (the broken extensions, and the
+Functions that fail when their scenario runs), then every scenario and every extension, and opens
+a checkout for each. The data folder is found from the current
 directory, so run lsf from this folder.
 
 The store data (`shopify-local/`) is the demo store that `lsf checkout init` writes, with what

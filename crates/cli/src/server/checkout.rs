@@ -133,6 +133,7 @@ pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> O
     match (incoming.method.as_str(), segments) {
         ("GET", ["checkout"]) => Some(control_state(state, incoming)),
         ("GET", ["checkouts"]) => Some(home(state, incoming)),
+        ("GET", ["checkouts", "check"]) => Some(home_check(state, incoming)),
         ("GET", ["checkout", "assets", file]) => Some(asset(file)),
         ("GET", ["extensions", handle, file @ ..]) if !file.is_empty() => {
             Some(extension_file(state, handle, file))
@@ -227,8 +228,17 @@ fn request_root(state: &ServerState, session_id: &str, incoming: &Incoming) -> S
 /// a checkout without a theme; with a theme, which owns `/`, it is `/__lsf/checkouts`.
 fn home(state: &ServerState, incoming: &Incoming) -> Reply {
     let store = state.store_of(incoming);
+    let language = language_of(state, &store, incoming);
+    let root = root_of(language).to_string();
+    let check = home::check_url((!language.primary).then_some(language.iso_code.as_str()));
+    home::page(state, incoming, options(state), &root, &check)
+}
+
+/// `/__lsf/checkouts/check`: the Functions that fail when the scenarios run, for the home page.
+fn home_check(state: &ServerState, incoming: &Incoming) -> Reply {
+    let store = state.store_of(incoming);
     let root = root_of(language_of(state, &store, incoming)).to_string();
-    home::page(state, incoming, options(state), &root)
+    home::check(state, incoming, options(state), &root)
 }
 
 /// `/checkout`: a checkout for the cart of the visitor, in the language of the request. With
@@ -377,25 +387,17 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
     }
 
     let id = state.new_session_id();
-    let mut session = state.initial_session(store);
-    let mut problems = lsf_core::diagnostics::Diagnostics::new();
-    lsf_core::store::build::apply_session_input(
-        store,
-        &scenario.session,
-        &mut session,
-        &mut problems,
-        &scenario.file,
-        "/session",
-    );
-    if problems.has_errors() {
-        let details: Vec<String> = problems.items.iter().map(ToString::to_string).collect();
-        return notice(
-            422,
-            &format!("The scenario {name} has errors"),
-            &[],
-            &details,
-        );
-    }
+    let (mut session, mut entered, mut prepared) = match scenario_start(state, store, scenario) {
+        Ok(start) => start,
+        Err(details) => {
+            return notice(
+                422,
+                &format!("The scenario {name} has errors"),
+                &[],
+                &details,
+            );
+        }
+    };
     // `&customer=` logs the scenario's checkout in as someone else, as the menu would once it
     // is open: checked before anything is set up.
     let login = match incoming.query_param("customer") {
@@ -405,19 +407,6 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         },
         None => None,
     };
-    let mut entered = entered_by(scenario);
-    // As entering the address does: markets decide on the country of the address.
-    if let Some(code) = entered
-        .shipping_address
-        .as_ref()
-        .and_then(|address| address.country_code.as_deref())
-        .and_then(|code| store.country(code))
-    {
-        session.country = Some(code.iso_code.clone());
-    }
-    // The checkout of the scenario as the first read prepares it, then the login.
-    let mut prepared = None;
-    checkout_account::prepare(store, &mut session, &mut entered, &mut prepared);
     if let Some(customer) = login {
         checkout_account::switch_to(store, &mut session, &mut entered, customer, None);
         prepared = Some(Identity::of(store, &session));
@@ -447,6 +436,69 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
     let mut location = checkout_path(root_of(language), &token);
     location.push_str(&carried_query(incoming, &["variant", "targets"]));
     with_cookie(Reply::redirect(&location), &id, true)
+}
+
+/// The session and the checkout a scenario opens with, as the first read prepares them, and
+/// who they were prepared for. `Err` holds what is wrong with its cart or buyer.
+fn scenario_start(
+    state: &ServerState,
+    store: &Store,
+    scenario: &lsf_core::store::CheckoutScenario,
+) -> Result<(Session, CheckoutState, Option<Identity>), Vec<String>> {
+    let mut session = state.initial_session(store);
+    let mut problems = lsf_core::diagnostics::Diagnostics::new();
+    lsf_core::store::build::apply_session_input(
+        store,
+        &scenario.session,
+        &mut session,
+        &mut problems,
+        &scenario.file,
+        "/session",
+    );
+    if problems.has_errors() {
+        return Err(problems.items.iter().map(ToString::to_string).collect());
+    }
+    let mut entered = entered_by(scenario);
+    // As entering the address does: markets decide on the country of the address.
+    if let Some(code) = entered
+        .shipping_address
+        .as_ref()
+        .and_then(|address| address.country_code.as_deref())
+        .and_then(|code| store.country(code))
+    {
+        session.country = Some(code.iso_code.clone());
+    }
+    let mut prepared = None;
+    checkout_account::prepare(store, &mut session, &mut entered, &mut prepared);
+    Ok((session, entered, prepared))
+}
+
+/// What the Functions of the app compute for a scenario as it opens, in its language: what the
+/// home page looks at to find the Functions that fail. `app` is the app as loaded once for
+/// every scenario.
+pub(super) fn run_scenario(
+    state: &ServerState,
+    app: &App,
+    store: &Store,
+    scenario: &lsf_core::store::CheckoutScenario,
+) -> Result<CheckoutResult, String> {
+    let (session, mut checkout, _) =
+        scenario_start(state, store, scenario).map_err(|problems| problems.join("; "))?;
+    let language = scenario
+        .language
+        .as_deref()
+        .and_then(|iso| store.language(iso))
+        .unwrap_or_else(|| store.primary_language());
+    let selection = selection_for(app, &options(state).extensions, Some(scenario))?;
+    Ok(price_with(
+        app,
+        &selection,
+        &session,
+        store,
+        &mut checkout,
+        language,
+        BuyerJourneyStep::Interaction,
+    ))
 }
 
 fn escape_query(value: &str) -> String {
@@ -525,13 +577,27 @@ fn price(
     language: &Language,
     step: BuyerJourneyStep,
 ) -> Result<(App, Selection, CheckoutResult), String> {
-    checkout.language = Some(language.iso_code.clone());
-    checkout.step = step;
     let options = options(state);
     let app = lsf_checkout::app::load(&options.app_dir)?;
     // The scenario the checkout opened from sets it up, as long as it exists and is valid.
     let scenario = scenario_named(store, checkout.scenario.as_deref());
     let selection = selection_for(&app, &options.extensions, scenario)?;
+    let result = price_with(&app, &selection, session, store, checkout, language, step);
+    Ok((app, selection, result))
+}
+
+/// [`price`] with the app loaded and the extensions selected.
+fn price_with(
+    app: &App,
+    selection: &Selection,
+    session: &Session,
+    store: &Store,
+    checkout: &mut CheckoutState,
+    language: &Language,
+    step: BuyerJourneyStep,
+) -> CheckoutResult {
+    checkout.language = Some(language.iso_code.clone());
+    checkout.step = step;
     let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
     if checkout.email.is_none() {
         checkout.email = customer.map(|customer| customer.email.clone());
@@ -542,8 +608,7 @@ fn price(
             .filter(|phone| !phone.is_empty());
     }
     let config = config_for(store, checkout.scenario.as_deref());
-    let result = pipeline::compute(&app, &selection, store, session, checkout, &config);
-    Ok((app, selection, result))
+    pipeline::compute(app, selection, store, session, checkout, &config)
 }
 
 /// The checkout as the Functions compute it for `step`: `Interaction` for everything the buyer

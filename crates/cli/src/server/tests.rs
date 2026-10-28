@@ -6410,9 +6410,13 @@ fn the_home_page_lists_every_extension_of_the_app() {
         page.headers
     );
     let html = text(&page);
-    // It wears the checkout's stylesheet and needs no script and no other host.
+    // It wears the checkout's stylesheet, needs no other host, and its one script (the filter
+    // and the check of the Functions) is the checkout's own.
     assert!(html.contains("/__lsf/checkout/assets/checkout.css"));
-    assert!(!html.contains("<script"));
+    assert_eq!(html.matches("<script").count(), 1, "{html}");
+    assert!(
+        html.contains("<script type=\"module\" src=\"/__lsf/checkout/assets/home.js\"></script>")
+    );
     assert!(!html.contains("http://") && !html.contains("https://"));
     for handle in [
         "volume-discount",
@@ -6587,7 +6591,16 @@ fn the_home_page_lists_the_scenarios_and_the_ones_with_errors() {
         summary["Entered"].contains("address 1 rue de Rivoli, Paris, FR"),
         "{summary:?}"
     );
-    assert_eq!(summary["Discounts"], "codes entered: WELCOME");
+    // The discounts are the store's: not listed again for each scenario.
+    assert!(
+        summary["Discounts"].starts_with("the store's ")
+            && summary["Discounts"].ends_with(" discounts · codes entered: WELCOME"),
+        "{summary:?}"
+    );
+    assert_eq!(
+        tees["facts"],
+        json!(["1 line", "Jane", "FR", "fr", "1 code", "Shop look"])
+    );
     assert_eq!(
         summary["Overrides"],
         "shipping Standard 4.90 USD, Express 12.90 USD · tax 20%"
@@ -6634,6 +6647,358 @@ fn the_home_page_says_how_to_get_scenarios() {
     let html = text(&get(&state, "/", "home"));
     assert!(html.contains("None yet"), "{html}");
     assert!(html.contains("lsf checkout init --app"), "{html}");
+}
+
+/// The position of `needle` in `html`, which must have it.
+fn position(html: &str, needle: &str) -> usize {
+    html.find(needle)
+        .unwrap_or_else(|| panic!("no {needle} in the page"))
+}
+
+#[test]
+fn the_problems_of_the_home_page_come_first_errors_first() {
+    let app = app_with_oddities("problems");
+    let data = ScenarioData::new(
+        "home-problems",
+        &[(
+            "broken.json",
+            r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#,
+        )],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
+
+    let problems = json["problems"].as_array().unwrap();
+    let severities: Vec<&str> = problems
+        .iter()
+        .map(|problem| problem["severity"].as_str().unwrap())
+        .collect();
+    let errors = severities.iter().filter(|s| **s == "error").count();
+    assert!(errors > 0 && errors < severities.len(), "{severities:?}");
+    assert!(
+        severities[..errors].iter().all(|s| *s == "error"),
+        "{severities:?}"
+    );
+    assert_eq!(
+        json["counts"],
+        json!({"errors": errors, "warnings": severities.len() - errors})
+    );
+    // An extension that is not built cannot run: an error, with where to see it.
+    let remote = problems
+        .iter()
+        .find(|problem| problem["subject"] == "remote-rules")
+        .expect("remote-rules");
+    assert_eq!(remote["severity"], "error");
+    assert_eq!(remote["kind"], "function");
+    assert_eq!(remote["href"], "#function-remote-rules");
+    // A legacy target is a warning.
+    let legacy = problems
+        .iter()
+        .find(|problem| problem["subject"] == "quantity-limit")
+        .expect("quantity-limit");
+    assert_eq!(legacy["severity"], "warning");
+    // A scenario that does not validate leads to its row.
+    let broken = problems
+        .iter()
+        .find(|problem| problem["kind"] == "scenario")
+        .expect("the broken scenario");
+    assert_eq!(broken["href"], "#scenario-broken");
+    assert_eq!(broken["where"], "checkouts/broken.json");
+
+    // On the page, the problems are the first thing, errors before warnings, each on a line.
+    let problems_at = position(&html, "data-section=\"problems\"");
+    assert!(problems_at < position(&html, "data-section=\"open\""));
+    assert!(problems_at < position(&html, "data-section=\"scenarios\""));
+    assert!(position(&html, "lsf-hp-group is-error") < position(&html, "lsf-hp-group is-warning"));
+    assert!(html.contains(&format!("{errors} errors")), "{html}");
+    assert!(html.contains("href=\"#scenario-broken\""));
+    assert!(html.contains("id=\"scenario-broken\""));
+    assert!(html.contains("id=\"function-remote-rules\""));
+}
+
+/// The fixture app with a Function whose Wasm module does not compile: every run of it fails.
+fn app_with_a_failing_function(label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-home-crash-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let directory = root.join("extensions/broken-wasm");
+    std::fs::create_dir_all(directory.join("src")).unwrap();
+    std::fs::create_dir_all(directory.join("dist")).unwrap();
+    std::fs::write(
+        directory.join("shopify.extension.toml"),
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Broken Wasm"
+handle = "broken-wasm"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  path = "dist/function.wasm"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("src/run.graphql"),
+        "query Input { cart { lines { quantity } } }",
+    )
+    .unwrap();
+    std::fs::write(directory.join("dist/function.wasm"), b"not a wasm module").unwrap();
+    root
+}
+
+#[test]
+fn a_function_that_fails_when_a_scenario_runs_is_a_problem_of_that_scenario() {
+    let app = app_with_a_failing_function("check");
+    let data = ScenarioData::new(
+        "home-crash",
+        &[
+            (
+                "crash.json",
+                r#"{"title": "It crashes", "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#,
+            ),
+            (
+                "fine.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["volume-discount"]}"#,
+            ),
+        ],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+
+    // The page does not wait for the check: it says where to ask for it.
+    let before = body_json(&get(&state, "/?format=json", "home"));
+    assert_eq!(before["check"]["state"], "pending");
+    assert_eq!(before["check"]["url"], "/__lsf/checkouts/check");
+    assert_eq!(before["check"]["total"], 2);
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("data-check=\"pending\""), "{html}");
+    assert!(html.contains("data-check-url=\"/__lsf/checkouts/check\""));
+    assert!(html.contains("Running the Functions of 2 scenarios"));
+
+    // The check runs the Functions of each scenario as its checkout would.
+    let check = body_json(&get(&state, "/__lsf/checkouts/check", "home"));
+    assert_eq!(check["state"], "done");
+    assert_eq!(check["checked"], 2);
+    let failures = check["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{check}");
+    assert_eq!(failures[0]["handle"], "broken-wasm");
+    assert_eq!(failures[0]["target"], "cart.validations.generate.run");
+    assert_eq!(failures[0]["scenarios"], json!(["crash"]));
+    // What the page puts in place: the problems, the rows that fail, the scenarios in order.
+    assert!(
+        check["problems"]
+            .as_str()
+            .unwrap()
+            .contains("data-check=\"done\"")
+    );
+    assert!(
+        check["problems"]
+            .as_str()
+            .unwrap()
+            .contains("href=\"#scenario-crash\"")
+    );
+    let rows = check["rows"].as_object().unwrap();
+    assert!(
+        rows["scenario-crash"]
+            .as_str()
+            .unwrap()
+            .contains("data-status=\"error\"")
+    );
+    assert!(rows.contains_key("function-broken-wasm"));
+    assert!(!rows.contains_key("scenario-fine"));
+    assert_eq!(check["order"], json!(["scenario-crash", "scenario-fine"]));
+
+    // Once it ran, the page has it: a problem linked to the scenario it fails in.
+    let after = body_json(&get(&state, "/?format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert_eq!(after["check"]["state"], "done");
+    let crash = &after["problems"][0];
+    assert_eq!(crash["kind"], "crash");
+    assert_eq!(crash["severity"], "error");
+    assert_eq!(crash["subject"], "broken-wasm");
+    assert_eq!(crash["target"], "cart.validations.generate.run");
+    assert_eq!(crash["href"], "#scenario-crash");
+    assert_eq!(crash["scenarios"], json!(["crash"]));
+    let scenario = |name: &str| {
+        after["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|scenario| scenario["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(scenario("crash")["status"], "error");
+    assert_eq!(scenario("crash")["failing"], json!(["broken-wasm"]));
+    assert_eq!(scenario("fine")["status"], "ok");
+    let function = after["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "broken-wasm")
+        .unwrap()
+        .clone();
+    assert_eq!(function["status"], "error");
+    assert_eq!(function["scenarios"], 1);
+    assert_eq!(function["failures"][0]["scenarios"], json!(["crash"]));
+}
+
+#[test]
+fn without_the_script_the_page_runs_the_check_when_asked() {
+    let app = app_with_a_failing_function("now");
+    let data = ScenarioData::new(
+        "home-check-now",
+        &[(
+            "crash.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#,
+        )],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("href=\"/?check=1\""), "{html}");
+    let html = text(&get(&state, "/?check=1", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert!(html.contains("data-check=\"done\""), "{html}");
+    assert!(html.contains("data-problem=\"crash\""), "{html}");
+}
+
+#[test]
+fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
+    let data = ScenarioData::new(
+        "home-statuses",
+        &[
+            (
+                "plain.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["volume-discount"]}"#,
+            ),
+            (
+                "legacy.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["quantity-limit", "gift-message"]}"#,
+            ),
+            (
+                "ghost.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["ghost"]}"#,
+            ),
+            ("unreadable.json", "{ nope"),
+        ],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let statuses: HashMap<&str, &str> = json["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap(), s["status"].as_str().unwrap()))
+        .collect();
+    assert_eq!(statuses["plain"], "ok");
+    // It uses a Function with a legacy target.
+    assert_eq!(statuses["legacy"], "warning");
+    assert_eq!(statuses["ghost"], "error");
+    assert_eq!(statuses["unreadable"], "error");
+    let legacy = json["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "legacy")
+        .unwrap();
+    assert_eq!(legacy["functions"], json!(["quantity-limit"]));
+    assert_eq!(legacy["uiExtensions"], json!(["gift-message"]));
+    assert_eq!(legacy["allExtensions"], false);
+
+    // The page lists them problems first, then by name, each with what the filter reads.
+    let html = text(&get(&state, "/", "home"));
+    let at = |name: &str| position(&html, &format!("data-scenario=\"{name}\""));
+    assert!(at("ghost") < at("unreadable"));
+    assert!(at("unreadable") < at("legacy"));
+    assert!(at("legacy") < at("plain"));
+    assert!(
+        html.contains("data-status=\"warning\" data-uses=\"functions ui\""),
+        "{html}"
+    );
+    assert!(html.contains("1 Function · 1 UI"));
+    assert!(html.contains("data-filter hidden"));
+}
+
+#[test]
+fn a_scenario_lists_the_discounts_only_when_it_has_its_own() {
+    let data = ScenarioData::new(
+        "home-discounts",
+        &[
+            (
+                "own.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}},
+                    "checkout": {"discounts": [{"function": "volume-discount", "title": "Bulk deal", "code": "BULK", "classes": ["PRODUCT"]}]}}"#,
+            ),
+            (
+                "store.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}}"#,
+            ),
+        ],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let scenario = |name: &str| {
+        json["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    let discounts = |scenario: &Json| {
+        scenario["summary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["label"] == "Discounts")
+            .map(|row| row["text"].as_str().unwrap().to_string())
+            .unwrap()
+    };
+    let own = scenario("own");
+    assert_eq!(own["problems"], json!([]), "{own}");
+    assert_eq!(discounts(&own), "Bulk deal (code BULK)");
+    assert!(
+        own["facts"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("1 own discount"))
+    );
+    let store = scenario("store");
+    assert!(discounts(&store).starts_with("the store's "), "{store}");
+    assert!(!discounts(&store).contains("Bulk deal"));
+}
+
+#[test]
+fn the_home_page_of_an_app_with_nothing_says_so() {
+    let root = std::env::temp_dir().join(format!("lsf-home-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("extensions")).unwrap();
+    std::fs::write(root.join("shopify.app.toml"), "name = \"Empty app\"\n").unwrap();
+    let state = checkout_server_of(root.clone(), &[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&root).ok();
+
+    assert_eq!(json["problems"], json!([]));
+    assert_eq!(json["counts"], json!({"errors": 0, "warnings": 0}));
+    assert_eq!(json["check"]["state"], "none");
+    assert_eq!(json["functions"], json!([]));
+    assert_eq!(json["uiExtensions"], json!([]));
+    assert!(html.contains("No problems."), "{html}");
+    assert!(html.contains("lsf-hp is-clear"));
+    assert!(html.contains("The app has no Function."));
+    assert!(html.contains("The app has no checkout UI extension."));
+    assert!(html.contains("None yet"));
+    // Nothing to filter.
+    assert!(!html.contains("data-filter"));
 }
 
 #[test]

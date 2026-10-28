@@ -10,6 +10,7 @@ mod control;
 pub use control::{apply_session_input, routes};
 mod forms;
 mod home;
+mod home_check;
 mod live_reload;
 mod minify;
 pub mod params;
@@ -117,6 +118,8 @@ pub struct ServerState {
     changes: live_reload::Changes,
     /// How long the templates, the sections and the blocks took so far, for `/__lsf/timings`.
     pub(crate) timings: timing::Totals,
+    /// The Functions that fail when the scenarios run, as the home page last found them.
+    pub(crate) home_check: home_check::Cache,
 }
 
 /// One HTTP request, decoded.
@@ -221,6 +224,7 @@ impl ServerState {
             last_token: AtomicU64::new(0),
             changes: live_reload::Changes::new(),
             timings: timing::Totals::default(),
+            home_check: home_check::Cache::default(),
         };
         (state, diagnostics)
     }

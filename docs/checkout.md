@@ -12,8 +12,8 @@ Shopify's checkout.
 npx local-storefront checkout --app ../my-app
 ```
 
-Open <http://127.0.0.1:9292/>: the [home page](#the-home-page) lists the extensions of the app
-and the [checkout scenarios](#scenarios), and opens a checkout for each. <http://127.0.0.1:9292/checkout>
+Open <http://127.0.0.1:9292/>: the [home page](#the-home-page) lists what is wrong first, then
+the [checkout scenarios](#scenarios) and the extensions of the app, and opens a checkout for each. <http://127.0.0.1:9292/checkout>
 is the checkout of the cart of the session, which the store data defines (`session.cart`, see
 [data format](data-format.md#customers-and-sessions)). It needs no theme.
 
@@ -77,28 +77,65 @@ radii in the same file.
 ## The home page
 
 `GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
-page says, for tools) shows everything the checkout can do for the app, with the look of the
-checkout and without any network:
+page says, for tools) shows what is wrong first, then everything the checkout can do for the
+app, in dense rows whose details open under them. It has the look of the checkout and needs no
+network.
 
-- **Every Function:** its handle and name, the API version, the Function API of each target, whether
-  it is built (and the command that builds it), whether it has a `.fetch` target (network
-  access) and whether a target is legacy or not run by the local checkout. What is wrong with it
-  (a missing build, an unknown target, an API version that is not supported) shows as a banner.
-- **Every checkout UI extension:** its handle, API version, capabilities and targets, each with
-  the place it has on the page ("Checkout summary: under each line"). A target the page has no
-  place for (`purchase.checkout.chat.render`, the pickup point targets) is said to have none: the
-  extension does not render there.
-- **Every [scenario](#scenarios):** a summary of its cart, buyer, country and language, what the
-  buyer entered, discounts, settings it overrides, look and extensions, and a link that opens a
-  fresh checkout for it. A scenario with errors is listed with them and has no link.
+- **Problems**, at the top, errors first, each on one line with where to look (the row of the
+  extension or of the scenario). The first eight of each kind show, a "Show N more" opens the
+  others.
+  - Errors: an extension that cannot load or run (no build, an API version that is not
+    supported or missing, an unknown Function target, a missing or wrong `owner_type`, what the
+    loader refuses), a scenario that does not validate or names an extension the app lacks, an
+    error in the store data, and **a Function that fails when a scenario runs**.
+  - Warnings: legacy targets, targets the local checkout knows of and does not run, targets the
+    page has no place for, and what else the loader says that does not stop anything.
+- **Open a checkout:** with the cart of the store data, with [every extension
+  target](#every-extension-target), or in the Shop look.
+- **Every [scenario](#scenarios)**, those with problems first, then by name. A row has a status
+  dot, the title and the file, a few words for its cart, buyer, country, language and codes,
+  the description, how many Functions and UI extensions it runs ("all extensions" without an
+  `extensions` list), and buttons that open a fresh checkout for it. Its details list the cart,
+  the buyer, what was entered, the settings it overrides, and the extensions it runs. The
+  discounts are listed only when the scenario sets its own (`checkout.discounts`); otherwise
+  they are "the store's N discounts". A search box and chips (with problems, uses Functions,
+  uses UI extensions) filter the list.
 - **Every customer of the store data** ([login profiles](#log-in-as-a-customer)): name, email,
   company, tags, orders, saved addresses and country, and a link that opens the checkout logged
   in as them: the first scenario's, for its cart, when there is one.
-- **A link that opens a checkout where every extension renders at every target it declares**
-  ([`?targets=all`](#every-extension-target)), and one for the Shop look.
+- **Every Function** and **every checkout UI extension**, one line each: its status, handle and
+  name, Function API or capabilities, API version, how many scenarios run it, its targets, and its
+  first problem. Its details list each target (the Function API, a `.fetch` target that reaches
+  the network, a legacy target; for a UI extension, the place it has on the page, such as
+  "Checkout summary: under each line"), how to build it, and all of its problems.
 
 An extension that `--extension` leaves out is listed and marked so. The page follows the locale
 prefix of its URL (`/fr/` links to `/fr/checkout`; `/__lsf/checkouts?locale=fr` does the same).
+
+### The Functions that fail
+
+The home page runs the Functions of every scenario that opens, as its checkout would when it
+opens (what `lsf function run --scenario` does), and lists each Function target that fails, with
+the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
+an output that does not fit the schema of its API version, a `.fetch` request that cannot be
+sent. The scenario and the Function get an error status.
+
+Running them all takes a moment (about 0.7 s for the 82 scenarios of the
+[playground](../examples/checkout-playground)), so the page does not wait for it: it shows
+"Running the Functions…" and asks `GET /__lsf/checkouts/check`, which answers what it found.
+What a check found is kept until the store data or the app (a Function, its Wasm module) changes:
+the page then has it at once. A check that fails or takes more than 30 s says so, and the rest
+of the page stays. Without JavaScript, the page links to `?check=1`, which runs the check
+before it answers.
+
+### The checkout UI extensions that do not load
+
+The page also loads the bundle of each checkout UI extension in a hidden frame of the sandbox,
+as the checkout does, without rendering it. A bundle that throws while it loads, or that does not
+register a target it declares (`shopify.extend`), is listed with the problems. The frame has an
+opaque origin, so the browser hides what the bundle threw ("Script error."): open a checkout
+with the extension to read it. An extension that throws only when it renders or when the buyer
+acts is not found this way.
 
 ## Scenarios
 
@@ -570,7 +607,8 @@ await request.post(`${path}/update`, {
 | `GET /checkout` | Leads to the checkout of the session's cart. `?variant=shop` for the other look, `?targets=all` for [every extension target](#every-extension-target). | A redirect to `/checkouts/cn/<token>` (`/fr/checkouts/cn/<token>` from `/fr/checkout`) |
 | `GET /checkout?scenario=<name>` | Opens a checkout for a [scenario](#scenarios), in a new session. | A redirect to its checkout with a new session cookie, or `404`/`422` and a page that says why |
 | `GET /checkout?customer=<email>` | Logs the session in as a [customer of the data](#log-in-as-a-customer) (`default`, `none` too), then leads to its checkout. With `scenario=`, opens the scenario as them. | A redirect, or `404` and a page that lists the customers |
-| `GET /` (`lsf checkout`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says. | HTML, or JSON |
+| `GET /` (`lsf checkout`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says, `?check=1` to [run the Functions of the scenarios](#the-functions-that-fail) first. | HTML, or JSON |
+| `GET /__lsf/checkouts/check` | Runs the Functions of every scenario (or takes the last run on the same app and data): [the ones that fail](#the-functions-that-fail). | JSON: `failures` (`handle`, `target`, `error`, `scenarios`), and what the page shows of it |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |

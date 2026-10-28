@@ -778,46 +778,18 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
   background: #fff;
 }
 
-/* --- The home page: the extensions of the app and the checkout scenarios ------------------- */
+/* --- The home page: what is wrong, the scenarios, the customers and the extensions ----------
+ * A dashboard of white panels on a grey page. Everything is a dense row whose details open
+ * under it (<details>); strong colors only say what is wrong. */
 
-.lsf-home-main { display: flex; flex-direction: column; gap: 2rem; max-width: 1060px; margin: 0 auto; padding: var(--lsf-space-3xl) var(--lsf-space-5xl) 4rem; }
-.lsf-home h3 { font-size: 1rem; font-weight: 600; }
-.lsf-home h2 .lsf-muted { font-size: .9rem; font-weight: 400; }
-.lsf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 1rem; }
-.lsf-card {
-  display: flex;
-  flex-direction: column;
-  gap: .6rem;
-  min-width: 0;
-  padding: 1rem;
-  border: 1px solid var(--lsf-color-border);
-  border-radius: var(--lsf-radius-panel);
-  background: var(--lsf-color-bg);
-}
-.lsf-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .6rem; }
-.lsf-chips { display: flex; flex-wrap: wrap; gap: .3rem; width: 100%; }
+.lsf-home { background: var(--lsf-color-bg-subdued); }
+.lsf-h-header { padding: var(--lsf-space-base) max(var(--lsf-space-3xl), calc((100% - 1240px) / 2 + var(--lsf-space-3xl))); }
+.lsf-h-header .lsf-brand { font-size: var(--lsf-size-xl); }
+.lsf-h-header .lsf-secure { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lsf-home-main { display: flex; flex-direction: column; gap: var(--lsf-space-xl); max-width: 1240px; margin: 0 auto; padding: var(--lsf-space-2xl) var(--lsf-space-3xl) var(--lsf-space-6xl); }
+.lsf-home-main > .lsf-section { padding: var(--lsf-space-2xl); border: var(--lsf-border-width) solid var(--lsf-color-border); border-radius: var(--lsf-radius-panel); background: var(--lsf-color-bg); }
 .lsf-home code { padding: 0 .3rem; border-radius: 4px; background: var(--lsf-color-info-wash-2); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-.lsf-targets { display: flex; flex-direction: column; gap: .35rem; margin: 0; padding: 0; list-style: none; }
-.lsf-targets li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .5rem; }
-.lsf-people { gap: var(--lsf-space-m); }
-.lsf-people .lsf-badges { width: 100%; margin-top: 0; }
-.lsf-facts { display: flex; flex-direction: column; gap: .3rem; margin: 0; }
-.lsf-facts > div { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: .5rem; }
-.lsf-facts dt { color: var(--lsf-color-text-subdued); }
-.lsf-facts dd { margin: 0; overflow-wrap: anywhere; }
-.lsf-home-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: auto; }
-.lsf-home-actions .lsf-pay, .lsf-home-actions .lsf-apply {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: auto;
-  min-width: 0;
-  min-height: 2.5rem;
-  padding: 0 1.1rem;
-  font-size: .9rem;
-  text-decoration: none;
-}
-.lsf-file { font-size: .8rem; }
+.lsf-home .lsf-banner { margin: 0; }
 .lsf-home-problem {
   margin: 0;
   padding: .6rem .75rem;
@@ -829,7 +801,184 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.lsf-home .lsf-banner { margin: 0; }
+.lsf-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.lsf-home [hidden] { display: none !important; }
+
+/* The panels, and the layout: on wide screens the scenarios are the main column, with the ways
+ * to open a checkout and the customers beside them. */
+.lsf-hp, .lsf-h-section { min-width: 0; padding: var(--lsf-space-xl) var(--lsf-space-xl) var(--lsf-space-m); border: var(--lsf-border-width) solid var(--lsf-color-border); border-radius: var(--lsf-radius-panel); background: var(--lsf-color-bg); }
+.lsf-h-layout { display: flex; flex-direction: column; gap: var(--lsf-space-xl); }
+@media (min-width: 1100px) {
+  .lsf-h-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto auto 1fr; align-items: start; gap: var(--lsf-space-xl) var(--lsf-space-2xl); }
+  .lsf-h-layout > * { grid-column: 1; }
+  .lsf-h-layout > .lsf-h-scenarios { grid-row: 1 / span 3; }
+  .lsf-h-layout > .lsf-h-open { grid-column: 2; grid-row: 1; }
+  .lsf-h-layout > .lsf-h-customers { grid-column: 2; grid-row: 2; }
+  .lsf-h-layout > .lsf-h-extensions, .lsf-h-layout > .lsf-h-others { grid-column: 1 / -1; }
+}
+.lsf-h-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--lsf-space-2xs) var(--lsf-space-l); margin-bottom: var(--lsf-space-m); }
+.lsf-h-head h2 { font-size: var(--lsf-size-l); }
+.lsf-h-count { min-width: 0; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); overflow-wrap: anywhere; }
+.lsf-h-note, .lsf-h-empty { margin: var(--lsf-space-xs) 0 var(--lsf-space-m); font-size: var(--lsf-size-s); }
+
+/* Status dots: green is quiet, the problems are not. */
+.lsf-dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.lsf-dot.is-ok { background: var(--lsf-color-success-wash-3); box-shadow: inset 0 0 0 1.5px var(--lsf-color-success); }
+.lsf-dot.is-error { background: var(--lsf-color-critical); }
+.lsf-dot.is-warning { background: var(--lsf-color-warning); }
+.lsf-dot.is-off { background: var(--lsf-color-border-emphasis); }
+
+/* A row that opens: a chevron, a dot, then what it is. */
+.lsf-home summary { list-style: none; cursor: pointer; }
+.lsf-home summary::-webkit-details-marker { display: none; }
+.lsf-h-details > summary, .lsf-hp-row summary { display: flex; align-items: center; gap: var(--lsf-space-m); min-width: 0; border-radius: var(--lsf-radius-small); }
+.lsf-h-details > summary::before, .lsf-hp-row summary::before, .lsf-hp-more > summary::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px;
+  border-right: 1.5px solid var(--lsf-color-text-subdued);
+  border-bottom: 1.5px solid var(--lsf-color-text-subdued);
+  transform: rotate(-45deg);
+  transition: transform var(--lsf-duration-fast) var(--lsf-ease);
+}
+.lsf-home details[open] > summary::before { transform: rotate(45deg); }
+.lsf-h-details > summary:hover, .lsf-hp-row summary:hover { background: var(--lsf-color-bg-subdued); }
+
+/* The problems: errors first, each on one line. */
+.lsf-hp.has-errors { border-left: 3px solid var(--lsf-color-critical); }
+.lsf-hp.has-warnings { border-left: 3px solid var(--lsf-color-warning); }
+.lsf-hp.is-clear { padding-bottom: var(--lsf-space-xl); }
+.lsf-hp.is-clear .lsf-h-head { margin-bottom: var(--lsf-space-xs); }
+.lsf-hp-check { display: flex; align-items: center; gap: var(--lsf-space-s); margin: calc(-1 * var(--lsf-space-xs)) 0 var(--lsf-space-m); color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); }
+.lsf-hp-check.is-error { color: var(--lsf-color-critical); }
+.lsf-hp-clear { display: flex; align-items: center; gap: var(--lsf-space-m); }
+.lsf-hp-group + .lsf-hp-group { margin-top: var(--lsf-space-m); }
+.lsf-hp-group h3 { margin-bottom: var(--lsf-space-2xs); font-size: var(--lsf-size-s); line-height: 1.6; }
+.lsf-hp-group.is-error h3 { color: var(--lsf-color-critical); }
+.lsf-hp-group.is-warning h3 { color: var(--lsf-color-warning); }
+.lsf-h-n { color: var(--lsf-color-text-subdued); font-weight: var(--lsf-font-weight); }
+.lsf-hp-rows { margin: 0; padding: 0; list-style: none; }
+.lsf-hp-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; column-gap: var(--lsf-space-base); border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
+.lsf-hp-rows > .lsf-hp-row:first-child { border-top: 0; }
+.lsf-hp-row summary { min-height: 32px; padding: 0 var(--lsf-space-xs); white-space: nowrap; }
+.lsf-hp-kind { flex: none; width: 6.5rem; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); }
+.lsf-hp-row.is-error[data-problem='crash'] .lsf-hp-kind { color: var(--lsf-color-critical); font-weight: var(--lsf-font-weight-bold); }
+.lsf-hp-row summary code { flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+.lsf-hp-msg { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lsf-hp-where { display: block; max-width: 14rem; padding-top: 7px; overflow: hidden; text-overflow: ellipsis; font-size: var(--lsf-size-s); white-space: nowrap; }
+.lsf-hp-full { display: flex; flex-direction: column; gap: var(--lsf-space-xs); padding: var(--lsf-space-xs) 0 var(--lsf-space-m) calc(6.5rem + 40px); font-size: var(--lsf-size-s); }
+.lsf-hp-full pre { margin: 0; padding: var(--lsf-space-s) var(--lsf-space-m); border-radius: var(--lsf-radius-small); background: var(--lsf-color-bg-subdued); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lsf-hp-more > summary { display: inline-flex; align-items: center; gap: var(--lsf-space-m); padding: var(--lsf-space-xs) var(--lsf-space-xs) var(--lsf-space-s); color: var(--lsf-color-accent); font-size: var(--lsf-size-s); }
+.lsf-hp-more[open] > summary { display: none; }
+.lsf-hp-more .lsf-hp-rows { border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
+.lsf-h-spin { flex: none; width: 10px; height: 10px; border: 2px solid var(--lsf-color-border); border-top-color: var(--lsf-color-text-subdued); border-radius: 50%; animation: lsf-h-spin var(--lsf-duration-spin) linear infinite; }
+@keyframes lsf-h-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .lsf-h-spin { animation: none; } }
+
+/* Buttons and chips. */
+.lsf-h-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lsf-space-s); }
+.lsf-h-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 var(--lsf-space-l);
+  border: var(--lsf-border-width) solid var(--lsf-color-border);
+  border-radius: var(--lsf-radius-small);
+  background: var(--lsf-color-bg);
+  color: var(--lsf-color-text);
+  font-size: var(--lsf-size-s);
+  font-weight: var(--lsf-font-weight-bold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.lsf-h-btn:hover { border-color: var(--lsf-color-border-emphasis); background: var(--lsf-color-bg-subdued); color: var(--lsf-color-text); }
+.lsf-h-btn.is-primary { border-color: var(--lsf-color-accent); background: var(--lsf-color-accent); color: var(--lsf-color-on-accent); }
+.lsf-h-btn.is-primary:hover { border-color: var(--lsf-color-accent-hover); background: var(--lsf-color-accent-hover); color: var(--lsf-color-on-accent); }
+.lsf-h-chip, .lsf-h-tchip { display: inline-block; max-width: 15rem; padding: 0 var(--lsf-space-s); overflow: hidden; border-radius: 4px; background: var(--lsf-color-bg-subdued); color: var(--lsf-color-text); font: 11.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.lsf-h-chip:hover { background: var(--lsf-color-info-wash-2); color: var(--lsf-color-accent); }
+.lsf-h-tchip { color: var(--lsf-color-text-subdued); }
+.lsf-h-tchip.is-more { flex: none; overflow: visible; }
+
+/* The lists of scenarios and extensions. */
+.lsf-h-list { margin: 0; padding: 0; list-style: none; }
+.lsf-h-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; column-gap: var(--lsf-space-m); border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
+.lsf-h-list > .lsf-h-row:first-child { border-top: 0; }
+.lsf-h-ext { grid-template-columns: minmax(0, 1fr); }
+.lsf-h-details { min-width: 0; }
+.lsf-h-details > summary { padding: var(--lsf-space-s) var(--lsf-space-xs); }
+.lsf-h-main { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; }
+.lsf-h-title { display: flex; align-items: baseline; gap: var(--lsf-space-m); min-width: 0; white-space: nowrap; }
+.lsf-h-title > strong { min-width: 0; overflow: hidden; font-weight: var(--lsf-font-weight-bold); text-overflow: ellipsis; }
+.lsf-h-title > code { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; color: var(--lsf-color-text-subdued); }
+.lsf-h-title > .lsf-h-handle { flex: 0 0 auto; max-width: 100%; padding: 0; background: none; color: var(--lsf-color-text); font-size: 12.5px; font-weight: var(--lsf-font-weight-bold); }
+.lsf-h-name { min-width: 0; overflow: hidden; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); text-overflow: ellipsis; }
+.lsf-h-meta { overflow: hidden; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); text-overflow: ellipsis; white-space: nowrap; }
+.lsf-h-meta.is-error { color: var(--lsf-color-critical); }
+.lsf-h-meta.is-warning { color: var(--lsf-color-warning); }
+.lsf-h-desc { color: var(--lsf-color-text-subdued); }
+.lsf-h-uses { flex: none; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); white-space: nowrap; }
+.lsf-h-targets { display: flex; flex: 0 1 auto; gap: var(--lsf-space-xs); max-width: 45%; min-width: 0; }
+/* An extension is one line, like a table: its handle and name, what it is, its targets; a
+ * second line says its first problem. */
+@media (min-width: 640px) {
+  .lsf-h-ext .lsf-h-main { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: var(--lsf-space-base); }
+  .lsf-h-ext .lsf-h-title { flex: 0 0 22rem; max-width: 22rem; overflow: hidden; }
+  .lsf-h-ext .lsf-h-meta { flex: 1 1 0; }
+  .lsf-h-ext .lsf-h-meta:is(.is-error, .is-warning) { flex-basis: 100%; }
+}
+.lsf-h-row > .lsf-h-actions { flex-wrap: nowrap; padding: var(--lsf-space-m) 0; }
+.lsf-h-body { display: flex; flex-direction: column; gap: var(--lsf-space-m); padding: var(--lsf-space-xs) var(--lsf-space-xs) var(--lsf-space-base) 34px; font-size: var(--lsf-size-s); }
+.lsf-h-facts { display: flex; flex-direction: column; gap: var(--lsf-space-2xs); margin: 0; }
+.lsf-h-facts > div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: var(--lsf-space-m); }
+.lsf-h-facts dt { color: var(--lsf-color-text-subdued); }
+.lsf-h-facts dd { margin: 0; overflow-wrap: anywhere; }
+.lsf-h-uses-list, .lsf-h-fails { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--lsf-space-xs); }
+.lsf-h-label { width: 8rem; color: var(--lsf-color-text-subdued); }
+.lsf-h-fails { color: var(--lsf-color-critical); }
+.lsf-h-file { font-size: var(--lsf-size-xs); }
+.lsf-h-tlist, .lsf-h-issues, .lsf-h-plain { display: flex; flex-direction: column; gap: var(--lsf-space-xs); margin: 0; padding: 0; list-style: none; }
+.lsf-h-tlist li, .lsf-h-plain li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--lsf-space-m); }
+.lsf-h-issues li { padding-left: var(--lsf-space-m); border-left: 2px solid var(--lsf-color-warning); overflow-wrap: anywhere; }
+.lsf-h-issues li.is-error { border-color: var(--lsf-color-critical); color: var(--lsf-color-critical-text); }
+.lsf-h-plain { padding-bottom: var(--lsf-space-m); }
+
+/* The filter of the scenarios: the script shows it. */
+.lsf-h-filter { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lsf-space-m) var(--lsf-space-base); margin-bottom: var(--lsf-space-s); }
+.lsf-h-search { flex: 1 1 14rem; min-width: 0; height: 32px; padding: 0 var(--lsf-space-l); border: var(--lsf-border-width) solid var(--lsf-color-border-emphasis); border-radius: var(--lsf-radius-small); background: var(--lsf-color-bg); color: var(--lsf-color-text); font: inherit; font-size: var(--lsf-size-s); }
+.lsf-h-chips { display: flex; flex-wrap: wrap; gap: var(--lsf-space-xs); }
+.lsf-h-chips button { height: 28px; padding: 0 var(--lsf-space-l); border: var(--lsf-border-width) solid var(--lsf-color-border); border-radius: 999px; background: var(--lsf-color-bg); color: var(--lsf-color-text); font: inherit; font-size: var(--lsf-size-s); cursor: pointer; }
+.lsf-h-chips button:hover { border-color: var(--lsf-color-border-emphasis); }
+.lsf-h-chips button[aria-pressed='true'] { border-color: var(--lsf-color-text); background: var(--lsf-color-text); color: var(--lsf-color-bg); }
+.lsf-h-shown { margin-left: auto; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); }
+
+/* The customers and the ways to open a checkout. */
+.lsf-h-open .lsf-h-actions { margin-bottom: var(--lsf-space-xs); }
+.lsf-h-people { margin: 0; padding: 0; list-style: none; }
+.lsf-h-people li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--lsf-space-m); padding: var(--lsf-space-s) 0; border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
+.lsf-h-people li:first-child { border-top: 0; padding-top: 0; }
+.lsf-h-email { min-width: 0; font-size: var(--lsf-size-s); overflow-wrap: anywhere; }
+.lsf-h-people .lsf-badges { width: 100%; margin-top: var(--lsf-space-2xs); }
+
+@media (max-width: 639.98px) {
+  .lsf-h-header { flex-wrap: wrap; row-gap: 0; }
+  .lsf-h-header .lsf-secure { width: 100%; margin-left: 0; }
+  .lsf-hp, .lsf-h-section { padding-left: var(--lsf-space-m); padding-right: var(--lsf-space-m); }
+  .lsf-hp-kind, .lsf-h-targets, .lsf-h-uses, .lsf-h-desc, .lsf-h-scenario .lsf-h-title > code { display: none; }
+  .lsf-hp-row summary { flex-wrap: wrap; row-gap: 0; padding: var(--lsf-space-xs); }
+  .lsf-hp-row summary code { max-width: calc(100% - 40px); }
+  .lsf-hp-msg { flex-basis: 100%; padding-left: 26px; }
+  .lsf-hp-where { max-width: 7rem; }
+  .lsf-hp-full { padding-left: 30px; }
+  .lsf-h-btn { height: 28px; }
+  .lsf-h-row { grid-template-columns: minmax(0, 1fr); }
+  .lsf-h-row > .lsf-h-actions { padding: 0 0 var(--lsf-space-s) 34px; }
+  .lsf-h-body { padding-left: var(--lsf-space-xs); }
+  .lsf-h-facts > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .lsf-h-label { width: 100%; }
+  .lsf-h-shown { width: 100%; margin-left: 0; }
+}
 
 /* --- Every extension target (?targets=all) ---------------------------------------------------- */
 

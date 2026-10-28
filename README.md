@@ -79,8 +79,9 @@ npx local-storefront checkout --app ../my-app
 ```
 
 Runs the Shopify Functions of the app and shows its checkout UI extensions on a local checkout,
-without a store. Its home page lists every Function and extension of the app and the checkout
-scenarios (carts, buyers, countries, settings), and opens a checkout for each:
+without a store. Its home page lists what is wrong first (including the Functions that fail when
+the scenarios run), then the checkout scenarios (carts, buyers, countries, settings) and every
+Function and extension of the app, and opens a checkout for each:
 `npx local-storefront checkout init --app ../my-app` writes a set made for the app.
 `npx local-storefront function run --app ../my-app` runs the Functions once and prints their
 input and output. Guide: [checkout](docs/checkout.md).

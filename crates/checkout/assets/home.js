@@ -1,0 +1,315 @@
+// The home page of `lsf checkout`. The page is complete without this script; it adds:
+// - the filter of the scenarios: a search on their title, file and extension handles, and
+//   chips (all, with problems, uses Functions, uses UI extensions), with the count of the rows
+//   shown;
+// - the check of the Functions: when the server has not run the Functions of the scenarios yet,
+//   the page asks `/__lsf/checkouts/check` once it is shown, and puts what it found in place
+//   (the list of problems, the rows of the scenarios and Functions that fail, the order of the
+//   scenarios). A check that fails or takes too long says so, the rest of the page stays;
+// - the load of the checkout UI extensions: each bundle is loaded in a hidden frame of the
+//   sandbox, as the checkout loads it, to see the targets it registers. A bundle that throws
+//   while it loads, or does not register a target it declares, is listed with the problems.
+//   The frame has an opaque origin, so the browser hides the message of what it threw
+//   ("Script error."): opening a checkout with the extension shows it.
+
+/** How long the page waits for the check, in milliseconds. */
+export const CHECK_TIMEOUT = 30000;
+
+/** Whether a scenario row (`{search, status, uses}`) is shown for the filter `{query, chip}`. */
+export function rowMatches(row, { query = '', chip = 'all' } = {}) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.every((word) => row.search.includes(word))) return false;
+  switch (chip) {
+    case 'problems':
+      return row.status === 'error' || row.status === 'warning';
+    case 'functions':
+      return row.uses.includes('functions');
+    case 'ui':
+      return row.uses.includes('ui');
+    default:
+      return true;
+  }
+}
+
+/** What the count under the filter says. */
+export function countText(shown, total) {
+  const noun = (n) => (n === 1 ? 'scenario' : 'scenarios');
+  return shown === total ? `${total} ${noun(total)}` : `${shown} of ${total} ${noun(total)} shown`;
+}
+
+function rowOf(element) {
+  const data = element.dataset;
+  return { search: data.search ?? '', status: data.status ?? 'ok', uses: (data.uses ?? '').split(' ') };
+}
+
+/** Shows the rows of `list` that match `filter`, and says how many. */
+export function applyFilter(list, filter) {
+  const rows = [...list.querySelectorAll('[data-scenario]')];
+  let shown = 0;
+  for (const row of rows) {
+    const match = rowMatches(rowOf(row), filter);
+    row.hidden = !match;
+    if (match) shown += 1;
+  }
+  return { shown, total: rows.length };
+}
+
+/** Puts the rows of `list` in the order of `ids` (the others stay after them). */
+export function reorder(list, ids) {
+  for (const id of ids) {
+    const row = list.querySelector(`[id="${id}"]`);
+    if (row) list.appendChild(row);
+  }
+}
+
+function setUpFilter(document) {
+  const box = document.querySelector('[data-filter]');
+  const list = document.querySelector('[data-list="scenarios"]');
+  if (!box || !list) return () => {};
+  const query = box.querySelector('[data-filter-query]');
+  const count = box.querySelector('[data-filter-count]');
+  const empty = document.querySelector('[data-filter-empty]');
+  const chips = [...box.querySelectorAll('[data-filter-chip]')];
+  const filter = { query: '', chip: 'all' };
+  const apply = () => {
+    const { shown, total } = applyFilter(list, filter);
+    count.textContent = countText(shown, total);
+    if (empty) empty.hidden = shown > 0;
+  };
+  query.addEventListener('input', () => {
+    filter.query = query.value;
+    apply();
+  });
+  for (const chip of chips) {
+    chip.addEventListener('click', () => {
+      filter.chip = chip.dataset.filterChip;
+      for (const other of chips) other.setAttribute('aria-pressed', String(other === chip));
+      apply();
+    });
+  }
+  box.hidden = false;
+  apply();
+  return apply;
+}
+
+function say(section, text) {
+  const line = section.querySelector('[data-check-line]');
+  if (!line) return;
+  line.textContent = text;
+  line.classList.add('is-error');
+}
+
+/** Asks for the check of the Functions, and puts what it found in the page. */
+async function check(document, window, refilter) {
+  const section = document.querySelector('[data-section="problems"]');
+  if (!section || section.dataset.check !== 'pending') return;
+  const url = section.dataset.checkUrl;
+  const controller = new window.AbortController();
+  const timer = window.setTimeout(() => controller.abort(), CHECK_TIMEOUT);
+  let answer;
+  try {
+    const response = await window.fetch(url, { signal: controller.signal, headers: { accept: 'application/json' } });
+    if (!response.ok) throw new Error(`the server answered ${response.status}`);
+    answer = await response.json();
+  } catch (error) {
+    say(section, `Could not check the Functions of the scenarios: ${error.name === 'AbortError' ? 'it took too long' : error.message}.`);
+    return;
+  } finally {
+    window.clearTimeout(timer);
+  }
+  if (answer.state === 'error' || typeof answer.problems !== 'string') {
+    say(section, `Could not check the Functions of the scenarios: ${answer.error ?? 'no answer'}.`);
+    return;
+  }
+  section.outerHTML = answer.problems;
+  for (const [id, html] of Object.entries(answer.rows ?? {})) {
+    const row = document.getElementById(id);
+    if (row) row.outerHTML = html;
+  }
+  const list = document.querySelector('[data-list="scenarios"]');
+  if (list && Array.isArray(answer.order)) reorder(list, answer.order);
+  refilter();
+}
+
+/** How long a bundle may take to load in its frame, in milliseconds. */
+export const PROBE_TIMEOUT = 5000;
+
+/** How many problems a group shows before the others are folded, as on the server. */
+const SHOWN_PROBLEMS = 8;
+
+/** How many bundles load at once. */
+const PROBES_AT_ONCE = 4;
+
+/**
+ * What loading its bundle says of a checkout UI extension that declares the targets `declared`:
+ * null when it registered them all, otherwise `{severity, message}`. `registered` is null when
+ * the bundle did not finish loading in time (nothing is said then); `errors` is what the frame
+ * reported while it loaded.
+ */
+export function verdict(declared, registered, errors) {
+  if (registered === null) return null;
+  const missing = declared.filter((target) => !registered.includes(target));
+  const thrown = errors.find((message) => message && message !== 'Script error.');
+  const what = thrown ? `throws while its bundle loads (${thrown})` : 'throws while its bundle loads';
+  if (missing.length === 0) {
+    return errors.length > 0 ? { severity: 'warning', message: `${what}, after it registered its targets` } : null;
+  }
+  if (registered.length === 0) {
+    return errors.length > 0
+      ? { severity: 'error', message: `${what}: it registers no target. Open a checkout with it to read the error.` }
+      : { severity: 'error', message: 'its bundle registers no target: shopify.extend is never called' };
+  }
+  return {
+    severity: 'error',
+    message: `its bundle does not register ${missing.join(', ')} (it registers ${registered.join(', ')})`,
+  };
+}
+
+/** Loads the bundle of one extension in a hidden frame: what it registered, and the errors. */
+function probe(document, window, sandboxUrl, row) {
+  const data = row.dataset;
+  const targets = (data.targets ?? '').split(' ').filter(Boolean);
+  return new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.setAttribute('tabindex', '-1');
+    frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+    const errors = [];
+    let timer = null;
+    const finish = (registered) => {
+      window.removeEventListener('message', listen);
+      window.clearTimeout(timer);
+      frame.remove();
+      resolve({ row, targets, registered, errors });
+    };
+    const listen = (event) => {
+      const message = event.data;
+      if (event.source !== frame.contentWindow || !message || message.lsf !== true) return;
+      if (message.type === 'ready') {
+        frame.contentWindow.postMessage({
+          lsf: true,
+          type: 'init',
+          probe: true,
+          handle: data.uiExtension,
+          target: targets[0],
+          script: new URL(data.probe, document.baseURI).href,
+          apiVersion: data.api,
+          ctx: {},
+          ext: { settings: {}, capabilities: {}, translations: {}, defaultLocale: null },
+          state: {},
+        }, '*');
+      } else if (message.type === 'error') {
+        errors.push(String(message.message));
+      } else if (message.type === 'registered') {
+        finish(message.targets ?? []);
+      }
+    };
+    timer = window.setTimeout(() => finish(null), PROBE_TIMEOUT);
+    window.addEventListener('message', listen);
+    frame.setAttribute('src', sandboxUrl);
+    document.body.appendChild(frame);
+  });
+}
+
+function element(document, tag, attributes = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+  for (const child of children) node.append(child);
+  return node;
+}
+
+/** The dot of a status, as the server draws it. */
+function dot(document, status) {
+  const label = status === 'error' ? 'Error' : 'Warning';
+  return element(document, 'span', { class: `lsf-dot is-${status}`, role: 'img', 'aria-label': label });
+}
+
+/** Adds a problem found in the browser to the list, and says it on the row of the extension. */
+function report(document, { row, problem }) {
+  const handle = row.dataset.uiExtension;
+  const section = document.querySelector('[data-section="problems"]');
+  if (section) {
+    const { severity, message } = problem;
+    let group = section.querySelector(`.lsf-hp-group.is-${severity}`);
+    if (!group) {
+      group = element(document, 'div', { class: `lsf-hp-group is-${severity}` },
+        element(document, 'h3', {}, severity === 'error' ? 'Errors ' : 'Warnings ', element(document, 'span', { class: 'lsf-h-n' }, '0')),
+        element(document, 'ul', { class: 'lsf-hp-rows' }));
+      const warnings = section.querySelector('.lsf-hp-group.is-warning');
+      if (severity === 'error' && warnings) section.insertBefore(group, warnings);
+      else section.appendChild(group);
+      section.querySelector('.lsf-hp-clear')?.remove();
+    }
+    const line = element(document, 'li', { class: `lsf-hp-row is-${severity}`, 'data-problem': 'load', 'data-subject': handle },
+      element(document, 'details', {},
+        element(document, 'summary', {}, dot(document, severity),
+          element(document, 'span', { class: 'lsf-hp-kind' }, 'UI extension'),
+          element(document, 'code', {}, handle),
+          element(document, 'span', { class: 'lsf-hp-msg', title: message }, message)),
+        element(document, 'div', { class: 'lsf-hp-full' },
+          element(document, 'pre', {}, message),
+          element(document, 'p', {}, 'Found by loading its bundle in this page, as the checkout does.'))),
+      element(document, 'a', { class: 'lsf-hp-where', href: `#${row.id}` }, 'details'));
+    // In the order of the server (scenarios last), with the rows past the first few folded.
+    const list = group.querySelector('.lsf-hp-rows');
+    list.insertBefore(line, list.querySelector('[data-problem="scenario"]'));
+    while (list.children.length > SHOWN_PROBLEMS) {
+      let more = group.querySelector('.lsf-hp-more');
+      if (!more) {
+        more = group.appendChild(element(document, 'details', { class: 'lsf-hp-more' },
+          element(document, 'summary', {}), element(document, 'ul', { class: 'lsf-hp-rows' })));
+      }
+      const rest = more.querySelector('.lsf-hp-rows');
+      rest.insertBefore(list.lastElementChild, rest.firstElementChild);
+      more.querySelector('summary').textContent = `Show ${rest.children.length} more`;
+    }
+    group.querySelector('.lsf-h-n').textContent = String(section.querySelectorAll(`.lsf-hp-row.is-${severity}`).length);
+    const errors = section.querySelectorAll('.lsf-hp-row.is-error').length;
+    const warnings = section.querySelectorAll('.lsf-hp-row.is-warning').length;
+    const counts = [];
+    if (errors) counts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+    if (warnings) counts.push(`${warnings} warning${warnings === 1 ? '' : 's'}`);
+    const head = section.querySelector('.lsf-h-head');
+    let count = head.querySelector('.lsf-h-count');
+    if (!count) count = head.appendChild(element(document, 'p', { class: 'lsf-h-count' }));
+    count.textContent = counts.join(' · ');
+    section.classList.remove('is-clear', 'has-warnings', 'has-errors');
+    section.classList.add(errors ? 'has-errors' : 'has-warnings');
+  }
+  // The row of the extension.
+  const { severity, message } = problem;
+  if (row.dataset.status !== 'error') {
+    row.dataset.status = severity;
+    row.querySelector('.lsf-dot')?.replaceWith(dot(document, severity));
+  }
+  row.querySelector('.lsf-h-main')?.appendChild(
+    element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, message));
+}
+
+/** Loads the bundle of every checkout UI extension the checkout loads, a few at a time. */
+async function probeAll(document, window) {
+  const rows = [...document.querySelectorAll('[data-probe]')];
+  if (rows.length === 0) return;
+  const sandboxUrl = new URL('sandbox.html', import.meta.url).href;
+  let next = 0;
+  const worker = async () => {
+    while (next < rows.length) {
+      const result = await probe(document, window, sandboxUrl, rows[next++]);
+      const problem = verdict(result.targets, result.registered, result.errors);
+      if (problem) report(document, { row: result.row, problem });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PROBES_AT_ONCE, rows.length) }, worker));
+}
+
+export async function start(document, window) {
+  const refilter = setUpFilter(document);
+  await check(document, window, refilter);
+  // After the check: its answer replaces the list of problems.
+  await probeAll(document, window);
+}
+
+if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+  start(document, window);
+}
