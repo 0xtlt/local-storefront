@@ -1,0 +1,54 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: every working extension",
+  "description": "All the ui-* extensions that are not ui-broken-*, at once. Add &targets=all to see every target of each.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 2,
+          "properties": {
+            "Monogram": "A.L."
+          }
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "payment": "card"
+  },
+  "extensions": [
+    "ui-header-notice",
+    "ui-contact-newsletter",
+    "ui-address-autofill",
+    "ui-shipping-options",
+    "ui-payment-notes",
+    "ui-reductions-codes",
+    "ui-line-properties",
+    "ui-line-quantity",
+    "ui-order-summary",
+    "ui-footer-links",
+    "ui-thank-you",
+    "ui-every-target",
+    "ui-gift-wrap",
+    "ui-upsell",
+    "ui-note-attributes",
+    "ui-metafield-writer",
+    "ui-metafield-legacy",
+    "ui-terms-gate",
+    "ui-cart-limit-gate",
+    "ui-intercept-no-capability",
+    "ui-checkout-inspector",
+    "ui-i18n-greeting",
+    "ui-settings-empty",
+    "ui-network-fetch",
+    "ui-api-access",
+    "ui-change-refusals"
+  ]
+}

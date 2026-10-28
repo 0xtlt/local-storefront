@@ -1,0 +1,37 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: one extension per target",
+  "description": "An extension at each static target of the checkout: header, contact, delivery address, shipping options, payment methods, discount field, each line, the lines, the footer. Jane is logged in, so every step has something to show.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 2,
+          "properties": {
+            "Monogram": "A.L."
+          }
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "payment": "card"
+  },
+  "extensions": [
+    "ui-header-notice",
+    "ui-contact-newsletter",
+    "ui-address-autofill",
+    "ui-shipping-options",
+    "ui-payment-notes",
+    "ui-reductions-codes",
+    "ui-line-properties",
+    "ui-order-summary",
+    "ui-footer-links"
+  ]
+}

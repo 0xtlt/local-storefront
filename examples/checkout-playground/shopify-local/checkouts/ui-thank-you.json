@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: the thank-you page",
+  "description": "Everything is entered: press Pay and the seven thank-you targets of ui-thank-you show the order. Or add &targets=all to see them under the checkout without ordering.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 2,
+          "properties": {
+            "Monogram": "A.L."
+          }
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "payment": "card"
+  },
+  "extensions": [
+    "ui-thank-you"
+  ]
+}

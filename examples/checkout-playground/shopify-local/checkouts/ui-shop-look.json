@@ -1,0 +1,33 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: extensions in the Shop look",
+  "description": "A set of the UI extensions in the look of the Shop app: banner, gift wrap, upsell, quantities, summary, terms gate, translations.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "entered": {
+    "payment": "card"
+  },
+  "variant": "shop",
+  "extensions": [
+    "ui-header-notice",
+    "ui-gift-wrap",
+    "ui-upsell",
+    "ui-line-quantity",
+    "ui-order-summary",
+    "ui-terms-gate",
+    "ui-i18n-greeting"
+  ]
+}

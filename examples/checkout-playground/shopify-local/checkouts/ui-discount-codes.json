@@ -1,0 +1,28 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: discount codes from an extension",
+  "description": "WELCOME10 is entered already. No discount of this scenario has a code, so every code is entered and refused, as on Shopify; remove it or enter others from the extension.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "discount_codes": [
+      "WELCOME10"
+    ]
+  },
+  "extensions": [
+    "ui-reductions-codes"
+  ]
+}

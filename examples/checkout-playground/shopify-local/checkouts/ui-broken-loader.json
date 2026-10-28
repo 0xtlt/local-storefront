@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI broken: not loaded",
+  "description": "Extensions the checkout refuses or cannot place: an unknown target, API 2025-07, no api_version, no dist/ bundle, a 2027-01 metafield without owner_type, an owner_type that does not exist. The server prints why at start; the page says it for those it knows.",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-broken-unknown-target",
+    "ui-broken-old-api",
+    "ui-broken-no-api-version",
+    "ui-broken-not-built",
+    "ui-broken-missing-owner-type",
+    "ui-broken-bad-owner-type"
+  ]
+}

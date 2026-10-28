@@ -1,0 +1,18 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: settings left empty",
+  "description": "ui-settings-empty declares three settings; the local checkout does not fill them in, so shopify.settings.value is {} and the extension shows its defaults.",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-settings-empty"
+  ]
+}

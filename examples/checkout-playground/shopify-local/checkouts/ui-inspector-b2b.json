@@ -1,0 +1,24 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: the inspector for a B2B buyer",
+  "description": "Alex buys for Northwind Hotels at the Seattle location: buyerIdentity.purchasingCompany has the company and the location.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "company_location": "Northwind Seattle",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 6
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 4
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-checkout-inspector"
+  ]
+}

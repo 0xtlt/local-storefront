@@ -1,0 +1,44 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: what the shopify global exposes",
+  "description": "A logged-in customer with line properties, a subscription line, a note, attributes, a code and a delivery choice: ui-checkout-inspector lists everything the shopify global gives, live.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 2,
+          "properties": {
+            "Monogram": "A.L.",
+            "Gift": "yes"
+          }
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        },
+        {
+          "variant": "SOCK-S",
+          "quantity": 2,
+          "selling_plan": "Deliver every month, 10% off"
+        }
+      ],
+      "note": "Leave at the door",
+      "attributes": {
+        "source": "playground",
+        "po_number": "PO-1042"
+      }
+    }
+  },
+  "entered": {
+    "discount_codes": [
+      "WELCOME10"
+    ],
+    "delivery": "standard",
+    "payment": "card"
+  },
+  "extensions": [
+    "ui-checkout-inspector"
+  ]
+}

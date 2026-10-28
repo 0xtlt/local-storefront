@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: buyer journey interceptors",
+  "description": "Six units and everything entered. Press Pay: ui-terms-gate blocks until the terms are ticked, ui-cart-limit-gate blocks over five units (use − under a line), and ui-intercept-no-capability tries to block without block_progress and is ignored.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 4
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "entered": {
+    "payment": "card"
+  },
+  "extensions": [
+    "ui-terms-gate",
+    "ui-cart-limit-gate",
+    "ui-intercept-no-capability",
+    "ui-line-quantity"
+  ]
+}
