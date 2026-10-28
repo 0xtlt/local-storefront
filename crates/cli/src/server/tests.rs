@@ -3034,15 +3034,7 @@ impl ScenarioData {
             std::process::id()
         ));
         std::fs::remove_dir_all(&directory).ok();
-        for (name, content) in lsf_core::store::demo::FILES {
-            let path = directory.join(name);
-            std::fs::create_dir_all(path.parent().expect("a parent")).expect("directory");
-            std::fs::write(path, content).expect("demo file");
-        }
-        std::fs::create_dir_all(directory.join("checkouts")).expect("checkouts");
-        for (name, content) in scenarios {
-            std::fs::write(directory.join("checkouts").join(name), content).expect("scenario");
-        }
+        crate::checkout::write_demo_scenarios(&directory, scenarios);
         ScenarioData(directory)
     }
 

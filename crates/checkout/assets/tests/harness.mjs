@@ -1,7 +1,7 @@
-// What the sandbox tests share: a page for the sandbox scripts (classic scripts, run in a
-// `vm` context the way a browser would run them), a state of the checkout and the fixture
-// extensions. Values made inside the context have other prototypes than the test's: compare
-// them through `plain()`.
+// What the tests share: a page for the sandbox scripts (classic scripts, run in a `vm` context
+// the way a browser would run them), a state of the checkout, the fixture extensions, and the
+// checkout page on the mock engine. Values made inside the context have other prototypes than
+// the test's: compare them through `plain()`.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { FakeDocument, FakeElement, FakeEvent, settle } from './fake-dom.mjs';
 import { withCurrency } from '../format.js';
-import { createCheckout } from '../preview/mock-engine.mjs';
+import { startCheckout } from '../checkout.js';
+import { complete, createCheckout, update } from '../preview/mock-engine.mjs';
 
 export const assets = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const fixtures = join(assets, '..', 'tests', 'fixtures', 'app', 'extensions');
@@ -30,6 +31,59 @@ export function pageState({ selection, ...state }, overrides = {}) {
 /** The checkout the sample starts with, as the page sees it. */
 export function checkoutState(overrides = {}) {
   return pageState(engineCheckout(), overrides);
+}
+
+const publicState = ({ selection, ...rest }) => rest;
+
+/**
+ * A checkout page on a checkout kept by the mock engine; `requests` is what it was asked. `start`
+ * is operations applied before the page loads (a login made elsewhere), `mutate` changes the
+ * engine's checkout first, `hold(url, body)` delays a request, and `conflict(engine, operations)`
+ * returns the checkout someone else made (a 409 reply) or nothing.
+ */
+export function checkoutPage({ start = [], variant = 'standard', mutate, hold, conflict, href = 'http://localhost/checkouts/cn/preview', window: more = {} } = {}) {
+  let engine = engineCheckout();
+  engine.variant = variant;
+  if (start.length) engine = update(engine, start).state;
+  if (mutate) mutate(engine);
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  const requests = [];
+  const location = { href, assigned: [], assign(url) { this.assigned.push(url); } };
+  const window = { addEventListener() {}, removeEventListener() {}, open() {}, ...more };
+  const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    requests.push({ url, body });
+    await hold?.(url, body);
+    if (url.endsWith('/update')) {
+      // Someone else changed the checkout: nothing is applied and the reply is the checkout now.
+      const other = conflict?.(engine, body.operations);
+      if (other) {
+        engine = other;
+        return reply(409, publicState(engine));
+      }
+      const result = update(engine, body.operations);
+      if (result.error) return reply(400, { error: result.error });
+      engine = result.state;
+      return reply(200, publicState(engine));
+    }
+    if (url.endsWith('/complete')) {
+      const result = complete(engine);
+      if (result.errors) {
+        engine = result.errors;
+        return reply(422, publicState(engine));
+      }
+      engine = result.state;
+      return reply(200, { redirect: 'http://localhost/checkouts/cn/preview/thank-you' });
+    }
+    return reply(404, { error: 'no such route' });
+  };
+  const sandboxUrl = 'http://localhost/__lsf/checkout/assets/sandbox.html';
+  const checkout = startCheckout({ root, initial: publicState(engine), document, window, location, fetch, storage: undefined, sandboxUrl });
+  const query = (selector) => root.querySelector(selector);
+  return { checkout, document, window, root, requests, location, query, text: (selector) => query(selector)?.textContent, operations: () => requests.filter((r) => r.url.endsWith('/update')).flatMap((r) => r.body.operations), engine: () => engine };
 }
 
 /** The bundle `shopify app build` left for `handle`. */

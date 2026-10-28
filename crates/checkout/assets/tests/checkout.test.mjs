@@ -3,61 +3,13 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { startCheckout } from '../checkout.js';
 import { op } from '../operations.js';
-import { complete, update } from '../preview/mock-engine.mjs';
-import { FakeDocument, FakeEvent } from './fake-dom.mjs';
-import { engineCheckout, pageState, settle } from './harness.mjs';
-
-const SANDBOX = 'http://localhost/__lsf/checkout/assets/sandbox.html';
-const publicState = (state) => {
-  const { selection, ...rest } = state;
-  return rest;
-};
+import { update } from '../preview/mock-engine.mjs';
+import { FakeEvent } from './fake-dom.mjs';
+import { checkoutPage, pageState, settle } from './harness.mjs';
 
 /** A page on a checkout kept by the mock engine; `requests` is what it was asked. */
-function app({ variant = 'standard', mutate, hold, conflict, href = 'http://localhost/checkouts/cn/preview', window: more = {} } = {}) {
-  let engine = engineCheckout();
-  engine.variant = variant;
-  if (mutate) mutate(engine);
-  const document = new FakeDocument();
-  const root = document.createElement('div');
-  document.body.appendChild(root);
-  const requests = [];
-  const location = { href, assigned: [], assign(url) { this.assigned.push(url); } };
-  const window = { addEventListener() {}, removeEventListener() {}, open() {}, ...more };
-  const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
-  const fetch = async (url, init) => {
-    const body = JSON.parse(init.body);
-    requests.push({ url, body });
-    await hold?.(url, body);
-    if (url.endsWith('/update')) {
-      // Someone else changed the checkout: nothing is applied and the reply is the checkout now.
-      const other = conflict?.(engine, body.operations);
-      if (other) {
-        engine = other;
-        return reply(409, publicState(engine));
-      }
-      const result = update(engine, body.operations);
-      if (result.error) return reply(400, { error: result.error });
-      engine = result.state;
-      return reply(200, publicState(engine));
-    }
-    if (url.endsWith('/complete')) {
-      const result = complete(engine);
-      if (result.errors) {
-        engine = result.errors;
-        return reply(422, publicState(engine));
-      }
-      engine = result.state;
-      return reply(200, { redirect: 'http://localhost/checkouts/cn/preview/thank-you' });
-    }
-    return reply(404, { error: 'no such route' });
-  };
-  const checkout = startCheckout({ root, initial: publicState(engine), document, window, location, fetch, storage: undefined, sandboxUrl: SANDBOX });
-  const query = (selector) => root.querySelector(selector);
-  return { checkout, document, window, root, requests, location, query, text: (selector) => query(selector)?.textContent, operations: () => requests.filter((r) => r.url.endsWith('/update')).flatMap((r) => r.body.operations), engine: () => engine };
-}
+const app = checkoutPage;
 
 const ADDRESS = { lastName: 'Martin', address1: '1 rue de Rivoli', city: 'Paris', countryCode: 'FR' };
 async function fillIn(page, { delivery = true, payment = true } = {}) {

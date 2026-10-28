@@ -362,6 +362,21 @@ pub fn display_money(cents: i64, currency: &str) -> String {
     )
 }
 
+/// Writes the demo store into `dir`, with the scenarios `(file, content)` in `checkouts/`: the
+/// store data of the tests that run scenarios.
+#[cfg(test)]
+pub fn write_demo_scenarios(dir: &Path, scenarios: &[(&str, &str)]) {
+    for (name, content) in lsf_core::store::demo::FILES {
+        let path = dir.join(name);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("directory");
+        std::fs::write(path, content).expect("demo file");
+    }
+    std::fs::create_dir_all(dir.join("checkouts")).expect("checkouts");
+    for (name, content) in scenarios {
+        std::fs::write(dir.join("checkouts").join(name), content).expect("scenario");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

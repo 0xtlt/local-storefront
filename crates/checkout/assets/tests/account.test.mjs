@@ -5,49 +5,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addressLabel, badges, initials, sameAddress, savedAddressId } from '../account.js';
-import { startCheckout } from '../checkout.js';
 import { sessionToken } from '../extension-host.js';
 import { update } from '../preview/mock-engine.mjs';
-import { FakeDocument, FakeEvent } from './fake-dom.mjs';
-import { engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
+import { FakeEvent } from './fake-dom.mjs';
+import { checkoutPage, engineCheckout, init, pageState, plain, sandboxWindow, settle } from './harness.mjs';
 
-const SANDBOX = 'http://localhost/__lsf/checkout/assets/sandbox.html';
 const AVA = 'ava.chen@example.com';
 const SAM = 'sam.okafor@example.com';
-const publicState = ({ selection, ...rest }) => rest;
 
 /** A page on a checkout the mock engine keeps. `start` is operations applied before the page
  * loads (a login made elsewhere). */
-function app({ start = [], variant = 'standard' } = {}) {
-  let engine = engineCheckout();
-  engine.variant = variant;
-  if (start.length) engine = update(engine, start).state;
-  const document = new FakeDocument();
-  const root = document.createElement('div');
-  document.body.appendChild(root);
-  const requests = [];
-  const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
-  const fetch = async (url, init) => {
-    const body = JSON.parse(init.body);
-    requests.push({ url, body });
-    const result = update(engine, body.operations);
-    if (result.error) return reply(400, { error: result.error });
-    engine = result.state;
-    return reply(200, publicState(engine));
-  };
-  const location = { href: 'http://localhost/checkouts/cn/preview', assign() {} };
-  const window = { addEventListener() {}, removeEventListener() {}, open() {} };
-  const checkout = startCheckout({ root, initial: publicState(engine), document, window, location, fetch, storage: undefined, sandboxUrl: SANDBOX });
-  const query = (selector) => root.querySelector(selector);
+function app(options) {
+  const page = checkoutPage(options);
+  const { query } = page;
   return {
-    checkout,
-    document,
-    root,
-    query,
+    ...page,
     trigger: () => query('.lsf-account-trigger'),
     menu: () => query('.lsf-account-menu'),
-    items: () => root.querySelectorAll('.lsf-account-menu [role="menuitemradio"]'),
-    operations: () => requests.flatMap((request) => request.body.operations),
+    items: () => page.root.querySelectorAll('.lsf-account-menu [role="menuitemradio"]'),
     key: (element, key) => element.dispatchEvent(new FakeEvent('keydown', { bubbles: true, cancelable: true, data: { key } })),
   };
 }

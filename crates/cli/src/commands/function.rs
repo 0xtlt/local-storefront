@@ -785,16 +785,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        let data = root.join("data");
-        for (name, content) in lsf_core::store::demo::FILES {
-            let path = data.join(name);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, content).unwrap();
-        }
-        std::fs::create_dir_all(data.join("checkouts")).unwrap();
-        for (name, content) in scenarios {
-            std::fs::write(data.join("checkouts").join(name), content).unwrap();
-        }
+        checkout::write_demo_scenarios(&root.join("data"), scenarios);
         root
     }
 
