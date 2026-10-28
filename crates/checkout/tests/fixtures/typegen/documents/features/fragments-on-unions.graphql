@@ -1,0 +1,3 @@
+fragment S on SearchResult { __typename ... on User { id } ... on Collection { name } }
+fragment I on Item { ... on Product { id } ... on Variant { sku } }
+query FU { search(q: "") { ...S } feed { ...I } grid { ...I } }

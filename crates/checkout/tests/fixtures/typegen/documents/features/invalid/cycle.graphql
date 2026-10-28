@@ -1,0 +1,2 @@
+fragment A on User { ...B }
+fragment B on User { ...A }

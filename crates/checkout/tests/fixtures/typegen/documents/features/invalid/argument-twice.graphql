@@ -1,0 +1,1 @@
+query V { node(id: "1", id: "2") { id } }

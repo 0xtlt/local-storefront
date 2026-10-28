@@ -1,0 +1,3 @@
+query One { me { id } }
+query Two($x: Int) { me { name } search(q: "x", first: $x) { __typename } }
+mutation Three { createUser(input: {name: "x"}) { id } }

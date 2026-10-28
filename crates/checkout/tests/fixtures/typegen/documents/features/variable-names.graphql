@@ -1,0 +1,1 @@
+query q($Id: ID!, $snake_case: Int, $camelCase: String) { node(id: $Id) { id } }

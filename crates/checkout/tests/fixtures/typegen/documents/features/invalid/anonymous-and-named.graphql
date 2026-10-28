@@ -1,0 +1,2 @@
+query { me { id } }
+query B { me { id } }

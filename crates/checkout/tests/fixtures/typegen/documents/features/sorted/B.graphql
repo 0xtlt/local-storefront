@@ -1,0 +1,1 @@
+query BQ { me { id } }

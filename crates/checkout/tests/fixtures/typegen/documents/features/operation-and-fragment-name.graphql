@@ -1,0 +1,2 @@
+query Collide { me { id } }
+fragment Collide on User { id }

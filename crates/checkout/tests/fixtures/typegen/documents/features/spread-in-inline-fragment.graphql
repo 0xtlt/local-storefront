@@ -1,0 +1,2 @@
+fragment F on User { name }
+query SI { node(id: "1") { ... on User { ...F } ... on Named { ...F } } }

@@ -1,0 +1,16 @@
+query DeliveryOptionsInput {
+  cart {
+    lines {
+      quantity
+    }
+    deliveryGroups {
+      id
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

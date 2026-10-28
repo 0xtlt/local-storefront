@@ -1,0 +1,1 @@
+query NI { node(id: "1") { ... on Named { name ... on User { email ... on Node { id } } } } }

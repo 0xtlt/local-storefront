@@ -29,3 +29,7 @@ graphql-parser = "0.4"
 # already uses; it is named here to tell its errors from other I/O errors.
 rustls = { version = "0.23", default-features = false, features = ["std"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+
+[dev-dependencies]
+# The SHA-256 of what graphql-codegen wrote, in the typegen tests.
+sha2 = "0.11"

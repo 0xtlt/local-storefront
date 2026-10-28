@@ -1,0 +1,1 @@
+query V { search(q: "x", filter: {range: {min: 1, max: 2}}) { __typename } }

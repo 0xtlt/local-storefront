@@ -1,0 +1,1 @@
+query U2 { search(q: "x") { __typename ... on User { id name } ... on Product { id name price } ... on Collection { id } } }

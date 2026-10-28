@@ -1,0 +1,1 @@
+query Iface { node(id: "1") { id ... on User { name email } ... on Product { name price } ... on Variant { sku } } }

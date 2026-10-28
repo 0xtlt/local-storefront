@@ -1,0 +1,1 @@
+query Merge { me { friends { id } friends { name } address { city } address { line1 } } viewer { friends { id } f: friends { name } } }

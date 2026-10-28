@@ -2585,6 +2585,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "toml",
  "ureq",
  "wasm-encoder 0.240.0",

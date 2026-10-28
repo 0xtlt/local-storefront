@@ -1,0 +1,1 @@
+query IfaceT { node(id: "1") { __typename id ... on User { name } } nodes(ids: []) { __typename ... on Collection { name } } }

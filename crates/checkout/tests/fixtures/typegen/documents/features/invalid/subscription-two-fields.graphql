@@ -1,0 +1,1 @@
+subscription S { userAdded { id } a: userAdded { name } }
