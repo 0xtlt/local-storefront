@@ -705,10 +705,13 @@ pub fn ignored(relative: &Path, outputs: &[PathBuf]) -> bool {
         || outputs.iter().any(|output| relative.starts_with(output))
 }
 
-/// What the build of a Function writes, in its folder: `dist/`, and the module wherever
-/// `[extensions.build] path` puts it.
+/// What the build of a Function writes, in its folder: `dist/`, the module wherever
+/// `[extensions.build] path` puts it, and for a JavaScript Function, the types of its typegen.
 fn outputs_of(function: &app::FunctionExtension) -> Vec<PathBuf> {
     let mut outputs = vec![PathBuf::from("dist")];
+    if function.build() == Some(app::Build::JavaScript) {
+        outputs.extend(lsf_checkout::javascript::outputs(&function.dir));
+    }
     if let Ok(module) = function.wasm_path.strip_prefix(&function.dir) {
         match module
             .parent()
@@ -746,21 +749,27 @@ fn rules_of(app: &App, selection: &Selection) -> BTreeMap<String, Rules> {
         let Some(folder) = function.dir.file_name() else {
             continue;
         };
-        let outputs = if function.build_command.is_some() {
+        let build = function.build();
+        let outputs = if build.is_some() {
             outputs_of(function)
         } else {
             Vec::new()
         };
+        // A JavaScript Function is built by lsf itself, in a process of its own as any build.
+        let command = build.map(|build| match build {
+            app::Build::Command(command) => command.to_string(),
+            app::Build::JavaScript => {
+                crate::checkout::javascript_build_command(&app.root, &function.handle)
+            }
+        });
         rules.insert(
             folder.to_string_lossy().into_owned(),
             Rules {
-                build: function
-                    .build_command
-                    .as_ref()
+                build: command
                     .filter(|_| selection.contains(&function.handle))
                     .map(|command| Job {
                         handle: function.handle.clone(),
-                        command: command.clone(),
+                        command,
                         dir: function.dir.clone(),
                         module: function.wasm_path.clone(),
                         outputs: outputs.clone(),

@@ -27,6 +27,12 @@ enum Subcommand {
     /// store data, runs them in checkout order, and prints each input, output and log with the
     /// checkout that results. Exits with 1 when a Function fails to run.
     Run(RunArgs),
+    /// Build the Functions of an app, as `shopify app build` does. A Function written in
+    /// JavaScript or TypeScript without a build command (as Shopify's CLI generates them) is
+    /// built by lsf, without Node: the GraphQL typegen (`generated/api.ts`), one JavaScript file
+    /// (`dist/function.js`), then its Wasm module. The others run their
+    /// `[extensions.build] command`.
+    Build(BuildArgs),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -44,6 +50,17 @@ enum Step {
     Interaction,
     /// The buyer places the order (`CHECKOUT_COMPLETION`).
     Completion,
+}
+
+#[derive(clap::Args)]
+struct BuildArgs {
+    /// The Functions to build, by handle. Every Function of the app when none is given.
+    #[arg(value_name = "HANDLE")]
+    handles: Vec<String>,
+
+    /// The directory of a Shopify app (the one with shopify.app.toml).
+    #[arg(long, env = "LSF_APP", value_name = "DIR")]
+    app: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -94,6 +111,29 @@ struct RunArgs {
     format: Format,
 }
 
+/// `lsf function build`: builds the Functions, and says what it wrote.
+fn build(args: &BuildArgs) -> Result<ExitCode, String> {
+    let Some(app_dir) = &args.app else {
+        return Err("`lsf function build` needs the app: `--app DIR` (or LSF_APP)".to_string());
+    };
+    let shopify_app = lsf_checkout::app::load(app_dir)?;
+    let selection = lsf_checkout::app::Selection::resolve(&shopify_app, &args.handles)?;
+    if selection.functions(&shopify_app).next().is_none() {
+        return Err("the app has no Function to build".to_string());
+    }
+    checkout::build(&shopify_app, &selection)?;
+    for function in selection.functions(&shopify_app) {
+        if function.built() {
+            eprintln!(
+                "built:  {}: {}",
+                function.handle,
+                function.wasm_path.display()
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// JSON given on the command line, or the path of a file that holds it.
 fn read_json(what: &str, value: &str) -> Result<Json, String> {
     let text = if value.trim_start().starts_with(['{', '[']) {
@@ -110,7 +150,10 @@ pub fn run(
     previews: &[lsf_core::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
-    let Subcommand::Run(args) = args.command;
+    let args = match args.command {
+        Subcommand::Run(args) => args,
+        Subcommand::Build(args) => return build(&args),
+    };
     let Ran {
         app: shopify_app,
         result,
@@ -597,7 +640,9 @@ mod tests {
         let step = |extra: &[&str]| {
             let mut words = vec!["lsf", "run", "quantity-limit"];
             words.extend_from_slice(extra);
-            let Subcommand::Run(run) = Cli::parse_from(words).args.command;
+            let Subcommand::Run(run) = Cli::parse_from(words).args.command else {
+                panic!("not `run`");
+            };
             run.step
         };
         assert!(matches!(step(&[]), Step::Completion));

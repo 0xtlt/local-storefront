@@ -299,7 +299,7 @@ fn function_json(
         // Whether the Function can make an HTTP request (it has a `.fetch` target).
         "network": targets.iter().any(|target| target["fetch"] == true),
         "built": function.built(),
-        "buildCommand": function.build_command,
+        "buildCommand": function.build().map(|build| build.describe().to_string()),
         "selected": selected,
         // A build of `--watch` that failed is an error, even if the last module runs.
         "status": if build.is_some() {

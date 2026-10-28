@@ -68,6 +68,9 @@ pub struct FunctionExtension {
     pub targets: Vec<FunctionTarget>,
     /// `[extensions.build] command`.
     pub build_command: Option<String>,
+    /// The entry of a Function written in JavaScript or TypeScript, as Shopify's CLI finds it:
+    /// `src/index.js`, else `src/index.ts`.
+    pub javascript: Option<PathBuf>,
     /// The Wasm module (`[extensions.build] path`, `dist/function.wasm` by default), absolute.
     pub wasm_path: PathBuf,
     /// `[extensions.input.variables]`: which metafield of the owner holds the query variables.
@@ -77,6 +80,35 @@ pub struct FunctionExtension {
 impl FunctionExtension {
     pub fn built(&self) -> bool {
         self.wasm_path.is_file()
+    }
+
+    /// How the Function is built: its build command, or, for a JavaScript Function without one
+    /// (Shopify's CLI builds those itself), lsf's build of it ([`crate::javascript`]).
+    pub fn build(&self) -> Option<Build<'_>> {
+        match self.build_command.as_deref() {
+            Some(command) if !command.trim().is_empty() => Some(Build::Command(command)),
+            _ if self.javascript.is_some() => Some(Build::JavaScript),
+            _ => None,
+        }
+    }
+}
+
+/// How a Function is built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Build<'a> {
+    /// `[extensions.build] command`, run in the Function's folder.
+    Command(&'a str),
+    /// A JavaScript Function, built by lsf as `shopify app function build` builds it.
+    JavaScript,
+}
+
+impl Build<'_> {
+    /// The build as the pages and messages show it.
+    pub fn describe(&self) -> &str {
+        match self {
+            Build::Command(command) => command,
+            Build::JavaScript => "lsf function build",
+        }
     }
 }
 
@@ -328,11 +360,12 @@ impl Selection {
 }
 
 /// What the diagnostic of a Function whose module is not at `wasm_path` says.
-fn missing_module(wasm_path: &Path, build_command: Option<&str>) -> String {
-    match build_command {
-        Some(command) => format!(
-            "no Wasm module at {}: build it with `{command}` (or `shopify app build`)",
-            wasm_path.display()
+fn missing_module(wasm_path: &Path, build: Option<Build>) -> String {
+    match build {
+        Some(build) => format!(
+            "no Wasm module at {}: build it with `{}` (or `shopify app build`)",
+            wasm_path.display(),
+            build.describe()
         ),
         None => format!(
             "no Wasm module at {}: run `shopify app build`",
@@ -391,14 +424,14 @@ impl App {
             return;
         };
         let function = &self.functions[index];
-        let before = missing_module(&function.wasm_path, function.build_command.as_deref());
+        let before = missing_module(&function.wasm_path, function.build());
         let built = module.is_file();
         let message = format!(
             "no Wasm module yet: the watch builds it with `{}`",
             function
-                .build_command
-                .as_deref()
-                .unwrap_or("shopify app build")
+                .build()
+                .as_ref()
+                .map_or("shopify app build", Build::describe)
         );
         self.diagnostics.retain(|diagnostic| {
             !(diagnostic.extension.as_deref() == Some(handle) && diagnostic.message == before)
@@ -657,12 +690,7 @@ fn load_function(
             .and_then(|v| v.as_str())
             .unwrap_or("dist/function.wasm"),
     );
-    if !wasm_path.is_file() {
-        app.warn(
-            Some(handle),
-            missing_module(&wasm_path, build_command.as_deref()),
-        );
-    }
+    let javascript = crate::javascript::entry(dir);
 
     let input_variables = entry
         .get("input")
@@ -676,7 +704,7 @@ fn load_function(
             })
         });
 
-    FunctionExtension {
+    let function = FunctionExtension {
         handle: handle.to_string(),
         name,
         dir: dir.to_path_buf(),
@@ -684,9 +712,17 @@ fn load_function(
         version,
         targets,
         build_command,
+        javascript,
         wasm_path,
         input_variables,
+    };
+    if !function.built() {
+        app.warn(
+            Some(handle),
+            missing_module(&function.wasm_path, function.build()),
+        );
     }
+    function
 }
 
 /// Why a `purchase.*` target is to be left, and what its release still takes from it.

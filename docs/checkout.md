@@ -34,17 +34,41 @@ the extensions of the app, see [scenarios](#scenarios).
 The app is a directory with `shopify.app.toml` and `extensions/*/shopify.extension.toml`. API
 versions 2026-10 and 2027-01 are supported. Functions run from their built Wasm module and
 extensions from their built bundle, which `shopify app build` writes (`dist/function.wasm`,
-`dist/<handle>.js`). Build first, or let `--build` run the `[extensions.build] command` of each
-Function:
+`dist/<handle>.js`). Build first, or let `--build` build each Function (its
+`[extensions.build] command`, or lsf's own build of a [JavaScript Function](#javascript-and-typescript-functions)):
 
 ```bash
 npx local-storefront checkout --app ../my-app --build
 ```
 
-A Function written in JavaScript or TypeScript runs as a Rust one does: Shopify's CLI builds it
-with Javy, and lsf runs its module with Shopify's Javy plugin. In an app that Shopify's CLI
-generates, such a Function has an empty build command, so `--build` and `--watch` do not build
-it: run `shopify app build` after changing it.
+### JavaScript and TypeScript Functions
+
+A Function written in JavaScript or TypeScript (`src/index.js` or `src/index.ts`) with no build
+command, as `shopify app generate extension` makes it, is built by lsf the way
+`shopify app function build` builds it, without Node and without Shopify's CLI:
+
+```bash
+npx local-storefront function build --app ../my-app        # every Function
+npx local-storefront function build discount --app ../my-app
+```
+
+`--build` and `--watch` build it the same way. The steps are the CLI's:
+
+1. **Types**: the `codegen` section of its `package.json` (graphql-codegen's config) is written
+   as graphql-codegen writes it (`generated/api.ts`), from `schema.graphql`, or, when the
+   Function has none, lsf's schema of its API version.
+2. **One JavaScript file** (`dist/function.js`), as esbuild bundles it: TypeScript removed, the
+   modules it imports (with `node_modules`, when there is one), enum members inlined, and what
+   nothing uses left out. `process.env.NAME` is the value of `NAME` in the environment or in the
+   app's `.env`. `@shopify/shopify_function` (2.x) need not be installed: lsf has its own copy
+   of the part a Function runs.
+3. **The Wasm module**, as Javy writes it for Shopify's plugin: for the same JavaScript, the
+   same bytes. It holds the QuickJS bytecode of the Function and imports the JavaScript engine
+   from the plugin, which lsf runs it with, as Shopify does.
+
+The module costs the instructions the CLI's would, within a few hundred. What lsf does not
+build: `import()`, a `require` of an ES module, and Functions written with
+`@shopify/shopify_function` 1.x (`shopify app build` builds those).
 
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
@@ -55,7 +79,7 @@ page.
 |---|---|
 | `--app <dir>` (`LSF_APP`) | The app. Required by `checkout` and `function run`. |
 | `--extension <handle>` | Uses only this extension, a Function or a checkout UI extension. Repeat it for several. Without it, every extension of the app is used. |
-| `--build` | Runs the build command of each Function first. |
+| `--build` | Builds each Function first: its build command, or lsf's build of a JavaScript Function. |
 | `--watch` | Develops the app as `shopify app dev` does: builds a Function again when its files change, and reloads the open pages. With `--build`, builds every Function at start. See [watch mode](#watch-mode). |
 | `--variant <standard\|shop>` | The look of the page: Shopify's one-page checkout, or the Shop app's. A URL can ask for the other with `?variant=shop`. |
 
@@ -69,7 +93,8 @@ npx local-storefront checkout --app ../my-app --watch
 ```
 
 Save a file of a Function and its build runs; when it is over, the open pages reload with the new
-module. It works with `serve --app` too.
+module. It works with `serve --app` too. A JavaScript Function without a build command counts as
+one with a build command: lsf builds it (`lsf function build`, in a process of its own).
 
 - **At the start**, the modules that are there are used, as without `--watch`, when nothing
   changed since the last watch of the app. For each Function that has a build command
@@ -107,7 +132,8 @@ module. It works with `serve --app` too.
 - **What is not**: `target/`, `node_modules/`, `.git/` and other dot folders, editors' temporary
   files, Markdown documents (in any folder), the store data folder (`shopify-local/`, or the one `--data` names),
   and what a build writes: the `dist/` folder of a Function that has a build command, its module
-  (`[extensions.build] path`), and `schema.graphql`. A build does not start itself again.
+  (`[extensions.build] path`), `schema.graphql`, and the types of a JavaScript Function's
+  typegen (`generated/api.ts`). A build does not start itself again.
 - **A change to a Function** with a build command runs that command in its folder, as `--build`
   does. A save that writes several files builds once. One build at a time per Function: a change
   during its build makes one more build after it. Up to 3 Functions build at once (the Functions
@@ -744,7 +770,7 @@ instructions: 34977
 | `--locale <iso>` | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--step interaction\|completion` | The step of the buyer journey, which validation Functions read as `buyerJourney.step`: `completion` (default) is the placing of the order, `interaction` is the page and its updates. |
 | `--format json` | The checkout as the page reads it, with every run in `runs`. For tools. |
-| `--build` | Runs the build command of each Function first. |
+| `--build` | Builds each Function first: its build command, or lsf's build of a JavaScript Function. |
 
 It exits with `1` when a Function fails to run (no module, a trap, an output that does not
 parse). Errors that a validation Function reports are part of the checkout, not a failure.

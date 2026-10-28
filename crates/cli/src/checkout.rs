@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ValueEnum;
-use lsf_checkout::app::{self, App, Selection};
+use lsf_checkout::app::{self, App, Build, Selection};
 use lsf_checkout::pipeline::DELIVERY_GROUP_HANDLE;
 use lsf_checkout::{
     Address, CheckoutConfig, CheckoutState, DeliveryKind, DiscountClass, DiscountConfig, Metafield,
@@ -98,26 +98,55 @@ pub fn print_app_diagnostics(app: &App, selection: &Selection) {
     }
 }
 
-/// Runs the build command of each selected Function, in its directory, as `shopify app build`
-/// does.
+/// Builds each selected Function, as `shopify app build` does: its build command, run in its
+/// directory, or for a JavaScript Function without one, lsf's build of it.
 pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
     for function in selection.functions(app) {
-        let Some(command) = &function.build_command else {
-            eprintln!("build:  {} has no build command", function.handle);
-            continue;
-        };
-        eprintln!("build:  {}: {command}", function.handle);
-        let status = build_command(command, &function.dir)
-            .status()
-            .map_err(|error| format!("cannot run the build of {}: {error}", function.handle))?;
-        if !status.success() {
-            return Err(format!(
-                "the build of {} failed ({status})",
-                function.handle
-            ));
+        match function.build() {
+            None => eprintln!("build:  {} has no build command", function.handle),
+            Some(Build::Command(command)) => {
+                eprintln!("build:  {}: {command}", function.handle);
+                let status = build_command(command, &function.dir)
+                    .status()
+                    .map_err(|error| {
+                        format!("cannot run the build of {}: {error}", function.handle)
+                    })?;
+                if !status.success() {
+                    return Err(format!(
+                        "the build of {} failed ({status})",
+                        function.handle
+                    ));
+                }
+            }
+            Some(Build::JavaScript) => {
+                eprintln!("build:  {}: JavaScript, built by lsf", function.handle);
+                lsf_checkout::javascript::build(function, &app.root)
+                    .map_err(|error| format!("the build of {} failed: {error}", function.handle))?;
+            }
         }
     }
     Ok(())
+}
+
+/// The command `--watch` runs to build a JavaScript Function: lsf itself
+/// (`lsf function build`), in a process of its own as any build.
+pub fn javascript_build_command(app_root: &Path, handle: &str) -> String {
+    let lsf = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("lsf"));
+    format!(
+        "{} function build --app {} {}",
+        shell_quote(&lsf.to_string_lossy()),
+        shell_quote(&app_root.to_string_lossy()),
+        shell_quote(handle)
+    )
+}
+
+/// `text` as one word of the shell [`build_command`] runs.
+fn shell_quote(text: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", text.replace('"', "\"\""))
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
 }
 
 /// The build command of a Function, to run in its folder `dir` through the shell.
