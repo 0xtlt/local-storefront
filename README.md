@@ -130,7 +130,7 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 |---|---|
 | `npx local-storefront serve` | Serves the theme at <http://127.0.0.1:9292>. |
 | `npx local-storefront init` | Creates `shopify-local/` with a demo store to edit. |
-| `npx local-storefront validate` | Checks the store data. `--format json` for tools. |
+| `npx local-storefront validate` | Checks the store data and the checkout scenarios, in a theme or in an app without one. `--format json` for tools. |
 | `npx local-storefront check` | Checks every Liquid file, and what Shopify's strict parser rejects. `--fix` rewrites it. `--format json` for tools. |
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
 | `npx local-storefront checkout --app <dir>` | Serves the checkout of a Shopify app: its Functions run, its checkout UI extensions show. `serve --app` does it with the theme. |

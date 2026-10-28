@@ -268,7 +268,8 @@ the store data: the cart (lines, quantities, selling plans, note, attributes), t
 a customer, a company location), the country, the language, what the buyer already entered
 (email, address, discount codes, delivery and payment), overrides of the `checkout` section
 (shipping rates, payment methods, discounts, Function settings, tax), the look and the
-extensions that run. The files are reloaded when they change, and `validate` checks them.
+extensions that run. The files are reloaded when they change, and `validate` checks them: run
+it in the app folder, no theme needed (`npx local-storefront validate`).
 
 ```json
 {

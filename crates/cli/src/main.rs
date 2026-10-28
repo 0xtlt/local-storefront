@@ -70,7 +70,8 @@ enum Command {
     Render(commands::render::Args),
     /// Render one URL and print what the render spent its time in: sections, blocks, snippets.
     Profile(commands::profile::Args),
-    /// Check the store data and explain every problem found.
+    /// Check the store data and explain every problem found, checkout scenarios included. Runs in
+    /// a theme, or in an app folder with a shopify-local/ directory and no theme.
     Validate(commands::validate::Args),
     /// Create the data directory: a demo store, JSON Schemas for editors, and a guide.
     Init(commands::init::Args),

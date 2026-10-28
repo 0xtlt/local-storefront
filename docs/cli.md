@@ -161,7 +161,13 @@ Prints what the render of one page spends its time on: sections, blocks, snippet
 
 `npx local-storefront validate`
 
-Checks the store data and explains every problem.
+Checks the store data and explains every problem, its checkout scenarios included.
+
+In a theme, the data is `--data`, or the theme's `shopify-local/`, or the built-in demo store.
+In a folder that is not a theme (an app with a `shopify-local/` folder for `lsf checkout`, such
+as [the checkout playground](../examples/checkout-playground)), it checks that folder's
+`shopify-local/` (or `--data`) alone, with the store's own languages, and needs one: a folder with
+neither a theme nor store data is an error.
 
 | Option | What it does |
 |---|---|

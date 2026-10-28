@@ -18,7 +18,7 @@ Inside the `scripts` of `package.json`, `local-storefront serve` is enough.
 | Command | What it does |
 |---|---|
 | `npx local-storefront serve` | Serves the theme at <http://127.0.0.1:9292>. |
-| `npx local-storefront validate` | Checks the store data. |
+| `npx local-storefront validate` | Checks the store data and the checkout scenarios, with or without a theme. |
 | `npx local-storefront check --fix` | Fixes what Shopify's strict Liquid parser rejects. |
 | `npx local-storefront fmt` | Formats Liquid files as Prettier does. |
 | `npx local-storefront profile <path>` | Shows what makes a page slow. |
