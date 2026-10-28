@@ -310,8 +310,8 @@ pub struct Options {
     /// The store data folder: the server reloads the pages when it changes, it builds nothing.
     /// `shopify-local/` of the app is left alone too.
     pub data: Option<PathBuf>,
-    /// The folder where what the Functions were built from is recorded, from one watch to the
-    /// next ([`record_dir`]). Not recorded without it.
+    /// The folder where what the Functions were built from, and what they made, is recorded
+    /// from one watch to the next ([`record_dir`]). Not recorded without it.
     pub record: Option<PathBuf>,
     /// How often the files are looked at while they change.
     pub poll: Duration,
@@ -356,8 +356,8 @@ impl Options {
     }
 }
 
-/// The folder where what the Functions of the app in `root` were built from is recorded: in the
-/// user's cache folder, never in the app.
+/// The folder where what the Functions of the app in `root` were built from, and what they made,
+/// is recorded: in the user's cache folder, never in the app.
 pub fn record_dir(root: &Path) -> Option<PathBuf> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut hasher = Fnv::default();
@@ -1148,7 +1148,8 @@ impl Scheduler {
 /// How a build ended.
 #[derive(Debug)]
 enum Outcome {
-    Built(Duration),
+    /// How long it took, and the [`module_hash`] of the module it published.
+    Built(Duration, String),
     Failed(Failure),
     /// The watcher was stopped.
     Stopped,
@@ -1288,7 +1289,7 @@ fn build(job: &Job, timeout: Duration, stop: &AtomicBool, modules: &Modules) -> 
             match std::fs::read(&job.module) {
                 Ok(bytes) => match check_module(&bytes) {
                     Ok(()) => match modules.publish(&job.handle, &bytes) {
-                        Ok(()) => return Outcome::Built(started.elapsed()),
+                        Ok(()) => return Outcome::Built(started.elapsed(), module_hash(&bytes)),
                         Err(error) => format!("cannot copy the module it built: {error}"),
                     },
                     Err(error) => format!("the build wrote an invalid module: {error}"),
@@ -1337,41 +1338,52 @@ fn terminate(child: &mut Child) {
 
 // --- What the last watch built -------------------------------------------------------------
 
-/// What each Function was last built from, and which builds did not finish, kept from one watch
-/// to the next in the user's cache folder, so that a watch builds at start only what changed
-/// since.
+/// What each Function's last build was made from, and what it made, kept from one watch to the
+/// next in the user's cache folder, so that a watch builds at start only what it cannot trust.
 ///
-/// Several servers may watch the same app (with other `--extension`s), so nothing is one file
-/// that each would write whole from what it read. In the record's folder:
+/// `inputs/<handle>.json` holds, for each Function with a build command, two hashes written
+/// once a build published its module: what it was built from (its files, the files the builds
+/// share, its build command), and the bytes it published. Each is written to a temporary file
+/// of its own writer, then renamed over the last one.
 ///
-/// - `inputs/<handle>.json`: a hash of what the Function was last built from (its files, the
-///   files the builds share, its build command). Each is written to a temporary file of its own
-///   writer, then renamed over the last one.
-/// - `building/<handle>.<owner>-<n>`: a mark, one per build of the Function (a name of its
-///   own each time), made before the build starts and removed by its watch once the module is
-///   published. A build stopped
-///   halfway (Ctrl-C, a crash) may leave a module that was not built from what is recorded: a
-///   watch builds at start any Function that has a mark, whoever made it. A watch holds a lock
-///   on its marks while it runs. A build that publishes its module removes the marks that no
-///   one held when it started (it locks them then, and keeps them locked until it is over):
-///   those builds stopped before it began, and what it wrote replaced what they left. A mark
-///   that was held when it started is left: that build may have stopped after this one began,
-///   over what it wrote.
+/// At start, a module is trusted only when both still match: its Function's files are the
+/// ones recorded, and its bytes are the ones that build published. A module written since (a
+/// build stopped halfway, a build another process left running, another server of the app) has
+/// other bytes, and is built again. Two servers that build the same Function each write what
+/// they published: the last one stays, and a module that is not that one is built again.
 struct Record {
     /// `None`: nothing is recorded.
     dir: Option<PathBuf>,
     root: PathBuf,
     /// Who this watch is in the names of its files: `<pid>-<nanos>-<n>`.
     owner: String,
-    /// The marks of this watch, locked while it runs, and their paths, by handle.
-    marks: BTreeMap<String, (std::fs::File, PathBuf)>,
-    /// The marks no one held when this watch's build of the Function started, locked since:
-    /// what that build removes once it publishes its module.
-    abandoned: BTreeMap<String, Vec<(PathBuf, std::fs::File)>>,
+}
+
+/// What a build of a Function was made from, and what it made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Built {
+    /// [`Coordinator::inputs`], in hex.
+    inputs: String,
+    /// [`module_hash`] of the module it published.
+    output: String,
+}
+
+impl Built {
+    fn new(inputs: u64, output: String) -> Built {
+        Built {
+            inputs: format!("{inputs:016x}"),
+            output,
+        }
+    }
 }
 
 /// Makes the names of the files a process writes its own.
 static RECORD_FILES: AtomicU64 = AtomicU64::new(0);
+
+/// A hash of the bytes of a module: what the record compares a module with.
+fn module_hash(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
 
 impl Record {
     fn open(dir: Option<PathBuf>, root: &Path) -> Record {
@@ -1379,7 +1391,12 @@ impl Record {
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|since| since.as_nanos())
             .unwrap_or_default();
-        let record = Record {
+        if let Some(dir) = &dir {
+            // What earlier versions of `--watch` left, never read.
+            let _ = std::fs::remove_file(dir.with_extension("json"));
+            let _ = std::fs::remove_dir_all(dir.join("building"));
+        }
+        Record {
             dir,
             root: root.to_path_buf(),
             owner: format!(
@@ -1387,54 +1404,10 @@ impl Record {
                 std::process::id(),
                 RECORD_FILES.fetch_add(1, Ordering::Relaxed)
             ),
-            marks: BTreeMap::new(),
-            abandoned: BTreeMap::new(),
-        };
-        record.read_old();
-        record
-    }
-
-    /// Takes in the record of an older lsf (`<dir>.json`, all of it in one file), then removes
-    /// it once all of it is written: what it says was built is kept where nothing newer is, and
-    /// what it says was building is marked, by no one.
-    fn read_old(&self) {
-        let Some(dir) = &self.dir else {
-            return;
-        };
-        let old = dir.with_extension("json");
-        let Some(json) = std::fs::read(&old)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
-        else {
-            return;
-        };
-        let functions: BTreeMap<String, String> = json
-            .get("functions")
-            .and_then(|functions| serde_json::from_value(functions.clone()).ok())
-            .unwrap_or_default();
-        let mut written = true;
-        for (handle, inputs) in functions {
-            if !self.inputs_file(&handle).is_some_and(|file| file.exists()) {
-                written &= self.write_inputs(&handle, &inputs);
-            }
-        }
-        let building: BTreeSet<String> = json
-            .get("building")
-            .and_then(|building| serde_json::from_value(building.clone()).ok())
-            .unwrap_or_default();
-        let marks = dir.join("building");
-        for handle in building {
-            written &= std::fs::create_dir_all(&marks).is_ok()
-                && std::fs::File::create(marks.join(format!("{}.old", file_name(&handle)))).is_ok();
-        }
-        // Kept while a part of it is not written: a build it says was stopped must not be
-        // forgotten. The next start reads it again.
-        if written {
-            let _ = std::fs::remove_file(old);
         }
     }
 
-    fn inputs_file(&self, handle: &str) -> Option<PathBuf> {
+    fn file(&self, handle: &str) -> Option<PathBuf> {
         Some(
             self.dir
                 .as_ref()?
@@ -1443,147 +1416,36 @@ impl Record {
         )
     }
 
-    /// The marks of `handle`, whoever made them.
-    fn marks_of(&self, handle: &str) -> Vec<PathBuf> {
-        let Some(dir) = &self.dir else {
-            return Vec::new();
-        };
-        let Ok(entries) = std::fs::read_dir(dir.join("building")) else {
-            return Vec::new();
-        };
-        let handle = file_name(handle);
-        entries
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                // A dot file is a mark being made: its build has not started.
-                !name.starts_with('.')
-                    && name
-                        .rsplit_once('.')
-                        .is_some_and(|(marked, _)| marked == handle)
-            })
-            .map(|entry| entry.path())
-            .collect()
+    /// Whether something is recorded of `handle`, readable or not.
+    fn has(&self, handle: &str) -> bool {
+        self.file(handle).is_some_and(|file| file.exists())
     }
 
-    /// Whether a build of `handle` started and did not publish its module, in this watch or
-    /// another (one that was stopped, or one that runs).
-    fn is_building(&self, handle: &str) -> bool {
-        !self.marks_of(handle).is_empty()
-    }
-
-    /// Marks `handle` as building, on disk, before its build starts.
-    fn start(&mut self, handle: &str) {
-        let Some(dir) = &self.dir else {
-            return;
-        };
-        // The marks of builds that are over, whoever made them (this watch's own, still held
-        // after a build that failed, is not one of them).
-        let abandoned = self.abandoned_marks(handle);
-        self.abandoned.insert(handle.to_string(), abandoned);
-        if self.marks.contains_key(handle) {
-            return;
-        }
-        let marks = dir.join("building");
-        // A name of its own for each build: a watch that removes the mark of a build that
-        // stopped can never take the one of a build that started since, under the same name.
-        let name = format!(
-            "{}.{}-{}",
-            file_name(handle),
-            self.owner,
-            RECORD_FILES.fetch_add(1, Ordering::Relaxed)
-        );
-        let making = marks.join(format!(".{name}"));
-        // Locked before it has its name: a mark no one holds is one that may be removed.
-        let made = std::fs::create_dir_all(&marks)
-            .and_then(|()| {
-                std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create_new(true)
-                    .open(&making)
-            })
-            .and_then(|file| {
-                file.lock()?;
-                let mark = marks.join(&name);
-                std::fs::rename(&making, &mark)?;
-                Ok((file, mark))
-            });
-        match made {
-            Ok(mark) => {
-                self.marks.insert(handle.to_string(), mark);
-            }
-            Err(_) => {
-                let _ = std::fs::remove_file(&making);
-            }
-        }
-    }
-
-    /// The build of `handle` published its module, built from `inputs`.
-    fn built(&mut self, handle: &str, inputs: u64) {
-        self.set(handle, inputs);
-        if self.dir.is_none() {
-            return;
-        }
-        if let Some((file, mark)) = self.marks.remove(handle) {
-            drop(file);
-            let _ = std::fs::remove_file(mark);
-        }
-        // The builds that were over when this one started: what this one wrote replaced what
-        // they left. Locked since, and each mark has a name of its own: these paths are theirs.
-        for (mark, file) in self.abandoned.remove(handle).unwrap_or_default() {
-            let _ = std::fs::remove_file(&mark);
-            drop(file);
-        }
-    }
-
-    /// The build of `handle` failed: what it found abandoned stays marked, unlocked again.
-    fn failed(&mut self, handle: &str) {
-        self.abandoned.remove(handle);
-    }
-
-    /// The marks of `handle` that no watch holds, locked: the builds that made them are over.
-    fn abandoned_marks(&self, handle: &str) -> Vec<(PathBuf, std::fs::File)> {
-        self.marks_of(handle)
-            .into_iter()
-            .filter_map(|mark| {
-                let file = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(&mark)
-                    .ok()?;
-                file.try_lock().ok()?;
-                Some((mark, file))
-            })
-            .collect()
-    }
-
-    fn get(&self, handle: &str) -> Option<String> {
-        let json: Json =
-            serde_json::from_slice(&std::fs::read(self.inputs_file(handle)?).ok()?).ok()?;
+    /// What the last build of `handle` that published its module was made from, and made.
+    fn get(&self, handle: &str) -> Option<Built> {
+        let json: Json = serde_json::from_slice(&std::fs::read(self.file(handle)?).ok()?).ok()?;
         if json.get("handle")?.as_str()? != handle {
             return None;
         }
-        Some(json.get("inputs")?.as_str()?.to_string())
+        Some(Built {
+            inputs: json.get("inputs")?.as_str()?.to_string(),
+            output: json.get("output")?.as_str()?.to_string(),
+        })
     }
 
-    fn set(&self, handle: &str, inputs: u64) {
-        self.write_inputs(handle, &format!("{inputs:016x}"));
-    }
-
-    /// Whether it is written.
-    fn write_inputs(&self, handle: &str, inputs: &str) -> bool {
-        let Some(path) = self.inputs_file(handle) else {
-            return false;
+    /// A build of `handle` published its module: what it was made from, and made.
+    fn set(&self, handle: &str, built: &Built) {
+        let Some(path) = self.file(handle) else {
+            return;
         };
         let Some(parent) = path.parent() else {
-            return false;
+            return;
         };
         let json = json!({
             "app": self.root.display().to_string(),
             "handle": handle,
-            "inputs": inputs,
+            "inputs": built.inputs,
+            "output": built.output,
         });
         let partial = parent.join(format!(
             ".{}.{}-{}.partial",
@@ -1597,7 +1459,6 @@ impl Record {
         if !written {
             let _ = std::fs::remove_file(&partial);
         }
-        written
     }
 }
 
@@ -1673,20 +1534,24 @@ impl Coordinator {
         let mut first = Vec::new();
         let mut trusted = 0;
         for job in &jobs {
-            if self.options.build_first
-                || !modules.path(&job.handle).is_file()
-                || self.record.is_building(&job.handle)
-            {
-                first.push(job.handle.clone());
-                continue;
-            }
-            let inputs = self.inputs(job);
+            // The copy of what `dist` holds, when it is a module a run can load.
+            let published = match std::fs::read(modules.path(&job.handle)) {
+                Ok(bytes) if !self.options.build_first => bytes,
+                _ => {
+                    first.push(job.handle.clone());
+                    continue;
+                }
+            };
+            let now = Built::new(self.inputs(job), module_hash(&published));
             match self.record.get(&job.handle) {
-                Some(recorded) if recorded == format!("{inputs:016x}") => {}
+                // What the last build made, from these files.
+                Some(recorded) if recorded == now => {}
                 Some(_) => first.push(job.handle.clone()),
+                // Something is recorded that cannot be read: what it says is not known.
+                None if self.record.has(&job.handle) => first.push(job.handle.clone()),
                 None => {
                     // Built before lsf watched it: it is taken to be built from these files.
-                    self.record.set(&job.handle, inputs);
+                    self.record.set(&job.handle, &now);
                     trusted += 1;
                 }
             }
@@ -1953,8 +1818,6 @@ impl Coordinator {
         }
         // What it builds from, as it starts: what changes later builds again.
         let inputs = self.inputs(&job);
-        // On disk before the build can write anything: a watch stopped during it builds it again.
-        self.record.start(&handle);
         let sender = self.sender.clone();
         let shared = self.shared.clone();
         let builds = self.builds.clone();
@@ -1971,13 +1834,12 @@ impl Coordinator {
 
     fn finished(&mut self, handle: &str, outcome: Outcome, inputs: u64) {
         match outcome {
-            Outcome::Built(took) => {
+            Outcome::Built(took, output) => {
                 self.builds.set(handle, None);
                 if self.builds.owns(handle) {
-                    self.record.built(handle, inputs);
+                    self.record.set(handle, &Built::new(inputs, output));
                 } else {
                     // Gone while it built.
-                    self.record.failed(handle);
                     self.builds.modules().withdraw(handle);
                 }
                 if self.initial.is_none() {
@@ -1991,7 +1853,6 @@ impl Coordinator {
                     message.push_str(line);
                 }
                 (self.log)(&message);
-                self.record.failed(handle);
                 self.builds.set(handle, Some(failure));
                 if let Some((_, _, failed)) = &mut self.initial {
                     *failed += 1;

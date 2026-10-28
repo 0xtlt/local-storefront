@@ -39,6 +39,8 @@ futures-util = { version = "0.3", default-features = false }
 indexmap.workspace = true
 # What tells `--watch` that a file of the app changed: FSEvents, inotify, ReadDirectoryChangesW.
 notify = "8"
+# A hash of the module a build of `--watch` published, kept in its record.
+blake3 = { version = "1", default-features = false }
 
 # Stops a build of `--watch` and what it started.
 [target.'cfg(unix)'.dependencies]

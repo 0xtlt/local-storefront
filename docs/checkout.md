@@ -61,17 +61,19 @@ npx local-storefront checkout --app ../my-app --watch
 Save a file of a Function and its build runs; when it is over, the open pages reload with the new
 module. It works with `serve --app` too.
 
-- **At the start**, the modules that are there are used, as without `--watch`. Only the
-  Functions that have no module a run can load, those whose files changed since the last watch
-  of the app, and those whose last build was stopped or failed, are built. The first watch of an app trusts the modules it finds, and says so: `using the
-  existing builds; --build rebuilds them all at start`. `--watch --build` builds every Function
-  that has a build command (`[extensions.build] command`). A build that fails does not stop the
-  server. What each Function was built from is recorded in the user's cache folder
-  (`~/Library/Caches/lsf/watch/` on macOS, `~/.cache/lsf/watch/` on Linux), never in the app:
-  a file per Function, and a mark per build while it runs. A Function that has a mark, left by
-  a watch stopped during the build or by another server of the same app, is built at start.
-  Several servers can watch the same app (with other `--extension`s) without losing what the
-  others recorded.
+- **At the start**, the modules that are there are used, as without `--watch`, when nothing
+  changed since the last watch of the app. For each Function that has a build command
+  (`[extensions.build] command`), the user's cache folder (`~/Library/Caches/lsf/watch/` on
+  macOS, `~/.cache/lsf/watch/` on Linux, never the app) records what its last build was made
+  from (its files, the files the builds share, its command) and a hash of the module it
+  published. A module is trusted only when both still match. Otherwise it is built: a Function
+  with no module a run can load, one whose files changed, and one whose module changed since,
+  whether a build was stopped halfway, failed after writing it, or another process wrote it (a
+  build left running by a server that was killed, another server of the same app). A Function
+  with nothing recorded, on the first watch of an app, keeps the module it has, and the
+  terminal says `using the existing builds; --build rebuilds them all at start`.
+  `--watch --build` builds every Function that has a build command. A build that fails does
+  not stop the server.
 - **What is watched**: the folder of each extension (`src/`, the input queries, its
   `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension), the
   other files of the app (a Cargo workspace's `Cargo.toml` and `Cargo.lock`, `package.json` and

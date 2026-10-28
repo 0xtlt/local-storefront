@@ -2538,6 +2538,7 @@ name = "lsf"
 version = "0.1.18"
 dependencies = [
  "axum",
+ "blake3",
  "brotli",
  "bytes",
  "clap",
