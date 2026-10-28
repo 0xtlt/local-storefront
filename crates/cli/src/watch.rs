@@ -1347,8 +1347,9 @@ fn terminate(child: &mut Child) {
 /// - `inputs/<handle>.json`: a hash of what the Function was last built from (its files, the
 ///   files the builds share, its build command). Each is written to a temporary file of its own
 ///   writer, then renamed over the last one.
-/// - `building/<handle>.<owner>`: a mark, one per watch that builds the Function, made before
-///   its build starts and removed by that watch once the module is published. A build stopped
+/// - `building/<handle>.<owner>-<n>`: a mark, one per build of the Function (a name of its
+///   own each time), made before the build starts and removed by its watch once the module is
+///   published. A build stopped
 ///   halfway (Ctrl-C, a crash) may leave a module that was not built from what is recorded: a
 ///   watch builds at start any Function that has a mark, whoever made it. A watch holds a lock
 ///   on its marks while it runs; a mark that no one holds is removed once another build of its
@@ -1359,8 +1360,8 @@ struct Record {
     root: PathBuf,
     /// Who this watch is in the names of its files: `<pid>-<nanos>-<n>`.
     owner: String,
-    /// The marks of this watch, locked while it runs, by handle.
-    marks: BTreeMap<String, std::fs::File>,
+    /// The marks of this watch, locked while it runs, and their paths, by handle.
+    marks: BTreeMap<String, (std::fs::File, PathBuf)>,
 }
 
 /// Makes the names of the files a process writes its own.
@@ -1387,8 +1388,8 @@ impl Record {
     }
 
     /// Takes in the record of an older lsf (`<dir>.json`, all of it in one file), then removes
-    /// it: what it says was built is kept where nothing newer is, and what it says was building
-    /// is marked, by no one.
+    /// it once all of it is written: what it says was built is kept where nothing newer is, and
+    /// what it says was building is marked, by no one.
     fn read_old(&self) {
         let Some(dir) = &self.dir else {
             return;
@@ -1404,9 +1405,10 @@ impl Record {
             .get("functions")
             .and_then(|functions| serde_json::from_value(functions.clone()).ok())
             .unwrap_or_default();
+        let mut written = true;
         for (handle, inputs) in functions {
             if !self.inputs_file(&handle).is_some_and(|file| file.exists()) {
-                self.write_inputs(&handle, &inputs);
+                written &= self.write_inputs(&handle, &inputs);
             }
         }
         let building: BTreeSet<String> = json
@@ -1415,10 +1417,14 @@ impl Record {
             .unwrap_or_default();
         let marks = dir.join("building");
         for handle in building {
-            let _ = std::fs::create_dir_all(&marks);
-            let _ = std::fs::File::create(marks.join(format!("{}.old", file_name(&handle))));
+            written &= std::fs::create_dir_all(&marks).is_ok()
+                && std::fs::File::create(marks.join(format!("{}.old", file_name(&handle)))).is_ok();
         }
-        let _ = std::fs::remove_file(old);
+        // Kept while a part of it is not written: a build it says was stopped must not be
+        // forgotten. The next start reads it again.
+        if written {
+            let _ = std::fs::remove_file(old);
+        }
     }
 
     fn inputs_file(&self, handle: &str) -> Option<PathBuf> {
@@ -1469,7 +1475,14 @@ impl Record {
             return;
         }
         let marks = dir.join("building");
-        let name = format!("{}.{}", file_name(handle), self.owner);
+        // A name of its own for each build: a watch that removes the mark of a build that
+        // stopped can never take the one of a build that started since, under the same name.
+        let name = format!(
+            "{}.{}-{}",
+            file_name(handle),
+            self.owner,
+            RECORD_FILES.fetch_add(1, Ordering::Relaxed)
+        );
         let making = marks.join(format!(".{name}"));
         // Locked before it has its name: a mark no one holds is one that may be removed.
         let made = std::fs::create_dir_all(&marks)
@@ -1482,12 +1495,13 @@ impl Record {
             })
             .and_then(|file| {
                 file.lock()?;
-                std::fs::rename(&making, marks.join(&name))?;
-                Ok(file)
+                let mark = marks.join(&name);
+                std::fs::rename(&making, &mark)?;
+                Ok((file, mark))
             });
         match made {
-            Ok(file) => {
-                self.marks.insert(handle.to_string(), file);
+            Ok(mark) => {
+                self.marks.insert(handle.to_string(), mark);
             }
             Err(_) => {
                 let _ = std::fs::remove_file(&making);
@@ -1498,22 +1512,38 @@ impl Record {
     /// The build of `handle` published its module, built from `inputs`.
     fn built(&mut self, handle: &str, inputs: u64) {
         self.set(handle, inputs);
-        let Some(dir) = &self.dir else {
+        if self.dir.is_none() {
             return;
-        };
-        if let Some(file) = self.marks.remove(handle) {
+        }
+        if let Some((file, mark)) = self.marks.remove(handle) {
             drop(file);
-            let name = format!("{}.{}", file_name(handle), self.owner);
-            let _ = std::fs::remove_file(dir.join("building").join(name));
+            let _ = std::fs::remove_file(mark);
         }
         // The marks of the watches that stopped: this build did what theirs did not finish.
-        for mark in self.marks_of(handle) {
-            let unheld = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&mark)
-                .is_ok_and(|file| file.try_lock().is_ok());
-            if unheld {
+        Record::prune(self.open_marks(handle));
+    }
+
+    /// The marks of `handle`, opened: what `prune` may remove.
+    fn open_marks(&self, handle: &str) -> Vec<(PathBuf, std::fs::File)> {
+        self.marks_of(handle)
+            .into_iter()
+            .filter_map(|mark| {
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&mark)
+                    .ok()?;
+                Some((mark, file))
+            })
+            .collect()
+    }
+
+    /// Removes the marks that no watch holds: their builds stopped. A mark held is the one of a
+    /// build that runs. Each build has a mark of its own name, so the path of a mark opened
+    /// before its build ended never names the mark of a later build.
+    fn prune(marks: Vec<(PathBuf, std::fs::File)>) {
+        for (mark, file) in marks {
+            if file.try_lock().is_ok() {
                 let _ = std::fs::remove_file(&mark);
             }
         }
@@ -1532,12 +1562,13 @@ impl Record {
         self.write_inputs(handle, &format!("{inputs:016x}"));
     }
 
-    fn write_inputs(&self, handle: &str, inputs: &str) {
+    /// Whether it is written.
+    fn write_inputs(&self, handle: &str, inputs: &str) -> bool {
         let Some(path) = self.inputs_file(handle) else {
-            return;
+            return false;
         };
         let Some(parent) = path.parent() else {
-            return;
+            return false;
         };
         let json = json!({
             "app": self.root.display().to_string(),
@@ -1556,6 +1587,7 @@ impl Record {
         if !written {
             let _ = std::fs::remove_file(&partial);
         }
+        written
     }
 }
 

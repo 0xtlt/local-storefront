@@ -1550,3 +1550,55 @@ fn a_symbolic_link_is_watched_where_it_leads() {
         assert_eq!(app.builds("fn-a"), 2, "{}", watching.said());
     }
 }
+
+#[test]
+fn a_mark_removed_late_is_never_the_one_of_a_build_that_started_since() {
+    let app = TempApp::new("late-prune");
+    let dir = app.ctl("record/app");
+    let mut a = Record::open(Some(dir.clone()), &app.root());
+    let b = Record::open(Some(dir.clone()), &app.root());
+    a.start("fn-a");
+    // B opens the marks of fn-a to remove the ones no watch holds, and is held up there.
+    let opened = b.open_marks("fn-a");
+    assert_eq!(opened.len(), 1);
+    // A publishes its module, and builds fn-a again.
+    a.built("fn-a", 1);
+    a.start("fn-a");
+    // B goes on: the mark it opened is no one's now, and goes.
+    Record::prune(opened);
+    assert!(
+        b.is_building("fn-a"),
+        "the build A started since is still marked"
+    );
+    assert_eq!(marked(&dir), ["fn-a"]);
+    a.built("fn-a", 2);
+    assert_eq!(marked(&dir), NONE);
+}
+
+#[test]
+fn the_record_of_an_older_lsf_stays_until_all_of_it_is_written() {
+    let app = TempApp::new("old-record-kept");
+    let dir = app.ctl("record/app");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Something in the way of the marks: a file where their folder goes.
+    std::fs::write(dir.join("building"), "").unwrap();
+    let old = json!({
+        "app": app.root().display().to_string(),
+        "functions": { "fn-a": "0000000000000001" },
+        "building": ["fn-a"],
+    });
+    std::fs::write(dir.with_extension("json"), old.to_string()).unwrap();
+
+    let record = Record::open(Some(dir.clone()), &app.root());
+    assert!(
+        dir.with_extension("json").exists(),
+        "kept: the mark of fn-a could not be written"
+    );
+    assert_eq!(record.get("fn-a").as_deref(), Some("0000000000000001"));
+
+    // Once nothing is in the way, it is read again, then removed.
+    std::fs::remove_file(dir.join("building")).unwrap();
+    let record = Record::open(Some(dir.clone()), &app.root());
+    assert!(!dir.with_extension("json").exists());
+    assert!(record.is_building("fn-a"));
+}
