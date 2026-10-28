@@ -1552,20 +1552,19 @@ fn a_symbolic_link_is_watched_where_it_leads() {
 }
 
 #[test]
-fn a_mark_removed_late_is_never_the_one_of_a_build_that_started_since() {
+fn a_build_removes_no_mark_of_a_build_that_started_since() {
     let app = TempApp::new("late-prune");
     let dir = app.ctl("record/app");
     let mut a = Record::open(Some(dir.clone()), &app.root());
-    let b = Record::open(Some(dir.clone()), &app.root());
+    let mut b = Record::open(Some(dir.clone()), &app.root());
     a.start("fn-a");
-    // B opens the marks of fn-a to remove the ones no watch holds, and is held up there.
-    let opened = b.open_marks("fn-a");
-    assert_eq!(opened.len(), 1);
-    // A publishes its module, and builds fn-a again.
+    // B builds fn-a too: the mark of A is held, so not one B may remove.
+    b.start("fn-a");
+    // A publishes its module, and builds fn-a again, under a mark of a new name.
     a.built("fn-a", 1);
     a.start("fn-a");
-    // B goes on: the mark it opened is no one's now, and goes.
-    Record::prune(opened);
+    // B publishes: its own mark goes, the new one of A stays.
+    b.built("fn-a", 1);
     assert!(
         b.is_building("fn-a"),
         "the build A started since is still marked"
@@ -1573,6 +1572,71 @@ fn a_mark_removed_late_is_never_the_one_of_a_build_that_started_since() {
     assert_eq!(marked(&dir), ["fn-a"]);
     a.built("fn-a", 2);
     assert_eq!(marked(&dir), NONE);
+}
+
+#[test]
+fn a_build_that_stops_after_another_began_is_built_again() {
+    let app = TempApp::new("stopped-after");
+    let dir = app.ctl("record/app");
+    let mut a = Record::open(Some(dir.clone()), &app.root());
+    let mut b = Record::open(Some(dir.clone()), &app.root());
+    a.start("fn-a");
+    b.start("fn-a");
+    // A stops halfway, after B's build began: what A wrote may be over what B wrote.
+    drop(a);
+    b.built("fn-a", 1);
+    assert_eq!(marked(&dir), ["fn-a"], "the mark of A stays");
+    drop(b);
+
+    // The next watch builds fn-a again, and that build, which began once A was over, removes
+    // the mark.
+    let mut c = Record::open(Some(dir.clone()), &app.root());
+    assert!(c.is_building("fn-a"));
+    c.start("fn-a");
+    c.built("fn-a", 1);
+    assert_eq!(marked(&dir), NONE);
+}
+
+#[test]
+fn a_failed_build_leaves_the_marks_it_found() {
+    let app = TempApp::new("failed-keeps");
+    let dir = app.ctl("record/app");
+    let mut a = Record::open(Some(dir.clone()), &app.root());
+    a.start("fn-a");
+    drop(a);
+    let mut b = Record::open(Some(dir.clone()), &app.root());
+    b.start("fn-a");
+    b.failed("fn-a");
+    assert_eq!(marked(&dir), ["fn-a", "fn-a"], "the one of A, and B's own");
+    // B's next build publishes: both go.
+    b.start("fn-a");
+    b.built("fn-a", 1);
+    assert_eq!(marked(&dir), NONE);
+}
+
+#[test]
+fn handles_that_differ_have_files_that_differ() {
+    assert_eq!(file_name("discount-codes"), "discount-codes");
+    let names = ["fn.a", "fn_a", "fn a", "Fn-a", "fn/a", "fné"].map(file_name);
+    let unique: BTreeSet<&String> = names.iter().collect();
+    assert_eq!(unique.len(), names.len(), "{names:?}");
+    assert!(
+        names
+            .iter()
+            .all(|name| !name.contains('.') && !name.contains('/'))
+    );
+
+    // The build of one does not remove the mark of the other.
+    let app = TempApp::new("alike");
+    let dir = app.ctl("record/app");
+    let mut a = Record::open(Some(dir.clone()), &app.root());
+    a.start("fn.a");
+    drop(a);
+    let mut b = Record::open(Some(dir.clone()), &app.root());
+    b.start("fn_a");
+    b.built("fn_a", 1);
+    assert!(b.is_building("fn.a"));
+    assert!(!b.is_building("fn_a"));
 }
 
 #[test]

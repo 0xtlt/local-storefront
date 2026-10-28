@@ -255,18 +255,18 @@ impl Drop for Modules {
     }
 }
 
-/// A handle as a file name.
+/// A handle as a file name, one of its own: `a-z`, `0-9` and `-` stay (all a handle of
+/// Shopify's may have), every other byte is `_` and two hex digits, `_` included.
 fn file_name(handle: &str) -> String {
-    handle
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    let mut name = String::with_capacity(handle.len());
+    for byte in handle.bytes() {
+        if byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' {
+            name.push(char::from(byte));
+        } else {
+            name.push_str(&format!("_{byte:02x}"));
+        }
+    }
+    name
 }
 
 /// Removes the folders of [`Modules`] of the processes that are gone (killed before they could).
@@ -1352,8 +1352,11 @@ fn terminate(child: &mut Child) {
 ///   published. A build stopped
 ///   halfway (Ctrl-C, a crash) may leave a module that was not built from what is recorded: a
 ///   watch builds at start any Function that has a mark, whoever made it. A watch holds a lock
-///   on its marks while it runs; a mark that no one holds is removed once another build of its
-///   Function published a module.
+///   on its marks while it runs. A build that publishes its module removes the marks that no
+///   one held when it started (it locks them then, and keeps them locked until it is over):
+///   those builds stopped before it began, and what it wrote replaced what they left. A mark
+///   that was held when it started is left: that build may have stopped after this one began,
+///   over what it wrote.
 struct Record {
     /// `None`: nothing is recorded.
     dir: Option<PathBuf>,
@@ -1362,6 +1365,9 @@ struct Record {
     owner: String,
     /// The marks of this watch, locked while it runs, and their paths, by handle.
     marks: BTreeMap<String, (std::fs::File, PathBuf)>,
+    /// The marks no one held when this watch's build of the Function started, locked since:
+    /// what that build removes once it publishes its module.
+    abandoned: BTreeMap<String, Vec<(PathBuf, std::fs::File)>>,
 }
 
 /// Makes the names of the files a process writes its own.
@@ -1382,6 +1388,7 @@ impl Record {
                 RECORD_FILES.fetch_add(1, Ordering::Relaxed)
             ),
             marks: BTreeMap::new(),
+            abandoned: BTreeMap::new(),
         };
         record.read_old();
         record
@@ -1471,6 +1478,10 @@ impl Record {
         let Some(dir) = &self.dir else {
             return;
         };
+        // The marks of builds that are over, whoever made them (this watch's own, still held
+        // after a build that failed, is not one of them).
+        let abandoned = self.abandoned_marks(handle);
+        self.abandoned.insert(handle.to_string(), abandoned);
         if self.marks.contains_key(handle) {
             return;
         }
@@ -1519,12 +1530,21 @@ impl Record {
             drop(file);
             let _ = std::fs::remove_file(mark);
         }
-        // The marks of the watches that stopped: this build did what theirs did not finish.
-        Record::prune(self.open_marks(handle));
+        // The builds that were over when this one started: what this one wrote replaced what
+        // they left. Locked since, and each mark has a name of its own: these paths are theirs.
+        for (mark, file) in self.abandoned.remove(handle).unwrap_or_default() {
+            let _ = std::fs::remove_file(&mark);
+            drop(file);
+        }
     }
 
-    /// The marks of `handle`, opened: what `prune` may remove.
-    fn open_marks(&self, handle: &str) -> Vec<(PathBuf, std::fs::File)> {
+    /// The build of `handle` failed: what it found abandoned stays marked, unlocked again.
+    fn failed(&mut self, handle: &str) {
+        self.abandoned.remove(handle);
+    }
+
+    /// The marks of `handle` that no watch holds, locked: the builds that made them are over.
+    fn abandoned_marks(&self, handle: &str) -> Vec<(PathBuf, std::fs::File)> {
         self.marks_of(handle)
             .into_iter()
             .filter_map(|mark| {
@@ -1533,20 +1553,10 @@ impl Record {
                     .write(true)
                     .open(&mark)
                     .ok()?;
+                file.try_lock().ok()?;
                 Some((mark, file))
             })
             .collect()
-    }
-
-    /// Removes the marks that no watch holds: their builds stopped. A mark held is the one of a
-    /// build that runs. Each build has a mark of its own name, so the path of a mark opened
-    /// before its build ended never names the mark of a later build.
-    fn prune(marks: Vec<(PathBuf, std::fs::File)>) {
-        for (mark, file) in marks {
-            if file.try_lock().is_ok() {
-                let _ = std::fs::remove_file(&mark);
-            }
-        }
     }
 
     fn get(&self, handle: &str) -> Option<String> {
@@ -1967,6 +1977,7 @@ impl Coordinator {
                     self.record.built(handle, inputs);
                 } else {
                     // Gone while it built.
+                    self.record.failed(handle);
                     self.builds.modules().withdraw(handle);
                 }
                 if self.initial.is_none() {
@@ -1980,6 +1991,7 @@ impl Coordinator {
                     message.push_str(line);
                 }
                 (self.log)(&message);
+                self.record.failed(handle);
                 self.builds.set(handle, Some(failure));
                 if let Some((_, _, failed)) = &mut self.initial {
                     *failed += 1;
