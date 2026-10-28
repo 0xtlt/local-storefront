@@ -310,8 +310,8 @@ pub struct Options {
     /// The store data folder: the server reloads the pages when it changes, it builds nothing.
     /// `shopify-local/` of the app is left alone too.
     pub data: Option<PathBuf>,
-    /// Where what the Functions were built from is recorded, from one watch to the next. Not
-    /// recorded without it.
+    /// The folder where what the Functions were built from is recorded, from one watch to the
+    /// next ([`record_dir`]). Not recorded without it.
     pub record: Option<PathBuf>,
     /// How often the files are looked at while they change.
     pub poll: Duration,
@@ -356,9 +356,9 @@ impl Options {
     }
 }
 
-/// Where what the Functions of the app in `root` were built from is recorded: in the user's
-/// cache folder, never in the app.
-pub fn record_file(root: &Path) -> Option<PathBuf> {
+/// The folder where what the Functions of the app in `root` were built from is recorded: in the
+/// user's cache folder, never in the app.
+pub fn record_dir(root: &Path) -> Option<PathBuf> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut hasher = Fnv::default();
     hasher.write(root.as_os_str().as_encoded_bytes());
@@ -366,7 +366,7 @@ pub fn record_file(root: &Path) -> Option<PathBuf> {
         cache_dir()?
             .join("lsf")
             .join("watch")
-            .join(format!("{:016x}.json", hasher.finish())),
+            .join(format!("{:016x}", hasher.finish())),
     )
 }
 
@@ -481,7 +481,7 @@ impl Watcher {
             } else {
                 Selection::only(options.extensions.iter().cloned())
             },
-            record: Record::read(options.record.clone(), &root),
+            record: Record::open(options.record.clone(), &root),
             data,
             root,
             builds,
@@ -1337,92 +1337,222 @@ fn terminate(child: &mut Child) {
 
 // --- What the last watch built -------------------------------------------------------------
 
-/// What each Function was last built from, by handle: a hash of its files, of the files the
-/// builds share, and of its build command. Kept from one watch to the next in the user's cache
-/// folder, so that a watch builds at start only what changed since.
+/// What each Function was last built from, and which builds did not finish, kept from one watch
+/// to the next in the user's cache folder, so that a watch builds at start only what changed
+/// since.
 ///
-/// A Function is also marked while it builds, from before its build starts until its module is
-/// published: a build stopped halfway (Ctrl-C) may leave a module that was not built from what
-/// is recorded, and the next watch builds a marked Function again whatever its hash.
+/// Several servers may watch the same app (with other `--extension`s), so nothing is one file
+/// that each would write whole from what it read. In the record's folder:
+///
+/// - `inputs/<handle>.json`: a hash of what the Function was last built from (its files, the
+///   files the builds share, its build command). Each is written to a temporary file of its own
+///   writer, then renamed over the last one.
+/// - `building/<handle>.<owner>`: a mark, one per watch that builds the Function, made before
+///   its build starts and removed by that watch once the module is published. A build stopped
+///   halfway (Ctrl-C, a crash) may leave a module that was not built from what is recorded: a
+///   watch builds at start any Function that has a mark, whoever made it. A watch holds a lock
+///   on its marks while it runs; a mark that no one holds is removed once another build of its
+///   Function published a module.
 struct Record {
-    path: Option<PathBuf>,
+    /// `None`: nothing is recorded.
+    dir: Option<PathBuf>,
     root: PathBuf,
-    /// `None`: nothing was recorded for the app.
-    functions: Option<BTreeMap<String, String>>,
-    /// The Functions whose last build started and did not publish its module.
-    building: BTreeSet<String>,
+    /// Who this watch is in the names of its files: `<pid>-<nanos>-<n>`.
+    owner: String,
+    /// The marks of this watch, locked while it runs, by handle.
+    marks: BTreeMap<String, std::fs::File>,
 }
 
+/// Makes the names of the files a process writes its own.
+static RECORD_FILES: AtomicU64 = AtomicU64::new(0);
+
 impl Record {
-    fn read(path: Option<PathBuf>, root: &Path) -> Record {
-        let json = path
-            .as_ref()
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok());
-        let functions = json
-            .as_ref()
-            .and_then(|json| serde_json::from_value(json.get("functions")?.clone()).ok());
-        let building = json
-            .as_ref()
-            .and_then(|json| serde_json::from_value(json.get("building")?.clone()).ok())
+    fn open(dir: Option<PathBuf>, root: &Path) -> Record {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|since| since.as_nanos())
             .unwrap_or_default();
-        Record {
-            path,
+        let record = Record {
+            dir,
             root: root.to_path_buf(),
-            functions,
-            building,
-        }
+            owner: format!(
+                "{}-{nanos}-{}",
+                std::process::id(),
+                RECORD_FILES.fetch_add(1, Ordering::Relaxed)
+            ),
+            marks: BTreeMap::new(),
+        };
+        record.read_old();
+        record
     }
 
-    /// Whether the last build of `handle` started and did not publish its module.
+    /// Takes in the record of an older lsf (`<dir>.json`, all of it in one file), then removes
+    /// it: what it says was built is kept where nothing newer is, and what it says was building
+    /// is marked, by no one.
+    fn read_old(&self) {
+        let Some(dir) = &self.dir else {
+            return;
+        };
+        let old = dir.with_extension("json");
+        let Some(json) = std::fs::read(&old)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
+        else {
+            return;
+        };
+        let functions: BTreeMap<String, String> = json
+            .get("functions")
+            .and_then(|functions| serde_json::from_value(functions.clone()).ok())
+            .unwrap_or_default();
+        for (handle, inputs) in functions {
+            if !self.inputs_file(&handle).is_some_and(|file| file.exists()) {
+                self.write_inputs(&handle, &inputs);
+            }
+        }
+        let building: BTreeSet<String> = json
+            .get("building")
+            .and_then(|building| serde_json::from_value(building.clone()).ok())
+            .unwrap_or_default();
+        let marks = dir.join("building");
+        for handle in building {
+            let _ = std::fs::create_dir_all(&marks);
+            let _ = std::fs::File::create(marks.join(format!("{}.old", file_name(&handle))));
+        }
+        let _ = std::fs::remove_file(old);
+    }
+
+    fn inputs_file(&self, handle: &str) -> Option<PathBuf> {
+        Some(
+            self.dir
+                .as_ref()?
+                .join("inputs")
+                .join(format!("{}.json", file_name(handle))),
+        )
+    }
+
+    /// The marks of `handle`, whoever made them.
+    fn marks_of(&self, handle: &str) -> Vec<PathBuf> {
+        let Some(dir) = &self.dir else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(dir.join("building")) else {
+            return Vec::new();
+        };
+        let handle = file_name(handle);
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                // A dot file is a mark being made: its build has not started.
+                !name.starts_with('.')
+                    && name
+                        .rsplit_once('.')
+                        .is_some_and(|(marked, _)| marked == handle)
+            })
+            .map(|entry| entry.path())
+            .collect()
+    }
+
+    /// Whether a build of `handle` started and did not publish its module, in this watch or
+    /// another (one that was stopped, or one that runs).
     fn is_building(&self, handle: &str) -> bool {
-        self.building.contains(handle)
+        !self.marks_of(handle).is_empty()
     }
 
     /// Marks `handle` as building, on disk, before its build starts.
     fn start(&mut self, handle: &str) {
-        if self.building.insert(handle.to_string()) {
-            self.write();
+        let Some(dir) = &self.dir else {
+            return;
+        };
+        if self.marks.contains_key(handle) {
+            return;
+        }
+        let marks = dir.join("building");
+        let name = format!("{}.{}", file_name(handle), self.owner);
+        let making = marks.join(format!(".{name}"));
+        // Locked before it has its name: a mark no one holds is one that may be removed.
+        let made = std::fs::create_dir_all(&marks)
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(&making)
+            })
+            .and_then(|file| {
+                file.lock()?;
+                std::fs::rename(&making, marks.join(&name))?;
+                Ok(file)
+            });
+        match made {
+            Ok(file) => {
+                self.marks.insert(handle.to_string(), file);
+            }
+            Err(_) => {
+                let _ = std::fs::remove_file(&making);
+            }
         }
     }
 
     /// The build of `handle` published its module, built from `inputs`.
     fn built(&mut self, handle: &str, inputs: u64) {
-        self.building.remove(handle);
         self.set(handle, inputs);
-        self.write();
-    }
-
-    fn get(&self, handle: &str) -> Option<&str> {
-        self.functions.as_ref()?.get(handle).map(String::as_str)
-    }
-
-    fn set(&mut self, handle: &str, inputs: u64) {
-        self.functions
-            .get_or_insert_default()
-            .insert(handle.to_string(), format!("{inputs:016x}"));
-    }
-
-    fn write(&self) {
-        let Some(path) = &self.path else {
+        let Some(dir) = &self.dir else {
             return;
         };
-        if self.functions.is_none() && self.building.is_empty() {
-            return;
+        if let Some(file) = self.marks.remove(handle) {
+            drop(file);
+            let name = format!("{}.{}", file_name(handle), self.owner);
+            let _ = std::fs::remove_file(dir.join("building").join(name));
         }
-        let functions = self.functions.clone().unwrap_or_default();
-        let json = json!({
-            "app": self.root.display().to_string(),
-            "functions": functions,
-            "building": self.building,
-        });
+        // The marks of the watches that stopped: this build did what theirs did not finish.
+        for mark in self.marks_of(handle) {
+            let unheld = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&mark)
+                .is_ok_and(|file| file.try_lock().is_ok());
+            if unheld {
+                let _ = std::fs::remove_file(&mark);
+            }
+        }
+    }
+
+    fn get(&self, handle: &str) -> Option<String> {
+        let json: Json =
+            serde_json::from_slice(&std::fs::read(self.inputs_file(handle)?).ok()?).ok()?;
+        if json.get("handle")?.as_str()? != handle {
+            return None;
+        }
+        Some(json.get("inputs")?.as_str()?.to_string())
+    }
+
+    fn set(&self, handle: &str, inputs: u64) {
+        self.write_inputs(handle, &format!("{inputs:016x}"));
+    }
+
+    fn write_inputs(&self, handle: &str, inputs: &str) {
+        let Some(path) = self.inputs_file(handle) else {
+            return;
+        };
         let Some(parent) = path.parent() else {
             return;
         };
-        let partial = path.with_extension("json.partial");
+        let json = json!({
+            "app": self.root.display().to_string(),
+            "handle": handle,
+            "inputs": inputs,
+        });
+        let partial = parent.join(format!(
+            ".{}.{}-{}.partial",
+            file_name(handle),
+            self.owner,
+            RECORD_FILES.fetch_add(1, Ordering::Relaxed)
+        ));
         let written = std::fs::create_dir_all(parent).is_ok()
             && std::fs::write(&partial, json.to_string()).is_ok()
-            && std::fs::rename(&partial, path).is_ok();
+            && std::fs::rename(&partial, &path).is_ok();
         if !written {
             let _ = std::fs::remove_file(&partial);
         }
@@ -1520,7 +1650,6 @@ impl Coordinator {
             }
         }
         if trusted > 0 {
-            self.record.write();
             (self.log)("watch:  using the existing builds; --build rebuilds them all at start");
         }
         first

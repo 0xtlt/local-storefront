@@ -67,7 +67,11 @@ module. It works with `serve --app` too.
   existing builds; --build rebuilds them all at start`. `--watch --build` builds every Function
   that has a build command (`[extensions.build] command`). A build that fails does not stop the
   server. What each Function was built from is recorded in the user's cache folder
-  (`~/Library/Caches/lsf/watch/` on macOS, `~/.cache/lsf/watch/` on Linux), never in the app.
+  (`~/Library/Caches/lsf/watch/` on macOS, `~/.cache/lsf/watch/` on Linux), never in the app:
+  a file per Function, and a mark per build while it runs. A Function that has a mark, left by
+  a watch stopped during the build or by another server of the same app, is built at start.
+  Several servers can watch the same app (with other `--extension`s) without losing what the
+  others recorded.
 - **What is watched**: the folder of each extension (`src/`, the input queries, its
   `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension), the
   other files of the app (a Cargo workspace's `Cargo.toml` and `Cargo.lock`, `package.json` and

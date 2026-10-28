@@ -1033,8 +1033,8 @@ fn a_watch_builds_at_start_what_has_no_module_or_changed_since_the_last() {
     app.function("fn-a");
     app.function("fn-b");
     std::fs::remove_file(app.path("extensions/fn-b/dist/function.wasm")).unwrap();
-    let record = app.ctl("record/app.json");
-    let options = |options: &mut Options| options.record = Some(app.ctl("record/app.json"));
+    let record = app.ctl("record/app");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
 
     // Nothing recorded: the modules there are used, the missing one is built.
     let mut watching = Watching::start(&app, options);
@@ -1047,7 +1047,7 @@ fn a_watch_builds_at_start_what_has_no_module_or_changed_since_the_last() {
         "{}",
         watching.said()
     );
-    assert!(record.is_file());
+    assert!(record.join("inputs/fn-a.json").is_file());
     watching.stop();
 
     // Nothing changed since: nothing builds.
@@ -1208,18 +1208,29 @@ fn a_build_stopped_halfway_builds_again_at_the_next_start() {
     assert_eq!(watching.served("fn-a"), "a2");
 }
 
-/// What the record says is building.
-fn marked(record: &Path) -> Json {
-    let json: Json = serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
-    json["building"].clone()
+/// The Functions the record says are building, once per mark.
+fn marked(record: &Path) -> Vec<String> {
+    let mut marked: Vec<String> = std::fs::read_dir(record.join("building"))
+        .map(|entries| {
+            entries
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| !name.starts_with('.'))
+                .map(|name| name.split_once('.').unwrap().0.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    marked.sort();
+    marked
 }
+
+const NONE: &[&str] = &[];
 
 #[test]
 fn a_forced_build_stopped_halfway_builds_again_at_the_next_start() {
     let app = TempApp::new("forced");
     app.function("fn-a");
-    let record = app.ctl("record/app.json");
-    let options = |options: &mut Options| options.record = Some(app.ctl("record/app.json"));
+    let record = app.ctl("record/app");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
 
     // A build that worked, recorded.
     let mut watching = Watching::start(&app, options);
@@ -1227,7 +1238,7 @@ fn a_forced_build_stopped_halfway_builds_again_at_the_next_start() {
     watching.settle();
     assert_eq!(watching.served("fn-a"), "v2");
     watching.stop();
-    assert_eq!(marked(&record), json!([]));
+    assert_eq!(marked(&record), NONE);
 
     // `--watch --build`, nothing changed: the build writes a whole module that is not what it
     // builds, and the watch is stopped before it is over.
@@ -1247,13 +1258,9 @@ fn a_forced_build_stopped_halfway_builds_again_at_the_next_start() {
     wait_for("the stale module", || {
         app.running("fn-a", 2) && app.dist("fn-a") == "stale"
     });
-    assert_eq!(marked(&record), json!(["fn-a"]), "marked before it built");
+    assert_eq!(marked(&record), ["fn-a"], "marked before it built");
     watcher.stop();
-    assert_eq!(
-        marked(&record),
-        json!(["fn-a"]),
-        "a build stopped is not over"
-    );
+    assert_eq!(marked(&record), ["fn-a"], "a build stopped is not over");
 
     // Its hash is the recorded one, but it is marked: built again.
     std::fs::remove_file(app.ctl("gated-fn-a")).unwrap();
@@ -1261,7 +1268,7 @@ fn a_forced_build_stopped_halfway_builds_again_at_the_next_start() {
     let mut watching = Watching::start(&app, options);
     assert_eq!(app.builds("fn-a"), 3, "{}", watching.said());
     assert_eq!(watching.served("fn-a"), "v2");
-    assert_eq!(marked(&record), json!([]));
+    assert_eq!(marked(&record), NONE);
     watching.stop();
 
     // A module the build left that a run cannot load (its header only) is not used, whatever
@@ -1270,6 +1277,127 @@ fn a_forced_build_stopped_halfway_builds_again_at_the_next_start() {
     let watching = Watching::start(&app, options);
     assert_eq!(app.builds("fn-a"), 4);
     assert_eq!(watching.served("fn-a"), "v2");
+}
+
+#[test]
+fn a_watch_does_not_erase_what_another_watch_of_the_app_marked() {
+    let app = TempApp::new("two-watches");
+    app.function("fn-a");
+    app.function("fn-b");
+    let record = app.ctl("record/app");
+    let only = |handle: &str| {
+        let record = record.clone();
+        let handle = handle.to_string();
+        move |options: &mut Options| {
+            options.record = Some(record);
+            options.extensions = vec![handle];
+        }
+    };
+    // What is there is recorded.
+    let mut first = Watching::start(&app, |options| options.record = Some(record.clone()));
+    first.stop();
+
+    // B watches fn-b, from before A marks anything.
+    let b = Watching::start(&app, only("fn-b"));
+
+    // A, `--build`, watches fn-a: its build writes a whole module that is not what it builds,
+    // and waits.
+    app.ctl_write("gated-fn-a", "");
+    std::fs::write(app.ctl("early-fn-a"), module("stale")).unwrap();
+    let mut forced = Options::new(vec!["fn-a".to_string()], true);
+    forced.events = false;
+    forced.poll = Duration::from_millis(10);
+    forced.record = Some(record.clone());
+    let a = Watcher::start(
+        &app.root(),
+        Arc::new(Builds::publishing(Modules::create().unwrap())),
+        forced,
+        Box::new(|| {}),
+        Arc::new(|_: &str| {}),
+    );
+    wait_for("the stale module", || {
+        app.running("fn-a", 1) && app.dist("fn-a") == "stale"
+    });
+
+    // B builds fn-b meanwhile, then A is stopped before its build is over.
+    app.source("fn-b", "b2");
+    b.settle();
+    assert_eq!(b.served("fn-b"), "b2");
+    assert_eq!(marked(&record), ["fn-a"]);
+    a.stop();
+
+    // A again: the build it did not finish is done again, not trusted.
+    std::fs::remove_file(app.ctl("gated-fn-a")).unwrap();
+    std::fs::remove_file(app.ctl("early-fn-a")).unwrap();
+    let a = Watching::start(&app, only("fn-a"));
+    assert_eq!(app.builds("fn-a"), 2, "{}", a.said());
+    assert_eq!(a.served("fn-a"), "v1");
+    assert_eq!(app.builds("fn-b"), 1);
+    // The mark of the A that stopped went with that build.
+    assert_eq!(marked(&record), NONE);
+}
+
+#[test]
+fn a_mark_another_watch_holds_stays_until_that_watch_is_over() {
+    let app = TempApp::new("held");
+    app.function("fn-a");
+    let record = app.ctl("record/app");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
+
+    // A builds fn-a, and waits.
+    let a = Watching::start(&app, options);
+    app.ctl_write("gated-fn-a", "");
+    app.source("fn-a", "a2");
+    wait_for("the build of A", || app.running("fn-a", 1));
+    assert_eq!(marked(&record), ["fn-a"]);
+
+    // B starts meanwhile: the Function is building, so B builds it too, and leaves A's mark.
+    app.go("fn-a", 2);
+    let b = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 2);
+    assert_eq!(b.served("fn-a"), "a2");
+    assert_eq!(marked(&record), ["fn-a"]);
+
+    // A is over: no mark left.
+    app.go("fn-a", 1);
+    a.settle();
+    assert_eq!(marked(&record), NONE);
+}
+
+#[test]
+fn the_record_of_an_older_lsf_is_read_once() {
+    let app = TempApp::new("old-record");
+    app.function("fn-a");
+    app.function("fn-b");
+    let record = app.ctl("record/app");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app"));
+    // What is there is recorded, in the way of an older lsf.
+    let mut watching = Watching::start(&app, options);
+    watching.stop();
+    let inputs = |handle: &str| {
+        let path = record.join(format!("inputs/{handle}.json"));
+        let json: Json = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        json["inputs"].as_str().unwrap().to_string()
+    };
+    let old = json!({
+        "app": app.root().display().to_string(),
+        "functions": { "fn-a": inputs("fn-a"), "fn-b": inputs("fn-b") },
+        "building": ["fn-b"],
+    });
+    std::fs::remove_dir_all(&record).unwrap();
+    std::fs::write(record.with_extension("json"), old.to_string()).unwrap();
+
+    // fn-a is trusted as it says, fn-b it said was building is built again.
+    let watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 0);
+    assert_eq!(app.builds("fn-b"), 1);
+    assert!(
+        !watching.said().contains("using the existing builds"),
+        "{}",
+        watching.said()
+    );
+    assert!(!record.with_extension("json").exists());
+    assert_eq!(marked(&record), NONE);
 }
 
 #[test]

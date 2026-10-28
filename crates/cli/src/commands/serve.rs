@@ -221,7 +221,7 @@ pub fn run(
             let changed = state.clone();
             let mut options = watch::Options::new(args.app.extensions.clone(), args.app.build);
             options.data = data_dir;
-            options.record = watch::record_file(dir);
+            options.record = watch::record_dir(dir);
             Some(Watcher::start(
                 dir,
                 state.builds.clone(),
