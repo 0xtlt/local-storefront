@@ -4,62 +4,63 @@
 //! query of a Function is checked against the schema of that release, and its output has to fit
 //! the result type of the target in that schema (see [`crate::schema`]).
 //!
-//! Adding a release takes one line in [`VERSIONS`] and the schemas in `crates/checkout/schemas`
-//! (`mise run checkout:schemas`, which reads the same list of versions).
+//! Adding a release takes one line in [`VERSIONS`]; `mise run checkout:schemas` (which reads the
+//! same list of versions) writes a schema file only for an API whose schema changed in it, to be
+//! listed in [`SCHEMA_FILES`].
 
-use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use crate::schema::Schema;
 
 /// A Shopify API release: `2026-10`, `2027-01`.
-#[derive(Clone, Copy)]
-pub struct ApiVersion(&'static VersionSpec);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ApiVersion(&'static str);
 
-struct VersionSpec {
-    id: &'static str,
-    /// The schema of each Function API, in [`FunctionApi::ALL`] order.
-    schemas: [&'static str; FunctionApi::ALL.len()],
+/// The supported releases, oldest first. The only place a release is listed.
+static VERSIONS: &[&str] = &["2026-10", "2027-01"];
+
+/// One schema of a Function API, in `crates/checkout/schemas/<since>/<api>.graphql`: the schema
+/// of the API from release `since` on, until a newer file of the same API. Releases that share a
+/// schema share its file, and its parsed [`Schema`].
+struct SchemaFile {
+    since: &'static str,
+    api: FunctionApi,
+    source: &'static str,
 }
 
-macro_rules! version {
-    ($id:literal) => {
-        VersionSpec {
-            id: $id,
-            schemas: [
-                include_str!(concat!(
-                    "../schemas/",
-                    $id,
-                    "/cart_checkout_validation.graphql"
-                )),
-                include_str!(concat!("../schemas/", $id, "/cart_transform.graphql")),
-                include_str!(concat!(
-                    "../schemas/",
-                    $id,
-                    "/delivery_customization.graphql"
-                )),
-                include_str!(concat!("../schemas/", $id, "/discount.graphql")),
-                include_str!(concat!("../schemas/", $id, "/order_discount.graphql")),
-                include_str!(concat!(
-                    "../schemas/",
-                    $id,
-                    "/payment_customization.graphql"
-                )),
-                include_str!(concat!("../schemas/", $id, "/product_discount.graphql")),
-                include_str!(concat!("../schemas/", $id, "/shipping_discount.graphql")),
-            ],
+macro_rules! schema_file {
+    ($since:literal, $api:ident, $name:literal) => {
+        SchemaFile {
+            since: $since,
+            api: FunctionApi::$api,
+            source: include_str!(concat!("../schemas/", $since, "/", $name, ".graphql")),
         }
     };
 }
 
-/// The supported releases, oldest first. The only place a release is listed.
-static VERSIONS: &[VersionSpec] = &[version!("2026-10"), version!("2027-01")];
+const SCHEMA_COUNT: usize = 8;
+
+/// Every file in `crates/checkout/schemas` (a test checks that the list and the folder agree).
+static SCHEMA_FILES: [SchemaFile; SCHEMA_COUNT] = [
+    schema_file!(
+        "2026-10",
+        CartCheckoutValidation,
+        "cart_checkout_validation"
+    ),
+    schema_file!("2026-10", CartTransform, "cart_transform"),
+    schema_file!("2026-10", DeliveryCustomization, "delivery_customization"),
+    schema_file!("2026-10", Discount, "discount"),
+    schema_file!("2026-10", OrderDiscount, "order_discount"),
+    schema_file!("2026-10", PaymentCustomization, "payment_customization"),
+    schema_file!("2026-10", ProductDiscount, "product_discount"),
+    schema_file!("2026-10", ShippingDiscount, "shipping_discount"),
+];
 
 impl ApiVersion {
     /// Every supported release, oldest first.
     pub fn all() -> impl Iterator<Item = ApiVersion> {
-        VERSIONS.iter().map(ApiVersion)
+        VERSIONS.iter().copied().map(ApiVersion)
     }
 
     /// The release written as `api_version` (`2026-10`), or the error to show: it names the
@@ -84,7 +85,7 @@ impl ApiVersion {
     }
 
     pub fn as_str(self) -> &'static str {
-        self.0.id
+        self.0
     }
 
     /// The most recent release.
@@ -98,41 +99,47 @@ impl ApiVersion {
         self.as_str() >= "2027-01"
     }
 
-    /// The schema of a Function API in this release.
+    /// The schema of a Function API in this release, parsed once for every release that shares
+    /// its file.
     pub fn schema(self, api: FunctionApi) -> &'static Schema {
-        type Cache = Mutex<HashMap<(&'static str, FunctionApi), &'static Schema>>;
-        static CACHE: OnceLock<Cache> = OnceLock::new();
-        let mut cache = CACHE
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        cache.entry((self.0.id, api)).or_insert_with(|| {
-            let source = self.0.schemas[api as usize];
-            let schema = Schema::parse(source).unwrap_or_else(|error| {
-                panic!("the {api} schema of {} is invalid: {error}", self.0.id)
-            });
-            Box::leak(Box::new(schema))
+        static PARSED: [OnceLock<Schema>; SCHEMA_COUNT] = [const { OnceLock::new() }; SCHEMA_COUNT];
+        let index = self.schema_file(api);
+        PARSED[index].get_or_init(|| {
+            let file = &SCHEMA_FILES[index];
+            Schema::parse(file.source).unwrap_or_else(|error| {
+                panic!("the {api} schema of {} is invalid: {error}", file.since)
+            })
         })
     }
-}
 
-impl PartialEq for ApiVersion {
-    fn eq(&self, other: &ApiVersion) -> bool {
-        self.0.id == other.0.id
+    /// The index in [`SCHEMA_FILES`] of the schema of `api` in this release: the file of the
+    /// newest release at or before it.
+    fn schema_file(self, api: FunctionApi) -> usize {
+        schema_file_of(&SCHEMA_FILES, self.0, api)
+            .unwrap_or_else(|| panic!("no {api} schema for {}", self.0))
     }
 }
 
-impl Eq for ApiVersion {}
+/// The index in `files` of the schema of `api` in `release`: the file of the newest release at or
+/// before it.
+fn schema_file_of(files: &[SchemaFile], release: &str, api: FunctionApi) -> Option<usize> {
+    files
+        .iter()
+        .enumerate()
+        .filter(|(_, file)| file.api == api && file.since <= release)
+        .max_by_key(|(_, file)| file.since)
+        .map(|(index, _)| index)
+}
 
 impl fmt::Display for ApiVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.0.id)
+        formatter.write_str(self.0)
     }
 }
 
 impl fmt::Debug for ApiVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "ApiVersion({})", self.0.id)
+        write!(formatter, "ApiVersion({})", self.0)
     }
 }
 
@@ -153,7 +160,6 @@ pub enum FunctionApi {
 }
 
 impl FunctionApi {
-    /// In the order of [`VersionSpec::schemas`].
     pub const ALL: [FunctionApi; 8] = [
         FunctionApi::CartCheckoutValidation,
         FunctionApi::CartTransform,
@@ -165,7 +171,7 @@ impl FunctionApi {
         FunctionApi::ShippingDiscount,
     ];
 
-    /// The name of its schema file in `crates/checkout/schemas/<version>`.
+    /// The name of its schema files in `crates/checkout/schemas/<release>`.
     pub fn name(self) -> &'static str {
         match self {
             FunctionApi::CartCheckoutValidation => "cart_checkout_validation",
@@ -291,6 +297,73 @@ mod tests {
         for other in ["", "unstable", "latest", "2026-1", "2026-10-01", "2027-04"] {
             assert!(ApiVersion::parse(other).is_err(), "{other}");
         }
+    }
+
+    #[test]
+    fn the_schema_files_are_the_ones_in_the_folder_and_name_the_releases_that_use_them() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas");
+        let mut on_disk = Vec::new();
+        for release in std::fs::read_dir(&root).unwrap() {
+            let release = release.unwrap();
+            for file in std::fs::read_dir(release.path()).unwrap() {
+                on_disk.push(format!(
+                    "{}/{}",
+                    release.file_name().to_string_lossy(),
+                    file.unwrap().file_name().to_string_lossy()
+                ));
+            }
+        }
+        on_disk.sort();
+        let mut listed: Vec<String> = SCHEMA_FILES
+            .iter()
+            .map(|file| format!("{}/{}.graphql", file.since, file.api.name()))
+            .collect();
+        listed.sort();
+        assert_eq!(listed, on_disk);
+
+        // Each release has a schema of each API, and the header of each file lists the releases
+        // that use it, as `mise run checkout:schemas` wrote it.
+        for (index, file) in SCHEMA_FILES.iter().enumerate() {
+            let users: Vec<&str> = ApiVersion::all()
+                .filter(|version| version.schema_file(file.api) == index)
+                .map(ApiVersion::as_str)
+                .collect();
+            let header = file.source.lines().next().unwrap();
+            assert!(
+                header.ends_with(&format!(", API versions {}.", users.join(", "))),
+                "{header}"
+            );
+        }
+    }
+
+    #[test]
+    fn releases_that_share_a_schema_parse_it_once() {
+        let [older, newer] = ["2026-10", "2027-01"].map(|id| ApiVersion::parse(id).unwrap());
+        for api in FunctionApi::ALL {
+            assert!(std::ptr::eq(older.schema(api), newer.schema(api)), "{api}");
+        }
+    }
+
+    #[test]
+    fn a_release_whose_schema_changed_has_its_own_file() {
+        let file = |since, api| SchemaFile {
+            since,
+            api,
+            source: "",
+        };
+        let files = [
+            file("2026-10", FunctionApi::Discount),
+            file("2026-10", FunctionApi::CartTransform),
+            file("2027-04", FunctionApi::Discount),
+        ];
+        let of = |release, api| schema_file_of(&files, release, api);
+        assert_eq!(of("2026-10", FunctionApi::Discount), Some(0));
+        assert_eq!(of("2027-01", FunctionApi::Discount), Some(0));
+        assert_eq!(of("2027-04", FunctionApi::Discount), Some(2));
+        assert_eq!(of("2027-07", FunctionApi::Discount), Some(2));
+        assert_eq!(of("2027-07", FunctionApi::CartTransform), Some(1));
+        assert_eq!(of("2026-07", FunctionApi::Discount), None);
+        assert_eq!(of("2027-01", FunctionApi::PaymentCustomization), None);
     }
 
     #[test]

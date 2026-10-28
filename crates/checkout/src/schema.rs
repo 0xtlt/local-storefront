@@ -7,7 +7,8 @@
 //!   no unknown field, no missing required field, the right scalars, `@oneOf` objects with
 //!   exactly one field.
 //!
-//! The schemas are in `crates/checkout/schemas`, per API version (see [`crate::version`]).
+//! The schemas are in `crates/checkout/schemas`, one file per API and per release that changed it
+//! (see [`crate::version`]).
 
 use std::collections::{BTreeSet, HashMap};
 

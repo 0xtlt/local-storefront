@@ -29,7 +29,8 @@ How this was established (all three agree):
 
 The RC can still change before 2027-01-01. When it does: pin a newer `@shopify/dev-mcp` in
 `tools/checkout/function_schemas.mjs`, run `mise run checkout:schemas`, `mise run
-fixtures:functions`, and look at `git diff crates/checkout/schemas`.
+fixtures:functions`, and look at `git status crates/checkout/schemas`: a schema that changes in
+2027-01 gets its own file in `crates/checkout/schemas/2027-01/`.
 
 ### What 2026-10 added to both (against 2026-07)
 
@@ -94,11 +95,18 @@ and the three legacy discount APIs have no `fetch` target.
 ## What is version aware now
 
 - **`ApiVersion`** (`version.rs`): the supported releases in one table (`VERSIONS`), and the schema
-  of each Function API (`FunctionApi`) per release, embedded with `include_str!`. `target_spec`
-  maps a target to its API and result type. Adding a release = one table line + the schema files.
-- **Schemas** (`crates/checkout/schemas/<version>/<api>.graphql`, SDL, generated, committed): from
+  of each Function API (`FunctionApi`) per release, embedded with `include_str!` (`SCHEMA_FILES`).
+  Releases that share a schema share its file and its parsed `Schema`. `target_spec` maps a target
+  to its API and result type. Adding a release = one table line, plus a `SCHEMA_FILES` line for
+  each schema file the generator wrote for it (a test checks the list against the folder).
+- **Schemas** (`crates/checkout/schemas/<since>/<api>.graphql`, SDL, generated, committed): the
+  schema of an API from release `<since>` on, until a newer file of the same API. A release gets a
+  file only when its schema differs from the release before; the first line of a file lists the
+  releases that use it. Today every file is in `2026-10/` and serves 2026-10 and 2027-01. From
   the `@shopify/dev-mcp@1.17.0` tarball pinned by SHA-256, by `tools/checkout/function_schemas.mjs`
-  (`mise run checkout:schemas`). Differences from Shopify's own `schema.graphql` files: no
+  (`mise run checkout:schemas`), which compares the SDL of consecutive releases without the
+  header. `tools/checkout/build_functions.sh` copies to a Function the file of the newest release
+  at or before its `api_version`. Differences from Shopify's own `schema.graphql` files: no
   descriptions; `@oneOf` is rebuilt (the introspection has none: an input object with only optional
   fields, minus the `*FetchResult` types and 3 plain ones); an input object without field (`DeprecatedOperation` of the
   delivery API) gets a `_noField` placeholder.

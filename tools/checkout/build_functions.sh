@@ -25,10 +25,21 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 app="$(cd "$1" && pwd)"
 shift
 schemas="$root/crates/checkout/schemas"
-# The newest release lsf has the schemas of.
-latest="$(ls "$schemas" | sort | tail -n 1)"
 
-# The Function API of a target: the name of its schema in crates/checkout/schemas/<version>.
+# The schema of a Function API at a release: the file of the newest release at or before it
+# (`mise run checkout:schemas` writes one only when a release changes the schema). A release older
+# than every file (a Function made to show that it is refused) is built with the newest one.
+schema_of() {
+  local found="" newest="" file release
+  for file in "$schemas"/*/"$1.graphql"; do
+    newest="$file"
+    release="$(basename "$(dirname "$file")")"
+    [[ "$release" > "$2" ]] || found="$file"
+  done
+  echo "${found:-$newest}"
+}
+
+# The Function API of a target: the name of its schema in crates/checkout/schemas/<release>.
 # Empty for the APIs lsf has no schema for (they are listed, not run): such a Function is written
 # without the typegen and needs none.
 api_of() {
@@ -58,9 +69,8 @@ else
 fi
 
 # The schema of each Function is the one of its API version (`api_version` in its
-# shopify.extension.toml) and Function API, from crates/checkout/schemas (`mise run
-# checkout:schemas`). Not committed with the app: they are copies, git-ignored. A version lsf
-# has no schema for (a Function made to show that it is refused) is built with the newest one.
+# shopify.extension.toml) and Function API, from crates/checkout/schemas (`schema_of`). Not
+# committed with the app: they are copies, git-ignored.
 for handle in "${handles[@]}"; do
   toml="$app/extensions/$handle/shopify.extension.toml"
   if [ ! -f "$app/extensions/$handle/Cargo.toml" ]; then
@@ -68,11 +78,10 @@ for handle in "${handles[@]}"; do
     exit 1
   fi
   version="$(sed -n 's/^api_version = "\(.*\)"/\1/p' "$toml" | head -n 1)"
-  [ -d "$schemas/$version" ] || version="$latest"
   target="$(sed -n 's/^ *target = "\(.*\)"/\1/p' "$toml" | head -n 1)"
   api="$(api_of "$target")"
   if [ -n "$api" ]; then
-    cp "$schemas/$version/$api.graphql" "$app/extensions/$handle/schema.graphql"
+    cp "$(schema_of "$api" "$version")" "$app/extensions/$handle/schema.graphql"
   fi
 done
 
