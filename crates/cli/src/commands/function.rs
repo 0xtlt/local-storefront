@@ -11,7 +11,7 @@ use lsf_core::store::validate::{FileKind, validate};
 use serde_json::Value as Json;
 
 use crate::app::App;
-use crate::checkout;
+use crate::checkout::{self, display_money};
 use crate::output::print_diagnostics;
 use crate::server::apply_session_input;
 
@@ -348,15 +348,6 @@ fn apply_scenario_session(
     }
 }
 
-fn money(cents: i64, currency: &str) -> String {
-    let sign = if cents < 0 { "-" } else { "" };
-    format!(
-        "{sign}{}.{:02} {currency}",
-        cents.abs() / 100,
-        cents.abs() % 100
-    )
-}
-
 fn indent(text: &str) -> String {
     text.lines()
         .map(|line| format!("  {line}"))
@@ -415,13 +406,17 @@ fn print_text(result: &CheckoutResult) {
         };
         let (subtotal, total) = (line.subtotal, line.total);
         if subtotal == total {
-            println!("  {} × {title}  {}", line.quantity, money(total, currency));
+            println!(
+                "  {} × {title}  {}",
+                line.quantity,
+                display_money(total, currency)
+            );
         } else {
             println!(
                 "  {} × {title}  {} → {}",
                 line.quantity,
-                money(subtotal, currency),
-                money(total, currency)
+                display_money(subtotal, currency),
+                display_money(total, currency)
             );
         }
     }
@@ -434,7 +429,7 @@ fn print_text(result: &CheckoutResult) {
                 .as_deref()
                 .map(|code| format!(" [{code}]"))
                 .unwrap_or_default(),
-            money(discount.amount, currency),
+            display_money(discount.amount, currency),
             discount.class,
             discount.function
         );
@@ -463,7 +458,7 @@ fn print_text(result: &CheckoutResult) {
                 "  delivery {mark} {} ({}): {}",
                 option.title,
                 option.handle,
-                money(option.cost, currency)
+                display_money(option.cost, currency)
             );
         }
     }
@@ -489,18 +484,18 @@ fn print_text(result: &CheckoutResult) {
     let cost = &result.cost;
     println!(
         "  subtotal {} · discounts -{} · shipping {} · tax {} · total {}",
-        money(cost.subtotal, currency),
-        money(cost.discounts, currency),
-        money(cost.shipping, currency),
-        money(cost.tax, currency),
-        money(cost.total, currency)
+        display_money(cost.subtotal, currency),
+        display_money(cost.discounts, currency),
+        display_money(cost.shipping, currency),
+        display_money(cost.tax, currency),
+        display_money(cost.total, currency)
     );
     // Only a cart with a selling plan that defers a part of the price has a balance.
     if cost.due_later > 0 {
         println!(
             "  due now {} · due later {}",
-            money(cost.due_now, currency),
-            money(cost.due_later, currency)
+            display_money(cost.due_now, currency),
+            display_money(cost.due_later, currency)
         );
     }
 }
@@ -913,12 +908,5 @@ mod tests {
             .unwrap_err();
         assert!(none.contains("has no scenario"), "{none}");
         std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn money_prints_with_its_currency() {
-        assert_eq!(money(1999, "EUR"), "19.99 EUR");
-        assert_eq!(money(-5, "USD"), "-0.05 USD");
-        assert_eq!(money(0, "USD"), "0.00 USD");
     }
 }

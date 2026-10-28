@@ -21,7 +21,7 @@ use serde_json::{Value as Json, json};
 use super::home_check::Report;
 use super::reply::{Reply, cache};
 use super::{Incoming, ServerState};
-use crate::checkout::CheckoutOptions;
+use crate::checkout::{CheckoutOptions, display_money, encoded_handle};
 use crate::watch::Failure;
 
 /// Where the files of the checkout page are served from.
@@ -148,16 +148,9 @@ fn problem(level: Level, message: impl Into<String>) -> (Level, String) {
 }
 
 /// The id of the row of a scenario or an extension on the page, for the links to it. Two names
-/// never share one: `a-z`, `0-9` and `-` stay, every other byte is `_` and its hex (`_` too).
+/// never share one ([`encoded_handle`]).
 fn anchor(prefix: &str, name: &str) -> String {
-    let mut id = format!("{prefix}-");
-    for byte in name.bytes() {
-        match byte {
-            b'a'..=b'z' | b'0'..=b'9' | b'-' => id.push(char::from(byte)),
-            _ => id.push_str(&format!("_{byte:02x}")),
-        }
-    }
-    id
+    format!("{prefix}-{}", encoded_handle(name))
 }
 
 /// What the loader says of an extension.
@@ -376,21 +369,12 @@ fn ui_extension_json(
     })
 }
 
-fn money(cents: i64, currency: &str) -> String {
-    format!(
-        "{}{}.{:02} {currency}",
-        if cents < 0 { "-" } else { "" },
-        cents.abs() / 100,
-        cents.abs() % 100
-    )
-}
-
 fn names(settings: &CheckoutSettings, store: &Store) -> (String, String) {
     let currency = store.shop.currency.as_str();
     let rates = settings
         .shipping_rates
         .iter()
-        .map(|rate| format!("{} {}", rate.title, money(rate.price, currency)))
+        .map(|rate| format!("{} {}", rate.title, display_money(rate.price, currency)))
         .collect::<Vec<_>>()
         .join(", ");
     let methods = settings
@@ -627,7 +611,8 @@ fn describe(
     (lines, facts)
 }
 
-fn query_escape(text: &str) -> String {
+/// A query component, `form_urlencoded`'s way (spaces as `+`).
+pub(super) fn query_escape(text: &str) -> String {
     form_urlencoded::byte_serialize(text.as_bytes()).collect()
 }
 

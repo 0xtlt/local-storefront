@@ -39,6 +39,8 @@ use std::time::{Duration, Instant, SystemTime};
 use lsf_checkout::app::{self, App, Selection};
 use serde_json::{Value as Json, json};
 
+use crate::checkout::encoded_handle;
+
 use lock::{Lock, Locks};
 
 mod lock;
@@ -222,12 +224,14 @@ impl Modules {
 
     /// The copy of the module of `handle`. It exists once a module of it was published.
     pub fn path(&self, handle: &str) -> PathBuf {
-        self.dir.join(format!("{}.wasm", file_name(handle)))
+        self.dir.join(format!("{}.wasm", encoded_handle(handle)))
     }
 
     /// Publishes a module that built, in one step: a request reads the old one or this one.
     fn publish(&self, handle: &str, bytes: &[u8]) -> std::io::Result<()> {
-        let partial = self.dir.join(format!("{}.wasm.partial", file_name(handle)));
+        let partial = self
+            .dir
+            .join(format!("{}.wasm.partial", encoded_handle(handle)));
         std::fs::create_dir_all(&self.dir)?;
         std::fs::write(&partial, bytes)?;
         std::fs::rename(&partial, self.path(handle)).inspect_err(|_| {
@@ -257,20 +261,6 @@ impl Drop for Modules {
     fn drop(&mut self) {
         self.remove();
     }
-}
-
-/// A handle as a file name, one of its own: `a-z`, `0-9` and `-` stay (all a handle of
-/// Shopify's may have), every other byte is `_` and two hex digits, `_` included.
-fn file_name(handle: &str) -> String {
-    let mut name = String::with_capacity(handle.len());
-    for byte in handle.bytes() {
-        if byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' {
-            name.push(char::from(byte));
-        } else {
-            name.push_str(&format!("_{byte:02x}"));
-        }
-    }
-    name
 }
 
 /// Removes the folders of [`Modules`] of the processes that are gone (killed before they could).
@@ -1469,7 +1459,7 @@ impl Record {
             self.dir
                 .as_ref()?
                 .join("inputs")
-                .join(format!("{}.json", file_name(handle))),
+                .join(format!("{}.json", encoded_handle(handle))),
         )
     }
 
@@ -1506,7 +1496,7 @@ impl Record {
         });
         let partial = parent.join(format!(
             ".{}.{}-{}.partial",
-            file_name(handle),
+            encoded_handle(handle),
             self.owner,
             RECORD_FILES.fetch_add(1, Ordering::Relaxed)
         ));

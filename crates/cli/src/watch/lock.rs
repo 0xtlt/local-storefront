@@ -35,7 +35,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::file_name;
+use crate::checkout::encoded_handle;
 
 /// The write locks of the Functions of an app.
 #[derive(Clone, Debug)]
@@ -83,7 +83,7 @@ impl Locks {
         if std::fs::create_dir_all(dir).is_err() {
             return Ok(None);
         }
-        let path = dir.join(format!("{}.lock", file_name(handle)));
+        let path = dir.join(format!("{}.lock", encoded_handle(handle)));
         #[cfg(unix)]
         let _guard = guard(dir);
         // A second time once a lock no build holds was replaced.

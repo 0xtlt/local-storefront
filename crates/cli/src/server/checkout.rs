@@ -323,7 +323,7 @@ fn carried_query(incoming: &Incoming, names: &[&str]) -> String {
         .filter_map(|name| {
             incoming
                 .query_param(name)
-                .map(|value| format!("{name}={}", escape_query(value)))
+                .map(|value| format!("{name}={}", home::query_escape(value)))
         })
         .collect();
     if pairs.is_empty() {
@@ -505,10 +505,6 @@ pub(super) fn run_scenario(
         BuyerJourneyStep::Interaction,
         runs,
     ))
-}
-
-fn escape_query(value: &str) -> String {
-    form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// The look of the checkout: `?variant=` when the request has it, which the session then keeps,

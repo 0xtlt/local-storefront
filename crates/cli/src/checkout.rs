@@ -337,9 +337,41 @@ pub fn translations(extension_dir: &Path) -> Translations {
     }
 }
 
+/// A handle (or a scenario name) as a name of its own, for file names and page anchors: `a-z`,
+/// `0-9` and `-` stay (all a handle of Shopify's may have), every other byte is `_` and two hex
+/// digits, `_` included. Two names never share one.
+pub fn encoded_handle(handle: &str) -> String {
+    let mut name = String::with_capacity(handle.len());
+    for byte in handle.bytes() {
+        if byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' {
+            name.push(char::from(byte));
+        } else {
+            name.push_str(&format!("_{byte:02x}"));
+        }
+    }
+    name
+}
+
+/// An amount in cents as people read it: `19.99 EUR`.
+pub fn display_money(cents: i64, currency: &str) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    format!(
+        "{sign}{}.{:02} {currency}",
+        cents.abs() / 100,
+        cents.abs() % 100
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn money_prints_with_its_currency() {
+        assert_eq!(display_money(1999, "EUR"), "19.99 EUR");
+        assert_eq!(display_money(-5, "USD"), "-0.05 USD");
+        assert_eq!(display_money(0, "USD"), "0.00 USD");
+    }
 
     #[test]
     fn the_store_data_maps_to_the_checkout_configuration() {

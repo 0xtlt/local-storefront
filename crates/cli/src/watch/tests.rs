@@ -1778,8 +1778,8 @@ fn a_symbolic_link_is_watched_where_it_leads() {
 
 #[test]
 fn handles_that_differ_have_files_that_differ() {
-    assert_eq!(file_name("discount-codes"), "discount-codes");
-    let names = ["fn.a", "fn_a", "fn a", "Fn-a", "fn/a", "fné"].map(file_name);
+    assert_eq!(encoded_handle("discount-codes"), "discount-codes");
+    let names = ["fn.a", "fn_a", "fn a", "Fn-a", "fn/a", "fné"].map(encoded_handle);
     let unique: BTreeSet<&String> = names.iter().collect();
     assert_eq!(unique.len(), names.len(), "{names:?}");
     assert!(
