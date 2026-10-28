@@ -12,9 +12,11 @@ use std::cell::RefCell;
 
 use common::*;
 use lsf_checkout::app::Selection;
-use lsf_checkout::fetch::{Fetcher, Request, Response};
+use lsf_checkout::fetch::{Fetcher, OfflineFetcher, Request, Response};
 use lsf_checkout::input::{FetchInput, InputContext};
-use lsf_checkout::pipeline::{compute_with, compute_with_fetcher};
+use lsf_checkout::pipeline::{
+    RunOptions, compute_with, compute_with_fetcher, compute_with_options,
+};
 use lsf_checkout::{CheckoutResult, CheckoutState, DiscountClass, DiscountConfig};
 use serde_json::{Value, json};
 
@@ -481,4 +483,116 @@ fn a_function_without_a_fetch_target_reads_no_fetch_result() {
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert_eq!(seen.into_inner(), [json!({"fetchResult": null})]);
     assert!(fake.seen.borrow().is_empty());
+}
+
+#[test]
+fn without_network_a_request_is_checked_but_not_sent() {
+    // A server of the test: no request of the test may reach it. Others may (a test that sends
+    // to a port it found free, a tool that watches the ports): the URL has a path of its own.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let path = format!("/offline-{}", std::process::id());
+    let url = format!("http://{}{path}", listener.local_addr().unwrap());
+    for kind in all_kinds() {
+        let outcome = run(kind, request_to(&url), Some(&OfflineFetcher));
+        // The `.run` target reads what a request whose connection fails reads.
+        assert_eq!(outcome.fetch_results.len(), 1, "{}", kind.run);
+        let fetch_result = &outcome.fetch_results[0]["fetchResult"];
+        assert_eq!(fetch_result["status"], 502, "{}", kind.run);
+        assert_eq!(
+            fetch_result["body"], "502 Bad Gateway (Connection Failed)",
+            "{}",
+            kind.run
+        );
+        let exchange = outcome.result.runs[0]
+            .exchange
+            .as_ref()
+            .expect("the exchange");
+        assert_eq!(exchange.request.url, url);
+        assert_eq!(exchange.response.status, 502);
+
+        // A request out of Shopify's limits still fails its `.fetch` target.
+        let mut too_slow = request_to(&url);
+        too_slow["request"]["policy"]["readTimeoutMs"] = json!(5000);
+        let outcome = run(kind, too_slow, Some(&OfflineFetcher));
+        assert!(outcome.fetch_results.is_empty(), "{}", kind.run);
+        assert!(
+            outcome
+                .result
+                .errors
+                .iter()
+                .any(|error| error.message.contains("fetch request")),
+            "{:?}",
+            outcome.result.errors
+        );
+    }
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                use std::io::BufRead;
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                let mut line = String::new();
+                let _ = std::io::BufReader::new(stream).read_line(&mut line);
+                assert!(!line.contains(&path), "the request was sent: {line}");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) => panic!("{error}"),
+        }
+    }
+}
+
+#[test]
+fn past_the_deadline_no_function_runs_and_the_result_says_so() {
+    let copy = AppCopy::new("network-deadline");
+    std::fs::write(
+        copy.file("quantity-limit", "dist/function.wasm"),
+        answering_module(&["run"]),
+    )
+    .unwrap();
+    copy.replace(
+        "quantity-limit",
+        "shopify.extension.toml",
+        "purchase.validation.run",
+        "cart.validations.generate.run",
+    );
+    let app = copy.load();
+    let store = store();
+    let session = session(&store, &[(TEE, 1)]);
+    let mut config = config();
+    config
+        .function_metafields
+        .insert("quantity-limit".to_string(), settings(json!({})));
+    let build = |_: &str, _: Option<&Value>, _: &InputContext| Ok(json!({"operations": []}));
+    let compute = |deadline| {
+        compute_with_options(
+            &app,
+            &Selection::only(["quantity-limit"]),
+            &store,
+            &session,
+            &CheckoutState::default(),
+            &config,
+            &build,
+            RunOptions {
+                fetcher: &OfflineFetcher,
+                deadline,
+            },
+        )
+    };
+    let in_time = compute(Some(
+        std::time::Instant::now() + std::time::Duration::from_secs(60),
+    ));
+    assert!(!in_time.interrupted);
+    assert_eq!(in_time.runs.len(), 1);
+    assert!(in_time.errors.is_empty(), "{:?}", in_time.errors);
+
+    let late = compute(Some(std::time::Instant::now()));
+    assert!(late.interrupted);
+    assert!(late.runs.is_empty(), "{:?}", late.runs);
+    // What did not run is not an error of the checkout.
+    assert!(late.errors.is_empty(), "{:?}", late.errors);
+
+    assert!(!compute(None).interrupted);
 }

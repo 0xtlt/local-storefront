@@ -37,14 +37,21 @@ export const bundle = (handle) => readFileSync(join(fixtures, handle, 'dist', `$
 
 /**
  * A browser window for the sandbox scripts. `scripts` are the files of the sandbox to run, in
- * order; `bundles` maps the URL of an extension script to its source. Returns the window and
- * what it posted to the page; `receive(message)` plays a message of the page.
+ * order; `bundles` maps the URL of an extension script to its source; `onPost` hears each
+ * message the frame posts to the page. Returns the window and what it posted to the page;
+ * `receive(message)` plays a message of the page.
  */
-export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, customElements } = {}) {
+export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, customElements, onPost } = {}) {
   const posted = [];
   const listeners = new Map();
   const document = new FakeDocument();
-  const parent = { postMessage: (message) => posted.push(JSON.parse(JSON.stringify(message))) };
+  const parent = {
+    postMessage: (message) => {
+      const copy = JSON.parse(JSON.stringify(message));
+      posted.push(copy);
+      onPost?.(copy);
+    },
+  };
   const context = vm.createContext({
     document,
     parent,

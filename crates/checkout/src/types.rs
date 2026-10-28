@@ -195,6 +195,11 @@ pub struct CheckoutResult {
     pub cost: Cost,
     /// Every Function run, in order, for the debug panel and `lsf function run`.
     pub runs: Vec<FunctionRun>,
+    /// Whether the Functions stopped running at the deadline of their
+    /// [`RunOptions`](crate::pipeline::RunOptions): the result is then not the checkout, only
+    /// the runs before it are.
+    #[serde(skip)]
+    pub interrupted: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

@@ -6,7 +6,7 @@
 // Messages to the page: `ready`, `resize`, `overlay`, `change`, `storage`, `sessionToken`,
 // `analytics`, `log`, `error`, `interceptors`, `intercepted`, `dismiss`, `reload`, `navigate`.
 // With `probe` in `init` (the home page), the bundle is only loaded, and the frame answers
-// `registered` with the targets it registered.
+// `probed`: whether the bundle loaded, and the targets it registered.
 (function (global) {
   'use strict';
   const Sandbox = global.LsfSandbox;
@@ -67,13 +67,20 @@
     };
     Sandbox.navigate = (url, target) => post({ type: 'navigate', url, target });
     reportSize();
+    // The home page only asks what the bundle registers: it loads, and renders nothing.
+    const probed = (loaded) => post({ type: 'probed', loaded, targets: [...runtime.registered.keys()] });
     try {
       await loadScript(init.script);
-      // The home page only asks what the bundle registers: it loads, and renders nothing.
-      if (init.probe) {
-        post({ type: 'registered', targets: [...runtime.registered.keys()] });
-        return;
-      }
+    } catch (error) {
+      fail(error && error.message ? error.message : error, error);
+      if (init.probe) probed(false);
+      return;
+    }
+    if (init.probe) {
+      probed(true);
+      return;
+    }
+    try {
       await run(init);
     } catch (error) {
       fail(error && error.message ? error.message : error, error);

@@ -18,6 +18,7 @@
 //! ones). A Function whose version is not supported is not run.
 
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset, Utc};
 use lsf_core::drops::cart::resolve_line;
@@ -108,6 +109,53 @@ pub fn compute_with_fetcher(
     build: &InputBuilder,
     fetcher: &dyn Fetcher,
 ) -> CheckoutResult {
+    compute_with_options(
+        app,
+        enabled,
+        store,
+        session,
+        state,
+        config,
+        build,
+        RunOptions {
+            fetcher,
+            deadline: None,
+        },
+    )
+}
+
+/// How the Functions of a computation run: what sends the requests of the `.fetch` targets,
+/// and when to stop running them.
+#[derive(Clone, Copy)]
+pub struct RunOptions<'a> {
+    pub fetcher: &'a dyn Fetcher,
+    /// Past it, no other Function runs, and the result is [`CheckoutResult::interrupted`]: it
+    /// is not the checkout. Each run is bounded on its own by the instruction limit.
+    pub deadline: Option<Instant>,
+}
+
+impl Default for RunOptions<'_> {
+    fn default() -> Self {
+        RunOptions {
+            fetcher: &HttpFetcher,
+            deadline: None,
+        }
+    }
+}
+
+/// [`compute_with`] with the [`RunOptions`] of its Function runs.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_with_options(
+    app: &App,
+    enabled: &Selection,
+    store: &lsf_core::Store,
+    session: &lsf_core::Session,
+    state: &CheckoutState,
+    config: &CheckoutConfig,
+    build: &InputBuilder,
+    options: RunOptions,
+) -> CheckoutResult {
+    let RunOptions { fetcher, deadline } = options;
     let now = store
         .now
         .unwrap_or_else(Utc::now)
@@ -122,6 +170,8 @@ pub fn compute_with_fetcher(
         config,
         build,
         fetcher,
+        deadline,
+        interrupted: false,
         currency: store.shop.currency.clone(),
         now,
         lines: initial_lines(store, session),
@@ -160,6 +210,10 @@ struct Pipeline<'a> {
     config: &'a CheckoutConfig,
     build: &'a InputBuilder<'a>,
     fetcher: &'a dyn Fetcher,
+    /// Past it, the Functions that are left do not run.
+    deadline: Option<Instant>,
+    /// Whether a Function did not run because the deadline passed.
+    interrupted: bool,
     currency: String,
     now: DateTime<FixedOffset>,
     lines: Vec<ResultLine>,
@@ -338,6 +392,15 @@ impl<'a> Pipeline<'a> {
         triggering_code: Option<&str>,
         fetch: FetchInput,
     ) -> Option<Value> {
+        // Out of time: nothing more runs, and nothing is recorded of what did not run.
+        if self.interrupted
+            || self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.interrupted = true;
+            return None;
+        }
         let (Some(version), Some(spec)) = (function.version, target.spec()) else {
             self.record_failure(
                 function,
@@ -1703,6 +1766,7 @@ impl<'a> Pipeline<'a> {
                 currency_code: self.currency,
             },
             runs: self.runs,
+            interrupted: self.interrupted,
         }
     }
 }

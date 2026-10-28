@@ -6851,6 +6851,208 @@ fn a_function_that_fails_when_a_scenario_runs_is_a_problem_of_that_scenario() {
 }
 
 #[test]
+fn a_check_whose_app_changed_while_it_ran_is_not_kept() {
+    let app_dir = app_with_a_failing_function("race");
+    let data = ScenarioData::new(
+        "home-race",
+        &[(
+            "crash.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#,
+        )],
+    );
+    let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data.0));
+    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let store = state.loaded().store.clone();
+    let wasm = app_dir.join("extensions/broken-wasm/dist/function.wasm");
+    let cache = super::home_check::Cache::default();
+    let found = |checked| super::home_check::Report {
+        checked,
+        total: 1,
+        ..Default::default()
+    };
+
+    // The module is rebuilt after the check ran it, before the check ends: what it found is
+    // about the old module, and is not kept.
+    let report = cache.get_or_run_with(&app, &store, || {
+        std::fs::write(&wasm, b"another module, of another size").unwrap();
+        found(1)
+    });
+    assert_eq!(report.checked, 1, "the answer is still given");
+    assert!(cache.get(&app, &store).is_none(), "kept for the new module");
+
+    // A check that nothing changed under is kept, and the next request takes it.
+    let report = cache.get_or_run_with(&app, &store, || found(1));
+    let again = cache.get_or_run_with(&app, &store, || panic!("ran again"));
+    assert!(std::sync::Arc::ptr_eq(&report, &again));
+
+    // A check that ran out of time is not kept.
+    std::fs::write(&wasm, b"a third module").unwrap();
+    cache.get_or_run_with(&app, &store, || found(0));
+    std::fs::remove_dir_all(&app_dir).ok();
+    assert!(cache.get(&app, &store).is_none());
+}
+
+/// The checkout playground, with the store data in a copy of its own that keeps the scenarios
+/// `keep`, and whose network Functions call `base`.
+fn playground_with(
+    label: &str,
+    keep: &[&str],
+    base: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/checkout-playground");
+    let data = std::env::temp_dir().join(format!("lsf-home-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data);
+    copy_directory(&app.join("shopify-local"), &data);
+    for entry in std::fs::read_dir(data.join("checkouts")).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !keep.iter().any(|kept| name == format!("{kept}.json")) {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+    let store = data.join("store.json");
+    let text = std::fs::read_to_string(&store).unwrap();
+    assert!(
+        text.contains("http://localhost:8787"),
+        "the store data calls the mock server"
+    );
+    std::fs::write(&store, text.replace("http://localhost:8787", base)).unwrap();
+    (app, data)
+}
+
+#[test]
+fn the_check_of_the_home_page_sends_no_http_request() {
+    // A server of the test, in place of the mock server: nothing may reach it. Other tests send
+    // requests to ports they found free, which may be this one: the URLs of this test have a
+    // path of their own.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let prefix = format!("/home-check-{}", std::process::id());
+    let base = format!("http://{}{prefix}", listener.local_addr().unwrap());
+    let (app, data) = playground_with(
+        "no-network",
+        &[
+            "fn-validation-network",
+            "fn-discount-network",
+            "fn-broken-fetch-timeout",
+        ],
+        &base,
+    );
+    let state = checkout_server_with_data(app, &[], true, Some(&data));
+    let html = text(&get(&state, "/", "home"));
+    let check = body_json(&get(&state, "/__lsf/checkouts/check", "home"));
+    std::fs::remove_dir_all(&data).ok();
+    assert!(html.contains("data-check=\"pending\""), "{html}");
+    assert_eq!(check["state"], "done", "{check}");
+    assert_eq!(check["checked"], 3, "{check}");
+    // The network Functions ran, their requests were not sent: they read a 502, and do not fail.
+    // A request out of Shopify's limits still fails its `.fetch` target.
+    let failures = check["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{check}");
+    assert_eq!(failures[0]["handle"], "broken-fetch-timeout");
+    assert_eq!(failures[0]["target"], "cart.validations.generate.fetch");
+    assert!(
+        failures[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("readTimeoutMs"),
+        "{check}"
+    );
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                use std::io::BufRead;
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut line = String::new();
+                let _ = std::io::BufReader::new(stream).read_line(&mut line);
+                assert!(!line.contains(&prefix), "the check sent a request: {line}");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) => panic!("{error}"),
+        }
+    }
+}
+
+#[test]
+fn a_check_past_its_budget_says_how_many_scenarios_it_checked() {
+    let (app_dir, data) = playground_with(
+        "budget",
+        &[
+            "fn-validation-network",
+            "fn-broken-panic",
+            "fn-broken-bad-output",
+        ],
+        "http://127.0.0.1:9",
+    );
+    let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data));
+    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let store = state.loaded().store.clone();
+    let report = super::home_check::run(&state, &app, &store, Duration::ZERO);
+    assert_eq!((report.checked, report.total), (0, 3));
+    assert!(report.failures.is_empty());
+    assert_eq!(report.to_json()["state"], "partial");
+
+    // The page says it, and asks again: a partial check is not kept.
+    let check = body_json(&get(&state, "/__lsf/checkouts/check", "home"));
+    std::fs::remove_dir_all(&data).ok();
+    assert_eq!(check["state"], "done", "{check}");
+    assert_eq!(check["checked"], 3);
+    let mut home = body_json(&get(&state, "/?format=json", "home"));
+    home["check"] = report.to_json();
+    let html = super::home::render(&home, "");
+    assert!(
+        html.contains("Checked 0 of 3 scenarios"),
+        "{}",
+        &html[..html.len().min(3000)]
+    );
+}
+
+#[test]
+fn scenarios_whose_names_differ_only_by_what_an_id_cannot_hold_have_ids_of_their_own() {
+    let cart = r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#;
+    let data = ScenarioData::new(
+        "home-ids",
+        &[("a b.json", cart), ("a-b.json", cart), ("a_b.json", cart)],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    let mut anchors: Vec<&str> = json["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|scenario| scenario["anchor"].as_str().unwrap())
+        .collect();
+    anchors.sort();
+    assert_eq!(
+        anchors,
+        ["scenario-a-b", "scenario-a_20b", "scenario-a_5fb"]
+    );
+    for anchor in &anchors {
+        assert_eq!(
+            html.matches(&format!("id=\"{anchor}\"")).count(),
+            1,
+            "{anchor}"
+        );
+    }
+    // Each problem leads to the row of its own scenario.
+    let mut links: Vec<&str> = json["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|problem| problem["kind"] == "scenario")
+        .map(|problem| problem["href"].as_str().unwrap())
+        .collect();
+    links.sort();
+    assert_eq!(
+        links,
+        ["#scenario-a-b", "#scenario-a_20b", "#scenario-a_5fb"]
+    );
+}
+
+#[test]
 fn without_the_script_the_page_runs_the_check_when_asked() {
     let app = app_with_a_failing_function("now");
     let data = ScenarioData::new(

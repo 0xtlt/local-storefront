@@ -79,7 +79,8 @@ radii in the same file.
 `GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
 page says, for tools) shows what is wrong first, then everything the checkout can do for the
 app, in dense rows whose details open under them. It has the look of the checkout and needs no
-network.
+network: it sends no request of the Functions, only the checkout UI extensions loaded to check them
+can call a server (see below).
 
 - **Problems**, at the top, errors first, each on one line with where to look (the row of the
   extension or of the scenario). The first eight of each kind show, a "Show N more" opens the
@@ -117,25 +118,41 @@ prefix of its URL (`/fr/` links to `/fr/checkout`; `/__lsf/checkouts?locale=fr` 
 The home page runs the Functions of every scenario that opens, as its checkout would when it
 opens (what `lsf function run --scenario` does), and lists each Function target that fails, with
 the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
-an output that does not fit the schema of its API version, a `.fetch` request that cannot be
-sent. The scenario and the Function get an error status.
+an output that does not fit the schema of its API version, a `.fetch` request out of Shopify's
+limits. The scenario and the Function get an error status.
+
+This check sends no HTTP request: opening the home page never calls a server. A `.fetch` target
+runs, and the request it asks for is checked against [Shopify's limits](#network-access) (a
+request out of them fails the target), but it is not sent: the `.run` target reads what it reads
+when the connection fails, `502 Bad Gateway (Connection Failed)`. A Function that only fails on
+some answer of its server is found by opening its scenario, which sends the request.
 
 Running them all takes a moment (about 0.7 s for the 82 scenarios of the
 [playground](../examples/checkout-playground)), so the page does not wait for it: it shows
 "Running the Functions…" and asks `GET /__lsf/checkouts/check`, which answers what it found.
-What a check found is kept until the store data or the app (a Function, its Wasm module) changes:
-the page then has it at once. A check that fails or takes more than 30 s says so, and the rest
-of the page stays. Without JavaScript, the page links to `?check=1`, which runs the check
-before it answers.
+The check has 20 s: it looks at the time before each Function runs (each run is bounded on its
+own by the instruction limit), and once they are spent it stops and says so ("Checked 40 of 82
+scenarios"). A complete check is kept until the store data or the app (a Function, its Wasm
+module) changes: the page then has it at once, and the next check runs on the next request after
+a change. A partial check, or one whose app changed while it ran (a module rebuilt), is not kept.
+A check that fails or takes more than 30 s says so, and the rest of the page stays. Without
+JavaScript, the page links to `?check=1`, which runs the check before it answers.
 
 ### The checkout UI extensions that do not load
 
 The page also loads the bundle of each checkout UI extension in a hidden frame of the sandbox,
-as the checkout does, without rendering it. A bundle that throws while it loads, or that does not
-register a target it declares (`shopify.extend`), is listed with the problems. The frame has an
-opaque origin, so the browser hides what the bundle threw ("Script error."): open a checkout
-with the extension to read it. An extension that throws only when it renders or when the buyer
-acts is not found this way.
+as the checkout does, without rendering it. Unlike the check of the Functions, this loads the
+real bundles: a bundle that calls the network as it loads does so. A bundle that does not load
+(no file), throws while it loads, or does not register a target it declares (`shopify.extend`),
+is listed with the problems, and the scenarios that run it get a warning, as for any extension
+with a problem. A frame that says nothing within 5 s is a warning that the page could not tell;
+one that reported an error and never finished is that error. The frame has an opaque origin, so
+the browser hides what the bundle threw ("Script error."): open a checkout with the extension to
+read it. An extension that throws only when it renders or when the buyer acts is not found this
+way.
+
+Messages show what is between backticks as code, and the paths inside the app relative to its
+folder (the full path is in the tooltip).
 
 ## Scenarios
 

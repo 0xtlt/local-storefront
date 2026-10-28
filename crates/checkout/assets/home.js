@@ -7,9 +7,10 @@
 //   (the list of problems, the rows of the scenarios and Functions that fail, the order of the
 //   scenarios). A check that fails or takes too long says so, the rest of the page stays;
 // - the load of the checkout UI extensions: each bundle is loaded in a hidden frame of the
-//   sandbox, as the checkout loads it, to see the targets it registers. A bundle that throws
-//   while it loads, or does not register a target it declares, is listed with the problems.
-//   The frame has an opaque origin, so the browser hides the message of what it threw
+//   sandbox, as the checkout loads it, to see the targets it registers. A bundle that does not
+//   load, throws while it loads, or does not register a target it declares, is listed with the
+//   problems, and the scenarios that run it are too. A bundle can itself call the network as it
+//   loads. The frame has an opaque origin, so the browser hides the message of what it threw
 //   ("Script error."): opening a checkout with the extension shows it.
 
 /** How long the page waits for the check, in milliseconds. */
@@ -52,6 +53,14 @@ export function applyFilter(list, filter) {
     if (match) shown += 1;
   }
   return { shown, total: rows.length };
+}
+
+/** The rows of `list` with problems first (errors, then warnings), then by name, as the server orders them. */
+export function sortRows(list) {
+  const rank = (row) => ({ error: 0, warning: 1 })[row.dataset.status] ?? 2;
+  const rows = [...list.querySelectorAll('[data-scenario]')];
+  rows.sort((a, b) => rank(a) - rank(b) || (a.dataset.scenario < b.dataset.scenario ? -1 : a.dataset.scenario > b.dataset.scenario ? 1 : 0));
+  reorder(list, rows.map((row) => row.id));
 }
 
 /** Puts the rows of `list` in the order of `ids` (the others stay after them). */
@@ -142,14 +151,28 @@ const PROBES_AT_ONCE = 4;
 
 /**
  * What loading its bundle says of a checkout UI extension that declares the targets `declared`:
- * null when it registered them all, otherwise `{severity, message}`. `registered` is null when
- * the bundle did not finish loading in time (nothing is said then); `errors` is what the frame
- * reported while it loaded.
+ * null when it registered them all, otherwise `{severity, message}`.
+ * - `registered` is what it registered, or null when the frame did not answer in time;
+ * - `errors` is what the frame reported while it loaded;
+ * - `loaded` is false when the bundle could not be loaded at all (no file, a network error).
+ * An error the frame reported is never dropped: only a frame that reported nothing and did not
+ * answer leaves it open, as a warning.
  */
-export function verdict(declared, registered, errors) {
-  if (registered === null) return null;
-  const missing = declared.filter((target) => !registered.includes(target));
+export function verdict(declared, registered, errors, loaded = true) {
   const thrown = errors.find((message) => message && message !== 'Script error.');
+  if (registered === null) {
+    if (errors.length === 0) {
+      return { severity: 'warning', message: `could not tell whether its bundle loads: the frame did not answer in ${PROBE_TIMEOUT / 1000} s` };
+    }
+    return {
+      severity: 'error',
+      message: thrown
+        ? `its bundle fails while it loads (${thrown}), and does not finish loading`
+        : 'throws while its bundle loads, and does not finish loading. Open a checkout with it to read the error.',
+    };
+  }
+  if (!loaded) return { severity: 'error', message: thrown ? `its bundle does not load: ${thrown}` : 'its bundle does not load' };
+  const missing = declared.filter((target) => !registered.includes(target));
   const what = thrown ? `throws while its bundle loads (${thrown})` : 'throws while its bundle loads';
   if (missing.length === 0) {
     return errors.length > 0 ? { severity: 'warning', message: `${what}, after it registered its targets` } : null;
@@ -157,7 +180,7 @@ export function verdict(declared, registered, errors) {
   if (registered.length === 0) {
     return errors.length > 0
       ? { severity: 'error', message: `${what}: it registers no target. Open a checkout with it to read the error.` }
-      : { severity: 'error', message: 'its bundle registers no target: shopify.extend is never called' };
+      : { severity: 'error', message: 'its bundle registers no target: `shopify.extend` is never called' };
   }
   return {
     severity: 'error',
@@ -165,8 +188,12 @@ export function verdict(declared, registered, errors) {
   };
 }
 
-/** Loads the bundle of one extension in a hidden frame: what it registered, and the errors. */
-function probe(document, window, sandboxUrl, row) {
+/**
+ * Loads the bundle of one extension in a hidden frame of the sandbox at `sandboxUrl`. Resolves
+ * `{row, targets, registered, loaded, errors}`: `registered` is null when the frame did not
+ * answer within `timeout` ms. The frame and the listener go away whatever happens.
+ */
+export function probe(document, window, sandboxUrl, row, timeout = PROBE_TIMEOUT) {
   const data = row.dataset;
   const targets = (data.targets ?? '').split(' ').filter(Boolean);
   return new Promise((resolve) => {
@@ -177,15 +204,18 @@ function probe(document, window, sandboxUrl, row) {
     frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
     const errors = [];
     let timer = null;
-    const finish = (registered) => {
+    let done = false;
+    const finish = (registered, loaded = registered !== null) => {
+      if (done) return;
+      done = true;
       window.removeEventListener('message', listen);
       window.clearTimeout(timer);
       frame.remove();
-      resolve({ row, targets, registered, errors });
+      resolve({ row, targets, registered, loaded, errors });
     };
     const listen = (event) => {
       const message = event.data;
-      if (event.source !== frame.contentWindow || !message || message.lsf !== true) return;
+      if (done || event.source !== frame.contentWindow || !message || message.lsf !== true) return;
       if (message.type === 'ready') {
         frame.contentWindow.postMessage({
           lsf: true,
@@ -201,14 +231,19 @@ function probe(document, window, sandboxUrl, row) {
         }, '*');
       } else if (message.type === 'error') {
         errors.push(String(message.message));
-      } else if (message.type === 'registered') {
-        finish(message.targets ?? []);
+      } else if (message.type === 'probed') {
+        finish(Array.isArray(message.targets) ? message.targets : [], message.loaded !== false);
       }
     };
-    timer = window.setTimeout(() => finish(null), PROBE_TIMEOUT);
+    timer = window.setTimeout(() => finish(null), timeout);
     window.addEventListener('message', listen);
-    frame.setAttribute('src', sandboxUrl);
-    document.body.appendChild(frame);
+    try {
+      frame.setAttribute('src', sandboxUrl);
+      document.body.appendChild(frame);
+    } catch (error) {
+      errors.push(String(error && error.message ? error.message : error));
+      finish([], false);
+    }
   });
 }
 
@@ -217,6 +252,21 @@ function element(document, tag, attributes = {}, ...children) {
   for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
   for (const child of children) node.append(child);
   return node;
+}
+
+/**
+ * A message as nodes: what is between backticks as `<code>`, the rest as text. Never HTML: the
+ * message is only ever text content.
+ */
+export function richText(document, text) {
+  const parts = String(text).split('`');
+  const nodes = [];
+  parts.forEach((part, index) => {
+    if (index % 2 === 0) nodes.push(part);
+    else if (index + 1 < parts.length) nodes.push(element(document, 'code', {}, part));
+    else nodes.push(`\`${part}`);
+  });
+  return nodes.filter((node) => node !== '');
 }
 
 /** The dot of a status, as the server draws it. */
@@ -246,9 +296,9 @@ function report(document, { row, problem }) {
         element(document, 'summary', {}, dot(document, severity),
           element(document, 'span', { class: 'lsf-hp-kind' }, 'UI extension'),
           element(document, 'code', {}, handle),
-          element(document, 'span', { class: 'lsf-hp-msg', title: message }, message)),
+          element(document, 'span', { class: 'lsf-hp-msg', title: message }, ...richText(document, message))),
         element(document, 'div', { class: 'lsf-hp-full' },
-          element(document, 'pre', {}, message),
+          element(document, 'pre', {}, ...richText(document, message)),
           element(document, 'p', {}, 'Found by loading its bundle in this page, as the checkout does.'))),
       element(document, 'a', { class: 'lsf-hp-where', href: `#${row.id}` }, 'details'));
     // In the order of the server (scenarios last), with the rows past the first few folded.
@@ -284,11 +334,26 @@ function report(document, { row, problem }) {
     row.querySelector('.lsf-dot')?.replaceWith(dot(document, severity));
   }
   row.querySelector('.lsf-h-main')?.appendChild(
-    element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, message));
+    element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, ...richText(document, message)));
+  markScenarios(document, handle);
+}
+
+/**
+ * The scenarios that run the extension `handle`, once its bundle showed a problem: as on the
+ * server, an extension with a problem makes the scenarios that use it warnings (a scenario
+ * that is an error stays one).
+ */
+export function markScenarios(document, handle) {
+  for (const row of document.querySelectorAll('[data-scenario]')) {
+    const uses = (row.dataset.uiExtensions ?? '').split(' ');
+    if (!uses.includes(handle) || row.dataset.status === 'error' || row.dataset.status === 'warning') continue;
+    row.dataset.status = 'warning';
+    row.querySelector('.lsf-dot')?.replaceWith(dot(document, 'warning'));
+  }
 }
 
 /** Loads the bundle of every checkout UI extension the checkout loads, a few at a time. */
-async function probeAll(document, window) {
+async function probeAll(document, window, refilter) {
   const rows = [...document.querySelectorAll('[data-probe]')];
   if (rows.length === 0) return;
   const sandboxUrl = new URL('sandbox.html', import.meta.url).href;
@@ -296,18 +361,22 @@ async function probeAll(document, window) {
   const worker = async () => {
     while (next < rows.length) {
       const result = await probe(document, window, sandboxUrl, rows[next++]);
-      const problem = verdict(result.targets, result.registered, result.errors);
+      const problem = verdict(result.targets, result.registered, result.errors, result.loaded);
       if (problem) report(document, { row: result.row, problem });
     }
   };
   await Promise.all(Array.from({ length: Math.min(PROBES_AT_ONCE, rows.length) }, worker));
+  // The scenarios that now have problems move up with the others.
+  const list = document.querySelector('[data-list="scenarios"]');
+  if (list) sortRows(list);
+  refilter();
 }
 
 export async function start(document, window) {
   const refilter = setUpFilter(document);
   await check(document, window, refilter);
   // After the check: its answer replaces the list of problems.
-  await probeAll(document, window);
+  await probeAll(document, window, refilter);
 }
 
 if (typeof document !== 'undefined' && typeof window !== 'undefined') {

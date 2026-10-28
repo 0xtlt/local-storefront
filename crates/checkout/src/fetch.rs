@@ -233,6 +233,19 @@ impl Fetcher for HttpFetcher {
     }
 }
 
+/// Sends nothing: every request answers what a request whose connection fails answers
+/// (`502 Bad Gateway (Connection Failed)`). The request is still built and checked against
+/// Shopify's limits first, so a request out of them still fails its `.fetch` target. For what
+/// runs the Functions without anyone asking for a checkout (the check of the home page).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OfflineFetcher;
+
+impl Fetcher for OfflineFetcher {
+    fn send(&self, _request: &Request) -> Response {
+        connection_failed()
+    }
+}
+
 fn send(request: &Request) -> Result<Response, Response> {
     let timeout = Duration::from_millis(request.read_timeout_ms);
     let agent: ureq::Agent = ureq::Agent::config_builder()

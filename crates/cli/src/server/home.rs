@@ -158,19 +158,17 @@ fn problem(level: Level, message: impl Into<String>) -> (Level, String) {
     (level, message.into())
 }
 
-/// The id of the row of a scenario or an extension on the page, for the links to it.
+/// The id of the row of a scenario or an extension on the page, for the links to it. Two names
+/// never share one: `a-z`, `0-9` and `-` stay, every other byte is `_` and its hex (`_` too).
 fn anchor(prefix: &str, name: &str) -> String {
-    let slug: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    format!("{prefix}-{slug}")
+    let mut id = format!("{prefix}-");
+    for byte in name.bytes() {
+        match byte {
+            b'a'..=b'z' | b'0'..=b'9' | b'-' => id.push(char::from(byte)),
+            _ => id.push_str(&format!("_{byte:02x}")),
+        }
+    }
+    id
 }
 
 /// What the loader says of an extension.
@@ -1153,7 +1151,7 @@ pub fn check(
         if failing(&scenario["failing"]) {
             rows.insert(
                 text_of(&scenario["anchor"]).to_string(),
-                json!(scenario_html(scenario)),
+                json!(scenario_html(scenario, app_dir(&home))),
             );
         }
     }
@@ -1161,7 +1159,7 @@ pub fn check(
         if failing(&function["failures"]) {
             rows.insert(
                 text_of(&function["anchor"]).to_string(),
-                json!(function_html(function)),
+                json!(function_html(function, app_dir(&home))),
             );
         }
     }
@@ -1179,6 +1177,41 @@ pub fn check(
 
 fn code(text: &str) -> String {
     format!("<code>{}</code>", esc(text))
+}
+
+/// The folder of the app, whose paths the page shows relative to it.
+fn app_dir(home: &Json) -> &str {
+    text_of(&home["app"]["directory"])
+}
+
+/// `text` with the paths inside the app folder `dir` relative to it.
+fn shorten(text: &str, dir: &str) -> String {
+    let dir = dir.trim_end_matches('/');
+    if dir.is_empty() {
+        return text.to_string();
+    }
+    text.replace(&format!("{dir}/"), "")
+}
+
+/// A message as the page shows it: the paths inside the app relative to its folder, and what is
+/// between backticks as code. Escaped first: the message cannot add HTML of its own. (The full
+/// message is the `title` of what shows it.)
+fn message_html(text: &str, dir: &str) -> String {
+    let short = shorten(text, dir);
+    let parts: Vec<&str> = short.split('`').collect();
+    let mut out = String::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index % 2 == 0 {
+            out.push_str(&esc(part));
+        } else if index + 1 < parts.len() {
+            out.push_str(&code(part));
+        } else {
+            // A backtick with no pair.
+            out.push('`');
+            out.push_str(&esc(part));
+        }
+    }
+    out
 }
 
 fn text_of(value: &Json) -> &str {
@@ -1228,7 +1261,7 @@ fn section_head(id: &str, title: &str, aside: &str) -> String {
     )
 }
 
-fn problem_html(problem: &Json) -> String {
+fn problem_html(problem: &Json, dir: &str) -> String {
     let severity = text_of(&problem["severity"]);
     let kind = text_of(&problem["kind"]);
     let label = match kind {
@@ -1262,7 +1295,11 @@ fn problem_html(problem: &Json) -> String {
     if let Some(target) = problem["target"].as_str() {
         full.push_str(&format!("<p>Target {}</p>", code(target)));
     }
-    full.push_str(&format!("<pre>{}</pre>", esc(message)));
+    full.push_str(&format!(
+        "<pre title=\"{}\">{}</pre>",
+        esc(message),
+        message_html(message, dir)
+    ));
     if scenarios.len() > 1 {
         let links: Vec<String> = scenarios
             .iter()
@@ -1283,14 +1320,15 @@ fn problem_html(problem: &Json) -> String {
     format!(
         "<li class=\"lsf-hp-row is-{severity}\" data-problem=\"{kind}\"{}>\
          <details><summary>{}<span class=\"lsf-hp-kind\">{label}</span>{subject}\
-         <span class=\"lsf-hp-msg\" title=\"{msg}\">{msg}</span></summary>\
+         <span class=\"lsf-hp-msg\" title=\"{}\">{}</span></summary>\
          <div class=\"lsf-hp-full\">{full}</div></details>{place}</li>",
         problem["subject"]
             .as_str()
             .map(|subject| format!(" data-subject=\"{}\"", esc(subject)))
             .unwrap_or_default(),
         dot(severity),
-        msg = esc(message),
+        esc(message),
+        message_html(message, dir),
     )
 }
 
@@ -1317,11 +1355,11 @@ fn check_line(home: &Json, check_now: &str) -> String {
             let seconds = check["elapsedMs"].as_u64().unwrap_or(0) as f64 / 1000.0;
             let mut text = if checked < total {
                 format!(
-                    "The Functions of {checked} of {total} scenarios ran ({seconds:.1} s), the others were not checked in time"
+                    "Checked {checked} of {total} scenarios ({seconds:.1} s): out of time for the others"
                 )
             } else {
                 format!(
-                    "The Functions of {} ran ({seconds:.1} s)",
+                    "Checked {} ({seconds:.1} s, without sending their HTTP requests)",
                     count(total, "scenario", "scenarios")
                 )
             };
@@ -1382,7 +1420,7 @@ fn problems_html(home: &Json, check_now: &str) -> String {
         let rows: Vec<String> = problems
             .iter()
             .filter(|problem| problem["severity"] == severity)
-            .map(problem_html)
+            .map(|problem| problem_html(problem, app_dir(home)))
             .collect();
         if rows.is_empty() {
             continue;
@@ -1436,7 +1474,7 @@ fn extension_chips(handles: &[&str], prefix: &str) -> String {
         .collect()
 }
 
-fn scenario_html(scenario: &Json) -> String {
+fn scenario_html(scenario: &Json, dir: &str) -> String {
     let name = text_of(&scenario["name"]);
     let title = text_of(&scenario["title"]);
     let status = text_of(&scenario["status"]);
@@ -1478,8 +1516,9 @@ fn scenario_html(scenario: &Json) -> String {
     // The second line: what is wrong, or the facts and the description.
     let meta = match (problems.first(), failing.is_empty()) {
         (Some(problem), _) => format!(
-            "<span class=\"lsf-h-meta is-error\" title=\"{0}\">{0}</span>",
-            esc(problem)
+            "<span class=\"lsf-h-meta is-error\" title=\"{}\">{}</span>",
+            esc(problem),
+            message_html(problem, dir)
         ),
         (None, false) => format!(
             "<span class=\"lsf-h-meta is-error\">Fails: {}</span>",
@@ -1511,8 +1550,9 @@ fn scenario_html(scenario: &Json) -> String {
     }
     for problem in &problems {
         body.push_str(&format!(
-            "<pre class=\"lsf-home-problem\">{}</pre>",
-            esc(problem)
+            "<pre class=\"lsf-home-problem\" title=\"{}\">{}</pre>",
+            esc(problem),
+            message_html(problem, dir)
         ));
     }
     if !failing.is_empty() {
@@ -1566,13 +1606,14 @@ fn scenario_html(scenario: &Json) -> String {
     };
     format!(
         "<li class=\"lsf-h-row lsf-h-scenario\" id=\"{}\" data-scenario=\"{}\" data-status=\"{status}\" \
-         data-uses=\"{}\" data-search=\"{}\"><details class=\"lsf-h-details\"><summary>{}\
+         data-uses=\"{}\" data-ui-extensions=\"{}\" data-search=\"{}\"><details class=\"lsf-h-details\"><summary>{}\
          <span class=\"lsf-h-main\"><span class=\"lsf-h-title\"><strong>{}</strong>{}</span>{meta}</span>\
          <span class=\"lsf-h-uses\">{}</span></summary><div class=\"lsf-h-body\">{body}</div></details>\
          <div class=\"lsf-h-actions\">{actions}</div></li>",
         esc(text_of(&scenario["anchor"])),
         esc(name),
         kinds.join(" "),
+        esc(&ui.join(" ")),
         esc(&search),
         dot(status),
         esc(title),
@@ -1622,7 +1663,7 @@ fn api_version(extension: &Json) -> String {
 }
 
 /// The first problem of an extension, on one line under its name.
-fn issue_line(extension: &Json) -> String {
+fn issue_line(extension: &Json, dir: &str) -> String {
     let failures = extension["failures"]
         .as_array()
         .cloned()
@@ -1653,8 +1694,9 @@ fn issue_line(extension: &Json) -> String {
     };
     let others = problems.len() + failures.len() - 1;
     format!(
-        "<span class=\"lsf-h-meta is-{severity}\" title=\"{0}\">{0}{1}</span>",
+        "<span class=\"lsf-h-meta is-{severity}\" title=\"{}\">{}{}</span>",
         esc(&text),
+        message_html(&text, dir),
         if others > 0 {
             format!(" (+{others})")
         } else {
@@ -1663,13 +1705,14 @@ fn issue_line(extension: &Json) -> String {
     )
 }
 
-fn problem_lines(extension: &Json) -> String {
+fn problem_lines(extension: &Json, dir: &str) -> String {
     let mut out = String::new();
     for problem in extension["problems"].as_array().into_iter().flatten() {
         out.push_str(&format!(
-            "<li class=\"is-{}\">{}</li>",
+            "<li class=\"is-{}\" title=\"{}\">{}</li>",
             esc(text_of(&problem["severity"])),
-            esc(text_of(&problem["message"]))
+            esc(text_of(&problem["message"])),
+            message_html(text_of(&problem["message"]), dir)
         ));
     }
     for failure in extension["failures"].as_array().into_iter().flatten() {
@@ -1688,7 +1731,7 @@ fn problem_lines(extension: &Json) -> String {
             "<li class=\"is-error\">{} fails in {}: {}</li>",
             code(text_of(&failure["target"])),
             links.join(", "),
-            esc(text_of(&failure["error"]))
+            message_html(text_of(&failure["error"]), dir)
         ));
     }
     if out.is_empty() {
@@ -1700,6 +1743,7 @@ fn problem_lines(extension: &Json) -> String {
 
 fn extension_row(
     extension: &Json,
+    dir: &str,
     data: &str,
     meta: &[String],
     targets: &[&str],
@@ -1732,13 +1776,13 @@ fn extension_row(
         dot(status),
         esc(handle),
         esc(&meta.join(" · ")),
-        issue_line(extension),
+        issue_line(extension, dir),
         target_chips(targets),
-        problem_lines(extension),
+        problem_lines(extension, dir),
     )
 }
 
-fn function_html(function: &Json) -> String {
+fn function_html(function: &Json, dir: &str) -> String {
     let mut meta: Vec<String> = strings(&function["apis"])
         .iter()
         .map(|api| format!("{api} API"))
@@ -1795,10 +1839,10 @@ fn function_html(function: &Json) -> String {
                 .to_string(),
         });
     }
-    extension_row(function, "data-function", &meta, &targets, &body)
+    extension_row(function, dir, "data-function", &meta, &targets, &body)
 }
 
-fn ui_extension_html(extension: &Json) -> String {
+fn ui_extension_html(extension: &Json, dir: &str) -> String {
     let mut meta = vec![api_version(extension)];
     if extension["built"] != true {
         meta.push("not built".to_string());
@@ -1831,6 +1875,7 @@ fn ui_extension_html(extension: &Json) -> String {
         .collect();
     extension_row(
         extension,
+        dir,
         "data-ui-extension",
         &meta,
         &targets,
@@ -1936,7 +1981,12 @@ pub fn render(home: &Json, check_now: &str) -> String {
             &if scenarios.is_empty() {
                 String::new()
             } else {
-                format!("{} in {}", scenarios.len(), code(folder))
+                format!(
+                    "{} in <code title=\"{}\">{}</code>",
+                    scenarios.len(),
+                    esc(folder),
+                    esc(&shorten(folder, app_dir(home)))
+                )
             }
         )
     ));
@@ -1961,7 +2011,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
              <ul class=\"lsf-h-list\" data-list=\"scenarios\">",
         );
         for scenario in &scenarios {
-            main.push_str(&scenario_html(scenario));
+            main.push_str(&scenario_html(scenario, app_dir(home)));
         }
         main.push_str(
             "</ul><p class=\"lsf-muted lsf-h-empty\" data-filter-empty hidden>No scenario matches the filter.</p>",
@@ -2005,7 +2055,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
             "functions",
             "Functions",
             "function",
-            function_html as fn(&Json) -> String,
+            function_html as fn(&Json, &str) -> String,
             "The app has no Function.",
         ),
         (
@@ -2041,7 +2091,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
             }
             main.push_str("<ul class=\"lsf-h-list\">");
             for extension in &extensions {
-                main.push_str(&render_row(extension));
+                main.push_str(&render_row(extension, app_dir(home)));
             }
             main.push_str("</ul>");
         }
@@ -2121,8 +2171,58 @@ mod tests {
     #[test]
     fn the_anchors_are_ids() {
         assert_eq!(
+            anchor("scenario", "fn-broken-panic"),
+            "scenario-fn-broken-panic"
+        );
+        assert_eq!(
             anchor("scenario", "fn-broken panic.é"),
-            "scenario-fn-broken-panic--"
+            "scenario-fn-broken_20panic_2e_c3_a9"
+        );
+        assert_eq!(anchor("ui", "Gift"), "ui-_47ift");
+    }
+
+    #[test]
+    fn two_names_never_share_an_anchor() {
+        let names = ["a b", "a-b", "a_b", "a_20b", "a.b", "A-b", "a--b"];
+        let ids: std::collections::HashSet<String> =
+            names.iter().map(|name| anchor("scenario", name)).collect();
+        assert_eq!(ids.len(), names.len(), "{ids:?}");
+        // An id is only made of what an id and a URL fragment take as they are.
+        for id in &ids {
+            assert!(
+                id.bytes().all(|byte| byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || b"-_".contains(&byte)),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_message_shows_its_code_and_paths_inside_the_app_relative_to_it() {
+        let dir = "/Users/someone/app";
+        assert_eq!(
+            message_html("`purchase.cart-transform.run` is a legacy target", dir),
+            "<code>purchase.cart-transform.run</code> is a legacy target"
+        );
+        assert_eq!(
+            message_html(
+                "no Wasm module at /Users/someone/app/extensions/x/dist/function.wasm: build the Function (`shopify app build`)",
+                dir
+            ),
+            "no Wasm module at extensions/x/dist/function.wasm: build the Function (<code>shopify app build</code>)"
+        );
+        // Escaped before the code is drawn: nothing the message says becomes HTML.
+        assert_eq!(
+            message_html("`<script>` & <b>`x`", dir),
+            "<code>&lt;script&gt;</code> &amp; &lt;b&gt;<code>x</code>"
+        );
+        // A backtick without its pair stays a backtick.
+        assert_eq!(message_html("a `b` c `d", dir), "a <code>b</code> c `d");
+        // A path outside the app stays whole.
+        assert_eq!(
+            message_html("/Users/someone/other/x", dir),
+            "/Users/someone/other/x"
         );
     }
 }

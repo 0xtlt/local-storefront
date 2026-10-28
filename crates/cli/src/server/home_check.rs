@@ -3,10 +3,15 @@
 //! and lists each run that fails (a trap, too many instructions, an output that does not fit
 //! the schema, a `.fetch` that cannot be sent) with the scenarios it fails in.
 //!
-//! Running them all takes a while (a Function that runs past the instruction limit, `.fetch`
-//! targets that wait for a server), so the page does not wait for it: it asks
-//! `/__lsf/checkouts/check` once it is shown. What a check found is kept until the store data
-//! or the app changes.
+//! Opening the home page sends no HTTP request: the check runs the `.fetch` targets, and checks
+//! the request each one asks for against Shopify's limits (a request out of them fails the
+//! target), but sends none ([`OfflineFetcher`]): the `.run` target reads what a request whose
+//! connection fails reads, a `502`.
+//!
+//! Running them all takes a while (a Function that runs past the instruction limit), so the
+//! page does not wait for it: it asks `/__lsf/checkouts/check` once it is shown. A check stops
+//! at its time budget, between two Function runs, and says how many scenarios it checked. What
+//! a complete check found is kept until the store data or the app changes.
 
 use std::hash::{Hash, Hasher};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -14,12 +19,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use lsf_checkout::app::App;
+use lsf_checkout::fetch::OfflineFetcher;
+use lsf_checkout::pipeline::RunOptions;
 use lsf_core::Store;
 use serde_json::{Value as Json, json};
 
 use super::ServerState;
 
-/// How long a check may take: the scenarios not run by then are said to be unchecked.
+/// How long a check may take: the scenarios not run by then are said to be unchecked. The
+/// page waits 30 s for the answer (`CHECK_TIMEOUT` in `home.js`).
 pub const BUDGET: Duration = Duration::from_secs(20);
 
 /// A Function target that fails, and the scenarios it fails in.
@@ -78,9 +86,13 @@ impl Report {
 /// What one scenario came to: its runs that failed, or why it could not run.
 type Outcome = Result<Vec<(String, String, String)>, String>;
 
-/// Runs the Functions of each scenario of `store` that opens, until `budget` is spent.
+/// Runs the Functions of each scenario of `store` that opens, until `budget` is spent. No
+/// request of a `.fetch` target is sent. The budget is checked before each Function runs: a
+/// scenario whose Functions did not all run in time is not checked (the runs of it that failed
+/// before still count).
 pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> Report {
     let started = Instant::now();
+    let deadline = started + budget;
     let options = state
         .options
         .checkout
@@ -94,33 +106,48 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
                 && crate::checkout::selection_for(app, &options.extensions, Some(scenario)).is_ok()
         })
         .collect();
-    let one = |scenario: &lsf_core::store::CheckoutScenario| -> Outcome {
+    let runs = RunOptions {
+        fetcher: &OfflineFetcher,
+        deadline: Some(deadline),
+    };
+    // What a scenario came to, and whether all its Functions ran.
+    let one = |scenario: &lsf_core::store::CheckoutScenario| -> (Outcome, bool) {
         // A panic in a run must not take the page down: the scenario is not checked.
         match catch_unwind(AssertUnwindSafe(|| {
-            super::checkout::run_scenario(state, app, store, scenario)
+            super::checkout::run_scenario(state, app, store, scenario, runs)
         })) {
-            Ok(Ok(result)) => Ok(result
-                .runs
-                .into_iter()
-                .filter_map(|run| run.error.map(|error| (run.handle, run.target, error)))
-                .collect()),
-            Ok(Err(problem)) => Err(problem),
-            Err(_) => Err("running its Functions panicked".to_string()),
+            Ok(Ok(result)) => {
+                let complete = !result.interrupted;
+                let failed = result
+                    .runs
+                    .into_iter()
+                    .filter_map(|run| run.error.map(|error| (run.handle, run.target, error)))
+                    .collect();
+                (Ok(failed), complete)
+            }
+            Ok(Err(problem)) => (Err(problem), true),
+            Err(_) => (Err("running its Functions panicked".to_string()), true),
         }
     };
     // One after the other: the runner keeps a couple of engines with their compiled modules,
     // and more runs at once would compile every module again in new engines.
     let mut outcomes: Vec<(usize, Outcome)> = Vec::new();
+    let mut checked = 0;
     for (index, scenario) in runnable.iter().enumerate() {
-        if started.elapsed() > budget {
+        if Instant::now() >= deadline {
             break;
         }
-        outcomes.push((index, one(scenario)));
+        let (outcome, complete) = one(scenario);
+        outcomes.push((index, outcome));
+        if !complete {
+            break;
+        }
+        checked += 1;
     }
 
     let mut report = Report {
         total: runnable.len(),
-        checked: outcomes.len(),
+        checked,
         ..Report::default()
     };
     // By (handle, target), in the order of the scenarios.
@@ -217,6 +244,16 @@ impl Cache {
 
     /// The check of this app and this store: the last one, or a new one.
     pub fn get_or_run(&self, state: &ServerState, app: &App, store: &Arc<Store>) -> Arc<Report> {
+        self.get_or_run_with(app, store, || run(state, app, store, BUDGET))
+    }
+
+    /// [`Cache::get_or_run`], with `check` to run the check.
+    pub(super) fn get_or_run_with(
+        &self,
+        app: &App,
+        store: &Arc<Store>,
+        check: impl FnOnce() -> Report,
+    ) -> Arc<Report> {
         let _running = self
             .running
             .lock()
@@ -224,11 +261,13 @@ impl Cache {
         if let Some(report) = self.get(app, store) {
             return report;
         }
-        let report = Arc::new(run(state, app, store, BUDGET));
-        // A check that ran out of time is not kept: the next request tries again.
-        if report.checked == report.total {
-            *self.last.lock().expect("check cache poisoned") =
-                Some((Key::of(app, store), report.clone()));
+        // What the check runs on, taken before it runs: a module rebuilt while it runs makes the
+        // key of after differ, and what it found is not kept for the new module.
+        let before = Key::of(app, store);
+        let report = Arc::new(check());
+        // A check that ran out of time is not kept either: the next request tries again.
+        if report.checked == report.total && before.matches(&Key::of(app, store)) {
+            *self.last.lock().expect("check cache poisoned") = Some((before, report.clone()));
         }
         report
     }

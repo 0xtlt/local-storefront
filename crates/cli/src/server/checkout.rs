@@ -475,12 +475,13 @@ fn scenario_start(
 
 /// What the Functions of the app compute for a scenario as it opens, in its language: what the
 /// home page looks at to find the Functions that fail. `app` is the app as loaded once for
-/// every scenario.
+/// every scenario; `runs` says how the requests of the `.fetch` targets go out and when to stop.
 pub(super) fn run_scenario(
     state: &ServerState,
     app: &App,
     store: &Store,
     scenario: &lsf_core::store::CheckoutScenario,
+    runs: pipeline::RunOptions,
 ) -> Result<CheckoutResult, String> {
     let (session, mut checkout, _) =
         scenario_start(state, store, scenario).map_err(|problems| problems.join("; "))?;
@@ -498,6 +499,7 @@ pub(super) fn run_scenario(
         &mut checkout,
         language,
         BuyerJourneyStep::Interaction,
+        runs,
     ))
 }
 
@@ -582,11 +584,21 @@ fn price(
     // The scenario the checkout opened from sets it up, as long as it exists and is valid.
     let scenario = scenario_named(store, checkout.scenario.as_deref());
     let selection = selection_for(&app, &options.extensions, scenario)?;
-    let result = price_with(&app, &selection, session, store, checkout, language, step);
+    let result = price_with(
+        &app,
+        &selection,
+        session,
+        store,
+        checkout,
+        language,
+        step,
+        pipeline::RunOptions::default(),
+    );
     Ok((app, selection, result))
 }
 
 /// [`price`] with the app loaded and the extensions selected.
+#[allow(clippy::too_many_arguments)]
 fn price_with(
     app: &App,
     selection: &Selection,
@@ -595,6 +607,7 @@ fn price_with(
     checkout: &mut CheckoutState,
     language: &Language,
     step: BuyerJourneyStep,
+    runs: pipeline::RunOptions,
 ) -> CheckoutResult {
     checkout.language = Some(language.iso_code.clone());
     checkout.step = step;
@@ -608,7 +621,16 @@ fn price_with(
             .filter(|phone| !phone.is_empty());
     }
     let config = config_for(store, checkout.scenario.as_deref());
-    pipeline::compute(app, selection, store, session, checkout, &config)
+    pipeline::compute_with_options(
+        app,
+        selection,
+        store,
+        session,
+        checkout,
+        &config,
+        &lsf_checkout::input::build,
+        runs,
+    )
 }
 
 /// The checkout as the Functions compute it for `step`: `Interaction` for everything the buyer

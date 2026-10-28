@@ -870,6 +870,8 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-hp-where { display: block; max-width: 14rem; padding-top: 7px; overflow: hidden; text-overflow: ellipsis; font-size: var(--lsf-size-s); white-space: nowrap; }
 .lsf-hp-full { display: flex; flex-direction: column; gap: var(--lsf-space-xs); padding: var(--lsf-space-xs) 0 var(--lsf-space-m) calc(6.5rem + 40px); font-size: var(--lsf-size-s); }
 .lsf-hp-full pre { margin: 0; padding: var(--lsf-space-s) var(--lsf-space-m); border-radius: var(--lsf-radius-small); background: var(--lsf-color-bg-subdued); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* What a message has between backticks: plain in a block that is all code already. */
+.lsf-hp-full pre code, .lsf-home-problem code { padding: 0; background: none; font: inherit; }
 .lsf-hp-more > summary { display: inline-flex; align-items: center; gap: var(--lsf-space-m); padding: var(--lsf-space-xs) var(--lsf-space-xs) var(--lsf-space-s); color: var(--lsf-color-accent); font-size: var(--lsf-size-s); }
 .lsf-hp-more[open] > summary { display: none; }
 .lsf-hp-more .lsf-hp-rows { border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
