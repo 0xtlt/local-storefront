@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-network-fetch.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: network access"
+handle = "ui-network-fetch"
+type = "ui_extension"
+description = "Calls the playground's fake API on localhost:8787 with fetch, and says so plainly when it is not running."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  [extensions.capabilities]
+  network_access = true

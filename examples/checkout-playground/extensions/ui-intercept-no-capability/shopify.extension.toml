@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-intercept-no-capability.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: intercept without block_progress"
+handle = "ui-intercept-no-capability"
+type = "ui_extension"
+description = "Tries to block every order but lacks the block_progress capability: the buyer goes on."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  # No [extensions.capabilities] block_progress: the interceptor is asked with
+  # canBlockProgress false, and its "block" is ignored.

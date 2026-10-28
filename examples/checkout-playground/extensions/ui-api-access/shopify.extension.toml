@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-api-access.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: API access and platform APIs"
+handle = "ui-api-access"
+type = "ui_extension"
+description = "Calls the Storefront API (query, which rejects in the local checkout), the session token, storage and analytics."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  [extensions.capabilities]
+  api_access = true

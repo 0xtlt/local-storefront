@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-terms-gate.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: terms gate"
+handle = "ui-terms-gate"
+type = "ui_extension"
+description = "A terms of sale checkbox above the Pay button: the buyer journey is blocked until it is ticked."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.actions.render-before"
+
+  [extensions.capabilities]
+  block_progress = true
