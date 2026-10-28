@@ -506,6 +506,9 @@ fn print_text(result: &CheckoutResult) {
 }
 
 #[cfg(test)]
+mod playground;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
