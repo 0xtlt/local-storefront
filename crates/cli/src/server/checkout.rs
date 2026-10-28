@@ -47,20 +47,10 @@ pub struct CheckoutSession {
     pub prepared: Option<Identity>,
 }
 
-/// A store, which is the same as another only if it is the very one that was loaded.
-struct SameStore(Arc<Store>);
-
-impl PartialEq for SameStore {
-    fn eq(&self, other: &SameStore) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
 /// What a request read of the session: everything `compute` runs the Functions on. A completion
 /// may only consume the cart, and an update only write, if this is still what the session holds,
 /// otherwise the buyer would pay for something they did not see, and wipe or restore what
 /// changed meanwhile (another tab, another completion, a login, a reload of the data).
-#[derive(PartialEq)]
 struct Basis {
     cart_lines: Vec<CartLine>,
     cart_note: String,
@@ -68,10 +58,10 @@ struct Basis {
     customer_id: Option<u64>,
     company_location: Option<u64>,
     country: Option<String>,
-    /// The store the session sees: its own, or the loaded one. Another one when the data was
-    /// reloaded or the control API gave the session a store.
-    store: SameStore,
-    state: Json,
+    /// The store the session sees: its own, or the loaded one. Another one (not the very same
+    /// `Arc`) when the data was reloaded or the control API gave the session a store.
+    store: Arc<Store>,
+    state: CheckoutState,
     placed: u64,
 }
 
@@ -85,11 +75,50 @@ impl Basis {
             customer_id: entry.session.customer_id,
             company_location: entry.session.company_location,
             country: entry.session.country.clone(),
-            store: SameStore(entry.store.clone().unwrap_or_else(|| loaded.clone())),
-            state: json!(entry.checkout.state),
+            store: entry.store.clone().unwrap_or_else(|| loaded.clone()),
+            state: entry.checkout.state.clone(),
             placed: entry.checkout.placed,
         }
     }
+
+    /// Whether `entry` still holds what was read, without copying it.
+    fn matches(&self, entry: &SessionEntry, loaded: &Arc<Store>) -> bool {
+        let session = &entry.session;
+        self.cart_lines == session.cart_lines
+            && self.cart_note == session.cart_note
+            && self.cart_attributes == session.cart_attributes
+            && self.customer_id == session.customer_id
+            && self.company_location == session.company_location
+            && self.country == session.country
+            && Arc::ptr_eq(&self.store, entry.store.as_ref().unwrap_or(loaded))
+            && same_entered(&self.state, &entry.checkout.state)
+            && self.placed == entry.checkout.placed
+    }
+}
+
+/// Whether two checkouts hold the same entries: the fields the session keeps (the serialized
+/// ones). The language, the step and the scenario come from the request, and do not count.
+fn same_entered(a: &CheckoutState, b: &CheckoutState) -> bool {
+    // Every field, so that a new one has to be sorted here.
+    let CheckoutState {
+        email,
+        phone,
+        shipping_address,
+        selected_delivery,
+        selected_payment,
+        discount_codes,
+        metafields,
+        language: _,
+        step: _,
+        scenario: _,
+    } = a;
+    *email == b.email
+        && *phone == b.phone
+        && *shipping_address == b.shipping_address
+        && *selected_delivery == b.selected_delivery
+        && *selected_payment == b.selected_payment
+        && *discount_codes == b.discount_codes
+        && *metafields == b.metafields
 }
 
 /// The pages and the API of the checkout. `None` when the request is not for the checkout, so
@@ -541,7 +570,7 @@ fn read(state: &ServerState, session_id: &str) -> (Session, Arc<Store>, Checkout
         let basis = Basis::of(entry, &loaded);
         (
             entry.session.clone(),
-            basis.store.0.clone(),
+            basis.store.clone(),
             entry.checkout.state.clone(),
             basis,
         )
@@ -1031,7 +1060,7 @@ pub(super) fn apply_update(
     between();
     let identity = Identity::of(&store, &session);
     let written = state.with_session(id, |entry| {
-        let unchanged = !is_placed(entry) && Basis::of(entry, &state.loaded().store) == basis;
+        let unchanged = !is_placed(entry) && basis.matches(entry, &state.loaded().store);
         if unchanged {
             entry.session.cart_lines = session.cart_lines;
             entry.session.cart_note = session.cart_note;
@@ -1607,7 +1636,7 @@ pub(super) fn place_order(
     // The cart is taken only if it is still the one that was priced; the check and the take are
     // one step of the session.
     let taken = state.with_session(id, |entry| {
-        if Basis::of(entry, &state.loaded().store) != computed.basis {
+        if !computed.basis.matches(entry, &state.loaded().store) {
             return false;
         }
         let number = 1000 + state.next_order();
@@ -1728,4 +1757,50 @@ fn extension_content_type(path: &std::path::Path) -> Option<&'static str> {
             | "ico"
     )
     .then(|| content_type(&format!("file.{extension}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_entries_compared_are_the_ones_the_session_keeps() {
+        let base = CheckoutState {
+            email: Some("a@b.c".into()),
+            ..CheckoutState::default()
+        };
+        // What comes from the request does not count, as when the state was compared as JSON.
+        let mut from_request = base.clone();
+        from_request.language = Some("fr".into());
+        from_request.step = lsf_checkout::BuyerJourneyStep::Completion;
+        from_request.scenario = Some("other".into());
+        assert!(same_entered(&base, &from_request));
+        assert_eq!(json!(base), json!(from_request));
+
+        // Every field the session keeps does.
+        let changes: [fn(&mut CheckoutState); 7] = [
+            |state| state.email = None,
+            |state| state.phone = Some("+1".into()),
+            |state| state.shipping_address = Some(Address::default()),
+            |state| {
+                state.selected_delivery.insert("g".into(), "o".into());
+            },
+            |state| state.selected_payment = Some("card".into()),
+            |state| state.discount_codes.push("SAVE".into()),
+            |state| {
+                state.metafields.push(lsf_checkout::Metafield {
+                    namespace: "n".into(),
+                    key: "k".into(),
+                    kind: "single_line_text_field".into(),
+                    value: "v".into(),
+                })
+            },
+        ];
+        for (index, change) in changes.iter().enumerate() {
+            let mut changed = base.clone();
+            change(&mut changed);
+            assert!(!same_entered(&base, &changed), "change {index}");
+            assert_ne!(json!(base), json!(changed), "change {index}");
+        }
+    }
 }
