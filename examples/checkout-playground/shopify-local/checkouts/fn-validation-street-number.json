@@ -1,0 +1,33 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Validation: street number, when the order is placed",
+  "description": "validation-street-number: the address has no street number. Nothing shows while the buyer types (CHECKOUT_INTERACTION); Pay now is refused (CHECKOUT_COMPLETION).",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    },
+    "delivery": "standard",
+    "payment": "card"
+  },
+  "extensions": [
+    "validation-street-number"
+  ]
+}

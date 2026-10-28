@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Cart transform: expand a bundle",
+  "description": "cart-transform-expand: the Weekend Bundle expands into a white tee and a tote, listed in its product metafield custom.bundle_components.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "BNDL-WKND",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "cart-transform-expand"
+  ]
+}

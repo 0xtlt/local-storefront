@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Cart transform: merge two lines into a set",
+  "description": "cart-transform-merge: a black tee and a navy beanie merge into the Cold-Weather Set, 10% off. The second tee stays on a line of its own.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TEE-BLK-M",
+          "quantity": 2
+        },
+        {
+          "variant": "BNE-NVY",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "cart-transform-merge"
+  ]
+}

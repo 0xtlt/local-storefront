@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Payment: no cash on delivery over $100",
+  "description": "payment-hide-cod: 136.00 in the cart, Cash on Delivery is hidden. Remove an overshirt and it comes back.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "payment-hide-cod"
+  ]
+}

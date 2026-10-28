@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Payment: payment methods renamed",
+  "description": "payment-rename: Bank Deposit and Cash on Delivery get longer names.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "payment-rename"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Delivery: store pickup first in Canada",
+  "description": "delivery-reorder: an address in Ottawa, Canada, where the shop is: Pick up in store moves to the top of the list.",
+  "session": {
+    "customer": "none",
+    "country": "CA",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "200 Elgin Street",
+      "city": "Ottawa",
+      "zip": "K2P 1L5",
+      "country_code": "CA",
+      "province_code": "ON"
+    }
+  },
+  "extensions": [
+    "delivery-reorder"
+  ]
+}

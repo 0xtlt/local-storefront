@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Broken: a request out of the limits",
+  "description": "broken-fetch-timeout asks for a request with a 5000 ms timeout; Shopify allows 100 to 2000 ms, so its .fetch target fails, no request is sent, and its .run target does not run.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "broken-fetch-timeout"
+  ]
+}

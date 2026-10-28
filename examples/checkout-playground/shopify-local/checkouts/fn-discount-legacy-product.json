@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: legacy product discount API",
+  "description": "discount-legacy-product (purchase.product-discount.run): 10% off the wool products, the beanie and the socks. The home page flags the legacy target.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "BNE-NVY",
+          "quantity": 1
+        },
+        {
+          "variant": "SOCK-L",
+          "quantity": 2
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-legacy-product"
+  ]
+}

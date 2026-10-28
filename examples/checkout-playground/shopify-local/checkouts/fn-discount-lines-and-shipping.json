@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: lines and shipping, one Function",
+  "description": "discount-lines-and-shipping: 10 items, so 5% off every line (cart.lines.discounts.generate.run) and half-price shipping (cart.delivery-options.discounts.generate.run).",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "SOCK-S",
+          "quantity": 6
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 4
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    }
+  },
+  "extensions": [
+    "discount-lines-and-shipping"
+  ]
+}

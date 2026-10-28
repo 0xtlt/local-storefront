@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: legacy order discount API",
+  "description": "discount-legacy-order (purchase.order-discount.run): 160.00 in the cart, 5.00 off the order.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 2
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-legacy-order"
+  ]
+}

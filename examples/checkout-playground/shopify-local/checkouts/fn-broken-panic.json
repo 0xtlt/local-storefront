@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Broken: a Function that panics",
+  "description": "broken-panic reads past the end of the cart lines and panics: the run fails (a Wasm trap), the Functions badge turns red, and the order cannot be completed.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "broken-panic"
+  ]
+}

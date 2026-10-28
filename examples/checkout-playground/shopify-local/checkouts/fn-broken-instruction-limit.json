@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Broken: past 11 million instructions",
+  "description": "broken-instruction-limit loops for about 26 million instructions: Shopify stops a Function past 11 million, so the run fails.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "broken-instruction-limit"
+  ]
+}

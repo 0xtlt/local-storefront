@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Cart transform: legacy target",
+  "description": "cart-transform-legacy (purchase.cart-transform.run): three totes in the cart, the Gift Box is free (an update to a price of 0).",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "GIFT-BOX",
+          "quantity": 1
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 3
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "cart-transform-legacy"
+  ]
+}

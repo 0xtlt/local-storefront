@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: several codes, one that no discount has",
+  "description": "discount-codes: SAVE10 (10% off) and WELCOME5 (5.00 off) apply, BIG20 needs 200.00 in the cart and takes nothing, NOPE is no discount's code and is refused.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TEE-BLK-M",
+          "quantity": 2
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "discount_codes": [
+      "SAVE10",
+      "WELCOME5",
+      "BIG20",
+      "NOPE"
+    ]
+  },
+  "extensions": [
+    "discount-codes"
+  ]
+}

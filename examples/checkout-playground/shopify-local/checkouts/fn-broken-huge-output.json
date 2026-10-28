@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Edge case: a huge output",
+  "description": "broken-huge-output answers 2,000 renames of the first delivery option: a big output in the Functions dialog, and the last title wins.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    }
+  },
+  "extensions": [
+    "broken-huge-output"
+  ]
+}

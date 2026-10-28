@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Validation: a gift box needs a gift note",
+  "description": "validation-gift-note: a Gift Box is in the cart and the cart has no gift_note attribute: an error. Set the attribute (a checkout UI extension, or the attribute operation) to clear it.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "GIFT-BOX",
+          "quantity": 1
+        },
+        {
+          "variant": "TEE-WHT-M",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "validation-gift-note"
+  ]
+}

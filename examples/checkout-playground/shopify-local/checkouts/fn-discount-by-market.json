@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: by market and country",
+  "description": "discount-by-market: a buyer in France is in the market europe, 10% off. Change the country of the address to Germany (15%, its own rate) or the US (nothing).",
+  "session": {
+    "customer": "none",
+    "country": "FR",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "8 rue des Lilas",
+      "city": "Lyon",
+      "zip": "69003",
+      "country_code": "FR"
+    }
+  },
+  "extensions": [
+    "discount-by-market"
+  ]
+}

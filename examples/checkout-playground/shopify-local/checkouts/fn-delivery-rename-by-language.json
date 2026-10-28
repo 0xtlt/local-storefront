@@ -1,0 +1,32 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Delivery: options renamed in French",
+  "description": "delivery-rename-by-language: the checkout is in French (language fr), the delivery options get French titles.",
+  "session": {
+    "customer": "none",
+    "country": "FR",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "8 rue des Lilas",
+      "city": "Lyon",
+      "zip": "69003",
+      "country_code": "FR"
+    }
+  },
+  "language": "fr",
+  "extensions": [
+    "delivery-rename-by-language"
+  ]
+}

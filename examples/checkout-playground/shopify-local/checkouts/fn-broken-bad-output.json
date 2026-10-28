@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Broken: an output out of the schema",
+  "description": "broken-bad-output answers deliveryOptionHide with handle instead of deliveryOptionHandle: the checkout refuses the output and names the field.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    }
+  },
+  "extensions": [
+    "broken-bad-output"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: B2B contract price by location",
+  "description": "discount-b2b-location: alex.morgan@example.com buys for Northwind Seattle (NW-SEA): 12% off every line. Switch to Northwind Portland and it is 8%.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "country": "US",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 6
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 4
+        }
+      ]
+    },
+    "company_location": "Northwind Seattle"
+  },
+  "extensions": [
+    "discount-b2b-location"
+  ]
+}

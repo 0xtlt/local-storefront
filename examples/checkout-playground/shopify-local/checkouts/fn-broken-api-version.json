@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Broken: an unsupported API version",
+  "description": "broken-api-version declares api_version 2025-07: the home page says it is not supported, and the Function does not run.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "broken-api-version"
+  ]
+}

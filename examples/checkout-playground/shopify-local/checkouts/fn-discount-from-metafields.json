@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: set by metafields",
+  "description": "discount-from-metafields: the percentage and the label come from the shop metafield custom.weekend_sale_settings, the products on sale from the product metafield custom.weekend_sale (the overshirt and the beanie, not the tee).",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        },
+        {
+          "variant": "BNE-NVY",
+          "quantity": 1
+        },
+        {
+          "variant": "TEE-WHT-M",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-from-metafields"
+  ]
+}

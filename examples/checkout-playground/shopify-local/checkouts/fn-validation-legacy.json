@@ -1,0 +1,22 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Validation: legacy validation target",
+  "description": "validation-legacy (purchase.validation.run): the email is at blocked.example, refused with a localizedMessage on the email.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "someone@blocked.example"
+  },
+  "extensions": [
+    "validation-legacy"
+  ]
+}

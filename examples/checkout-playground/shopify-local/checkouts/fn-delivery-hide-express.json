@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Delivery: no express to a PO box",
+  "description": "delivery-hide-express: the address is a PO box, Express is hidden. Change the address, or ship to France or Germany, to see the other rule.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "PO Box 1234",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    }
+  },
+  "extensions": [
+    "delivery-hide-express"
+  ]
+}

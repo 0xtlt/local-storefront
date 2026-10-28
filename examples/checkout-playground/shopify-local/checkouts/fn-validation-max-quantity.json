@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Validation: at most 2 limited prints",
+  "description": "validation-max-quantity: 3 Limited Edition Prints, 2 per order at most: an error on the line.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "PRINT-LTD",
+          "quantity": 3
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "validation-max-quantity"
+  ]
+}
