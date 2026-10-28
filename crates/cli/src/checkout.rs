@@ -140,10 +140,10 @@ pub fn javascript_build_command(app_root: &Path, handle: &str) -> String {
     )
 }
 
-/// `text` as one word of the shell [`build_command`] runs.
+/// `text` as one word of the shell [`build_command`] runs (a path on Windows has no `"`).
 fn shell_quote(text: &str) -> String {
     if cfg!(windows) {
-        format!("\"{}\"", text.replace('"', "\"\""))
+        format!("\"{text}\"")
     } else {
         format!("'{}'", text.replace('\'', "'\\''"))
     }
@@ -151,11 +151,17 @@ fn shell_quote(text: &str) -> String {
 
 /// The build command of a Function, to run in its folder `dir` through the shell.
 pub fn build_command(command: &str, dir: &Path) -> Command {
-    let mut process = if cfg!(windows) {
+    #[cfg(windows)]
+    let mut process = {
+        use std::os::windows::process::CommandExt as _;
         let mut process = Command::new("cmd");
-        process.args(["/C", command]);
+        // The command as written: an argument would be quoted again the way programs read
+        // their arguments, which cmd does not. `/S` takes off the quotes around it only.
+        process.raw_arg(format!("/S /C \"{command}\""));
         process
-    } else {
+    };
+    #[cfg(not(windows))]
+    let mut process = {
         let mut process = Command::new("sh");
         process.args(["-c", command]);
         process

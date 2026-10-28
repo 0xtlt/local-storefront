@@ -82,6 +82,14 @@ impl FunctionExtension {
         self.wasm_path.is_file()
     }
 
+    /// The command that builds the Function, as the pages and messages say it.
+    pub fn build_hint(&self) -> Option<String> {
+        self.build().map(|build| match build {
+            Build::Command(command) => command.to_string(),
+            Build::JavaScript => format!("lsf function build {}", self.handle),
+        })
+    }
+
     /// How the Function is built: its build command, or, for a JavaScript Function without one
     /// (Shopify's CLI builds those itself), lsf's build of it ([`crate::javascript`]).
     pub fn build(&self) -> Option<Build<'_>> {
@@ -100,16 +108,6 @@ pub enum Build<'a> {
     Command(&'a str),
     /// A JavaScript Function, built by lsf as `shopify app function build` builds it.
     JavaScript,
-}
-
-impl Build<'_> {
-    /// The build as the pages and messages show it.
-    pub fn describe(&self) -> &str {
-        match self {
-            Build::Command(command) => command,
-            Build::JavaScript => "lsf function build",
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -360,12 +358,11 @@ impl Selection {
 }
 
 /// What the diagnostic of a Function whose module is not at `wasm_path` says.
-fn missing_module(wasm_path: &Path, build: Option<Build>) -> String {
+fn missing_module(wasm_path: &Path, build: Option<String>) -> String {
     match build {
         Some(build) => format!(
-            "no Wasm module at {}: build it with `{}` (or `shopify app build`)",
+            "no Wasm module at {}: build it with `{build}` (or `shopify app build`)",
             wasm_path.display(),
-            build.describe()
         ),
         None => format!(
             "no Wasm module at {}: run `shopify app build`",
@@ -424,14 +421,13 @@ impl App {
             return;
         };
         let function = &self.functions[index];
-        let before = missing_module(&function.wasm_path, function.build());
+        let before = missing_module(&function.wasm_path, function.build_hint());
         let built = module.is_file();
         let message = format!(
             "no Wasm module yet: the watch builds it with `{}`",
             function
-                .build()
-                .as_ref()
-                .map_or("shopify app build", Build::describe)
+                .build_hint()
+                .unwrap_or_else(|| "shopify app build".to_string())
         );
         self.diagnostics.retain(|diagnostic| {
             !(diagnostic.extension.as_deref() == Some(handle) && diagnostic.message == before)
@@ -719,7 +715,7 @@ fn load_function(
     if !function.built() {
         app.warn(
             Some(handle),
-            missing_module(&function.wasm_path, function.build()),
+            missing_module(&function.wasm_path, function.build_hint()),
         );
     }
     function

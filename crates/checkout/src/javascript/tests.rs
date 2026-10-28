@@ -102,7 +102,7 @@ fn a_javascript_function_is_built_by_lsf_and_runs() {
             .iter()
             .any(|diagnostic| diagnostic
                 .message
-                .contains("build it with `lsf function build`")),
+                .contains("build it with `lsf function build bulk` (or `shopify app build`)")),
     );
 
     let built = app.build().unwrap();
@@ -198,6 +198,39 @@ fn globs_match_files_of_the_function() {
 }
 
 #[test]
+fn documents_globs_exclude_choose_and_go_up_as_graphql_codegen_s() {
+    let app = TempApp::new(&[
+        ("f/src/a.graphql", ""),
+        ("f/src/b.graphql", ""),
+        ("f/src/legacy/old.graphql", ""),
+        ("f/queries/c.graphql", ""),
+        ("shared/d.graphql", ""),
+    ]);
+    let dir = app.0.join("f");
+    let documents = |patterns: &[&str]| {
+        let patterns: Vec<String> = patterns.iter().map(|p| p.to_string()).collect();
+        documents_of(&dir, &patterns)
+    };
+    assert_eq!(
+        documents(&["src/**/*.graphql", "!src/legacy/*.graphql"]).unwrap(),
+        ["src/a.graphql", "src/b.graphql"]
+    );
+    assert_eq!(
+        documents(&["{src,queries}/*.graphql", "!src/b.graphql"]).unwrap(),
+        ["queries/c.graphql", "src/a.graphql"]
+    );
+    assert_eq!(
+        documents(&["../shared/*.graphql"]).unwrap(),
+        ["../shared/d.graphql"]
+    );
+    assert_eq!(
+        documents(&["src/[ab].graphql"]).unwrap_err(),
+        "the documents glob `src/[ab].graphql` uses a syntax lsf does not read (only `*`, `**`, \
+         `?`, `{a,b}` and `!`)"
+    );
+}
+
+#[test]
 fn dotenv_files_are_read_as_the_cli_reads_them() {
     let env = dotenv(
         "# a comment\nPLAIN=value # not this\nexport EXPORTED=1\nDOUBLE=\"two\\nlines\"\nSINGLE='as is \\n'\n\nEMPTY=\n",
@@ -207,6 +240,11 @@ fn dotenv_files_are_read_as_the_cli_reads_them() {
     assert_eq!(env["DOUBLE"], "two\nlines");
     assert_eq!(env["SINGLE"], "as is \\n");
     assert_eq!(env["EMPTY"], "");
+
+    let env = dotenv("HOST=\"example.com\" # prod\nHASH=\"a#b\"\nESCAPED='it\\'s'\n");
+    assert_eq!(env["HOST"], "example.com");
+    assert_eq!(env["HASH"], "a#b");
+    assert_eq!(env["ESCAPED"], "it\\'s");
 }
 
 /// The playground's TypeScript Function, built by lsf from its source, is the module committed

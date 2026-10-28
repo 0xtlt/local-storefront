@@ -199,12 +199,10 @@ fn types(function: &FunctionExtension, plan: &typegen::Plan) -> Result<PathBuf, 
         }
     };
     let mut documents = Vec::new();
-    for pattern in &plan.documents {
-        for path in glob(dir, pattern) {
-            let text = std::fs::read_to_string(dir.join(&path))
-                .map_err(|error| format!("cannot read {path}: {error}"))?;
-            documents.push((path, text));
-        }
+    for path in documents_of(dir, &plan.documents)? {
+        let text = std::fs::read_to_string(dir.join(&path))
+            .map_err(|error| format!("cannot read {path}: {error}"))?;
+        documents.push((path, text));
     }
     let types = typegen::generate(&schema, &documents, &plan.options)?;
     let path = resolve::normalize(&dir.join(&plan.output));
@@ -214,8 +212,47 @@ fn types(function: &FunctionExtension, plan: &typegen::Plan) -> Result<PathBuf, 
     Ok(path)
 }
 
-/// The files of `dir` a glob matches (`src/*.graphql`, `src/**/*.graphql`), relative to `dir`
-/// with `/`, sorted. `node_modules` and hidden folders are not searched.
+/// The files graphql-codegen's `documents` globs name, relative to `dir`: those the patterns
+/// match, but those a `!pattern` matches. `{a,b}` is either; other glob syntax is an error
+/// rather than a different set of files.
+pub fn documents_of(dir: &Path, patterns: &[String]) -> Result<Vec<String>, String> {
+    let mut included = std::collections::BTreeSet::new();
+    let mut excluded = std::collections::BTreeSet::new();
+    for pattern in patterns {
+        let (set, pattern) = match pattern.strip_prefix('!') {
+            Some(pattern) => (&mut excluded, pattern),
+            None => (&mut included, pattern.as_str()),
+        };
+        if pattern.contains(['[', ']', '(', ')']) {
+            return Err(format!(
+                "the documents glob `{pattern}` uses a syntax lsf does not read (only `*`, `**`, \
+                 `?`, `{{a,b}}` and `!`)"
+            ));
+        }
+        for pattern in braces(pattern) {
+            set.extend(glob(dir, &pattern));
+        }
+    }
+    Ok(included.difference(&excluded).cloned().collect())
+}
+
+/// The patterns `{a,b}` stands for: `src/{a,b}.graphql` is `src/a.graphql` and `src/b.graphql`.
+fn braces(pattern: &str) -> Vec<String> {
+    let Some(open) = pattern.find('{') else {
+        return vec![pattern.to_string()];
+    };
+    let Some(close) = pattern[open..].find('}').map(|close| open + close) else {
+        return vec![pattern.to_string()];
+    };
+    let (head, tail) = (&pattern[..open], &pattern[close + 1..]);
+    pattern[open + 1..close]
+        .split(',')
+        .flat_map(|choice| braces(&format!("{head}{choice}{tail}")))
+        .collect()
+}
+
+/// The files of `dir` a glob matches (`src/*.graphql`, `src/**/*.graphql`, `../shared/*.graphql`),
+/// relative to `dir` with `/`, sorted. `node_modules` and hidden folders are not searched.
 pub fn glob(dir: &Path, pattern: &str) -> Vec<String> {
     let pattern: Vec<&str> = pattern
         .trim_start_matches("./")
@@ -233,6 +270,10 @@ fn walk(dir: &Path, prefix: String, pattern: &[&str], found: &mut Vec<String>) {
     let Some((first, rest)) = pattern.split_first() else {
         return;
     };
+    if *first == ".." {
+        walk(&dir.join(".."), format!("{prefix}../"), rest, found);
+        return;
+    }
     if *first == "**" {
         // Zero folders, then one more.
         walk(dir, prefix.clone(), rest, found);
@@ -298,8 +339,9 @@ fn environment(app_dir: &Path) -> BTreeMap<String, String> {
     env
 }
 
-/// The variables of a `.env` file: `NAME=value` lines, `export` before the name allowed,
-/// values in quotes or not, `#` comments.
+/// The variables of a `.env` file, as the dotenv library of Shopify's CLI reads them: `NAME=value`
+/// lines, `export` before the name allowed, `#` comments. A value in quotes is what the quotes
+/// hold (`\n` is a new line in double quotes); one without ends at a `#`.
 fn dotenv(text: &str) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     for line in text.lines() {
@@ -312,27 +354,38 @@ fn dotenv(text: &str) -> BTreeMap<String, String> {
             continue;
         };
         let value = value.trim();
-        let value = if let Some(quoted) = value
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-        {
-            quoted.replace("\\n", "\n")
-        } else if let Some(quoted) = value
-            .strip_prefix('\'')
-            .and_then(|value| value.strip_suffix('\''))
-        {
-            quoted.to_string()
-        } else {
-            value
-                .split(" #")
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_string()
-        };
+        let quoted = value
+            .chars()
+            .next()
+            .filter(|c| matches!(c, '"' | '\'' | '`'));
+        let value =
+            match quoted.and_then(|quote| closing(&value[1..], quote).map(|end| (quote, end))) {
+                Some(('"', end)) => value[1..1 + end].replace("\\n", "\n").replace("\\r", "\r"),
+                Some((_, end)) => value[1..1 + end].to_string(),
+                None => value
+                    .split('#')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+            };
         env.insert(name.trim().to_string(), value);
     }
     env
+}
+
+/// Where the quote that closes a value is, in what follows the opening one: the first not after
+/// a backslash.
+fn closing(text: &str, quote: char) -> Option<usize> {
+    let mut escaped = false;
+    for (index, c) in text.char_indices() {
+        match c {
+            '\\' if !escaped => escaped = true,
+            c if c == quote && !escaped => return Some(index),
+            _ => escaped = false,
+        }
+    }
+    None
 }
 
 /// Writes a file whole: to a file next to it, renamed over it, so that nothing reads it half

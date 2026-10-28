@@ -65,6 +65,7 @@ pub fn bundle(options: &Options) -> Result<String, String> {
         modules: Vec::new(),
         ids: HashMap::new(),
         queue: VecDeque::new(),
+        exported: Vec::new(),
     };
     // The CLI's entry is bundled from the Function's folder.
     let run = graph.id(resolve::resolve(resolve::RUN, options.root, Kind::Import)?);
@@ -72,6 +73,9 @@ pub fn bundle(options: &Options) -> Result<String, String> {
     while let Some(id) = graph.queue.pop_front() {
         graph.analyze(id)?;
     }
+    graph.exported = (0..graph.modules.len())
+        .map(|id| graph.compute_exports_of(id))
+        .collect();
     graph.check_imports()?;
     let entry_name = graph.modules[user].name.clone();
     for export in options.exports {
@@ -171,6 +175,8 @@ struct Graph<'a> {
     modules: Vec<Module>,
     ids: HashMap<Resolved, usize>,
     queue: VecDeque<usize>,
+    /// What each module exports ([`Graph::exports_of`]), once every module is read.
+    exported: Vec<Option<BTreeSet<String>>>,
 }
 
 /// What a module is, from its first reading.
@@ -194,8 +200,8 @@ struct Module {
     stars: Vec<usize>,
     /// The constant members of the enums it declares, written as JavaScript, by enum.
     enums: Enums,
-    /// The modules its `require` calls name, in order.
-    requires: Vec<usize>,
+    /// The modules its `require` calls name, by where the call starts in `javascript`.
+    requires: BTreeMap<u32, usize>,
     /// The names it imports from other modules, to check they are exported.
     named: Vec<NamedImport>,
     /// Every name it declares, in any scope: a top-level name of another module must not be
@@ -221,8 +227,8 @@ struct StatementUse {
     effects: bool,
     /// The top-level names it reads.
     uses: Vec<Use>,
-    /// The modules it `require`s.
-    requires: Vec<usize>,
+    /// The modules it `require`s, by where the call starts.
+    requires: Vec<(u32, usize)>,
 }
 
 enum Use {
@@ -250,6 +256,9 @@ struct NamedImport {
     from: usize,
     name: String,
     line: usize,
+    /// A re-export in TypeScript (`export { Foo } from`): a name its module does not export is a
+    /// type, which esbuild leaves out.
+    maybe_type: bool,
 }
 
 /// What the Function needs of each module.
@@ -294,7 +303,7 @@ impl Graph<'_> {
             exports: BTreeMap::new(),
             stars: Vec::new(),
             enums: HashMap::new(),
-            requires: Vec::new(),
+            requires: BTreeMap::new(),
             named: Vec::new(),
             symbols: BTreeSet::new(),
             globals: BTreeSet::new(),
@@ -360,6 +369,7 @@ impl Graph<'_> {
         let mut reader = Reader {
             text: &javascript,
             name: &name,
+            typescript: source_type.is_typescript(),
             scoping,
             resolve: &mut resolve,
             module: id,
@@ -404,7 +414,11 @@ impl Graph<'_> {
 
     /// The names a module exports, with those of its `export * from`; `None` when a CommonJS
     /// module is among them.
-    fn exports_of(&self, id: usize) -> Option<BTreeSet<String>> {
+    fn exports_of(&self, id: usize) -> Option<&BTreeSet<String>> {
+        self.exported[id].as_ref()
+    }
+
+    fn compute_exports_of(&self, id: usize) -> Option<BTreeSet<String>> {
         let mut names = BTreeSet::new();
         let mut seen = BTreeSet::new();
         let mut stack = vec![(id, true)];
@@ -438,7 +452,7 @@ impl Graph<'_> {
             for import in &module.named {
                 let target = &self.modules[import.from];
                 // A JSON file's keys are its exports.
-                if target.form == Form::Json {
+                if target.form == Form::Json || import.maybe_type {
                     continue;
                 }
                 if self
@@ -459,7 +473,7 @@ impl Graph<'_> {
     /// `require` runs (its module would run at the `require`, not in the order of the imports).
     fn check_requires(&self) -> Result<(), String> {
         for module in &self.modules {
-            for &required in &module.requires {
+            for &required in module.requires.values() {
                 let target = &self.modules[required];
                 if target.form == Form::Esm {
                     return Err(format!(
@@ -604,7 +618,7 @@ impl Graph<'_> {
                     for &star in &module.stars {
                         work.push_back(Work::Whole(star));
                     }
-                    for &required in &module.requires {
+                    for &required in module.requires.values() {
                         work.push_back(Work::Whole(required));
                     }
                 }
@@ -644,7 +658,7 @@ impl Graph<'_> {
                             }
                         }
                     }
-                    for &required in &statement.requires {
+                    for &(_, required) in &statement.requires {
                         work.push_back(Work::Whole(required));
                     }
                 }
@@ -711,7 +725,12 @@ impl Graph<'_> {
         // scope: an import of it there would read that one), a module reads a global of that
         // name, or a module before took it.
         let mut declaring: HashMap<&str, usize> = HashMap::new();
-        let mut taken: BTreeSet<String> = BTreeSet::new();
+        // The globals the CommonJS modules and the runtime read, as well as the ES modules: a
+        // top-level name would hide them.
+        let mut taken: BTreeSet<String> = BTreeSet::from(["Object".to_string()]);
+        for &id in &layout.commonjs {
+            taken.extend(self.modules[id].globals.iter().cloned());
+        }
         for &id in &layout.order {
             let module = &self.modules[id];
             for symbol in &module.symbols {
@@ -810,8 +829,14 @@ impl Graph<'_> {
             }
             let name = scoping.symbol_name(symbol);
             if let Some(import) = module.imports.get(name) {
-                let read = layout.expression(self.target(import.from, import.name.as_deref()));
-                writer.reads.insert(symbol, read);
+                if import.name.is_none() {
+                    writer.namespaces.insert(symbol, import.from);
+                }
+                // A namespace only read through its members has no object: they are read where
+                // they are declared.
+                if let Some(read) = layout.read(&self.target(import.from, import.name.as_deref())) {
+                    writer.reads.insert(symbol, read);
+                }
             } else if let Some(renamed) = layout.names.get(&(id, name.to_string()))
                 && renamed != name
             {
@@ -892,9 +917,9 @@ impl Graph<'_> {
             let getters: Vec<String> = module
                 .exports
                 .keys()
-                .map(|name| {
-                    let (value, _) = layout.expression(self.target(id, Some(name)));
-                    format!("{}: () => {value}", quote(name))
+                .filter_map(|name| {
+                    let (value, _) = layout.read(&self.target(id, Some(name)))?;
+                    Some(format!("{}: () => {value}", quote(name)))
                 })
                 .collect();
             head.push_str(&format!(
@@ -902,8 +927,9 @@ impl Graph<'_> {
                 getters.join(", ")
             ));
             for star in &module.stars {
-                let (source, _) = layout.expression(self.target(*star, None));
-                head.push_str(&format!("__lsf_reexport({namespace}, {source});\n"));
+                if let Some((source, _)) = layout.read(&self.target(*star, None)) {
+                    head.push_str(&format!("__lsf_reexport({namespace}, {source});\n"));
+                }
             }
         }
         format!("{head}{}\n", body.trim_end())
@@ -942,15 +968,19 @@ struct Layout {
 impl Layout {
     /// The expression that reads `target`, and whether it is a plain name.
     fn expression(&self, target: Target) -> (String, bool) {
-        match target {
-            Target::Local(id, name) => match self.names.get(&(id, name.clone())) {
-                Some(name) => (name.clone(), true),
-                None => (name, true),
-            },
-            Target::Namespace(id) => (self.namespaces[&id].clone(), true),
-            Target::CommonJs(id, None) => (self.interop[&id].clone(), true),
-            Target::CommonJs(id, Some(name)) => (member(&self.interop[&id], &name), false),
-        }
+        self.read(&target)
+            .expect("what the Function needs has a name in the bundle")
+    }
+
+    /// The expression that reads `target`, and whether it is a plain name; `None` for a name
+    /// no module declares (a type re-exported in TypeScript), or a namespace that has no object.
+    fn read(&self, target: &Target) -> Option<(String, bool)> {
+        Some(match target {
+            Target::Local(id, name) => (self.names.get(&(*id, name.clone()))?.clone(), true),
+            Target::Namespace(id) => (self.namespaces.get(id)?.clone(), true),
+            Target::CommonJs(id, None) => (self.interop.get(id)?.clone(), true),
+            Target::CommonJs(id, Some(name)) => (member(self.interop.get(id)?, name), false),
+        })
     }
 }
 
@@ -1190,6 +1220,8 @@ fn required(call: &CallExpression, scoping: &Scoping) -> Option<Result<String, (
 struct Reader<'s, 'r> {
     text: &'s str,
     name: &'s str,
+    /// Whether the module was TypeScript.
+    typescript: bool,
     scoping: &'s Scoping,
     resolve: &'r mut dyn FnMut(&str, Kind) -> Result<usize, String>,
     module: usize,
@@ -1226,6 +1258,7 @@ impl Reader<'_, '_> {
             from,
             name: name.to_string(),
             line,
+            maybe_type: false,
         });
     }
 
@@ -1275,6 +1308,9 @@ impl Reader<'_, '_> {
                     for specifier in &export.specifiers {
                         let local = specifier.local.name().to_string();
                         self.named(from, &local, specifier.span.start);
+                        if self.typescript {
+                            self.named.last_mut().expect("just pushed").maybe_type = true;
+                        }
                         self.exports.insert(
                             specifier.exported.name().to_string(),
                             Export::From(from, local),
@@ -1438,7 +1474,7 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         match required(call, self.scoping) {
             Some(Ok(specifier)) => match (self.resolve)(&specifier, Kind::Require) {
-                Ok(id) => self.statement.requires.push(id),
+                Ok(id) => self.statement.requires.push((call.span.start, id)),
                 Err(error) => {
                     if self.error.is_none() {
                         self.error = Some(error);
@@ -1590,6 +1626,8 @@ struct Writer<'s, 'g> {
     edits: Vec<(u32, u32, String)>,
     /// What each imported binding reads, and whether that is a plain name.
     reads: HashMap<SymbolId, (String, bool)>,
+    /// The namespace imports (`* as name`), and the module of each.
+    namespaces: HashMap<SymbolId, usize>,
     /// The top-level bindings renamed.
     renames: HashMap<SymbolId, String>,
     /// Imported bindings called (`f()`, f`…`): called as `(0, object.f)()` when what they read
@@ -1599,8 +1637,8 @@ struct Writer<'s, 'g> {
     shorthands: BTreeSet<u32>,
     /// Member expressions written to: never inlined.
     targets: BTreeSet<u32>,
-    /// The modules of the module's `require` calls, in the order the first phase met them.
-    requires: std::slice::Iter<'s, usize>,
+    /// The modules of the module's `require` calls, by where the call starts.
+    requires: &'s BTreeMap<u32, usize>,
 }
 
 impl<'s, 'g> Writer<'s, 'g> {
@@ -1612,11 +1650,12 @@ impl<'s, 'g> Writer<'s, 'g> {
             scoping,
             edits: Vec::new(),
             reads: HashMap::new(),
+            namespaces: HashMap::new(),
             renames: HashMap::new(),
             callees: BTreeSet::new(),
             shorthands: BTreeSet::new(),
             targets: BTreeSet::new(),
-            requires: graph.modules[module].requires.iter(),
+            requires: &graph.modules[module].requires,
         }
     }
 
@@ -1695,11 +1734,8 @@ impl<'a> Visit<'a> for Writer<'_, '_> {
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         if required(call, self.scoping).is_some() {
-            let id = self
-                .requires
-                .next()
-                .expect("the first phase read this require");
-            let call_text = format!("{}()", self.layout.wrappers[id]);
+            let id = self.requires[&call.span.start];
+            let call_text = format!("{}()", self.layout.wrappers[&id]);
             self.edit(call.span, call_text);
             return;
         }
@@ -1724,19 +1760,31 @@ impl<'a> Visit<'a> for Writer<'_, '_> {
     }
 
     fn visit_static_member_expression(&mut self, expression: &StaticMemberExpression<'a>) {
+        let property = &expression.property.name;
         if !self.targets.contains(&expression.span.start)
             && let Expression::Identifier(object) = &expression.object
             && let Some(symbol) = self.symbol(object)
-            && self.reads.contains_key(&symbol)
-            && let Some(constant) = self.graph.enum_member(
-                self.module,
-                self.scoping.symbol_name(symbol),
-                &expression.property.name,
-            )
         {
-            let replacement = format!("{constant} /* {} */", expression.property.name);
-            self.edit(expression.span, replacement);
-            return;
+            if let Some(constant) =
+                self.graph
+                    .enum_member(self.module, self.scoping.symbol_name(symbol), property)
+            {
+                // `-Dir.Down` must not become `--1`.
+                let replacement = if constant.starts_with('-') {
+                    format!("({constant} /* {property} */)")
+                } else {
+                    format!("{constant} /* {property} */")
+                };
+                self.edit(expression.span, replacement);
+                return;
+            }
+            // `namespace.name` reads `name` where it is declared, as esbuild does.
+            if let Some(&from) = self.namespaces.get(&symbol)
+                && let Some((read, _)) = self.layout.read(&self.graph.target(from, Some(property)))
+            {
+                self.edit(expression.span, read);
+                return;
+            }
         }
         if let Expression::StaticMemberExpression(object) = &expression.object
             && object.property.name == "env"

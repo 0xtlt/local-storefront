@@ -477,3 +477,85 @@ fn a_require_of_an_es_module_is_an_error() {
         "src/index.js: `require` of src/other.js, an ES module, cannot be bundled: import it"
     );
 }
+
+#[test]
+fn a_namespace_read_only_through_its_members_reads_them_where_they_are_declared() {
+    let folder = Folder::new(&[
+        (
+            "src/util.js",
+            "export function f() { return 'f'; }\nexport function g() { return 'g'; }\n",
+        ),
+        (
+            "src/index.js",
+            "import * as util from './util.js';\nexport function run() { return util.f(); }\n",
+        ),
+    ]);
+    let code = folder.bundle(&["run"]).unwrap();
+    assert!(!code.contains("function g"), "{code}");
+    assert_eq!(folder.run("run", json!({})).0, json!("f"));
+}
+
+#[test]
+fn a_require_in_code_left_out_does_not_shift_the_others() {
+    let folder = Folder::new(&[
+        ("src/a.json", r#"{ "name": "a" }"#),
+        ("src/b.json", r#"{ "name": "b" }"#),
+        (
+            "src/index.js",
+            r#"function unused() { return require('./a.json'); }
+function used() { return require('./b.json'); }
+export function run() { return used().name; }
+"#,
+        ),
+    ]);
+    assert_eq!(folder.run("run", json!({})).0, json!("b"));
+}
+
+#[test]
+fn a_type_re_exported_in_typescript_is_left_out() {
+    let folder = Folder::new(&[
+        (
+            "src/types.ts",
+            "export interface Foo { id: string }\nexport const one = 1;\n",
+        ),
+        ("src/barrel.ts", "export { Foo, one } from './types';\n"),
+        (
+            "src/index.ts",
+            "import { one, type Foo } from './barrel';\nimport * as barrel from './barrel';\nexport function run(): Foo { return { id: String(one), keys: Object.keys(barrel) } as any; }\n",
+        ),
+    ]);
+    assert_eq!(
+        folder.run("run", json!({})).0,
+        json!({ "id": "1", "keys": ["one"] })
+    );
+}
+
+#[test]
+fn negative_enum_members_are_inlined_in_parentheses() {
+    let folder = Folder::new(&[
+        ("src/dir.ts", "export enum Dir { Down = -1, Up = 1 }\n"),
+        (
+            "src/index.ts",
+            "import { Dir } from './dir';\nexport function run() { return [-Dir.Down, Dir.Down ** 2, Dir.Down.toString(), Dir.Up.toString()]; }\n",
+        ),
+    ]);
+    assert_eq!(folder.run("run", json!({})).0, json!([1, 1, "-1", "1"]));
+}
+
+#[test]
+fn a_top_level_name_does_not_hide_a_global_a_commonjs_module_reads() {
+    let folder = Folder::new(&[
+        (
+            "node_modules/env/index.js",
+            "module.exports = typeof self !== 'undefined' ? 'browser' : 'other';\n",
+        ),
+        (
+            "src/index.js",
+            "import env from 'env';\nconst self = { name: 'mine' };\nexport function run() { return { env, self: self.name }; }\n",
+        ),
+    ]);
+    assert_eq!(
+        folder.run("run", json!({})).0,
+        json!({ "env": "other", "self": "mine" })
+    );
+}
