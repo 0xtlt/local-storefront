@@ -23,17 +23,19 @@ function send(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+/** The JSON object of the body, or null when the body is not one. */
 async function readJson(request) {
   let text = "";
   for await (const chunk of request) text += chunk;
   try {
-    return JSON.parse(text || "{}");
+    const value = JSON.parse(text || "{}");
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
-const server = createServer(async (request, response) => {
+async function handle(request, response) {
   const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
   console.log(`${request.method} ${url.pathname}${url.search}`);
 
@@ -49,6 +51,7 @@ const server = createServer(async (request, response) => {
   // discount-network: the percentage of the partner price, for the cart it is told about.
   if (request.method === "POST" && url.pathname === "/discount") {
     const cart = await readJson(request);
+    if (!cart) return send(response, 400, { error: "the body is not a JSON object" });
     const percentage = cart.subtotal >= 100 ? 15 : 12;
     console.log(`  cart of ${cart.items} items, ${cart.subtotal} ${cart.currency}: ${percentage}%`);
     return send(response, 200, { percentage, message: "Partner price" });
@@ -63,10 +66,27 @@ const server = createServer(async (request, response) => {
   }
 
   send(response, 404, { error: `nothing at ${request.method} ${url.pathname}` });
-});
+}
 
-server.listen(port, () => {
-  console.log(`fake API of the checkout playground: http://localhost:${port}`);
-  console.log("  POST /discount  ->  {percentage, message}");
-  console.log("  GET  /stock?skus=A,B  ->  {unavailable: [...]}");
-});
+// On the loopback addresses only, both of them: `localhost` is one or the other, depending on
+// the machine. A machine without IPv6 has the first one only.
+let listening = 0;
+for (const host of ["127.0.0.1", "::1"]) {
+  const server = createServer((request, response) => {
+    handle(request, response).catch((error) => {
+      console.error(error);
+      if (!response.headersSent) send(response, 500, { error: String(error?.message ?? error) });
+      else response.destroy();
+    });
+  });
+  server.on("error", (error) => {
+    if (host === "::1" && (error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT")) return;
+    throw error;
+  });
+  server.listen(port, host, () => {
+    if (++listening > 1) return;
+    console.log(`fake API of the checkout playground: http://localhost:${port}`);
+    console.log("  POST /discount  ->  {percentage, message}");
+    console.log("  GET  /stock?skus=A,B  ->  {unavailable: [...]}");
+  });
+}

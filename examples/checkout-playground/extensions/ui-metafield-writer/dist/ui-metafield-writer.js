@@ -1,8 +1,8 @@
 // ui-metafield-writer · API 2027-01 · purchase.checkout.block.render
 // Writes the cart metafield `$app:playground.packaging` from a select
 // (`applyMetafieldChange` updateCartMetafield) and removes it (removeCartMetafield). The toml
-// declares it with `owner_type = "CART"`, which 2027-01 requires. Lists `appMetafields`: the
-// Functions read the same metafield, see the Functions dialog.
+// declares it with `owner_type = "CART"`, which 2027-01 requires, and lists `appMetafields`.
+// No Function of the playground reads it.
 (() => {
   // h(tag, attributes, ...children) makes a Polaris web component: attributes are set as
   // attributes, functions become listeners (`onClick` listens to `click`), children are

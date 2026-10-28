@@ -3,12 +3,15 @@
 //! each `fn-*` scenario do what its description says.
 //!
 //! No network is needed. `discount-network` and `validation-network` call the mock server of
-//! the playground (`node tools/fake-api.mjs`, port 8787): without it their requests answer 502,
-//! which is what is checked; when it happens to run, its answers are checked instead.
+//! the playground (`node tools/fake-api.mjs`, `http://localhost:8787`). The tests never depend
+//! on what listens there: they run on a copy of the store data whose URLs lead to a port nothing
+//! listens on (the requests answer 502), and to a server of their own for the answers.
 
-use std::net::{SocketAddr, TcpStream};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lsf_checkout::{CheckoutResult, FunctionRun};
 
@@ -31,7 +34,108 @@ fn scenarios() -> Vec<String> {
     names
 }
 
+/// The URL of the mock server in the store data.
+const FAKE_API: &str = "http://localhost:8787";
+
+/// A copy of the store data of the playground whose network Functions call `base` instead of
+/// the mock server.
+fn data_calling(base: &str) -> PathBuf {
+    static COPIES: AtomicUsize = AtomicUsize::new(0);
+    let to = std::env::temp_dir().join(format!(
+        "lsf-playground-{}-{}",
+        std::process::id(),
+        COPIES.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&to);
+    copy_dir(&playground().join("shopify-local"), &to);
+    let store = to.join("store.json");
+    let text = std::fs::read_to_string(&store).unwrap();
+    assert!(text.contains(FAKE_API), "the store data calls {FAKE_API}");
+    std::fs::write(&store, text.replace(FAKE_API, base)).unwrap();
+    to
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            copy_dir(&path, &to.join(entry.file_name()));
+        } else {
+            std::fs::copy(&path, to.join(entry.file_name())).unwrap();
+        }
+    }
+}
+
+/// The store data the tests run on: the network Functions call a port nothing listens on.
+fn data() -> &'static Path {
+    static DATA: OnceLock<PathBuf> = OnceLock::new();
+    DATA.get_or_init(|| {
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        data_calling(&format!("http://127.0.0.1:{port}"))
+    })
+}
+
+/// A server of the test that answers as the mock server does: 12% off, and the slate mug out of
+/// stock. Its base URL.
+fn serve_fake_api() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+            let mut length = 0;
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                    break;
+                }
+                let (name, value) = header.split_once(':').unwrap_or(("", ""));
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let target = request_line.split(' ').nth(1).unwrap_or("");
+            let (status, answer) = if target == "/discount" {
+                (
+                    "200 OK",
+                    r#"{"percentage":12,"message":"Partner price"}"#.to_string(),
+                )
+            } else if let Some(skus) = target.strip_prefix("/stock?skus=") {
+                let out: Vec<&str> = skus.split(',').filter(|sku| *sku == "MUG-SLT").collect();
+                (
+                    "200 OK",
+                    serde_json::json!({ "unavailable": out }).to_string(),
+                )
+            } else {
+                ("404 Not Found", "{}".to_string())
+            };
+            let mut stream = reader.into_inner();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+        }
+    });
+    base
+}
+
 fn run_at(scenario: &str, step: Step) -> CheckoutResult {
+    run_on(data(), scenario, step)
+}
+
+fn run_on(data: &Path, scenario: &str, step: Step) -> CheckoutResult {
     let dir = playground();
     let args = RunArgs {
         handles: vec![],
@@ -44,7 +148,7 @@ fn run_at(scenario: &str, step: Step) -> CheckoutResult {
         step,
         format: Format::Json,
     };
-    match compute(&dir, Some(&dir.join("shopify-local")), &[], &args) {
+    match compute(&dir, Some(data), &[], &args) {
         Ok(ran) => ran.result,
         Err(error) => panic!("{scenario}: {error}"),
     }
@@ -125,12 +229,6 @@ fn lines(result: &CheckoutResult) -> Vec<(&str, u32, i64)> {
         .iter()
         .map(|line| (line.title.as_str(), line.quantity, line.total))
         .collect()
-}
-
-/// Whether the mock server of the playground answers on its port.
-fn fake_api_runs() -> bool {
-    let address: SocketAddr = "127.0.0.1:8787".parse().unwrap();
-    TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok()
 }
 
 #[test]
@@ -299,6 +397,40 @@ fn the_mix_scenarios_run_functions_and_checkout_ui_extensions_together() {
 }
 
 #[test]
+fn the_network_functions_read_what_the_server_answers() {
+    let base = serve_fake_api();
+    let data = data_calling(&base);
+
+    let result = run_on(&data, "fn-discount-network", Step::Completion);
+    assert_ok(&result);
+    let fetch = the_run(
+        &result,
+        "discount-network",
+        "cart.lines.discounts.generate.fetch",
+    );
+    let exchange = fetch.exchange.as_ref().expect("the request was sent");
+    assert_eq!(exchange.request.url, format!("{base}/discount"));
+    assert_eq!(exchange.response.status, 200);
+    assert_eq!(discount(&result, "Partner price: 12% off"), 768);
+
+    let result = run_on(&data, "fn-validation-network", Step::Completion);
+    assert_ok(&result);
+    let fetch = the_run(
+        &result,
+        "validation-network",
+        "cart.validations.generate.fetch",
+    );
+    let exchange = fetch.exchange.as_ref().expect("the request was sent");
+    assert_eq!(
+        exchange.request.url,
+        format!("{base}/stock?skus=MUG-SLT,TOTE-NAT")
+    );
+    assert_eq!(exchange.response.status, 200);
+    assert_eq!(errors(&result), ["Ceramic Mug is out of stock"]);
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+#[test]
 fn every_fn_scenario_does_what_it_says() {
     let names: Vec<String> = scenarios()
         .into_iter()
@@ -430,20 +562,17 @@ fn check(name: &str, result: &CheckoutResult) {
                 "cart.lines.discounts.generate.fetch",
             );
             let exchange = fetch.exchange.as_ref().expect("the request was sent");
-            assert_eq!(exchange.request.url, "http://localhost:8787/discount");
-            if fake_api_runs() {
-                assert_eq!(exchange.response.status, 200);
-                assert_eq!(discount(result, "Partner price: 12% off"), 768);
-            } else {
-                assert_eq!(exchange.response.status, 502);
-                assert!(result.discounts.is_empty());
-                let run = the_run(
-                    result,
-                    "discount-network",
-                    "cart.lines.discounts.generate.run",
-                );
-                assert!(run.logs.contains("the server answered 502"), "{}", run.logs);
-            }
+            assert!(exchange.request.url.ends_with("/discount"));
+            // Nothing answers (see `data`); the answers are in
+            // `the_network_functions_read_what_the_server_answers`.
+            assert_eq!(exchange.response.status, 502);
+            assert!(result.discounts.is_empty());
+            let run = the_run(
+                result,
+                "discount-network",
+                "cart.lines.discounts.generate.run",
+            );
+            assert!(run.logs.contains("the server answered 502"), "{}", run.logs);
         }
         // Delivery customizations.
         "fn-delivery-hide-express" => {
@@ -558,16 +687,16 @@ fn check(name: &str, result: &CheckoutResult) {
                 "cart.validations.generate.fetch",
             );
             let exchange = fetch.exchange.as_ref().expect("the request was sent");
-            assert_eq!(
-                exchange.request.url,
-                "http://localhost:8787/stock?skus=MUG-SLT,TOTE-NAT"
+            assert!(
+                exchange
+                    .request
+                    .url
+                    .ends_with("/stock?skus=MUG-SLT,TOTE-NAT"),
+                "{}",
+                exchange.request.url
             );
-            if fake_api_runs() {
-                assert_eq!(errors(result), ["Ceramic Mug is out of stock"]);
-            } else {
-                assert_eq!(exchange.response.status, 502);
-                assert!(result.errors.is_empty(), "{:?}", errors(result));
-            }
+            assert_eq!(exchange.response.status, 502);
+            assert!(result.errors.is_empty(), "{:?}", errors(result));
         }
         // Cart transforms.
         "fn-cart-transform-expand" => {

@@ -116,7 +116,7 @@ lsf function run --app . --scenario fn-validation-street-number --step interacti
 
 `discount-network` and `validation-network` have a `.fetch` target: the checkout sends the HTTP
 request they ask for, to `http://localhost:8787`. Start the mock server for real answers (no
-dependency, Node only):
+dependency, Node only; it listens on the loopback addresses only):
 
 ```bash
 node tools/fake-api.mjs        # or, from the root: mise run playground:api
@@ -147,7 +147,9 @@ app build` does. `lsf checkout --app . --build` runs the same command for each F
 `crates/cli/src/commands/function/playground.rs` checks that the store data and every scenario
 are valid, that the `lsf checkout init` scenarios run no broken Function, and what each `fn-*`
 scenario comes to (the Functions that ran, a discount, a hidden option, an error message). It
-needs neither the network nor the mock server:
+needs neither the network nor the mock server, and does not care what listens on port 8787: it
+runs on a copy of the store data whose network Functions call a closed port (502), or a small
+server of the test (its answers):
 
 ```bash
 cargo test -p lsf playground
