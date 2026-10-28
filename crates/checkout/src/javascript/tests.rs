@@ -208,3 +208,71 @@ fn dotenv_files_are_read_as_the_cli_reads_them() {
     assert_eq!(env["SINGLE"], "as is \\n");
     assert_eq!(env["EMPTY"], "");
 }
+
+/// The playground's TypeScript Function, built by lsf from its source, is the module committed
+/// in the playground, and does what the module Shopify's CLI 4.9.5 built from the same source
+/// (`tests/fixtures/javy/discount.wasm`) does, in as many instructions within 1%.
+#[test]
+fn the_playground_function_built_by_lsf_runs_as_the_one_shopify_s_cli_built() {
+    let playground = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/checkout-playground/extensions/discount-typescript");
+    let read = |path: &str| std::fs::read_to_string(playground.join(path)).unwrap();
+    let files = [
+        "shopify.extension.toml",
+        "package.json",
+        "src/index.ts",
+        "src/cart_lines_discounts_generate_run.ts",
+        "src/cart_lines_discounts_generate_run.graphql",
+    ]
+    .map(|path| (format!("extensions/discount-typescript/{path}"), read(path)));
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, content)| (path.as_str(), content.as_str()))
+        .collect();
+    let app = TempApp::new(&files);
+    let built = app.build().unwrap();
+    assert_eq!(
+        std::fs::read(&built.module).unwrap(),
+        std::fs::read(playground.join("dist/function.wasm")).unwrap(),
+        "the committed module is not the one lsf builds: `mise run playground:functions`"
+    );
+
+    let cli = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/javy/discount.wasm");
+    let line = |id: &str, quantity: u32, title: &str| {
+        json!({
+            "id": id,
+            "quantity": quantity,
+            "merchandise": { "__typename": "ProductVariant", "product": { "title": title } }
+        })
+    };
+    let settings = json!({ "jsonValue": { "percentage": 10, "minimumQuantity": 2 } });
+    let inputs = [
+        json!({
+            "cart": { "lines": [line("gid://shopify/CartLine/1", 2, "Mug"), line("gid://shopify/CartLine/2", 1, "Tee")] },
+            "discount": { "discountClasses": ["PRODUCT"], "metafield": settings }
+        }),
+        json!({
+            "cart": { "lines": [line("gid://shopify/CartLine/1", 5, "Mug")] },
+            "discount": { "discountClasses": ["ORDER"], "metafield": settings }
+        }),
+        json!({
+            "cart": { "lines": [line("gid://shopify/CartLine/1", 5, "Mug")] },
+            "discount": { "discountClasses": ["PRODUCT"], "metafield": null }
+        }),
+    ];
+    let export = "cart-lines-discounts-generate-run";
+    for input in inputs {
+        let ours = crate::runner::run(&built.module, export, &input);
+        let theirs = crate::runner::run(&cli, export, &input);
+        assert_eq!(ours.error, None);
+        assert_eq!(ours.output, theirs.output, "{input}");
+        assert_eq!(ours.logs, theirs.logs, "{input}");
+        let difference = ours.instructions.abs_diff(theirs.instructions) as f64;
+        assert!(
+            difference <= theirs.instructions as f64 * 0.01,
+            "{} instructions, and {} with Shopify's CLI",
+            ours.instructions,
+            theirs.instructions
+        );
+    }
+}

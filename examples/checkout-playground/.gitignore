@@ -1,6 +1,9 @@
 target/
 # Copied from crates/checkout/schemas by `mise run playground:functions` (the schema of the API version of each Function).
 extensions/*/schema.graphql
-# What `npm install` and the typegen write in a JavaScript Function (discount-typescript).
-extensions/*/node_modules/
+# What the build of a JavaScript Function writes besides its module (discount-typescript): the
+# types of its typegen, and the JavaScript Javy compiled. And `npm install`, which lsf does not
+# need.
 extensions/*/generated/
+extensions/*/dist/function.js
+extensions/*/node_modules/

@@ -433,6 +433,53 @@ fn the_build_outputs_and_the_tools_folders_are_not_watched() {
 }
 
 #[test]
+fn a_javascript_function_is_built_by_lsf_without_watching_its_types() {
+    let app = TempApp::new("javascript");
+    app.write(
+        "extensions/bulk/shopify.extension.toml",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Bulk"
+handle = "bulk"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+"#,
+    );
+    app.write(
+        "extensions/bulk/package.json",
+        r#"{ "codegen": { "schema": "schema.graphql", "documents": "src/*.graphql",
+  "generates": { "./generated/api.ts": { "plugins": ["typescript", "typescript-operations"] } } } }"#,
+    );
+    app.write("extensions/bulk/src/index.ts", "export function run() {}\n");
+    let shopify_app = app::load(&app.root()).unwrap();
+    let rules = rules_of(&shopify_app, &Selection::all());
+    let rules = &rules["bulk"];
+    let job = rules.build.as_ref().expect("a build");
+    assert!(
+        job.command.contains(" function build --app "),
+        "{}",
+        job.command
+    );
+    assert!(job.command.ends_with(" 'bulk'"), "{}", job.command);
+    assert!(
+        ignored(Path::new("generated/api.ts"), &rules.outputs),
+        "{:?}",
+        rules.outputs
+    );
+    assert!(ignored(Path::new("dist/function.js"), &rules.outputs));
+    assert!(!ignored(Path::new("src/index.ts"), &rules.outputs));
+    assert!(!ignored(Path::new("package.json"), &rules.outputs));
+}
+
+#[test]
 fn what_every_build_may_read_is_the_rest_of_the_app() {
     let root = Path::new("/app");
     let data = Path::new("/app/fixtures");

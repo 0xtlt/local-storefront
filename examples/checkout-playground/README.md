@@ -143,9 +143,9 @@ tools/checkout/build_functions.sh examples/checkout-playground discount-codes  #
 It copies the schema of each Function (its `api_version` and Function API, from
 `crates/checkout/schemas`, not committed here), builds the Cargo workspace of this folder for
 `wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify
-app build` does. `discount-typescript` is built by Shopify's CLI itself (`shopify app function
-build`, through `npx`), in a copy of it inside a minimal app: the CLI refuses this one, whose
-checkout UI extensions are not in Shopify's format. `lsf checkout --app . --build` runs the same command for each Function.
+app build` does. `discount-typescript`, which has no build command as Shopify's templates, is
+built by lsf (`lsf function build`), without Node: its types (`generated/api.ts`, not committed),
+`dist/function.js`, then its module. `lsf checkout --app . --build` runs the same command for each Function.
 `broken-missing-build` has no build command and stays unbuilt.
 
 To change a Function and see it at once, `mise run playground:dev` (`lsf checkout --app .

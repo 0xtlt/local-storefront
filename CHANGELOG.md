@@ -100,6 +100,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   checkout, and a panel lists each target as shown, without a place on the page, or waiting for
   something the cart lacks.
 - **`lsf function run --scenario <name>`** runs the Functions for a scenario.
+- **`lsf function build`** builds the Functions of an app. A JavaScript or TypeScript Function
+  without a build command, as Shopify's CLI generates it, is built by lsf as
+  `shopify app function build` builds it, without Node: its types (`generated/api.ts`, as
+  graphql-codegen writes them), `dist/function.js` (bundled as esbuild does, enums inlined and
+  unused code left out), then its module, the bytes Javy writes. `--build` and `--watch` build
+  it too.
 
 ## 0.1.18 - 2026-10-21
 
