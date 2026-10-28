@@ -7,7 +7,7 @@
 //! error, never a different output: a setting of the `codegen` section that is not supported, a
 //! document that uses `@defer` or an introspection field, a schema with an `extend` that
 //! graphql-codegen merges in a way this does not. Documents that graphql-codegen refuses are
-//! refused here too (see [`validate`] for the rules that are checked).
+//! refused here too (see `validate` for the rules that are checked).
 
 mod model;
 mod operations;

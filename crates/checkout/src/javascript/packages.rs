@@ -5,7 +5,7 @@
 //! package's `package.json` and license (all MIT, but `@shopify/shopify_function`: Apache-2.0).
 //!
 //! `tools/checkout/javascript_packages.mjs` writes them (`crates/checkout/javascript-packages`)
-//! and their list ([`files`]). A package in the app's own `node_modules` comes first, as with
+//! and their list (`files`). A package in the app's own `node_modules` comes first, as with
 //! esbuild.
 
 mod files;
