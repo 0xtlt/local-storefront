@@ -1,0 +1,21 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Tag and collection discount"
+handle = "discount-tag-percentage"
+type = "function"
+description = "A percentage off the lines whose product has one of the tags, or is in one of the collections, that the discount's settings list"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-tag-percentage"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

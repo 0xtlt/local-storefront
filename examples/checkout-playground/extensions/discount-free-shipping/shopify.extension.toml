@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Free shipping above an amount"
+handle = "discount-free-shipping"
+type = "function"
+description = "Free shipping once the subtotal reaches the threshold of its settings"
+
+  [[extensions.targeting]]
+  target = "cart.delivery-options.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_delivery_options_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-free-shipping"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

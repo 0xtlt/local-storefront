@@ -1,0 +1,21 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Legacy product discount"
+handle = "discount-legacy-product"
+type = "function"
+description = "A percentage off the products with one of the tags of its settings, with the legacy product discount API"
+
+  [[extensions.targeting]]
+  target = "purchase.product-discount.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-legacy-product"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

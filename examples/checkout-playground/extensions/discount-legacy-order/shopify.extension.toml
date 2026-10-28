@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Legacy order discount"
+handle = "discount-legacy-order"
+type = "function"
+description = "A fixed amount off the order above a subtotal, with the legacy order discount API"
+
+  [[extensions.targeting]]
+  target = "purchase.order-discount.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-legacy-order"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

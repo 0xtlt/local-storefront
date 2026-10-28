@@ -1,0 +1,24 @@
+# $tags comes from the settings of the discount ([extensions.input.variables]).
+query Input($tags: [String!]!) {
+  cart {
+    lines {
+      id
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            title
+            hasAnyTag(tags: $tags)
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

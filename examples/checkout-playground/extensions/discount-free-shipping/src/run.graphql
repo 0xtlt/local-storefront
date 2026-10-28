@@ -1,0 +1,18 @@
+query Input {
+  cart {
+    cost {
+      subtotalAmount {
+        amount
+      }
+    }
+    deliveryGroups {
+      id
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

@@ -1,0 +1,21 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Buy two, get one free"
+handle = "discount-buy-two-get-one"
+type = "function"
+description = "One unit free for every three of a product with one of the tags of its settings"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-buy-two-get-one"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

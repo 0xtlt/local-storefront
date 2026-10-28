@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Amount off shipping"
+handle = "discount-shipping-amount"
+type = "function"
+description = "An amount off shipping: two discounts use it, only the better one applies"
+
+  [[extensions.targeting]]
+  target = "cart.delivery-options.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_delivery_options_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-shipping-amount"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

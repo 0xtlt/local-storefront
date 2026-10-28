@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Code discounts"
+handle = "discount-codes"
+type = "function"
+description = "The discount of the code the buyer entered: a percentage or an amount off the order"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-codes"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

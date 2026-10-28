@@ -1,0 +1,20 @@
+query Input {
+  cart {
+    cost {
+      subtotalAmount {
+        amount
+      }
+    }
+  }
+  enteredDiscountCodes {
+    code
+    rejectable
+  }
+  triggeringDiscountCode
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}
