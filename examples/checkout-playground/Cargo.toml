@@ -27,6 +27,13 @@ members = [
   "extensions/payment-rename",
   "extensions/payment-reorder",
   "extensions/payment-legacy",
+  "extensions/validation-minimum-order",
+  "extensions/validation-max-quantity",
+  "extensions/validation-blocked-country",
+  "extensions/validation-gift-note",
+  "extensions/validation-street-number",
+  "extensions/validation-legacy",
+  "extensions/validation-network",
 ]
 
 [profile.release]

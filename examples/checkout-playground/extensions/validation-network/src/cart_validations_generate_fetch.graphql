@@ -1,0 +1,17 @@
+query Input {
+  cart {
+    lines {
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          sku
+        }
+      }
+    }
+  }
+  validation {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

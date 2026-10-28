@@ -1,0 +1,22 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Stock check, from a server"
+handle = "validation-network"
+type = "function"
+description = "Asks a server which products are out of stock and refuses them (network access: a .fetch target)"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.fetch"
+  input_query = "src/cart_validations_generate_fetch.graphql"
+  export = "cart_validations_generate_fetch"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. validation-network"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

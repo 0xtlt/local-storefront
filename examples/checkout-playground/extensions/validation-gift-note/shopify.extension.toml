@@ -1,0 +1,21 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Gift note required"
+handle = "validation-gift-note"
+type = "function"
+description = "Asks for a gift note (a cart attribute) when a product with the gift tag is in the cart"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. validation-gift-note"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

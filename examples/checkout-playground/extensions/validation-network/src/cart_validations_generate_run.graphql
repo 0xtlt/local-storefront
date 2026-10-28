@@ -1,0 +1,19 @@
+query Input {
+  fetchResult {
+    status
+    jsonBody
+  }
+  cart {
+    lines {
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          sku
+          product {
+            title
+          }
+        }
+      }
+    }
+  }
+}

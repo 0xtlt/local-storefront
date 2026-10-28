@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Minimum order amount"
+handle = "validation-minimum-order"
+type = "function"
+description = "Refuses a subtotal below the minimum of its settings"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. validation-minimum-order"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

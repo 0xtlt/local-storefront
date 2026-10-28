@@ -684,6 +684,65 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
+name = "validation-blocked-country"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "validation-gift-note"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "validation-legacy"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "validation-max-quantity"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "validation-minimum-order"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "validation-network"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "validation-street-number"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
 name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
