@@ -248,12 +248,20 @@ test('sizes the frame, grows it for an overlay and shows its errors', () => {
   assert.match(frame.iframe.className, /lsf-ext-overlay/);
   from(frame, { type: 'overlay', open: false });
   assert.doesNotMatch(frame.iframe.className, /lsf-ext-overlay/);
-  from(frame, { type: 'error', message: 'boom' });
+  from(frame, { type: 'error', message: 'boom', stack: 'Error: boom\n    at gift-message.js:1:7' });
   from(frame, { type: 'error', message: 'again' });
   assert.equal(slot.firstChild.firstChild.className, 'lsf-ext-error');
   assert.equal(slot.firstChild.firstChild.textContent, `gift-message (${BLOCK}): again`);
   assert.equal(slot.firstChild.querySelectorAll('.lsf-ext-error').length, 1, 'one banner');
   assert.equal(log.calls.filter(([level]) => level === 'error').length, 2);
+  // The banner shows the stack of the error under it, when there is one.
+  from(frame, { type: 'error', message: 'boom', stack: 'Error: boom\n    at gift-message.js:1:7' });
+  assert.equal(slot.firstChild.firstChild.textContent, `gift-message (${BLOCK}): boomStackError: boom\n    at gift-message.js:1:7`);
+  // The page keeps each error once, for the dialog of the Functions.
+  assert.deepEqual(host.errors(), [
+    { handle: 'gift-message', target: BLOCK, message: 'boom', stack: 'Error: boom\n    at gift-message.js:1:7' },
+    { handle: 'gift-message', target: BLOCK, message: 'again', stack: null },
+  ]);
   from(frame, { type: 'dismiss' });
   assert.equal(slot.firstChild.style.display, 'none');
 });

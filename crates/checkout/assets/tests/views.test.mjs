@@ -22,13 +22,13 @@ const has = (node, name) => (node.props.class ?? '').split(/\s+/).includes(name)
 const byClass = (tree, name) => findAll(tree, (node) => has(node, name));
 const text = (node) => (node.tag === '#text' ? node.text : node.children.map(text).join(''));
 
-function page(state, ui = {}, { slots = [], refusals } = {}) {
+function page(state, ui = {}, { slots = [], refusals, extensionErrors } = {}) {
   const actions = new Proxy({}, { get: () => () => {} });
   const slot = (target, instance) => {
     slots.push([target, instance]);
     return null;
   };
-  return renderPage({ state, ui: { draft: { address: {} }, ...ui }, slot, actions, refusals, location: 'http://localhost/checkouts/cn/preview' });
+  return renderPage({ state, ui: { draft: { address: {} }, ...ui }, slot, actions, refusals, extensionErrors, location: 'http://localhost/checkouts/cn/preview' });
 }
 
 /** The sample checkout after `operations`, as the page gets it. */
@@ -491,6 +491,18 @@ test('an extension the host does not load shows why, next to the problems with t
   const kept = findAll(tree, (node) => node.tag === 'li' && node.props.key === 'gift-message')[0];
   assert.doesNotMatch(text(kept), /not loaded/);
   assert.equal(byClass(page(checkoutState()), 'lsf-diagnostics').length, 0, 'nothing to say, nothing shown');
+});
+
+test('the overview of the Functions lists what the checkout UI extensions threw, with the stack', () => {
+  const extensionErrors = [{ handle: 'gift-message', target: 'purchase.checkout.block.render', message: 'a click handler threw', stack: 'Error: a click handler threw\n    at gift-message.js:3:9' }];
+  const tree = page(checkoutState(), { functionsOpen: true, functionsView: 'overview' }, { extensionErrors });
+  const [listed] = findAll(tree, (node) => node.props['data-test'] === 'extension-errors');
+  assert.match(text(listed), /gift-message.*purchase\.checkout\.block\.render a click handler threw/);
+  assert.match(text(listed), /at gift-message\.js:3:9/);
+  const extension = findAll(tree, (node) => node.tag === 'li' && node.props.key === 'gift-message')[0];
+  assert.match(text(extension), /error/);
+  const none = page(checkoutState(), { functionsOpen: true, functionsView: 'overview' });
+  assert.equal(findAll(none, (node) => node.props['data-test'] === 'extension-errors').length, 0);
 });
 
 // --- Every extension target (?targets=all) ---

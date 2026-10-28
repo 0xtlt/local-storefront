@@ -90,7 +90,9 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     };
   }
 
-  // A script put into the head runs the bundle behind its `src`, then says it loaded.
+  // A script put into the head runs the bundle behind its `src`, then says it loaded. As in a
+  // browser, what the bundle throws goes to the `error` listeners of the window, and the script
+  // still loaded.
   const append = document.head.appendChild.bind(document.head);
   document.head.appendChild = (node) => {
     append(node);
@@ -98,7 +100,11 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     const source = bundles[node.src];
     setImmediate(() => {
       if (source === undefined) return node.onerror?.();
-      vm.runInContext(source, context, { filename: node.src });
+      try {
+        vm.runInContext(source, context, { filename: node.src });
+      } catch (error) {
+        for (const listener of listeners.get('error') ?? []) listener({ message: `Uncaught ${error}`, error });
+      }
       return node.onload?.();
     });
     return node;
@@ -118,6 +124,10 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     context,
     document,
     posted,
+    /** Plays an event of the window (`error`, `unhandledrejection`). */
+    fire(type, event) {
+      for (const listener of listeners.get(type) ?? []) listener(event);
+    },
     /** Plays a message of the page. */
     receive(message, source = parent) {
       for (const listener of listeners.get('message') ?? []) listener({ source, data: { lsf: true, ...message } });

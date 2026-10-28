@@ -456,7 +456,11 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
   background: var(--lsf-color-critical-wash-1);
   color: var(--lsf-color-critical-text);
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
 }
+.lsf-ext-error p { margin: 0; }
+.lsf-ext-error summary { cursor: pointer; margin-top: var(--lsf-space-xs); }
+.lsf-ext-error pre, .lsf-fn-stack { margin: var(--lsf-space-xs) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* --- The thank-you page ---------------------------------------------------------------- */
 

@@ -59,6 +59,11 @@ export function startCheckout({ root, initial, document, window, location, fetch
     storage,
     getState: () => state,
     dispatch: (operations) => send(operations),
+    // An error of an extension shows in the dialog of the Functions, when it is open; otherwise
+    // the dialog reads them when it opens.
+    onError: () => {
+      if (ui.functionsOpen) paint();
+    },
   });
 
   function slot(target, instance = {}) {
@@ -78,7 +83,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
   function paint() {
     document.body?.setAttribute?.('data-variant', state.variant);
     if (document.documentElement) document.documentElement.lang = languageOf(state);
-    render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals(), preview }));
+    render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals(), extensionErrors: host.errors(), preview }));
     badgeLift();
     host.update(state);
   }

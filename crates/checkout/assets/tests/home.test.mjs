@@ -218,6 +218,16 @@ test('a bundle that registers its targets is fine, and its frame goes away', asy
   assert.deepEqual(page.sandbox().posts('probed'), [{ lsf: true, type: 'probed', loaded: true, targets: [TARGET] }]);
 });
 
+test('a bundle that throws as it loads is an error with what it threw', async () => {
+  const page = sandboxedProbe({ [BUNDLE_URL]: 'throw new Error("no config in the bundle");' });
+  const result = await probe(page.document, page.window, 'sandbox.html', page.row, 2000);
+  assert.deepEqual(result.registered, []);
+  assert.equal(result.errors[0], 'no config in the bundle');
+  const problem = verdict(result.targets, result.registered, result.errors, result.loaded);
+  assert.equal(problem.severity, 'error');
+  assert.equal(problem.message, 'throws while its bundle loads (no config in the bundle): it registers no target');
+});
+
 test('a bundle that does not load is an error that says why, without waiting for the timeout', async () => {
   const page = sandboxedProbe({});
   const started = Date.now();

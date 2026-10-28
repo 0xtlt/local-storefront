@@ -248,11 +248,10 @@ The page also loads the bundle of each checkout UI extension in a hidden frame o
 as the checkout does, without rendering it. Unlike the check of the Functions, this loads the
 real bundles: a bundle that calls the network as it loads does so. A bundle that does not load
 (no file), throws while it loads, or does not register a target it declares (`shopify.extend`),
-is listed with the problems, and the scenarios that run it take the level of that problem, as
-for any extension with a problem. A frame that says nothing within 5 s is a warning that the page could not tell;
-one that reported an error and never finished is that error. The frame has an opaque origin, so
-the browser hides what the bundle threw ("Script error."): open a checkout with the extension to
-read it. An extension that throws only when it renders or when the buyer acts is not found this
+is listed with the problems with what it threw, and the scenarios that run it take the level of
+that problem, as for any extension with a problem. A frame that says nothing within 5 s is a
+warning that the page could not tell; one that reported an error and never finished is that
+error. An extension that throws only when it renders or when the buyer acts is not found this
 way.
 
 Messages show what is between backticks as code, and the paths inside the app relative to its
@@ -675,8 +674,15 @@ does.
 
 The checkout UI extensions render where their targets say: in the page, one sandboxed frame
 each. They read the checkout through the `shopify` global and change it with the `apply*Change`
-methods, `buyerJourney.intercept` can block the payment, and both the Polaris web components and
-the older React components work.
+methods, `buyerJourney.intercept` can block the payment, and they draw with the Polaris web
+components (`s-text`, `s-button`, ...), as from API version 2025-10. React and remote-ui
+extensions (2025-07 and older) do not run: lsf runs 2026-10 and 2027-01 only.
+
+What an extension throws, while its bundle loads, when a target renders or in a listener, and
+the promises it rejects with nobody to catch them, show above its frame with their message and
+stack, and in the overview of the Functions dialog. The frame keeps an opaque origin: lsf serves
+the bundles with CORS (`Access-Control-Allow-Origin: *`) so that the browser does not hide those
+errors ("Script error.").
 
 An extension needs a supported `api_version`, or it is reported as an error and not shown. From
 2027-01, each `[[extensions.metafields]]` entry needs an `owner_type` (`CART`, `CUSTOMER`, ...),

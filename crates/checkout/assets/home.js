@@ -9,9 +9,9 @@
 // - the load of the checkout UI extensions: each bundle is loaded in a hidden frame of the
 //   sandbox, as the checkout loads it, to see the targets it registers. A bundle that does not
 //   load, throws while it loads, or does not register a target it declares, is listed with the
-//   problems, and the scenarios that run it are too. A bundle can itself call the network as it
-//   loads. The frame has an opaque origin, so the browser hides the message of what it threw
-//   ("Script error."): opening a checkout with the extension shows it.
+//   problems, and the scenarios that run it take its level. A bundle can itself call the
+//   network as it loads. The sandbox loads it with CORS, so what it throws reaches the page with
+//   its message, though the frame has an opaque origin.
 
 /** How long the page waits for the check, in milliseconds. */
 export const CHECK_TIMEOUT = 30000;
@@ -179,7 +179,7 @@ export function verdict(declared, registered, errors, loaded = true) {
   }
   if (registered.length === 0) {
     return errors.length > 0
-      ? { severity: 'error', message: `${what}: it registers no target. Open a checkout with it to read the error.` }
+      ? { severity: 'error', message: thrown ? `${what}: it registers no target` : `${what}: it registers no target. Open a checkout with it to read the error.` }
       : { severity: 'error', message: 'its bundle registers no target: `shopify.extend` is never called' };
   }
   return {

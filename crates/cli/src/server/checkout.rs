@@ -1724,7 +1724,11 @@ fn extension_file(state: &ServerState, handle: &str, file: &[&str]) -> Reply {
         // The page of an extension is a sandboxed frame, but nothing stops the extension from
         // sending it to one of its own files: with this policy such a file runs without the
         // origin of the checkout, which it would otherwise share.
+        // The frame (an opaque origin) loads the bundle with CORS: without it, the browser
+        // would hide what the bundle throws ("Script error.") and drop its unhandled
+        // rejections. The files are the build's, with no credentials to protect.
         Ok(content) => Reply::new(200, kind, content)
+            .header("access-control-allow-origin", "*")
             .header("content-security-policy", "sandbox allow-scripts")
             .header("x-content-type-options", "nosniff")
             .cached(cache::PRIVATE),

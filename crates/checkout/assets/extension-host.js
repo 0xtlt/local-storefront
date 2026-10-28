@@ -81,10 +81,14 @@ const INTERCEPT_TIMEOUT_MS = 5000;
  *   operations. A function is called when its turn in the queue comes, so that what it builds
  *   follows the changes that were made before it.
  * @param {Storage} [options.storage]
+ * @param {() => void} [options.onError]  called when an extension reports an error the page has
+ *   not seen yet (see `errors`)
  */
-export function createExtensionHost({ document, window, sandboxUrl, getState, dispatch, storage, console: log = console }) {
+export function createExtensionHost({ document, window, sandboxUrl, getState, dispatch, storage, onError, console: log = console }) {
   /** Every live iframe. */
   const instances = new Set();
+  /** What the extensions threw, by handle, target and message: `{handle, target, message, stack}`. */
+  const reported = new Map();
   const slots = new Map();
   let counter = 0;
 
@@ -216,14 +220,36 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     }
   }
 
-  function showError(instance, message) {
+  /** The banner above the frame: the last error, and its stack under it when there is one. */
+  function showError(instance, message, stack) {
     instance.error ??= (() => {
       const banner = document.createElement('div');
       banner.className = 'lsf-ext-error';
       instance.frame.insertBefore(banner, instance.iframe);
       return banner;
     })();
-    instance.error.textContent = `${instance.ext.handle} (${instance.target}): ${message}`;
+    const line = document.createElement('p');
+    line.textContent = `${instance.ext.handle} (${instance.target}): ${message}`;
+    const parts = [line];
+    if (stack) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'Stack';
+      const pre = document.createElement('pre');
+      pre.textContent = stack;
+      details.append(summary, pre);
+      parts.push(details);
+    }
+    instance.error.replaceChildren(...parts);
+  }
+
+  /** Keeps an error for the dialog of the Functions; the same one again changes nothing. */
+  const MAX_ERRORS = 50;
+  function remember(instance, message, stack) {
+    const key = `${instance.ext.handle}\n${instance.target}\n${message}`;
+    if (reported.has(key) || reported.size >= MAX_ERRORS) return;
+    reported.set(key, { handle: instance.ext.handle, target: instance.target, message, stack: stack ?? null });
+    onError?.();
   }
 
   async function change(instance, data) {
@@ -311,10 +337,14 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
       case 'log':
         log[data.level]?.(`[${instance.ext.handle}]`, ...(data.args ?? []));
         break;
-      case 'error':
-        log.error?.(`[${instance.ext.handle}] ${data.message}`);
-        showError(instance, data.message);
+      case 'error': {
+        const message = String(data.message);
+        const stack = typeof data.stack === 'string' && data.stack ? data.stack : null;
+        log.error?.(`[${instance.ext.handle}] ${message}`, ...(stack ? [`\n${stack}`] : []));
+        showError(instance, message, stack);
+        remember(instance, message, stack);
         break;
+      }
       case 'interceptors':
         instance.interceptors = data.count;
         break;
@@ -385,6 +415,8 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
   return {
     hasTarget,
     refusals,
+    /** `[{handle, target, message, stack}]`: what the extensions threw since the page loaded. */
+    errors: () => [...reported.values()],
     attach,
     detach,
     update,

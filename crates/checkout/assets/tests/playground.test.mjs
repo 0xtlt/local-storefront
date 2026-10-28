@@ -40,9 +40,9 @@ const NOT_LOADED = {
   'ui-broken-bad-owner-type': /owner_type of \$app:playground\.bad_owner must be one of/,
 };
 const NOT_BUILT = ['ui-broken-not-built'];
-// `ui-broken-throws-on-load` too, but the test window cannot catch what a bundle throws as it
-// loads: the registration test covers it.
 const FAILS_AT_RUN = {
+  // The error that it registered nothing says what the bundle threw.
+  'ui-broken-throws-on-load': /threw while it loaded \(ui-broken-throws-on-load: the bundle throws before it registers its target\.\), and did not register purchase\.checkout\.block\.render/,
   'ui-broken-throws-on-render': /Cannot read properties of undefined/,
   'ui-broken-unregistered-target': /registered: purchase\.checkout\.footer\.render-after/,
 };
@@ -141,7 +141,6 @@ test('each working extension draws at each of its targets without an error', asy
   const ctxFor = (target) => (/cart-line-item/.test(target) ? { lineId: state.lines[0].id } : {});
   for (const handle of handles) {
     if (NOT_LOADED[handle] || NOT_BUILT.includes(handle) || FAILS_AT_RUN[handle] || NOT_BOOTED.includes(handle)) continue;
-    if (handle === 'ui-broken-throws-on-load') continue;
     for (const target of manifest(handle).targets.filter((name) => RENDERED_TARGETS.includes(name))) {
       const win = await boot(handle, target, ctxFor(target));
       assert.deepEqual(win.posts('error'), [], `${handle} at ${target}`);

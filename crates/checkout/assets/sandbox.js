@@ -13,14 +13,31 @@
   const post = (message) => global.parent.postMessage({ lsf: true, ...message }, '*');
 
   let runtime = null;
+  /** What the bundle threw while it was evaluated, for the error that says it registered nothing. */
+  let loading = null;
+  /** `load` while the bundle is evaluated, `run` after. */
+  let phase = null;
 
-  function fail(message, error) {
-    post({ type: 'error', message: String(message), stack: error && error.stack });
+  /** The text and the stack of what was thrown, whatever it is (an Error, a string, nothing). */
+  function describe(error) {
+    if (error && typeof error === 'object' && 'message' in error) {
+      return { message: String(error.message), stack: typeof error.stack === 'string' ? error.stack : undefined };
+    }
+    return { message: String(error), stack: undefined };
   }
 
+  function fail(message, error) {
+    const stack = error && typeof error.stack === 'string' ? error.stack : undefined;
+    post({ type: 'error', message: String(message), stack });
+  }
+
+  // The bundle is fetched with CORS (the server allows it): a script of another origin than the
+  // frame's (an opaque one) would have its errors hidden ("Script error.") and its unhandled
+  // rejections dropped by the browser. The frame keeps its opaque origin.
   function loadScript(url) {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
+      script.crossOrigin = 'anonymous';
       script.src = url;
       script.onload = resolve;
       script.onerror = () =>
@@ -47,10 +64,15 @@
     const render = runtime.registered.get(init.target);
     if (!render) {
       const known = [...runtime.registered.keys()];
-      fail(
-        'The bundle did not register ' + init.target + ' with shopify.extend (it registered: ' +
-          (known.length ? known.join(', ') : 'nothing') + ').',
-      );
+      const missing =
+        'did not register ' + init.target + ' with shopify.extend (it registered: ' +
+        (known.length ? known.join(', ') : 'nothing') + ').';
+      if (loading) {
+        // Why: what it threw while it loaded.
+        fail('The bundle threw while it loaded (' + loading.message + '), and ' + missing, loading);
+      } else {
+        fail('The bundle ' + missing);
+      }
       return;
     }
     await render();
@@ -70,12 +92,15 @@
     // The home page only asks what the bundle registers: it loads, and renders nothing.
     const probed = (loaded) => post({ type: 'probed', loaded, targets: [...runtime.registered.keys()] });
     try {
+      loading = null;
+      phase = 'load';
       await loadScript(init.script);
     } catch (error) {
       fail(error && error.message ? error.message : error, error);
       if (init.probe) probed(false);
       return;
     }
+    phase = 'run';
     if (init.probe) {
       probed(true);
       return;
@@ -96,10 +121,16 @@
       runtime.receive(data);
     }
   });
-  global.addEventListener('error', (event) => fail(event.message, event.error));
+  // What the bundle throws outside of the calls the frame makes (while it is evaluated, in a
+  // listener, a timer, a promise nobody waits for): its message and its stack go to the page.
+  global.addEventListener('error', (event) => {
+    const thrown = event.error !== undefined && event.error !== null ? describe(event.error) : { message: event.message };
+    if (phase === 'load' && !loading) loading = { message: thrown.message, stack: thrown.stack };
+    fail(thrown.message || event.message, thrown);
+  });
   global.addEventListener('unhandledrejection', (event) => {
-    const reason = event.reason;
-    fail('Unhandled rejection: ' + (reason && reason.message ? reason.message : reason), reason);
+    const thrown = describe(event.reason);
+    fail('Unhandled rejection: ' + thrown.message, thrown);
   });
 
   post({ type: 'ready' });

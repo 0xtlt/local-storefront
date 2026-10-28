@@ -8,6 +8,7 @@
 //   slot     `slot(target, instance)` → the node where extensions of that target render, or null
 //   actions  what the buyer's gestures do
 //   refusals the extensions the host does not load, `[{handle, reason}]` (see `api-versions.js`)
+//   extensionErrors what the extensions threw, `[{handle, target, message, stack}]`
 
 import { accountMenu, addressLabel, fullName, initials, otherContactEmail, savedAddressId } from './account.js';
 import { countriesOf, countryName, price, priceOrFree, storefrontLink } from './format.js';
@@ -837,6 +838,8 @@ function runDetail(ctx, runs, index) {
 function functionsOverview(ctx) {
   const { state } = ctx;
   const refused = new Set((ctx.refusals ?? []).map((refusal) => refusal.handle));
+  const thrown = ctx.extensionErrors ?? [];
+  const failed = new Set(thrown.map((error) => error.handle));
   // What `?functions=` asked for and has no run here: its entries stand out, and a note says
   // so when none of them names it.
   const focus = ctx.ui?.functionsFocus?.handle ?? null;
@@ -865,8 +868,12 @@ function functionsOverview(ctx) {
       h('ul', null, state.errors.map((error) => h('li', { class: focused(error.function) }, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
     (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
       h('ul', null, state.skippedDiscounts.map((skipped) => h('li', null, h('strong', null, skipped.title), skipped.code && h('code', null, skipped.code), ` ${skipped.reason}`, h('code', null, skipped.function))))),
+    thrown.length > 0 && h('div', { 'data-test': 'extension-errors' }, h('h4', null, 'Errors of the checkout UI extensions'),
+      h('ul', null, thrown.map((error) => h('li', { key: `${error.handle}:${error.target}:${error.message}`, class: focused(error.handle) },
+        h('strong', null, error.handle), h('code', null, error.target), ` ${error.message}`,
+        error.stack && h('details', null, h('summary', null, 'Stack'), h('pre', { class: 'lsf-fn-stack' }, error.stack)))))),
     extensions.length > 0 && h('div', null, h('h4', null, 'Extensions'),
-      h('ul', null, extensions.map((ext) => h('li', { key: ext.handle, class: focused(ext.handle) }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), (ext.targets ?? []).map((target) => h('code', null, target)))))));
+      h('ul', null, extensions.map((ext) => h('li', { key: ext.handle, class: focused(ext.handle) }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), failed.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'error'), (ext.targets ?? []).map((target) => h('code', null, target)))))));
 }
 
 /**
