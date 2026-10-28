@@ -1,0 +1,22 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Broken: unknown target"
+handle = "broken-unknown-target"
+type = "function"
+description = "Declares a target that does not exist next to one that runs"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart_validations_generate_run"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.later"
+  input_query = "src/cart_validations_generate_later.graphql"
+  export = "cart_validations_generate_later"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. broken-unknown-target"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Huge output"
+handle = "broken-huge-output"
+type = "function"
+description = "Answers thousands of operations"
+
+  [[extensions.targeting]]
+  target = "cart.delivery-options.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_delivery_options_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. broken-huge-output"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

@@ -1,0 +1,22 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Broken: request out of the limits"
+handle = "broken-fetch-timeout"
+type = "function"
+description = "Asks for a request whose timeout is out of the limits: the .fetch target fails"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.fetch"
+  input_query = "src/cart_validations_generate_fetch.graphql"
+  export = "cart_validations_generate_fetch"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. broken-fetch-timeout"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

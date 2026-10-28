@@ -1,0 +1,180 @@
+# Most of what a validation can ask for. Run it and look at the input in the Functions dialog.
+query Input {
+  buyerJourney {
+    step
+  }
+  presentmentCurrencyRate
+  localization {
+    country {
+      isoCode
+    }
+    language {
+      isoCode
+    }
+    market {
+      id
+      handle
+    }
+  }
+  shop {
+    localTime {
+      date
+    }
+    announcement: metafield(namespace: "custom", key: "announcement") {
+      value
+    }
+    sale: metafield(namespace: "custom", key: "weekend_sale_settings") {
+      type
+      jsonValue
+    }
+  }
+  validation {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+  cart {
+    note: attribute(key: "note") {
+      key
+      value
+    }
+    gift: attribute(key: "gift") {
+      key
+      value
+    }
+    cost {
+      subtotalAmount {
+        amount
+        currencyCode
+      }
+      totalAmount {
+        amount
+        currencyCode
+      }
+      totalTaxAmount {
+        amount
+      }
+      totalDutyAmount {
+        amount
+      }
+    }
+    buyerIdentity {
+      email
+      phone
+      isAuthenticated
+      customer {
+        id
+        email
+        displayName
+        firstName
+        lastName
+        numberOfOrders
+        createdAt
+        amountSpent {
+          amount
+          currencyCode
+        }
+        vip: hasAnyTag(tags: ["vip"])
+        tags: hasTags(tags: ["vip", "wholesale", "newsletter"]) {
+          tag
+          hasTag
+        }
+        loyalty: metafield(namespace: "custom", key: "loyalty_tier") {
+          value
+        }
+      }
+      purchasingCompany {
+        company {
+          id
+          name
+          externalId
+        }
+        location {
+          id
+          name
+          externalId
+        }
+      }
+    }
+    deliveryGroups {
+      id
+      deliveryAddress {
+        firstName
+        lastName
+        address1
+        city
+        provinceCode
+        countryCode
+        zip
+      }
+      selectedDeliveryOption {
+        handle
+        title
+      }
+      deliveryOptions {
+        handle
+        title
+        description
+        deliveryMethodType
+        cost {
+          amount
+          currencyCode
+        }
+      }
+    }
+    lines {
+      id
+      quantity
+      engraving: attribute(key: "_engraving") {
+        value
+      }
+      cost {
+        amountPerQuantity {
+          amount
+          currencyCode
+        }
+        compareAtAmountPerQuantity {
+          amount
+        }
+        subtotalAmount {
+          amount
+        }
+        totalAmount {
+          amount
+        }
+      }
+      sellingPlanAllocation {
+        sellingPlan {
+          id
+          name
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          sku
+          title
+          requiresShipping
+          weight
+          weightUnit
+          product {
+            id
+            handle
+            title
+            vendor
+            productType
+            isGiftCard
+            onSale: hasAnyTag(tags: ["sale"])
+            care: metafield(namespace: "custom", key: "care") {
+              value
+            }
+            memberPrice: metafield(namespace: "custom", key: "member_price") {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}

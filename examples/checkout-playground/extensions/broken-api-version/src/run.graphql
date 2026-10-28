@@ -1,0 +1,6 @@
+query Input {
+  paymentMethods {
+    id
+    name
+  }
+}

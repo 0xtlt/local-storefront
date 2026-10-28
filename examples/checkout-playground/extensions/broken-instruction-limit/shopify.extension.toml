@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Broken: too many instructions"
+handle = "broken-instruction-limit"
+type = "function"
+description = "Loops past the 11 million instructions Shopify allows a Function"
+
+  [[extensions.targeting]]
+  target = "cart.payment-methods.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_payment_methods_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. broken-instruction-limit"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

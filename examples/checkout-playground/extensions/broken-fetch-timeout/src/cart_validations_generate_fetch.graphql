@@ -1,0 +1,7 @@
+query Input {
+  validation {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

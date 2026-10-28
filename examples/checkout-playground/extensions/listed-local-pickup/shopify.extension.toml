@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Local pickup"
+handle = "listed-local-pickup"
+type = "function"
+description = "A local pickup delivery option generator: listed by the local checkout, not run"
+
+  [[extensions.targeting]]
+  target = "cart.local-pickup-delivery-option-generator.run"
+  input_query = "src/run.graphql"
+  export = "cart_local_pickup_delivery_option_generator_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. listed-local-pickup"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

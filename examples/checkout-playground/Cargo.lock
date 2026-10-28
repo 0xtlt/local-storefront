@@ -83,6 +83,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "broken-api-version"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-bad-output"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-big-input"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-fetch-timeout"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-huge-output"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-instruction-limit"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-logs"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-panic"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "broken-unknown-target"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -360,6 +425,34 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "listed-fulfillment-constraints"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "listed-local-pickup"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "listed-order-routing"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "listed-pickup-points"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
 
 [[package]]
 name = "logos"

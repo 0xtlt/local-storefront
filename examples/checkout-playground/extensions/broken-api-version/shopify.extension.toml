@@ -1,0 +1,17 @@
+api_version = "2025-07"
+
+[[extensions]]
+name = "Broken: unsupported API version"
+handle = "broken-api-version"
+type = "function"
+description = "Declares an API version lsf does not support: it is not run"
+
+  [[extensions.targeting]]
+  target = "cart.payment-methods.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_payment_methods_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. broken-api-version"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

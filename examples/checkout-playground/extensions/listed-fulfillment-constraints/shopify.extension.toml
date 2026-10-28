@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Fulfillment constraints"
+handle = "listed-fulfillment-constraints"
+type = "function"
+description = "A fulfillment constraints Function: listed by the local checkout, not run"
+
+  [[extensions.targeting]]
+  target = "cart.fulfillment-constraints.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_fulfillment_constraints_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. listed-fulfillment-constraints"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

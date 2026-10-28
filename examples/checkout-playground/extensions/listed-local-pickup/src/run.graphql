@@ -1,0 +1,6 @@
+query Input {
+  locations {
+    id
+    name
+  }
+}

@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Big input"
+handle = "broken-big-input"
+type = "function"
+description = "Asks for a lot: lines with products, metafields and attributes, the buyer, localization, cost, delivery"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. broken-big-input"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

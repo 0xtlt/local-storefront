@@ -39,6 +39,19 @@ members = [
   "extensions/cart-transform-update",
   "extensions/cart-transform-properties",
   "extensions/cart-transform-legacy",
+  "extensions/broken-panic",
+  "extensions/broken-instruction-limit",
+  "extensions/broken-bad-output",
+  "extensions/broken-logs",
+  "extensions/broken-huge-output",
+  "extensions/broken-unknown-target",
+  "extensions/broken-api-version",
+  "extensions/broken-big-input",
+  "extensions/broken-fetch-timeout",
+  "extensions/listed-fulfillment-constraints",
+  "extensions/listed-order-routing",
+  "extensions/listed-pickup-points",
+  "extensions/listed-local-pickup",
 ]
 
 [profile.release]

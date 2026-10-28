@@ -1,0 +1,11 @@
+[package]
+name = "broken-big-input"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+shopify_function = "2.3"
