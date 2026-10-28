@@ -412,6 +412,36 @@ const COUNTRIES: &[(&str, &str, &str)] = &[
     ("ZA", "South Africa", "ZAR"),
 ];
 
+/// The officially assigned codes of ISO 3166-1 alpha-2, in alphabetical order.
+const ISO_COUNTRY_CODES: [&str; 249] = [
+    "AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT", "AU", "AW", "AX", "AZ",
+    "BA", "BB", "BD", "BE", "BF", "BG", "BH", "BI", "BJ", "BL", "BM", "BN", "BO", "BQ", "BR", "BS",
+    "BT", "BV", "BW", "BY", "BZ", "CA", "CC", "CD", "CF", "CG", "CH", "CI", "CK", "CL", "CM", "CN",
+    "CO", "CR", "CU", "CV", "CW", "CX", "CY", "CZ", "DE", "DJ", "DK", "DM", "DO", "DZ", "EC", "EE",
+    "EG", "EH", "ER", "ES", "ET", "FI", "FJ", "FK", "FM", "FO", "FR", "GA", "GB", "GD", "GE", "GF",
+    "GG", "GH", "GI", "GL", "GM", "GN", "GP", "GQ", "GR", "GS", "GT", "GU", "GW", "GY", "HK", "HM",
+    "HN", "HR", "HT", "HU", "ID", "IE", "IL", "IM", "IN", "IO", "IQ", "IR", "IS", "IT", "JE", "JM",
+    "JO", "JP", "KE", "KG", "KH", "KI", "KM", "KN", "KP", "KR", "KW", "KY", "KZ", "LA", "LB", "LC",
+    "LI", "LK", "LR", "LS", "LT", "LU", "LV", "LY", "MA", "MC", "MD", "ME", "MF", "MG", "MH", "MK",
+    "ML", "MM", "MN", "MO", "MP", "MQ", "MR", "MS", "MT", "MU", "MV", "MW", "MX", "MY", "MZ", "NA",
+    "NC", "NE", "NF", "NG", "NI", "NL", "NO", "NP", "NR", "NU", "NZ", "OM", "PA", "PE", "PF", "PG",
+    "PH", "PK", "PL", "PM", "PN", "PR", "PS", "PT", "PW", "PY", "QA", "RE", "RO", "RS", "RU", "RW",
+    "SA", "SB", "SC", "SD", "SE", "SG", "SH", "SI", "SJ", "SK", "SL", "SM", "SN", "SO", "SR", "SS",
+    "ST", "SV", "SX", "SY", "SZ", "TC", "TD", "TF", "TG", "TH", "TJ", "TK", "TL", "TM", "TN", "TO",
+    "TR", "TT", "TV", "TW", "TZ", "UA", "UG", "UM", "US", "UY", "UZ", "VA", "VC", "VE", "VG", "VI",
+    "VN", "VU", "WF", "WS", "YE", "YT", "ZA", "ZM", "ZW",
+];
+
+/// Codes that are not officially assigned by ISO 3166-1 and that Shopify takes as countries of an
+/// address: Ascension Island, Tristan da Cunha, Kosovo.
+const SHOPIFY_COUNTRY_CODES: [&str; 3] = ["AC", "TA", "XK"];
+
+/// Whether `code` (upper case) is a country of an address: an ISO 3166-1 alpha-2 code, or one of
+/// the few others Shopify takes. `ZZ` (unknown region) and the other user-assigned codes are not.
+pub fn is_country_code(code: &str) -> bool {
+    ISO_COUNTRY_CODES.binary_search(&code).is_ok() || SHOPIFY_COUNTRY_CODES.contains(&code)
+}
+
 /// The English names of every country known here, in alphabetical order.
 pub fn country_names() -> Vec<&'static str> {
     let mut names: Vec<&str> = COUNTRIES.iter().map(|(_, name, _)| *name).collect();
@@ -533,5 +563,25 @@ pub fn policy_title(handle: &str) -> &'static str {
         "terms-of-service" => "Terms of service",
         "subscription-policy" => "Cancellation policy",
         _ => "Policy",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_country_code_is_one_of_iso_3166_or_of_shopify() {
+        assert!(ISO_COUNTRY_CODES.is_sorted());
+        for code in ["FR", "US", "GB", "XK", "AC", "TA", "AX"] {
+            assert!(is_country_code(code), "{code}");
+        }
+        for code in ["ZZ", "XX", "AA", "QM", "EU", "UK", "fr", "FRA", ""] {
+            assert!(!is_country_code(code), "{code}");
+        }
+        // Every country this file names is one.
+        for (code, _, _) in COUNTRIES {
+            assert!(is_country_code(code), "{code}");
+        }
     }
 }

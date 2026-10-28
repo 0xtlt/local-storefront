@@ -805,7 +805,7 @@ the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount":
 | `customer` | `customer`: an email, `default`, or `null` to log out; `location` (optional): a company location by id or name | Logs the checkout in as a [customer of the data](#log-in-as-a-customer). The session gets the customer; the contact and the address become theirs. |
 | `companyLocation` | `location`: a `gid://shopify/CompanyLocation/…`, its number or its name | Chooses the location the logged-in B2B customer buys for; the order ships there. |
 | `email`, `phone` | `value` | Sets the contact. An empty value clears it. |
-| `shippingAddress` | `address`: `firstName`, `lastName`, `company`, `address1`, `address2`, `city`, `countryCode`, `provinceCode`, `zip`, `phone` | Sets the address. A country of the store becomes the country of the session. |
+| `shippingAddress` | `address`: `firstName`, `lastName`, `company`, `address1`, `address2`, `city`, `countryCode`, `provinceCode`, `zip`, `phone` | Sets the address. A country of the store becomes the country of the session. A `countryCode` that is not a country (ISO 3166-1 alpha-2, or `XK`, `AC`, `TA` as Shopify takes them; not `ZZ`) is refused and changes nothing. The store data has no shipping zones: any real country is taken. |
 | `deliveryOption` | `group` (`group-1`), `handle` | Chooses a shipping rate. |
 | `paymentMethod` | `handle` | Chooses a payment method. No handle clears it. |
 | `discountCode` | `action` (`add` or `remove`), `code` | Enters or takes back a code. |

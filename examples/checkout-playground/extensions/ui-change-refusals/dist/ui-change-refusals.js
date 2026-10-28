@@ -2,9 +2,7 @@
 // One button per change the checkout refuses, and the answer it gave (`{type: "error",
 // message}`): a gift card and payment method attributes (not supported locally), a line with
 // quantity 0, a line id that does not exist, an unknown attribute change, an empty discount
-// code, a note change of an unknown type. The last button sends an address in a country that
-// does not exist (ZZ): the local checkout accepts it today
-// and makes ZZ the country of the checkout.
+// code, a note change of an unknown type, an address in a country that does not exist (ZZ).
 (() => {
   // h(tag, attributes, ...children) makes a Polaris web component: attributes are set as
   // attributes, functions become listeners (`onClick` listens to `click`), children are

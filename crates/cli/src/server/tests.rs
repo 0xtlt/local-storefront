@@ -4088,6 +4088,48 @@ fn operations_change_what_the_buyer_chose() {
 }
 
 #[test]
+fn an_address_in_a_country_that_does_not_exist_is_refused() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-zz",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let before = body_json(&get(&state, &format!("{path}.json"), "co-zz"));
+    for code in ["ZZ", "xx", "FRA", "UK"] {
+        let reply = operations(
+            &state,
+            &path,
+            "co-zz",
+            json!([{"type": "shippingAddress", "address": {"lastName": "Doe", "countryCode": code}}]),
+        );
+        assert_eq!(reply.status, 400, "{code}: {}", text(&reply));
+        assert!(
+            text(&reply).contains(&format!(
+                "`{}` is not a country code (ISO 3166-1 alpha-2",
+                code.to_ascii_uppercase()
+            )),
+            "{}",
+            text(&reply)
+        );
+    }
+    // Nothing changed: not the address, not the country of the checkout.
+    let after = body_json(&get(&state, &format!("{path}.json"), "co-zz"));
+    assert_eq!(after["shippingAddress"], before["shippingAddress"]);
+    assert_eq!(after["localization"], before["localization"]);
+    // A real country is taken, even one the store does not list (it has no shipping zones).
+    let reply = operations(
+        &state,
+        &path,
+        "co-zz",
+        json!([{"type": "shippingAddress", "address": {"lastName": "Doe", "countryCode": "nz"}}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["shippingAddress"]["countryCode"], "NZ");
+}
+
+#[test]
 fn operations_change_the_cart_lines() {
     let state = checkout_server(&[], false);
     let path = start_checkout(

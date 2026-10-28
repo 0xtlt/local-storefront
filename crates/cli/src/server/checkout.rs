@@ -1146,6 +1146,14 @@ fn apply(
             }
             if let Some(code) = &mut address.country_code {
                 *code = code.trim().to_ascii_uppercase();
+                // As Shopify, a country that does not exist is refused (`ZZ`, `XX`): the checkout
+                // keeps the address it had. The store data has no shipping zones: a real country
+                // the store does not sell to is taken.
+                if !lsf_core::store::reference::is_country_code(code) {
+                    return Err(format!(
+                        "`{code}` is not a country code (ISO 3166-1 alpha-2, such as `US` or `FR`)"
+                    ));
+                }
                 // Markets decide on the country of the address.
                 if store.country(code).is_some() {
                     session.country = Some(code.clone());
