@@ -1,7 +1,7 @@
 {
   "$schema": "../schema/checkout-scenario.schema.json",
   "title": "UI: discount codes from an extension",
-  "description": "WELCOME10 is entered already. No discount of this scenario has a code, so every code is entered and refused, as on Shopify; remove it or enter others from the extension.",
+  "description": "SAVE10 is entered already and takes 10% off (discount-codes). Enter WELCOME5 (5.00 off) or BIG20 (needs 200.00) from the extension, or NOPE, which no discount has and is refused; remove a code from the extension too.",
   "session": {
     "customer": "jane.doe@example.com",
     "cart": {
@@ -19,10 +19,11 @@
   },
   "entered": {
     "discount_codes": [
-      "WELCOME10"
+      "SAVE10"
     ]
   },
   "extensions": [
+    "discount-codes",
     "ui-reductions-codes"
   ]
 }

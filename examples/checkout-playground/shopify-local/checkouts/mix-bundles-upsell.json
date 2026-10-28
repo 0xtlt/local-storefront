@@ -1,0 +1,55 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Mix: bundles, a sale and an upsell",
+  "description": "Cart transforms build the lines (engraving, gift wrap, a merged set, an expanded bundle) while ui-line-properties shows their properties and ui-upsell adds a line; discount-tag-percentage takes its share of what the transforms made.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1,
+          "properties": {
+            "_engraving": "Ada"
+          }
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1,
+          "properties": {
+            "_gift_wrap": "yes"
+          }
+        },
+        {
+          "variant": "TEE-BLK-M",
+          "quantity": 1,
+          "properties": {
+            "_set": "cold"
+          }
+        },
+        {
+          "variant": "BNE-NVY",
+          "quantity": 1,
+          "properties": {
+            "_set": "cold"
+          }
+        },
+        {
+          "variant": "BNDL-WKND",
+          "quantity": 1,
+          "properties": {
+            "_bundle_of": "8182177638701:1,4381608573867:1"
+          }
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "cart-transform-properties",
+    "discount-tag-percentage",
+    "ui-line-properties",
+    "ui-upsell",
+    "ui-line-quantity",
+    "ui-order-summary"
+  ]
+}

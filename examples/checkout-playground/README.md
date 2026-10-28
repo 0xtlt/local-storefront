@@ -104,7 +104,8 @@ Each case has a scenario, `shopify-local/checkouts/fn-<case>.json`, whose `exten
 the Functions of that case. `fn-everything` runs every Function that is not `broken-*` or
 `listed-*`. The scenarios of `lsf checkout init` (`guest`, `customer`, `b2b`, `abroad`,
 `subscription`, `pre-order`, `shop-look`, `large-cart`) run the same Functions without the network
-ones, so that none of them breaks.
+ones, so that none of them breaks, and the everyday checkout UI extensions (no `ui-broken-*`, and
+none that holds Pay).
 
 ```bash
 lsf function run --app . --scenario fn-discount-codes
@@ -151,6 +152,20 @@ needs neither the network nor the mock server:
 ```bash
 cargo test -p lsf playground
 ```
+
+## Functions and checkout UI extensions together
+
+The `mix-*` scenarios run Functions and checkout UI extensions on the same checkout:
+
+| Scenario | What runs |
+|---|---|
+| `mix-bundles-upsell` | the cart transform from line properties and a tag discount, with `ui-line-properties`, `ui-upsell`, `ui-line-quantity` and `ui-order-summary` |
+| `mix-b2b` | a B2B contract price, the payment methods of a company and net-30 terms, a minimum order, with `ui-checkout-inspector` and `ui-payment-notes` |
+| `mix-gated-order` | codes, a minimum order and a quantity cap, with `ui-reductions-codes` and the two extensions that hold Pay (`ui-terms-gate`, `ui-cart-limit-gate`) |
+| `mix-france` | a French buyer: the Europe market discount, express hidden, French delivery titles, and the extensions in French |
+| `mix-everything` | every Function of `fn-everything` and every extension of `ui-everything` |
+
+`ui-discount-codes` runs `discount-codes` too, so that the codes the extension enters apply.
 
 ## Checkout UI extensions
 

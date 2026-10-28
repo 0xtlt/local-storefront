@@ -47,6 +47,19 @@
     "validation-legacy",
     "validation-max-quantity",
     "validation-minimum-order",
-    "validation-street-number"
+    "validation-street-number",
+    "ui-header-notice",
+    "ui-contact-newsletter",
+    "ui-address-autofill",
+    "ui-shipping-options",
+    "ui-payment-notes",
+    "ui-reductions-codes",
+    "ui-line-properties",
+    "ui-order-summary",
+    "ui-footer-links",
+    "ui-gift-wrap",
+    "ui-upsell",
+    "ui-note-attributes",
+    "ui-thank-you"
   ]
 }

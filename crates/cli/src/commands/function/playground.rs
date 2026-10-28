@@ -188,12 +188,14 @@ fn every_function_is_built_and_in_a_scenario() {
             function.handle
         );
     }
-    // What is wrong with the app is the broken-* and listed-* Functions, and the legacy targets.
+    // What is wrong with the app is the broken-* and listed-* Functions, the ui-broken-* checkout
+    // UI extensions, and the legacy targets.
     for diagnostic in &app.diagnostics {
         let handle = diagnostic.extension.as_deref().unwrap_or("");
         assert!(
             handle.starts_with("broken-")
                 || handle.starts_with("listed-")
+                || handle.starts_with("ui-broken-")
                 || diagnostic.message.contains("legacy target"),
             "{diagnostic}"
         );
@@ -223,6 +225,18 @@ fn the_init_scenarios_run_no_broken_function() {
             ran(&result)
         );
         assert!(ran(&result).len() > 25, "{name}: {:?}", ran(&result));
+        // Their checkout UI extensions are working ones too.
+        let listed = listed(name);
+        assert!(
+            listed.iter().any(|handle| handle.starts_with("ui-")),
+            "{name}: {listed:?}"
+        );
+        assert!(
+            listed
+                .iter()
+                .all(|handle| !handle.starts_with("ui-broken-")),
+            "{name}: {listed:?}"
+        );
     }
     // The Functions see what each of them is about.
     assert_eq!(discount(&run("customer"), "VIP: 20% off"), 1334);
@@ -231,6 +245,57 @@ fn the_init_scenarios_run_no_broken_function() {
         2784
     );
     assert_eq!(discount(&run("abroad"), "10% off in market europe"), 667);
+}
+
+/// The `extensions` list of a scenario.
+fn listed(name: &str) -> Vec<String> {
+    let text =
+        std::fs::read_to_string(playground().join(format!("shopify-local/checkouts/{name}.json")))
+            .unwrap();
+    let scenario: serde_json::Value = serde_json::from_str(&text).unwrap();
+    scenario["extensions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|handle| handle.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn the_mix_scenarios_run_functions_and_checkout_ui_extensions_together() {
+    let names: Vec<String> = scenarios()
+        .into_iter()
+        .filter(|name| name.starts_with("mix-"))
+        .collect();
+    assert!(names.len() >= 5, "{names:?}");
+    for name in &names {
+        let listed = listed(name);
+        for handle in &listed {
+            assert!(
+                playground().join("extensions").join(handle).is_dir(),
+                "{name}: no extension {handle}"
+            );
+        }
+        let ui = listed
+            .iter()
+            .filter(|handle| handle.starts_with("ui-"))
+            .count();
+        assert!(ui > 0 && ui < listed.len(), "{name}: {listed:?}");
+        let result = run(name);
+        assert_ok(&result);
+        assert!(result.errors.is_empty(), "{name}: {:?}", errors(&result));
+        // Every Function it lists ran: the UI extensions are the rest of the list.
+        assert_eq!(
+            ran(&result).len(),
+            listed.len() - ui,
+            "{name}: {:?}",
+            ran(&result)
+        );
+    }
+    assert_eq!(
+        discount(&run("mix-b2b"), "Northwind Seattle: 12% contract price"),
+        2784
+    );
 }
 
 #[test]

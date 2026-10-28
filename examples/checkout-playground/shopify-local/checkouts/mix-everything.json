@@ -1,0 +1,123 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Mix: every working Function and extension",
+  "description": "Every Function of fn-everything and every extension of ui-everything on one checkout. The two interceptors hold Pay: tick the terms and keep five units at most.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        },
+        {
+          "variant": "SOCK-S",
+          "quantity": 3
+        },
+        {
+          "variant": "BNDL-WKND",
+          "quantity": 1
+        },
+        {
+          "variant": "TEE-BLK-M",
+          "quantity": 1
+        },
+        {
+          "variant": "BNE-NVY",
+          "quantity": 1
+        },
+        {
+          "variant": "GIFT-BOX",
+          "quantity": 1
+        }
+      ],
+      "attributes": {
+        "gift_note": "Happy birthday!"
+      }
+    }
+  },
+  "entered": {
+    "discount_codes": [
+      "SAVE10",
+      "SHIP1",
+      "SHIP3"
+    ],
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    }
+  },
+  "extensions": [
+    "cart-transform-expand",
+    "cart-transform-legacy",
+    "cart-transform-merge",
+    "cart-transform-properties",
+    "cart-transform-update",
+    "delivery-hide-express",
+    "delivery-legacy",
+    "delivery-rename-by-language",
+    "delivery-reorder",
+    "discount-b2b-location",
+    "discount-buy-two-get-one",
+    "discount-by-market",
+    "discount-codes",
+    "discount-free-shipping",
+    "discount-from-metafields",
+    "discount-legacy-order",
+    "discount-legacy-product",
+    "discount-legacy-shipping",
+    "discount-lines-and-shipping",
+    "discount-network",
+    "discount-order-fixed",
+    "discount-shipping-amount",
+    "discount-tag-percentage",
+    "discount-vip-customer",
+    "payment-hide-cod",
+    "payment-hide-for-b2b",
+    "payment-legacy",
+    "payment-rename",
+    "payment-reorder",
+    "validation-blocked-country",
+    "validation-gift-note",
+    "validation-legacy",
+    "validation-max-quantity",
+    "validation-minimum-order",
+    "validation-network",
+    "validation-street-number",
+    "ui-header-notice",
+    "ui-contact-newsletter",
+    "ui-address-autofill",
+    "ui-shipping-options",
+    "ui-payment-notes",
+    "ui-reductions-codes",
+    "ui-line-properties",
+    "ui-line-quantity",
+    "ui-order-summary",
+    "ui-footer-links",
+    "ui-thank-you",
+    "ui-every-target",
+    "ui-gift-wrap",
+    "ui-upsell",
+    "ui-note-attributes",
+    "ui-metafield-writer",
+    "ui-metafield-legacy",
+    "ui-terms-gate",
+    "ui-cart-limit-gate",
+    "ui-intercept-no-capability",
+    "ui-checkout-inspector",
+    "ui-i18n-greeting",
+    "ui-settings-empty",
+    "ui-network-fetch",
+    "ui-api-access",
+    "ui-change-refusals"
+  ]
+}

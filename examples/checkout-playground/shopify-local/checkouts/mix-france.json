@@ -1,0 +1,41 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Mix: a French buyer",
+  "description": "camille.martin@example.com in Lyon, in French: the market discount of Europe (discount-by-market), express hidden in France (delivery-hide-express), French delivery titles (delivery-rename-by-language), and the extensions in French (ui-i18n-greeting, ui-header-notice).",
+  "session": {
+    "customer": "camille.martin@example.com",
+    "country": "FR",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "8 rue des Lilas",
+      "city": "Lyon",
+      "zip": "69003",
+      "country_code": "FR"
+    }
+  },
+  "language": "fr",
+  "extensions": [
+    "discount-by-market",
+    "delivery-hide-express",
+    "delivery-rename-by-language",
+    "ui-i18n-greeting",
+    "ui-header-notice",
+    "ui-shipping-options"
+  ]
+}
