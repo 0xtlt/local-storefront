@@ -1,0 +1,11 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "id": 9100000001,
+  "title": "Gift Wrap",
+  "description": "<p>Recycled paper and a cotton ribbon. Added by the ui-gift-wrap checkout UI extension of the playground.</p>",
+  "vendor": "Local Supply Co.",
+  "type": "Service",
+  "tags": ["ui-playground"],
+  "price": "5.00",
+  "variants": [{ "id": 9100000011, "sku": "UI-GIFT-WRAP" }]
+}
