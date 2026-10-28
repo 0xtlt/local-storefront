@@ -23,7 +23,8 @@ use super::checkout_account::{self, Identity};
 use super::reply::{Reply, cache, content_type};
 use super::{Incoming, SESSION_COOKIE, ServerState, SessionEntry, cart_token_of, home};
 use crate::checkout::{
-    CheckoutOptions, Variant, config_for, entered_by, scenario_named, selection_for, translations,
+    CheckoutOptions, Variant, apply_scenario, config_for, scenario_named, selection_for,
+    translations,
 };
 
 /// Where the files of the page are served from.
@@ -450,27 +451,9 @@ fn scenario_start(
     scenario: &lsf_core::store::CheckoutScenario,
 ) -> Result<(Session, CheckoutState, Option<Identity>), Vec<String>> {
     let mut session = state.initial_session(store);
-    let mut problems = lsf_core::diagnostics::Diagnostics::new();
-    lsf_core::store::build::apply_session_input(
-        store,
-        &scenario.session,
-        &mut session,
-        &mut problems,
-        &scenario.file,
-        "/session",
-    );
+    let (mut entered, problems) = apply_scenario(store, scenario, &mut session);
     if problems.has_errors() {
         return Err(problems.items.iter().map(ToString::to_string).collect());
-    }
-    let mut entered = entered_by(scenario);
-    // As entering the address does: markets decide on the country of the address.
-    if let Some(code) = entered
-        .shipping_address
-        .as_ref()
-        .and_then(|address| address.country_code.as_deref())
-        .and_then(|code| store.country(code))
-    {
-        session.country = Some(code.iso_code.clone());
     }
     let mut prepared = None;
     checkout_account::prepare(store, &mut session, &mut entered, &mut prepared);
@@ -1124,26 +1107,11 @@ fn apply(
                 .filter(|address| !address.is_null())
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let mut address: Address = serde_json::from_value(address)
-                .map_err(|problem| format!("the address is not valid: {problem}"))?;
-            for field in [
-                &mut address.first_name,
-                &mut address.last_name,
-                &mut address.company,
-                &mut address.address1,
-                &mut address.address2,
-                &mut address.city,
-                &mut address.country_code,
-                &mut address.province_code,
-                &mut address.zip,
-                &mut address.phone,
-            ] {
-                if field.as_deref().is_some_and(|text| text.trim().is_empty()) {
-                    *field = None;
-                }
-            }
+            let mut address = serde_json::from_value::<Address>(address)
+                .map_err(|problem| format!("the address is not valid: {problem}"))?
+                .normalized();
             if let Some(code) = &mut address.country_code {
-                *code = code.trim().to_ascii_uppercase();
+                *code = code.trim().to_string();
                 // As Shopify, a country that does not exist is refused (`ZZ`, `XX`): the checkout
                 // keeps the address it had. The store data has no shipping zones: a real country
                 // the store does not sell to is taken.

@@ -12,11 +12,12 @@ use lsf_checkout::{
     Address, CheckoutConfig, CheckoutState, DeliveryKind, DiscountClass, DiscountConfig, Metafield,
     PaymentMethodConfig, PaymentPlacement, ShippingRate,
 };
-use lsf_core::Store;
+use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::model::{
     CheckoutDeliveryKind, CheckoutDiscountClass, CheckoutPaymentPlacement,
 };
 use lsf_core::store::{CheckoutScenario, CheckoutSettings};
+use lsf_core::{Session, Store};
 use serde_json::Value as Json;
 
 /// Which look the checkout page takes.
@@ -266,17 +267,20 @@ pub fn narrow_to_scenario(
 pub fn entered_by(scenario: &CheckoutScenario) -> CheckoutState {
     let entered = &scenario.entered;
     let text = |value: &Option<String>| value.clone().filter(|text| !text.trim().is_empty());
-    let address = entered.shipping_address.as_ref().map(|address| Address {
-        first_name: text(&address.first_name),
-        last_name: text(&address.last_name),
-        company: text(&address.company),
-        address1: text(&address.address1),
-        address2: text(&address.address2),
-        city: text(&address.city),
-        country_code: text(&address.country_code).map(|code| code.to_ascii_uppercase()),
-        province_code: text(&address.province_code),
-        zip: text(&address.zip),
-        phone: text(&address.phone),
+    let address = entered.shipping_address.as_ref().map(|address| {
+        Address {
+            first_name: address.first_name.clone(),
+            last_name: address.last_name.clone(),
+            company: address.company.clone(),
+            address1: address.address1.clone(),
+            address2: address.address2.clone(),
+            city: address.city.clone(),
+            country_code: address.country_code.clone(),
+            province_code: address.province_code.clone(),
+            zip: address.zip.clone(),
+            phone: address.phone.clone(),
+        }
+        .normalized()
     });
     CheckoutState {
         email: text(&entered.email),
@@ -292,6 +296,36 @@ pub fn entered_by(scenario: &CheckoutScenario) -> CheckoutState {
         scenario: Some(scenario.name.clone()),
         ..CheckoutState::default()
     }
+}
+
+/// Opens `scenario` on `session`, which the caller made (`Session::initial` for a command, the
+/// server's initial session for the server): applies its cart and buyer, then the country of the
+/// address it entered, as entering the address does (markets decide on it). Returns what the
+/// buyer entered, and what is wrong with the cart or the buyer of the scenario.
+pub fn apply_scenario(
+    store: &Store,
+    scenario: &CheckoutScenario,
+    session: &mut Session,
+) -> (CheckoutState, Diagnostics) {
+    let mut problems = Diagnostics::new();
+    lsf_core::store::build::apply_session_input(
+        store,
+        &scenario.session,
+        session,
+        &mut problems,
+        &scenario.file,
+        "/session",
+    );
+    let entered = entered_by(scenario);
+    if let Some(country) = entered
+        .shipping_address
+        .as_ref()
+        .and_then(|address| address.country_code.as_deref())
+        .and_then(|code| store.country(code))
+    {
+        session.country = Some(country.iso_code.clone());
+    }
+    (entered, problems)
 }
 
 /// The translations of a checkout UI extension: `locales/<language>.json`, or
@@ -380,6 +414,51 @@ pub fn write_demo_scenarios(dir: &Path, scenarios: &[(&str, &str)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A scenario of the demo store in which the buyer entered `entered`.
+    fn scenario_entering(entered: Json) -> CheckoutScenario {
+        let (store, _) = lsf_core::store::load::load(
+            &lsf_core::store::load::DataSource::Demo,
+            &lsf_core::store::load::LoadOptions::default(),
+        );
+        CheckoutScenario {
+            name: "entered".into(),
+            file: "checkouts/entered.json".into(),
+            title: "Entered".into(),
+            description: None,
+            session: Default::default(),
+            entered: serde_json::from_value(entered).unwrap(),
+            language: None,
+            look: None,
+            extensions: None,
+            checkout: store.checkout,
+            overrides: Vec::new(),
+            problems: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_scenario_address_keeps_what_is_written_but_blank_fields_and_capitalizes_the_country() {
+        let entered = |address: Json| {
+            entered_by(&scenario_entering(
+                serde_json::json!({"shipping_address": address}),
+            ))
+            .shipping_address
+        };
+        let address = entered(serde_json::json!({
+            "first_name": " Ada ", "last_name": "  ", "city": "Paris", "country_code": "fr"
+        }))
+        .unwrap();
+        assert_eq!(address.first_name.as_deref(), Some(" Ada "), "not trimmed");
+        assert_eq!(address.last_name, None);
+        assert_eq!(address.city.as_deref(), Some("Paris"));
+        assert_eq!(address.country_code.as_deref(), Some("FR"));
+        // The country is capitalized, not trimmed.
+        let spaced = entered(serde_json::json!({"country_code": " fr "})).unwrap();
+        assert_eq!(spaced.country_code.as_deref(), Some(" FR "));
+        // Blank fields only: no address.
+        assert_eq!(entered(serde_json::json!({"city": " ", "zip": ""})), None);
+    }
 
     #[test]
     fn money_prints_with_its_currency() {

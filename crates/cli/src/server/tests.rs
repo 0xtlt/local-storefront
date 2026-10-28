@@ -4032,7 +4032,7 @@ fn operations_change_what_the_buyer_chose() {
         json!([
             {"type": "email", "value": "buyer@example.com"},
             {"type": "phone", "value": "+33102030405"},
-            {"type": "shippingAddress", "address": {"lastName": "Doe", "countryCode": "fr", "city": ""}},
+            {"type": "shippingAddress", "address": {"firstName": " Jo ", "lastName": "Doe", "countryCode": " fr ", "city": ""}},
             {"type": "deliveryOption", "group": "group-1", "handle": "express"},
             {"type": "paymentMethod", "handle": "cod"},
             {"type": "discountCode", "action": "add", "code": "SAVE10"},
@@ -4048,8 +4048,10 @@ fn operations_change_what_the_buyer_chose() {
     let json = body_json(&reply);
     assert_eq!(json["buyer"]["email"], "buyer@example.com");
     assert_eq!(json["buyer"]["phone"], "+33102030405");
+    // A blank field is no field, the country is trimmed and capitalized, the rest is as typed.
     assert_eq!(json["shippingAddress"]["countryCode"], "FR");
     assert_eq!(json["shippingAddress"]["city"], Json::Null);
+    assert_eq!(json["shippingAddress"]["firstName"], " Jo ");
     assert_eq!(json["deliveryGroups"][0]["selected"], "express");
     assert_eq!(json["selectedPayment"], "cod");
     assert_eq!(json["discountCodes"][0]["code"], "SAVE10");
@@ -7753,4 +7755,21 @@ fn with_watch_the_checkout_runs_the_module_the_watch_published() {
         .find(|function| function["handle"] == "volume-discount")
         .unwrap();
     assert_eq!(function["built"], true);
+}
+
+#[test]
+fn a_saved_address_is_trimmed_and_its_blank_fields_dropped() {
+    let saved = lsf_core::store::Address {
+        first_name: " Ada ".into(),
+        last_name: "  ".into(),
+        city: "Paris".into(),
+        country_code: " fr ".into(),
+        ..Default::default()
+    };
+    let address = super::checkout_account::checkout_address(&saved);
+    assert_eq!(address.first_name.as_deref(), Some("Ada"));
+    assert_eq!(address.last_name, None);
+    assert_eq!(address.city.as_deref(), Some("Paris"));
+    assert_eq!(address.country_code.as_deref(), Some("FR"));
+    assert_eq!(address.zip, None);
 }

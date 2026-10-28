@@ -81,6 +81,33 @@ pub struct Address {
     pub phone: Option<String>,
 }
 
+impl Address {
+    /// The address with its blank fields (empty or spaces only) dropped and its country code in
+    /// capitals. The other fields stay as written.
+    pub fn normalized(mut self) -> Address {
+        for field in [
+            &mut self.first_name,
+            &mut self.last_name,
+            &mut self.company,
+            &mut self.address1,
+            &mut self.address2,
+            &mut self.city,
+            &mut self.country_code,
+            &mut self.province_code,
+            &mut self.zip,
+            &mut self.phone,
+        ] {
+            if field.as_deref().is_some_and(|text| text.trim().is_empty()) {
+                *field = None;
+            }
+        }
+        if let Some(code) = &mut self.country_code {
+            *code = code.to_ascii_uppercase();
+        }
+        self
+    }
+}
+
 /// A metafield as Shopify stores it: `value` is the string form (JSON for `json` and list types).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

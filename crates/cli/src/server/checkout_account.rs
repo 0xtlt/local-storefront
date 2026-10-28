@@ -90,10 +90,8 @@ pub fn saved_addresses<'a>(
 
 /// An address of the store data as the checkout holds it: an empty field is no field.
 pub fn checkout_address(address: &StoreAddress) -> Address {
-    let text = |value: &str| {
-        let value = value.trim();
-        (!value.is_empty()).then(|| value.to_string())
-    };
+    // Trimmed, unlike what a scenario or the buyer enters.
+    let text = |value: &str| Some(value.trim().to_string());
     Address {
         first_name: text(&address.first_name),
         last_name: text(&address.last_name),
@@ -101,11 +99,12 @@ pub fn checkout_address(address: &StoreAddress) -> Address {
         address1: text(&address.address1),
         address2: text(&address.address2),
         city: text(&address.city),
-        country_code: text(&address.country_code).map(|code| code.to_ascii_uppercase()),
+        country_code: text(&address.country_code),
         province_code: text(&address.province_code),
         zip: text(&address.zip),
         phone: text(&address.phone),
     }
+    .normalized()
 }
 
 /// The addresses of `identity`, as the checkout holds them.

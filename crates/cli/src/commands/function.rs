@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use lsf_checkout::app::Selection;
 use lsf_checkout::pipeline;
-use lsf_checkout::{BuyerJourneyStep, CheckoutResult, CheckoutState};
+use lsf_checkout::{BuyerJourneyStep, CheckoutResult};
 use lsf_core::Session;
 use lsf_core::diagnostics::{Diagnostics, Severity};
 use lsf_core::store::model::SessionInput;
@@ -210,9 +210,9 @@ fn compute(
     };
 
     let mut session = Session::initial(&store);
+    let mut entered = None;
     if let Some(scenario) = scenario {
-        let mut problems = Diagnostics::new();
-        apply_scenario_session(&store, scenario, &mut session, &mut problems);
+        let (state, problems) = checkout::apply_scenario(&store, scenario, &mut session);
         if problems.has_errors() {
             print_diagnostics(&problems);
             return Err(format!(
@@ -220,6 +220,7 @@ fn compute(
                 scenario.name
             ));
         }
+        entered = Some(state);
     }
     if let Some(value) = &args.session {
         let mut problems = Diagnostics::new();
@@ -236,7 +237,7 @@ fn compute(
         }
     }
     // What the scenario had the buyer enter, with what `--checkout` says on top.
-    let mut state = scenario.map_or_else(CheckoutState::default, checkout::entered_by);
+    let mut state = entered.unwrap_or_default();
     if let Some(value) = &args.checkout {
         let mut merged = serde_json::to_value(&state).map_err(|error| error.to_string())?;
         match (read_json("checkout", value)?, merged.as_object_mut()) {
@@ -320,32 +321,6 @@ fn scenario_to_run<'a>(
         ));
     }
     Ok(scenario)
-}
-
-/// Applies the cart, buyer and country of a scenario on `session`.
-fn apply_scenario_session(
-    store: &lsf_core::Store,
-    scenario: &lsf_core::store::CheckoutScenario,
-    session: &mut Session,
-    problems: &mut Diagnostics,
-) {
-    lsf_core::store::build::apply_session_input(
-        store,
-        &scenario.session,
-        session,
-        problems,
-        &scenario.file,
-        "/session",
-    );
-    // As entering the address does: markets decide on the country of the address.
-    let state = checkout::entered_by(scenario);
-    if let Some(country) = state
-        .shipping_address
-        .and_then(|address| address.country_code)
-        .and_then(|code| store.country(&code).map(|country| country.iso_code.clone()))
-    {
-        session.country = Some(country);
-    }
 }
 
 fn indent(text: &str) -> String {
