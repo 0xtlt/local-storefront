@@ -81,6 +81,13 @@ for (const [handle, { target, act }] of Object.entries(CASES)) {
     assert.deepEqual(ours.posts('error'), [], 'lsf');
     assert.deepEqual(theirs.posts('error'), [], 'Shopify CLI');
     assert.ok(ours.document.body.childNodes.length > 0, `${handle} draws something`);
+    if (handle === 'ui-preact') {
+      // The template translates with an element among the replacements.
+      assert.match(
+        ours.document.body.outerHTML,
+        /Welcome to the <s-text type="emphasis">purchase\.checkout\.block\.render<\/s-text> extension!/,
+      );
+    }
     assert.deepEqual(seen(ours), seen(theirs), 'when it is drawn');
 
     act(ours);
