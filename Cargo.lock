@@ -2569,6 +2569,7 @@ dependencies = [
 name = "lsf-checkout"
 version = "0.1.18"
 dependencies = [
+ "brotli",
  "chrono",
  "function-runner",
  "graphql-parser",
@@ -2579,6 +2580,7 @@ dependencies = [
  "serde_json",
  "toml",
  "ureq",
+ "wasm-encoder 0.240.0",
  "wasmtime",
 ]
 
