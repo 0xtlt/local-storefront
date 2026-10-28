@@ -32,8 +32,10 @@ The customers are the demo store's: `jane.doe@example.com` (tag `vip`), `alex.mo
 
 ## Functions
 
-50 Functions, one Rust crate each (`extensions/<handle>`), written with the `shopify_function`
-crate. The comment at the top of each `src/lib.rs` says what it does and what it shows. They are
+51 Functions (`extensions/<handle>`): 50 Rust crates, written with the `shopify_function` crate,
+and `discount-typescript`, written in TypeScript the way `shopify app generate extension --flavor
+typescript` makes it. The comment at the top of each `src/lib.rs` (`src/*.ts`) says what it does
+and what it shows. They are
 configured the way Shopify's are, by the JSON metafield `$app:config.settings` of the discount or
 the customization that owns them: the `checkout` section of `shopify-local/store.json` holds all of
 them.
@@ -41,6 +43,7 @@ them.
 | Handle | API | Version | What it shows | Scenario |
 |---|---|---|---|---|
 | `discount-tag-percentage` | discount | 2026-10 | % off lines by product tag or collection; input query variables | `fn-discount-tag-percentage` |
+| `discount-typescript` | discount | 2026-10 | % off lines of 2 units or more, in TypeScript (Javy) | `fn-discount-typescript` |
 | `discount-order-fixed` | discount | 2027-01 | fixed amount off the order above a subtotal | `fn-discount-order-fixed` |
 | `discount-buy-two-get-one` | discount | 2026-10 | buy 2 get 1 free: 100% off part of a line | `fn-discount-buy-two-get-one` |
 | `discount-free-shipping` | discount | 2027-01 | free shipping above a subtotal | `fn-discount-free-shipping` |
@@ -140,7 +143,9 @@ tools/checkout/build_functions.sh examples/checkout-playground discount-codes  #
 It copies the schema of each Function (its `api_version` and Function API, from
 `crates/checkout/schemas`, not committed here), builds the Cargo workspace of this folder for
 `wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify
-app build` does. `lsf checkout --app . --build` runs the same command for each Function.
+app build` does. `discount-typescript` is built by Shopify's CLI itself (`shopify app function
+build`, through `npx`), in a copy of it inside a minimal app: the CLI refuses this one, whose
+checkout UI extensions are not in Shopify's format. `lsf checkout --app . --build` runs the same command for each Function.
 `broken-missing-build` has no build command and stays unbuilt.
 
 To change a Function and see it at once, `mise run playground:dev` (`lsf checkout --app .

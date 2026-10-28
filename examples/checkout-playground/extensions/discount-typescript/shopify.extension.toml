@@ -1,0 +1,19 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Quantity discount (TypeScript)"
+handle = "discount-typescript"
+type = "function"
+description = "A percentage off the lines of a few units or more, written in TypeScript the way `shopify app generate extension --flavor typescript` makes it"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  # In a Function that `shopify app generate extension` makes, `command` is empty: Shopify's CLI
+  # builds it. Here this repository's script runs the same build (see build_functions.sh).
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-typescript"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.ts"]

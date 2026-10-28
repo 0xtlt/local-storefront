@@ -41,6 +41,11 @@ Function:
 npx local-storefront checkout --app ../my-app --build
 ```
 
+A Function written in JavaScript or TypeScript runs as a Rust one does: Shopify's CLI builds it
+with Javy, and lsf runs its module with Shopify's Javy plugin. In an app that Shopify's CLI
+generates, such a Function has an empty build command, so `--build` and `--watch` do not build
+it: run `shopify app build` after changing it.
+
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
 when the server starts (`app: …`), and is in the `diagnostics` of the state and on the home

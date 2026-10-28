@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: 10% off 2 or more, in TypeScript",
+  "description": "discount-typescript, a Function written in TypeScript and built by Shopify's CLI (Javy): the two mugs are 10% off, the single tee is not. Add a second tee and it is 10% off too.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        },
+        {
+          "variant": "TEE-WHT-M",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-typescript"
+  ]
+}

@@ -1,3 +1,6 @@
 target/
 # Copied from crates/checkout/schemas by `mise run playground:functions` (the schema of the API version of each Function).
 extensions/*/schema.graphql
+# What `npm install` and the typegen write in a JavaScript Function (discount-typescript).
+extensions/*/node_modules/
+extensions/*/generated/

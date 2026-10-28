@@ -132,6 +132,14 @@
         }
       },
       {
+        "function": "discount-typescript",
+        "title": "10% off 2 or more of an item",
+        "classes": ["PRODUCT"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "percentage": 10, "minimumQuantity": 2 } }
+        }
+      },
+      {
         "function": "discount-order-fixed",
         "title": "$10 off orders over $100",
         "classes": ["ORDER"],

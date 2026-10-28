@@ -349,12 +349,12 @@ fn the_init_scenarios_run_no_broken_function() {
         );
     }
     // The Functions see what each of them is about.
-    assert_eq!(discount(&run("customer"), "VIP: 20% off"), 1334);
+    assert_eq!(discount(&run("customer"), "VIP: 20% off"), 1238);
     assert_eq!(
         discount(&run("b2b"), "Northwind Seattle: 12% contract price"),
         2784
     );
-    assert_eq!(discount(&run("abroad"), "10% off in market europe"), 667);
+    assert_eq!(discount(&run("abroad"), "10% off in market europe"), 619);
 }
 
 /// The `extensions` list of a scenario.
@@ -473,6 +473,25 @@ fn check(name: &str, result: &CheckoutResult) {
             only("discount-tag-percentage");
             // 15% of the overshirt (68.00) and of the two mugs (44.00), not of the tee.
             assert_eq!(discount(result, "15% off"), 1680);
+        }
+        "fn-discount-typescript" => {
+            only("discount-typescript");
+            // 10% of the two mugs (44.00), not of the single tee.
+            assert_eq!(discount(result, "10% off 2 or more"), 440);
+            // Written in TypeScript and built by Shopify's CLI: its module runs on Shopify's
+            // Javy plugin, and what it gives `console.log` is its log.
+            let module = std::fs::read(
+                playground().join("extensions/discount-typescript/dist/function.wasm"),
+            )
+            .unwrap();
+            let plugin = b"shopify_functions_javy_v";
+            assert!(module.windows(plugin.len()).any(|bytes| bytes == plugin));
+            let run = the_run(
+                result,
+                "discount-typescript",
+                "cart.lines.discounts.generate.run",
+            );
+            assert!(run.logs.contains("Ceramic Mug: 2 units"), "{}", run.logs);
         }
         "fn-discount-order-fixed" => {
             only("discount-order-fixed");
@@ -879,7 +898,7 @@ fn check(name: &str, result: &CheckoutResult) {
                     .all(|handle| !handle.starts_with("broken-"))
             );
             assert!(result.errors.is_empty(), "{:?}", errors(result));
-            assert_eq!(discount(result, "VIP: 20% off"), 4282);
+            assert_eq!(discount(result, "VIP: 20% off"), 4110);
             assert!(
                 lines(result)
                     .iter()
