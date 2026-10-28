@@ -616,6 +616,9 @@ html:has(.lsf-fn-dialog[open]) { overflow: hidden; }
 .lsf-fn-overview { display: flex; flex-direction: column; gap: var(--lsf-space-xs); max-width: 72rem; }
 .lsf-fn-overview ul { display: flex; flex-direction: column; gap: var(--lsf-space-xs); margin: 0; padding-left: 1.2rem; }
 .lsf-fn-overview li code { margin-left: var(--lsf-space-xs); overflow-wrap: anywhere; }
+/* What `?functions=` asked for, when the checkout has no run of it: the note, and its entries. */
+.lsf-fn-focus { margin: 0; padding: var(--lsf-space-s) var(--lsf-space-m); border-radius: var(--lsf-radius-small); background: var(--lsf-color-bg-subdued); }
+.lsf-fn-overview li.is-focus { margin-left: calc(-1 * var(--lsf-space-xs)); padding: var(--lsf-space-2xs) var(--lsf-space-xs); border-radius: var(--lsf-radius-small); outline: 2px solid var(--lsf-color-accent); }
 .lsf-chip { padding: 0 var(--lsf-space-m); border-radius: 999px; font-size: var(--lsf-size-s); font-weight: var(--lsf-font-weight-bold); }
 .lsf-chip.is-ok { background: var(--lsf-color-success-wash-3); color: var(--lsf-color-success-text); }
 .lsf-chip.is-error { background: var(--lsf-color-critical-wash-3); color: var(--lsf-color-critical-text); }
@@ -867,7 +870,11 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-hp-row.is-error[data-problem='crash'] .lsf-hp-kind { color: var(--lsf-color-critical); font-weight: var(--lsf-font-weight-bold); }
 .lsf-hp-row summary code { flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
 .lsf-hp-msg { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.lsf-hp-where { display: block; max-width: 14rem; padding-top: 7px; overflow: hidden; text-overflow: ellipsis; font-size: var(--lsf-size-s); white-space: nowrap; }
+.lsf-hp-where { display: block; max-width: 16rem; padding-top: 7px; overflow: hidden; text-overflow: ellipsis; font-size: var(--lsf-size-s); white-space: nowrap; }
+/* The link that opens the checkout where the problem shows: what it opens, then where. */
+.lsf-hp-open { font-weight: var(--lsf-font-weight-bold); }
+.lsf-hp-in { color: var(--lsf-color-text-subdued); font-size: 12px; font-weight: normal; }
+.lsf-hp-rowlinks { color: var(--lsf-color-text-subdued); }
 .lsf-hp-full { display: flex; flex-direction: column; gap: var(--lsf-space-xs); padding: var(--lsf-space-xs) 0 var(--lsf-space-m) calc(6.5rem + 40px); font-size: var(--lsf-size-s); }
 .lsf-hp-full pre { margin: 0; padding: var(--lsf-space-s) var(--lsf-space-m); border-radius: var(--lsf-radius-small); background: var(--lsf-color-bg-subdued); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* What a message has between backticks: plain in a block that is all code already. */

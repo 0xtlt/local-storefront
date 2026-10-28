@@ -275,7 +275,7 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
     }
     let root = request_root(state, &id, incoming);
     let mut location = checkout_path(&root, &token_of(state, &id));
-    location.push_str(&carried_query(incoming, &["variant", "targets"]));
+    location.push_str(&carried_query(incoming, CARRIED));
     with_cookie(Reply::redirect(&location), &id, is_new)
 }
 
@@ -311,6 +311,10 @@ fn customer_of_query(
             )
         })
 }
+
+/// What the redirects to a checkout keep of the request: the look (`variant`), every target
+/// (`targets`), and the run the dialog of the Functions opens on (`functions`).
+const CARRIED: &[&str] = &["variant", "targets", "functions"];
 
 /// The query parameters of the request that the checkout page keeps, as `?a=1&b=2`.
 fn carried_query(incoming: &Incoming, names: &[&str]) -> String {
@@ -434,7 +438,7 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
         .and_then(|iso| store.language(iso))
         .unwrap_or(request_language);
     let mut location = checkout_path(root_of(language), &token);
-    location.push_str(&carried_query(incoming, &["variant", "targets"]));
+    location.push_str(&carried_query(incoming, CARRIED));
     with_cookie(Reply::redirect(&location), &id, true)
 }
 

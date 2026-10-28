@@ -668,6 +668,36 @@ export function defaultRunView(runs = []) {
   return runs.length > 0 ? runView(runs, 0) : 'overview';
 }
 
+/**
+ * What `?functions=` of the URL `href` asks the dialog of the Functions to open on: null when
+ * the URL does not have it; otherwise `{handle, target}`, from `<handle>` or
+ * `<handle>:<target>`, both null for an empty value (the overview).
+ */
+export function functionsRequest(href) {
+  let value;
+  try {
+    value = new URL(href ?? '', 'http://localhost/').searchParams.get('functions');
+  } catch {
+    return null;
+  }
+  if (value === null) return null;
+  value = value.trim();
+  if (value === '') return { handle: null, target: null };
+  const colon = value.indexOf(':');
+  if (colon < 0) return { handle: value, target: null };
+  return { handle: value.slice(0, colon), target: value.slice(colon + 1) || null };
+}
+
+/** What the dialog opens on for `request` (see `functionsRequest`): the runs of its handle (and
+ * target), the first that failed, else the first; the overview when the checkout has none. */
+export function requestedView(runs = [], request) {
+  if (!request?.handle) return 'overview';
+  const matches = (entry) => entry.handle === request.handle && (!request.target || entry.target === request.target);
+  const failed = runs.findIndex((entry) => matches(entry) && entry.error);
+  const index = failed >= 0 ? failed : runs.findIndex(matches);
+  return index >= 0 ? runView(runs, index) : 'overview';
+}
+
 /** The index of the run `view` names, `-1` for the overview. A run that is gone gives way to
  * the default. */
 export function selectedRun(runs = [], view) {
@@ -788,6 +818,14 @@ function runDetail(ctx, runs, index) {
 function functionsOverview(ctx) {
   const { state } = ctx;
   const refused = new Set((ctx.refusals ?? []).map((refusal) => refusal.handle));
+  // What `?functions=` asked for and has no run here: its entries stand out, and a note says
+  // so when none of them names it.
+  const focus = ctx.ui?.functionsFocus?.handle ?? null;
+  const focused = (handle) => (focus !== null && handle === focus ? 'is-focus' : null);
+  const named = focus !== null && ((state.errors ?? []).some((error) => error.function === focus)
+    || (state.extensions ?? []).some((ext) => ext.handle === focus));
+  const ran = focus !== null && (state.runs ?? []).some((entry) => entry.handle === focus);
+  const target = ctx.ui?.functionsFocus?.target;
   const other = isShop(state) ? 'standard' : 'shop';
   const link = new URL(ctx.location ?? 'http://localhost/');
   link.searchParams.set('variant', other);
@@ -797,13 +835,17 @@ function functionsOverview(ctx) {
       ` · ${plural(extensions.length, 'checkout UI extension')}`,
       state.scenario && ` · scenario ${state.scenario.title}`,
       state.home && ' · ', state.home && h('a', { class: 'lsf-link', href: state.home }, 'All checkouts and extensions')),
+    focus !== null && !named && h('p', { class: 'lsf-fn-focus', 'data-focus': focus },
+      h('code', null, focus),
+      ran && target ? [' has no run of ', h('code', null, target), ' in this checkout.'] : ' did not run or load in this checkout.',
+      state.home && [' ', h('a', { class: 'lsf-link', href: state.home }, 'The home page says why.')]),
     (state.runs ?? []).length === 0 && h('p', { class: 'lsf-muted' }, 'No Function ran.'),
     (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
-      h('ul', null, state.errors.map((error) => h('li', null, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
+      h('ul', null, state.errors.map((error) => h('li', { class: focused(error.function) }, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),
     (state.skippedDiscounts ?? []).length > 0 && h('div', { 'data-test': 'skipped-discounts' }, h('h4', null, 'Discounts not applied'),
       h('ul', null, state.skippedDiscounts.map((skipped) => h('li', null, h('strong', null, skipped.title), skipped.code && h('code', null, skipped.code), ` ${skipped.reason}`, h('code', null, skipped.function))))),
     extensions.length > 0 && h('div', null, h('h4', null, 'Extensions'),
-      h('ul', null, extensions.map((ext) => h('li', { key: ext.handle }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), (ext.targets ?? []).map((target) => h('code', null, target)))))));
+      h('ul', null, extensions.map((ext) => h('li', { key: ext.handle, class: focused(ext.handle) }, h('strong', null, ext.handle), h('span', { class: 'lsf-muted' }, ` ${ext.apiVersion} · `), refused.has(ext.handle) && h('span', { class: 'lsf-chip is-error' }, 'not loaded'), (ext.targets ?? []).map((target) => h('code', null, target)))))));
 }
 
 /**

@@ -275,6 +275,23 @@ function dot(document, status) {
   return element(document, 'span', { class: `lsf-dot is-${status}`, role: 'img', 'aria-label': label });
 }
 
+/**
+ * The link on the right of a problem found in the browser: a fresh checkout of the scenario
+ * that runs the extension, as the server picks it (`data-open`, `data-open-in`), or of the
+ * store's cart, where the extension loads and shows what goes wrong; without one, its row on
+ * this page.
+ */
+export function openLink(document, row) {
+  const href = row.dataset.open;
+  if (!href) return element(document, 'a', { class: 'lsf-hp-where', href: `#${row.id}` }, 'details');
+  const scenario = row.dataset.openIn || '';
+  return element(document, 'a', {
+    class: 'lsf-hp-where lsf-hp-open',
+    href,
+    title: `Opens a fresh checkout of ${scenario ? `the scenario ${scenario}` : "the store's cart"}`,
+  }, 'Open in checkout ', element(document, 'span', { class: 'lsf-hp-in' }, scenario || "store's cart"));
+}
+
 /** Adds a problem found in the browser to the list, and says it on the row of the extension. */
 function report(document, { row, problem }) {
   const handle = row.dataset.uiExtension;
@@ -299,8 +316,10 @@ function report(document, { row, problem }) {
           element(document, 'span', { class: 'lsf-hp-msg', title: message }, ...richText(document, message))),
         element(document, 'div', { class: 'lsf-hp-full' },
           element(document, 'pre', {}, ...richText(document, message)),
-          element(document, 'p', {}, 'Found by loading its bundle in this page, as the checkout does.'))),
-      element(document, 'a', { class: 'lsf-hp-where', href: `#${row.id}` }, 'details'));
+          element(document, 'p', {}, 'Found by loading its bundle in this page, as the checkout does.'),
+          element(document, 'p', { class: 'lsf-hp-rowlinks' }, 'On this page: ',
+            element(document, 'a', { href: `#${row.id}` }, handle), ' in the UI extensions'))),
+      openLink(document, row));
     // In the order of the server (scenarios last), with the rows past the first few folded.
     const list = group.querySelector('.lsf-hp-rows');
     list.insertBefore(line, list.querySelector('[data-problem="scenario"]'));

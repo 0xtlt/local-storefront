@@ -316,6 +316,9 @@ fn function_json(
                 "target": target.target,
                 "api": spec.map(|spec| spec.api.to_string()),
                 "runs": target.kind != TargetKind::Unsupported,
+                // Whether a checkout has a run of it: a target it runs, on an API version it
+                // runs (a Function that is not built has a run, that fails).
+                "hasRun": target.kind != TargetKind::Unsupported && function.version.is_some(),
                 "fetch": matches!(
                     target.kind,
                     TargetKind::LinesDiscountsFetch
@@ -382,6 +385,9 @@ fn ui_extension_json(
         .collect();
     let problems = ui_problems(app, extension);
     let selected = selection.contains(&extension.handle);
+    // Whether the checkout loads it: every error keeps it out (not built, an API version it
+    // does not run, an `owner_type` that is wrong or missing); a warning does not.
+    let loads = !problems.iter().any(|(level, _)| *level == Level::Error);
     // The bundle the checkout loads, for the page to load it on its own and see what it
     // registers (`home.js`): only for an extension the checkout loads.
     let script = (selected && extension.built() && extension.version.is_some()).then(|| {
@@ -405,6 +411,7 @@ fn ui_extension_json(
         "status": extension_status(&problems, &[], selected),
         "problems": problems_json(&problems),
         "scenarios": used_by,
+        "loads": loads,
         "script": script,
     })
 }
@@ -785,6 +792,44 @@ struct Problem {
     link: Option<(String, String)>,
     /// The scenarios a Function fails in.
     scenarios: Vec<String>,
+    /// The checkout where it shows (see [`Open`]).
+    open: Option<Open>,
+}
+
+/// A fresh checkout where a problem shows: the scenario that runs the extension (or the
+/// store's cart, when no scenario does), with the dialog of the Functions open on `functions`
+/// (`?functions=<handle>` or `<handle>:<target>`) when it is set.
+struct Open {
+    scenario: Option<String>,
+    functions: Option<String>,
+    /// Whether the dialog opens on a run (otherwise the page, or the overview of the dialog).
+    run: bool,
+}
+
+impl Open {
+    fn href(&self, root: &str, scenario: Option<&str>) -> String {
+        checkout_href(
+            root,
+            scenario.or(self.scenario.as_deref()),
+            self.functions.as_deref(),
+        )
+    }
+}
+
+/// `/checkout`, with `?scenario=` and `?functions=` when they are given.
+fn checkout_href(root: &str, scenario: Option<&str>, functions: Option<&str>) -> String {
+    let mut pairs = Vec::new();
+    if let Some(name) = scenario {
+        pairs.push(format!("scenario={}", query_escape(name)));
+    }
+    if let Some(functions) = functions {
+        pairs.push(format!("functions={}", query_escape(functions)));
+    }
+    if pairs.is_empty() {
+        format!("{root}/checkout")
+    } else {
+        format!("{root}/checkout?{}", pairs.join("&"))
+    }
 }
 
 impl Problem {
@@ -800,7 +845,24 @@ impl Problem {
         (self.level, kind)
     }
 
-    fn to_json(&self) -> Json {
+    fn to_json(&self, root: &str) -> Json {
+        let open = self.open.as_ref().map(|open| {
+            json!({
+                "href": open.href(root, None),
+                "scenario": open.scenario,
+                "functions": open.functions,
+                "run": open.run,
+            })
+        });
+        // Each scenario a Function fails in, with the checkout of that scenario on the run.
+        let runs: Vec<Json> = match &self.open {
+            Some(open) if self.kind == "crash" => self
+                .scenarios
+                .iter()
+                .map(|name| json!({"scenario": name, "href": open.href(root, Some(name))}))
+                .collect(),
+            _ => Vec::new(),
+        };
         json!({
             "severity": self.level.name(),
             "kind": self.kind,
@@ -810,7 +872,64 @@ impl Problem {
             "href": self.link.as_ref().map(|(href, _)| href),
             "where": self.link.as_ref().map(|(_, label)| label),
             "scenarios": self.scenarios,
+            // The checkout where it shows, and for a run that fails, each scenario's.
+            "open": open,
+            "runs": runs,
         })
+    }
+}
+
+/// The targets of an extension, each once.
+fn target_names(extension: &Json) -> Vec<&str> {
+    let mut names = Vec::new();
+    for target in extension["targets"].as_array().into_iter().flatten() {
+        let name = text_of(&target["target"]);
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Where a problem of an extension shows: the scenario that runs it (`runsIn`, see `build`), or
+/// the store's cart.
+/// - A Function: the dialog of the Functions on it, on the target the message names when it
+///   has several. The checkout shows that run, or the overview when it has none.
+/// - A checkout UI extension that the page loads shows on the page: no dialog. One it does not
+///   load (not built, an API version it does not run, an `owner_type` it refuses) is in the
+///   overview of the dialog.
+fn open_for(kind: &str, extension: &Json, message: &str) -> Open {
+    let handle = text_of(&extension["handle"]);
+    let scenario = extension["runsIn"].as_str().map(str::to_string);
+    if kind == "uiExtension" {
+        return Open {
+            scenario,
+            functions: (extension["loads"] != true).then(|| handle.to_string()),
+            run: false,
+        };
+    }
+    let targets: Vec<&Json> = extension["targets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .collect();
+    let named = targets
+        .iter()
+        .find(|target| message.contains(&format!("`{}`", text_of(&target["target"]))));
+    let functions = match named {
+        Some(target) if target_names(extension).len() > 1 => {
+            format!("{handle}:{}", text_of(&target["target"]))
+        }
+        _ => handle.to_string(),
+    };
+    let run = match named {
+        Some(target) => target["hasRun"] == true,
+        None => targets.iter().any(|target| target["hasRun"] == true),
+    };
+    Open {
+        scenario,
+        functions: Some(functions),
+        run,
     }
 }
 
@@ -825,7 +944,7 @@ fn problem_list(
     report: Option<&Report>,
 ) -> Vec<Problem> {
     let mut list = Vec::new();
-    let mut add = |level, kind, subject: Option<String>, message: String, link| {
+    let add = |list: &mut Vec<Problem>, level, kind, subject: Option<String>, message, link| {
         list.push(Problem {
             level,
             kind,
@@ -834,6 +953,7 @@ fn problem_list(
             target: None,
             link,
             scenarios: Vec::new(),
+            open: None,
         });
     };
     for item in &state.loaded().diagnostics.items {
@@ -842,6 +962,7 @@ fn problem_list(
             && !item.file.starts_with("checkouts/")
         {
             add(
+                &mut list,
                 Level::Error,
                 "store",
                 Some(item.file.clone()),
@@ -856,6 +977,7 @@ fn problem_list(
         .filter(|diagnostic| diagnostic.extension.is_none())
     {
         add(
+            &mut list,
             Level::of(diagnostic.severity),
             "app",
             None,
@@ -864,21 +986,25 @@ fn problem_list(
         );
     }
     for (kind, extensions, label) in [
-        ("function", functions, "details"),
-        ("uiExtension", ui_extensions, "details"),
+        ("function", functions, "Functions"),
+        ("uiExtension", ui_extensions, "UI extensions"),
     ] {
         for extension in extensions {
             for problem in extension["problems"].as_array().into_iter().flatten() {
-                add(
-                    Level::of_json(problem),
+                let message = text_of(&problem["message"]);
+                list.push(Problem {
+                    level: Level::of_json(problem),
                     kind,
-                    extension["handle"].as_str().map(str::to_string),
-                    text_of(&problem["message"]).to_string(),
-                    Some((
+                    subject: extension["handle"].as_str().map(str::to_string),
+                    message: message.to_string(),
+                    target: None,
+                    link: Some((
                         format!("#{}", text_of(&extension["anchor"])),
                         label.to_string(),
                     )),
-                );
+                    scenarios: Vec::new(),
+                    open: Some(open_for(kind, extension, message)),
+                });
             }
         }
     }
@@ -893,6 +1019,7 @@ fn problem_list(
             first.to_string()
         };
         add(
+            &mut list,
             Level::Error,
             "scenario",
             scenario["name"].as_str().map(str::to_string),
@@ -917,6 +1044,16 @@ fn problem_list(
             continue;
         }
         let first = &failure.scenarios[0];
+        // The run itself: the target too when the Function has several.
+        let several = functions
+            .iter()
+            .find(|function| function["handle"] == failure.handle.as_str())
+            .is_some_and(|function| target_names(function).len() > 1);
+        let functions = if several {
+            format!("{}:{}", failure.handle, failure.target)
+        } else {
+            failure.handle.clone()
+        };
         list.push(Problem {
             level: Level::Error,
             kind: "crash",
@@ -925,6 +1062,11 @@ fn problem_list(
             target: Some(failure.target.clone()),
             link: Some((format!("#{}", anchor("scenario", first)), first.clone())),
             scenarios: failure.scenarios.clone(),
+            open: Some(Open {
+                scenario: Some(first.clone()),
+                functions: Some(functions),
+                run: true,
+            }),
         });
     }
     list.sort_by_key(Problem::rank);
@@ -970,25 +1112,53 @@ pub fn build(
         statuses: HashMap::new(),
     };
 
-    // How many scenarios that open run each extension.
+    // How many scenarios that open run each extension, and the one its problems open: the one
+    // that names it among the fewest extensions (the first of those), otherwise the first that
+    // runs every extension.
+    let opens: Vec<&CheckoutScenario> = store
+        .scenarios
+        .iter()
+        .filter(|scenario| own_problems(&context, scenario).is_empty())
+        .collect();
     let mut used_by: HashMap<String, usize> = HashMap::new();
-    for scenario in &store.scenarios {
-        if own_problems(&context, scenario).is_empty() {
-            for handle in uses(&context, scenario) {
-                *used_by.entry(handle.to_string()).or_default() += 1;
+    let mut runs_in: HashMap<String, (usize, String)> = HashMap::new();
+    for scenario in &opens {
+        let rank = scenario.extensions.as_ref().map_or(usize::MAX, Vec::len);
+        for handle in uses(&context, scenario) {
+            *used_by.entry(handle.to_string()).or_default() += 1;
+            let best = runs_in
+                .entry(handle.to_string())
+                .or_insert_with(|| (rank, scenario.name.clone()));
+            if rank < best.0 {
+                *best = (rank, scenario.name.clone());
             }
         }
     }
     let used = |handle: &str| used_by.get(handle).copied().unwrap_or(0);
+    let runs_in = |mut extension: Json| {
+        extension["runsIn"] = json!(
+            runs_in
+                .get(text_of(&extension["handle"]))
+                .map(|(_, name)| name)
+        );
+        extension
+    };
     let functions: Vec<Json> = app
         .functions
         .iter()
         .map(|function| function_json(&app, &selection, function, report, used(&function.handle)))
+        .map(runs_in)
         .collect();
     let ui_extensions: Vec<Json> = app
         .ui_extensions
         .iter()
         .map(|extension| ui_extension_json(&app, &selection, extension, used(&extension.handle)))
+        .map(runs_in)
+        .map(|mut extension| {
+            // Where a problem the page finds when it loads the bundle shows (`home.js`).
+            extension["open"] = json!(checkout_href(root, extension["runsIn"].as_str(), None));
+            extension
+        })
         .collect();
     // What a scenario reads of the extensions it uses: their own problems, not the runs that
     // fail (those are the scenario's own).
@@ -1038,7 +1208,7 @@ pub fn build(
         "dataFolder": state.app.data_dir().map(|dir| dir.join("checkouts").display().to_string()),
         "storeDataProblems": state.loaded().diagnostics.error_count(),
         // Everything that is wrong, errors first.
-        "problems": problems.iter().map(Problem::to_json).collect::<Vec<_>>(),
+        "problems": problems.iter().map(|problem| problem.to_json(root)).collect::<Vec<_>>(),
         "counts": {"errors": errors, "warnings": problems.len() - errors},
         // The Functions that fail when the scenarios run: `pending` until the check ran.
         "check": check,
@@ -1275,21 +1445,47 @@ fn problem_html(problem: &Json, dir: &str) -> String {
     let message = text_of(&problem["message"]);
     let subject = problem["subject"].as_str().map(code).unwrap_or_default();
     let scenarios = strings(&problem["scenarios"]);
-    let place = match problem["href"].as_str() {
-        Some(href) => format!(
+    let more = if scenarios.len() > 1 {
+        format!(" <span class=\"lsf-muted\">+{}</span>", scenarios.len() - 1)
+    } else {
+        String::new()
+    };
+    let open = &problem["open"];
+    let place = match (open["href"].as_str(), problem["href"].as_str()) {
+        (Some(href), _) => {
+            let run = open["run"] == true;
+            let label = if run {
+                "Open the run"
+            } else {
+                "Open in checkout"
+            };
+            let place = match open["scenario"].as_str() {
+                Some(name) => format!("the scenario {name}"),
+                None => "the store's cart".to_string(),
+            };
+            let shows = match open["functions"].as_str() {
+                Some(_) if run => ", the Functions dialog on its run",
+                Some(_) => ", the Functions dialog on its overview",
+                None => "",
+            };
+            format!(
+                "<a class=\"lsf-hp-where lsf-hp-open\" href=\"{}\" title=\"{}\">{label} \
+                 <span class=\"lsf-hp-in\">{}</span>{more}</a>",
+                esc(href),
+                esc(&format!("Opens a fresh checkout of {place}{shows}")),
+                esc(open["scenario"].as_str().unwrap_or("store's cart")),
+            )
+        }
+        (None, Some(href)) => format!(
             "<a class=\"lsf-hp-where\" href=\"{}\">{}{}</a>",
             esc(href),
             esc(text_of(&problem["where"])),
-            if scenarios.len() > 1 {
-                format!(" <span class=\"lsf-muted\">+{}</span>", scenarios.len() - 1)
-            } else {
-                String::new()
-            }
+            more
         ),
-        None if kind == "store" => {
+        (None, None) if kind == "store" => {
             "<span class=\"lsf-hp-where lsf-muted\"><code>lsf validate</code></span>".to_string()
         }
-        None => String::new(),
+        (None, None) => String::new(),
     };
     let mut full = String::new();
     if let Some(target) = problem["target"].as_str() {
@@ -1301,21 +1497,54 @@ fn problem_html(problem: &Json, dir: &str) -> String {
         message_html(message, dir)
     ));
     if scenarios.len() > 1 {
-        let links: Vec<String> = scenarios
-            .iter()
-            .map(|name| {
+        // Each with the checkout of that scenario on the run.
+        let links: Vec<String> = problem["runs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|run| {
                 format!(
-                    "<a href=\"#{}\">{}</a>",
-                    esc(&anchor("scenario", name)),
-                    esc(name)
+                    "<a href=\"{}\">{}</a>",
+                    esc(text_of(&run["href"])),
+                    esc(text_of(&run["scenario"]))
                 )
             })
             .collect();
         full.push_str(&format!(
-            "<p>Fails in {} scenarios: {}</p>",
+            "<p>Fails in {} scenarios, open the run in each: {}</p>",
             scenarios.len(),
             links.join(", ")
         ));
+    }
+    // The rows of this page it is about, when the link on the right opens a checkout.
+    if open.is_object() {
+        let mut rows = Vec::new();
+        if let Some(subject) = problem["subject"].as_str() {
+            let (prefix, list) = match kind {
+                "uiExtension" => ("ui", "UI extensions"),
+                _ => ("function", "Functions"),
+            };
+            rows.push(format!(
+                "<a href=\"#{}\">{}</a> in the {list}",
+                esc(&anchor(prefix, subject)),
+                esc(subject)
+            ));
+        }
+        if kind == "crash" {
+            for name in &scenarios {
+                rows.push(format!(
+                    "<a href=\"#{}\">{}</a> in the scenarios",
+                    esc(&anchor("scenario", name)),
+                    esc(name)
+                ));
+            }
+        }
+        if !rows.is_empty() {
+            full.push_str(&format!(
+                "<p class=\"lsf-hp-rowlinks\">On this page: {}</p>",
+                rows.join(" · ")
+            ));
+        }
     }
     format!(
         "<li class=\"lsf-hp-row is-{severity}\" data-problem=\"{kind}\"{}>\
@@ -1759,6 +1988,15 @@ fn extension_row(
         ),
         None => String::new(),
     };
+    // The checkout where a problem found that way shows.
+    let open = match extension["open"].as_str() {
+        Some(href) if !probe.is_empty() => format!(
+            " data-open=\"{}\" data-open-in=\"{}\"",
+            esc(href),
+            esc(extension["runsIn"].as_str().unwrap_or_default())
+        ),
+        _ => String::new(),
+    };
     let handle = text_of(&extension["handle"]);
     let status = text_of(&extension["status"]);
     let name = extension["name"]
@@ -1766,7 +2004,7 @@ fn extension_row(
         .map(|name| format!("<span class=\"lsf-h-name\">{}</span>", esc(name)))
         .unwrap_or_default();
     format!(
-        "<li class=\"lsf-h-row lsf-h-ext\" id=\"{}\" {data}=\"{}\" data-status=\"{status}\"{probe}>\
+        "<li class=\"lsf-h-row lsf-h-ext\" id=\"{}\" {data}=\"{}\" data-status=\"{status}\"{probe}{open}>\
          <details class=\"lsf-h-details\"><summary>{}<span class=\"lsf-h-main\">\
          <span class=\"lsf-h-title\"><code class=\"lsf-h-handle\">{}</code>{name}</span>\
          <span class=\"lsf-h-meta\">{}</span>{}</span><span class=\"lsf-h-targets\">{}</span></summary>\

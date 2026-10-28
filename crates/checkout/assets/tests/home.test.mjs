@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { FakeDocument } from './fake-dom.mjs';
 import { init as sandboxInit, sandboxWindow } from './harness.mjs';
-import { applyFilter, countText, markScenarios, probe, reorder, richText, rowMatches, sortRows, start, verdict } from '../home.js';
+import { applyFilter, countText, markScenarios, openLink, probe, reorder, richText, rowMatches, sortRows, start, verdict } from '../home.js';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
 
@@ -349,4 +349,22 @@ test('a scenario that runs a broken bundle becomes a warning, and moves up', () 
   assert.equal(c.dataset.status, 'error', 'an error stays one');
   sortRows(list);
   assert.deepEqual(list.children.map((row) => row.id), ['c', 'b', 'd', 'a']);
+});
+
+test('a problem the page finds in a bundle opens the checkout of the first scenario that runs it', () => {
+  const document = new FakeDocument();
+  const href = '/checkout?scenario=ui-broken-%3Cloader%3E';
+  const link = openLink(document, { id: 'ui-probed', dataset: { open: href, openIn: 'ui-broken-<loader>' } });
+  assert.equal(link.getAttribute('href'), href);
+  assert.equal(link.getAttribute('class'), 'lsf-hp-where lsf-hp-open');
+  assert.match(link.textContent, /^Open in checkout ui-broken-<loader>$/);
+  assert.equal(link.querySelector('.lsf-hp-in').textContent, 'ui-broken-<loader>', 'the name is text');
+  assert.equal(link.getAttribute('title'), 'Opens a fresh checkout of the scenario ui-broken-<loader>');
+
+  // No scenario runs it: the store's cart.
+  const cart = openLink(document, { id: 'ui-probed', dataset: { open: '/checkout', openIn: '' } });
+  assert.equal(cart.getAttribute('href'), '/checkout');
+  assert.equal(cart.querySelector('.lsf-hp-in').textContent, "store's cart");
+  // A row without a checkout to open: its row on the page.
+  assert.equal(openLink(document, { id: 'ui-probed', dataset: {} }).getAttribute('href'), '#ui-probed');
 });

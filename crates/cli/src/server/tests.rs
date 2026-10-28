@@ -7356,3 +7356,189 @@ fn every_scenario_that_init_writes_opens_and_runs_the_app() {
     }
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// The problem of the home page about `subject`, of the kind `kind`.
+fn problem_about<'a>(home: &'a Json, kind: &str, subject: &str) -> &'a Json {
+    home["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| problem["kind"] == kind && problem["subject"] == subject)
+        .unwrap_or_else(|| panic!("no {kind} problem about {subject}: {}", home["problems"]))
+}
+
+#[test]
+fn a_problem_of_the_home_page_opens_the_checkout_where_it_shows() {
+    let app = app_with_oddities("open");
+    let data = ScenarioData::new(
+        "home-open",
+        &[
+            // Names it among others, and comes first: the one that names fewer wins.
+            (
+                "a a.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["quantity-limit", "volume-discount"]}"#,
+            ),
+            // Runs every extension: one that names it wins over it.
+            (
+                "aaa-all.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+            ),
+            (
+                "a b&c.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["quantity-limit"]}"#,
+            ),
+        ],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+
+    // A legacy target runs: the first scenario that names the Function, with the dialog on it.
+    // The name of the scenario is escaped in the URL, and the URL in the HTML.
+    let legacy = problem_about(&json, "function", "quantity-limit");
+    assert_eq!(
+        legacy["open"],
+        json!({
+            "href": "/checkout?scenario=a+b%26c&functions=quantity-limit",
+            "scenario": "a b&c",
+            "functions": "quantity-limit",
+            "run": true,
+        })
+    );
+    // The row of the Function on the page is still there, under the details.
+    assert_eq!(legacy["href"], "#function-quantity-limit");
+    assert!(
+        html.contains("href=\"/checkout?scenario=a+b%26c&amp;functions=quantity-limit\""),
+        "{html}"
+    );
+    assert!(html.contains("Open the run <span class=\"lsf-hp-in\">a b&amp;c</span>"));
+    assert!(html.contains("On this page: <a href=\"#function-quantity-limit\">quantity-limit</a>"));
+
+    // A Function that is not built: the scenario that runs every extension (no other does),
+    // where its run fails. The message names no target: the Function as a whole.
+    let remote = problem_about(&json, "function", "remote-rules");
+    assert_eq!(
+        remote["open"]["href"],
+        "/checkout?scenario=aaa-all&functions=remote-rules"
+    );
+    assert_eq!(remote["open"]["run"], true);
+
+    // A UI extension on an API version the checkout does not run is not on the page: the
+    // overview of the dialog, which says so.
+    let chat = json["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| problem["subject"] == "chat-widget" && problem["severity"] == "error")
+        .unwrap();
+    assert_eq!(
+        chat["open"]["href"],
+        "/checkout?scenario=aaa-all&functions=chat-widget"
+    );
+    assert_eq!(chat["open"]["run"], false);
+    assert!(html.contains("Open in checkout <span class=\"lsf-hp-in\">aaa-all</span>"));
+    std::fs::remove_dir_all(&app).ok();
+
+    // No scenario runs the extensions: the store's cart.
+    let app = app_with_oddities("open-none");
+    let state = checkout_server_with_data(app.clone(), &[], true, None);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    let legacy = problem_about(&json, "function", "quantity-limit");
+    assert_eq!(legacy["open"]["href"], "/checkout?functions=quantity-limit");
+    assert_eq!(legacy["open"]["scenario"], Json::Null);
+}
+
+#[test]
+fn a_run_that_fails_opens_its_scenario_on_that_run_and_its_target() {
+    let app = app_with_a_failing_function("open");
+    // A second target: the link names the target of the run.
+    let toml = app.join("extensions/broken-wasm/shopify.extension.toml");
+    let declared = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(
+        &toml,
+        declared.replace(
+            "  [extensions.build]",
+            "  [[extensions.targeting]]\n  target = \"cart.payment-methods.transform.run\"\n  input_query = \"src/run.graphql\"\n  export = \"run\"\n\n  [extensions.build]",
+        ),
+    )
+    .unwrap();
+    let cart = r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#;
+    let data = ScenarioData::new("home-open-run", &[("one.json", cart), ("two.json", cart)]);
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?check=1&format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
+
+    let crash = json["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| {
+            problem["kind"] == "crash" && problem["target"] == "cart.validations.generate.run"
+        })
+        .unwrap_or_else(|| panic!("{}", json["problems"]));
+    let href = "/checkout?scenario=one&functions=broken-wasm%3Acart.validations.generate.run";
+    assert_eq!(crash["open"]["href"], href);
+    assert_eq!(crash["open"]["run"], true);
+    // It fails in both: each with the checkout of that scenario on the run.
+    assert_eq!(
+        crash["runs"],
+        json!([
+            {"scenario": "one", "href": href},
+            {
+                "scenario": "two",
+                "href": "/checkout?scenario=two&functions=broken-wasm%3Acart.validations.generate.run"
+            },
+        ])
+    );
+    assert!(html.contains(&format!("href=\"{}\"", href.replace('&', "&amp;"))));
+    assert!(html.contains("Fails in 2 scenarios, open the run in each:"));
+    // The rows on this page, under the details.
+    assert!(html.contains("<a href=\"#function-broken-wasm\">broken-wasm</a> in the Functions"));
+    assert!(html.contains("<a href=\"#scenario-two\">two</a> in the scenarios"));
+
+    // With one target, the handle is enough.
+    let app = app_with_a_failing_function("open-one");
+    let data = ScenarioData::new("home-open-one", &[("one.json", cart)]);
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?check=1&format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert_eq!(
+        problem_about(&json, "crash", "broken-wasm")["open"]["href"],
+        "/checkout?scenario=one&functions=broken-wasm"
+    );
+}
+
+#[test]
+fn the_run_to_show_survives_the_redirect_of_a_scenario() {
+    let data = ScenarioData::new("query-functions", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let reply = get(
+        &state,
+        "/checkout?scenario=tees&functions=volume-discount%3Acart.lines.discounts.generate.run&targets=all",
+        "viewer",
+    );
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    assert_eq!(
+        header(&reply, "location").unwrap(),
+        format!(
+            "/fr/checkouts/cn/{}?targets=all&functions=volume-discount%3Acart.lines.discounts.generate.run",
+            super::cart_token_of(&id)
+        )
+    );
+    // Empty (the overview), and escaped: it cannot add a parameter of its own.
+    let reply = get(&state, "/checkout?scenario=tees&functions=", "viewer");
+    assert!(header(&reply, "location").unwrap().ends_with("?functions="));
+    let reply = get(
+        &state,
+        "/checkout?functions=a%26variant%3Dshop%20%3Cb%3E",
+        "viewer",
+    );
+    let location = header(&reply, "location").unwrap();
+    assert!(
+        location.ends_with("?functions=a%26variant%3Dshop+%3Cb%3E"),
+        "{location}"
+    );
+}

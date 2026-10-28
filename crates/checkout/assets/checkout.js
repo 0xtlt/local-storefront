@@ -7,7 +7,7 @@ import { MENU_ITEMS } from './account.js';
 import { RENDERED_TARGETS, createExtensionHost } from './extension-host.js';
 import { languageOf, withCurrency } from './format.js';
 import { missingFields, op } from './operations.js';
-import { defaultRunView, renderPage } from './views.js';
+import { defaultRunView, functionsRequest, renderPage, requestedView } from './views.js';
 import { h, render } from './vdom.js';
 
 const ADDRESS_FIELDS = [
@@ -29,10 +29,12 @@ export function startCheckout({ root, initial, document, window, location, fetch
     discountError: null,
     summaryOpen: false,
     accountOpen: false,
-    // The dialog of the Functions, what it shows (`overview`, or a run: see `runView`) and the
-    // JSON just copied from it.
+    // The dialog of the Functions, what it shows (`overview`, or a run: see `runView`), what
+    // `?functions=` asked for when it has no run here (`{handle, target}`, for the overview to
+    // point at), and the JSON just copied from it.
     functionsOpen: false,
     functionsView: null,
+    functionsFocus: null,
     copied: null,
     tried: false,
     busy: false,
@@ -388,10 +390,10 @@ export function startCheckout({ root, initial, document, window, location, fetch
       paint();
     },
 
-    /** Opens the dialog of the Functions, on its first failed run, or closes it. The page
-     * opens it as a modal (`showModal()`); whatever closes it (this, Escape, the backdrop)
-     * ends in `functionsClosed`. */
-    toggleFunctions(open) {
+    /** Opens the dialog of the Functions, on `view` (by default its first failed run), or
+     * closes it. The page opens it as a modal (`showModal()`); whatever closes it (this, Escape,
+     * the backdrop) ends in `functionsClosed`. `focus` is what the overview points at. */
+    toggleFunctions(open, view = null, focus = null) {
       const dialog = functionsDialog();
       if (!open) {
         if (dialog?.open) dialog.close();
@@ -400,7 +402,8 @@ export function startCheckout({ root, initial, document, window, location, fetch
       }
       if (dialog ? dialog.open : ui.functionsOpen) return;
       ui.functionsOpen = true;
-      ui.functionsView = defaultRunView(state.runs ?? []);
+      ui.functionsView = view ?? defaultRunView(state.runs ?? []);
+      ui.functionsFocus = focus;
       paint();
       if (dialog && !dialog.open) dialog.showModal?.();
     },
@@ -411,6 +414,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
       if (functionsDialog()?.open) return;
       const wasOpen = ui.functionsOpen;
       ui.functionsOpen = false;
+      ui.functionsFocus = null;
       ui.copied = null;
       if (wasOpen) paint();
       root.querySelector?.('.lsf-fn-badge')?.focus?.();
@@ -429,6 +433,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
     /** Shows the overview (`overview`) or a run (`runView`) in the dialog. */
     showRun(view) {
       ui.functionsView = view;
+      ui.functionsFocus = null;
       paint();
     },
 
@@ -502,7 +507,27 @@ export function startCheckout({ root, initial, document, window, location, fetch
     },
   };
 
+  /** `?functions=` (from a problem of the home page): the dialog opens on the run it names, or
+   * on the overview, as the badge opens it. The parameter then leaves the URL, so that a reload
+   * or a later update does not open it again. */
+  function openRequested() {
+    const request = functionsRequest(location.href);
+    if (!request) return;
+    // First, so that the links the dialog draws from the URL do not have it.
+    try {
+      const url = new URL(location.href);
+      url.searchParams.delete('functions');
+      window?.history?.replaceState?.(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      // A page without a history to change keeps its URL.
+    }
+    const view = requestedView(state.runs ?? [], request);
+    actions.toggleFunctions(true, view, view === 'overview' && request.handle ? request : null);
+    root.querySelector?.('.lsf-fn-main .is-focus, .lsf-fn-main .lsf-fn-focus')?.scrollIntoView?.({ block: 'nearest' });
+  }
+
   paint();
+  openRequested();
   return { actions, ui, host, send, getState: () => state, paint };
 }
 

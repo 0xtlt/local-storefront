@@ -747,3 +747,93 @@ test('a checkout with nothing to ship has no address and no shipping method, unl
   assert.ok(every.query('[data-section="delivery"]'), 'every target needs the steps of a cart that ships');
   assert.ok(every.query('[data-section="shipping"]'));
 });
+
+/** A page opened from a problem of the home page: `?functions=` in its URL, a history to drop it from. */
+function openedWith(functions, more = {}) {
+  const replaced = [];
+  const history = { state: null, replaceState: (state, title, url) => replaced.push(url) };
+  const href = `http://localhost/checkouts/cn/preview?variant=standard&functions=${encodeURIComponent(functions)}#top`;
+  const page = app({ href, window: { history }, ...more });
+  return { ...page, replaced };
+}
+
+test('`?functions=<handle>` opens the dialog on that run, as the badge would, and leaves the URL', () => {
+  const page = openedWith('order-rules');
+  const dialog = page.query('.lsf-fn-dialog');
+  assert.equal(page.checkout.ui.functionsOpen, true);
+  assert.equal(dialog.modal, true, 'opened with showModal()');
+  // Not the default (the first run, volume-discount): the run the URL names.
+  assert.equal(page.query('.lsf-fn-run').getAttribute('data-run'), 'order-rules');
+  assert.equal(page.query('[aria-current="true"]').getAttribute('data-run'), 'order-rules');
+  assert.deepEqual(page.replaced, ['/checkouts/cn/preview?variant=standard#top'], 'the rest of the URL stays');
+});
+
+test('`?functions=<handle>:<target>` opens that target of the Function', () => {
+  const page = openedWith('volume-discount:cart.lines.discounts.generate.run', {
+    mutate(engine) {
+      // The same Function on two targets, the second failing: the target the URL names wins.
+      engine.runs.push({ ...engine.runs[0], target: 'cart.delivery-options.discounts.generate.run', error: 'trap' });
+    },
+  });
+  assert.equal(page.query('.lsf-fn-run code').textContent, 'cart.lines.discounts.generate.run');
+});
+
+test('an unknown handle, or an empty value, opens the overview, and the handle is said to have no run', () => {
+  const unknown = openedWith('<img src=x onerror=alert(1)>');
+  assert.equal(unknown.checkout.ui.functionsOpen, true);
+  assert.ok(unknown.query('.lsf-fn-overview'));
+  assert.equal(unknown.query('.lsf-fn-run'), null);
+  const note = unknown.query('.lsf-fn-focus');
+  assert.match(note.textContent, /did not run or load in this checkout/);
+  assert.equal(note.querySelector('code').textContent, '<img src=x onerror=alert(1)>', 'text, not HTML');
+  assert.equal(note.querySelector('img'), null);
+
+  const empty = openedWith('');
+  assert.ok(empty.query('.lsf-fn-overview'));
+  assert.equal(empty.query('.lsf-fn-focus'), null, 'nothing to point at');
+  assert.deepEqual(empty.replaced, ['/checkouts/cn/preview?variant=standard#top']);
+});
+
+test('a target the Function does not run here opens the overview, which says so', () => {
+  const page = openedWith('order-rules:cart.validations.generate.fetch');
+  assert.ok(page.query('.lsf-fn-overview'));
+  assert.match(page.text('.lsf-fn-focus'), /^order-rules has no run of cart\.validations\.generate\.fetch in this checkout\./);
+});
+
+test('the overview points at the extension the URL names', () => {
+  const page = openedWith('gift-message');
+  const focused = page.root.querySelectorAll('.lsf-fn-overview li.is-focus');
+  assert.equal(focused.length, 1);
+  assert.match(focused[0].textContent, /^gift-message/);
+  assert.equal(page.query('.lsf-fn-focus'), null, 'it is listed: no note');
+});
+
+test('once the dialog opened from the URL is closed, an update does not open it again', async () => {
+  const page = openedWith('order-rules');
+  const dialog = page.query('.lsf-fn-dialog');
+  page.query('.lsf-fn-close').click();
+  await settle();
+  assert.equal(page.checkout.ui.functionsOpen, false);
+  await page.checkout.actions.commit('email', 'a@b.c');
+  assert.equal(dialog.open, false);
+  assert.equal(page.checkout.ui.functionsOpen, false);
+  assert.equal(page.query('.lsf-fn-frame'), null);
+  // The badge opens it on its own default again.
+  page.query('.lsf-fn-badge').click();
+  assert.equal(page.query('.lsf-fn-run').getAttribute('data-run'), 'volume-discount');
+});
+
+test('the run opened from the URL stays across updates', async () => {
+  const page = openedWith('order-rules');
+  await page.checkout.actions.commit('email', 'a@b.c');
+  assert.equal(page.query('.lsf-fn-dialog').open, true);
+  assert.equal(page.query('.lsf-fn-run').getAttribute('data-run'), 'order-rules');
+});
+
+test('without `?functions=` the dialog stays closed and the URL as it is', () => {
+  const replaced = [];
+  const page = app({ window: { history: { state: null, replaceState: (...args) => replaced.push(args) } } });
+  assert.equal(page.checkout.ui.functionsOpen, false);
+  assert.equal(page.query('.lsf-fn-dialog').open, false);
+  assert.deepEqual(replaced, []);
+});

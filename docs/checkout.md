@@ -82,9 +82,26 @@ app, in dense rows whose details open under them. It has the look of the checkou
 network: it sends no request of the Functions, only the checkout UI extensions loaded to check them
 can call a server (see below).
 
-- **Problems**, at the top, errors first, each on one line with where to look (the row of the
-  extension or of the scenario). The first eight of each kind show, a "Show N more" opens the
-  others.
+- **Problems**, at the top, errors first, each on one line. The first eight of each kind show, a
+  "Show N more" opens the others. The link on the right of a problem opens a fresh checkout
+  where it shows, as the Open button of a scenario does, and its name is under the link. Its
+  details also link to the rows of this page it is about.
+  - A Function that fails: "Open the run", the first scenario it fails in, with the [Functions
+    dialog](#what-runs) open on that run (`?functions=<handle>`, and `:<target>` when the
+    Function has several). The details link to the run in each of the other scenarios.
+  - Another problem of a Function: the scenario that runs it (of those that name it in
+    `extensions`, the one with the fewest; otherwise the first that runs every extension), with
+    the dialog on it, on the target the message names. A Function that has a run there (a legacy target, a missing build, whose run
+    fails) opens on that run, "Open the run"; one that never runs (an `api_version` that is not
+    supported, an unknown or listed-only target) opens on the Overview, which says it did not
+    run, "Open in checkout".
+  - A checkout UI extension: the scenario that runs it, chosen the same way, without the dialog, where it shows
+    on the page, with what goes wrong. One the page does not load (not built, an API version that
+    is not supported, an `owner_type` that is wrong or missing) opens the Overview of the dialog on
+    it.
+  - An extension that no scenario runs: the checkout of the store's cart, `/checkout`, the same
+    way.
+  - A scenario that does not validate cannot open: the link goes to its row.
   - Errors: an extension that cannot load or run (no build, an API version that is not
     supported or missing, an unknown Function target, a missing or wrong `owner_type`, what the
     loader refuses), a scenario that does not validate or names an extension the app lacks, an
@@ -551,6 +568,23 @@ Copy button; a `.fetch` run adds its HTTP request and response. It opens on the 
 failed. Its Overview lists the errors that block the checkout, the discounts a Function answered
 that were not applied, the checkout UI extensions, and a link to the other skin. Escape, the
 close button or a click outside closes it.
+
+`?functions=` on the URL of a checkout opens the dialog as the page loads, which is what the
+links of the [home page](#the-home-page) problems do. `/checkout?scenario=<name>` and
+`/checkout` keep it through their redirect, as they keep `variant` and `targets`.
+
+| Value | The dialog opens on |
+|---|---|
+| `<handle>` | the run of that Function that failed first, else its first run |
+| `<handle>:<target>` | the same, among the runs of that target |
+| empty (`?functions=`) | the Overview |
+
+A value with no run in the checkout (a Function that does not run there, an unknown handle, a
+checkout UI extension) opens the Overview: what it names is outlined there (an error, an
+extension), or a line says it did not run or load in this checkout. The page then drops the
+parameter from its URL (`history.replaceState`), so a reload does not open the dialog again;
+once closed, nothing reopens it. The run stays picked across updates, as a run picked by hand
+does.
 
 The checkout UI extensions render where their targets say: in the page, one sandboxed frame
 each. They read the checkout through the `shopify` global and change it with the `apply*Change`
