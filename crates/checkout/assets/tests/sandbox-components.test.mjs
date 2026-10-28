@@ -526,6 +526,17 @@ test('no constructor touches its element: no attribute, no class, no child', () 
   }
 });
 
+test('a long word breaks instead of overflowing the text, the banner heading and a button', () => {
+  const { Sandbox, make } = components();
+  assert.match(Sandbox.components.LIGHT_CSS, /s-text, s-paragraph, s-heading \{ overflow-wrap: break-word; \}/);
+  assert.match(make('s-banner')._root.html, /\.heading\{[^}]*overflow-wrap:anywhere/);
+  for (const tag of ['s-button', 's-press-button']) {
+    const html = make(tag)._root.html;
+    assert.match(html, /:host\{display:inline-flex;max-width:100%\}/, tag);
+    assert.match(html, /button\{display:inline-flex;min-width:0;overflow-wrap:anywhere;/, tag);
+  }
+});
+
 test('a switch looks like one from its shadow root, not from a class of its own', () => {
   const { make } = components();
   const toggle = make('s-switch');

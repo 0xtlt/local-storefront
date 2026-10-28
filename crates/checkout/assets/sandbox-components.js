@@ -402,7 +402,7 @@
       <div class="main"><strong class="heading" part="heading"></strong><div class="content"><slot></slot></div><div class="actions"><slot name="secondary-actions"></slot><slot name="primary-action"></slot></div></div>
       <button class="dismiss" type="button" aria-label="Dismiss" hidden>×</button></div>`,
     css: `:host{display:block}.banner{display:flex;gap:var(--lsf-space-l);padding:var(--lsf-space-base) var(--lsf-space-xl);border-radius:var(--lsf-radius-panel);border:1px solid var(--tone-border);background:var(--tone-bg);color:var(--tone-fg)}
-      .icon{flex:none;margin-top:1px;color:var(--tone-icon)}.main{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--lsf-space-xs)}.heading{font-weight:var(--lsf-font-weight-bold)}.heading:empty{display:none}.actions{display:flex;gap:var(--lsf-space-m);flex-wrap:wrap}.actions:not(:has(*)){display:none}
+      .icon{flex:none;margin-top:1px;color:var(--tone-icon)}.main{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--lsf-space-xs)}.heading{font-weight:var(--lsf-font-weight-bold);overflow-wrap:anywhere}.content{overflow-wrap:break-word}.heading:empty{display:none}.actions{display:flex;gap:var(--lsf-space-m);flex-wrap:wrap}.actions:not(:has(*)){display:none}
       .dismiss{flex:none;border:0;background:none;color:inherit;cursor:pointer;font-size:1.25rem;line-height:1}
       :host{--tone-bg:var(--lsf-color-info-wash-1);--tone-border:var(--lsf-color-border);--tone-fg:var(--lsf-color-text);--tone-icon:var(--lsf-color-text)}
       :host([tone="success"]){--tone-bg:var(--lsf-color-success-wash-1);--tone-border:var(--lsf-color-success-wash-3);--tone-fg:var(--lsf-color-success-text);--tone-icon:var(--lsf-color-success)}
@@ -651,7 +651,7 @@
     },
   });
 
-  const BUTTON_CSS = `:host{display:inline-flex}button{display:inline-flex;align-items:center;justify-content:center;gap:var(--lsf-space-s);width:100%;padding:var(--lsf-space-base);border:0;border-radius:var(--lsf-radius-button);background:var(--lsf-color-bg);box-shadow:inset 0 0 0 1px var(--lsf-color-border);color:var(--lsf-color-text);font-weight:var(--lsf-font-weight-bold);line-height:inherit;cursor:pointer;transition:background-color var(--lsf-duration-base) var(--lsf-ease),box-shadow var(--lsf-duration-base) var(--lsf-ease),opacity var(--lsf-duration-base) var(--lsf-ease)}
+  const BUTTON_CSS = `:host{display:inline-flex;max-width:100%}button{display:inline-flex;min-width:0;overflow-wrap:anywhere;align-items:center;justify-content:center;gap:var(--lsf-space-s);width:100%;padding:var(--lsf-space-base);border:0;border-radius:var(--lsf-radius-button);background:var(--lsf-color-bg);box-shadow:inset 0 0 0 1px var(--lsf-color-border);color:var(--lsf-color-text);font-weight:var(--lsf-font-weight-bold);line-height:inherit;cursor:pointer;transition:background-color var(--lsf-duration-base) var(--lsf-ease),box-shadow var(--lsf-duration-base) var(--lsf-ease),opacity var(--lsf-duration-base) var(--lsf-ease)}
     button:hover{background:var(--lsf-color-bg-subdued);box-shadow:inset 0 0 0 1px var(--lsf-color-border-emphasis)}button:focus-visible{outline:var(--lsf-ring-width) solid var(--lsf-color-focus-ring);outline-offset:0}
     :host([variant="primary"]) button{background:var(--lsf-color-accent);box-shadow:none;color:var(--lsf-color-on-accent)}:host([variant="primary"]) button:hover,:host([variant="primary"]) button:focus-visible{background:var(--lsf-color-accent-hover)}
     :host([tone="critical"]) button{color:var(--lsf-color-critical);box-shadow:inset 0 0 0 1px var(--lsf-color-critical)}:host([tone="critical"][variant="primary"]) button{background:var(--lsf-color-critical);box-shadow:none;color:var(--lsf-color-on-accent)}:host([tone="critical"][variant="primary"]) button:hover{background:var(--lsf-color-critical-hover)}
@@ -1078,6 +1078,8 @@
     s-clickable:focus-visible { outline: var(--lsf-ring-width) solid var(--lsf-color-focus-ring); outline-offset: 2px; }
     s-clickable[disabled] { opacity: var(--lsf-opacity-disabled); cursor: default; }
     s-text { display: inline; }
+    /* A long word or URL breaks rather than overflow the frame; the layout stays as it is otherwise. */
+    s-text, s-paragraph, s-heading { overflow-wrap: break-word; }
     s-text[type="strong"] { font-weight: var(--lsf-font-weight-bold); }
     s-text[type="emphasis"] { font-style: italic; }
     s-text[type="small"], s-text[type="offset"] { font-size: var(--lsf-size-s); }
