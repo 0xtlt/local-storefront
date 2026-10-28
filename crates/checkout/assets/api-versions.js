@@ -6,6 +6,7 @@
 // candidate until 2027-01-01: the API of 2026-10, but declaring a metafield without `owner_type`
 // blocks the deployment.
 
+// A JSON module: the checkout pages need Chrome 123+, Safari 17.2+ or Firefox 138+.
 import api from './api.json' with { type: 'json' };
 
 /** Each release, with what it requires: `{'2026-10': {metafieldOwnerType: 'optional'}, ...}`. */

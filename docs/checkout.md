@@ -17,6 +17,9 @@ the [checkout scenarios](#scenarios) and the extensions of the app, and opens a 
 is the checkout of the cart of the session, which the store data defines (`session.cart`, see
 [data format](data-format.md#customers-and-sessions)). It needs no theme.
 
+The pages need a recent browser: Chrome 123+, Safari 17.2+ or Firefox 138+ (they import JSON
+modules).
+
 With a theme, `serve` does the same and the cart form of the theme leads to that checkout. The
 theme owns `/`, so the home page is at <http://127.0.0.1:9292/__lsf/checkouts>, and the server
 prints its address when it starts:
