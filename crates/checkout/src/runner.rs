@@ -6,7 +6,6 @@
 //! Compiled modules are cached by path, modification time and size, so a rebuilt Function is
 //! picked up by the next run.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -16,6 +15,7 @@ use function_runner::engine::{
     FunctionRunParams, new_engine, run as run_module, uses_msgpack_provider,
 };
 use function_runner::{BytesContainer, BytesContainerType, Codec};
+use indexmap::IndexMap;
 use serde_json::Value;
 use wasmtime::{Config, Engine, Module};
 
@@ -71,8 +71,16 @@ struct Cached {
 /// a time: the watchdog of a run moves the epoch of its own engine only.
 struct Slot {
     engine: Engine,
-    modules: HashMap<PathBuf, Cached>,
+    /// The modules compiled, the least recently used first: at most [`MODULES_PER_ENGINE`], so
+    /// that the modules of Functions gone from the app (or of other apps) do not stay forever.
+    modules: IndexMap<PathBuf, Cached>,
+    /// [`MODULES_PER_ENGINE`], or fewer in tests.
+    capacity: usize,
 }
+
+/// How many compiled modules an engine keeps: more than an app has Functions (the playground
+/// has 50), fewer than a long session of `--watch` and tests can leave behind.
+const MODULES_PER_ENGINE: usize = 64;
 
 /// How many engines stay in the pool when no run needs them.
 const IDLE_ENGINES: usize = 2;
@@ -308,7 +316,8 @@ impl Runner {
 fn new_slot() -> Result<Slot, String> {
     Ok(Slot {
         engine: engine()?,
-        modules: HashMap::new(),
+        modules: IndexMap::new(),
+        capacity: MODULES_PER_ENGINE,
     })
 }
 
@@ -353,14 +362,21 @@ impl Slot {
         let modified = metadata.modified().ok();
         let size = metadata.len();
 
-        if let Some(cached) = self.modules.get(wasm)
+        // Taken out, and put back last: the most recently used.
+        if let Some(cached) = self.modules.shift_remove(wasm)
             && cached.modified == modified
             && cached.size == size
         {
-            return Ok(cached.module.clone());
+            let module = cached.module.clone();
+            self.modules.insert(wasm.to_path_buf(), cached);
+            return Ok(module);
         }
         let module = Module::from_file(&self.engine, wasm)
             .map_err(|error| format!("cannot load {}: {error:#}", wasm.display()))?;
+        // Past the capacity, the least recently used goes.
+        while self.modules.len() >= self.capacity {
+            self.modules.shift_remove_index(0);
+        }
         self.modules.insert(
             wasm.to_path_buf(),
             Cached {
@@ -487,6 +503,27 @@ mod tests {
         let (before, error) = split_failure("oops\nmodule exited with code: 1");
         assert_eq!(before, "oops\n");
         assert_eq!(error, "module exited with code: 1");
+    }
+
+    #[test]
+    fn an_engine_keeps_the_modules_used_last() {
+        let dir = std::env::temp_dir().join(format!("lsf-runner-lru-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |name: &str| dir.join(name);
+        for name in ["a.wasm", "b.wasm", "c.wasm"] {
+            // The smallest module there is.
+            std::fs::write(path(name), b"\0asm\x01\0\0\0").unwrap();
+        }
+        let mut slot = new_slot().unwrap();
+        slot.capacity = 2;
+        slot.module(&path("a.wasm")).unwrap();
+        slot.module(&path("b.wasm")).unwrap();
+        // `a` is used again: `b` is now the oldest, and goes for `c`.
+        slot.module(&path("a.wasm")).unwrap();
+        slot.module(&path("c.wasm")).unwrap();
+        let kept: Vec<PathBuf> = slot.modules.keys().cloned().collect();
+        assert_eq!(kept, [path("a.wasm"), path("c.wasm")]);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
