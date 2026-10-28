@@ -1080,29 +1080,23 @@ pub fn check_url(locale: Option<&str>) -> String {
     }
 }
 
-/// Everything the home page says, for the request in the language whose locale root is `root`.
-/// `report` is what the check of the Functions found, when it ran; otherwise the page asks
-/// `check` for it.
-pub fn build(
+/// Everything the home page says about `app` and `store` (the request's one snapshot of each),
+/// in the language whose locale root is `root`. `report` is what the check of the Functions
+/// found, when it ran; otherwise the page asks `check` for it.
+fn build(
     state: &ServerState,
-    incoming: &Incoming,
     options: &CheckoutOptions,
+    store: &Store,
+    app: &App,
     root: &str,
     check: &str,
     report: Option<&Report>,
 ) -> Json {
-    let store = state.store_of(incoming);
-    let app = match state.load_app(&options.app_dir) {
-        Ok(app) => app,
-        Err(problem) => {
-            return json!({"error": problem, "root": root});
-        }
-    };
     let selection =
-        Selection::resolve(&app, &options.extensions).unwrap_or_else(|_| Selection::all());
+        Selection::resolve(app, &options.extensions).unwrap_or_else(|_| Selection::all());
     let mut context = Context {
-        store: &store,
-        app: &app,
+        store,
+        app,
         options,
         selection: &selection,
         root,
@@ -1147,7 +1141,7 @@ pub fn build(
         .map(|function| {
             let build = state.builds.failure(&function.handle);
             function_json(
-                &app,
+                app,
                 &selection,
                 function,
                 report,
@@ -1160,7 +1154,7 @@ pub fn build(
     let ui_extensions: Vec<Json> = app
         .ui_extensions
         .iter()
-        .map(|extension| ui_extension_json(&app, &selection, extension, used(&extension.handle)))
+        .map(|extension| ui_extension_json(app, &selection, extension, used(&extension.handle)))
         .map(runs_in)
         .map(|mut extension| {
             // Where a problem the page finds when it loads the bundle shows (`home.js`).
@@ -1185,7 +1179,7 @@ pub fn build(
         .iter()
         .map(|scenario| scenario_json(&context, scenario))
         .collect();
-    let problems = problem_list(state, &app, &functions, &ui_extensions, &scenarios, report);
+    let problems = problem_list(state, app, &functions, &ui_extensions, &scenarios, report);
     let errors = problems
         .iter()
         .filter(|problem| problem.level == Level::Error)
@@ -1231,12 +1225,12 @@ pub fn build(
         // opens in the store's own language and country, the first that opens otherwise.
         "customers": store.customers.iter()
             .map(|customer| {
-                let mut profile = super::checkout_account::profile_json(customer, &store, false);
+                let mut profile = super::checkout_account::profile_json(customer, store, false);
                 // Opens: no problem of its own, and the extensions it names are the app's.
                 let opens = || {
                     store.scenarios.iter().filter(|scenario| {
                         scenario.problems.is_empty()
-                            && crate::checkout::selection_for(&app, &options.extensions, Some(scenario)).is_ok()
+                            && crate::checkout::selection_for(app, &options.extensions, Some(scenario)).is_ok()
                     })
                 };
                 let scenario = opens()
@@ -1270,18 +1264,18 @@ pub fn page(
     root: &str,
     check: &str,
 ) -> Reply {
-    let report = match state.load_app(&options.app_dir) {
+    let store = state.store_of(incoming);
+    let home = match state.load_app(&options.app_dir) {
         Ok(app) => {
-            let store = state.store_of(incoming);
-            if incoming.query_param("check").is_some() {
+            let report = if incoming.query_param("check").is_some() {
                 Some(state.home_check.get_or_run(state, &app, &store))
             } else {
                 state.home_check.get(&app, &store)
-            }
+            };
+            build(state, options, &store, &app, root, check, report.as_deref())
         }
-        Err(_) => None,
+        Err(problem) => json!({"error": problem, "root": root}),
     };
-    let home = build(state, incoming, options, root, check, report.as_deref());
     if incoming.query_param("format") == Some("json") {
         return Reply::json(200, &home).cached(cache::PRIVATE);
     }
@@ -1324,7 +1318,7 @@ pub fn check(
     };
     let report = state.home_check.get_or_run(state, &app, &store);
     let url = check_url(incoming.query_param("locale"));
-    let home = build(state, incoming, options, root, &url, Some(&report));
+    let home = build(state, options, &store, &app, root, &url, Some(&report));
     let mut answer = report.to_json();
     answer["problems"] = json!(problems_html(&home, ""));
     let mut rows = serde_json::Map::new();
