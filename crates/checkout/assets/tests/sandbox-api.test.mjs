@@ -285,6 +285,25 @@ test('settings and translations', () => {
   assert.equal(shopify.i18n.formatNumber(1234.5), '1,234.5');
 });
 
+test('a translation with an element among its replacements is its pieces, as on Shopify', () => {
+  const { shopify } = runtime({
+    ext: { translations: { en: { welcome: 'Welcome to the {{target}} extension!', twice: '{{a}}{{b}} and {{ a }}', open: '{{missing}} {{name}}' } } },
+  });
+  // An element of the extension's JSX (a Preact vnode): kept as it is, between the text around it.
+  const element = { type: 's-text', props: { children: 'block' } };
+  const welcome = shopify.i18n.translate('welcome', { target: element });
+  assert.ok(Array.isArray(welcome));
+  assert.equal(welcome.length, 3);
+  assert.equal(welcome[0], 'Welcome to the ');
+  assert.equal(welcome[1], element, 'the same element, not a copy');
+  assert.equal(welcome[2], ' extension!');
+  // Strings and numbers next to it stay pieces of their own; no empty piece.
+  assert.deepEqual(plain(shopify.i18n.translate('twice', { a: element, b: 2 })), [plain(element), '2', ' and ', plain(element)]);
+  // Strings and numbers only: one string; a placeholder without a replacement stays as written.
+  assert.equal(shopify.i18n.translate('twice', { a: 'x', b: 1 }), 'x1 and x');
+  assert.equal(shopify.i18n.translate('open', { name: 'Ada' }), '{{missing}} Ada');
+});
+
 function inLocale(locale, translations, defaultLocale) {
   const state = structuredClone(checkoutState());
   state.shop = { ...state.shop, locale };

@@ -332,9 +332,22 @@
           value = value[category] !== undefined ? value[category] : value.other;
         }
         if (typeof value !== 'string') return key;
-        return value.replace(/\{\{?\s*(\w+)\s*\}?\}/g, (whole, name) =>
-          replacements && name in replacements ? String(replacements[name]) : whole,
-        );
+        // As Shopify's: the text around each placeholder, and each replacement, a string unless
+        // it is an object (an element of the extension's JSX). Only strings: one string. Else the
+        // pieces, which the extension renders as children.
+        const pieces = [];
+        let last = 0;
+        value.replace(/\{\{?\s*(\w+)\s*\}?\}/g, (whole, name, offset) => {
+          // A placeholder without a replacement stays as it is written.
+          if (!replacements || !(name in replacements)) return whole;
+          if (offset > last) pieces.push(value.slice(last, offset));
+          last = offset + whole.length;
+          const replacement = replacements[name];
+          pieces.push(replacement !== null && typeof replacement === 'object' ? replacement : String(replacement));
+          return whole;
+        });
+        if (last < value.length) pieces.push(value.slice(last));
+        return pieces.every((piece) => typeof piece === 'string') ? pieces.join('') : pieces;
       },
     };
   }
