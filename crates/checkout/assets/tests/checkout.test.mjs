@@ -778,6 +778,22 @@ test('`?functions=<handle>:<target>` opens that target of the Function', () => {
   assert.equal(page.query('.lsf-fn-run code').textContent, 'cart.lines.discounts.generate.run');
 });
 
+test('`?functions=<handle>` opens the first run of the Function that failed, past one of the same target that did not', () => {
+  const page = openedWith('volume-discount', {
+    mutate(engine) {
+      // Two runs of the same Function and target: the first succeeds, the second fails.
+      engine.runs.splice(1, 0, { ...engine.runs[0], error: 'trap: the second run' });
+    },
+  });
+  const run = page.query('.lsf-fn-run');
+  assert.equal(run.getAttribute('data-run'), 'volume-discount');
+  assert.match(run.textContent, /trap: the second run/);
+  const entries = [...page.root.querySelectorAll('.lsf-fn-entry[data-run="volume-discount"]')];
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].getAttribute('aria-current'), null, 'not the run that succeeded');
+  assert.equal(entries[1].getAttribute('aria-current'), 'true');
+});
+
 test('an unknown handle, or an empty value, opens the overview, and the handle is said to have no run', () => {
   const unknown = openedWith('<img src=x onerror=alert(1)>');
   assert.equal(unknown.checkout.ui.functionsOpen, true);
