@@ -70,6 +70,11 @@
 
   // The title Shopify gives the only variant of a product without options. The state leaves it
   // out of `variantTitle` (the checkout page does not show it), the API does not.
+  /** The `*.myshopify.com` domain of a shop with no other: its name as a handle, no hyphen at either end. */
+  const myshopifyDomainOf = (name) =>
+    (String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'shop') + '.myshopify.com';
+  Sandbox.myshopifyDomainOf = myshopifyDomainOf;
+
   const DEFAULT_VARIANT_TITLE = 'Default Title';
 
   // The Cart Lines API of 2026-10 and 2027-01: `title` is the title of the variant ("Small",
@@ -414,7 +419,7 @@
       id: 'gid://shopify/Shop/1',
       name: (state.shop && state.shop.name) || '',
       storefrontUrl: state.shop && state.shop.storefrontUrl,
-      myshopifyDomain: String((state.shop && state.shop.name) || 'shop').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.myshopify.com',
+      myshopifyDomain: (state.shop && state.shop.myshopifyDomain) || myshopifyDomainOf(state.shop && state.shop.name),
     };
     api.storage = {
       read: (key) => call('storage', { op: 'read', key }),

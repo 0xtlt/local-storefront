@@ -3352,6 +3352,12 @@ fn the_state_describes_the_checkout() {
     assert_eq!(json["token"], path.rsplit('/').next().unwrap());
     assert_eq!(json["shop"]["currencyCode"], "USD");
     assert_eq!(json["shop"]["storefrontUrl"], "http://shop.test");
+    // The domain of the store data, for `shopify.shop.myshopifyDomain`.
+    let domain = json["shop"]["myshopifyDomain"].as_str().unwrap();
+    assert!(
+        domain.ends_with(".myshopify.com") && !domain.contains("-."),
+        "{domain}"
+    );
     assert_eq!(json["buyer"]["email"], Json::Null);
     assert_eq!(json["lines"][0]["id"], "gid://shopify/CartLine/1");
     assert_eq!(json["lines"][0]["sku"], "TEE-BLK-M");

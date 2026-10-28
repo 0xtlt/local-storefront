@@ -678,6 +678,8 @@ fn compute(
             // The primary language of the store. The buyer's is `localization.language`.
             "locale": store.primary_language().iso_code,
             "storefrontUrl": origin_of(incoming),
+            // `permanent_domain` of the store data, or one made of the name of the shop.
+            "myshopifyDomain": store.shop.permanent_domain,
             // The countries the store sells in, for the country selector.
             "countries": store.countries.iter()
                 .map(|country| json!({"code": country.iso_code, "name": country.name}))

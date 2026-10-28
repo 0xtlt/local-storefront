@@ -386,6 +386,16 @@ test('registers targets with extend and offers the rest of the global', () => {
   assert.equal(shopify.experimentalIsShopAppStyle, false);
 });
 
+test('the myshopify domain is the one of the store, or one made of its name without a hyphen at either end', () => {
+  const { myshopifyDomainOf } = runtime().win.context.LsfSandbox;
+  assert.equal(myshopifyDomainOf('Local Supply Co.'), 'local-supply-co.myshopify.com');
+  assert.equal(myshopifyDomainOf('  ¡Café & Co!  '), 'caf-co.myshopify.com');
+  assert.equal(myshopifyDomainOf(''), 'shop.myshopify.com');
+  const state = pageState(engineCheckout());
+  state.shop = { ...state.shop, myshopifyDomain: 'the-real-one.myshopify.com' };
+  assert.equal(runtime({ state }).shopify.shop.myshopifyDomain, 'the-real-one.myshopify.com');
+});
+
 test('capabilities become names', () => {
   const { capabilityNames } = runtime().win.context.LsfSandbox;
   assert.deepEqual(plain(capabilityNames({ api_access: true, network_access: false, collect_buyer_consent: { sms_marketing: true, customer_personal_data: false } })), ['api_access', 'collect_buyer_consent.sms_marketing']);
