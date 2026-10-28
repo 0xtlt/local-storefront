@@ -558,7 +558,7 @@ html:has(.lsf-fn-dialog[open]) { overflow: hidden; }
   width: 100%;
   padding: var(--lsf-space-m) var(--lsf-space-l);
   border: 0;
-  border-radius: var(--lsf-radius-small);
+  border-radius: 0;
   background: none;
   color: inherit;
   font: inherit;
