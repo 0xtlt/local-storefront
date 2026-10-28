@@ -1,0 +1,18 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: changes the checkout refuses",
+  "description": "One button per refused change (gift card, payment attributes, quantity 0, unknown line, unknown change types, empty code, unknown country) and the answer each gets.",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-change-refusals"
+  ]
+}

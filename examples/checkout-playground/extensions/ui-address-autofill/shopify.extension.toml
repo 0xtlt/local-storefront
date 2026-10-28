@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-address-autofill.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: address autofill"
+handle = "ui-address-autofill"
+type = "ui_extension"
+description = "Around the delivery address: the country the checkout is in, and buttons that fill or change the address."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.delivery-address.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.delivery-address.render-after"

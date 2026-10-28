@@ -1,0 +1,11 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "id": 9100000002,
+  "title": "Sample Pack",
+  "description": "<p>Three small samples. The upsell of the ui-upsell checkout UI extension of the playground.</p>",
+  "vendor": "Local Supply Co.",
+  "type": "Accessories",
+  "tags": ["ui-playground"],
+  "price": "4.00",
+  "variants": [{ "id": 9100000021, "sku": "UI-SAMPLES" }]
+}

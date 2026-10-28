@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-order-summary.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: order summary"
+handle = "ui-order-summary"
+type = "ui_extension"
+description = "Under the lines of the order summary: the cost the extension reads, line by line."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.cart-line-list.render-after"

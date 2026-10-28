@@ -1,0 +1,11 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "id": 9100000003,
+  "title": "Enamel Pin",
+  "description": "<p>Sold out: the ui-upsell checkout UI extension of the playground offers it, and adding it fails.</p>",
+  "vendor": "Local Supply Co.",
+  "type": "Accessories",
+  "tags": ["ui-playground"],
+  "price": "9.00",
+  "variants": [{ "id": 9100000031, "sku": "UI-PIN", "inventory_quantity": 0 }]
+}

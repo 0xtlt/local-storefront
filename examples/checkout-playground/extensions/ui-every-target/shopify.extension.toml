@@ -1,0 +1,81 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-every-target.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: every target"
+handle = "ui-every-target"
+type = "ui_extension"
+description = "One extension that declares every target the local checkout renders, and marks each with its name."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.header.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.contact.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.delivery-address.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.delivery-address.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-list.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-item.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-item.details.render"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.payment-method-list.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.payment-method-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.cart-line-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.cart-line-item.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.reductions.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.reductions.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.actions.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.footer.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.announcement.render"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.header.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.block.render"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.customer-information.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.cart-line-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.cart-line-item.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.footer.render-after"

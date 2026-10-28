@@ -1,0 +1,13 @@
+{
+  "heading": "Traductions",
+  "greeting": "Bonjour {{name}} !",
+  "guest": "à vous",
+  "items": {
+    "one": "{{count}} article dans votre panier",
+    "other": "{{count}} articles dans votre panier"
+  },
+  "total": "Votre total est de {{amount}}.",
+  "number": "Un grand nombre : {{number}}",
+  "today": "Nous sommes le {{date}}.",
+  "languages": "Langue de l’acheteur : {{buyer}} · textes en : {{extension}}"
+}

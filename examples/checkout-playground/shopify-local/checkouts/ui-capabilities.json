@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: network and API access",
+  "description": "ui-network-fetch calls the fake API on localhost:8787 (start it with node tools/fake-api.mjs, or see the warning); ui-api-access shows query rejected, the session token, storage and analytics.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-network-fetch",
+    "ui-api-access"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "heading": "Translations",
+  "greeting": "Hello {{name}}!",
+  "guest": "there",
+  "items": {
+    "one": "{{count}} item in your cart",
+    "other": "{{count}} items in your cart"
+  },
+  "total": "Your total is {{amount}}.",
+  "number": "A big number: {{number}}",
+  "today": "Today is {{date}}.",
+  "languages": "Buyer language: {{buyer}} · strings in: {{extension}}",
+  "english_only": "This sentence has no French translation: it falls back to the default locale, English."
+}

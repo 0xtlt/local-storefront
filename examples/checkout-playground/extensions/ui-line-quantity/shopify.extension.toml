@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-line-quantity.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: line quantity"
+handle = "ui-line-quantity"
+type = "ui_extension"
+description = "Under each line: buttons that change its quantity or remove it."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.cart-line-item.render-after"

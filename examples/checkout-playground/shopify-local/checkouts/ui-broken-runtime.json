@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI broken: errors while running",
+  "description": "A bundle that throws before it registers, one that throws when its target runs, one that throws on events, one that draws nothing, one that registers the wrong target, and a slow one (4 s to render, 7 s to answer Pay).",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "buyer@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "1 Test Street",
+      "city": "Testville",
+      "zip": "12345",
+      "country_code": "US"
+    },
+    "payment": "card"
+  },
+  "extensions": [
+    "ui-broken-throws-on-load",
+    "ui-broken-throws-on-render",
+    "ui-broken-throws-on-event",
+    "ui-broken-renders-nothing",
+    "ui-broken-unregistered-target",
+    "ui-broken-slow"
+  ]
+}

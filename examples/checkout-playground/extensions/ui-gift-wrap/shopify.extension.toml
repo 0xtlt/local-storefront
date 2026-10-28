@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-gift-wrap.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: gift wrap"
+handle = "ui-gift-wrap"
+type = "ui_extension"
+description = "A gift wrap checkbox: it adds the Gift Wrap product to the cart and sets a cart attribute, and takes both back."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

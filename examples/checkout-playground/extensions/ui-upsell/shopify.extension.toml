@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-upsell.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: upsell"
+handle = "ui-upsell"
+type = "ui_extension"
+description = "Offers products to add to the cart: one that adds, one that is sold out, one that does not exist."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

@@ -1,0 +1,10 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-no-api-version.js, is written by hand
+# (no build step): read it for what the extension shows.
+[[extensions]]
+name = "UI broken: no-api-version"
+handle = "ui-broken-no-api-version"
+type = "ui_extension"
+description = "Has no api_version: not loaded."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

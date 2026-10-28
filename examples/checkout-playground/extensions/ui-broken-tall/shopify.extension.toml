@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-tall.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI broken: tall"
+handle = "ui-broken-tall"
+type = "ui_extension"
+description = "Draws 150 rows: a frame far taller than the window."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

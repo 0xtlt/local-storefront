@@ -1,0 +1,21 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-shipping-options.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: shipping options"
+handle = "ui-shipping-options"
+type = "ui_extension"
+description = "Before and after the list of shipping options, under each option, and in the details of the selected one."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-list.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-item.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-item.details.render"

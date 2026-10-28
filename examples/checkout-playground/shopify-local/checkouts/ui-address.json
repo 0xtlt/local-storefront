@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: contact and address autofill",
+  "description": "A guest with nothing entered: the contact extension follows the email you type; the address extension fills the whole address, changes only the ZIP, or moves it to France (the country of the checkout follows).",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "BNE-OCH",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-contact-newsletter",
+    "ui-address-autofill"
+  ]
+}

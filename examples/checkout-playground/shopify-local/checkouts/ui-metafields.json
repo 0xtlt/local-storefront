@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: cart metafields",
+  "description": "Write a cart metafield the 2027-01 way (owner_type CART, updateCartMetafield) and count clicks the older 2026-10 way (updateMetafield). Each extension lists what it reads back.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-SLT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-metafield-writer",
+    "ui-metafield-legacy"
+  ]
+}
