@@ -18,6 +18,15 @@ members = [
   "extensions/discount-legacy-shipping",
   "extensions/discount-shipping-amount",
   "extensions/discount-network",
+  "extensions/delivery-hide-express",
+  "extensions/delivery-rename-by-language",
+  "extensions/delivery-reorder",
+  "extensions/delivery-legacy",
+  "extensions/payment-hide-cod",
+  "extensions/payment-hide-for-b2b",
+  "extensions/payment-rename",
+  "extensions/payment-reorder",
+  "extensions/payment-legacy",
 ]
 
 [profile.release]

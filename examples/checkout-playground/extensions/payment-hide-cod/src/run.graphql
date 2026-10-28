@@ -1,0 +1,18 @@
+query Input {
+  cart {
+    cost {
+      subtotalAmount {
+        amount
+      }
+    }
+  }
+  paymentMethods {
+    id
+    name
+  }
+  paymentCustomization {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

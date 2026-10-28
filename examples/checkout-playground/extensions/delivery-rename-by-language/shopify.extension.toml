@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Rename delivery options by language"
+handle = "delivery-rename-by-language"
+type = "function"
+description = "Renames the delivery options in the language of the buyer"
+
+  [[extensions.targeting]]
+  target = "cart.delivery-options.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_delivery_options_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. delivery-rename-by-language"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

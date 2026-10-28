@@ -1,0 +1,20 @@
+query Input {
+  localization {
+    language {
+      isoCode
+    }
+  }
+  cart {
+    deliveryGroups {
+      deliveryOptions {
+        handle
+        title
+      }
+    }
+  }
+  deliveryCustomization {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

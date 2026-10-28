@@ -1,0 +1,16 @@
+query Input {
+  cart {
+    buyerIdentity {
+      purchasingCompany {
+        company {
+          name
+        }
+      }
+    }
+  }
+  paymentCustomization {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

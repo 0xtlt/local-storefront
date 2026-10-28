@@ -1,0 +1,12 @@
+query Input {
+  paymentMethods {
+    id
+    name
+    placements
+  }
+  paymentCustomization {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

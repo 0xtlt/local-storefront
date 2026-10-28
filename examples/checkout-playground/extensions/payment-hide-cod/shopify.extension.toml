@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Hide cash on delivery"
+handle = "payment-hide-cod"
+type = "function"
+description = "Hides cash on delivery once the subtotal reaches an amount"
+
+  [[extensions.targeting]]
+  target = "cart.payment-methods.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_payment_methods_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. payment-hide-cod"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

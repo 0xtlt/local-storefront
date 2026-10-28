@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Legacy payment customization"
+handle = "payment-legacy"
+type = "function"
+description = "The legacy payment customization target: sets payment terms for B2B buyers, the one operation it still takes"
+
+  [[extensions.targeting]]
+  target = "purchase.payment-customization.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. payment-legacy"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

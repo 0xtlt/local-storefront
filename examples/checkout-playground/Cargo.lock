@@ -107,6 +107,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "delivery-hide-express"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "delivery-legacy"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "delivery-rename-by-language"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "delivery-reorder"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
 name = "discount-b2b-location"
 version = "1.0.0"
 dependencies = [
@@ -331,6 +365,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "payment-hide-cod"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "payment-hide-for-b2b"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "payment-legacy"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "payment-rename"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "payment-reorder"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
 ]
 
 [[package]]
