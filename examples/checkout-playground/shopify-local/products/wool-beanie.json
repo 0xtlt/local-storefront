@@ -1,0 +1,16 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Wool Beanie",
+  "description": "<p>A fisherman beanie knit from soft merino. One size fits most.</p>",
+  "type": "Accessories",
+  "tags": ["wool", "hats"],
+  "options": ["Color"],
+  "images": [
+    { "src": "products/beanie-navy.jpg", "alt": "Navy wool beanie", "width": 1600, "height": 1600 },
+    { "src": "products/beanie-ochre.jpg", "alt": "Ochre wool beanie", "width": 1600, "height": 1600 }
+  ],
+  "variants": [
+    { "options": ["Navy"], "price": 3400, "sku": "BNE-NVY", "inventory_quantity": 9, "image": "products/beanie-navy.jpg" },
+    { "options": ["Ochre"], "price": 3600, "sku": "BNE-OCH", "inventory_quantity": 4, "image": "products/beanie-ochre.jpg" }
+  ]
+}

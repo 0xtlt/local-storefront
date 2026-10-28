@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CollectionInput",
+  "description": "A collection of products.\n\nA collection named `all` containing every product always exists; define it yourself only\nto change its title or order.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/collection.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0,
+      "default": null
+    },
+    "title": {
+      "type": "string"
+    },
+    "handle": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "description": {
+      "description": "HTML description.",
+      "type": "string",
+      "default": ""
+    },
+    "image": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ImageInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "products": {
+      "description": "Handles of the products in the collection, in manual order.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "rules": {
+      "description": "Makes the collection automated: products matching the rules are added after the ones\nlisted in `products`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CollectionRule"
+      },
+      "default": []
+    },
+    "disjunctive": {
+      "description": "With several rules: `true` to match any of them, `false` (default) to match all.",
+      "type": "boolean",
+      "default": false
+    },
+    "sort_order": {
+      "description": "The default order of the products. Defaults to `manual`.",
+      "$ref": "#/$defs/SortOrder",
+      "default": "manual"
+    },
+    "template_suffix": {
+      "description": "Selects `templates/collection.<suffix>.json`.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "published_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "updated_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "metafields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/MetafieldInput"
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "title"
+  ],
+  "$defs": {
+    "ImageInput": {
+      "description": "An image: either just its source, or an object with more detail.\n\nThe source is a path inside the `files/` directory of the data directory\n(`\"shirt.jpg\"` → `files/shirt.jpg`). When no such file exists a placeholder of the declared\nsize is generated, so fixtures work without shipping real images.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ImageDetail"
+        }
+      ]
+    },
+    "ImageDetail": {
+      "description": "An image with its metadata.",
+      "type": "object",
+      "properties": {
+        "src": {
+          "description": "Path of the image inside `files/`, e.g. `\"products/shirt-front.jpg\"`.",
+          "type": "string"
+        },
+        "alt": {
+          "description": "Alternative text. Defaults to an empty string.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "width": {
+          "description": "Width in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "height": {
+          "description": "Height in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "focal_point": {
+          "description": "The focal point as percentages from the top-left corner, e.g. `{\"x\": 50, \"y\": 20}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocalPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "src"
+      ]
+    },
+    "FocalPoint": {
+      "description": "The point of an image that should stay visible when it is cropped.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Horizontal position, 0 (left) to 100 (right).",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Vertical position, 0 (top) to 100 (bottom).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "CollectionRule": {
+      "description": "A rule of an automated collection: products matching it are included.",
+      "type": "object",
+      "properties": {
+        "column": {
+          "description": "What to look at: `tag`, `type`, `vendor`, `title`, `price` (cents) or\n`compare_at_price` (cents).",
+          "$ref": "#/$defs/RuleColumn"
+        },
+        "relation": {
+          "description": "Defaults to `equals`.",
+          "$ref": "#/$defs/RuleRelation",
+          "default": "equals"
+        },
+        "condition": {
+          "description": "The value compared with, e.g. `\"sale\"` for a tag or `\"5000\"` for a price in cents.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "column",
+        "condition"
+      ]
+    },
+    "RuleColumn": {
+      "description": "The product property an automated collection rule looks at.",
+      "type": "string",
+      "enum": [
+        "tag",
+        "type",
+        "vendor",
+        "title",
+        "price",
+        "compare_at_price"
+      ]
+    },
+    "RuleRelation": {
+      "description": "How an automated collection rule compares the property to its condition.",
+      "type": "string",
+      "enum": [
+        "equals",
+        "not_equals",
+        "contains",
+        "not_contains",
+        "starts_with",
+        "ends_with",
+        "greater_than",
+        "less_than"
+      ]
+    },
+    "SortOrder": {
+      "description": "How a collection orders its products by default.",
+      "type": "string",
+      "enum": [
+        "manual",
+        "best-selling",
+        "title-ascending",
+        "title-descending",
+        "price-ascending",
+        "price-descending",
+        "created-ascending",
+        "created-descending"
+      ]
+    },
+    "MetafieldInput": {
+      "description": "A metafield value. Write the value directly and its type is inferred (string →\n`single_line_text_field`, integer → `number_integer`, decimal → `number_decimal`, boolean →\n`boolean`, anything else → `json`), or spell out `{\"type\": ..., \"value\": ...}`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TypedMetafield"
+        },
+        true
+      ]
+    },
+    "TypedMetafield": {
+      "description": "A metafield with an explicit type.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,\n`rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`,\n`date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the\nother measurements (`distance`, `temperature`, `duration`...), `product_reference`,\n`collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the\narticle's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant\nof those.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "value"
+      ]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "A pre-order with a deposit",
+  "description": "A line bought with a selling plan that charges a deposit today and the rest later: the checkout shows what is due today and what is due later.",
+  "session": {
+    "customer": "default",
+    "cart": {
+      "items": [
+        {
+          "variant": "BNE-NVY",
+          "quantity": 2,
+          "selling_plan": "Pre-order: 40% today, the rest when it ships"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "A B2B buyer, Northwind Hotels",
+  "description": "A customer who buys for a company, at one of its locations, in larger quantities: what purchasingCompany gives the Functions.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "country": "US",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 6
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 4
+        }
+      ]
+    },
+    "company_location": "Northwind Seattle"
+  },
+  "entered": {
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "1 Test Street",
+      "city": "Testville",
+      "zip": "12345",
+      "country_code": "US"
+    }
+  }
+}

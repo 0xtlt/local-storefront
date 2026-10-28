@@ -1,0 +1,16 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "A guest, one line",
+  "description": "The plainest checkout: nobody is logged in, one line, nothing entered yet.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  }
+}

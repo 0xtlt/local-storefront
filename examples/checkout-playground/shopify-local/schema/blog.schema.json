@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BlogInput",
+  "description": "A blog (`/blogs/<handle>`) and its articles.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/blog.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0,
+      "default": null
+    },
+    "title": {
+      "type": "string"
+    },
+    "handle": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "articles": {
+      "description": "Articles, newest first unless they carry `published_at` dates.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ArticleInput"
+      },
+      "default": []
+    },
+    "comments_enabled": {
+      "description": "Whether readers can comment. Defaults to `false`.",
+      "type": "boolean",
+      "default": false
+    },
+    "moderated": {
+      "description": "Whether comments wait for approval. Defaults to `false`.",
+      "type": "boolean",
+      "default": false
+    },
+    "template_suffix": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "metafields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/MetafieldInput"
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "title"
+  ],
+  "$defs": {
+    "ArticleInput": {
+      "description": "A blog post.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "handle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "HTML content.",
+          "type": "string",
+          "default": ""
+        },
+        "excerpt": {
+          "description": "HTML excerpt. `article.excerpt_or_content` falls back to the content.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CommentInput"
+          },
+          "default": []
+        },
+        "template_suffix": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "published_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "ImageInput": {
+      "description": "An image: either just its source, or an object with more detail.\n\nThe source is a path inside the `files/` directory of the data directory\n(`\"shirt.jpg\"` → `files/shirt.jpg`). When no such file exists a placeholder of the declared\nsize is generated, so fixtures work without shipping real images.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ImageDetail"
+        }
+      ]
+    },
+    "ImageDetail": {
+      "description": "An image with its metadata.",
+      "type": "object",
+      "properties": {
+        "src": {
+          "description": "Path of the image inside `files/`, e.g. `\"products/shirt-front.jpg\"`.",
+          "type": "string"
+        },
+        "alt": {
+          "description": "Alternative text. Defaults to an empty string.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "width": {
+          "description": "Width in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "height": {
+          "description": "Height in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "focal_point": {
+          "description": "The focal point as percentages from the top-left corner, e.g. `{\"x\": 50, \"y\": 20}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocalPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "src"
+      ]
+    },
+    "FocalPoint": {
+      "description": "The point of an image that should stay visible when it is cropped.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Horizontal position, 0 (left) to 100 (right).",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Vertical position, 0 (top) to 100 (bottom).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "CommentInput": {
+      "description": "A comment on an article.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "author": {
+          "type": "string"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "HTML content.",
+          "type": "string"
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "author",
+        "content"
+      ]
+    },
+    "MetafieldInput": {
+      "description": "A metafield value. Write the value directly and its type is inferred (string →\n`single_line_text_field`, integer → `number_integer`, decimal → `number_decimal`, boolean →\n`boolean`, anything else → `json`), or spell out `{\"type\": ..., \"value\": ...}`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TypedMetafield"
+        },
+        true
+      ]
+    },
+    "TypedMetafield": {
+      "description": "A metafield with an explicit type.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,\n`rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`,\n`date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the\nother measurements (`distance`, `temperature`, `duration`...), `product_reference`,\n`collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the\narticle's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant\nof those.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "value"
+      ]
+    }
+  }
+}

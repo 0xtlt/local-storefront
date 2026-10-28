@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "A large cart",
+  "description": "Many units on several lines: quantity limits, amount thresholds, free shipping, volume discounts.",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 12
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 8
+        },
+        {
+          "variant": "OVS-S",
+          "quantity": 5
+        },
+        {
+          "variant": "SOCK-S",
+          "quantity": 3
+        }
+      ]
+    }
+  }
+}

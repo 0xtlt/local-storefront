@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Another country and language",
+  "description": "A buyer in another country, reading the checkout in another language: localization.country, language and market for the Functions and the extensions.",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 2
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    },
+    "country": "FR"
+  },
+  "entered": {
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "1 Test Street",
+      "city": "Testville",
+      "zip": "12345",
+      "country_code": "FR"
+    }
+  },
+  "language": "fr"
+}

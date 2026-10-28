@@ -1,0 +1,3648 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoreInput",
+  "description": "A data file: any combination of the sections below. Every `*.json` file at the root of the\ndata directory is one of these, and they are merged, so you can split the data as you like\n(`shop.json`, `catalog.json`, ...).",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"./schema/store.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "shop": {
+      "description": "General store information. At most one data file may define it.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShopInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "products": {
+      "description": "Products. They can also live one per file in `products/`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ProductInput"
+      },
+      "default": []
+    },
+    "collections": {
+      "description": "Collections. They can also live one per file in `collections/`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CollectionInput"
+      },
+      "default": []
+    },
+    "pages": {
+      "description": "Pages. They can also live one per file in `pages/`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PageInput"
+      },
+      "default": []
+    },
+    "blogs": {
+      "description": "Blogs with their articles. They can also live one per file in `blogs/`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/BlogInput"
+      },
+      "default": []
+    },
+    "menus": {
+      "description": "Navigation menus by handle, e.g. `main-menu` and `footer`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/MenuInput"
+      },
+      "default": {}
+    },
+    "customers": {
+      "description": "Customers. They can also live one per file in `customers/`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CustomerInput"
+      },
+      "default": []
+    },
+    "companies": {
+      "description": "Companies that buy from the store (B2B). Customers join one with their `company`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CompanyInput"
+      },
+      "default": []
+    },
+    "gift_cards": {
+      "description": "Issued gift cards, each with its own page.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GiftCardInput"
+      },
+      "default": []
+    },
+    "metaobjects": {
+      "description": "Metaobject entries by type.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/MetaobjectInput"
+        }
+      },
+      "default": {}
+    },
+    "localization": {
+      "description": "The countries and languages of the store. At most one data file may define it.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LocalizationInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "swatches": {
+      "description": "The swatches of product option values, by the name of the value:\n`{\"White\": \"#ffffff\", \"Floral\": {\"image\": \"swatches/floral.jpg\"}}`. Every option value\nwith one of these names gets the swatch, on products and in collection filters.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/SwatchInput"
+      },
+      "default": {}
+    },
+    "locations": {
+      "description": "The places the store stocks products at, for store pickup.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LocationInput"
+      },
+      "default": []
+    },
+    "selling_plan_groups": {
+      "description": "Groups of selling plans: subscriptions, pre-orders and other purchase options.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SellingPlanGroupInput"
+      },
+      "default": []
+    },
+    "files": {
+      "description": "Metadata for files in `files/`, by path.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/FileInput"
+      },
+      "default": {}
+    },
+    "session": {
+      "description": "What every new browser session starts with: a logged-in customer, a filled cart...",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "checkout": {
+      "description": "The fake checkout of `lsf checkout --app`: shipping rates, payment methods, discounts\nand Function settings. At most one data file may define it.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CheckoutInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "now": {
+      "description": "Freezes the clock: the instant `'now'` resolves to, e.g. `\"2025-01-15T10:00:00Z\"`.\nSet it to make renders reproducible; each `'now'` of a render is then one nanosecond\nafter the previous one, so `%N` still differs between calls. Defaults to the real time,\nread at each `'now'`.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "theme_settings": {
+      "description": "Overrides for theme settings (`config/settings_data.json`), by setting id.",
+      "type": "object",
+      "additionalProperties": true,
+      "default": {}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ShopInput": {
+      "description": "General store information (the `shop` object). Every field has a sensible default.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "name": {
+          "description": "Defaults to `\"Local Store\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "domain": {
+          "description": "The primary domain, without scheme. Defaults to the host the server is reached on.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "permanent_domain": {
+          "description": "The `*.myshopify.com` domain. Defaults to a value derived from the name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "currency": {
+          "description": "ISO 4217 code of the store currency. Defaults to `USD`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "money_format": {
+          "description": "How `money` formats amounts, e.g. `\"${{amount}}\"` or `\"{{amount_with_comma_separator}} €\"`.\nDefaults to the usual format of the currency.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "money_with_currency_format": {
+          "description": "How `money_with_currency` formats amounts, e.g. `\"${{amount}} USD\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timezone": {
+          "description": "IANA time zone used to display dates, e.g. `\"Europe/Paris\"`. Defaults to `UTC`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "policies": {
+          "$ref": "#/$defs/PoliciesInput",
+          "default": {
+            "privacy_policy": null,
+            "refund_policy": null,
+            "shipping_policy": null,
+            "terms_of_service": null,
+            "subscription_policy": null
+          }
+        },
+        "enabled_payment_types": {
+          "description": "Payment icons to show, e.g. `[\"visa\", \"master\", \"american_express\", \"paypal\"]`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
+        },
+        "customer_accounts_enabled": {
+          "description": "Whether customer accounts exist at all. Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "customer_accounts_optional": {
+          "description": "Whether checking out as a guest is possible. Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "customer_accounts": {
+          "description": "Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and\n`/account` is a page of local-storefront where you choose who is logged in. `legacy`:\nthe theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has\nthose templates, and to `new` otherwise.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CustomerAccounts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "taxes_included": {
+          "description": "Whether prices include taxes. Defaults to `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "password_message": {
+          "description": "The message shown on the password page.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "password": {
+          "description": "The password the `/password` page accepts. Defaults to `\"password\"`. The storefront is\nnever locked: the page is there to be worked on, and nothing leads to it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "brand": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrandInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "AddressInput": {
+      "description": "A postal address. Every field is optional.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "first_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "last_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "company": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "address1": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "address2": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "city": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "province": {
+          "description": "Province or state name, e.g. `\"Ontario\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "province_code": {
+          "description": "E.g. `\"ON\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "country": {
+          "description": "Country name, e.g. `\"Canada\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "country_code": {
+          "description": "ISO 3166-1 alpha-2 code, e.g. `\"CA\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "zip": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "PoliciesInput": {
+      "description": "The store policies. Each one that is set gets a page under `/policies/`.",
+      "type": "object",
+      "properties": {
+        "privacy_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "refund_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "shipping_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terms_of_service": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "subscription_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "PolicyInput": {
+      "description": "A store policy (`shop.refund_policy`, `/policies/refund-policy`).",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Defaults to the standard title of the policy.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "body": {
+          "description": "HTML body.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "body"
+      ]
+    },
+    "CustomerAccounts": {
+      "description": "The customer accounts of a store.",
+      "oneOf": [
+        {
+          "description": "Accounts hosted by Shopify, outside the theme.",
+          "type": "string",
+          "const": "new"
+        },
+        {
+          "description": "Accounts rendered by the theme's `templates/customers`.",
+          "type": "string",
+          "const": "legacy"
+        }
+      ]
+    },
+    "BrandInput": {
+      "description": "The brand assets of the store (`shop.brand`).",
+      "type": "object",
+      "properties": {
+        "slogan": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "short_description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "logo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "square_logo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cover_image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "favicon": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "colors": {
+          "description": "Brand colors as CSS hex strings, e.g. `{\"primary\": [\"#112233\"], \"secondary\": []}`.",
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImageInput": {
+      "description": "An image: either just its source, or an object with more detail.\n\nThe source is a path inside the `files/` directory of the data directory\n(`\"shirt.jpg\"` → `files/shirt.jpg`). When no such file exists a placeholder of the declared\nsize is generated, so fixtures work without shipping real images.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ImageDetail"
+        }
+      ]
+    },
+    "ImageDetail": {
+      "description": "An image with its metadata.",
+      "type": "object",
+      "properties": {
+        "src": {
+          "description": "Path of the image inside `files/`, e.g. `\"products/shirt-front.jpg\"`.",
+          "type": "string"
+        },
+        "alt": {
+          "description": "Alternative text. Defaults to an empty string.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "width": {
+          "description": "Width in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "height": {
+          "description": "Height in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "focal_point": {
+          "description": "The focal point as percentages from the top-left corner, e.g. `{\"x\": 50, \"y\": 20}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocalPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "src"
+      ]
+    },
+    "FocalPoint": {
+      "description": "The point of an image that should stay visible when it is cropped.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Horizontal position, 0 (left) to 100 (right).",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Vertical position, 0 (top) to 100 (bottom).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "MetafieldInput": {
+      "description": "A metafield value. Write the value directly and its type is inferred (string →\n`single_line_text_field`, integer → `number_integer`, decimal → `number_decimal`, boolean →\n`boolean`, anything else → `json`), or spell out `{\"type\": ..., \"value\": ...}`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TypedMetafield"
+        },
+        true
+      ]
+    },
+    "TypedMetafield": {
+      "description": "A metafield with an explicit type.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,\n`rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`,\n`date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the\nother measurements (`distance`, `temperature`, `duration`...), `product_reference`,\n`collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the\narticle's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant\nof those.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "value"
+      ]
+    },
+    "ProductInput": {
+      "description": "A product.\n\nThe smallest valid product is `{\"title\": \"Blue shirt\", \"price\": 1999}`: it gets a single\ndefault variant, like a product without options in the Shopify admin.",
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/product.schema.json\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Generated from the handle when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "handle": {
+          "description": "The URL slug (`/products/<handle>`). Derived from the title when omitted. In a\n`products/<name>.json` file it defaults to the file name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "description": {
+          "description": "HTML description. Also exposed as `product.content`.",
+          "type": "string",
+          "default": ""
+        },
+        "vendor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "type": {
+          "description": "The product type, e.g. `\"Shirts\"`.",
+          "type": "string",
+          "default": ""
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "options": {
+          "description": "Option names, e.g. `[\"Size\", \"Color\"]`. At most three. Omit for a product with a\nsingle default variant.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OptionInput"
+          },
+          "default": []
+        },
+        "variants": {
+          "description": "The variants. Each must give one value per option.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VariantInput"
+          },
+          "default": []
+        },
+        "price": {
+          "description": "Price of the variants that do not set their own, and of the default variant.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compare_at_price": {
+          "description": "Compare-at price of the variants that do not set their own.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "images": {
+          "description": "Shorthand for image-only media. Use `media` for videos and 3D models.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ImageInput"
+          },
+          "default": []
+        },
+        "media": {
+          "description": "Images, videos and models in display order. When set, `images` must be empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaInput"
+          },
+          "default": []
+        },
+        "available": {
+          "description": "Shorthand to set availability on every variant that does not say otherwise.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "collections": {
+          "description": "Handles of the collections this product belongs to, in addition to the collections\nthat list it in their own `products`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "template_suffix": {
+          "description": "Selects `templates/product.<suffix>.json` instead of `templates/product.json`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "gift_card": {
+          "description": "Whether the product is a gift card (`product.gift_card?`).",
+          "type": "boolean",
+          "default": false
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "published_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        },
+        "recommendations": {
+          "description": "Handles of the products returned by product recommendations for this product.\nDefaults to other products from the same collections.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
+        },
+        "selling_plan_groups": {
+          "description": "Names of the selling plan groups (from `selling_plan_groups`) this product is sold\nwith, in addition to the groups that list it in their own `products`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "requires_selling_plan": {
+          "description": "Whether the product can only be bought with a selling plan, like a product sold by\nsubscription only. Defaults to `false`.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "OptionInput": {
+      "description": "A product option. Write just the name (`\"Size\"`); the values are collected from the variants.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/OptionDetail"
+        }
+      ]
+    },
+    "OptionDetail": {
+      "description": "A product option with its values in a chosen order.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "description": "The values in display order. Defaults to the order they appear in the variants. A\nvalue is its name (`\"White\"`), or its name with a swatch\n(`{\"name\": \"White\", \"swatch\": \"#ffffff\"}`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OptionValueInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "OptionValueInput": {
+      "description": "A value of a product option: its name, or its name with a swatch.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/OptionValueDetail"
+        }
+      ]
+    },
+    "OptionValueDetail": {
+      "description": "A value of a product option with its swatch (`product_option_value.swatch`).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "swatch": {
+          "description": "The swatch of the value on this product. Defaults to the swatch the store's\n`swatches` give to this name.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SwatchInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "SwatchInput": {
+      "description": "How an option value is shown instead of its name: a CSS color (`\"#f4f1ea\"`), or an object\nwith a color, an image, or both.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SwatchDetail"
+        }
+      ]
+    },
+    "SwatchDetail": {
+      "description": "A swatch with a color, an image, or both (`swatch.color`, `swatch.image`).",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "A CSS color: `\"#f4f1ea\"`, `\"rgb(244, 241, 234)\"`, ...",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "image": {
+          "description": "An image, for a pattern that a single color cannot show.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "VariantInput": {
+      "description": "A product variant.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Generated from the product handle and the variant's position when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "description": "Defaults to the option values joined with ` / ` (`\"Small / Blue\"`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "options": {
+          "description": "One value per product option, in the order of the product's `options`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "price": {
+          "description": "Defaults to the product's `price`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compare_at_price": {
+          "description": "The price before a sale. Must be higher than `price` to show as a discount.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sku": {
+          "description": "Also a convenient way to reference the variant from carts and orders.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "barcode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "available": {
+          "description": "Whether the variant can be bought. Derived from the inventory fields when omitted.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "inventory_quantity": {
+          "description": "Units in stock. Setting it turns inventory tracking on.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "default": null
+        },
+        "inventory_tracked": {
+          "description": "Set to `false` to disable inventory tracking (the variant is then always available).\nDefaults to `true` when `inventory_quantity` is set, `false` otherwise.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "inventory_policy": {
+          "$ref": "#/$defs/InventoryPolicy",
+          "default": "deny"
+        },
+        "weight": {
+          "description": "Weight in grams.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "weight_unit": {
+          "description": "The unit the weight is displayed in: `g`, `kg`, `oz` or `lb`. Defaults to `kg`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "requires_shipping": {
+          "description": "Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "taxable": {
+          "description": "Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "image": {
+          "description": "The `src` of the product image that shows this variant.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "unit_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit_price_measurement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnitPriceMeasurement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quantity_rule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantityRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quantity_price_breaks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuantityPriceBreak"
+          },
+          "default": []
+        },
+        "store_availabilities": {
+          "description": "The locations (from `locations`, by name) that stock this variant, and whether it is in\nstock there: `{\"Portland\": true, \"Seattle\": false}`. When omitted, every location stocks\nthe variant, and it is in stock there when the variant is available.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "Money": {
+      "description": "An amount of money: an integer number of cents (`1999`, the unit Liquid uses) or a decimal string in the shop currency (`\"19.99\"`). Floats such as `19.99` are rejected because they are ambiguous.",
+      "anyOf": [
+        {
+          "description": "Cents, e.g. 1999 for 19.99.",
+          "type": "integer"
+        },
+        {
+          "description": "Decimal amount, e.g. \"19.99\" or \"20\".",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d{1,2})?$"
+        }
+      ]
+    },
+    "InventoryPolicy": {
+      "description": "What happens when a tracked variant is out of stock.",
+      "oneOf": [
+        {
+          "description": "Stop selling when the stock reaches zero.",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Keep selling when out of stock.",
+          "type": "string",
+          "const": "continue"
+        }
+      ]
+    },
+    "UnitPriceMeasurement": {
+      "description": "What a unit price refers to, e.g. 250 g priced per 100 g.",
+      "type": "object",
+      "properties": {
+        "measured_type": {
+          "description": "`weight`, `volume`, `length` or `area`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "quantity_value": {
+          "type": "number",
+          "format": "double"
+        },
+        "quantity_unit": {
+          "description": "E.g. `g`, `kg`, `ml`, `l`, `m`.",
+          "type": "string"
+        },
+        "reference_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "reference_unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "quantity_value",
+        "quantity_unit"
+      ]
+    },
+    "QuantityRule": {
+      "description": "The quantities a variant can be bought in (`variant.quantity_rule`).",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "Minimum quantity. Defaults to 1.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "max": {
+          "description": "Maximum quantity. No maximum when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "increment": {
+          "description": "Quantities must be a multiple of this. Defaults to 1.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "QuantityPriceBreak": {
+      "description": "A volume price: the unit price from a given quantity.",
+      "type": "object",
+      "properties": {
+        "minimum_quantity": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "price": {
+          "$ref": "#/$defs/Money"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "minimum_quantity",
+        "price"
+      ]
+    },
+    "MediaInput": {
+      "description": "A piece of product media. Images can be written as a plain string.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ImageInput"
+        },
+        {
+          "$ref": "#/$defs/MediaDetail"
+        }
+      ]
+    },
+    "MediaDetail": {
+      "description": "A video, an external (YouTube/Vimeo) video or a 3D model.",
+      "type": "object",
+      "properties": {
+        "media_type": {
+          "$ref": "#/$defs/MediaType"
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "alt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "preview_image": {
+          "description": "The image shown before the media plays.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sources": {
+          "description": "`video` and `model`: the files, by decreasing preference.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaSource"
+          },
+          "default": []
+        },
+        "duration": {
+          "description": "`video`: length in milliseconds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "host": {
+          "description": "`external_video`: `youtube` or `vimeo`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoHost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "external_id": {
+          "description": "`external_video`: the id of the video on the host, e.g. `dQw4w9WgXcQ`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "aspect_ratio": {
+          "description": "Width divided by height. Defaults to the preview image's ratio, or 16:9.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "media_type"
+      ]
+    },
+    "MediaType": {
+      "description": "The kind of a piece of media that is not an image.",
+      "type": "string",
+      "enum": [
+        "video",
+        "external_video",
+        "model"
+      ]
+    },
+    "MediaSource": {
+      "description": "One file of a video or 3D model.",
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "Path inside `files/` or an absolute URL.",
+          "type": "string"
+        },
+        "mime_type": {
+          "description": "E.g. `video/mp4`, `model/gltf-binary`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "format": {
+          "description": "E.g. `mp4`, `m3u8`, `glb`, `usdz`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
+    "VideoHost": {
+      "description": "Where an external video is hosted.",
+      "type": "string",
+      "enum": [
+        "youtube",
+        "vimeo"
+      ]
+    },
+    "CollectionInput": {
+      "description": "A collection of products.\n\nA collection named `all` containing every product always exists; define it yourself only\nto change its title or order.",
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/collection.schema.json\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "handle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "description": {
+          "description": "HTML description.",
+          "type": "string",
+          "default": ""
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "products": {
+          "description": "Handles of the products in the collection, in manual order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "rules": {
+          "description": "Makes the collection automated: products matching the rules are added after the ones\nlisted in `products`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CollectionRule"
+          },
+          "default": []
+        },
+        "disjunctive": {
+          "description": "With several rules: `true` to match any of them, `false` (default) to match all.",
+          "type": "boolean",
+          "default": false
+        },
+        "sort_order": {
+          "description": "The default order of the products. Defaults to `manual`.",
+          "$ref": "#/$defs/SortOrder",
+          "default": "manual"
+        },
+        "template_suffix": {
+          "description": "Selects `templates/collection.<suffix>.json`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "published_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "CollectionRule": {
+      "description": "A rule of an automated collection: products matching it are included.",
+      "type": "object",
+      "properties": {
+        "column": {
+          "description": "What to look at: `tag`, `type`, `vendor`, `title`, `price` (cents) or\n`compare_at_price` (cents).",
+          "$ref": "#/$defs/RuleColumn"
+        },
+        "relation": {
+          "description": "Defaults to `equals`.",
+          "$ref": "#/$defs/RuleRelation",
+          "default": "equals"
+        },
+        "condition": {
+          "description": "The value compared with, e.g. `\"sale\"` for a tag or `\"5000\"` for a price in cents.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "column",
+        "condition"
+      ]
+    },
+    "RuleColumn": {
+      "description": "The product property an automated collection rule looks at.",
+      "type": "string",
+      "enum": [
+        "tag",
+        "type",
+        "vendor",
+        "title",
+        "price",
+        "compare_at_price"
+      ]
+    },
+    "RuleRelation": {
+      "description": "How an automated collection rule compares the property to its condition.",
+      "type": "string",
+      "enum": [
+        "equals",
+        "not_equals",
+        "contains",
+        "not_contains",
+        "starts_with",
+        "ends_with",
+        "greater_than",
+        "less_than"
+      ]
+    },
+    "SortOrder": {
+      "description": "How a collection orders its products by default.",
+      "type": "string",
+      "enum": [
+        "manual",
+        "best-selling",
+        "title-ascending",
+        "title-descending",
+        "price-ascending",
+        "price-descending",
+        "created-ascending",
+        "created-descending"
+      ]
+    },
+    "PageInput": {
+      "description": "A page (`/pages/<handle>`).",
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/page.schema.json\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "handle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "HTML content.",
+          "type": "string",
+          "default": ""
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "template_suffix": {
+          "description": "Selects `templates/page.<suffix>.json`, e.g. `\"contact\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "published_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "BlogInput": {
+      "description": "A blog (`/blogs/<handle>`) and its articles.",
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/blog.schema.json\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "handle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "articles": {
+          "description": "Articles, newest first unless they carry `published_at` dates.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArticleInput"
+          },
+          "default": []
+        },
+        "comments_enabled": {
+          "description": "Whether readers can comment. Defaults to `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "moderated": {
+          "description": "Whether comments wait for approval. Defaults to `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "template_suffix": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "ArticleInput": {
+      "description": "A blog post.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "handle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "HTML content.",
+          "type": "string",
+          "default": ""
+        },
+        "excerpt": {
+          "description": "HTML excerpt. `article.excerpt_or_content` falls back to the content.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CommentInput"
+          },
+          "default": []
+        },
+        "template_suffix": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "published_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "CommentInput": {
+      "description": "A comment on an article.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "author": {
+          "type": "string"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "HTML content.",
+          "type": "string"
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "author",
+        "content"
+      ]
+    },
+    "MenuInput": {
+      "description": "A navigation menu (`linklists.<handle>`).",
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/menu.schema.json\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "Defaults to the handle, title-cased.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "LinkInput": {
+      "description": "A link in a navigation menu.\n\nPoint it at a resource with exactly one of `url`, `collection`, `product`, `page`, `blog`,\n`article` or `policy`; the URL and the link type follow from it. A link with none of them\npoints to `#`.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "description": "A literal URL: `/`, `/collections/all`, `/search`, `https://example.com`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "collection": {
+          "description": "Handle of a collection.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "product": {
+          "description": "Handle of a product.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "page": {
+          "description": "Handle of a page.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "blog": {
+          "description": "Handle of a blog.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "article": {
+          "description": "An article as `<blog-handle>/<article-handle>`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "policy": {
+          "description": "A policy: `privacy-policy`, `refund-policy`, `shipping-policy`, `terms-of-service`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "links": {
+          "description": "Nested links (up to three levels, like the Shopify admin).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "CustomerInput": {
+      "description": "A customer. Sessions log in as a customer by email (see `session.customer`), and the checkout\nof an app lists the customers as login profiles: \"Log in\" logs the checkout in as one of them,\nwith their addresses (the first is the default) and, for a B2B customer, their locations.",
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/customer.schema.json\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "email": {
+          "type": "string"
+        },
+        "first_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "last_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "accepts_marketing": {
+          "type": "boolean",
+          "default": false
+        },
+        "has_account": {
+          "description": "Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "tax_exempt": {
+          "type": "boolean",
+          "default": false
+        },
+        "addresses": {
+          "description": "The first address is the default one (`customer.default_address`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AddressInput"
+          },
+          "default": []
+        },
+        "orders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrderInput"
+          },
+          "default": []
+        },
+        "password": {
+          "description": "The password accepted by the local login form. Any password works when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "company": {
+          "description": "The name of a company in `companies`: the customer buys for it (B2B).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "company_locations": {
+          "description": "The names of the locations of the company the customer can buy for. Defaults to all\nof them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "company_contact": {
+          "description": "What the company knows of the customer as a buyer: their job title, language, dates.\nCheckout Functions read it as `purchasingCompany.contact`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompanyContactInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "email"
+      ]
+    },
+    "OrderInput": {
+      "description": "An order of a customer, shown on account pages.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "name": {
+          "description": "The order name, e.g. `\"#1001\"`. Generated when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "financial_status": {
+          "description": "`paid`, `pending`, `refunded`, ... Defaults to `paid`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "fulfillment_status": {
+          "description": "`fulfilled`, `unfulfilled`, `partial`. Defaults to `unfulfilled`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "line_items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrderLineInput"
+          },
+          "default": []
+        },
+        "shipping_address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "billing_address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "shipping_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tax_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cancelled": {
+          "type": "boolean",
+          "default": false
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "OrderLineInput": {
+      "description": "A line of an order.",
+      "type": "object",
+      "properties": {
+        "variant": {
+          "description": "A variant, by id or SKU, or a product handle (its first variant is used).",
+          "$ref": "#/$defs/VariantRef"
+        },
+        "quantity": {
+          "description": "Defaults to 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variant"
+      ]
+    },
+    "VariantRef": {
+      "description": "A reference to a variant: its numeric id, its SKU, or a product handle (meaning that\nproduct's first variant).",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "CompanyContactInput": {
+      "description": "A customer as a contact of their company (B2B): `purchasingCompany.contact` of a checkout\nFunction.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "The job title of the contact, e.g. `\"Purchasing manager\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "locale": {
+          "description": "The language of the contact, e.g. `\"fr\"`. None when absent.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "created_at": {
+          "description": "Defaults to the creation date of the company.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "description": "Defaults to `created_at`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "CompanyInput": {
+      "description": "A company that buys from the store (B2B). A customer whose `company` names it is a B2B\ncustomer: `customer.b2b?` is true, and `customer.current_company` is this company.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "name": {
+          "description": "The name customers refer to the company by.",
+          "type": "string"
+        },
+        "external_id": {
+          "description": "The id the merchant gives the company in its own systems.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "locations": {
+          "description": "The places the company buys for. The first one is selected when a customer logs in.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CompanyLocationInput"
+          },
+          "default": []
+        },
+        "created_at": {
+          "description": "Defaults to a fixed date, 2024-01-01 plus one day per company.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "description": "Defaults to `created_at`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "CompanyLocationInput": {
+      "description": "A place a company buys for (`customer.current_location`): a branch, a shop, a warehouse.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "name": {
+          "type": "string"
+        },
+        "external_id": {
+          "description": "The id the merchant gives the location in its own systems.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "shipping_address": {
+          "description": "Where orders of this location ship to.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tax_registration_id": {
+          "description": "The tax number of the location, e.g. a VAT number.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "locale": {
+          "description": "The preferred language of the location, e.g. `\"fr\"`. None when absent.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "created_at": {
+          "description": "Defaults to the creation date of the company.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "description": "Defaults to `created_at`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "orders_count": {
+          "description": "The number of orders placed at the location, which checkout Functions read as\n`ordersCount`. The orders of the customers are not counted: defaults to 0.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "total_spent": {
+          "description": "The amount spent at the location (`totalSpent`), e.g. `\"1250.00\"`. Defaults to 0.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "GiftCardInput": {
+      "description": "An issued gift card, shown by `templates/gift_card.liquid` at the URL the `routes` command lists\n(`/gift_cards/<shop id>/<token>`).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The code customers redeem at checkout, e.g. `\"WCGX7X97G74JGDGC\"`.",
+          "type": "string"
+        },
+        "initial_value": {
+          "description": "The value the card was issued with.",
+          "$ref": "#/$defs/Money"
+        },
+        "balance": {
+          "description": "What is left on the card. Defaults to `initial_value`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "currency": {
+          "description": "ISO 4217 code. Defaults to the shop's currency.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "expires_on": {
+          "description": "The day the card stops working, e.g. `\"2026-12-31\"`. A date before `now` makes the card\n`expired`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "enabled": {
+          "description": "`false` for a card the merchant disabled.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "customer": {
+          "description": "The email of the customer (from `customers`) the card belongs to.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "recipient": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GiftCardRecipientInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "send_on": {
+          "description": "When the card is scheduled to be sent to its recipient.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "product": {
+          "description": "The handle of the gift card product that was bought.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "properties": {
+          "description": "Line item properties of the purchase.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "template_suffix": {
+          "description": "Selects `templates/gift_card.<suffix>.liquid`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "initial_value"
+      ]
+    },
+    "GiftCardRecipientInput": {
+      "description": "Who a gift card was sent to.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "nickname": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "MetaobjectInput": {
+      "description": "A metaobject entry (`metaobjects.<type>.<handle>`).",
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string"
+        },
+        "fields": {
+          "description": "Field values, with the same shorthand as metafields.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/MetafieldInput"
+          },
+          "default": {}
+        },
+        "template_suffix": {
+          "description": "Selects `templates/metaobject/<type>.<suffix>.json` instead of\n`templates/metaobject/<type>.json` for the page of the entry, which is\n`/pages/<type>/<handle>`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handle"
+      ]
+    },
+    "LocalizationInput": {
+      "description": "The countries and languages the store sells in (the `localization` object).\n\nThe first language is the primary one and is served at `/`; the others are served under\n`/<iso_code>/`. Defaults to one country (`US`) and the theme's default language.",
+      "type": "object",
+      "properties": {
+        "countries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CountryInput"
+          },
+          "default": []
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LanguageInput"
+          },
+          "default": []
+        },
+        "markets": {
+          "description": "Groups of countries sold as one market. A country in none of them is a market of its\nown, named after the country.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarketInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "CountryInput": {
+      "description": "A country the store sells to.",
+      "type": "object",
+      "properties": {
+        "iso_code": {
+          "description": "ISO 3166-1 alpha-2 code, e.g. `\"FR\"`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Defaults to the English name of the country.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "currency": {
+          "description": "ISO 4217 currency code. Defaults to the store currency.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "unit_system": {
+          "description": "`metric` or `imperial`. Defaults to `metric`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "popular": {
+          "description": "Whether to list the country among the popular ones.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "iso_code"
+      ]
+    },
+    "LanguageInput": {
+      "description": "A language the store is published in.",
+      "type": "object",
+      "properties": {
+        "iso_code": {
+          "description": "Locale code, e.g. `\"en\"`, `\"fr\"`, `\"pt-BR\"`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The language's name in English. Defaults to a built-in name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "endonym_name": {
+          "description": "The language's name in that language. Defaults to a built-in name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "iso_code"
+      ]
+    },
+    "MarketInput": {
+      "description": "A market: the countries the store sells to as one, as checkout Functions see it in\n`localization.market` and `MailingAddress.market`.",
+      "type": "object",
+      "properties": {
+        "handle": {
+          "description": "What Functions call the market: `\"europe\"`.",
+          "type": "string"
+        },
+        "countries": {
+          "description": "The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handle",
+        "countries"
+      ]
+    },
+    "LocationInput": {
+      "description": "A place the store stocks products at, where customers can pick up their orders\n(`variant.store_availabilities`, `store_availability.location`).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "name": {
+          "description": "The name of the location. Variants refer to it by this name.",
+          "type": "string"
+        },
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pick_up_enabled": {
+          "description": "Whether orders can be picked up at the location. Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "pick_up_time": {
+          "description": "How long a pickup order takes to be ready. Defaults to `\"Usually ready in 24 hours\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "physical_storefront": {
+          "description": "Whether the location is a shop that sells in person. Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "latitude": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "longitude": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "SellingPlanGroupInput": {
+      "description": "A group of selling plans (`product.selling_plan_groups`): what a subscription app creates\nfor \"Subscribe and save\". Products are sold with a group when the group lists them in\n`products`, or when they name the group in their own `selling_plan_groups`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The name shown to customers, e.g. `\"Subscribe and save\"`. Products refer to the group\nby this name.",
+          "type": "string"
+        },
+        "app_id": {
+          "description": "The id of the app that created the group (`selling_plan_group.app_id`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "options": {
+          "description": "The names of the options the plans differ by. Defaults to one option,\n`\"Delivery frequency\"`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "selling_plans": {
+          "description": "The plans of the group. At least one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SellingPlanInput"
+          }
+        },
+        "products": {
+          "description": "Handles of the products sold with these plans.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "selling_plans"
+      ]
+    },
+    "SellingPlanInput": {
+      "description": "A selling plan: one way of buying a product, such as \"Deliver every month, 10% off\".",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Generated from the names of the group and of the plan when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "name": {
+          "description": "The name shown to customers, e.g. `\"Deliver every month, 10% off\"`.",
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "options": {
+          "description": "One value per option of the group, e.g. `[\"Every month\"]`. Defaults to the plan's name.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "price_adjustments": {
+          "description": "How the plan changes the price: at most two adjustments, the first one applies to the\nfirst orders. No adjustment means the price of the variant.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PriceAdjustmentInput"
+          },
+          "default": []
+        },
+        "recurring_deliveries": {
+          "description": "Whether the plan delivers more than once. Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "checkout_charge": {
+          "description": "What is paid at checkout. Defaults to the whole price (`percentage`, `100`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckoutChargeInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "PriceAdjustmentInput": {
+      "description": "A price adjustment of a selling plan (`selling_plan.price_adjustments`).",
+      "type": "object",
+      "properties": {
+        "value_type": {
+          "$ref": "#/$defs/AdjustmentType"
+        },
+        "value": {
+          "description": "With `percentage`: the percentage, e.g. `10`. With `fixed_amount` and `price`: an\namount of money, e.g. `\"2.00\"` or `200`.",
+          "$ref": "#/$defs/Money"
+        },
+        "order_count": {
+          "description": "The number of orders the adjustment applies to. Every order when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value_type",
+        "value"
+      ]
+    },
+    "AdjustmentType": {
+      "description": "How a price adjustment of a selling plan changes the price.",
+      "oneOf": [
+        {
+          "description": "`value` percent off the price of the variant.",
+          "type": "string",
+          "const": "percentage"
+        },
+        {
+          "description": "`value` (an amount of money) off the price of the variant.",
+          "type": "string",
+          "const": "fixed_amount"
+        },
+        {
+          "description": "`value` (an amount of money) is the price.",
+          "type": "string",
+          "const": "price"
+        }
+      ]
+    },
+    "CheckoutChargeInput": {
+      "description": "What is paid at checkout, for plans that take a deposit (`selling_plan.checkout_charge`).",
+      "type": "object",
+      "properties": {
+        "value_type": {
+          "$ref": "#/$defs/CheckoutChargeType"
+        },
+        "value": {
+          "description": "With `percentage`: the percentage, e.g. `50`. With `price`: an amount of money.",
+          "$ref": "#/$defs/Money"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value_type",
+        "value"
+      ]
+    },
+    "CheckoutChargeType": {
+      "description": "How the amount due at checkout is expressed.",
+      "oneOf": [
+        {
+          "description": "`value` percent of the price.",
+          "type": "string",
+          "const": "percentage"
+        },
+        {
+          "description": "`value` (an amount of money).",
+          "type": "string",
+          "const": "price"
+        }
+      ]
+    },
+    "FileInput": {
+      "description": "A file in `files/` that needs metadata. Files without an entry work too.",
+      "type": "object",
+      "properties": {
+        "alt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "width": {
+          "description": "Size to assume when the file itself is absent (a placeholder is generated).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "focal_point": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocalPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "SessionInput": {
+      "description": "The state a browser session starts with. Tests can replace it per session through the\ncontrol API (`PUT /__lsf/session`).",
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/session.schema.json\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "customer": {
+          "description": "Who is logged in: the email of a customer, `\"default\"` for the first customer of the\ndata, or `\"none\"`. Nobody is logged in when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "cart": {
+          "description": "The content of the cart. Empty when omitted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CartInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "country": {
+          "description": "ISO code of the selected country. Defaults to the first country.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "company_location": {
+          "description": "For a B2B customer: the name of the company location they buy for. Defaults to the\nfirst one they have access to.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "CartInput": {
+      "description": "The cart a session starts with.",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CartLineInput"
+          },
+          "default": []
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "attributes": {
+          "description": "Cart attributes.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "CartLineInput": {
+      "description": "A line of the cart a session starts with.",
+      "type": "object",
+      "properties": {
+        "variant": {
+          "description": "A variant, by id or SKU, or a product handle (its first variant is used).",
+          "$ref": "#/$defs/VariantRef"
+        },
+        "quantity": {
+          "description": "Defaults to 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        },
+        "properties": {
+          "description": "Line item properties, e.g. `{\"Engraving\": \"Hello\"}`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "selling_plan": {
+          "description": "The selling plan the line is bought with: its name or its id. The product of the\nvariant must be sold with it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SellingPlanRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variant"
+      ]
+    },
+    "SellingPlanRef": {
+      "description": "A reference to a selling plan: its numeric id, or its name.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "CheckoutInput": {
+      "description": "How the local checkout (`lsf checkout --app`) is set up. Every field has a default.",
+      "type": "object",
+      "properties": {
+        "shipping_rates": {
+          "description": "The delivery options offered to every address. Defaults to one, \"Standard\" at 5.00.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/CheckoutShippingRateInput"
+          },
+          "default": null
+        },
+        "payment_methods": {
+          "description": "The payment methods. Defaults to \"Credit card\", \"Cash on Delivery\" and \"Bank Deposit\".",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/CheckoutPaymentMethodInput"
+          },
+          "default": null
+        },
+        "discounts": {
+          "description": "Discounts backed by discount Functions of the app.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/CheckoutDiscountInput"
+          },
+          "default": null
+        },
+        "functions": {
+          "description": "The settings of the other Functions, by the handle of the Function.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CheckoutFunctionInput"
+          },
+          "default": {}
+        },
+        "tax_rate": {
+          "description": "Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when\nomitted.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "CheckoutShippingRateInput": {
+      "description": "A delivery option the local checkout offers to every address.",
+      "type": "object",
+      "properties": {
+        "handle": {
+          "description": "What Functions and the page call the option: `\"standard\"`.",
+          "type": "string"
+        },
+        "title": {
+          "description": "What the buyer sees. Defaults to the handle.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "price": {
+          "description": "The cost, e.g. `\"4.90\"`.",
+          "$ref": "#/$defs/Money"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "kind": {
+          "description": "Defaults to `\"shipping\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckoutDeliveryKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handle",
+        "price"
+      ]
+    },
+    "CheckoutDeliveryKind": {
+      "description": "What kind of delivery a shipping rate is.",
+      "oneOf": [
+        {
+          "description": "Delivered to the address.",
+          "type": "string",
+          "const": "shipping"
+        },
+        {
+          "description": "Picked up in a store.",
+          "type": "string",
+          "const": "pick_up"
+        },
+        {
+          "description": "Delivered locally.",
+          "type": "string",
+          "const": "local"
+        }
+      ]
+    },
+    "CheckoutPaymentMethodInput": {
+      "description": "A payment method the local checkout offers.",
+      "type": "object",
+      "properties": {
+        "handle": {
+          "description": "What payment customization Functions and the page call the method: `\"card\"`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "What the buyer sees. Defaults to the handle.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "placements": {
+          "description": "Where the method is offered, which payment customization Functions read as\n`placements`. Defaults to `[\"PAYMENT_METHOD\"]`: the list of the checkout.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckoutPaymentPlacement"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handle"
+      ]
+    },
+    "CheckoutPaymentPlacement": {
+      "description": "Where a payment method is offered.",
+      "oneOf": [
+        {
+          "description": "The list of payment methods of the checkout.",
+          "type": "string",
+          "const": "PAYMENT_METHOD"
+        },
+        {
+          "description": "The express buttons (Shop Pay, Apple Pay, ...).",
+          "type": "string",
+          "const": "ACCELERATED_CHECKOUT"
+        }
+      ]
+    },
+    "CheckoutDiscountInput": {
+      "description": "A discount backed by a discount Function of the app.",
+      "type": "object",
+      "properties": {
+        "function": {
+          "description": "The handle of the discount Function in the app.",
+          "type": "string"
+        },
+        "title": {
+          "description": "What the buyer sees. Defaults to the handle of the Function.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "code": {
+          "description": "The code that triggers the discount. Without one the discount is automatic.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "classes": {
+          "description": "What the discount may reduce. All three when omitted.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckoutDiscountClass"
+          },
+          "default": []
+        },
+        "metafields": {
+          "description": "The metafields of the discount, which its Function's input query reads, by\n`\"namespace.key\"`: `{\"$app:config.settings\": {\"type\": \"json\", \"value\": {\"percent\": 10}}}`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/MetafieldInput"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "function"
+      ]
+    },
+    "CheckoutDiscountClass": {
+      "description": "What a discount may reduce.",
+      "type": "string",
+      "enum": [
+        "PRODUCT",
+        "ORDER",
+        "SHIPPING"
+      ]
+    },
+    "CheckoutFunctionInput": {
+      "description": "The settings of a Function that is not a discount: cart transform, delivery or payment\ncustomization, validation.",
+      "type": "object",
+      "properties": {
+        "metafields": {
+          "description": "The metafields of the object the Function belongs to, by `\"namespace.key\"`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/MetafieldInput"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

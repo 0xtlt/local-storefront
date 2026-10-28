@@ -1,0 +1,19 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "gift_cards": [
+    {
+      "code": "WCGX7X97G74JGDGC",
+      "initial_value": "50.00",
+      "balance": "32.50",
+      "customer": "jane.doe@example.com",
+      "product": "gift-card",
+      "message": "Happy birthday! Treat yourself.",
+      "recipient": { "name": "Jane Doe", "email": "jane.doe@example.com", "nickname": "Jane" }
+    },
+    {
+      "code": "EXPD2020AAAABBBB",
+      "initial_value": "25.00",
+      "expires_on": "2020-12-31"
+    }
+  ]
+}

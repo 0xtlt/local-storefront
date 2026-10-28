@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MenuInput",
+  "description": "A navigation menu (`linklists.<handle>`).",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/menu.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "description": "Defaults to the handle, title-cased.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LinkInput"
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "LinkInput": {
+      "description": "A link in a navigation menu.\n\nPoint it at a resource with exactly one of `url`, `collection`, `product`, `page`, `blog`,\n`article` or `policy`; the URL and the link type follow from it. A link with none of them\npoints to `#`.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "description": "A literal URL: `/`, `/collections/all`, `/search`, `https://example.com`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "collection": {
+          "description": "Handle of a collection.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "product": {
+          "description": "Handle of a product.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "page": {
+          "description": "Handle of a page.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "blog": {
+          "description": "Handle of a blog.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "article": {
+          "description": "An article as `<blog-handle>/<article-handle>`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "policy": {
+          "description": "A policy: `privacy-policy`, `refund-policy`, `shipping-policy`, `terms-of-service`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "links": {
+          "description": "Nested links (up to three levels, like the Shopify admin).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    }
+  }
+}

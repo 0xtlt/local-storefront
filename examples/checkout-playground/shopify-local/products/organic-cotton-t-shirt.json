@@ -1,0 +1,43 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Organic Cotton T-Shirt",
+  "description": "<p>A heavyweight tee cut from 220 gsm organic cotton. Boxy through the body, with a ribbed collar that keeps its shape.</p><ul><li>100% organic cotton</li><li>Garment dyed</li><li>Made in Portugal</li></ul>",
+  "vendor": "Local Supply Co.",
+  "type": "Apparel",
+  "tags": ["cotton", "tops", "bestseller"],
+  "options": [
+    { "name": "Color", "values": ["White", "Black", "Sage"] },
+    { "name": "Size", "values": ["S", "M", "L", "XL"] }
+  ],
+  "price": 3200,
+  "images": [
+    { "src": "products/tee-white.jpg", "alt": "White organic cotton t-shirt", "width": 1600, "height": 2000 },
+    { "src": "products/tee-black.jpg", "alt": "Black organic cotton t-shirt", "width": 1600, "height": 2000 },
+    { "src": "products/tee-sage.jpg", "alt": "Sage organic cotton t-shirt", "width": 1600, "height": 2000 },
+    { "src": "products/tee-detail.jpg", "alt": "Close-up of the ribbed collar", "width": 1600, "height": 2000 }
+  ],
+  "variants": [
+    { "options": ["White", "S"], "sku": "TEE-WHT-S", "inventory_quantity": 12, "image": "products/tee-white.jpg" },
+    { "options": ["White", "M"], "sku": "TEE-WHT-M", "inventory_quantity": 20, "image": "products/tee-white.jpg" },
+    { "options": ["White", "L"], "sku": "TEE-WHT-L", "inventory_quantity": 8, "image": "products/tee-white.jpg" },
+    { "options": ["White", "XL"], "sku": "TEE-WHT-XL", "inventory_quantity": 0, "image": "products/tee-white.jpg" },
+    { "options": ["Black", "S"], "sku": "TEE-BLK-S", "inventory_quantity": 5, "image": "products/tee-black.jpg" },
+    { "options": ["Black", "M"], "sku": "TEE-BLK-M", "inventory_quantity": 14, "image": "products/tee-black.jpg" },
+    { "options": ["Black", "L"], "sku": "TEE-BLK-L", "inventory_quantity": 3, "image": "products/tee-black.jpg" },
+    { "options": ["Black", "XL"], "sku": "TEE-BLK-XL", "inventory_quantity": 6, "image": "products/tee-black.jpg" },
+    { "options": ["Sage", "S"], "sku": "TEE-SGE-S", "inventory_quantity": 0, "image": "products/tee-sage.jpg" },
+    { "options": ["Sage", "M"], "sku": "TEE-SGE-M", "inventory_quantity": 2, "image": "products/tee-sage.jpg" },
+    { "options": ["Sage", "L"], "sku": "TEE-SGE-L", "inventory_quantity": 0, "image": "products/tee-sage.jpg" },
+    { "options": ["Sage", "XL"], "sku": "TEE-SGE-XL", "inventory_quantity": 0, "image": "products/tee-sage.jpg" }
+  ],
+  "metafields": {
+    "custom": {
+      "care": "Machine wash cold. Tumble dry low.",
+      "fabric_weight": { "type": "weight", "value": { "value": 220, "unit": "g" } }
+    },
+    "reviews": {
+      "rating": { "type": "rating", "value": { "value": "4.6", "scale_min": "1.0", "scale_max": "5.0" } },
+      "rating_count": 128
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "The Shop look",
+  "description": "The checkout in the look of the Shop app and Shop Pay.",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "variant": "shop"
+}

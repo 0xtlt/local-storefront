@@ -1,0 +1,24 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "A logged-in customer",
+  "description": "The first customer of the store data buys two products, with a note and a cart attribute.",
+  "session": {
+    "customer": "default",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 2
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ],
+      "note": "Please leave at the door",
+      "attributes": {
+        "gift": "no"
+      }
+    }
+  }
+}

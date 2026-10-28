@@ -1,0 +1,19 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "pages": [
+    {
+      "title": "About",
+      "content": "<p>Local Supply Co. started in a garage with one sewing machine and a simple idea: make fewer, better things.</p><p>Everything we sell is designed to be used every day and to get better with age.</p>"
+    },
+    {
+      "title": "Contact",
+      "content": "<p>Questions about an order? Send us a note and we will get back to you within one business day.</p>",
+      "template_suffix": "contact"
+    },
+    {
+      "title": "Shipping & returns",
+      "handle": "shipping-returns",
+      "content": "<h2>Shipping</h2><p>Orders ship within two business days.</p><h2>Returns</h2><p>Returns are free within 30 days.</p>"
+    }
+  ]
+}

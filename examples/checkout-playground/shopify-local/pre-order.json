@@ -1,0 +1,18 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "selling_plan_groups": [
+    {
+      "name": "Pre-order, 40% now",
+      "options": ["Payment"],
+      "selling_plans": [
+        {
+          "name": "Pre-order: 40% today, the rest when it ships",
+          "options": ["40% deposit"],
+          "recurring_deliveries": false,
+          "checkout_charge": { "value_type": "percentage", "value": 40 }
+        }
+      ],
+      "products": ["wool-beanie"]
+    }
+  ]
+}

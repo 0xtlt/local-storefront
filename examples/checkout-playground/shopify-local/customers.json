@@ -1,0 +1,143 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "companies": [
+    {
+      "name": "Northwind Hotels",
+      "external_id": "NW-001",
+      "metafields": {
+        "custom": {
+          "account_manager": "Sam Rivera",
+          "payment_terms": "Net 30"
+        }
+      },
+      "locations": [
+        {
+          "name": "Northwind Portland",
+          "external_id": "NW-PDX",
+          "tax_registration_id": "93-1234567",
+          "shipping_address": {
+            "address1": "815 Harbor Way",
+            "city": "Portland",
+            "province": "Oregon",
+            "province_code": "OR",
+            "country": "United States",
+            "country_code": "US",
+            "zip": "97201"
+          },
+          "metafields": {
+            "custom": { "delivery_notes": "Loading dock B, weekdays 8am to 4pm" }
+          }
+        },
+        {
+          "name": "Northwind Seattle",
+          "external_id": "NW-SEA",
+          "shipping_address": {
+            "address1": "2200 Alder Street",
+            "city": "Seattle",
+            "province": "Washington",
+            "province_code": "WA",
+            "country": "United States",
+            "country_code": "US",
+            "zip": "98121"
+          }
+        }
+      ]
+    }
+  ],
+  "customers": [
+    {
+      "email": "jane.doe@example.com",
+      "first_name": "Jane",
+      "last_name": "Doe",
+      "phone": "+1 555 010 9988",
+      "tags": ["vip"],
+      "accepts_marketing": true,
+      "password": "password",
+      "metafields": {
+        "custom": { "loyalty_tier": "gold" }
+      },
+      "addresses": [
+        {
+          "first_name": "Jane",
+          "last_name": "Doe",
+          "address1": "12 Maple Street",
+          "address2": "Apt 4",
+          "city": "Portland",
+          "province": "Oregon",
+          "province_code": "OR",
+          "country": "United States",
+          "country_code": "US",
+          "zip": "97205",
+          "phone": "+1 555 010 9988"
+        },
+        {
+          "first_name": "Jane",
+          "last_name": "Doe",
+          "company": "Doe Design Studio",
+          "address1": "400 Pine Avenue",
+          "city": "Seattle",
+          "province": "Washington",
+          "province_code": "WA",
+          "country": "United States",
+          "country_code": "US",
+          "zip": "98101"
+        }
+      ],
+      "orders": [
+        {
+          "created_at": "2024-03-04T16:20:00-05:00",
+          "fulfillment_status": "fulfilled",
+          "line_items": [
+            { "variant": "TEE-WHT-M", "quantity": 2 },
+            { "variant": "canvas-tote-bag", "quantity": 1 }
+          ],
+          "shipping_price": 600
+        },
+        {
+          "created_at": "2024-05-18T11:05:00-04:00",
+          "line_items": [{ "variant": "MUG-OAT", "quantity": 4 }]
+        }
+      ]
+    },
+    {
+      "email": "new.customer@example.com",
+      "first_name": "Noah",
+      "last_name": "Nguyen"
+    },
+    {
+      "email": "alex.morgan@example.com",
+      "first_name": "Alex",
+      "last_name": "Morgan",
+      "tags": ["wholesale"],
+      "company": "Northwind Hotels",
+      "metafields": {
+        "custom": { "job_title": "Purchasing manager" }
+      }
+    },
+    {
+      "email": "camille.martin@example.com",
+      "first_name": "Camille",
+      "last_name": "Martin",
+      "phone": "+33 1 23 45 67 89",
+      "tags": ["newsletter"],
+      "addresses": [
+        {
+          "first_name": "Camille",
+          "last_name": "Martin",
+          "address1": "8 rue des Lilas",
+          "city": "Lyon",
+          "country": "France",
+          "country_code": "FR",
+          "zip": "69003",
+          "phone": "+33 1 23 45 67 89"
+        }
+      ],
+      "orders": [
+        {
+          "created_at": "2024-09-12T10:30:00+02:00",
+          "line_items": [{ "variant": "canvas-tote-bag", "quantity": 1 }]
+        }
+      ]
+    }
+  ]
+}

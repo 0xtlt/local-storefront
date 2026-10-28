@@ -1,0 +1,41 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "menus": {
+    "main-menu": {
+      "title": "Main menu",
+      "links": [
+        { "title": "Home", "url": "/" },
+        {
+          "title": "Shop",
+          "collection": "all",
+          "links": [
+            {
+              "title": "Apparel",
+              "collection": "apparel",
+              "links": [
+                { "title": "Organic Cotton T-Shirt", "product": "organic-cotton-t-shirt" },
+                { "title": "Linen Overshirt", "product": "linen-overshirt" }
+              ]
+            },
+            { "title": "Home goods", "collection": "home-goods" },
+            { "title": "Accessories", "collection": "accessories" },
+            { "title": "Sale", "collection": "sale" }
+          ]
+        },
+        { "title": "Journal", "blog": "journal" },
+        { "title": "About", "page": "about" },
+        { "title": "Contact", "page": "contact" }
+      ]
+    },
+    "footer": {
+      "title": "Footer menu",
+      "links": [
+        { "title": "Search", "url": "/search" },
+        { "title": "About", "page": "about" },
+        { "title": "Shipping & returns", "page": "shipping-returns" },
+        { "title": "Refund policy", "policy": "refund-policy" },
+        { "title": "Privacy policy", "policy": "privacy-policy" }
+      ]
+    }
+  }
+}

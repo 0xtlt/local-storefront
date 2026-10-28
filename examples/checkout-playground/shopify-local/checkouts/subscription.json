@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "A subscription",
+  "description": "A line bought with a selling plan that repeats: what the Functions read of a selling plan.",
+  "session": {
+    "customer": "default",
+    "cart": {
+      "items": [
+        {
+          "variant": "SOCK-S",
+          "quantity": 2,
+          "selling_plan": "Deliver every month, 10% off"
+        }
+      ]
+    }
+  }
+}
