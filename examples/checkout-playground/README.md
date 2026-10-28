@@ -144,10 +144,12 @@ app build` does. `lsf checkout --app . --build` runs the same command for each F
 `broken-missing-build` has no build command and stays unbuilt.
 
 To change a Function and see it at once, `mise run playground:dev` (`lsf checkout --app .
---watch`) builds every Function, then builds one again when you save it and reloads the open
-pages ([watch mode](../../docs/checkout.md#watch-mode)). It rewrites the committed modules: a
-build on another machine or toolchain does not give the same bytes, so
-`git checkout -- examples/checkout-playground` puts them back.
+--watch`) serves the committed modules, then builds a Function again when you save it and
+reloads the open pages ([watch mode](../../docs/checkout.md#watch-mode)). Nothing is built at
+start, so `git status` stays clean until you edit something. A Function you rebuild gets new
+bytes in its `dist/function.wasm` (another machine or toolchain does not give the same ones):
+commit them with the change, or `git checkout` that file. `mise run playground:dev -- --build`
+rebuilds every Function at start.
 
 ### Tests
 

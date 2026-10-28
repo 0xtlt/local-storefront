@@ -327,6 +327,20 @@ impl Selection {
     }
 }
 
+/// What the diagnostic of a Function whose module is not at `wasm_path` says.
+fn missing_module(wasm_path: &Path, build_command: Option<&str>) -> String {
+    match build_command {
+        Some(command) => format!(
+            "no Wasm module at {}: build it with `{command}` (or `shopify app build`)",
+            wasm_path.display()
+        ),
+        None => format!(
+            "no Wasm module at {}: run `shopify app build`",
+            wasm_path.display()
+        ),
+    }
+}
+
 /// Loads the app in `dir`. Fails only when `dir` is not a directory; everything else that is
 /// wrong with the app is reported in [`App::diagnostics`].
 pub fn load(dir: &Path) -> Result<App, String> {
@@ -364,6 +378,37 @@ pub fn load(dir: &Path) -> Result<App, String> {
 }
 
 impl App {
+    /// Runs `module` for the Function `handle` instead of its build output: the copy `lsf
+    /// checkout --watch` keeps of the last module that built, so that a request never reads a
+    /// module its build is writing. Without that copy, the Function is not built, and its
+    /// diagnostic says that the watch builds it.
+    pub fn use_module(&mut self, handle: &str, module: PathBuf) {
+        let Some(index) = self
+            .functions
+            .iter()
+            .position(|function| function.handle == handle)
+        else {
+            return;
+        };
+        let function = &self.functions[index];
+        let before = missing_module(&function.wasm_path, function.build_command.as_deref());
+        let built = module.is_file();
+        let message = format!(
+            "no Wasm module yet: the watch builds it with `{}`",
+            function
+                .build_command
+                .as_deref()
+                .unwrap_or("shopify app build")
+        );
+        self.diagnostics.retain(|diagnostic| {
+            !(diagnostic.extension.as_deref() == Some(handle) && diagnostic.message == before)
+        });
+        self.functions[index].wasm_path = module;
+        if !built {
+            self.warn(Some(handle), message);
+        }
+    }
+
     fn warn(&mut self, extension: Option<&str>, message: String) {
         self.diagnostics.push(Diagnostic {
             severity: Severity::Warning,
@@ -615,16 +660,7 @@ fn load_function(
     if !wasm_path.is_file() {
         app.warn(
             Some(handle),
-            match &build_command {
-                Some(command) => format!(
-                    "no Wasm module at {}: build it with `{command}` (or `shopify app build`)",
-                    wasm_path.display()
-                ),
-                None => format!(
-                    "no Wasm module at {}: run `shopify app build`",
-                    wasm_path.display()
-                ),
-            },
+            missing_module(&wasm_path, build_command.as_deref()),
         );
     }
 
@@ -1005,6 +1041,42 @@ handle = "banner"
                     .starts_with("banner: target `customer-account.order-status.block.render`")),
             "{messages:?}"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_function_can_run_another_module_than_its_build_output() {
+        let root = temp_app("use-module");
+        write(
+            &root,
+            "extensions/fn/shopify.extension.toml",
+            "type = \"function\"\nhandle = \"fn\"\napi_version = \"2026-10\"\n[[targeting]]\ntarget = \"purchase.validation.run\"\n[build]\ncommand = \"make\"\n",
+        );
+        let missing = |app: &App| -> Vec<String> {
+            app.diagnostics
+                .iter()
+                .filter(|d| d.message.starts_with("no Wasm module"))
+                .map(ToString::to_string)
+                .collect()
+        };
+        // No copy yet: not built, and the diagnostic says that the watch builds it.
+        let mut app = load(&root).unwrap();
+        assert_eq!(missing(&app).len(), 1);
+        let copy = root.join("copy.wasm");
+        app.use_module("fn", copy.clone());
+        assert_eq!(app.function("fn").unwrap().wasm_path, copy);
+        assert!(!app.function("fn").unwrap().built());
+        assert_eq!(
+            missing(&app),
+            ["fn: no Wasm module yet: the watch builds it with `make`"]
+        );
+
+        // A copy: built, whatever the build output is.
+        write(&root, "copy.wasm", "\0asm");
+        let mut app = load(&root).unwrap();
+        app.use_module("fn", copy);
+        assert!(app.function("fn").unwrap().built());
+        assert!(missing(&app).is_empty(), "{:?}", app.diagnostics);
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -46,7 +46,7 @@ starts, and is in the `diagnostics` of the state.
 | `--app <dir>` (`LSF_APP`) | The app. Required by `checkout` and `function run`. |
 | `--extension <handle>` | Uses only this extension, a Function or a checkout UI extension. Repeat it for several. Without it, every extension of the app is used. |
 | `--build` | Runs the build command of each Function first. |
-| `--watch` | Develops the app as `shopify app dev` does: builds the Functions first, builds a Function again when its files change, and reloads the open pages. See [watch mode](#watch-mode). |
+| `--watch` | Develops the app as `shopify app dev` does: builds a Function again when its files change, and reloads the open pages. With `--build`, builds every Function at start. See [watch mode](#watch-mode). |
 | `--variant <standard\|shop>` | The look of the page: Shopify's one-page checkout, or the Shop app's. A URL can ask for the other with `?variant=shop`. |
 
 `checkout` takes the other options of [`serve`](cli.md#serve) (`--port`, `--host`, `--quiet`,
@@ -61,35 +61,54 @@ npx local-storefront checkout --app ../my-app --watch
 Save a file of a Function and its build runs; when it is over, the open pages reload with the new
 module. It works with `serve --app` too.
 
-- **At the start**, every Function that has a build command (`[extensions.build] command`) is
-  built, as with `--build`, several at once. A build that fails does not stop the server.
+- **At the start**, the modules that are there are used, as without `--watch`. Only the
+  Functions that have no module, and those whose files changed since the last watch of the app,
+  are built. The first watch of an app trusts the modules it finds, and says so: `using the
+  existing builds; --build rebuilds them all at start`. `--watch --build` builds every Function
+  that has a build command (`[extensions.build] command`). A build that fails does not stop the
+  server. What each Function was built from is recorded in the user's cache folder
+  (`~/Library/Caches/lsf/watch/` on macOS, `~/.cache/lsf/watch/` on Linux), never in the app.
 - **What is watched**: the folder of each extension (`src/`, the input queries, its
-  `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension),
-  `shopify.app.toml`, and the extension folders that are added or removed. The store data and
-  its scenarios are watched as always.
+  `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension), the
+  other files of the app (a Cargo workspace's `Cargo.toml` and `Cargo.lock`, `package.json` and
+  its lock file, the crates and folders the Functions share), `shopify.app.toml`, and the
+  extension folders that are added or removed. A symbolic link is watched where it leads. The
+  store data and its scenarios are watched as always.
 - **What is not**: `target/`, `node_modules/`, `.git/` and other dot folders, editors' temporary
-  files, and what a build writes: the `dist/` folder of a Function that has a build command, its
-  module (`[extensions.build] path`), and `schema.graphql`. A build does not start itself again.
+  files, Markdown documents, the store data folder (`shopify-local/`, or the one `--data` names),
+  and what a build writes: the `dist/` folder of a Function that has a build command, its module
+  (`[extensions.build] path`), and `schema.graphql`. A build does not start itself again.
 - **A change to a Function** with a build command runs that command in its folder, as `--build`
   does. A save that writes several files builds once. One build at a time per Function: a change
   during its build makes one more build after it. Up to 3 Functions build at once (the Functions
   of one Cargo workspace wait for each other on its lock). The terminal says
   `↻ building discount-codes…`, then `✓ discount-codes built in 1.4s`.
+- **A change to the other files of the app** builds every Function that has a build command:
+  `↻ Cargo.toml changed: building 12 Functions`.
 - **Any other change** (a checkout UI extension's bundle, an extension without a build, an
-  extension added or removed, `shopify.app.toml`, a scenario, the store data) reloads the pages
-  at once.
-- **The pages reload**: the checkout, the thank-you page and the home page. What the buyer
+  extension added or removed, `shopify.app.toml`, a scenario, the store data) reloads the pages.
+- **The pages reload** once every build a change started is over: the checkout, the thank-you
+  page and the home page, once per change however many Functions it builds. What the buyer
   entered is kept, it is in the session. The home page runs the Functions of the scenarios again.
-- **A build that fails** keeps the last module that built, as `shopify app dev` does: the
-  checkout runs it. The terminal prints `✗ discount-codes: build failed (exit status: 101)` and
-  the last 20 lines of its output; the checkout page shows them in a banner and in the overview
-  of the Functions dialog, and the home page lists the build first among its problems. The next
-  build that works clears it.
+- **The checkout never runs what a build is writing.** It runs a copy of the last module of each
+  Function that built, kept out of the app (in the system's temporary folder, removed when the
+  server stops). Once a build is over and its module is a whole Wasm module, the copy is replaced
+  in one step. The checkout, the Functions dialog and the runs of the home page all read it.
+  `dist/` is only written by the build command.
+- **A build that fails** leaves that copy, as `shopify app dev` does: the checkout runs it. The
+  terminal prints `✗ discount-codes: build failed (exit status: 101)`, the first error (from its
+  `error` line to the end of its source context) and the last lines of the output; the checkout
+  page shows them in a banner and in the overview of the Functions dialog, and the home page
+  lists the build first among its problems. A Function that never built is not built until a
+  build works. The next build that works clears it.
 - **A build that hangs** does not hold the server: it is stopped after 10 minutes and fails.
-  Ctrl-C stops the builds that run, and puts back the module of one stopped halfway.
+  Ctrl-C stops the builds that run; one stopped halfway is built again at the next start.
 
-The files are watched through the system's events (FSEvents, inotify): at rest, watching an app
-of 90 extensions costs about 0.2 % of a core. Where a file system has no events, they are polled.
+The files are watched through the system's events (FSEvents on macOS, inotify on Linux, folder
+by folder, without the tools' folders): at rest, watching an app of 90 extensions costs about
+0.2 % of a core. Where a file system has no events, they are polled.
+
+`lsf function run` has no watch mode: it runs the modules in `dist/`, as they are.
 
 ## The look of the page
 

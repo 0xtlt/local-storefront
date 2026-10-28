@@ -1031,8 +1031,13 @@ fn problem_list(
             continue;
         }
         let message = format!(
-            "{}: the checkout runs the last module that built",
-            text_of(&build["reason"])
+            "{}: {}",
+            text_of(&build["reason"]),
+            if function["built"] == true {
+                "the checkout runs the last module that built"
+            } else {
+                "no module of it built yet"
+            }
         );
         list.push(Problem {
             level: Level::Error,
@@ -1139,7 +1144,7 @@ pub fn build(
     report: Option<&Report>,
 ) -> Json {
     let store = state.store_of(incoming);
-    let app = match lsf_checkout::app::load(&options.app_dir) {
+    let app = match state.load_app(&options.app_dir) {
         Ok(app) => app,
         Err(problem) => {
             return json!({"error": problem, "root": root});
@@ -1317,7 +1322,7 @@ pub fn page(
     root: &str,
     check: &str,
 ) -> Reply {
-    let report = match lsf_checkout::app::load(&options.app_dir) {
+    let report = match state.load_app(&options.app_dir) {
         Ok(app) => {
             let store = state.store_of(incoming);
             if incoming.query_param("check").is_some() {
@@ -1362,7 +1367,7 @@ pub fn check(
     root: &str,
 ) -> Reply {
     let store = state.store_of(incoming);
-    let app = match lsf_checkout::app::load(&options.app_dir) {
+    let app = match state.load_app(&options.app_dir) {
         Ok(app) => app,
         Err(problem) => {
             return Reply::json(200, &json!({"state": "error", "error": problem}))

@@ -377,7 +377,7 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
             &scenario.problems,
         );
     }
-    let app = match lsf_checkout::app::load(&options.app_dir) {
+    let app = match state.load_app(&options.app_dir) {
         Ok(app) => app,
         Err(problem) => return notice(500, "The app cannot be read", &[problem], &[]),
     };
@@ -584,7 +584,7 @@ fn price(
     step: BuyerJourneyStep,
 ) -> Result<(App, Selection, CheckoutResult), String> {
     let options = options(state);
-    let app = lsf_checkout::app::load(&options.app_dir)?;
+    let app = state.load_app(&options.app_dir)?;
     // The scenario the checkout opened from sets it up, as long as it exists and is valid.
     let scenario = scenario_named(store, checkout.scenario.as_deref());
     let selection = selection_for(&app, &options.extensions, scenario)?;
@@ -1683,7 +1683,7 @@ fn asset(file: &str) -> Reply {
 /// A file of the build of a checkout UI extension: `<extension>/dist/<file>`.
 fn extension_file(state: &ServerState, handle: &str, file: &[&str]) -> Reply {
     let options = options(state);
-    let Ok(app) = lsf_checkout::app::load(&options.app_dir) else {
+    let Ok(app) = state.load_app(&options.app_dir) else {
         return Reply::not_found();
     };
     let Ok(selection) = Selection::resolve(&app, &options.extensions) else {

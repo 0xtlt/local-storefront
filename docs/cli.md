@@ -48,7 +48,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions. See [checkout](checkout.md). |
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
 | `--build` | | With `--app`: runs the build command of each Function first. |
-| `--watch` | | With `--app`: builds the Functions first, builds a Function again when its files change, and reloads the open pages (it implies `--build` and `--live-reload`). See [watch mode](checkout.md#watch-mode). |
+| `--watch` | | With `--app`: builds a Function again when its files change, and reloads the open pages (it implies `--live-reload`). At start, builds only the Functions that have no module or changed since the last watch; with `--build`, all of them. See [watch mode](checkout.md#watch-mode). |
 | `--variant <standard\|shop>` | | With `--app`: the look of the checkout page, `standard` by default. |
 
 When it is ready, the server prints a line to stderr that starts with

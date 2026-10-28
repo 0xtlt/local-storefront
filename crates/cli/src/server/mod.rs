@@ -232,6 +232,14 @@ impl ServerState {
         (state, diagnostics)
     }
 
+    /// Reads the app of the checkout. With `--watch`, the Functions it builds run the copy of
+    /// their last module that built, never what a build is writing.
+    pub(crate) fn load_app(&self, dir: &Path) -> Result<lsf_checkout::app::App, String> {
+        let mut app = lsf_checkout::app::load(dir)?;
+        self.builds.apply(&mut app);
+        Ok(app)
+    }
+
     pub fn loaded(&self) -> Arc<Loaded> {
         self.loaded.read().expect("store lock poisoned").clone()
     }

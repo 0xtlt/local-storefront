@@ -7641,3 +7641,58 @@ fn without_live_reload_the_checkout_pages_have_no_script() {
         json!([])
     );
 }
+
+#[test]
+fn with_watch_the_checkout_runs_the_module_the_watch_published() {
+    let discount = || {
+        json!({"checkout": {"discounts": [{
+            "function": "volume-discount",
+            "title": "Volume",
+            "classes": ["PRODUCT"],
+            "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
+            }}
+        }]}})
+    };
+    let lines = || json!([{"variant": "TEE-BLK-M", "quantity": 3}]);
+    let discounted = |json: &Json| {
+        let line = &json["lines"][0];
+        line["total"]["amount"].as_f64().unwrap() < line["subtotal"]["amount"].as_f64().unwrap()
+    };
+
+    // Nothing published yet: the Function is not built, whatever its build output is.
+    let mut state = checkout_server(&[], true);
+    state.builds = std::sync::Arc::new(crate::watch::Builds::publishing(
+        crate::watch::Modules::create().unwrap(),
+    ));
+    state.builds.own_for_tests(&["volume-discount"], &[]);
+    let path = start_checkout(&state, "co-published", lines(), discount());
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-published"));
+    assert!(!discounted(&json), "{json}");
+    assert!(
+        json["diagnostics"].as_array().unwrap().iter().any(|d| d
+            .as_str()
+            .unwrap()
+            .starts_with("volume-discount: no Wasm module yet")),
+        "{}",
+        json["diagnostics"]
+    );
+
+    // Published: it runs.
+    let module =
+        std::fs::read(fixture_app().join("extensions/volume-discount/dist/function.wasm")).unwrap();
+    state
+        .builds
+        .own_for_tests(&["volume-discount"], &[("volume-discount", &module)]);
+    let path = start_checkout(&state, "co-published-2", lines(), discount());
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-published-2"));
+    assert!(discounted(&json), "{json}");
+    let home = body_json(&get(&state, "/?format=json", "co-published-2"));
+    let function = home["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "volume-discount")
+        .unwrap();
+    assert_eq!(function["built"], true);
+}

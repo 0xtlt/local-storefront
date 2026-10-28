@@ -33,10 +33,12 @@ pub struct Args {
     #[arg(long = "static")]
     static_files: bool,
 
-    /// Develop the app of `--app`, as `shopify app dev` does: build its Functions first (as
-    /// `--build`), build a Function again when its files change, and reload the open pages
-    /// (`--live-reload`) when a build is over or another file of the app or the data changes.
-    /// A build that fails keeps the last module that built, and the pages show its error.
+    /// Develop the app of `--app`, as `shopify app dev` does: build a Function again when its
+    /// files change, and reload the open pages (`--live-reload`) when the builds are over or
+    /// another file of the app or the data changes. At start, only the Functions that have no
+    /// module or whose files changed since the last watch are built (all with `--build`). The
+    /// checkout runs a copy of the last module that built: a build that fails keeps it, and the
+    /// pages show its error.
     #[arg(long, conflicts_with = "static_files")]
     watch: bool,
 
@@ -178,6 +180,7 @@ pub fn run(
         app
     };
     let source = app.describe_source();
+    let data_dir = app.data_dir().cloned();
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
@@ -204,14 +207,25 @@ pub fn run(
         return Err("the store data has errors (see above)".to_string());
     }
 
+    let mut state = state;
+    if args.watch {
+        // The modules the checkout runs: copies, out of the app, of the last that built.
+        let modules = watch::Modules::create()
+            .map_err(|error| format!("--watch: cannot create a folder for the modules: {error}"))?;
+        state.builds = Arc::new(watch::Builds::publishing(modules));
+    }
+    let builds = state.builds.clone();
     let state = Arc::new(state);
     let watcher = match (&args.app.app, args.watch) {
         (Some(dir), true) => {
             let changed = state.clone();
+            let mut options = watch::Options::new(args.app.extensions.clone(), args.app.build);
+            options.data = data_dir;
+            options.record = watch::record_file(dir);
             Some(Watcher::start(
                 dir,
                 state.builds.clone(),
-                watch::Options::new(args.app.extensions.clone(), true),
+                options,
                 // What the home page found when it ran the Functions is for the old modules.
                 Box::new(move || changed.home_check.clear()),
                 Arc::new(|line: &str| eprintln!("{line}")),
@@ -291,6 +305,7 @@ pub fn run(
     if let Some(watcher) = watcher {
         watcher.stop();
     }
+    builds.close();
     Ok(ExitCode::SUCCESS)
 }
 

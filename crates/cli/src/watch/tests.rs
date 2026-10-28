@@ -1,9 +1,20 @@
-//! Tests of `--watch`: what is looked at, when builds run, and what a build that fails leaves.
+//! Tests of `--watch`: what is looked at, when builds run, what the checkout runs meanwhile,
+//! and what a build that fails leaves.
 //!
-//! The apps are made in a temporary folder, with a build command that is a shell script: it
-//! "builds" a Function by copying `src/main.txt` to `dist/function.wasm`, counts its builds in
-//! `count-<handle>` (in the app's folder, which is not watched), sleeps for as long as
-//! `sleep-<handle>` says, and fails when `fail-<handle>` exists.
+//! Each test makes a temporary folder with the app in `app/` and what the tests steer the
+//! builds with in `ctl/`, out of the app (which is all watched). The build command is a shell
+//! script: it "builds" a Function by copying `src/main.wasm` (a module whose only section says
+//! its version) to `dist/function.wasm`. It counts its builds in `ctl/count-<handle>`, says it
+//! runs with `ctl/running-<handle>-<n>` while it does, and notes in `ctl/concurrency` how many
+//! ran when it started. Steered by files of `ctl/`:
+//!
+//! - `gated-<handle>`: build `n` waits for `go-<handle>-<n>`;
+//! - `partial-<handle>`: it removes the module and writes half of one first, as a compiler
+//!   writing its output does (before the gate);
+//! - `fail-<handle>`: it fails, after writing half a module.
+//!
+//! The tests wait for what they can see (a file, what the watcher says it did), never for a
+//! guessed time.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,19 +24,54 @@ use std::time::{Duration, Instant};
 use super::*;
 
 const BUILD: &str = r#"h=$(basename "$PWD")
-echo build >> "../../count-$h"
+ctl=../../../ctl
+echo build >> "$ctl/count-$h"
+n=$(wc -l < "$ctl/count-$h" | tr -d ' ')
+: > "$ctl/running-$h-$n"
+ls "$ctl" | grep -c '^running-' >> "$ctl/concurrency"
+echo $$ > "$ctl/pid-$h"
 echo "compiling $h"
-if [ -f "../../sleep-$h" ]; then sleep "$(cat "../../sleep-$h")"; fi
 mkdir -p dist
-if [ -f "../../fail-$h" ]; then
+if [ -f "$ctl/partial-$h" ]; then
+  rm -f dist/function.wasm
+  printf 'half-written' > dist/function.wasm
+fi
+if [ -f "$ctl/gated-$h" ]; then
+  while [ ! -f "$ctl/go-$h-$n" ]; do sleep 0.01; done
+fi
+if [ -f "$ctl/fail-$h" ]; then
   printf 'half-written' > dist/function.wasm
   echo "error: expected one of \`;\` or \`}\`" >&2
+  rm -f "$ctl/running-$h-$n"
   exit 1
 fi
-cp src/main.txt dist/function.wasm
+cp src/main.wasm dist/function.wasm
 # As the playground's build does: a copy of the schema next to the Function.
 echo "type Query" > schema.graphql
+rm -f "$ctl/running-$h-$n"
 "#;
+
+/// A Wasm module whose only section (a custom one) holds `text`.
+fn module(text: &str) -> Vec<u8> {
+    assert!(text.len() < 120);
+    let mut bytes = b"\0asm\x01\0\0\0".to_vec();
+    bytes.push(0);
+    bytes.push(text.len() as u8 + 1);
+    bytes.push(0);
+    bytes.extend_from_slice(text.as_bytes());
+    bytes
+}
+
+/// What [`module`] made `bytes` from: `missing` without bytes, `invalid` for what is not one.
+fn version(bytes: Option<Vec<u8>>) -> String {
+    match bytes {
+        None => "missing".to_string(),
+        Some(bytes) if is_module(&bytes) && bytes.len() >= 11 => {
+            String::from_utf8_lossy(&bytes[11..]).into_owned()
+        }
+        Some(_) => "invalid".to_string(),
+    }
+}
 
 struct TempApp(PathBuf);
 
@@ -35,34 +81,57 @@ impl TempApp {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root =
+        let base =
             std::env::temp_dir().join(format!("lsf-watch-{label}-{}-{nanos}", std::process::id()));
-        std::fs::create_dir_all(root.join("extensions")).unwrap();
-        let app = TempApp(root.canonicalize().unwrap());
+        std::fs::create_dir_all(base.join("app/extensions")).unwrap();
+        std::fs::create_dir_all(base.join("ctl")).unwrap();
+        let app = TempApp(base.canonicalize().unwrap());
         app.write("shopify.app.toml", "name = \"Watch\"\nhandle = \"watch\"\n");
-        app.write("build.sh", BUILD);
-        app.write(
+        app.ctl_write("build.sh", BUILD);
+        app.ctl_write(
             "build2.sh",
-            "mkdir -p dist\nprintf 'from build2' > dist/function.wasm\n",
+            "mkdir -p dist\ncp src/other.wasm dist/function.wasm\n",
         );
         app
     }
 
+    fn root(&self) -> PathBuf {
+        self.0.join("app")
+    }
+
     fn path(&self, relative: &str) -> PathBuf {
-        self.0.join(relative)
+        self.root().join(relative)
     }
 
     fn write(&self, relative: &str, content: &str) {
+        self.write_bytes(relative, content.as_bytes());
+    }
+
+    fn write_bytes(&self, relative: &str, content: &[u8]) {
         let path = self.path(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
     }
 
-    fn read(&self, relative: &str) -> String {
-        std::fs::read_to_string(self.path(relative)).unwrap_or_default()
+    fn ctl(&self, name: &str) -> PathBuf {
+        self.0.join("ctl").join(name)
     }
 
-    /// A Function built by `command`, whose module is `v1`.
+    fn ctl_write(&self, name: &str, content: &str) {
+        std::fs::write(self.ctl(name), content).unwrap();
+    }
+
+    /// Lets build `n` of `handle` go on.
+    fn go(&self, handle: &str, n: usize) {
+        self.ctl_write(&format!("go-{handle}-{n}"), "");
+    }
+
+    /// Whether build `n` of `handle` runs.
+    fn running(&self, handle: &str, n: usize) -> bool {
+        self.ctl(&format!("running-{handle}-{n}")).exists()
+    }
+
+    /// A Function built by `command`, whose source and module are `v1`.
     fn function_with(&self, handle: &str, command: &str) {
         self.write(
             &format!("extensions/{handle}/shopify.extension.toml"),
@@ -89,12 +158,23 @@ type = "function"
             &format!("extensions/{handle}/src/run.graphql"),
             "query { cart { cost { subtotalAmount { amount } } } }\n",
         );
-        self.write(&format!("extensions/{handle}/src/main.txt"), "v1");
-        self.write(&format!("extensions/{handle}/dist/function.wasm"), "v1");
+        self.source(handle, "v1");
+        self.write_bytes(
+            &format!("extensions/{handle}/dist/function.wasm"),
+            &module("v1"),
+        );
     }
 
     fn function(&self, handle: &str) {
-        self.function_with(handle, "sh ../../build.sh");
+        self.function_with(handle, "sh ../../../ctl/build.sh");
+    }
+
+    /// Saves the source of `handle`: what its next build makes.
+    fn source(&self, handle: &str, version: &str) {
+        self.write_bytes(
+            &format!("extensions/{handle}/src/main.wasm"),
+            &module(version),
+        );
     }
 
     fn ui_extension(&self, handle: &str) {
@@ -119,7 +199,32 @@ type = "ui_extension"
 
     /// How many builds of `handle` started.
     fn builds(&self, handle: &str) -> usize {
-        self.read(&format!("count-{handle}")).lines().count()
+        std::fs::read_to_string(self.ctl(&format!("count-{handle}")))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    }
+
+    /// What the build output of `handle` is.
+    fn dist(&self, handle: &str) -> String {
+        version(std::fs::read(self.path(&format!("extensions/{handle}/dist/function.wasm"))).ok())
+    }
+
+    /// How many builds ran at once, at most.
+    fn concurrency(&self) -> usize {
+        std::fs::read_to_string(self.ctl("concurrency"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The app as the checkout reads it with these builds.
+    fn load(&self, builds: &Builds) -> App {
+        let mut app = app::load(&self.root()).unwrap();
+        builds.apply(&mut app);
+        app
     }
 }
 
@@ -137,21 +242,23 @@ struct Watching {
     reloads: Arc<AtomicUsize>,
 }
 
+const LONG: Duration = Duration::from_secs(30);
+
 impl Watching {
     fn start(app: &TempApp, tune: impl FnOnce(&mut Options)) -> Watching {
         let mut options = Options::new(Vec::new(), false);
         options.poll = Duration::from_millis(10);
-        // Polled, every 30 ms: the same on every system. One test follows the events.
+        // Polled, every 30 ms: the same on every system. Some tests follow the events.
         options.events = false;
-        options.quiet = Duration::from_millis(80);
+        options.quiet = Duration::from_millis(60);
         tune(&mut options);
-        let builds = Arc::new(Builds::default());
+        let builds = Arc::new(Builds::publishing(Modules::create().unwrap()));
         let lines = Arc::new(Mutex::new(Vec::new()));
         let reloads = Arc::new(AtomicUsize::new(0));
         let said = lines.clone();
         let counted = reloads.clone();
         let watcher = Watcher::start(
-            &app.0,
+            &app.root(),
             builds.clone(),
             options,
             Box::new(move || {
@@ -159,15 +266,22 @@ impl Watching {
             }),
             Arc::new(move |line: &str| said.lock().unwrap().push(line.to_string())),
         );
-        // What the files are when it starts is what changes are measured from.
-        assert!(watcher.wait_idle(Duration::from_secs(20)));
-        std::thread::sleep(Duration::from_millis(30));
-        Watching {
+        let watching = Watching {
             watcher: Some(watcher),
             builds,
             lines,
             reloads,
-        }
+        };
+        assert!(
+            watching.watcher().wait_idle(LONG),
+            "the first builds did not end:\n{}",
+            watching.said()
+        );
+        watching
+    }
+
+    fn watcher(&self) -> &Watcher {
+        self.watcher.as_ref().unwrap()
     }
 
     fn reloads(&self) -> usize {
@@ -178,26 +292,40 @@ impl Watching {
         self.lines.lock().unwrap().join("\n")
     }
 
-    /// Waits for the changes to count and the builds to end.
+    /// What the checkout runs for `handle`.
+    fn served(&self, handle: &str) -> String {
+        version(std::fs::read(self.builds.module_path(handle).unwrap()).ok())
+    }
+
+    /// Waits until the watcher looked at the files after what the test changed, and what it
+    /// saw counted: the builds it started are over, and the pages told.
     fn settle(&self) {
-        // Long enough for a change to be seen and to hold still.
-        std::thread::sleep(Duration::from_millis(150));
         assert!(
-            self.watcher
-                .as_ref()
-                .unwrap()
-                .wait_idle(Duration::from_secs(20)),
+            self.watcher().look_and_wait(LONG, true),
             "the builds did not end:\n{}",
             self.said()
         );
     }
+
+    /// Waits until the watcher saw what the test changed: the builds it asks for may run.
+    fn seen(&self) {
+        assert!(
+            self.watcher().look_and_wait(LONG, false),
+            "the change was not seen:\n{}",
+            self.said()
+        );
+    }
+
+    fn stop(&mut self) {
+        self.watcher.take().unwrap().stop();
+    }
 }
 
 fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + LONG;
     while !condition() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -236,13 +364,117 @@ fn the_build_outputs_and_the_tools_folders_are_not_watched() {
 }
 
 #[test]
+fn what_every_build_may_read_is_the_rest_of_the_app() {
+    let root = Path::new("/app");
+    let data = Path::new("/app/fixtures");
+    let shared = |name: &str| shared_input(Path::new(name), &root.join(name), root, Some(data));
+    for name in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "crates",
+        "tools",
+    ] {
+        assert!(shared(name), "{name}");
+    }
+    for name in [
+        "shopify-local",
+        "fixtures",
+        "target",
+        "node_modules",
+        ".git",
+        "README.md",
+    ] {
+        assert!(!shared(name), "{name}");
+    }
+}
+
+#[test]
+fn a_module_is_whole_or_not_one() {
+    assert!(is_module(&module("v1")));
+    assert!(is_module(b"\0asm\x01\0\0\0"));
+    let whole = module("a longer section");
+    for cut in 1..whole.len() {
+        if cut != 8 {
+            assert!(!is_module(&whole[..cut]), "cut at {cut}");
+        }
+    }
+    assert!(!is_module(b"half-written"));
+    assert!(!is_module(b""));
+}
+
+#[test]
+fn the_output_kept_is_the_first_error_and_the_end() {
+    let mut output = Output::default();
+    for n in 0..30 {
+        output.push(format!("   Compiling crate-{n}"));
+    }
+    for line in [
+        "error[E0425]: cannot find value `x` in this scope",
+        " --> src/main.rs:3:5",
+        "  |",
+        "3 |     x",
+        "  |     ^ not found in this scope",
+        "",
+        "error: aborting due to 1 previous error",
+    ] {
+        output.push(line.to_string());
+    }
+    for n in 0..30 {
+        output.push(format!("note {n}"));
+    }
+    let text = output.text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[..6],
+        [
+            "error[E0425]: cannot find value `x` in this scope",
+            " --> src/main.rs:3:5",
+            "  |",
+            "3 |     x",
+            "  |     ^ not found in this scope",
+            "…",
+        ]
+    );
+    assert_eq!(lines.len(), 6 + TAIL, "{text}");
+    assert_eq!(lines.last(), Some(&"note 29"));
+    assert!(!text.contains("Compiling"), "{text}");
+
+    // Without an error: the end. A short output is kept whole.
+    let mut output = Output::default();
+    for n in 0..30 {
+        output.push(format!("line {n}"));
+    }
+    let text = output.text();
+    assert_eq!(text.lines().count(), TAIL);
+    assert!(text.ends_with("line 29"));
+    let mut output = Output::default();
+    output.push("Compiling".to_string());
+    output.push("error: boom".to_string());
+    output.push("  context".to_string());
+    assert_eq!(output.text(), "Compiling\nerror: boom\n  context");
+
+    // A long error is cut.
+    let mut output = Output::default();
+    output.push("error: long".to_string());
+    for n in 0..100 {
+        output.push(format!("  context {n}"));
+    }
+    let text = output.text();
+    assert!(text.lines().count() <= FIRST_ERROR + 1 + TAIL, "{text}");
+    assert!(text.contains("\n…\n"), "{text}");
+}
+
+#[test]
 fn a_burst_of_changes_counts_once_when_the_files_hold_still() {
     let start = Instant::now();
     let at = |ms: u64| start + Duration::from_millis(ms);
     let mut debounce = Debounce::new(Duration::from_millis(100), Duration::from_secs(1));
     let change = |name: &str| Changes {
-        config: false,
         extensions: [name.to_string()].into(),
+        ..Changes::default()
     };
     debounce.add(Changes::default(), at(0));
     assert!(!debounce.is_pending(), "nothing changed");
@@ -294,7 +526,7 @@ fn one_build_at_a_time_per_function_and_one_more_after_a_change_during_it() {
     assert!(scheduler.request("a").is_empty());
     assert_eq!(scheduler.finished("a"), ["d"]);
     assert_eq!(scheduler.finished("c"), ["a"]);
-    // `d` is gone before its turn... it ran already; `e` is dropped while it waits.
+    // `e` is dropped while it waits.
     assert!(scheduler.request("e").is_empty());
     scheduler.forget("e");
     assert!(scheduler.finished("d").is_empty());
@@ -308,27 +540,20 @@ fn one_build_at_a_time_per_function_and_one_more_after_a_change_during_it() {
 fn a_save_builds_the_function_once_and_tells_the_pages_after_the_build() {
     let app = TempApp::new("burst");
     app.function("fn-a");
-    let watching = Watching::start(&app, |options| options.quiet = Duration::from_millis(150));
+    let watching = Watching::start(&app, |options| options.quiet = Duration::from_millis(300));
+    assert_eq!(app.builds("fn-a"), 0, "the module that is there is used");
+    assert_eq!(watching.served("fn-a"), "v1");
     let generation = watching.builds.generation();
 
-    // An editor's save: several files, a few milliseconds apart.
-    for (index, file) in [
-        "src/main.txt",
-        "src/lib.rs",
-        "src/run.graphql",
-        "src/main.txt",
-    ]
-    .iter()
-    .enumerate()
-    {
-        app.write(&format!("extensions/fn-a/{file}"), &format!("v2 {index}"));
-        std::thread::sleep(Duration::from_millis(15));
-    }
-    app.write("extensions/fn-a/src/main.txt", "v2");
+    // An editor's save: several files at once.
+    app.source("fn-a", "v2 draft");
+    app.write("extensions/fn-a/src/lib.rs", "// v2");
+    app.write("extensions/fn-a/src/run.graphql", "query { cart { note } }");
+    app.source("fn-a", "v2");
     watching.settle();
 
     assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
-    assert_eq!(app.read("extensions/fn-a/dist/function.wasm"), "v2");
+    assert_eq!(watching.served("fn-a"), "v2");
     assert!(watching.builds.generation() > generation);
     assert_eq!(watching.reloads(), 1);
     let said = watching.said();
@@ -337,25 +562,123 @@ fn a_save_builds_the_function_once_and_tells_the_pages_after_the_build() {
 }
 
 #[test]
+fn the_checkout_runs_the_last_module_that_built_while_a_build_writes_its_own() {
+    let app = TempApp::new("published");
+    app.function("fn-a");
+    let watching = Watching::start(&app, |_| {});
+    let published = watching.builds.module_path("fn-a").unwrap();
+    assert!(!published.starts_with(app.root()), "out of the app");
+    let function = app.load(&watching.builds);
+    let function = function.function("fn-a").unwrap();
+    assert_eq!(function.wasm_path, published);
+    assert!(function.built());
+
+    // The build removes the module, writes half of one, and holds there.
+    app.ctl_write("partial-fn-a", "");
+    app.ctl_write("gated-fn-a", "");
+    app.source("fn-a", "v2");
+    wait_for("the half-written module", || {
+        app.running("fn-a", 1) && app.dist("fn-a") == "invalid"
+    });
+    let during = app.load(&watching.builds);
+    let function = during.function("fn-a").unwrap();
+    assert_eq!(function.wasm_path, published);
+    assert!(function.built());
+    assert_eq!(watching.served("fn-a"), "v1", "the last module that built");
+    assert!(
+        !during
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no Wasm module")),
+        "{:?}",
+        during.diagnostics
+    );
+
+    app.go("fn-a", 1);
+    watching.settle();
+    assert_eq!(watching.served("fn-a"), "v2");
+    assert_eq!(app.dist("fn-a"), "v2", "the build's own output, untouched");
+    assert_eq!(watching.reloads(), 1);
+
+    // Out of the watch, the app is what is on disk.
+    let plain = app.load(&Builds::default());
+    assert!(
+        plain
+            .function("fn-a")
+            .unwrap()
+            .wasm_path
+            .ends_with("dist/function.wasm")
+    );
+}
+
+#[test]
 fn a_change_during_a_build_builds_exactly_once_more() {
     let app = TempApp::new("during");
     app.function("fn-a");
     let watching = Watching::start(&app, |_| {});
-    app.write("sleep-fn-a", "0.6");
+    app.ctl_write("gated-fn-a", "");
 
-    app.write("extensions/fn-a/src/main.txt", "v2");
-    wait_for("the build to start", || app.builds("fn-a") == 1);
+    app.source("fn-a", "v2");
+    wait_for("the build to start", || app.running("fn-a", 1));
     // Saved three times while it builds.
     for version in ["v3", "v4", "v5"] {
-        app.write("extensions/fn-a/src/main.txt", version);
-        std::thread::sleep(Duration::from_millis(120));
+        app.source("fn-a", version);
+        watching.seen();
     }
+    app.go("fn-a", 1);
+    app.go("fn-a", 2);
     watching.settle();
 
     assert_eq!(app.builds("fn-a"), 2, "{}", watching.said());
-    assert_eq!(app.read("extensions/fn-a/dist/function.wasm"), "v5");
+    assert_eq!(watching.served("fn-a"), "v5");
     // The pages reload once, after the last build.
     assert_eq!(watching.reloads(), 1);
+}
+
+#[test]
+fn the_pages_reload_once_every_build_a_change_started_is_over() {
+    let app = TempApp::new("wave");
+    let handles = ["fn-a", "fn-b", "fn-c", "fn-d"];
+    for handle in handles {
+        app.function(handle);
+        app.ctl_write(&format!("gated-{handle}"), "");
+    }
+    let watching = Watching::start(&app, |options| options.parallel = 3);
+    let generation = watching.builds.generation();
+
+    // A, B and C build, D waits.
+    for handle in handles {
+        app.source(handle, "v2");
+    }
+    watching.seen();
+    wait_for("three builds", || {
+        app.running("fn-a", 1) && app.running("fn-b", 1) && app.running("fn-c", 1)
+    });
+    assert_eq!(app.builds("fn-d"), 0);
+    // A changes again during its build.
+    app.source("fn-a", "v3");
+    watching.seen();
+
+    // A is over: D starts, and A waits behind it. The pages do not reload yet.
+    app.go("fn-a", 1);
+    wait_for("D to start", || app.running("fn-d", 1));
+    assert_eq!(app.builds("fn-a"), 1);
+    assert_eq!(watching.reloads(), 0, "{}", watching.said());
+    assert_eq!(watching.builds.generation(), generation);
+
+    // B and C are over: A builds again. Still no reload.
+    app.go("fn-b", 1);
+    app.go("fn-c", 1);
+    wait_for("A to build again", || app.running("fn-a", 2));
+    assert_eq!(watching.reloads(), 0, "{}", watching.said());
+
+    app.go("fn-d", 1);
+    app.go("fn-a", 2);
+    watching.settle();
+    assert_eq!(watching.reloads(), 1, "{}", watching.said());
+    assert_eq!(watching.served("fn-a"), "v3");
+    assert_eq!(watching.served("fn-d"), "v2");
+    assert_eq!(app.builds("fn-a"), 2);
 }
 
 #[test]
@@ -363,19 +686,20 @@ fn a_build_that_fails_keeps_the_last_module_and_says_why() {
     let app = TempApp::new("fail");
     app.function("fn-a");
     let watching = Watching::start(&app, |_| {});
-    app.write("extensions/fn-a/src/main.txt", "v2");
+    app.source("fn-a", "v2");
     watching.settle();
-    assert_eq!(app.read("extensions/fn-a/dist/function.wasm"), "v2");
+    assert_eq!(watching.served("fn-a"), "v2");
 
     // It breaks: the build writes half a module and fails.
-    app.write("fail-fn-a", "");
-    app.write("extensions/fn-a/src/main.txt", "v3, broken");
+    app.ctl_write("fail-fn-a", "");
+    app.source("fn-a", "v3, broken");
     watching.settle();
     assert_eq!(app.builds("fn-a"), 2);
+    assert_eq!(watching.served("fn-a"), "v2", "the last module that built");
     assert_eq!(
-        app.read("extensions/fn-a/dist/function.wasm"),
-        "v2",
-        "the last module that built"
+        app.dist("fn-a"),
+        "invalid",
+        "what the build left, left alone"
     );
     let failure = watching.builds.failure("fn-a").expect("a failure");
     assert!(
@@ -391,12 +715,60 @@ fn a_build_that_fails_keeps_the_last_module_and_says_why() {
     assert_eq!(watching.reloads(), 2, "the pages show the error");
 
     // Fixed.
-    std::fs::remove_file(app.path("fail-fn-a")).unwrap();
-    app.write("extensions/fn-a/src/main.txt", "v4");
+    std::fs::remove_file(app.ctl("fail-fn-a")).unwrap();
+    app.source("fn-a", "v4");
     watching.settle();
-    assert_eq!(app.read("extensions/fn-a/dist/function.wasm"), "v4");
+    assert_eq!(watching.served("fn-a"), "v4");
     assert_eq!(watching.builds.failure("fn-a"), None);
     assert_eq!(watching.reloads(), 3);
+}
+
+#[test]
+fn a_build_that_writes_no_whole_module_fails() {
+    let app = TempApp::new("nomodule");
+    app.function_with("fn-a", "printf 'half' > dist/function.wasm");
+    app.function_with("fn-b", "rm dist/function.wasm");
+    let watching = Watching::start(&app, |_| {});
+    app.source("fn-a", "v2");
+    app.source("fn-b", "v2");
+    watching.settle();
+    let failure = watching.builds.failure("fn-a").expect("a failure");
+    assert_eq!(
+        failure.reason,
+        "the build wrote dist/function.wasm, which is not a whole Wasm module"
+    );
+    assert_eq!(
+        watching.builds.failure("fn-b").unwrap().reason,
+        "the build wrote no module at dist/function.wasm"
+    );
+    assert_eq!(watching.served("fn-a"), "v1");
+    assert_eq!(watching.served("fn-b"), "v1");
+}
+
+#[test]
+fn a_function_that_never_built_is_not_built() {
+    let app = TempApp::new("never");
+    app.function("fn-a");
+    // What a build stopped halfway left.
+    app.write("extensions/fn-a/dist/function.wasm", "half-written");
+    app.ctl_write("fail-fn-a", "");
+    let watching = Watching::start(&app, |_| {});
+    assert_eq!(app.builds("fn-a"), 1, "built at start: it has no module");
+    assert_eq!(watching.served("fn-a"), "missing");
+    assert!(watching.builds.failure("fn-a").is_some());
+    let app_now = app.load(&watching.builds);
+    assert!(!app_now.function("fn-a").unwrap().built());
+    assert!(
+        app_now
+            .diagnostics
+            .iter()
+            .any(|d| d.extension.as_deref() == Some("fn-a")
+                && d.message
+                    == "no Wasm module yet: the watch builds it with `sh ../../../ctl/build.sh`"),
+        "{:?}",
+        app_now.diagnostics
+    );
+    assert_eq!(watching.reloads(), 1, "the pages show the error");
 }
 
 #[test]
@@ -404,7 +776,7 @@ fn what_a_build_writes_does_not_build_again() {
     let app = TempApp::new("outputs");
     app.function("fn-a");
     let watching = Watching::start(&app, |_| {});
-    app.write("extensions/fn-a/src/main.txt", "v2");
+    app.source("fn-a", "v2");
     watching.settle();
     assert_eq!(app.builds("fn-a"), 1);
     let reloads = watching.reloads();
@@ -415,12 +787,69 @@ fn what_a_build_writes_does_not_build_again() {
     app.write("extensions/fn-a/target/debug/x", "x");
     app.write("extensions/fn-a/node_modules/a/index.js", "x");
     app.write("extensions/fn-a/.git/HEAD", "x");
-    app.write("build.sh", BUILD);
-    app.write("count-other", "x");
+    app.write("target/release/x", "x");
+    app.write(".git/index", "x");
     watching.settle();
-    std::thread::sleep(Duration::from_millis(200));
+    watching.settle();
     assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
     assert_eq!(watching.reloads(), reloads);
+}
+
+#[test]
+fn a_change_to_the_files_the_builds_share_builds_every_function() {
+    let app = TempApp::new("shared");
+    app.write("Cargo.toml", "[workspace]\nmembers = [\"extensions/*\"]\n");
+    app.write("crates/common/src/lib.rs", "pub fn x() {}");
+    app.write("shopify-local/store.json", "{}");
+    app.write("README.md", "# App");
+    app.function("fn-a");
+    app.function("fn-b");
+    app.ui_extension("ui-a");
+    let watching = Watching::start(&app, |_| {});
+
+    // The root manifest, with a change to one Function at the same time: one build each.
+    app.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"extensions/*\"]\nresolver = \"2\"\n",
+    );
+    app.source("fn-a", "a2");
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
+    assert_eq!(app.builds("fn-b"), 1, "{}", watching.said());
+    assert_eq!(watching.served("fn-a"), "a2");
+    assert_eq!(watching.reloads(), 1);
+    assert!(
+        watching
+            .said()
+            .contains("↻ Cargo.toml changed: building 2 Functions"),
+        "{}",
+        watching.said()
+    );
+
+    // A crate they share, and a lock file.
+    app.write("crates/common/src/lib.rs", "pub fn x() -> u8 { 1 }");
+    app.write("Cargo.lock", "# lock");
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 2);
+    assert_eq!(app.builds("fn-b"), 2);
+
+    // The store data and a document build nothing.
+    app.write("shopify-local/store.json", "{\"name\": \"x\"}");
+    app.write("README.md", "# App, again");
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 2, "{}", watching.said());
+}
+
+#[test]
+fn the_data_folder_named_by_data_builds_nothing() {
+    let app = TempApp::new("data");
+    app.write("fixtures/store.json", "{}");
+    app.function("fn-a");
+    let data = app.path("fixtures");
+    let watching = Watching::start(&app, |options| options.data = Some(data));
+    app.write("fixtures/store.json", "{\"name\": \"x\"}");
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 0, "{}", watching.said());
 }
 
 #[test]
@@ -430,29 +859,37 @@ fn a_change_to_the_app_files_reloads_the_app() {
     let watching = Watching::start(&app, |_| {});
 
     // Another build command: the next build runs it.
-    app.function_with("fn-a", "sh ../../build2.sh");
+    app.write_bytes("extensions/fn-a/src/other.wasm", &module("from build2"));
+    app.function_with("fn-a", "sh ../../../ctl/build2.sh");
     watching.settle();
     assert_eq!(
-        app.read("extensions/fn-a/dist/function.wasm"),
-        "from build2"
+        watching.served("fn-a"),
+        "from build2",
+        "{}",
+        watching.said()
     );
     assert_eq!(app.builds("fn-a"), 0, "the old command did not run");
 
     // A new Function is built; one that is removed is forgotten.
     app.function("fn-b");
-    app.write("extensions/fn-b/src/main.txt", "b1");
+    app.source("fn-b", "b1");
     watching.settle();
     assert_eq!(app.builds("fn-b"), 1, "{}", watching.said());
-    assert_eq!(app.read("extensions/fn-b/dist/function.wasm"), "b1");
+    assert_eq!(watching.served("fn-b"), "b1");
 
-    app.write("fail-fn-b", "");
-    app.write("extensions/fn-b/src/main.txt", "b2");
+    app.ctl_write("fail-fn-b", "");
+    app.source("fn-b", "b2");
     watching.settle();
     assert!(watching.builds.failure("fn-b").is_some());
     let reloads = watching.reloads();
     std::fs::remove_dir_all(app.path("extensions/fn-b")).unwrap();
     watching.settle();
     assert_eq!(watching.builds.failure("fn-b"), None);
+    assert_eq!(
+        watching.served("fn-b"),
+        "missing",
+        "its module is withdrawn"
+    );
     assert!(
         watching.said().contains("↻ fn-b removed"),
         "{}",
@@ -508,30 +945,115 @@ fn only_the_selected_functions_build() {
         1,
         "once, when the first builds are over"
     );
+    // The other one runs its build output, as without the watch.
+    let loaded = app.load(&watching.builds);
+    assert!(
+        loaded
+            .function("fn-a")
+            .unwrap()
+            .wasm_path
+            .starts_with(app.root())
+    );
 
-    app.write("extensions/fn-a/src/main.txt", "a2");
+    app.source("fn-a", "a2");
     watching.settle();
     assert_eq!(app.builds("fn-a"), 0);
 }
 
 #[test]
+fn a_watch_builds_at_start_what_has_no_module_or_changed_since_the_last() {
+    let app = TempApp::new("record");
+    app.function("fn-a");
+    app.function("fn-b");
+    std::fs::remove_file(app.path("extensions/fn-b/dist/function.wasm")).unwrap();
+    let record = app.ctl("record/app.json");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app.json"));
+
+    // Nothing recorded: the modules there are used, the missing one is built.
+    let mut watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 0);
+    assert_eq!(app.builds("fn-b"), 1);
+    assert!(
+        watching
+            .said()
+            .contains("watch:  using the existing builds; --build rebuilds them all at start"),
+        "{}",
+        watching.said()
+    );
+    assert!(record.is_file());
+    watching.stop();
+
+    // Nothing changed since: nothing builds.
+    let mut watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a") + app.builds("fn-b"), 1);
+    assert!(!watching.said().contains("using the existing builds"));
+    assert_eq!(watching.reloads(), 0);
+    watching.stop();
+
+    // Changed while nothing watched: built at start.
+    app.source("fn-a", "a2");
+    let mut watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 1);
+    assert_eq!(app.builds("fn-b"), 1);
+    assert_eq!(watching.served("fn-a"), "a2");
+    watching.stop();
+
+    // A build that failed is built again at the next start.
+    app.ctl_write("fail-fn-b", "");
+    app.source("fn-b", "b2");
+    let mut watching = Watching::start(&app, options);
+    watching.settle();
+    assert_eq!(app.builds("fn-b"), 2);
+    watching.stop();
+    std::fs::remove_file(app.ctl("fail-fn-b")).unwrap();
+    let mut watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-b"), 3);
+    assert_eq!(watching.served("fn-b"), "b2");
+    watching.stop();
+
+    // `--build`: all of them.
+    let watching = Watching::start(&app, |options| {
+        options.record = Some(record.clone());
+        options.build_first = true;
+    });
+    assert_eq!(app.builds("fn-a"), 2);
+    assert_eq!(app.builds("fn-b"), 4);
+    assert!(watching.said().starts_with("↻ building 2 Functions…"));
+}
+
+#[test]
 fn the_first_builds_run_side_by_side_and_say_what_failed() {
     let app = TempApp::new("first");
-    for handle in ["fn-a", "fn-b", "fn-c", "fn-d"] {
+    let handles = ["fn-a", "fn-b", "fn-c", "fn-d"];
+    for handle in handles {
         app.function(handle);
-        app.write(&format!("sleep-{handle}"), "0.5");
+        app.ctl_write(&format!("gated-{handle}"), "");
     }
-    app.write("fail-fn-c", "");
-    let started = Instant::now();
-    let watching = Watching::start(&app, |options| {
-        options.build_first = true;
-        options.parallel = 2;
+    app.ctl_write("fail-fn-c", "");
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let said = lines.clone();
+    let builds = Arc::new(Builds::publishing(Modules::create().unwrap()));
+    let mut options = Options::new(Vec::new(), true);
+    options.events = false;
+    options.poll = Duration::from_millis(10);
+    options.parallel = 2;
+    let watcher = Watcher::start(
+        &app.root(),
+        builds.clone(),
+        options,
+        Box::new(|| {}),
+        Arc::new(move |line: &str| said.lock().unwrap().push(line.to_string())),
+    );
+    wait_for("two builds", || {
+        handles.iter().filter(|h| app.running(h, 1)).count() == 2
     });
-    // Four builds of 0.5 s, two at a time.
-    let took = started.elapsed();
-    assert!(took >= Duration::from_millis(1000), "{took:?}");
-    assert!(took < Duration::from_millis(1800), "{took:?}");
-    let said = watching.said();
+    for handle in handles {
+        app.go(handle, 1);
+    }
+    assert!(watcher.wait_idle(LONG));
+    // Two at once, never more.
+    assert_eq!(app.concurrency(), 2);
+    let said = lines.lock().unwrap().join("\n");
     assert!(said.starts_with("↻ building 4 Functions…"), "{said}");
     assert!(said.contains("✗ fn-c: build failed"), "{said}");
     assert!(
@@ -542,7 +1064,10 @@ fn the_first_builds_run_side_by_side_and_say_what_failed() {
         !said.contains("✓ fn-a"),
         "no line per build at the start: {said}"
     );
-    assert_eq!(app.read("extensions/fn-c/dist/function.wasm"), "v1");
+    assert_eq!(
+        version(std::fs::read(builds.module_path("fn-c").unwrap()).ok()),
+        "v1"
+    );
 }
 
 #[test]
@@ -553,20 +1078,19 @@ fn a_build_that_hangs_is_stopped() {
     let watching = Watching::start(&app, |options| {
         options.timeout = Duration::from_millis(500);
     });
-    app.write("sleep-fn-a", "30");
-    app.write("extensions/fn-a/src/main.txt", "a2");
-    wait_for("the build to start", || app.builds("fn-a") == 1);
+    // It waits for a go that never comes.
+    app.ctl_write("gated-fn-a", "");
+    app.source("fn-a", "a2");
+    wait_for("the build to start", || app.running("fn-a", 1));
 
     // Another Function builds meanwhile.
-    app.write("extensions/fn-b/src/main.txt", "b2");
-    wait_for("fn-b to build", || {
-        app.read("extensions/fn-b/dist/function.wasm") == "b2"
-    });
+    app.source("fn-b", "b2");
+    wait_for("fn-b to build", || watching.served("fn-b") == "b2");
     watching.settle();
     let failure = watching.builds.failure("fn-a").expect("timed out");
     assert_eq!(failure.reason, "build timed out after 0.5s");
     assert!(failure.output.contains("compiling fn-a"), "{failure:?}");
-    assert_eq!(app.read("extensions/fn-a/dist/function.wasm"), "v1");
+    assert_eq!(watching.served("fn-a"), "v1");
 }
 
 #[test]
@@ -574,35 +1098,47 @@ fn stopping_stops_the_builds_that_run() {
     let app = TempApp::new("stop");
     app.function("fn-a");
     let mut watching = Watching::start(&app, |_| {});
-    app.write("sleep-fn-a", "30");
-    app.write("extensions/fn-a/src/main.txt", "a2");
-    wait_for("the build to start", || app.builds("fn-a") == 1);
+    app.ctl_write("gated-fn-a", "");
+    app.source("fn-a", "a2");
+    wait_for("the build to start", || {
+        app.running("fn-a", 1) && app.ctl("pid-fn-a").is_file()
+    });
+    let pid: i32 = std::fs::read_to_string(app.ctl("pid-fn-a"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
 
     let stopping = Instant::now();
-    watching.watcher.take().unwrap().stop();
+    watching.stop();
     assert!(
-        stopping.elapsed() < Duration::from_secs(3),
+        stopping.elapsed() < Duration::from_secs(5),
         "{:?}",
         stopping.elapsed()
     );
-    // The `sleep` it started is gone with it: nothing writes the module any more.
-    std::fs::remove_file(app.path("sleep-fn-a")).unwrap();
-    std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(app.read("extensions/fn-a/dist/function.wasm"), "v1");
+    // The build is gone: nothing writes the module any more.
+    wait_for("the build to end", || unsafe { libc::kill(pid, 0) } != 0);
+    assert_eq!(app.dist("fn-a"), "v1");
 }
 
 #[test]
-fn a_build_stopped_halfway_puts_the_module_back() {
+fn a_build_stopped_halfway_builds_again_at_the_next_start() {
     let app = TempApp::new("halfway");
-    // It removes the module first, as the playground's build does, then takes its time.
-    app.function_with("fn-a", "rm dist/function.wasm && sleep 30");
+    app.function("fn-a");
     let mut watching = Watching::start(&app, |_| {});
-    app.write("extensions/fn-a/src/main.txt", "a2");
-    wait_for("the build to remove the module", || {
-        !app.path("extensions/fn-a/dist/function.wasm").exists()
-    });
-    watching.watcher.take().unwrap().stop();
-    assert_eq!(app.read("extensions/fn-a/dist/function.wasm"), "v1");
+    // It removes the module and writes half of one, as the playground's build does.
+    app.ctl_write("partial-fn-a", "");
+    app.ctl_write("gated-fn-a", "");
+    app.source("fn-a", "a2");
+    wait_for("the half-written module", || app.dist("fn-a") == "invalid");
+    watching.stop();
+    assert_eq!(app.dist("fn-a"), "invalid", "the build's folder is its own");
+
+    std::fs::remove_file(app.ctl("partial-fn-a")).unwrap();
+    std::fs::remove_file(app.ctl("gated-fn-a")).unwrap();
+    let watching = Watching::start(&app, |_| {});
+    assert_eq!(app.builds("fn-a"), 2);
+    assert_eq!(watching.served("fn-a"), "a2");
 }
 
 #[test]
@@ -615,17 +1151,119 @@ fn what_the_system_says_wakes_the_watcher_up() {
         options.idle = Duration::from_secs(60);
     });
     assert!(!watching.said().contains("polled"), "{}", watching.said());
-    app.write("extensions/fn-a/src/main.txt", "v2");
-    wait_for("the build", || {
-        app.read("extensions/fn-a/dist/function.wasm") == "v2"
-    });
+    app.source("fn-a", "v2");
+    wait_for("the build", || watching.served("fn-a") == "v2");
     watching.settle();
     assert_eq!(app.builds("fn-a"), 1);
+
+    // A save that writes a file aside, then renames it over the source.
+    app.write_bytes("extensions/fn-a/src/.main.wasm.tmp", &module("v3"));
+    std::fs::rename(
+        app.path("extensions/fn-a/src/.main.wasm.tmp"),
+        app.path("extensions/fn-a/src/main.wasm"),
+    )
+    .unwrap();
+    wait_for("the build after the rename", || {
+        watching.served("fn-a") == "v3"
+    });
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 2);
 
     // A build writes a lot where nobody looks: no build again.
     app.write("extensions/fn-a/target/debug/x", "x");
     app.write("extensions/fn-a/dist/function.wasm", "v2 again");
     watching.settle();
-    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(app.builds("fn-a"), 2);
+}
+
+#[test]
+fn folder_by_folder_new_folders_are_followed_and_the_tools_ones_are_not() {
+    let app = TempApp::new("folders");
+    app.function("fn-a");
+    app.write("extensions/fn-a/target/debug/x", "x");
+    app.write("node_modules/a/index.js", "x");
+    let watching = Watching::start(&app, |options| {
+        options.events = true;
+        options.each_folder = true;
+        options.idle = Duration::from_secs(60);
+    });
+    let followed = watching
+        .watcher()
+        .followed()
+        .expect("the system says when files change");
+    assert!(followed.contains(&app.root()));
+    assert!(followed.contains(&app.path("extensions/fn-a/src")));
+    assert!(
+        !followed
+            .iter()
+            .any(|folder| folder.ends_with("target") || folder.ends_with("node_modules")),
+        "{followed:?}"
+    );
+
+    // A new folder: followed once seen, and a change in it builds.
+    app.write("extensions/fn-a/src/deep/x.rs", "// 1");
+    wait_for("the first build", || app.builds("fn-a") == 1);
+    watching.settle();
+    assert!(
+        watching
+            .watcher()
+            .followed()
+            .unwrap()
+            .contains(&app.path("extensions/fn-a/src/deep"))
+    );
+    app.write("extensions/fn-a/src/deep/x.rs", "// 2, longer");
+    wait_for("the build of the change in the new folder", || {
+        app.builds("fn-a") == 2
+    });
+    watching.settle();
+}
+
+#[test]
+fn the_watcher_goes_on_when_the_system_loses_track() {
+    let app = TempApp::new("lost");
+    app.function("fn-a");
+    let watching = Watching::start(&app, |options| {
+        options.events = true;
+        options.idle = Duration::from_secs(60);
+    });
+    watching.watcher().system_error();
+    watching.settle();
+    app.source("fn-a", "v2");
+    wait_for("the build", || watching.served("fn-a") == "v2");
+    watching.settle();
     assert_eq!(app.builds("fn-a"), 1);
+}
+
+#[test]
+fn a_symbolic_link_is_watched_where_it_leads() {
+    #[cfg(unix)]
+    {
+        let app = TempApp::new("links");
+        app.function("fn-a");
+        let shared = app.0.join("shared");
+        std::fs::create_dir_all(shared.join("common")).unwrap();
+        std::fs::write(shared.join("lib.rs"), "// 1").unwrap();
+        std::fs::write(shared.join("common/mod.rs"), "// 1").unwrap();
+        std::os::unix::fs::symlink(
+            shared.join("lib.rs"),
+            app.path("extensions/fn-a/src/lib.rs"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(shared.join("common"), app.path("extensions/fn-a/common"))
+            .unwrap();
+        // A link that leads in a circle stops.
+        std::os::unix::fs::symlink(
+            app.path("extensions/fn-a"),
+            app.path("extensions/fn-a/loop"),
+        )
+        .unwrap();
+        let watching = Watching::start(&app, |_| {});
+
+        std::fs::write(shared.join("lib.rs"), "// 2, longer").unwrap();
+        watching.settle();
+        assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
+        std::fs::write(shared.join("common/mod.rs"), "// 2, longer").unwrap();
+        watching.settle();
+        assert_eq!(app.builds("fn-a"), 2, "{}", watching.said());
+    }
 }

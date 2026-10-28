@@ -55,7 +55,8 @@ pub struct AppArgs {
     #[arg(long = "extension", value_name = "HANDLE")]
     pub extensions: Vec<String>,
 
-    /// Run the build command of each Function (`[extensions.build] command`) first.
+    /// Run the build command of each Function (`[extensions.build] command`) first. With
+    /// `--watch`, build every Function at start, not only those that changed.
     #[arg(long)]
     pub build: bool,
 }
