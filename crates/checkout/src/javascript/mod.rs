@@ -3,5 +3,7 @@
 //! JavaScript file for the Function and what it imports, then the module that runs it on
 //! Shopify's Javy plugin.
 
+pub mod bundle;
 pub mod javy;
+pub mod resolve;
 pub mod typegen;

@@ -1767,6 +1767,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmac-sha1-compact"
+version = "1.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ed9b23855291da44e7e84616e19dc0d969c3580e14ffa6b759f28775e26afc1"
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2575,6 +2581,7 @@ dependencies = [
  "graphql-parser",
  "indexmap",
  "lsf-core",
+ "oxc",
  "rustls",
  "serde",
  "serde_json",
@@ -3051,9 +3058,12 @@ dependencies = [
  "oxc_minifier",
  "oxc_parser",
  "oxc_regular_expression",
+ "oxc_semantic",
  "oxc_span",
  "oxc_str",
  "oxc_syntax",
+ "oxc_transformer",
+ "oxc_transformer_plugins",
 ]
 
 [[package]]
@@ -3158,6 +3168,9 @@ dependencies = [
 name = "oxc_data_structures"
 version = "0.154.0"
 source = "git+https://github.com/oxc-project/oxc?tag=oxfmt_v0.73.0#6941b4ed45ead21c45bc2164cb80a180eed85b43"
+dependencies = [
+ "ropey",
+]
 
 [[package]]
 name = "oxc_diagnostics"
@@ -3427,6 +3440,57 @@ dependencies = [
  "oxc_str",
  "phf 0.14.0",
  "unicode-id-start",
+]
+
+[[package]]
+name = "oxc_transformer"
+version = "0.154.0"
+source = "git+https://github.com/oxc-project/oxc?tag=oxfmt_v0.73.0#6941b4ed45ead21c45bc2164cb80a180eed85b43"
+dependencies = [
+ "base64 0.23.1",
+ "compact_str",
+ "hmac-sha1-compact",
+ "indexmap",
+ "itoa",
+ "memchr",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_compat",
+ "oxc_data_structures",
+ "oxc_diagnostics",
+ "oxc_ecmascript",
+ "oxc_regular_expression",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_str",
+ "oxc_syntax",
+ "oxc_traverse",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "oxc_transformer_plugins"
+version = "0.154.0"
+source = "git+https://github.com/oxc-project/oxc?tag=oxfmt_v0.73.0#6941b4ed45ead21c45bc2164cb80a180eed85b43"
+dependencies = [
+ "cow-utils",
+ "itoa",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_diagnostics",
+ "oxc_ecmascript",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_str",
+ "oxc_syntax",
+ "oxc_transformer",
+ "oxc_traverse",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -4221,6 +4285,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ropey"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93411e420bcd1a75ddd1dc3caf18c23155eda2c090631a85af21ba19e97093b5"
+dependencies = [
+ "smallvec",
+ "str_indices",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4686,6 +4760,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "str_indices"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
 
 [[package]]
 name = "strsim"
