@@ -1286,24 +1286,45 @@ impl<'a> Pipeline<'a> {
     }
 
     fn delivery_customizations(&mut self) {
-        for (index, function) in self.functions_with(&[TargetKind::DeliveryCustomization]) {
-            for target in self.targets_of(function, &[TargetKind::DeliveryCustomization]) {
+        self.customizations(
+            TargetKind::DeliveryCustomization,
+            OwnerKind::DeliveryCustomization,
+            "gid://shopify/DeliveryCustomization",
+            "delivery customization",
+            Self::apply_delivery_operation,
+            // Each output may hide the option the buyer chose.
+            Self::select_delivery,
+        );
+    }
+
+    /// Runs the Functions of a customization `kind` (delivery, payment) one after the other, each
+    /// owned by `<owner_gid>/<its position>`, and applies the operations of each output with
+    /// `apply`: an operation it refuses is an error of the Function, after `label`. `after` runs
+    /// once each output is applied.
+    fn customizations(
+        &mut self,
+        kind: TargetKind,
+        owner_kind: OwnerKind,
+        owner_gid: &str,
+        label: &str,
+        apply: fn(&mut Self, &Value) -> Result<(), String>,
+        after: fn(&mut Self),
+    ) {
+        for (index, function) in self.functions_with(&[kind]) {
+            for target in self.targets_of(function, &[kind]) {
                 let owner = OwnerSpec {
-                    kind: OwnerKind::DeliveryCustomization,
-                    id: format!("gid://shopify/DeliveryCustomization/{}", index + 1),
+                    kind: owner_kind,
+                    id: format!("{owner_gid}/{}", index + 1),
                     metafields: self.function_metafields(&function.handle),
                     classes: &[],
                 };
                 if let Some(output) = self.execute(function, target, owner, None) {
                     for operation in array(&output, "operations") {
-                        if let Err(message) = self.apply_delivery_operation(operation) {
-                            self.function_error(
-                                function,
-                                format!("delivery customization: {message}"),
-                            );
+                        if let Err(message) = apply(self, operation) {
+                            self.function_error(function, format!("{label}: {message}"));
                         }
                     }
-                    self.select_delivery();
+                    after(self);
                 }
             }
         }
@@ -1578,26 +1599,14 @@ impl<'a> Pipeline<'a> {
     // ---- payment, validation ----
 
     fn payment_customizations(&mut self) {
-        for (index, function) in self.functions_with(&[TargetKind::PaymentCustomization]) {
-            for target in self.targets_of(function, &[TargetKind::PaymentCustomization]) {
-                let owner = OwnerSpec {
-                    kind: OwnerKind::PaymentCustomization,
-                    id: format!("gid://shopify/PaymentCustomization/{}", index + 1),
-                    metafields: self.function_metafields(&function.handle),
-                    classes: &[],
-                };
-                if let Some(output) = self.execute(function, target, owner, None) {
-                    for operation in array(&output, "operations") {
-                        if let Err(message) = self.apply_payment_operation(operation) {
-                            self.function_error(
-                                function,
-                                format!("payment customization: {message}"),
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        self.customizations(
+            TargetKind::PaymentCustomization,
+            OwnerKind::PaymentCustomization,
+            "gid://shopify/PaymentCustomization",
+            "payment customization",
+            Self::apply_payment_operation,
+            |_| {},
+        );
     }
 
     /// An operation of `cart.payment-methods.transform.run`: `paymentMethodHide`,
