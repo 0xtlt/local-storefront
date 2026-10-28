@@ -20,7 +20,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const DECLARED = ['title', 'tone', 'threshold'];
   const DEFAULTS = { title: 'Settings (defaults in use)', tone: 'info', threshold: 50 };

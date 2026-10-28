@@ -22,7 +22,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   // [title, () => value]: what each section shows. Signals are read with `.value`.
   const SECTIONS = [

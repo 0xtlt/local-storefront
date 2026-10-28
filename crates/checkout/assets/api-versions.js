@@ -7,7 +7,7 @@ export const API_VERSIONS = {
   '2026-10': { metafieldOwnerType: 'optional' },
   // A release candidate until 2027-01-01: the API of 2026-10, but declaring a metafield
   // without `owner_type` blocks the deployment.
-  '2027-01': { metafieldOwnerType: 'required', candidate: true },
+  '2027-01': { metafieldOwnerType: 'required' },
 };
 
 /** The resources a metafield declaration (`owner_type`) can name. */

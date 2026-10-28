@@ -44,9 +44,6 @@ pub struct Failure {
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     pub failures: Vec<Failure>,
-    /// Scenarios that could not be run at all, and why (they have errors of their own, which
-    /// the page lists anyway, so they are not failures).
-    pub skipped: Vec<(String, String)>,
     /// How many scenarios ran, out of how many could.
     pub checked: usize,
     pub total: usize,
@@ -153,12 +150,10 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
     // By (handle, target), in the order of the scenarios.
     for (index, outcome) in outcomes {
         let name = &runnable[index].name;
-        let failed = match outcome {
-            Ok(failed) => failed,
-            Err(problem) => {
-                report.skipped.push((name.clone(), problem));
-                continue;
-            }
+        // A scenario that could not run at all has errors of its own, which the page lists
+        // anyway: it is not a failure.
+        let Ok(failed) = outcome else {
+            continue;
         };
         for (handle, target, error) in failed {
             match report

@@ -21,7 +21,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const WRAP = 'gid://shopify/ProductVariant/9100000011';
   const wrapLine = () => shopify.lines.value.find((line) => line.merchandise.id === WRAP);

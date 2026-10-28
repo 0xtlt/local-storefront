@@ -25,7 +25,7 @@ test('the tokens set the defaults of a store with no branding', () => {
 
 test('what follows from the accent is derived from it, not written down', () => {
   const tokens = read('tokens.css');
-  for (const name of ['accent-hover', 'accent-tint-1', 'accent-tint-2', 'accent-tint-3', 'accent-wash', 'focus-ring']) {
+  for (const name of ['accent-hover', 'accent-tint-2', 'accent-tint-3', 'focus-ring']) {
     assert.match(tokens, new RegExp(`--lsf-color-${name}:[^;]*var\\(--lsf-color-accent\\)`), name);
   }
 });

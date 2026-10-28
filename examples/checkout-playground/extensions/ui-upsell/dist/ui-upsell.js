@@ -23,7 +23,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const OFFERS = [
     { title: 'Sample Pack', price: 4, id: 'gid://shopify/ProductVariant/9100000021' },

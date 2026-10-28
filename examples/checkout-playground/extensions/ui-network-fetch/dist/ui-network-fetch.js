@@ -21,7 +21,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const ENDPOINT = 'http://localhost:8787/';
   const TIMEOUT_MS = 3000;

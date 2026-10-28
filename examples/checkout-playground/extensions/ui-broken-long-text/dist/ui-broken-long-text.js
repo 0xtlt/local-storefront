@@ -21,7 +21,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const WORD = 'Pneumonoultramicroscopicsilicovolcanoconiosis'.repeat(4);
   const LINK = `https://example.com/${'a-very-long-path-segment/'.repeat(8)}?ref=${'x'.repeat(60)}`;

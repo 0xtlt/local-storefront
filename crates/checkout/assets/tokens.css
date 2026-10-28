@@ -61,7 +61,6 @@
   --lsf-color-info: var(--lsf-color-text);
   --lsf-color-info-wash-1: var(--lsf-color-bg-subdued);
   --lsf-color-info-wash-2: #ededed;
-  --lsf-color-info-wash-3: var(--lsf-color-border);
 
   /* --- Corner radii --------------------------------------------------------------------------
    * A component takes its own radius if it is set, else the global one if it is set, else the
@@ -69,7 +68,6 @@
   --lsf-radius-small: 8px;
   --lsf-radius-base: 12px;
   --lsf-radius-large: 16px;
-  --lsf-radius-full: 36px;
   --lsf-radius-control: var(--lsf-radius-global, var(--lsf-radius-base));
   --lsf-radius-button: var(--lsf-radius-global, var(--lsf-radius-base));
   --lsf-radius-checkbox: var(--lsf-radius-global, var(--lsf-radius-small));
@@ -101,7 +99,6 @@
 
   /* --- Shadows and motion --------------------------------------------------------------------- */
   --lsf-shadow-xs: 0 0 0 0.5px rgb(0 0 0 / 5%), 0 1px 3px 0 rgb(0 0 0 / 4%), 0 2px 8px 0 rgb(0 0 0 / 6%);
-  --lsf-shadow-s: 0 0 0 0.5px rgb(0 0 0 / 6%), 0 2px 4px 0 rgb(0 0 0 / 4%), 0 3px 12px 0 rgb(0 0 0 / 6%);
   --lsf-shadow-base: 0 0 0 0.5px rgb(0 0 0 / 6%), 0 2px 5px rgb(0 0 0 / 4%), 0 4px 18px rgb(0 0 0 / 10%);
   --lsf-shadow-xl: 0 0 0 0.5px rgb(0 0 0 / 7%), 0 4px 7px rgb(0 0 0 / 4%), 0 8px 32px rgb(0 0 0 / 16%);
   --lsf-ring-width: 3px;
@@ -145,11 +142,9 @@
 
   /* The hover color is the accent a little darker and less saturated. */
   --lsf-color-accent-hover: oklch(from var(--lsf-color-accent) calc(l - 0.088) calc(c * 0.85) h);
-  /* Three very light washes of the accent, and the subdued text that reads on them. */
-  --lsf-color-accent-tint-1: oklch(from var(--lsf-color-accent) 0.99 calc(c * 0.03) h);
+  /* Two very light washes of the accent, and the subdued text that reads on them. */
   --lsf-color-accent-tint-2: oklch(from var(--lsf-color-accent) 0.975 calc(c * 0.06) h);
   --lsf-color-accent-tint-3: oklch(from var(--lsf-color-accent) 0.95 calc(c * 0.12) h);
-  --lsf-color-accent-wash: oklch(from var(--lsf-color-accent) l c h / 5%);
   --lsf-color-text-subdued-on-tint: oklch(from var(--lsf-color-accent) 0.52 calc(c * 0.1) h);
   /* The ring of a focused control. */
   --lsf-color-focus-ring: oklch(from var(--lsf-color-accent) l c h / 30%);
@@ -161,10 +156,8 @@
   :root,
   [data-variant] {
     --lsf-color-accent-hover: color-mix(in oklab, var(--lsf-color-accent), black 25%);
-    --lsf-color-accent-tint-1: color-mix(in oklab, var(--lsf-color-accent) 3%, white);
     --lsf-color-accent-tint-2: color-mix(in oklab, var(--lsf-color-accent) 6%, white);
     --lsf-color-accent-tint-3: color-mix(in oklab, var(--lsf-color-accent) 12%, white);
-    --lsf-color-accent-wash: color-mix(in srgb, var(--lsf-color-accent) 5%, transparent);
     --lsf-color-text-subdued-on-tint: color-mix(in oklab, var(--lsf-color-accent) 15%, #666);
     --lsf-color-focus-ring: color-mix(in srgb, var(--lsf-color-accent) 30%, transparent);
     --lsf-color-critical-ring: color-mix(in srgb, var(--lsf-color-critical) 30%, transparent);

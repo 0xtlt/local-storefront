@@ -20,7 +20,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const accepted = () => shopify.attributes.value.some((entry) => entry.key === 'terms_accepted' && entry.value === 'yes');
 

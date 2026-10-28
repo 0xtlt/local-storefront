@@ -20,7 +20,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   for (const target of ['purchase.checkout.nowhere.render', 'purchase.checkout.chat.render', 'purchase.checkout.block.render']) {
     shopify.extend(target, () => {

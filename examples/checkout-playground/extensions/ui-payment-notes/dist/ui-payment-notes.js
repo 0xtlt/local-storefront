@@ -21,7 +21,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   shopify.extend('purchase.checkout.payment-method-list.render-before', () => {
     mount(h('s-text', { color: 'subdued' }, 'Every transaction is secure and encrypted. (ui-payment-notes)'));

@@ -22,7 +22,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const claims = (token) => {
     const part = token.split('.')[1] || '';

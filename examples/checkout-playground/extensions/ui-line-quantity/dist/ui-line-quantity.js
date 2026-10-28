@@ -19,7 +19,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   shopify.extend('purchase.checkout.cart-line-item.render-after', () => {
     const count = h('s-text', {});

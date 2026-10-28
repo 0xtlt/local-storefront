@@ -8,8 +8,6 @@ const ext = (apiVersion, metafields) => ({ handle: 'x', apiVersion, metafields }
 
 test('runs 2026-10 and the 2027-01 release candidate, nothing else', () => {
   assert.deepEqual(Object.keys(API_VERSIONS), ['2026-10', '2027-01']);
-  assert.equal(API_VERSIONS['2027-01'].candidate, true);
-  assert.equal(API_VERSIONS['2026-10'].candidate, undefined);
   for (const version of ['2026-10', '2027-01']) assert.equal(refusalOf(ext(version)), null, version);
 });
 

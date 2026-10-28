@@ -20,7 +20,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   const LIMIT = 5;
   const units = () => shopify.lines.value.reduce((sum, line) => sum + line.quantity, 0);

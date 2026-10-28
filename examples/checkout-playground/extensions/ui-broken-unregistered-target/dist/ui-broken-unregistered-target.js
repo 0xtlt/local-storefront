@@ -19,7 +19,6 @@
     return node;
   };
   const mount = (...nodes) => document.body.replaceChildren(...nodes);
-  const money = (value) => (value ? shopify.i18n.formatCurrency(value.amount) : '—');
 
   shopify.extend('purchase.checkout.footer.render-after', () => {
     mount(h('s-text', {}, 'You should not see this: the footer target is not declared.'));
