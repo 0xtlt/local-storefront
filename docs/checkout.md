@@ -536,13 +536,13 @@ the lines) and the units that stay as "a separate item", but does not say how th
 merged line follows from the quantities: the greatest common divisor is the one rule that keeps
 every merged unit in a whole number of identical bundles.
 
-Several delivery customizations, and several payment customizations, run one after the other in
-the order of the app's extensions, and each sees what the ones before it did: a method that one
-hides is not in the input of the next, and a method one renames comes to the next with its new
-name; when two rename the same method, the last one wins. Shopify's documentation does not say
-how several of them combine (the Delivery Customization and Payment Customization Function API
-pages only say that a store can activate 25 of each, and the cart transform page is the only one
-that says how the operations of several Functions are merged), so lsf keeps this chain. A store
+Several delivery customizations, and several payment customizations, run one after the other in the
+order of their folders in `extensions/` (by name), and each sees what the ones before it did: a
+method that one hides is not in the input of the next, and a method one renames comes to the next
+with its new name; when two rename the same method, the last one wins. Shopify's documentation does
+not say how several of them combine (the Delivery Customization and Payment Customization Function
+API pages only say that a store can activate 25 of each, and the cart transform page is the only
+one that says how the operations of several Functions are merged), so lsf keeps this chain. A store
 with one customization of each kind, the common case, sees no difference.
 
 Each Function sees the checkout as the steps before it left it, as on Shopify. A Function that
