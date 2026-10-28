@@ -85,6 +85,15 @@ for handle in "${handles[@]}"; do
   fi
 done
 
+rustup target add wasm32-unknown-unknown >/dev/null
+packages=()
+for handle in "${handles[@]}"; do
+  packages+=(-p "$handle")
+done
+cargo build --manifest-path "$app/Cargo.toml" --release --target wasm32-unknown-unknown "${packages[@]}"
+
+# Shopify's trampoline, next to what cargo built (after the build: cargo makes target/, which may
+# be a link to a cache folder that is gone).
 trampoline_version="2.0.0"
 case "$(uname -s)" in
   Darwin) os="macos" ;;
@@ -104,13 +113,6 @@ if [ ! -x "$trampoline" ]; then
   chmod +x "$trampoline.part"
   mv "$trampoline.part" "$trampoline"
 fi
-
-rustup target add wasm32-unknown-unknown >/dev/null
-packages=()
-for handle in "${handles[@]}"; do
-  packages+=(-p "$handle")
-done
-cargo build --manifest-path "$app/Cargo.toml" --release --target wasm32-unknown-unknown "${packages[@]}"
 
 for handle in "${handles[@]}"; do
   module="${handle//-/_}.wasm"

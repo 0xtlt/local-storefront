@@ -68,6 +68,7 @@ fn cart_lines_discounts_generate_run(
                     selection_strategy: schema::ProductDiscountSelectionStrategy::First,
                     candidates: vec![schema::ProductDiscountCandidate {
                         targets,
+                        prerequisites: None,
                         message: Some(format!("{}% off {}+ items", config.percentage, config.minimum_quantity)),
                         value: schema::ProductDiscountCandidateValue::Percentage(schema::Percentage {
                             value: Decimal(config.percentage),
