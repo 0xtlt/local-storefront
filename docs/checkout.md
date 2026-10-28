@@ -46,10 +46,50 @@ starts, and is in the `diagnostics` of the state.
 | `--app <dir>` (`LSF_APP`) | The app. Required by `checkout` and `function run`. |
 | `--extension <handle>` | Uses only this extension, a Function or a checkout UI extension. Repeat it for several. Without it, every extension of the app is used. |
 | `--build` | Runs the build command of each Function first. |
+| `--watch` | Develops the app as `shopify app dev` does: builds the Functions first, builds a Function again when its files change, and reloads the open pages. See [watch mode](#watch-mode). |
 | `--variant <standard\|shop>` | The look of the page: Shopify's one-page checkout, or the Shop app's. A URL can ask for the other with `?variant=shop`. |
 
 `checkout` takes the other options of [`serve`](cli.md#serve) (`--port`, `--host`, `--quiet`,
 `--static`, `--customer`, ...).
+
+### Watch mode
+
+```bash
+npx local-storefront checkout --app ../my-app --watch
+```
+
+Save a file of a Function and its build runs; when it is over, the open pages reload with the new
+module. It works with `serve --app` too.
+
+- **At the start**, every Function that has a build command (`[extensions.build] command`) is
+  built, as with `--build`, several at once. A build that fails does not stop the server.
+- **What is watched**: the folder of each extension (`src/`, the input queries, its
+  `shopify.extension.toml`, `locales/`, and the `dist/` bundle of a checkout UI extension),
+  `shopify.app.toml`, and the extension folders that are added or removed. The store data and
+  its scenarios are watched as always.
+- **What is not**: `target/`, `node_modules/`, `.git/` and other dot folders, editors' temporary
+  files, and what a build writes: the `dist/` folder of a Function that has a build command, its
+  module (`[extensions.build] path`), and `schema.graphql`. A build does not start itself again.
+- **A change to a Function** with a build command runs that command in its folder, as `--build`
+  does. A save that writes several files builds once. One build at a time per Function: a change
+  during its build makes one more build after it. Up to 3 Functions build at once (the Functions
+  of one Cargo workspace wait for each other on its lock). The terminal says
+  `↻ building discount-codes…`, then `✓ discount-codes built in 1.4s`.
+- **Any other change** (a checkout UI extension's bundle, an extension without a build, an
+  extension added or removed, `shopify.app.toml`, a scenario, the store data) reloads the pages
+  at once.
+- **The pages reload**: the checkout, the thank-you page and the home page. What the buyer
+  entered is kept, it is in the session. The home page runs the Functions of the scenarios again.
+- **A build that fails** keeps the last module that built, as `shopify app dev` does: the
+  checkout runs it. The terminal prints `✗ discount-codes: build failed (exit status: 101)` and
+  the last 20 lines of its output; the checkout page shows them in a banner and in the overview
+  of the Functions dialog, and the home page lists the build first among its problems. The next
+  build that works clears it.
+- **A build that hangs** does not hold the server: it is stopped after 10 minutes and fails.
+  Ctrl-C stops the builds that run, and puts back the module of one stopped halfway.
+
+The files are watched through the system's events (FSEvents, inotify): at rest, watching an app
+of 90 extensions costs about 0.2 % of a core. Where a file system has no events, they are polled.
 
 ## The look of the page
 

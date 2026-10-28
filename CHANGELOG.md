@@ -7,6 +7,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Added
 
+- **Watch mode for the checkout of an app.** `lsf checkout --app <dir> --watch` (and `serve
+  --app <dir> --watch`) builds the Functions, builds one again when its files change, and
+  reloads the open checkout, thank-you and home pages, as `shopify app dev` does. A build that
+  fails keeps the last module that built and shows its error on the page and on the home page.
+  A checkout UI extension's bundle, `shopify.app.toml` and the scenarios reload the pages too.
+  See [watch mode](docs/checkout.md#watch-mode).
 - **Log in as a customer at the checkout.** "Log in" in the Contact section of the local
   checkout opens a menu of the customers of the store data. Picking one logs the checkout (and
   the session) in as them: the Contact section shows the account, Delivery offers their saved

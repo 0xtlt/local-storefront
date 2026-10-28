@@ -143,6 +143,12 @@ It copies the schema of each Function (its `api_version` and Function API, from
 app build` does. `lsf checkout --app . --build` runs the same command for each Function.
 `broken-missing-build` has no build command and stays unbuilt.
 
+To change a Function and see it at once, `mise run playground:dev` (`lsf checkout --app .
+--watch`) builds every Function, then builds one again when you save it and reloads the open
+pages ([watch mode](../../docs/checkout.md#watch-mode)). It rewrites the committed modules: a
+build on another machine or toolchain does not give the same bytes, so
+`git checkout -- examples/checkout-playground` puts them back.
+
 ### Tests
 
 `crates/cli/src/commands/function/playground.rs` checks that the store data and every scenario
