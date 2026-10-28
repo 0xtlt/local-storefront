@@ -1094,6 +1094,62 @@ fn a_change_to_an_extension_without_a_build_reloads_the_pages_at_once() {
 }
 
 #[test]
+fn a_checkout_ui_extension_with_its_sources_is_bundled_when_they_change() {
+    let app = TempApp::new("ui-build");
+    app.ui_extension("ui-a");
+    app.write(
+        "extensions/ui-a/tsconfig.json",
+        r#"{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }"#,
+    );
+    let source = |text: &str| {
+        format!(
+            "import '@shopify/ui-extensions/preact';\nimport {{ render }} from 'preact';\nexport default async () => {{ render(<s-text>{text}</s-text>, document.body); }};\n"
+        )
+    };
+    // Written after its bundle: the bundle is older than its sources, and built at start.
+    app.write("extensions/ui-a/src/Checkout.jsx", &source("first"));
+    let watching = Watching::start(&app, |_| {});
+    let bundle = || std::fs::read_to_string(app.path("extensions/ui-a/dist/ui-a.js")).unwrap();
+    assert!(bundle().contains("first"), "{}", watching.said());
+    assert!(
+        watching.said().contains("✓ ui-a built in"),
+        "{}",
+        watching.said()
+    );
+
+    let reloads = watching.reloads();
+    app.write("extensions/ui-a/src/Checkout.jsx", &source("second"));
+    watching.settle();
+    assert!(bundle().contains("second"), "{}", watching.said());
+    assert!(watching.reloads() > reloads);
+    assert!(
+        watching.said().contains("↻ ui-a changed: bundling ui-a"),
+        "{}",
+        watching.said()
+    );
+    // What it writes in `dist/` does not bundle it again.
+    assert_eq!(
+        watching.said().matches("✓ ui-a built in").count(),
+        2,
+        "{}",
+        watching.said()
+    );
+
+    app.write(
+        "extensions/ui-a/src/Checkout.jsx",
+        "export default () => {\n",
+    );
+    watching.settle();
+    let failure = watching.builds.failure("ui-a").expect("a failure");
+    assert!(
+        failure.reason.contains("src/Checkout.jsx:"),
+        "{}",
+        failure.reason
+    );
+    assert!(bundle().contains("second"), "the last bundle stays");
+}
+
+#[test]
 fn only_the_selected_functions_build() {
     let app = TempApp::new("selected");
     app.function("fn-a");

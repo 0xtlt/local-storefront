@@ -114,40 +114,12 @@ struct RunArgs {
 
 /// `lsf function build`: builds the Functions, and says what it wrote.
 fn build(args: &BuildArgs) -> Result<ExitCode, String> {
-    let app_dir = match &args.app {
-        Some(app_dir) => app_dir.clone(),
-        None => std::env::current_dir()
-            .ok()
-            .and_then(|dir| app_around(&dir))
-            .ok_or_else(|| {
-                "`lsf function build` needs the app: run it in the app's folder, or give \
-                 `--app DIR` (or LSF_APP)"
-                    .to_string()
-            })?,
-    };
-    let shopify_app = lsf_checkout::app::load(&app_dir)?;
-    let selection = lsf_checkout::app::Selection::resolve(&shopify_app, &args.handles)?;
-    if selection.functions(&shopify_app).next().is_none() {
-        return Err("the app has no Function to build".to_string());
-    }
-    checkout::build(&shopify_app, &selection)?;
-    for function in selection.functions(&shopify_app) {
-        if function.built() {
-            eprintln!(
-                "built:  {}: {}",
-                function.handle,
-                function.wasm_path.display()
-            );
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// The app `dir` is in: the closest folder, from `dir` up, that has a `shopify.app.toml`.
-fn app_around(dir: &Path) -> Option<std::path::PathBuf> {
-    dir.ancestors()
-        .find(|dir| dir.join("shopify.app.toml").is_file())
-        .map(Path::to_path_buf)
+    checkout::run_build(
+        args.app.as_deref(),
+        &args.handles,
+        "lsf function build",
+        checkout::build_functions,
+    )
 }
 
 /// JSON given on the command line, or the path of a file that holds it.
@@ -652,9 +624,9 @@ mod tests {
         let nested = root.join("extensions/bulk/src");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(root.join("shopify.app.toml"), "name = \"App\"\n").unwrap();
-        assert_eq!(app_around(&nested), Some(root.clone()));
-        assert_eq!(app_around(&root), Some(root.clone()));
-        assert_eq!(app_around(&std::env::temp_dir()), None);
+        assert_eq!(checkout::app_around(&nested), Some(root.clone()));
+        assert_eq!(checkout::app_around(&root), Some(root.clone()));
+        assert_eq!(checkout::app_around(&std::env::temp_dir()), None);
         std::fs::remove_dir_all(&root).ok();
     }
 

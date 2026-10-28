@@ -94,6 +94,19 @@ npx local-storefront checkout init --app ../my-app
 | `--app <dir>` | `LSF_APP` | The app the scenarios are made for. |
 | `--force` | | Overwrites the scenarios that exist. |
 
+## checkout build
+
+`npx local-storefront checkout build [handle]... --app <dir>`
+
+Builds the extensions of an app, as `shopify app build` does, without Node: its Functions (as
+`function build`) and its checkout UI extensions that name their sources (`module`), bundled into
+`dist/<handle>.js`. Guide: [checkout](checkout.md#what-lsf-builds-without-node).
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The extensions to build. Every extension of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+
 ## function build
 
 `npx local-storefront function build [handle]... --app <dir>`
@@ -106,7 +119,7 @@ TypeScript without a build command is built by lsf, without Node: its types
 | Option | Environment variable | What it does |
 |---|---|---|
 | `[handle]...` | | The Functions to build. Every Function of the app when none is given. |
-| `--app <dir>` | `LSF_APP` | The app. Required. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 
 ## function run
 

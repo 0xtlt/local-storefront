@@ -135,6 +135,7 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
 | `npx local-storefront checkout --app <dir>` | Serves the checkout of a Shopify app: its Functions run, its checkout UI extensions show. `serve --app` does it with the theme. |
 | `npx local-storefront checkout init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
+| `npx local-storefront checkout build [handle]... --app <dir>` | Builds the extensions of an app as `shopify app build` does, without Node: Functions, and checkout UI extensions from their sources. |
 | `npx local-storefront function build [handle]... --app <dir>` | Builds the Functions of an app. A JavaScript or TypeScript Function is built by lsf, without Node, as `shopify app function build` builds it. |
 | `npx local-storefront function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--scenario <name>` runs a checkout scenario. `--format json` for tools. |
 | `npx local-storefront render <path>` | Prints the HTML of one page, without a server. |

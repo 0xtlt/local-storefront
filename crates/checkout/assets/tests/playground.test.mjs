@@ -19,6 +19,8 @@ const bundlePath = (handle) => join(extensions, handle, 'dist', `${handle}.js`);
 const bundle = (handle) => readFileSync(bundlePath(handle), 'utf8');
 const url = (handle) => `http://localhost/__lsf/extensions/${handle}/${handle}.js`;
 
+/** Built from its sources (a target names its `module`), by lsf: its bundle is minified. */
+const fromSources = (handle) => /^\s*module\s*=/m.test(toml(handle));
 const field = (text, name) => text.match(new RegExp(`^\\s*${name}\\s*=\\s*"([^"]*)"`, 'm'))?.[1];
 const targetsOf = (text) => [...text.matchAll(/^\s*target\s*=\s*"([^"]+)"/gm)].map((match) => match[1]);
 const metafieldsOf = (text) =>
@@ -82,7 +84,9 @@ test('the working extensions run on a supported API version and render where the
 test('each bundle says what it shows and registers the targets its toml declares', () => {
   for (const handle of handles.filter((name) => !NOT_BUILT.includes(name))) {
     const source = bundle(handle);
-    assert.match(source, /^\/\/ ui-/, `${handle} starts with a comment that says what it shows`);
+    if (!fromSources(handle)) {
+      assert.match(source, /^\/\/ ui-/, `${handle} starts with a comment that says what it shows`);
+    }
     const win = sandboxWindow();
     win.run('globalThis.__names = []; globalThis.shopify = { extend: (name) => { globalThis.__names.push(name); } };');
     let thrown = null;

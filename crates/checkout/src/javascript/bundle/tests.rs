@@ -30,6 +30,8 @@ impl Folder {
         self.bundle_with(exports, &BTreeMap::new())
     }
 
+    /// Bundles the Function whose entry is `src/index.ts` or `src/index.js`, with the exports
+    /// `exports` (the names of their JavaScript functions).
     fn bundle_with(
         &self,
         exports: &[&str],
@@ -40,28 +42,26 @@ impl Folder {
             .map(|entry| self.0.join(entry))
             .find(|entry| entry.is_file())
             .expect("an entry");
-        let exports: Vec<String> = exports.iter().map(|export| export.to_string()).collect();
+        let exports: Vec<String> = exports.iter().map(|export| kebab(export)).collect();
+        let resolver = Resolver {
+            aliases: vec![("user-function".to_string(), entry)],
+            extensions: crate::javascript::resolve::FUNCTION_EXTENSIONS,
+        };
         bundle(&Options {
             root: &self.0,
-            entry: &entry,
-            exports: &exports,
+            entry: &crate::javascript::function_entry(&exports),
+            resolver: &resolver,
             env,
+            jsx_in_js: false,
+            format: Format::Module,
+            minify: false,
         })
     }
 
     /// Bundles, builds the module, runs `export` with `input`: the output and the logs.
     fn run(&self, export: &str, input: Value) -> (Value, String) {
         let code = self.bundle(&[export]).unwrap();
-        let kebab: String = export
-            .chars()
-            .flat_map(|c| {
-                if c.is_uppercase() {
-                    vec!['-', c.to_ascii_lowercase()]
-                } else {
-                    vec![c]
-                }
-            })
-            .collect();
+        let kebab = kebab(export);
         let module = javy::module(&code, &[&kebab]).unwrap();
         let wasm = self.0.join("dist/function.wasm");
         std::fs::create_dir_all(wasm.parent().unwrap()).unwrap();
@@ -70,6 +70,19 @@ impl Folder {
         assert!(execution.error.is_none(), "{:?}\n{code}", execution.error);
         (execution.output.unwrap(), execution.logs)
     }
+}
+
+/// `cartLinesDiscountsGenerateRun` as an export of an extension: `cart-lines-discounts-generate-run`.
+fn kebab(name: &str) -> String {
+    name.chars()
+        .flat_map(|c| {
+            if c.is_uppercase() {
+                vec!['-', c.to_ascii_lowercase()]
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
 }
 
 impl Drop for Folder {
@@ -309,7 +322,7 @@ fn an_export_the_entry_does_not_have_is_an_error() {
                 "cartDeliveryOptionsDiscountsGenerateRun"
             ])
             .unwrap_err(),
-        "src/index.ts does not export a function `cartDeliveryOptionsDiscountsGenerateRun`"
+        "src/index.ts does not export `cartDeliveryOptionsDiscountsGenerateRun`"
     );
 }
 
@@ -340,7 +353,7 @@ fn what_cannot_be_bundled_is_an_error() {
     let cases = [
         (
             "import fs from 'fs';\nexport function run() {}\n",
-            "src/index.js: cannot import `fs`: it is a module of Node, and a Function does not run on Node",
+            "src/index.js: cannot import `fs`: it is a module of Node, and an extension does not run on Node",
         ),
         (
             "import x from './missing';\nexport function run() {}\n",
@@ -557,5 +570,67 @@ fn a_top_level_name_does_not_hide_a_global_a_commonjs_module_reads() {
     assert_eq!(
         folder.run("run", json!({})).0,
         json!({ "env": "other", "self": "mine" })
+    );
+}
+
+/// Bundles `src/entry.jsx` as a checkout UI extension's script.
+fn script(folder: &Folder, jsx_in_js: bool) -> Result<String, String> {
+    let resolver = Resolver {
+        aliases: Vec::new(),
+        extensions: crate::javascript::resolve::UI_EXTENSIONS,
+    };
+    bundle(&Options {
+        root: &folder.0,
+        entry: "import Target_0 from './src/Entry.jsx';shopify.extend('purchase.checkout.block.render', (...args) => Target_0(...args));",
+        resolver: &resolver,
+        env: &BTreeMap::new(),
+        jsx_in_js,
+        format: Format::Script,
+        minify: false,
+    })
+}
+
+#[test]
+fn jsx_calls_the_runtime_its_tsconfig_names() {
+    let folder = Folder::new(&[
+        (
+            "tsconfig.base.json",
+            "{ /* shared */ \"compilerOptions\": { \"jsxImportSource\": \"preact\", }, }",
+        ),
+        ("tsconfig.json", r#"{ "extends": "./tsconfig.base" }"#),
+        (
+            "src/Entry.jsx",
+            "import { render } from 'preact';\nimport { Note } from './note.js';\nexport default () => render(<s-text><Note /></s-text>, document.body);\n",
+        ),
+        (
+            "src/note.js",
+            "export function Note() { return <s-badge>new</s-badge>; }\n",
+        ),
+    ]);
+    let code = script(&folder, true).unwrap();
+    assert!(code.starts_with("(() => {"), "{code}");
+    assert!(!code.contains("export "), "{code}");
+    assert!(
+        code.contains("// node_modules/preact/jsx-runtime/dist/jsxRuntime.module.js"),
+        "{code}"
+    );
+    assert!(
+        code.contains(r#"shopify.extend("purchase.checkout.block.render""#),
+        "{code}"
+    );
+    // A `.js` file holds JSX only in a checkout UI extension.
+    let error = script(&folder, false).unwrap_err();
+    assert!(error.starts_with("src/note.js:1:"), "{error}");
+}
+
+#[test]
+fn without_a_tsconfig_jsx_calls_react_s_runtime() {
+    let folder = Folder::new(&[(
+        "src/Entry.jsx",
+        "export default () => <s-text>hi</s-text>;\n",
+    )]);
+    assert_eq!(
+        script(&folder, true).unwrap_err(),
+        "src/Entry.jsx: cannot find the package of `react/jsx-runtime` in a node_modules folder: install it"
     );
 }

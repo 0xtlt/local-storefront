@@ -21,7 +21,7 @@ toml = "0.9"
 # The build of JavaScript Functions (`javascript`): the module Javy writes, and the source it
 # embeds, compressed as Javy does.
 wasm-encoder = "0.240"
-oxc = { workspace = true, features = ["ast_visit", "codegen", "semantic", "transformer"] }
+oxc = { workspace = true, features = ["ast_visit", "codegen", "minifier", "semantic", "transformer"] }
 brotli = { version = "9", default-features = false, features = ["std"] }
 # Parses the input queries of Functions.
 graphql-parser = "0.4"

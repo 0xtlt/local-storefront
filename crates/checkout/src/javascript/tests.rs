@@ -360,3 +360,126 @@ fn the_javascript_function_built_by_lsf_runs_as_the_one_shopify_s_cli_built() {
         ],
     );
 }
+
+/// Shopify's template of a checkout UI extension in Preact (`shopify app generate extension
+/// --template checkout_ui --flavor preact`), with no `node_modules`.
+const PREACT_EXTENSION: &[(&str, &str)] = &[
+    (
+        "extensions/banner/shopify.extension.toml",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Banner"
+handle = "banner"
+type = "ui_extension"
+
+[[extensions.targeting]]
+module = "./src/Checkout.jsx"
+target = "purchase.checkout.block.render"
+"#,
+    ),
+    (
+        "extensions/banner/package.json",
+        r#"{ "name": "banner", "private": true, "dependencies": { "preact": "^10.10.x", "@preact/signals": "^2.3.x", "@shopify/ui-extensions": "2026.10.x" } }"#,
+    ),
+    (
+        "extensions/banner/tsconfig.json",
+        r#"{
+  // As the template writes it.
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "target": "ES2020",
+  },
+  "include": ["./src", "./shopify.d.ts"]
+}"#,
+    ),
+    (
+        "extensions/banner/src/Checkout.jsx",
+        r#"import '@shopify/ui-extensions/preact';
+import {render} from "preact";
+
+export default async () => {
+  render(<Extension />, document.body)
+};
+
+function Extension() {
+  return (
+    <s-banner heading="Banner">
+      <s-text>{shopify.i18n.translate("welcome", {target: <s-text type="emphasis">{shopify.extension.target}</s-text>})}</s-text>
+    </s-banner>
+  );
+}
+"#,
+    ),
+];
+
+#[test]
+fn a_preact_checkout_ui_extension_is_built_without_node_modules() {
+    let app = TempApp::new(PREACT_EXTENSION);
+    let shopify_app = app::load(&app.0).unwrap();
+    let extension = &shopify_app.ui_extensions[0];
+    assert!(extension.buildable());
+    assert!(shopify_app.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("build it with `lsf checkout build banner` (or `shopify app build`)")
+    }));
+    let bundle = build_extension(extension, &app.0).unwrap();
+    assert_eq!(bundle, extension.dir.join("dist/banner.js"));
+    let script = std::fs::read_to_string(&bundle).unwrap();
+    assert!(
+        script.contains("purchase.checkout.block.render"),
+        "{script}"
+    );
+    assert!(script.contains("s-banner"), "{script}");
+    assert!(script.contains("setSignals"), "{script}");
+    assert!(
+        !script.contains("import "),
+        "a script, not a module: {script}"
+    );
+}
+
+/// The playground's checkout UI extensions built from their sources: built again by lsf, in an
+/// app of their own, they are the bundles committed in the playground. What those do next to
+/// the bundles Shopify's CLI builds is checked by `assets/tests/built-extensions.test.mjs`.
+#[test]
+fn the_playground_s_preact_extensions_are_the_bundles_lsf_builds() {
+    let playground =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/checkout-playground/extensions");
+    for handle in ["ui-preact", "ui-preact-typescript"] {
+        let source = playground.join(handle);
+        let mut files = Vec::new();
+        let mut stack = vec![source.clone()];
+        while let Some(folder) = stack.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                let relative = path.strip_prefix(&source).unwrap().to_path_buf();
+                if relative.starts_with("dist") {
+                    continue;
+                }
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    let name = format!(
+                        "extensions/{handle}/{}",
+                        relative.to_string_lossy().replace('\\', "/")
+                    );
+                    files.push((name, std::fs::read_to_string(&path).unwrap()));
+                }
+            }
+        }
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(path, content)| (path.as_str(), content.as_str()))
+            .collect();
+        let app = TempApp::new(&files);
+        let shopify_app = app::load(&app.0).unwrap();
+        let bundle = build_extension(shopify_app.ui_extension(handle).unwrap(), &app.0).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(bundle).unwrap(),
+            std::fs::read_to_string(source.join("dist").join(format!("{handle}.js"))).unwrap(),
+            "{handle}: the committed bundle is not the one lsf builds: `lsf checkout build {handle} --app examples/checkout-playground`"
+        );
+    }
+}

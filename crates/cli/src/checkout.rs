@@ -98,9 +98,16 @@ pub fn print_app_diagnostics(app: &App, selection: &Selection) {
     }
 }
 
-/// Builds each selected Function, as `shopify app build` does: its build command, run in its
-/// directory, or for a JavaScript Function without one, lsf's build of it.
+/// Builds the selected extensions, as `shopify app build` does: the Functions
+/// ([`build_functions`]), then the checkout UI extensions ([`build_ui_extensions`]).
 pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
+    build_functions(app, selection)?;
+    build_ui_extensions(app, selection)
+}
+
+/// Builds each selected Function: its build command, run in its directory, or for a JavaScript
+/// Function without one, lsf's build of it.
+pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
     for function in selection.functions(app) {
         match function.build() {
             None => eprintln!("build:  {} has no build command", function.handle),
@@ -126,6 +133,92 @@ pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Bundles each selected checkout UI extension that names its sources (`module`), as
+/// `shopify app build` does, without Node. One that does not is left as it is: its bundle is
+/// the one `dist/` holds.
+pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), String> {
+    for extension in selection.ui_extensions(app) {
+        if !extension.buildable() {
+            continue;
+        }
+        let started = std::time::Instant::now();
+        lsf_checkout::javascript::build_extension(extension, &app.root)
+            .map_err(|error| format!("the build of {} failed: {error}", extension.handle))?;
+        eprintln!(
+            "build:  {}: built by lsf in {}ms",
+            extension.handle,
+            started.elapsed().as_millis()
+        );
+    }
+    Ok(())
+}
+
+/// The app `dir` is in: the closest folder, from `dir` up, that has a `shopify.app.toml`.
+pub fn app_around(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .find(|dir| dir.join("shopify.app.toml").is_file())
+        .map(Path::to_path_buf)
+}
+
+/// The app of a command: `--app`, or the one the current folder is in.
+pub fn app_of(app: Option<&Path>, command: &str) -> Result<PathBuf, String> {
+    match app {
+        Some(app) => Ok(app.to_path_buf()),
+        None => std::env::current_dir()
+            .ok()
+            .and_then(|dir| app_around(&dir))
+            .ok_or_else(|| {
+                format!(
+                    "`{command}` needs the app: run it in the app's folder, or give `--app DIR` \
+                     (or LSF_APP)"
+                )
+            }),
+    }
+}
+
+/// `lsf function build` and `lsf checkout build`: builds the extensions of an app (`handles`, or
+/// all), with `build`, and says what it wrote.
+pub fn run_build(
+    app: Option<&Path>,
+    handles: &[String],
+    command: &str,
+    build: fn(&App, &Selection) -> Result<(), String>,
+) -> Result<std::process::ExitCode, String> {
+    let app_dir = app_of(app, command)?;
+    let shopify_app = app::load(&app_dir)?;
+    let selection = Selection::resolve(&shopify_app, handles)?;
+    build(&shopify_app, &selection)?;
+    let shopify_app = app::load(&app_dir)?;
+    let mut built = 0;
+    for function in selection.functions(&shopify_app) {
+        if function.built() {
+            eprintln!(
+                "built:  {}: {}",
+                function.handle,
+                function.wasm_path.display()
+            );
+            built += 1;
+        }
+    }
+    for extension in selection.ui_extensions(&shopify_app) {
+        if extension.buildable() && extension.built() {
+            eprintln!(
+                "built:  {}: {}",
+                extension.handle,
+                extension.bundle.display()
+            );
+            built += 1;
+        }
+    }
+    if built == 0 {
+        return Err(
+            "nothing was built: the app has no extension lsf or its build command builds"
+                .to_string(),
+        );
+    }
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 /// The command `--watch` runs to build a JavaScript Function: lsf itself

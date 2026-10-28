@@ -22,16 +22,23 @@ impl Folder {
         Folder(dir)
     }
 
-    /// Where `specifier`, imported from `src/`, leads, relative to the folder.
+    /// Where `specifier`, imported from `src/`, leads, relative to the folder (lsf's packages by
+    /// their path in `node_modules`).
     fn resolve(&self, specifier: &str, kind: Kind) -> Result<String, String> {
-        resolve(specifier, &self.0.join("src"), kind).map(|resolved| match resolved {
-            Resolved::File(path) => path
-                .strip_prefix(&self.0)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/"),
-            Resolved::Run => "(lsf's run)".to_string(),
-        })
+        let resolver = Resolver {
+            aliases: vec![("user-function".to_string(), self.0.join("src/index.ts"))],
+            extensions: FUNCTION_EXTENSIONS,
+        };
+        resolver
+            .resolve(specifier, &self.0.join("src"), kind)
+            .map(|path| match super::packages::relative(&path) {
+                Some(ours) => format!("(lsf) {ours}"),
+                None => path
+                    .strip_prefix(&self.0)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            })
     }
 }
 
@@ -148,9 +155,53 @@ fn exports_maps_are_read_with_the_conditions_of_the_import() {
 }
 
 #[test]
-fn the_run_library_is_lsfs_copy_without_node_modules() {
+fn the_packages_an_extension_needs_are_lsf_s_without_node_modules() {
     let folder = Folder::new(&[("src/index.ts", "")]);
-    assert_eq!(folder.resolve(RUN, Kind::Import).unwrap(), "(lsf's run)");
+    for (specifier, file) in [
+        (
+            "@shopify/shopify_function/run",
+            "node_modules/@shopify/shopify_function/run.ts",
+        ),
+        ("preact", "node_modules/preact/dist/preact.module.js"),
+        (
+            "preact/jsx-runtime",
+            "node_modules/preact/jsx-runtime/dist/jsxRuntime.module.js",
+        ),
+        (
+            "@shopify/ui-extensions/preact",
+            "node_modules/@shopify/ui-extensions/build/esm/preact.mjs",
+        ),
+    ] {
+        assert_eq!(
+            folder.resolve(specifier, Kind::Import).unwrap(),
+            format!("(lsf) {file}")
+        );
+    }
+    // The app's own come first.
+    let folder = Folder::new(&[
+        ("src/index.ts", ""),
+        (
+            "node_modules/preact/package.json",
+            r#"{ "module": "mine.js" }"#,
+        ),
+        ("node_modules/preact/mine.js", ""),
+    ]);
+    assert_eq!(
+        folder.resolve("preact", Kind::Import).unwrap(),
+        "node_modules/preact/mine.js"
+    );
+    assert_eq!(
+        folder.resolve("user-function", Kind::Import).unwrap(),
+        "src/index.ts"
+    );
+    let folder = Folder::new(&[("src/other.ts", "")]);
+    assert_eq!(
+        folder.resolve("user-function", Kind::Import).unwrap_err(),
+        format!(
+            "cannot find `{}` (`user-function`)",
+            folder.0.join("src/index.ts").display()
+        )
+    );
 }
 
 #[test]
@@ -162,6 +213,6 @@ fn node_modules_come_before_node_builtins() {
     );
     assert_eq!(
         folder.resolve("node:fs", Kind::Import).unwrap_err(),
-        "cannot import `node:fs`: it is a module of Node, and a Function does not run on Node"
+        "cannot import `node:fs`: it is a module of Node, and an extension does not run on Node"
     );
 }

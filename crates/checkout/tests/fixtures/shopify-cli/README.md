@@ -6,6 +6,9 @@ The playground's two Functions written in JavaScript and TypeScript, built by Sh
 
 - `discount-typescript.wasm`: `examples/checkout-playground/extensions/discount-typescript`.
 - `validation-javascript.wasm`: `examples/checkout-playground/extensions/validation-javascript`.
+- `ui-preact.js` and `ui-preact-typescript.js`: the bundles `shopify app build` writes for the
+  playground's checkout UI extensions built from their sources. `assets/tests/built-extensions.test.mjs`
+  draws each one next to lsf's bundle and compares.
 
 `crates/checkout/src/javascript/tests.rs` builds the same Functions with lsf and checks that its
 modules do what these do: the same output, the same logs, as many instructions within 1%.

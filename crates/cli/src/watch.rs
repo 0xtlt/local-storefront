@@ -731,6 +731,9 @@ struct Rules {
     outputs: Vec<PathBuf>,
     /// Its build, for a selected Function that has one.
     build: Option<Job>,
+    /// The handle of a selected checkout UI extension that lsf bundles: the watcher bundles it
+    /// itself when its files change, in a moment, and reloads the pages.
+    ui: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -775,10 +778,47 @@ fn rules_of(app: &App, selection: &Selection) -> BTreeMap<String, Rules> {
                         outputs: outputs.clone(),
                     }),
                 outputs,
+                ui: None,
             },
         );
     }
+    for extension in &app.ui_extensions {
+        let Some(folder) = extension.dir.file_name() else {
+            continue;
+        };
+        if extension.buildable() && selection.contains(&extension.handle) {
+            rules.insert(
+                folder.to_string_lossy().into_owned(),
+                Rules {
+                    outputs: vec![PathBuf::from("dist")],
+                    build: None,
+                    ui: Some(extension.handle.clone()),
+                },
+            );
+        }
+    }
     rules
+}
+
+/// Whether the bundle of a checkout UI extension is missing, or older than a file of its folder
+/// (but `dist/`, `node_modules/` and hidden ones).
+fn stale(extension: &lsf_checkout::app::UiExtension) -> bool {
+    let Some(built) = std::fs::metadata(&extension.bundle)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+    else {
+        return true;
+    };
+    let mut newer = false;
+    walk(
+        &extension.dir,
+        &|relative| ignored(relative, &[PathBuf::from("dist")]),
+        &mut |_, _, metadata| {
+            newer |= metadata.modified().is_ok_and(|modified| modified > built);
+        },
+        &mut |_| {},
+    );
+    newer
 }
 
 /// Walks the files of `dir` that `skip` does not leave alone (by their path in `dir`): `file`
@@ -1632,6 +1672,19 @@ impl Coordinator {
     }
 
     fn run(mut self, receiver: mpsc::Receiver<Event>, first: Vec<String>) {
+        // The checkout UI extensions lsf bundles: those whose bundle is missing or older than
+        // their files (all with `--build`), at once.
+        let ui: Vec<String> = self.ui_handles().into_iter().collect();
+        if let Ok(app) = app::load(&self.root) {
+            for handle in ui {
+                let stale = app
+                    .ui_extension(&handle)
+                    .is_some_and(|extension| self.options.build_first || stale(extension));
+                if stale {
+                    self.build_ui(&handle);
+                }
+            }
+        }
         if !first.is_empty() {
             (self.log)(&format!(
                 "↻ building {}…",
@@ -1769,6 +1822,7 @@ impl Coordinator {
             self.seen = Snapshot::take(&self.root, &self.rules, self.data.as_deref());
         }
         let handles: BTreeSet<String> = self.jobs().map(|job| job.handle.clone()).collect();
+        let ui = self.ui_handles();
         let mut reload = false;
         // Each Function once, whatever asked for it.
         let mut to_build = BTreeSet::new();
@@ -1790,6 +1844,11 @@ impl Coordinator {
             to_build.extend(handles.iter().cloned());
         }
         for folder in &changes.extensions {
+            if let Some(handle) = self.rules.get(folder).and_then(|rules| rules.ui.clone()) {
+                (self.log)(&format!("↻ {folder} changed: bundling {handle}"));
+                self.build_ui(&handle);
+                continue;
+            }
             match self.rules.get(folder).and_then(|rules| rules.build.clone()) {
                 Some(job) => {
                     to_build.insert(job.handle);
@@ -1807,16 +1866,57 @@ impl Coordinator {
         for handle in &to_build {
             self.request(handle);
         }
-        // The Functions that are gone, or that do not build any more.
+        // The extensions that are gone, or that do not build any more.
         let known: BTreeSet<String> = self.builds.failures().into_iter().map(|(h, _)| h).collect();
-        if known.iter().any(|handle| !handles.contains(handle)) {
-            self.builds.retain(&handles);
+        let building: BTreeSet<String> = handles.union(&ui).cloned().collect();
+        if known.iter().any(|handle| !building.contains(handle)) {
+            self.builds.retain(&building);
             reload = true;
         }
         for handle in known.difference(&handles) {
             self.scheduler.forget(handle);
         }
         self.reload_due |= reload;
+    }
+
+    /// The checkout UI extensions the watcher bundles.
+    fn ui_handles(&self) -> BTreeSet<String> {
+        self.rules
+            .values()
+            .filter_map(|rules| rules.ui.clone())
+            .collect()
+    }
+
+    /// Bundles a checkout UI extension, here and now (it takes a moment), says how it went as
+    /// the build of a Function does, and has the pages reload.
+    fn build_ui(&mut self, handle: &str) {
+        let started = Instant::now();
+        let built = app::load(&self.root).and_then(|app| {
+            let extension = app
+                .ui_extension(handle)
+                .ok_or_else(|| format!("{handle} is not an extension of the app"))?;
+            lsf_checkout::javascript::build_extension(extension, &self.root)
+        });
+        match built {
+            Ok(_) => {
+                (self.log)(&format!(
+                    "✓ {handle} built in {:.1}s",
+                    started.elapsed().as_secs_f64()
+                ));
+                self.builds.set(handle, None);
+            }
+            Err(error) => {
+                (self.log)(&format!("✗ {handle}: {error}"));
+                self.builds.set(
+                    handle,
+                    Some(Failure {
+                        reason: error,
+                        output: String::new(),
+                    }),
+                );
+            }
+        }
+        self.reload_due = true;
     }
 
     /// Tells the pages to reload.

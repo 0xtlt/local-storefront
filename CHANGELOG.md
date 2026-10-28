@@ -106,6 +106,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   graphql-codegen writes them), `dist/function.js` (bundled as esbuild does, enums inlined and
   unused code left out), then its module, the bytes Javy writes. `--build` and `--watch` build
   it too.
+- **`lsf checkout build`** builds the extensions of an app as `shopify app build` does, without
+  Node: its Functions, and its checkout UI extensions whose targets name their sources, bundled
+  (JSX with the `jsxImportSource` of their `tsconfig.json`, minified) into `dist/<handle>.js`.
+  `--build` and `--watch` build those too. Without a `node_modules`, `preact`,
+  `@preact/signals`, `@shopify/ui-extensions` and `@shopify/shopify_function` come from lsf's
+  own copy.
 
 ## 0.1.18 - 2026-10-21
 

@@ -1,8 +1,14 @@
-//! One JavaScript module for a Function and all it imports, as esbuild writes it for Shopify's
-//! CLI (`dist/function.js`): what Javy compiles.
+//! One JavaScript file for an extension and all it imports, as esbuild writes it for Shopify's
+//! CLI: a Function's `dist/function.js`, the ES module Javy compiles, or a checkout UI extension's
+//! `dist/<handle>.js`, a minified script.
 //!
-//! Each module is read and its TypeScript removed (oxc's transformer, which also turns `enum`s
-//! into objects). Then, as esbuild does:
+//! The entry is the one Shopify's CLI generates and hands esbuild as `stdin` (TypeScript and
+//! JSX): for a Function, an export per target that hands the user's function to
+//! `@shopify/shopify_function/run`; for a checkout UI extension, a `shopify.extend` per target.
+//!
+//! Each module is read and its TypeScript and JSX removed (oxc's transformer, which also turns
+//! `enum`s into objects; JSX calls the automatic runtime of the `jsxImportSource` its
+//! `tsconfig.json` names, `react` by default). Then, as esbuild does:
 //!
 //! - **Tree shaking**: only what the Function's exports use, and what has side effects, is kept.
 //!   `generated/api.ts` declares every enum of the Function API (some 250 country codes, …), and
@@ -18,9 +24,8 @@
 //!   that run the first time something needs them. `import()`, and `require` of an ES module, are
 //!   not bundled.
 //!
-//! The entry is the one Shopify's CLI generates: for each export of the targets, a function of
-//! that name that hands the user's function of the same name to `@shopify/shopify_function/run`,
-//! which reads the input, calls it, and writes the output.
+//! A module's path in the comments of the bundle, and in messages, is relative to the
+//! extension's folder; a package of lsf's own copy is named by its path in `node_modules`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -37,39 +42,59 @@ use oxc::ast::ast::{
 use oxc::ast_visit::{Visit, walk};
 use oxc::codegen::Codegen;
 use oxc::diagnostics::OxcDiagnostic;
+use oxc::minifier::{CompressOptions, MangleOptions, Minifier, MinifierOptions};
 use oxc::parser::Parser;
 use oxc::semantic::{ScopeFlags, Scoping, SemanticBuilder, SymbolId};
 use oxc::span::{GetSpan, SourceType, Span};
-use oxc::transformer::{TransformOptions, Transformer};
+use oxc::transformer::{JsxRuntime, TransformOptions, Transformer};
 
-use super::resolve::{self, Kind, Resolved};
+use super::packages;
+use super::resolve::{Kind, Resolver};
 
 /// What to bundle.
 pub struct Options<'a> {
-    /// The Function's folder: paths in messages are relative to it.
+    /// The extension's folder: the entry is resolved from it, and paths in messages are
+    /// relative to it.
     pub root: &'a Path,
-    /// The user's entry, `src/index.ts` or `src/index.js`.
-    pub entry: &'a Path,
-    /// The functions the module exports, as Javy calls them: the camelCase name of each target's
-    /// `export`.
-    pub exports: &'a [String],
+    /// The entry Shopify's CLI generates, read as esbuild reads its `stdin`: TypeScript with
+    /// JSX.
+    pub entry: &'a str,
+    pub resolver: &'a Resolver,
     /// The values of `process.env.NAME`, by name.
     pub env: &'a BTreeMap<String, String>,
+    /// Whether a `.js` file may hold JSX, as Shopify's CLI has esbuild read those of a checkout
+    /// UI extension.
+    pub jsx_in_js: bool,
+    pub format: Format,
+    /// Whether the bundle is minified (whitespace, syntax and names), as a checkout UI
+    /// extension's is.
+    pub minify: bool,
 }
 
-/// The JavaScript of the Function: one ES module that exports `options.exports`.
+/// What the bundle is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    /// An ES module that exports what the entry exports: what Javy compiles.
+    Module,
+    /// A script that runs everything in a function of its own, as esbuild's `iife`.
+    Script,
+}
+
+/// The JavaScript of the extension.
 pub fn bundle(options: &Options) -> Result<String, String> {
     let mut graph = Graph {
         root: options.root,
         env: options.env,
+        resolver: options.resolver,
+        jsx_in_js: options.jsx_in_js,
+        entry: options.entry,
         modules: Vec::new(),
         ids: HashMap::new(),
         queue: VecDeque::new(),
         exported: Vec::new(),
+        jsx_sources: HashMap::new(),
     };
-    // The CLI's entry is bundled from the Function's folder.
-    let run = graph.id(resolve::resolve(resolve::RUN, options.root, Kind::Import)?);
-    let user = graph.id(Resolved::File(options.entry.to_path_buf()));
+    let entry = graph.id(Source::Entry);
     while let Some(id) = graph.queue.pop_front() {
         graph.analyze(id)?;
     }
@@ -77,24 +102,18 @@ pub fn bundle(options: &Options) -> Result<String, String> {
         .map(|id| graph.compute_exports_of(id))
         .collect();
     graph.check_imports()?;
-    let entry_name = graph.modules[user].name.clone();
-    for export in options.exports {
-        if graph
-            .exports_of(user)
-            .is_some_and(|names| !names.contains(export))
-        {
-            return Err(format!(
-                "{entry_name} does not export a function `{export}`"
-            ));
-        }
-    }
-
     graph.check_requires()?;
 
-    let mut roots = vec![(run, "default".to_string())];
-    roots.extend(options.exports.iter().map(|export| (user, export.clone())));
-    let live = graph.live(&roots, &[run, user]);
-    let layout = graph.layout(&live, &[run, user]);
+    let entry_exports: Vec<String> = match options.format {
+        Format::Module => graph.modules[entry].exports.keys().cloned().collect(),
+        Format::Script => Vec::new(),
+    };
+    let roots: Vec<(usize, String)> = entry_exports
+        .iter()
+        .map(|name| (entry, name.clone()))
+        .collect();
+    let live = graph.live(&roots, &[entry]);
+    let layout = graph.layout(&live, &[entry]);
 
     let mut code = String::new();
     if !layout.commonjs.is_empty() || !layout.namespaces.is_empty() {
@@ -106,31 +125,45 @@ pub fn bundle(options: &Options) -> Result<String, String> {
     for &id in &layout.order {
         code.push_str(&graph.emit(id, &live, &layout));
     }
-    // An entry no module imports that is CommonJS: its view as an ES module.
-    for entry in [run, user] {
-        if layout.interop.contains_key(&entry) && !layout.owner.contains_key(&entry) {
-            code.push_str(&format!(
-                "var {} = __lsf_toESM({}());\n",
-                layout.interop[&entry], layout.wrappers[&entry]
-            ));
-        }
+    if !entry_exports.is_empty() {
+        let exported: Vec<String> = entry_exports
+            .iter()
+            .map(|name| {
+                let (local, _) = layout.expression(graph.target(entry, Some(name)));
+                if &local == name {
+                    local
+                } else {
+                    format!("{local} as {name}")
+                }
+            })
+            .collect();
+        code.push_str(&format!("export {{ {} }};\n", exported.join(", ")));
     }
-    let (run_function, _) = layout.expression(graph.target(run, Some("default")));
-    code.push_str("// The entry Shopify's CLI generates.\n");
-    for export in options.exports {
-        let (user_function, _) = layout.expression(graph.target(user, Some(export)));
-        code.push_str(&format!(
-            "function __lsf_{export}() {{\n  return {run_function}({user_function});\n}}\n"
-        ));
+    if options.format == Format::Script {
+        code = format!("(() => {{\n{code}}})();\n");
     }
-    let exported: Vec<String> = options
-        .exports
-        .iter()
-        .map(|export| format!("__lsf_{export} as {export}"))
-        .collect();
-    code.push_str(&format!("export {{ {} }};\n", exported.join(", ")));
-    check_syntax(&code)?;
-    Ok(code)
+    check_syntax(&code, options.format)?;
+    Ok(if options.minify { minify(&code) } else { code })
+}
+
+/// The bundle minified as esbuild's `minify`: whitespace, syntax, and the names of what the
+/// script's function declares.
+fn minify(code: &str) -> String {
+    let allocator = Allocator::default();
+    let mut program = Parser::new(&allocator, code, SourceType::cjs())
+        .parse()
+        .program;
+    let minified = Minifier::new(MinifierOptions {
+        mangle: Some(MangleOptions::default()),
+        mangle_properties: None,
+        compress: Some(CompressOptions::smallest()),
+    })
+    .minify(&allocator, &mut program);
+    Codegen::new()
+        .with_options(oxc::codegen::CodegenOptions::minify())
+        .with_scoping(minified.scoping)
+        .build(&program)
+        .code
 }
 
 /// What CommonJS modules and namespace objects need: getters on an object, a CommonJS module run
@@ -169,19 +202,32 @@ var __lsf_toESM = (exports) => {
 };
 "#;
 
+/// Where a module comes from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Source {
+    /// The entry Shopify's CLI generates.
+    Entry,
+    File(PathBuf),
+}
+
 struct Graph<'a> {
     root: &'a Path,
     env: &'a BTreeMap<String, String>,
+    resolver: &'a Resolver,
+    jsx_in_js: bool,
+    entry: &'a str,
     modules: Vec<Module>,
-    ids: HashMap<Resolved, usize>,
+    ids: HashMap<Source, usize>,
     queue: VecDeque<usize>,
+    /// The `jsxImportSource` of the `tsconfig.json` that rules each folder.
+    jsx_sources: HashMap<PathBuf, String>,
     /// What each module exports ([`Graph::exports_of`]), once every module is read.
     exported: Vec<Option<BTreeSet<String>>>,
 }
 
 /// What a module is, from its first reading.
 struct Module {
-    source: Resolved,
+    source: Source,
     /// The path relative to the Function's folder, for messages.
     name: String,
     /// The JavaScript, types removed; for a JSON file, the JSON.
@@ -282,14 +328,14 @@ enum Work {
 
 impl Graph<'_> {
     /// The id of a module, read later if it is new.
-    fn id(&mut self, source: Resolved) -> usize {
+    fn id(&mut self, source: Source) -> usize {
         if let Some(&id) = self.ids.get(&source) {
             return id;
         }
         let id = self.modules.len();
         let name = match &source {
-            Resolved::File(path) => display(path, self.root),
-            Resolved::Run => format!("{} (lsf's copy)", resolve::RUN),
+            Source::File(path) => display(path, self.root),
+            Source::Entry => "<stdin>".to_string(),
         };
         self.modules.push(Module {
             source: source.clone(),
@@ -317,16 +363,16 @@ impl Graph<'_> {
     fn analyze(&mut self, id: usize) -> Result<(), String> {
         let name = self.modules[id].name.clone();
         let (text, dir, path) = match &self.modules[id].source {
-            Resolved::File(path) => {
+            Source::File(path) => {
                 let text = std::fs::read_to_string(path)
                     .map_err(|error| format!("cannot read {name}: {error}"))?;
                 let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
                 (text, dir, path.clone())
             }
-            Resolved::Run => (
-                resolve::RUN_SOURCE.to_string(),
+            Source::Entry => (
+                self.entry.to_string(),
                 self.root.to_path_buf(),
-                PathBuf::from("run.ts"),
+                self.root.join("stdin.tsx"),
             ),
         };
         let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -338,11 +384,14 @@ impl Graph<'_> {
             module.javascript = text;
             return Ok(());
         }
+        let jsx = matches!(extension, "jsx" | "tsx")
+            || self.jsx_in_js && matches!(extension, "js" | "mjs" | "cjs");
         let source_type = SourceType::from_path(&path)
             .unwrap_or_else(|_| SourceType::unambiguous())
-            .with_jsx(matches!(extension, "jsx" | "tsx"));
-        let (javascript, enums) = if source_type.is_typescript() {
-            strip_types(&text, source_type, &path, &name)?
+            .with_jsx(jsx);
+        let (javascript, enums) = if source_type.is_typescript() || jsx {
+            let import_source = self.jsx_source(&dir);
+            transform(&text, source_type, &path, &name, &import_source)?
         } else {
             (text, HashMap::new())
         };
@@ -361,10 +410,12 @@ impl Graph<'_> {
         let symbols = scoping.symbol_names().map(str::to_string).collect();
         let globals = unresolved.keys().map(|name| name.to_string()).collect();
 
+        let resolver = self.resolver;
         let mut resolve = |specifier: &str, kind: Kind| -> Result<usize, String> {
-            let resolved = resolve::resolve(specifier, &dir, kind)
+            let resolved = resolver
+                .resolve(specifier, &dir, kind)
                 .map_err(|error| format!("{name}: {error}"))?;
-            Ok(self.id(resolved))
+            Ok(self.id(Source::File(resolved)))
         };
         let mut reader = Reader {
             text: &javascript,
@@ -410,6 +461,26 @@ impl Graph<'_> {
         module.form = if commonjs { Form::CommonJs } else { Form::Esm };
         module.javascript = javascript.clone();
         Ok(())
+    }
+
+    /// The `jsxImportSource` of the closest `tsconfig.json` (or `jsconfig.json`) of `dir`, or of
+    /// what it `extends`; `react`, esbuild's default, without one.
+    fn jsx_source(&mut self, dir: &Path) -> String {
+        if let Some(source) = self.jsx_sources.get(dir) {
+            return source.clone();
+        }
+        let source = dir
+            .ancestors()
+            .find_map(|folder| {
+                ["tsconfig.json", "jsconfig.json"]
+                    .iter()
+                    .map(|name| folder.join(name))
+                    .find(|path| path.is_file())
+            })
+            .and_then(|config| jsx_import_source(&config, 0))
+            .unwrap_or_else(|| "react".to_string());
+        self.jsx_sources.insert(dir.to_path_buf(), source.clone());
+        source
     }
 
     /// The names a module exports, with those of its `export * from`; `None` when a CommonJS
@@ -459,10 +530,15 @@ impl Graph<'_> {
                     .exports_of(import.from)
                     .is_some_and(|names| !names.contains(&import.name))
                 {
-                    return Err(format!(
-                        "{}:{}: {} does not export `{}`",
-                        self.modules[import.module].name, import.line, target.name, import.name
-                    ));
+                    let importer = &self.modules[import.module];
+                    return Err(if importer.source == Source::Entry {
+                        format!("{} does not export `{}`", target.name, import.name)
+                    } else {
+                        format!(
+                            "{}:{}: {} does not export `{}`",
+                            importer.name, import.line, target.name, import.name
+                        )
+                    });
                 }
             }
         }
@@ -991,8 +1067,11 @@ fn javascript_type(source_type: SourceType) -> SourceType {
         .with_commonjs(source_type.is_commonjs())
 }
 
-/// `path` relative to `root`, with `/`.
+/// `path` relative to `root`, with `/`; a file of lsf's packages by its path in `node_modules`.
 fn display(path: &Path, root: &Path) -> String {
+    if let Some(relative) = packages::relative(path) {
+        return relative;
+    }
     let relative = path.strip_prefix(root).unwrap_or(path);
     relative
         .components()
@@ -1001,14 +1080,16 @@ fn display(path: &Path, root: &Path) -> String {
         .join("/")
 }
 
-/// The JavaScript of a TypeScript module: types, `import type`s and imports only used as types
-/// removed, `enum`s and `namespace`s turned into objects, nothing lowered past ES2022 (esbuild's
-/// target for Functions). With the constant members of its top-level enums.
-fn strip_types(
+/// The JavaScript of a TypeScript or JSX module: types, `import type`s and imports only used as
+/// types removed, `enum`s and `namespace`s turned into objects, JSX turned into calls of the
+/// automatic runtime of `jsx_source` (`preact/jsx-runtime`), nothing lowered past ES2022. With the
+/// constant members of its top-level enums.
+fn transform(
     text: &str,
     source_type: SourceType,
     path: &Path,
     name: &str,
+    jsx_source: &str,
 ) -> Result<(String, Enums), String> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, text, source_type).parse();
@@ -1018,13 +1099,90 @@ fn strip_types(
     let mut program = parsed.program;
     let enums = constant_enums(&program);
     let semantic = SemanticBuilder::new().with_enum_eval(true).build(&program);
-    let options = TransformOptions::from_target("es2022").expect("a known target");
+    let mut options = TransformOptions::from_target("es2022").expect("a known target");
+    options.jsx.runtime = JsxRuntime::Automatic;
+    options.jsx.import_source = Some(jsx_source.to_string());
     let transformed = Transformer::new(&allocator, path, &options)
         .build_with_scoping(semantic.semantic.into_scoping(), &mut program);
     if let Some(error) = transformed.diagnostics.iter().next() {
         return Err(describe(error, name, text));
     }
     Ok((Codegen::new().build(&program).code, enums))
+}
+
+/// The `compilerOptions.jsxImportSource` of a `tsconfig.json`, or of the one it `extends`
+/// (a path). The file may hold comments and trailing commas, as TypeScript allows.
+fn jsx_import_source(config: &Path, depth: usize) -> Option<String> {
+    let text = std::fs::read_to_string(config).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&jsonc(&text)).ok()?;
+    if let Some(source) = value["compilerOptions"]["jsxImportSource"].as_str() {
+        return Some(source.to_string());
+    }
+    let extends = value["extends"].as_str()?;
+    if depth > 8 || !(extends.starts_with('.') || Path::new(extends).is_absolute()) {
+        return None;
+    }
+    // As TypeScript: the path, else the path with `.json` after it.
+    let parent = config.parent()?.join(extends);
+    let parent = if parent.is_file() {
+        parent
+    } else {
+        let mut with_json = parent.into_os_string();
+        with_json.push(".json");
+        PathBuf::from(with_json)
+    };
+    jsx_import_source(&parent, depth + 1)
+}
+
+/// JSON with comments and trailing commas, as plain JSON.
+fn jsonc(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                '\\' => out.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('"', _) => {
+                in_string = true;
+                out.push(c);
+            }
+            ('/', Some('/')) => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        out.push(c);
+                        break;
+                    }
+                }
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut last = ' ';
+                for c in chars.by_ref() {
+                    if last == '*' && c == '/' {
+                        break;
+                    }
+                    last = c;
+                }
+            }
+            (',', _) => {
+                // A comma before `}` or `]` is dropped.
+                let rest: String = chars.clone().collect();
+                if !matches!(rest.trim_start().chars().next(), Some('}' | ']')) {
+                    out.push(c);
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// The enums declared once at the top level whose members are all constants (string or number
@@ -1123,10 +1281,15 @@ fn position(text: &str, offset: usize) -> (usize, usize) {
     (line, column)
 }
 
-/// The whole bundle parses: what lsf writes cannot be a syntax error Javy would trap on.
-fn check_syntax(code: &str) -> Result<(), String> {
+/// The whole bundle parses: what lsf writes cannot be a syntax error Javy or a browser would stop
+/// on.
+fn check_syntax(code: &str, format: Format) -> Result<(), String> {
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, code, SourceType::mjs()).parse();
+    let source_type = match format {
+        Format::Module => SourceType::mjs(),
+        Format::Script => SourceType::cjs(),
+    };
+    let parsed = Parser::new(&allocator, code, source_type).parse();
     match parsed.diagnostics.iter().next() {
         Some(error) => Err(format!(
             "lsf wrote JavaScript that does not parse ({}): please report it",

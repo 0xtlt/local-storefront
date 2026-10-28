@@ -1,7 +1,14 @@
-//! Builds a Function written in JavaScript or TypeScript into its Wasm module, as
-//! `shopify app function build` does, without Node: the GraphQL typegen ([`typegen`]), one
-//! JavaScript file for the Function and what it imports ([`bundle`]), then the module that runs
-//! it on Shopify's Javy plugin ([`javy`]).
+//! Builds what Shopify's CLI builds with Node, without it:
+//!
+//! - a Function written in JavaScript or TypeScript, into its Wasm module, as
+//!   `shopify app function build` does: the GraphQL typegen ([`typegen`]), one JavaScript file
+//!   for the Function and what it imports ([`bundle`]), then the module that runs it on
+//!   Shopify's Javy plugin ([`javy`]);
+//! - a checkout UI extension (JavaScript, TypeScript, JSX with Preact or another runtime), into
+//!   the script the page runs, as `shopify app build` bundles it ([`build_extension`]).
+//!
+//! The npm packages they import come from the app's `node_modules`, or from lsf's own copy of
+//! those Shopify's templates use ([`packages`]).
 //!
 //! It writes what the CLI writes: the types of the `codegen` section of `package.json`
 //! (`generated/api.ts`), `dist/function.js`, and the module at `[extensions.build] path`. Unlike
@@ -11,6 +18,7 @@
 
 pub mod bundle;
 pub mod javy;
+pub mod packages;
 pub mod resolve;
 pub mod typegen;
 
@@ -19,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::app::FunctionExtension;
+use crate::app::{FunctionExtension, UiExtension};
 
 /// The entry of a JavaScript Function in `dir`, as Shopify's CLI finds it: `src/index.js`, else
 /// `src/index.ts`.
@@ -58,16 +66,19 @@ pub fn build(function: &FunctionExtension, app_dir: &Path) -> Result<Built, Stri
         None => None,
     };
 
-    let names: Vec<String> = exports
-        .iter()
-        .map(|export| javy::camel_case(export))
-        .collect();
     let env = environment(app_dir);
+    let resolver = resolve::Resolver {
+        aliases: vec![("user-function".to_string(), entry)],
+        extensions: resolve::FUNCTION_EXTENSIONS,
+    };
     let javascript = bundle::bundle(&bundle::Options {
         root: dir,
-        entry: &entry,
-        exports: &names,
+        entry: &function_entry(&exports),
+        resolver: &resolver,
         env: &env,
+        jsx_in_js: false,
+        format: bundle::Format::Module,
+        minify: false,
     })?;
     let exports: Vec<&str> = exports.iter().map(String::as_str).collect();
     let module = javy::module(&javascript, &exports)?;
@@ -80,6 +91,88 @@ pub fn build(function: &FunctionExtension, app_dir: &Path) -> Result<Built, Stri
         javascript: javascript_path,
         types,
     })
+}
+
+/// Builds the checkout UI extension `extension` of the app in `app_dir`, as `shopify app build`
+/// bundles it: `dist/<handle>.js`, a minified script. Returns where it wrote it.
+///
+/// What is not built as Shopify's CLI builds it: the script is not lowered to ES2015 (the CLI's
+/// target; the page runs in a browser that needs none of it), a `.graphql` import is an error,
+/// and a target's `should_render` module is not built (the page does not run it).
+pub fn build_extension(extension: &UiExtension, app_dir: &Path) -> Result<PathBuf, String> {
+    let modules: Vec<(&str, &str)> = extension
+        .targets
+        .iter()
+        .filter_map(|target| Some((target.target.as_str(), target.module.as_deref()?)))
+        .collect();
+    if modules.is_empty() {
+        return Err("no target names its source (`module`): there is nothing to build".to_string());
+    }
+    let mut env = environment_of(app_dir);
+    // What `shopify app build` gives: a build for production.
+    env.entry("NODE_ENV".to_string())
+        .or_insert_with(|| "production".to_string());
+    let resolver = resolve::Resolver {
+        aliases: Vec::new(),
+        extensions: resolve::UI_EXTENSIONS,
+    };
+    let script = bundle::bundle(&bundle::Options {
+        root: &extension.dir,
+        entry: &extension_entry(extension.api_version.as_deref(), &modules),
+        resolver: &resolver,
+        env: &env,
+        jsx_in_js: true,
+        format: bundle::Format::Script,
+        minify: true,
+    })?;
+    write(&extension.bundle, script.as_bytes())?;
+    Ok(extension.bundle.clone())
+}
+
+/// The entry Shopify's CLI generates for a checkout UI extension: from API version 2025-10, each
+/// target's module is imported and its default export registered for the target with
+/// `shopify.extend`; before, each module is imported, and registers itself.
+pub fn extension_entry(api_version: Option<&str>, modules: &[(&str, &str)]) -> String {
+    let registers = api_version
+        .and_then(|version| {
+            let (year, month) = version.split_once('-')?;
+            Some((year.parse::<u32>().ok()?, month.parse::<u32>().ok()?))
+        })
+        .is_some_and(|(year, month)| year > 2025 || year == 2025 && month >= 10);
+    let lines: Vec<String> = modules
+        .iter()
+        .enumerate()
+        .map(|(index, (target, module))| {
+            if registers {
+                format!(
+                    "import Target_{index} from '{module}';shopify.extend('{target}', (...args) => Target_{index}(...args));"
+                )
+            } else {
+                format!("import '{module}';")
+            }
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// The entry Shopify's CLI generates for a Function and hands esbuild as `stdin`: for each export
+/// of its targets (`cart-lines-discounts-generate-run`), a function of that name in camelCase
+/// that hands the user's function of the same name to `@shopify/shopify_function/run`.
+pub fn function_entry(exports: &[String]) -> String {
+    let functions: Vec<String> = exports
+        .iter()
+        .map(|export| {
+            let name = javy::camel_case(export);
+            let run = javy::camel_case(&format!("run-{export}"));
+            format!(
+                "\nimport {{ {name} as {run} }} from \"user-function\"\nexport function {name}() {{ return __runFunction({run}) }}"
+            )
+        })
+        .collect();
+    format!(
+        "\nimport __runFunction from \"@shopify/shopify_function/run\"\n{}",
+        functions.join("\n")
+    )
 }
 
 /// What the build of the Function in `dir` writes besides `dist/`, relative to `dir`: the file of
@@ -319,10 +412,18 @@ fn matches(pattern: &str, name: &str) -> bool {
     from(&pattern, &name)
 }
 
-/// The values of `process.env` in the Function, as Shopify's CLI gives them to esbuild: the
-/// app's `.env`, then the environment (variables named as identifiers), and `NODE_ENV`
-/// `development` when neither sets it (esbuild's default).
+/// The values of `process.env` in a Function, as Shopify's CLI gives them to esbuild: those of
+/// [`environment_of`], and `NODE_ENV` `development` when neither sets it (esbuild's default).
 fn environment(app_dir: &Path) -> BTreeMap<String, String> {
+    let mut env = environment_of(app_dir);
+    env.entry("NODE_ENV".to_string())
+        .or_insert_with(|| "development".to_string());
+    env
+}
+
+/// The app's `.env`, then the environment (variables named as identifiers), as Shopify's CLI
+/// gives them to esbuild.
+fn environment_of(app_dir: &Path) -> BTreeMap<String, String> {
     let mut env = std::fs::read_to_string(app_dir.join(".env"))
         .map(|text| dotenv(&text))
         .unwrap_or_default();
@@ -334,8 +435,6 @@ fn environment(app_dir: &Path) -> BTreeMap<String, String> {
             env.insert(name, value);
         }
     }
-    env.entry("NODE_ENV".to_string())
-        .or_insert_with(|| "development".to_string());
     env
 }
 

@@ -187,6 +187,16 @@ The `mix-*` scenarios run Functions and checkout UI extensions on the same check
 
 `ui-discount-codes` runs `discount-codes` too, so that the codes the extension enters apply.
 
+## Checkout UI extensions built from their sources
+
+`ui-preact` (Shopify's template in Preact, as it comes: JSX) and `ui-preact-typescript` (TSX,
+the hooks of `@shopify/ui-extensions/checkout/preact` and a signal) name their sources
+(`module`): lsf bundles them, without Node and without `node_modules`, into their
+`dist/<handle>.js` (`lsf checkout build ui-preact --app .`, `--build`, or `--watch` when they
+change). The scenario `ui-preact` shows both. `crates/checkout/assets/tests/built-extensions.test.mjs`
+draws each bundle next to the one Shopify's CLI 5.0.0 builds from the same sources
+(`crates/checkout/tests/fixtures/shopify-cli`), acts on them, and compares.
+
 ## Checkout UI extensions
 
 The `extensions/ui-*` folders are checkout UI extensions. Each bundle, `dist/<handle>.js`, is

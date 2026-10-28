@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Builds the playground's JavaScript and TypeScript Functions with Shopify's CLI, as
-# `shopify app deploy` does (from the root of an app), and copies their modules here: the
-# modules lsf's build is compared with (crates/checkout/src/javascript/tests.rs). Needs Node, npm
-# and the network; nothing else in this repository does.
+# Builds the playground's extensions written in JavaScript and TypeScript with Shopify's CLI, as
+# `shopify app deploy` does (from the root of an app), and copies what it wrote here: the modules
+# of the Functions and the bundles of the checkout UI extensions lsf's builds are compared with
+# (crates/checkout/src/javascript/tests.rs, crates/checkout/assets/tests/built-extensions.test.mjs).
+# Needs Node, npm and the network; nothing else in this repository does.
 #
 #   crates/checkout/tests/fixtures/shopify-cli/regenerate.sh [cli version]
 set -euo pipefail
@@ -44,4 +45,16 @@ for pair in discount-typescript:discount validation-javascript:cart_checkout_val
     app function build --path "extensions/$handle")
   cp "$target/dist/function.wasm" "$here/$handle.wasm"
 done
-ls -l "$here"/*.wasm
+for handle in ui-preact ui-preact-typescript; do
+  source="$root/examples/checkout-playground/extensions/$handle"
+  target="$scratch/app/extensions/$handle"
+  mkdir -p "$target"
+  cp -R "$source/src" "$source/package.json" "$source/tsconfig.json" "$source/shopify.extension.toml" "$target/"
+  [ -d "$source/locales" ] && cp -R "$source/locales" "$target/"
+  (cd "$target" && npm install --no-audit --no-fund --loglevel=error)
+done
+(cd "$scratch/app" && SHOPIFY_CLI_NO_ANALYTICS=1 npx --yes "@shopify/cli@$version" app build --skip-dependencies-installation)
+for handle in ui-preact ui-preact-typescript; do
+  cp "$scratch/app/extensions/$handle/dist/$handle.js" "$here/$handle.js"
+done
+ls -l "$here"/*.wasm "$here"/*.js

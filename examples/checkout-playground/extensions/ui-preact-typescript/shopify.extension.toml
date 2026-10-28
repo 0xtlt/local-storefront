@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground built from its sources, in TypeScript with Preact,
+# the hooks of `@shopify/ui-extensions/checkout/preact` and a signal. lsf bundles it
+# (`lsf checkout build ui-preact-typescript`, `--build`, `--watch`), without Node, into
+# dist/ui-preact-typescript.js.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: Preact in TypeScript"
+handle = "ui-preact-typescript"
+type = "ui_extension"
+description = "Under the cart lines: how many lines and items, the total, and a button that shows or hides each line. TypeScript and Preact, built by lsf."
+
+[[extensions.targeting]]
+module = "./src/CartLines.tsx"
+target = "purchase.checkout.cart-line-list.render-after"

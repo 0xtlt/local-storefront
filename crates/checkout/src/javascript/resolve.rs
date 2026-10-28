@@ -1,61 +1,21 @@
-//! Where an `import` or a `require` of a Function's JavaScript leads, as esbuild resolves it when
-//! Shopify's CLI bundles a Function (its default `browser` platform): relative paths with the
-//! extensions it tries, `index` files, packages in `node_modules` with their `exports`, `module`
-//! or `main`. `@shopify/shopify_function/run`, the library that reads the input and writes the
-//! output, needs no `node_modules`: lsf has a copy of it.
+//! Where an `import` or a `require` of an extension's JavaScript leads, as esbuild resolves it
+//! when Shopify's CLI bundles a Function or a checkout UI extension (its default `browser`
+//! platform): aliases, relative paths with the extensions the build tries, `index` files,
+//! packages in `node_modules` with their `exports`, `module` or `main`. A package no
+//! `node_modules` of the app has comes from lsf's own copy ([`super::packages`]), when it is one
+//! of those.
 
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
-/// The extensions tried after a path that names no file, in esbuild's order.
-const EXTENSIONS: [&str; 5] = [".tsx", ".ts", ".jsx", ".js", ".json"];
+use super::packages;
 
-/// The library a Function's entry imports to read its input and write its output. lsf uses the
-/// one in `node_modules` when there is one, as esbuild does, and its own copy otherwise.
-pub const RUN: &str = "@shopify/shopify_function/run";
+/// The extensions esbuild tries after a path that names no file, for a Function (its default).
+pub const FUNCTION_EXTENSIONS: &[&str] = &[".tsx", ".ts", ".jsx", ".js", ".css", ".json"];
 
-/// `run.ts` of `@shopify/shopify_function` 2.0.1 (Apache-2.0, Shopify), which esbuild bundles
-/// into every JavaScript Function.
-pub const RUN_SOURCE: &str = r#"export type UserFunction<Input extends {}, Output extends {}> = (
-  input: Input
-) => Output;
-
-interface ShopifyFunction {
-  readInput(): any;
-  writeOutput(val: any);
-}
-
-declare global {
-  const ShopifyFunction: ShopifyFunction;
-}
-
-export default function <I extends {}, O extends {}>(
-  userfunction: UserFunction<I, O>
-) {
-  try {
-    ShopifyFunction;
-  } catch (e) {
-    throw new Error(
-      "ShopifyFunction is not defined. Please rebuild your function using the latest version of Shopify CLI."
-    );
-  }
-
-  const input_obj = ShopifyFunction.readInput();
-  const output_obj = userfunction(input_obj);
-  ShopifyFunction.writeOutput(output_obj);
-}
-"#;
-
-/// What an import leads to.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Resolved {
-    /// A file, its path as found (not canonicalized: two paths to one file are one module only
-    /// if they are written the same).
-    File(PathBuf),
-    /// lsf's copy of `@shopify/shopify_function/run`.
-    Run,
-}
+/// The extensions Shopify's CLI has esbuild try for a checkout UI extension (no `.jsx`).
+pub const UI_EXTENSIONS: &[&str] = &[".tsx", ".ts", ".js", ".json", ".esnext", ".mjs", ".ejs"];
 
 /// Whether the import is an `import` (or `export … from`) or a `require`: the condition
 /// `exports` maps of packages are read with.
@@ -65,101 +25,120 @@ pub enum Kind {
     Require,
 }
 
-/// Where `specifier`, imported from a file of `from_dir`, leads.
-pub fn resolve(specifier: &str, from_dir: &Path, kind: Kind) -> Result<Resolved, String> {
-    if specifier.starts_with("./")
-        || specifier.starts_with("../")
-        || specifier == "."
-        || specifier == ".."
-        || Path::new(specifier).is_absolute()
-    {
-        let path = normalize(&from_dir.join(specifier));
-        return file_or_directory(&path)
-            .map(Resolved::File)
-            .ok_or_else(|| format!("cannot find `{specifier}`"));
-    }
-    match package(specifier, from_dir, kind)? {
-        Some(path) => Ok(Resolved::File(path)),
-        None if specifier == RUN || specifier == "@shopify/shopify_function/run.ts" => {
-            Ok(Resolved::Run)
+/// How a build resolves imports.
+#[derive(Clone, Debug)]
+pub struct Resolver {
+    /// Specifiers that stand for a file, as esbuild's `alias`: `user-function` is the entry of a
+    /// Function.
+    pub aliases: Vec<(String, PathBuf)>,
+    /// The extensions tried after a path that names no file, in order.
+    pub extensions: &'static [&'static str],
+}
+
+impl Resolver {
+    /// The file `specifier`, imported from a file of `from_dir`, leads to. Paths are as found,
+    /// not canonicalized: two paths to one file are one module only if they are written the
+    /// same.
+    pub fn resolve(&self, specifier: &str, from_dir: &Path, kind: Kind) -> Result<PathBuf, String> {
+        if let Some((_, path)) = self.aliases.iter().find(|(alias, _)| alias == specifier) {
+            return self
+                .file_or_directory(path)
+                .ok_or_else(|| format!("cannot find `{}` (`{specifier}`)", path.display()));
         }
-        // A package of npm by the same name comes first (`events`, `buffer`), as with esbuild.
-        None if is_builtin(specifier) => Err(format!(
-            "cannot import `{specifier}`: it is a module of Node, and a Function does not run on Node"
-        )),
-        None => Err(format!(
+        if specifier.starts_with("./")
+            || specifier.starts_with("../")
+            || specifier == "."
+            || specifier == ".."
+            || Path::new(specifier).is_absolute()
+        {
+            let path = normalize(&from_dir.join(specifier));
+            return self
+                .file_or_directory(&path)
+                .ok_or_else(|| format!("cannot find `{specifier}`"));
+        }
+        let (name, subpath) = split_package(specifier)
+            .ok_or_else(|| format!("`{specifier}` is not a path nor a package name"))?;
+        for dir in from_dir.ancestors() {
+            let root = dir.join("node_modules").join(name);
+            if root.is_dir() {
+                return self.package(specifier, &root, name, subpath, kind);
+            }
+        }
+        // A package the app does not have, but lsf does.
+        let ours = packages::root()?.join(name);
+        if ours.is_dir() {
+            return self.package(specifier, &ours, name, subpath, kind);
+        }
+        if is_builtin(specifier) {
+            return Err(format!(
+                "cannot import `{specifier}`: it is a module of Node, and an extension does not run on Node"
+            ));
+        }
+        Err(format!(
             "cannot find the package of `{specifier}` in a node_modules folder: install it"
-        )),
+        ))
     }
 }
 
-/// The file `path` names, with one of [`EXTENSIONS`], or the `index` of the directory.
-fn file_or_directory(path: &Path) -> Option<PathBuf> {
-    file(path).or_else(|| directory(path))
-}
-
-fn file(path: &Path) -> Option<PathBuf> {
-    if path.is_file() {
-        return Some(path.to_path_buf());
+impl Resolver {
+    /// The file `path` names, with one of the extensions, or the `index` of the directory.
+    fn file_or_directory(&self, path: &Path) -> Option<PathBuf> {
+        self.file(path).or_else(|| self.directory(path))
     }
-    let text = path.to_str()?;
-    for extension in EXTENSIONS {
-        let candidate = PathBuf::from(format!("{text}{extension}"));
-        if candidate.is_file() {
-            return Some(candidate);
+
+    fn file(&self, path: &Path) -> Option<PathBuf> {
+        if path.is_file() {
+            return Some(path.to_path_buf());
         }
-    }
-    // TypeScript imports `./a.js` for `./a.ts`: esbuild tries the TypeScript file.
-    let rewrites: [(&str, &[&str]); 4] = [
-        (".js", &[".ts", ".tsx"]),
-        (".jsx", &[".ts", ".tsx"]),
-        (".mjs", &[".mts"]),
-        (".cjs", &[".cts"]),
-    ];
-    for (javascript, typescript) in rewrites {
-        if let Some(stem) = text.strip_suffix(javascript) {
-            for extension in typescript {
-                let candidate = PathBuf::from(format!("{stem}{extension}"));
-                if candidate.is_file() {
-                    return Some(candidate);
+        let text = path.to_str()?;
+        for extension in self.extensions {
+            let candidate = PathBuf::from(format!("{text}{extension}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        // TypeScript imports `./a.js` for `./a.ts`: esbuild tries the TypeScript file.
+        let rewrites: [(&str, &[&str]); 4] = [
+            (".js", &[".ts", ".tsx"]),
+            (".jsx", &[".ts", ".tsx"]),
+            (".mjs", &[".mts"]),
+            (".cjs", &[".cts"]),
+        ];
+        for (javascript, typescript) in rewrites {
+            if let Some(stem) = text.strip_suffix(javascript) {
+                for extension in typescript {
+                    let candidate = PathBuf::from(format!("{stem}{extension}"));
+                    if candidate.is_file() {
+                        return Some(candidate);
+                    }
                 }
             }
         }
+        None
     }
-    None
-}
 
-fn directory(path: &Path) -> Option<PathBuf> {
-    if !path.is_dir() {
-        return None;
-    }
-    if let Some(manifest) = read_manifest(&path.join("package.json"))
-        && let Some(main) = main_field(&manifest)
-        && let Some(found) = file_or_directory(&normalize(&path.join(main)))
-    {
-        return Some(found);
-    }
-    file(&path.join("index"))
-}
-
-/// The entry a package's `browser` (when a path), `module` or `main` names, in esbuild's order
-/// for the browser.
-fn main_field(manifest: &Value) -> Option<&str> {
-    ["browser", "module", "main"]
-        .into_iter()
-        .find_map(|field| manifest.get(field).and_then(Value::as_str))
-}
-
-/// The file of a bare specifier (`lodash/fp`, `@scope/name/sub`) in the closest `node_modules`
-/// that has the package. `None` when no `node_modules` has it.
-fn package(specifier: &str, from_dir: &Path, kind: Kind) -> Result<Option<PathBuf>, String> {
-    let (name, subpath) = split_package(specifier)
-        .ok_or_else(|| format!("`{specifier}` is not a path nor a package name"))?;
-    for dir in from_dir.ancestors() {
-        let root = dir.join("node_modules").join(name);
-        if !root.is_dir() {
-            continue;
+    fn directory(&self, path: &Path) -> Option<PathBuf> {
+        if !path.is_dir() {
+            return None;
         }
+        if let Some(manifest) = read_manifest(&path.join("package.json"))
+            && let Some(main) = main_field(&manifest)
+            && let Some(found) = self.file_or_directory(&normalize(&path.join(main)))
+        {
+            return Some(found);
+        }
+        self.file(&path.join("index"))
+    }
+
+    /// The file of `subpath` in the package at `root`: through its `exports` when it has them.
+    fn package(
+        &self,
+        specifier: &str,
+        root: &Path,
+        name: &str,
+        subpath: &str,
+        kind: Kind,
+    ) -> Result<PathBuf, String> {
         let manifest = read_manifest(&root.join("package.json"));
         if let Some(exports) = manifest
             .as_ref()
@@ -174,7 +153,7 @@ fn package(specifier: &str, from_dir: &Path, kind: Kind) -> Result<Option<PathBu
                 format!("the package `{name}` does not export `{wanted}` (its `exports`)")
             })?;
             let path = normalize(&root.join(target));
-            return file(&path).map(Some).ok_or_else(|| {
+            return self.file(&path).ok_or_else(|| {
                 format!(
                     "`{specifier}` leads to {}, which is missing",
                     path.display()
@@ -182,15 +161,20 @@ fn package(specifier: &str, from_dir: &Path, kind: Kind) -> Result<Option<PathBu
             });
         }
         let found = if subpath.is_empty() {
-            directory(&root)
+            self.directory(root)
         } else {
-            file_or_directory(&normalize(&root.join(subpath)))
+            self.file_or_directory(&normalize(&root.join(subpath)))
         };
-        return found
-            .map(Some)
-            .ok_or_else(|| format!("cannot find `{specifier}` in {}", root.display()));
+        found.ok_or_else(|| format!("cannot find `{specifier}` in {}", root.display()))
     }
-    Ok(None)
+}
+
+/// The entry a package's `browser` (when a path), `module` or `main` names, in esbuild's order
+/// for the browser.
+fn main_field(manifest: &Value) -> Option<&str> {
+    ["browser", "module", "main"]
+        .into_iter()
+        .find_map(|field| manifest.get(field).and_then(Value::as_str))
 }
 
 /// `name` and the rest: `@scope/name/sub` is `@scope/name` and `sub`.

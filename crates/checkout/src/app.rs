@@ -226,6 +226,24 @@ impl UiExtension {
     pub fn built(&self) -> bool {
         self.bundle.is_file()
     }
+
+    /// Whether lsf can build the extension, as `shopify app build` bundles it: a target names
+    /// its source (`module`), and the source is there. One that has only its bundle (`dist/`)
+    /// is used as it is.
+    pub fn buildable(&self) -> bool {
+        self.targets.iter().any(|target| {
+            target
+                .module
+                .as_ref()
+                .is_some_and(|module| self.dir.join(module).is_file())
+        })
+    }
+
+    /// The command that builds the extension, as the pages and messages say it.
+    pub fn build_hint(&self) -> Option<String> {
+        self.buildable()
+            .then(|| format!("lsf checkout build {}", self.handle))
+    }
 }
 
 /// A metafield a checkout UI extension declares: `[[extensions.metafields]]`.
@@ -846,12 +864,20 @@ fn load_ui_extension(
 
     let bundle = dir.join("dist").join(format!("{handle}.js"));
     if !bundle.is_file() {
+        let has_source = targets.iter().any(|target| {
+            target
+                .module
+                .as_ref()
+                .is_some_and(|module| dir.join(module).is_file())
+        });
+        let build = if has_source {
+            format!("build it with `lsf checkout build {handle}` (or `shopify app build`)")
+        } else {
+            "run `shopify app build`".to_string()
+        };
         app.warn(
             Some(handle),
-            format!(
-                "not built (missing {}): run `shopify app build`",
-                bundle.display()
-            ),
+            format!("not built (missing {}): {build}", bundle.display()),
         );
     }
 

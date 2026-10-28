@@ -33,13 +33,29 @@ the extensions of the app, see [scenarios](#scenarios).
 
 The app is a directory with `shopify.app.toml` and `extensions/*/shopify.extension.toml`. API
 versions 2026-10 and 2027-01 are supported. Functions run from their built Wasm module and
-extensions from their built bundle, which `shopify app build` writes (`dist/function.wasm`,
-`dist/<handle>.js`). Build first, or let `--build` build each Function (its
-`[extensions.build] command`, or lsf's own build of a [JavaScript Function](#javascript-and-typescript-functions)):
+extensions from their built bundle (`dist/function.wasm`, `dist/<handle>.js`). lsf builds them
+as `shopify app build` does, without Node and without Shopify's CLI
+([what it builds](#what-lsf-builds-without-node)): `lsf checkout build`, or `--build` before it
+serves:
 
 ```bash
+npx local-storefront checkout build --app ../my-app      # every extension
 npx local-storefront checkout --app ../my-app --build
 ```
+
+### What lsf builds without Node
+
+| Extension | Built by lsf when | Output |
+|---|---|---|
+| A Function with a build command (Rust, …) | always: the command runs in its folder | its module |
+| A Function in JavaScript or TypeScript (`src/index.js`, `src/index.ts`), no build command | always ([below](#javascript-and-typescript-functions)) | `dist/function.wasm` |
+| A checkout UI extension whose targets name their sources (`module`), and the sources are there | always ([below](#checkout-ui-extensions)) | `dist/<handle>.js` |
+| A checkout UI extension with only its bundle | never: the bundle is used as it is | |
+
+The npm packages they import come from the app's `node_modules`, when it has them. Without, lsf
+has its own copy of those Shopify's templates use: `@shopify/shopify_function` 2.0.1, `preact`
+10.29.8, `@preact/signals` 2.11.4 and `@shopify/ui-extensions` 2026.10.0 (MIT, but
+`@shopify/shopify_function`: Apache-2.0). Any other package needs a `node_modules`.
 
 ### JavaScript and TypeScript Functions
 
@@ -69,6 +85,33 @@ npx local-storefront function build discount --app ../my-app
 The module costs the instructions the CLI's would, within a few hundred. What lsf does not
 build: `import()`, a `require` of an ES module, and Functions written with
 `@shopify/shopify_function` 1.x (`shopify app build` builds those).
+
+### Checkout UI extensions
+
+A checkout UI extension whose targets name their sources (`module = "./src/Checkout.jsx"`), in
+JavaScript, TypeScript or JSX, with Preact as Shopify's templates or another runtime, is bundled
+by lsf the way `shopify app build` bundles it, without Node:
+
+```bash
+npx local-storefront checkout build banner --app ../my-app
+```
+
+`--build` builds it too, and `--watch` builds it again when its files change, in a moment, then
+reloads the open pages; at start, it builds those whose bundle is missing or older than their
+files. As Shopify's CLI does:
+
+- **The entry**: from API version 2025-10, each target's module is imported and its default
+  export registered with `shopify.extend('<target>', …)`; before, each module is imported.
+- **JSX** calls the automatic runtime of the `jsxImportSource` of the closest `tsconfig.json`
+  (`preact` in Shopify's templates; `react` without one), in `.jsx`, `.tsx` and `.js` files.
+- **The bundle** is one minified script (`dist/<handle>.js`): the modules it imports, what nothing
+  uses left out, `process.env.NODE_ENV` `production` and the other values of `process.env` from
+  the environment or the app's `.env`.
+
+The bundle does what the CLI's does: the playground's tests draw both at their target and act on
+them, and compare. It is not the same text (each is minified by its own tool), it is not lowered
+to ES2015 (the page runs in a browser that needs none of it), and a target's `should_render`
+module is not built (the page does not run it). A `.graphql` import is an error.
 
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
