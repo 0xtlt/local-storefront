@@ -484,39 +484,41 @@ impl<'a> Pipeline<'a> {
                 None => message,
             });
         }
-        let failed = execution.error.is_some() || execution.output.is_none();
         // What is applied has the lists the schema asks for; the run keeps what the Function
-        // answered.
-        let mut applied = execution.output.clone();
-        if !failed && let Some(output) = &mut applied {
-            version
-                .schema(spec.api)
-                .normalize_output(spec.result, output);
-        }
-        let run = FunctionRun {
+        // answered. A failed run applies nothing: only a run that succeeds copies its output.
+        let applied = match (&execution.error, &execution.output) {
+            (None, Some(output)) => {
+                let mut applied = output.clone();
+                version
+                    .schema(spec.api)
+                    .normalize_output(spec.result, &mut applied);
+                Some(applied)
+            }
+            _ => {
+                self.errors.push(CheckoutError {
+                    message: format!(
+                        "Function `{}` failed: {}",
+                        function.handle,
+                        execution.error.as_deref().unwrap_or("no output")
+                    ),
+                    target: None,
+                    function: Some(function.handle.clone()),
+                });
+                None
+            }
+        };
+        self.runs.push(FunctionRun {
             handle: function.handle.clone(),
             target: target.target.clone(),
             export: target.export.clone(),
             input,
-            output: execution.output.clone(),
+            output: execution.output,
             logs: execution.logs,
-            error: execution.error.clone(),
+            error: execution.error,
             instructions: execution.instructions,
             exchange: None,
-        };
-        if failed {
-            self.errors.push(CheckoutError {
-                message: format!(
-                    "Function `{}` failed: {}",
-                    function.handle,
-                    execution.error.as_deref().unwrap_or("no output")
-                ),
-                target: None,
-                function: Some(function.handle.clone()),
-            });
-        }
-        self.runs.push(run);
-        if failed { None } else { applied }
+        });
+        applied
     }
 
     fn record_failure(
