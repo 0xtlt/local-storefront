@@ -1,0 +1,11 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Gift Box",
+  "description": "<p>A recycled kraft box with tissue paper and a card. The checkout playground asks for a gift note when it is in the cart (`validation-gift-note`), and makes it free with three other items (`cart-transform-legacy`).</p>",
+  "type": "Accessories",
+  "tags": ["gift-box"],
+  "price": "8.00",
+  "variants": [
+    { "sku": "GIFT-BOX", "inventory_quantity": 100, "weight": 150 }
+  ]
+}

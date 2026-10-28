@@ -27,7 +27,8 @@
     "enabled_payment_types": ["visa", "master", "american_express", "paypal", "apple_pay", "google_pay", "shopify_pay"],
     "metafields": {
       "custom": {
-        "announcement": "Free shipping on orders over $75"
+        "announcement": "Free shipping on orders over $75",
+        "weekend_sale_settings": { "type": "json", "value": { "percentage": 10, "label": "Weekend sale" } }
       }
     }
   },
@@ -91,12 +92,289 @@
     "countries": [
       { "iso_code": "US", "popular": true },
       { "iso_code": "CA", "popular": true },
-      { "iso_code": "FR" }
+      { "iso_code": "FR" },
+      { "iso_code": "DE" }
     ],
     "languages": [
       { "iso_code": "en" },
       { "iso_code": "fr" }
+    ],
+    "markets": [
+      { "handle": "europe", "countries": ["FR", "DE"] }
     ]
+  },
+  "checkout": {
+    "shipping_rates": [
+      { "handle": "standard", "title": "Standard", "price": "4.90", "description": "3 to 5 business days" },
+      { "handle": "express", "title": "Express", "price": "12.90", "description": "1 to 2 business days" },
+      { "handle": "local", "title": "Local delivery", "price": "7.00", "kind": "local" },
+      { "handle": "pickup", "title": "Pick up in store", "price": "0.00", "kind": "pick_up" }
+    ],
+    "payment_methods": [
+      { "handle": "card", "name": "Credit card" },
+      { "handle": "paypal", "name": "PayPal" },
+      { "handle": "cod", "name": "Cash on Delivery" },
+      { "handle": "bank", "name": "Bank Deposit" },
+      { "handle": "invoice", "name": "Invoice (Net 30)" },
+      { "handle": "shop_pay", "name": "Shop Pay", "placements": ["ACCELERATED_CHECKOUT"] },
+      { "handle": "apple_pay", "name": "Apple Pay", "placements": ["ACCELERATED_CHECKOUT"] }
+    ],
+    "discounts": [
+      {
+        "function": "discount-tag-percentage",
+        "title": "15% off sale items and home goods",
+        "classes": ["PRODUCT"],
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": { "percentage": 15, "tags": ["sale"], "collections": ["gid://shopify/Collection/6759449335775"] }
+          }
+        }
+      },
+      {
+        "function": "discount-order-fixed",
+        "title": "$10 off orders over $100",
+        "classes": ["ORDER"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "amount": "10.00", "minimumSubtotal": 100 } }
+        }
+      },
+      {
+        "function": "discount-buy-two-get-one",
+        "title": "Socks: buy 2, get 1 free",
+        "classes": ["PRODUCT"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "tags": ["socks"], "buy": 2, "free": 1 } }
+        }
+      },
+      {
+        "function": "discount-free-shipping",
+        "title": "Free shipping over $75",
+        "classes": ["SHIPPING"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "threshold": 75 } } }
+      },
+      {
+        "function": "discount-vip-customer",
+        "title": "VIP: 20% off",
+        "classes": ["ORDER"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "tags": ["vip"], "percentage": 20 } } }
+      },
+      {
+        "function": "discount-b2b-location",
+        "title": "Northwind contract price",
+        "classes": ["PRODUCT"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "locations": { "NW-SEA": 12, "NW-PDX": 8 } } }
+        }
+      },
+      {
+        "function": "discount-by-market",
+        "title": "Market launch",
+        "classes": ["ORDER"],
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": { "markets": { "europe": 10 }, "countries": { "DE": 15 } }
+          }
+        }
+      },
+      {
+        "function": "discount-codes",
+        "title": "10% off with SAVE10",
+        "code": "SAVE10",
+        "classes": ["ORDER"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+      },
+      {
+        "function": "discount-codes",
+        "title": "$5 off with WELCOME5",
+        "code": "WELCOME5",
+        "classes": ["ORDER"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "amount": "5.00" } } }
+      },
+      {
+        "function": "discount-codes",
+        "title": "20% off orders over $200 with BIG20",
+        "code": "BIG20",
+        "classes": ["ORDER"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "percentage": 20, "minimumSubtotal": 200 } }
+        }
+      },
+      { "function": "discount-from-metafields", "title": "Weekend sale", "classes": ["PRODUCT"] },
+      {
+        "function": "discount-lines-and-shipping",
+        "title": "Big cart: 5% off and half-price shipping",
+        "classes": ["PRODUCT", "SHIPPING"],
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": { "minimumItems": 10, "percentage": 5, "shippingPercentage": 50 }
+          }
+        }
+      },
+      {
+        "function": "discount-legacy-product",
+        "title": "Wool week: 10% off (legacy API)",
+        "classes": ["PRODUCT"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "tags": ["wool"], "percentage": 10 } } }
+      },
+      {
+        "function": "discount-legacy-order",
+        "title": "$5 off orders over $150 (legacy API)",
+        "classes": ["ORDER"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "amount": "5.00", "minimumSubtotal": 150 } }
+        }
+      },
+      {
+        "function": "discount-legacy-shipping",
+        "title": "Express: $2 off (legacy API)",
+        "classes": ["SHIPPING"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "option": "express", "amount": "2.00" } }
+        }
+      },
+      {
+        "function": "discount-shipping-amount",
+        "title": "$1 off shipping",
+        "code": "SHIP1",
+        "classes": ["SHIPPING"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "amount": "1.00" } } }
+      },
+      {
+        "function": "discount-shipping-amount",
+        "title": "$3 off shipping",
+        "code": "SHIP3",
+        "classes": ["SHIPPING"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "amount": "3.00" } } }
+      },
+      {
+        "function": "discount-network",
+        "title": "Partner price",
+        "classes": ["ORDER"],
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "url": "http://localhost:8787/discount" } }
+        }
+      }
+    ],
+    "functions": {
+      "delivery-hide-express": {
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": { "option": "express", "countries": ["FR", "DE"], "poBox": true }
+          }
+        }
+      },
+      "delivery-rename-by-language": {
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": {
+              "fr": {
+                "standard": "Standard (3 à 5 jours ouvrés)",
+                "express": "Express (1 à 2 jours ouvrés)",
+                "local": "Livraison locale",
+                "pickup": "Retrait en boutique"
+              }
+            }
+          }
+        }
+      },
+      "delivery-reorder": {
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "first": "pickup", "countries": ["CA"] } }
+        }
+      },
+      "payment-hide-cod": {
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "method": "Cash on Delivery", "from": 100 } }
+        }
+      },
+      "payment-hide-for-b2b": {
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": { "hideForB2b": ["PayPal", "Cash on Delivery"], "onlyForB2b": ["Invoice (Net 30)"] }
+          }
+        }
+      },
+      "payment-rename": {
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": {
+              "Bank Deposit": "Bank transfer (2 to 3 business days)",
+              "Cash on Delivery": "Cash on delivery (pay the courier)"
+            }
+          }
+        }
+      },
+      "payment-reorder": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "first": ["PayPal", "Credit card"] } } }
+      },
+      "payment-legacy": { "metafields": { "$app:config.settings": { "type": "json", "value": { "dueInDays": 30 } } } },
+      "validation-minimum-order": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "minimum": 20 } } }
+      },
+      "validation-max-quantity": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "tags": ["limited"], "maximum": 2 } } }
+      },
+      "validation-blocked-country": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "countries": ["DE"] } } }
+      },
+      "validation-gift-note": {
+        "metafields": {
+          "$app:config.settings": { "type": "json", "value": { "tags": ["gift-box"], "attribute": "gift_note" } }
+        }
+      },
+      "validation-legacy": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "blockedDomain": "blocked.example" } } }
+      },
+      "validation-network": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "url": "http://localhost:8787/stock" } } }
+      },
+      "cart-transform-merge": {
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": {
+              "variants": ["gid://shopify/ProductVariant/3784131125857", "gid://shopify/ProductVariant/5803446973649"],
+              "parentVariant": "gid://shopify/ProductVariant/2770579135767",
+              "title": "Cold-Weather Set",
+              "percentageDecrease": 10
+            }
+          }
+        }
+      },
+      "cart-transform-update": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "tags": ["vip"] } } }
+      },
+      "cart-transform-properties": {
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": {
+              "engravingPrice": "6.00",
+              "giftWrapPrice": "3.00",
+              "sets": { "cold": "gid://shopify/ProductVariant/2770579135767" }
+            }
+          }
+        }
+      },
+      "cart-transform-legacy": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "freeWith": 3 } } }
+      },
+      "broken-fetch-timeout": {
+        "metafields": {
+          "$app:config.settings": {
+            "type": "json",
+            "value": { "url": "http://localhost:8787/stock", "readTimeoutMs": 5000 }
+          }
+        }
+      }
+    }
   },
   "session": {
     "cart": { "items": [] }

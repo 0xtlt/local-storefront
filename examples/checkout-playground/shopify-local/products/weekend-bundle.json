@@ -1,0 +1,22 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Weekend Bundle",
+  "description": "<p>A white tee and a canvas tote, sold as one product. The cart transform `cart-transform-expand` of the checkout playground expands it into its components, listed in the metafield `custom.bundle_components`.</p>",
+  "type": "Apparel",
+  "tags": ["bundle"],
+  "price": "50.00",
+  "variants": [
+    { "sku": "BNDL-WKND", "inventory_quantity": 25 }
+  ],
+  "metafields": {
+    "custom": {
+      "bundle_components": {
+        "type": "json",
+        "value": [
+          { "variant": "gid://shopify/ProductVariant/8182177638701", "quantity": 1 },
+          { "variant": "gid://shopify/ProductVariant/4381608573867", "quantity": 1 }
+        ]
+      }
+    }
+  }
+}

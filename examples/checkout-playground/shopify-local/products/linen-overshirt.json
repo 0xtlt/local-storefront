@@ -15,5 +15,8 @@
     { "options": ["S"], "sku": "OVS-S", "inventory_quantity": 4 },
     { "options": ["M"], "sku": "OVS-M", "inventory_quantity": 7 },
     { "options": ["L"], "sku": "OVS-L", "inventory_quantity": 1 }
-  ]
+  ],
+  "metafields": {
+    "custom": { "member_price": "58.00", "weekend_sale": true }
+  }
 }

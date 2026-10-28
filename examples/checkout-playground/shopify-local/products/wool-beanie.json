@@ -12,5 +12,8 @@
   "variants": [
     { "options": ["Navy"], "price": 3400, "sku": "BNE-NVY", "inventory_quantity": 9, "image": "products/beanie-navy.jpg" },
     { "options": ["Ochre"], "price": 3600, "sku": "BNE-OCH", "inventory_quantity": 4, "image": "products/beanie-ochre.jpg" }
-  ]
+  ],
+  "metafields": {
+    "custom": { "weekend_sale": true }
+  }
 }
