@@ -32,10 +32,11 @@ The customers are the demo store's: `jane.doe@example.com` (tag `vip`), `alex.mo
 
 ## Functions
 
-51 Functions (`extensions/<handle>`): 50 Rust crates, written with the `shopify_function` crate,
-and `discount-typescript`, written in TypeScript the way `shopify app generate extension --flavor
-typescript` makes it. The comment at the top of each `src/lib.rs` (`src/*.ts`) says what it does
-and what it shows. They are
+52 Functions (`extensions/<handle>`): 50 Rust crates, written with the `shopify_function` crate,
+`discount-typescript`, written in TypeScript the way `shopify app generate extension --flavor
+typescript` makes it, and `validation-javascript`, in plain JavaScript (`--flavor vanilla-js`).
+The comment at the top of each `src/lib.rs` (`src/*.ts`, `src/*.js`) says what it does and what
+it shows. They are
 configured the way Shopify's are, by the JSON metafield `$app:config.settings` of the discount or
 the customization that owns them: the `checkout` section of `shopify-local/store.json` holds all of
 them.
@@ -69,6 +70,7 @@ them.
 | `payment-legacy` | payment customization | 2026-10 | legacy target: payment terms for B2B | `fn-payment-legacy` |
 | `validation-minimum-order` | validation | 2026-10 | minimum order amount | `fn-validation-minimum-order` |
 | `validation-max-quantity` | validation | 2027-01 | max units of a tagged product, error on the line | `fn-validation-max-quantity` |
+| `validation-javascript` | validation | 2026-10 | max items per order, in plain JavaScript | `fn-validation-javascript` |
 | `validation-blocked-country` | validation | 2026-10 | blocked shipping country | `fn-validation-blocked-country` |
 | `validation-gift-note` | validation | 2027-01 | a cart attribute required by a product | `fn-validation-gift-note` |
 | `validation-street-number` | validation | 2026-10 | an error at `CHECKOUT_COMPLETION` only | `fn-validation-street-number` |
@@ -143,9 +145,11 @@ tools/checkout/build_functions.sh examples/checkout-playground discount-codes  #
 It copies the schema of each Function (its `api_version` and Function API, from
 `crates/checkout/schemas`, not committed here), builds the Cargo workspace of this folder for
 `wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify
-app build` does. `discount-typescript`, which has no build command as Shopify's templates, is
-built by lsf (`lsf function build`), without Node: its types (`generated/api.ts`, not committed),
-`dist/function.js`, then its module. `lsf checkout --app . --build` runs the same command for each Function.
+app build` does. `discount-typescript` and `validation-javascript`, which have no build command
+as Shopify's templates, are built by lsf (`lsf function build`), without Node: their types
+(`generated/api.ts`, not committed), `dist/function.js`, then their module. Their modules do what
+those Shopify's CLI builds do, in as many instructions: `crates/checkout/src/javascript/tests.rs`
+compares them with the CLI's (`crates/checkout/tests/fixtures/shopify-cli`). `lsf checkout --app . --build` runs the same command for each Function.
 `broken-missing-build` has no build command and stays unbuilt.
 
 To change a Function and see it at once, `mise run playground:dev` (`lsf checkout --app .

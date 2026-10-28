@@ -329,6 +329,9 @@
       "validation-max-quantity": {
         "metafields": { "$app:config.settings": { "type": "json", "value": { "tags": ["limited"], "maximum": 2 } } }
       },
+      "validation-javascript": {
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "maximumUnits": 30 } } }
+      },
       "validation-blocked-country": {
         "metafields": { "$app:config.settings": { "type": "json", "value": { "countries": ["DE"] } } }
       },

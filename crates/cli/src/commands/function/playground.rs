@@ -685,6 +685,32 @@ fn check(name: &str, result: &CheckoutResult) {
                 ["The minimum order is 20.00 USD: add 4.00 more"]
             );
         }
+        "fn-validation-javascript" => {
+            only("validation-javascript");
+            assert_eq!(
+                errors(result),
+                ["At most 30 items per order (40 in the cart)"]
+            );
+            assert_eq!(result.errors[0].target.as_deref(), Some("$.cart"));
+            // Plain JavaScript, built by lsf: the module runs on Shopify's Javy plugin.
+            let module = std::fs::read(
+                playground().join("extensions/validation-javascript/dist/function.wasm"),
+            )
+            .unwrap();
+            let plugin = b"shopify_functions_javy_v";
+            assert!(module.windows(plugin.len()).any(|bytes| bytes == plugin));
+            let run = the_run(
+                result,
+                "validation-javascript",
+                "cart.validations.generate.run",
+            );
+            assert!(
+                run.logs
+                    .contains("40 items: Ceramic Mug, Organic Cotton T-Shirt"),
+                "{}",
+                run.logs
+            );
+        }
         "fn-validation-max-quantity" => {
             assert_eq!(
                 errors(result),

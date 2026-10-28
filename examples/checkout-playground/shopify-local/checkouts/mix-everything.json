@@ -84,6 +84,7 @@
     "validation-blocked-country",
     "validation-gift-note",
     "validation-max-quantity",
+    "validation-javascript",
     "validation-minimum-order",
     "validation-network",
     "validation-street-number",
