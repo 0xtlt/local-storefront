@@ -6531,7 +6531,7 @@ fn the_home_page_says_what_is_wrong_with_the_extensions() {
     std::fs::remove_dir_all(&app).ok();
     assert!(html.contains("no place on the page"), "{html}");
     assert!(
-        html.contains("has no place for purchase.checkout.chat.render"),
+        html.contains("has no place for <code>purchase.checkout.chat.render</code>"),
         "{html}"
     );
     assert!(html.contains("network access"));

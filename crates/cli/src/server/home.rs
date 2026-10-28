@@ -27,18 +27,6 @@ use crate::watch::Failure;
 /// Where the files of the checkout page are served from.
 pub const ASSETS: &str = "/__lsf/checkout/assets";
 
-/// The resources a metafield declaration of a checkout UI extension can name (`owner_type`), as
-/// `api-versions.js` has them.
-const OWNER_TYPES: [&str; 7] = [
-    "CART",
-    "COMPANY",
-    "COMPANY_LOCATION",
-    "CUSTOMER",
-    "PRODUCT",
-    "PRODUCTVARIANT",
-    "SHOP",
-];
-
 /// The Function targets of Shopify that the local checkout knows of and does not run (delivery
 /// generators, fulfillment constraints, order routing). Any other target it does not run is one
 /// it does not know: a typo, or a target of no Function API.
@@ -211,10 +199,10 @@ fn function_problems(app: &App, function: &FunctionExtension) -> Vec<(Level, Str
         .collect()
 }
 
-/// The problems of a checkout UI extension: what the loader says (an extension that is not
-/// built is an error), an `owner_type` the page refuses, the targets the page has no place for.
+/// The problems of a checkout UI extension: what the loader says (among them an `owner_type`
+/// the page refuses, the targets the page has no place for); one that is not built is an error.
 fn ui_problems(app: &App, extension: &UiExtension) -> Vec<(Level, String)> {
-    let mut problems: Vec<(Level, String)> = diagnostics_of(app, &extension.handle)
+    diagnostics_of(app, &extension.handle)
         .map(|diagnostic| {
             if !extension.built() && diagnostic.message.starts_with("not built") {
                 problem(Level::Error, &diagnostic.message)
@@ -222,44 +210,7 @@ fn ui_problems(app: &App, extension: &UiExtension) -> Vec<(Level, String)> {
                 problem(Level::of(diagnostic.severity), &diagnostic.message)
             }
         })
-        .collect();
-    let refused: Vec<String> = extension
-        .metafields
-        .iter()
-        .filter(|declared| {
-            declared
-                .owner_type
-                .as_deref()
-                .is_some_and(|owner| !OWNER_TYPES.contains(&owner))
-        })
-        .map(|declared| format!("{}.{}", declared.namespace, declared.key))
-        .collect();
-    if !refused.is_empty() {
-        problems.push(problem(
-            Level::Error,
-            format!(
-                "owner_type of {} must be one of {}: the checkout does not load the extension",
-                refused.join(", "),
-                OWNER_TYPES.join(", ")
-            ),
-        ));
-    }
-    let unplaced: Vec<&str> = extension
-        .targets
-        .iter()
-        .filter(|target| placement(&target.target).is_none())
-        .map(|target| target.target.as_str())
-        .collect();
-    if !unplaced.is_empty() {
-        problems.push(problem(
-            Level::Warning,
-            format!(
-                "The local checkout has no place for {}: the extension is not rendered there.",
-                unplaced.join(", ")
-            ),
-        ));
-    }
-    problems
+        .collect()
 }
 
 fn problems_json(problems: &[(Level, String)]) -> Vec<Json> {
@@ -2460,7 +2411,7 @@ mod tests {
             .and_then(|rest| rest.split("];").next())
             .expect("the list of owner types");
         let names: Vec<&str> = list.split('\'').skip(1).step_by(2).collect();
-        assert_eq!(names, OWNER_TYPES);
+        assert_eq!(names, lsf_checkout::app::OWNER_TYPES);
     }
 
     #[test]

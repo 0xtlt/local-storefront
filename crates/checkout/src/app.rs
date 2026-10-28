@@ -793,6 +793,24 @@ fn load_ui_extension(
             );
         }
     }
+    // A checkout target the page has no place for: a typo, or one the local checkout lacks.
+    let unplaced: Vec<String> = targets
+        .iter()
+        .filter(|target| {
+            renders_in_checkout(&target.target)
+                && crate::placement::placement(&target.target).is_none()
+        })
+        .map(|target| format!("`{}`", target.target))
+        .collect();
+    if !unplaced.is_empty() {
+        app.warn(
+            Some(handle),
+            format!(
+                "the local checkout has no place for {}: the extension is not rendered there",
+                unplaced.join(", ")
+            ),
+        );
+    }
 
     let bundle = dir.join("dist").join(format!("{handle}.js"));
     if !bundle.is_file() {
@@ -819,9 +837,22 @@ fn load_ui_extension(
     }
 }
 
+/// The resources a metafield declaration of a checkout UI extension can name (`owner_type`), as
+/// `api-versions.js` has them.
+pub const OWNER_TYPES: [&str; 7] = [
+    "CART",
+    "COMPANY",
+    "COMPANY_LOCATION",
+    "CUSTOMER",
+    "PRODUCT",
+    "PRODUCTVARIANT",
+    "SHOP",
+];
+
 /// `[[extensions.metafields]]`. An entry without `namespace` or `key` is an error and left out;
-/// one without `owner_type` is an error when the API version requires it (the declaration is
-/// kept: the page says why the extension is refused).
+/// one without `owner_type` is an error when the API version requires it, and one whose
+/// `owner_type` is not a resource of [`OWNER_TYPES`] always is (the declaration is kept: the page
+/// says why the extension is refused).
 fn load_metafield_declarations(
     app: &mut App,
     handle: &str,
@@ -854,6 +885,18 @@ fn load_metafield_declarations(
                 format!(
                     "API version {version} requires `owner_type` on every metafield declaration: \
                      `{namespace}.{key}` has none"
+                ),
+            );
+        }
+        if let Some(owner) = owner_type.as_deref()
+            && !OWNER_TYPES.contains(&owner)
+        {
+            app.error(
+                Some(handle),
+                format!(
+                    "`owner_type` of `{namespace}.{key}` is `{owner}`, which is not one of {}: \
+                     the checkout does not load the extension",
+                    OWNER_TYPES.join(", ")
                 ),
             );
         }
@@ -1227,6 +1270,60 @@ handle = "banner"
                     .to_string()
             ),
             "{errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_unknown_owner_type_and_a_target_without_a_place_are_diagnostics() {
+        let root = temp_app("ui-unknown");
+        write(
+            &root,
+            "extensions/odd/shopify.extension.toml",
+            r#"
+api_version = "2027-01"
+
+[[extensions]]
+type = "ui_extension"
+handle = "odd"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.nowhere.render"
+
+  [[extensions.metafields]]
+  namespace = "$app:odd"
+  key = "kept"
+  owner_type = "ORDER"
+"#,
+        );
+        let app = load(&root).unwrap();
+        let said: Vec<String> = app
+            .diagnostics
+            .iter()
+            .filter(|d| d.extension.as_deref() == Some("odd"))
+            .map(|d| format!("{:?}: {}", d.severity, d.message))
+            .collect();
+        assert!(
+            said.contains(
+                &"Error: `owner_type` of `$app:odd.kept` is `ORDER`, which is not one of CART, COMPANY, COMPANY_LOCATION, CUSTOMER, PRODUCT, PRODUCTVARIANT, SHOP: the checkout does not load the extension"
+                    .to_string()
+            ),
+            "{said:?}"
+        );
+        assert!(
+            said.contains(
+                &"Warning: the local checkout has no place for `purchase.checkout.nowhere.render`: the extension is not rendered there"
+                    .to_string()
+            ),
+            "{said:?}"
+        );
+        // A target the page places, and a known owner type, say nothing.
+        assert!(
+            !said.iter().any(|line| line.contains("block.render")),
+            "{said:?}"
         );
         let _ = std::fs::remove_dir_all(root);
     }
