@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::Hasher;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::JoinHandle;
@@ -40,6 +40,7 @@ use lsf_checkout::app::{self, App, Selection};
 use serde_json::{Value as Json, json};
 
 use crate::checkout::encoded_handle;
+use crate::shopify_cli::ShopifyCli;
 
 use lock::{Lock, Locks};
 
@@ -395,6 +396,8 @@ enum Event {
     /// A build is over: the Function, how it ended, a hash of what it was built from, and its
     /// write lock, let go once what it built is recorded.
     Finished(String, Outcome, u64, Option<Lock>),
+    /// Shopify's CLI is done bundling these checkout UI extensions.
+    Bundled(Vec<String>, Outcome),
     /// The system says that a file changed.
     Touched,
     Stop,
@@ -496,6 +499,9 @@ impl Watcher {
             sender: sender.clone(),
             workers: Vec::new(),
             initial: None,
+            ui_wanted: BTreeSet::new(),
+            ui_running: false,
+            deferred: BTreeSet::new(),
             reload_due: false,
             started: 0,
             looked: 0,
@@ -705,10 +711,14 @@ pub fn ignored(relative: &Path, outputs: &[PathBuf]) -> bool {
         || outputs.iter().any(|output| relative.starts_with(output))
 }
 
-/// What the build of a Function writes, in its folder: `dist/`, and the module wherever
-/// `[extensions.build] path` puts it.
+/// What the build of a Function writes, in its folder: `dist/`, the module wherever
+/// `[extensions.build] path` puts it, and for a JavaScript Function that Shopify's CLI builds,
+/// the types of its typegen.
 fn outputs_of(function: &app::FunctionExtension) -> Vec<PathBuf> {
     let mut outputs = vec![PathBuf::from("dist")];
+    if function.build() == Some(app::Build::ShopifyCli) {
+        outputs.extend(typegen_outputs(&function.dir));
+    }
     if let Ok(module) = function.wasm_path.strip_prefix(&function.dir) {
         match module
             .parent()
@@ -721,6 +731,30 @@ fn outputs_of(function: &app::FunctionExtension) -> Vec<PathBuf> {
     outputs
 }
 
+/// What the GraphQL typegen of a JavaScript Function writes (`generated/api.ts`): the files its
+/// `package.json` names in `codegen.generates`.
+fn typegen_outputs(dir: &Path) -> Vec<PathBuf> {
+    let Some(package) = std::fs::read(dir.join("package.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
+    else {
+        return Vec::new();
+    };
+    package
+        .pointer("/codegen/generates")
+        .and_then(Json::as_object)
+        .into_iter()
+        .flat_map(|generates| generates.keys())
+        .map(|path| {
+            Path::new(path)
+                .components()
+                .filter(|component| !matches!(component, std::path::Component::CurDir))
+                .collect::<PathBuf>()
+        })
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect()
+}
+
 /// How the watcher treats the folder of an extension.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Rules {
@@ -728,13 +762,20 @@ struct Rules {
     outputs: Vec<PathBuf>,
     /// Its build, for a selected Function that has one.
     build: Option<Job>,
+    /// The handle of a selected checkout UI extension built from its sources: Shopify's CLI
+    /// bundles it (`shopify app build`) when its files change.
+    ui: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Job {
     handle: String,
-    command: String,
+    /// The command line, or why there is none (Shopify's CLI is not to be found).
+    command: Result<String, String>,
+    /// The Function's folder.
     dir: PathBuf,
+    /// Where the command runs: the Function's folder, or for Shopify's CLI the app's.
+    cwd: PathBuf,
     module: PathBuf,
     outputs: Vec<PathBuf>,
 }
@@ -742,34 +783,91 @@ struct Job {
 /// The rules of each extension folder (by its name) of `app`.
 fn rules_of(app: &App, selection: &Selection) -> BTreeMap<String, Rules> {
     let mut rules = BTreeMap::new();
+    // Looked for once, when a Function needs it.
+    let mut cli = None;
     for function in &app.functions {
         let Some(folder) = function.dir.file_name() else {
             continue;
         };
-        let outputs = if function.build_command.is_some() {
+        let build = function.build();
+        let outputs = if build.is_some() {
             outputs_of(function)
         } else {
             Vec::new()
         };
+        let job = build
+            .filter(|_| selection.contains(&function.handle))
+            .map(|build| {
+                let (command, cwd) = match build {
+                    app::Build::Command(command) => (Ok(command.to_string()), function.dir.clone()),
+                    // From the app's folder, as `shopify app build` runs it.
+                    app::Build::ShopifyCli => (
+                        cli.get_or_insert_with(|| ShopifyCli::find(&app.root))
+                            .as_ref()
+                            .map(|cli| cli.function_build_line(&function.dir))
+                            .map_err(Clone::clone),
+                        app.root.clone(),
+                    ),
+                };
+                Job {
+                    handle: function.handle.clone(),
+                    command,
+                    dir: function.dir.clone(),
+                    cwd,
+                    module: function.wasm_path.clone(),
+                    outputs: outputs.clone(),
+                }
+            });
         rules.insert(
             folder.to_string_lossy().into_owned(),
             Rules {
-                build: function
-                    .build_command
-                    .as_ref()
-                    .filter(|_| selection.contains(&function.handle))
-                    .map(|command| Job {
-                        handle: function.handle.clone(),
-                        command: command.clone(),
-                        dir: function.dir.clone(),
-                        module: function.wasm_path.clone(),
-                        outputs: outputs.clone(),
-                    }),
+                build: job,
                 outputs,
+                ui: None,
             },
         );
     }
+    for extension in &app.ui_extensions {
+        let Some(folder) = extension.dir.file_name() else {
+            continue;
+        };
+        // `shopify app build` bundles each of them, selected or not: what it writes is not
+        // looked at.
+        if extension.buildable() {
+            rules.insert(
+                folder.to_string_lossy().into_owned(),
+                Rules {
+                    outputs: vec![PathBuf::from("dist")],
+                    build: None,
+                    ui: selection
+                        .contains(&extension.handle)
+                        .then(|| extension.handle.clone()),
+                },
+            );
+        }
+    }
     rules
+}
+
+/// Whether the bundle of a checkout UI extension is missing, or older than a file of its folder
+/// (but `dist/`, `node_modules/` and hidden ones).
+fn stale(extension: &app::UiExtension) -> bool {
+    let Some(built) = std::fs::metadata(&extension.bundle)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+    else {
+        return true;
+    };
+    let mut newer = false;
+    walk(
+        &extension.dir,
+        &|relative| ignored(relative, &[PathBuf::from("dist")]),
+        &mut |_, _, metadata| {
+            newer |= metadata.modified().is_ok_and(|modified| modified > built);
+        },
+        &mut |_| {},
+    );
+    newer
 }
 
 /// Walks the files of `dir` that `skip` does not leave alone (by their path in `dir`): `file`
@@ -1226,9 +1324,9 @@ impl Output {
     }
 }
 
-/// Runs the build of a Function in its folder, as `--build` does, and publishes the module it
-/// wrote when it built and the module is whole. The module of a build that fails is left as it
-/// is: the checkout runs the copy of the last one that built.
+/// Runs the build of a Function, as `--build` does, and publishes the module it wrote when it
+/// built and the module is whole. The module of a build that fails is left as it is: the
+/// checkout runs the copy of the last one that built.
 ///
 /// `lock` is the Function's write lock ([`lock`]), held by the caller until what it built is
 /// recorded. On macOS and Linux the build inherits it, and so does what it starts: a build that
@@ -1240,16 +1338,107 @@ fn build(
     modules: &Modules,
     lock: Option<&Lock>,
 ) -> Outcome {
+    let started = Instant::now();
+    let command = match &job.command {
+        Ok(command) => command,
+        Err(missing) => {
+            return Outcome::Failed(Failure {
+                reason: missing.clone(),
+                output: String::new(),
+            });
+        }
+    };
+    let (status, output) = match execute(command, &job.cwd, timeout, shared, lock) {
+        Ok(ran) => ran,
+        Err(outcome) => return outcome,
+    };
+    let reason = match status {
+        Some(status) if status.success() => {
+            let module = job.module.strip_prefix(&job.dir).unwrap_or(&job.module);
+            match std::fs::read(&job.module) {
+                Ok(bytes) => match check_module(&bytes) {
+                    Ok(()) => match modules.publish(&job.handle, &bytes) {
+                        Ok(()) => return Outcome::Built(started.elapsed(), module_hash(&bytes)),
+                        Err(error) => format!("cannot copy the module it built: {error}"),
+                    },
+                    Err(error) => format!("the build wrote an invalid module: {error}"),
+                },
+                Err(_) => format!("the build wrote no module at {}", module.display()),
+            }
+        }
+        status => unsuccessful(status, started, timeout),
+    };
+    Outcome::Failed(Failure { reason, output })
+}
+
+/// Bundles checkout UI extensions with Shopify's CLI (`command`, `shopify app build` from the
+/// app's folder `root`), and checks that it wrote their `bundles`.
+fn bundle(
+    command: &Result<String, String>,
+    root: &Path,
+    bundles: &[PathBuf],
+    timeout: Duration,
+    shared: &Shared,
+) -> Outcome {
+    let started = Instant::now();
+    let command = match command {
+        Ok(command) => command,
+        Err(missing) => {
+            return Outcome::Failed(Failure {
+                reason: missing.clone(),
+                output: String::new(),
+            });
+        }
+    };
+    let (status, output) = match execute(command, root, timeout, shared, None) {
+        Ok(ran) => ran,
+        Err(outcome) => return outcome,
+    };
+    let reason = match status {
+        Some(status) if status.success() => match bundles.iter().find(|bundle| !bundle.is_file()) {
+            None => return Outcome::Built(started.elapsed(), String::new()),
+            Some(bundle) => format!(
+                "Shopify's CLI wrote no bundle at {}",
+                bundle.strip_prefix(root).unwrap_or(bundle).display()
+            ),
+        },
+        status => unsuccessful(status, started, timeout),
+    };
+    Outcome::Failed(Failure { reason, output })
+}
+
+/// Why a build that did not succeed failed: how it exited (`None`: it ran out of time, or could
+/// not be waited for).
+fn unsuccessful(status: Option<ExitStatus>, started: Instant, timeout: Duration) -> String {
+    match status {
+        Some(status) => format!("build failed ({status})"),
+        None if started.elapsed() >= timeout => {
+            format!("build timed out after {}", seconds(timeout))
+        }
+        None => "build failed".to_string(),
+    }
+}
+
+/// Runs `command` through the shell in `cwd`: how it exited (`None`: it ran out of time, or
+/// could not be waited for), and what it printed, as [`Output`] keeps it. `Err` when it cannot
+/// start, or when the watcher stops: it is stopped then, with all it started.
+fn execute(
+    command: &str,
+    cwd: &Path,
+    timeout: Duration,
+    shared: &Shared,
+    lock: Option<&Lock>,
+) -> Result<(Option<ExitStatus>, String), Outcome> {
     let stop = &shared.stop;
     let started = Instant::now();
-    let mut command = crate::checkout::build_command(&job.command, &job.dir);
-    command
+    let mut process = crate::checkout::build_command(command, cwd);
+    process
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // A group of its own, to stop all it starts (`sh`, then `cargo`, then `rustc`) at once.
     #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    std::os::unix::process::CommandExt::process_group(&mut process, 0);
     // The lock's descriptor stays open in the build: cleared of close-on-exec in its process
     // only, between `fork` and `exec`, so that the builds of other Functions, which start from
     // other threads, never get it.
@@ -1257,18 +1446,18 @@ fn build(
     if let Some(fd) = lock.map(Lock::fd) {
         // SAFETY: `inherit` only makes calls that are safe between `fork` and `exec`.
         unsafe {
-            std::os::unix::process::CommandExt::pre_exec(&mut command, move || lock::inherit(fd))
+            std::os::unix::process::CommandExt::pre_exec(&mut process, move || lock::inherit(fd))
         };
     }
     #[cfg(not(unix))]
     let _ = lock;
-    let mut child = match command.spawn() {
+    let mut child = match process.spawn() {
         Ok(child) => child,
         Err(error) => {
-            return Outcome::Failed(Failure {
-                reason: format!("cannot run `{}`: {error}", job.command),
+            return Err(Outcome::Failed(Failure {
+                reason: format!("cannot run `{command}`: {error}"),
                 output: String::new(),
-            });
+            }));
         }
     };
     let output = Arc::new(Mutex::new(Output::default()));
@@ -1308,10 +1497,10 @@ fn build(
                 std::thread::spawn(move || {
                     let _ = child.wait();
                 });
-                return Outcome::Stopped;
+                return Err(Outcome::Stopped);
             }
             terminate(&mut child);
-            return Outcome::Stopped;
+            return Err(Outcome::Stopped);
         }
         if started.elapsed() >= timeout {
             terminate(&mut child);
@@ -1323,27 +1512,7 @@ fn build(
     // output open: that is not waited for long.
     while finished.recv_timeout(Duration::from_millis(500)).is_ok() {}
     let output = output.lock().expect("output poisoned").text();
-    let reason = match status {
-        Some(status) if status.success() => {
-            let module = job.module.strip_prefix(&job.dir).unwrap_or(&job.module);
-            match std::fs::read(&job.module) {
-                Ok(bytes) => match check_module(&bytes) {
-                    Ok(()) => match modules.publish(&job.handle, &bytes) {
-                        Ok(()) => return Outcome::Built(started.elapsed(), module_hash(&bytes)),
-                        Err(error) => format!("cannot copy the module it built: {error}"),
-                    },
-                    Err(error) => format!("the build wrote an invalid module: {error}"),
-                },
-                Err(_) => format!("the build wrote no module at {}", module.display()),
-            }
-        }
-        Some(status) => format!("build failed ({status})"),
-        None if started.elapsed() >= timeout => {
-            format!("build timed out after {}", seconds(timeout))
-        }
-        None => "build failed".to_string(),
-    };
-    Outcome::Failed(Failure { reason, output })
+    Ok((status, output))
 }
 
 /// Stops a build and everything it started: politely, then not.
@@ -1551,6 +1720,13 @@ struct Coordinator {
     workers: Vec<JoinHandle<()>>,
     /// The builds of the start, while they run: when they started, how many, how many failed.
     initial: Option<(Instant, usize, usize)>,
+    /// The checkout UI extensions to bundle with Shopify's CLI, once no build runs:
+    /// `shopify app build` builds every extension of the app, the Functions too.
+    ui_wanted: BTreeSet<String>,
+    /// Shopify's CLI is bundling them.
+    ui_running: bool,
+    /// The Functions to build once it is done.
+    deferred: BTreeSet<String>,
     /// The pages are to reload, once no build runs or waits.
     reload_due: bool,
     /// How many looks at the files started, and how many are over.
@@ -1623,6 +1799,18 @@ impl Coordinator {
     }
 
     fn run(mut self, receiver: mpsc::Receiver<Event>, first: Vec<String>) {
+        // The checkout UI extensions Shopify's CLI bundles: those whose bundle is missing or
+        // older than their files (all with `--build`), once the Functions built.
+        if let Ok(app) = app::load(&self.root) {
+            for handle in self.ui_handles() {
+                if app
+                    .ui_extension(&handle)
+                    .is_some_and(|extension| self.options.build_first || stale(extension))
+                {
+                    self.ui_wanted.insert(handle);
+                }
+            }
+        }
         if !first.is_empty() {
             (self.log)(&format!(
                 "↻ building {}…",
@@ -1633,6 +1821,7 @@ impl Coordinator {
                 self.request(&handle);
             }
         }
+        self.start_ui();
         self.update_status();
         let mut last_look = Instant::now();
         while !self.shared.stop.load(Ordering::Relaxed) {
@@ -1643,6 +1832,7 @@ impl Coordinator {
                     // What it built is recorded: another build of it may write its module.
                     drop(lock);
                 }
+                Ok(Event::Bundled(handles, outcome)) => self.bundled(&handles, outcome),
                 Ok(Event::Touched) => self.dirty = true,
                 Ok(Event::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1681,21 +1871,105 @@ impl Coordinator {
         let mut status = self.shared.status.lock().expect("watcher poisoned");
         status.looked = self.looked;
         status.pending = self.dirty || self.debounce.is_pending() || self.reload_due;
-        status.building = self.scheduler.is_busy();
+        status.building = self.busy();
         self.shared.changed.notify_all();
     }
 
     /// The pages reload once the builds are over: none runs or waits, and no change waits to
     /// count (it may start one).
     fn settle(&mut self) {
-        if self.reload_due
-            && !self.scheduler.is_busy()
-            && !self.debounce.is_pending()
-            && !self.dirty
-        {
+        if self.reload_due && !self.busy() && !self.debounce.is_pending() && !self.dirty {
             self.reload_due = false;
             self.publish();
         }
+    }
+
+    /// Whether a build runs or waits: a Function's, or Shopify's CLI bundling checkout UI
+    /// extensions.
+    fn busy(&self) -> bool {
+        self.scheduler.is_busy()
+            || self.ui_running
+            || !self.ui_wanted.is_empty()
+            || !self.deferred.is_empty()
+    }
+
+    /// The checkout UI extensions Shopify's CLI bundles.
+    fn ui_handles(&self) -> BTreeSet<String> {
+        self.rules
+            .values()
+            .filter_map(|rules| rules.ui.clone())
+            .collect()
+    }
+
+    /// Has Shopify's CLI bundle the checkout UI extensions that wait for it, in the background,
+    /// once no build of a Function runs or waits: `shopify app build` builds them too, and
+    /// writes their modules.
+    fn start_ui(&mut self) {
+        if self.ui_running || self.ui_wanted.is_empty() || self.scheduler.is_busy() {
+            return;
+        }
+        let handles: Vec<String> = std::mem::take(&mut self.ui_wanted).into_iter().collect();
+        let bundles: Vec<PathBuf> = match app::load(&self.root) {
+            Ok(app) => handles
+                .iter()
+                .filter_map(|handle| app.ui_extension(handle))
+                .map(|extension| extension.bundle.clone())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        let command = ShopifyCli::find(&self.root).map(|cli| cli.app_build_line(&self.root));
+        (self.log)(&format!(
+            "↻ building {} with Shopify's CLI (shopify app build)…",
+            handles.join(", ")
+        ));
+        self.ui_running = true;
+        let root = self.root.clone();
+        let sender = self.sender.clone();
+        let shared = self.shared.clone();
+        let timeout = self.options.timeout;
+        let worker = std::thread::Builder::new()
+            .name("lsf-build-ui".to_string())
+            .spawn(move || {
+                let outcome = bundle(&command, &root, &bundles, timeout, &shared);
+                let _ = sender.send(Event::Bundled(handles, outcome));
+            })
+            .expect("cannot start a build");
+        self.workers.push(worker);
+    }
+
+    /// Shopify's CLI is done bundling `handles`: says how it went as the build of a Function
+    /// does, builds the Functions that waited for it, and has the pages reload.
+    fn bundled(&mut self, handles: &[String], outcome: Outcome) {
+        self.ui_running = false;
+        match outcome {
+            Outcome::Built(took, _) => {
+                for handle in handles {
+                    self.builds.set(handle, None);
+                }
+                (self.log)(&format!(
+                    "✓ {} built in {:.1}s",
+                    handles.join(", "),
+                    took.as_secs_f64()
+                ));
+            }
+            Outcome::Failed(failure) => {
+                let mut message = format!("✗ {}: {}", handles.join(", "), failure.reason);
+                for line in failure.output.lines() {
+                    message.push_str("\n    ");
+                    message.push_str(line);
+                }
+                (self.log)(&message);
+                for handle in handles {
+                    self.builds.set(handle, Some(failure.clone()));
+                }
+            }
+            Outcome::Stopped => return,
+        }
+        self.reload_due = true;
+        for handle in std::mem::take(&mut self.deferred) {
+            self.request(&handle);
+        }
+        self.start_ui();
     }
 
     /// The builds of the selected Functions that have one.
@@ -1780,7 +2054,13 @@ impl Coordinator {
             ));
             to_build.extend(handles.iter().cloned());
         }
+        let ui = self.ui_handles();
         for folder in &changes.extensions {
+            if let Some(handle) = self.rules.get(folder).and_then(|rules| rules.ui.clone()) {
+                (self.log)(&format!("↻ {folder} changed: building {handle}"));
+                self.ui_wanted.insert(handle);
+                continue;
+            }
             match self.rules.get(folder).and_then(|rules| rules.build.clone()) {
                 Some(job) => {
                     to_build.insert(job.handle);
@@ -1798,14 +2078,18 @@ impl Coordinator {
         for handle in &to_build {
             self.request(handle);
         }
-        // The Functions that are gone, or that do not build any more.
+        self.ui_wanted.retain(|handle| ui.contains(handle));
+        self.start_ui();
+        // The extensions that are gone, or that do not build any more.
         let known: BTreeSet<String> = self.builds.failures().into_iter().map(|(h, _)| h).collect();
-        if known.iter().any(|handle| !handles.contains(handle)) {
-            self.builds.retain(&handles);
+        let building: BTreeSet<String> = handles.union(&ui).cloned().collect();
+        if known.iter().any(|handle| !building.contains(handle)) {
+            self.builds.retain(&building);
             reload = true;
         }
         for handle in known.difference(&handles) {
             self.scheduler.forget(handle);
+            self.deferred.remove(handle);
         }
         self.reload_due |= reload;
     }
@@ -1817,6 +2101,11 @@ impl Coordinator {
     }
 
     fn request(&mut self, handle: &str) {
+        // Shopify's CLI is building the app, this Function too: it builds once it is done.
+        if self.ui_running {
+            self.deferred.insert(handle.to_string());
+            return;
+        }
         for handle in self.scheduler.request(handle) {
             self.spawn(handle);
         }
@@ -1827,7 +2116,10 @@ impl Coordinator {
     fn inputs(&mut self, job: &Job) -> u64 {
         let shared = self.shared_content();
         let mut hasher = Fnv::default();
-        hasher.write(job.command.as_bytes());
+        match &job.command {
+            Ok(command) => hasher.write(command.as_bytes()),
+            Err(missing) => hasher.write(missing.as_bytes()),
+        }
         hasher.write_u8(0);
         hasher.write(job.module.as_os_str().as_encoded_bytes());
         hasher.write_u8(0);
@@ -1946,6 +2238,7 @@ impl Coordinator {
         for next in self.scheduler.finished(handle) {
             self.spawn(next);
         }
+        self.start_ui();
         if let Some((started, total, failed)) = self.initial
             && !self.scheduler.is_busy()
         {

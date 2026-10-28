@@ -240,6 +240,88 @@ type = "ui_extension"
         self.write(&format!("extensions/{handle}/dist/{handle}.js"), "// v1\n");
     }
 
+    /// Shopify's CLI, as the app's own (`node_modules/.bin/shopify`): `app function build
+    /// --path DIR` "builds" the Function in `DIR` as `build.sh` does (and writes the types of
+    /// its typegen); `app build --path ROOT` bundles each checkout UI extension that has a
+    /// `src/Checkout.jsx` into `dist/<folder>.js` (the source, under a comment). It notes each
+    /// call in `ctl/cli` (its folder, then its arguments), fails with `ctl/fail-cli`, and with
+    /// `ctl/gated-cli` waits for `ctl/go-cli` before `app build`.
+    fn shopify_cli(&self) {
+        let ctl = self.0.join("ctl");
+        let script = format!(
+            r#"#!/bin/sh
+ctl='{}'
+echo "$PWD $*" >> "$ctl/cli"
+if [ -f "$ctl/fail-cli" ]; then
+  echo "error: [targeting.0.module]: Required" >&2
+  exit 1
+fi
+if [ "$2" = function ]; then
+  dir="$5"
+  mkdir -p "$dir/dist" "$dir/generated"
+  echo "export type Run = {{}};" > "$dir/generated/api.ts"
+  cp "$dir/src/main.wasm" "$dir/dist/function.wasm"
+  exit 0
+fi
+if [ -f "$ctl/gated-cli" ]; then
+  while [ ! -f "$ctl/go-cli" ]; do sleep 0.01; done
+fi
+for source in "$4"/extensions/*/src/Checkout.jsx; do
+  [ -f "$source" ] || continue
+  extension=$(dirname "$(dirname "$source")")
+  mkdir -p "$extension/dist"
+  {{ echo "// built"; cat "$source"; }} > "$extension/dist/$(basename "$extension").js"
+done
+"#,
+            ctl.display()
+        );
+        let path = self.path("node_modules/.bin/shopify");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, script).unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// The calls of the fake [`TempApp::shopify_cli`]: its folder, then its arguments.
+    fn cli_calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.ctl("cli"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// A Function written in TypeScript as Shopify's CLI generates it: no build command, an
+    /// `src/index.ts`, a typegen in its `package.json`, and no module yet.
+    fn javascript_function(&self, handle: &str) {
+        self.function_with(handle, "");
+        self.write(
+            &format!("extensions/{handle}/package.json"),
+            r#"{ "codegen": { "schema": "schema.graphql", "documents": "src/*.graphql",
+  "generates": { "./generated/api.ts": { "plugins": ["typescript", "typescript-operations"] } } } }"#,
+        );
+        self.write(
+            &format!("extensions/{handle}/src/index.ts"),
+            "export * from './run';\n",
+        );
+        std::fs::remove_file(self.path(&format!("extensions/{handle}/dist/function.wasm")))
+            .unwrap();
+    }
+
+    /// A checkout UI extension built from its source, `src/Checkout.jsx`, which says `text`.
+    fn ui_source(&self, handle: &str, text: &str) {
+        self.write(
+            &format!("extensions/{handle}/src/Checkout.jsx"),
+            &format!("export default () => '{text}';\n"),
+        );
+    }
+
+    /// The bundle of the checkout UI extension `handle`.
+    fn bundle(&self, handle: &str) -> String {
+        std::fs::read_to_string(self.path(&format!("extensions/{handle}/dist/{handle}.js")))
+            .unwrap_or_default()
+    }
+
     /// How many builds of `handle` started.
     fn builds(&self, handle: &str) -> usize {
         std::fs::read_to_string(self.ctl(&format!("count-{handle}")))
@@ -430,6 +512,47 @@ fn the_build_outputs_and_the_tools_folders_are_not_watched() {
     ] {
         assert!(ignored(Path::new(left_alone), &built), "{left_alone}");
     }
+}
+
+#[test]
+fn a_javascript_function_is_built_by_shopify_s_cli_from_the_app_s_folder() {
+    let app = TempApp::new("javascript");
+    app.shopify_cli();
+    app.javascript_function("bulk");
+    app.ui_extension("ui-a");
+    app.ui_source("ui-a", "a");
+    app.ui_extension("ui-b");
+    app.ui_source("ui-b", "b");
+    let shopify_app = app::load(&app.root()).unwrap();
+    let rules = rules_of(
+        &shopify_app,
+        &Selection::only(["bulk".to_string(), "ui-a".to_string()]),
+    );
+    let bulk = &rules["bulk"];
+    let job = bulk.build.as_ref().expect("a build");
+    let command = job.command.as_ref().unwrap();
+    assert!(
+        command.starts_with(&format!(
+            "'{}' 'app' 'function' 'build' '--path' ",
+            app.path("node_modules/.bin/shopify").display()
+        )),
+        "{command}"
+    );
+    assert!(command.ends_with(" '--no-input'"), "{command}");
+    assert_eq!(job.cwd, app.root());
+    assert!(
+        ignored(Path::new("generated/api.ts"), &bulk.outputs),
+        "{:?}",
+        bulk.outputs
+    );
+    assert!(ignored(Path::new("dist/function.js"), &bulk.outputs));
+    assert!(!ignored(Path::new("src/index.ts"), &bulk.outputs));
+    assert!(!ignored(Path::new("package.json"), &bulk.outputs));
+    // Shopify's CLI bundles the selected checkout UI extension; what it writes in the other's
+    // `dist/` is not looked at either.
+    assert_eq!(rules["ui-a"].ui.as_deref(), Some("ui-a"));
+    assert_eq!(rules["ui-b"].ui, None);
+    assert!(ignored(Path::new("dist/ui-b.js"), &rules["ui-b"].outputs));
 }
 
 #[test]
@@ -1080,6 +1203,83 @@ fn only_the_selected_functions_build() {
     app.source("fn-a", "a2");
     watching.settle();
     assert_eq!(app.builds("fn-a"), 0);
+}
+
+#[test]
+fn shopify_s_cli_builds_a_javascript_function_and_bundles_the_checkout_ui_extensions() {
+    let app = TempApp::new("shopify-cli");
+    app.shopify_cli();
+    app.javascript_function("bulk");
+    app.ui_extension("ui-a");
+    // Written after its bundle: the bundle is older than its source, and built at start.
+    app.ui_source("ui-a", "first");
+    let watching = Watching::start(&app, |_| {});
+    assert_eq!(watching.served("bulk"), "v1", "{}", watching.said());
+    assert!(app.bundle("ui-a").contains("first"), "{}", watching.said());
+    let calls = app.cli_calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    // From the app's folder, the Functions first: `shopify app build` builds them too.
+    let root = app.root().display().to_string();
+    assert_eq!(
+        calls[0],
+        format!("{root} app function build --path {root}/extensions/bulk --no-input")
+    );
+    assert_eq!(
+        calls[1],
+        format!("{root} app build --path {root} --skip-dependencies-installation --no-input")
+    );
+    assert!(
+        watching.said().contains("✓ ui-a built in"),
+        "{}",
+        watching.said()
+    );
+
+    let reloads = watching.reloads();
+    app.ui_source("ui-a", "second");
+    watching.settle();
+    assert!(app.bundle("ui-a").contains("second"), "{}", watching.said());
+    assert!(watching.reloads() > reloads);
+    assert!(
+        watching.said().contains("↻ ui-a changed: building ui-a"),
+        "{}",
+        watching.said()
+    );
+    // What it writes (bundles, modules, types) builds nothing again.
+    assert_eq!(app.cli_calls().len(), 3, "{:?}", app.cli_calls());
+
+    // A Function that changes while Shopify's CLI builds the app builds once it is done.
+    app.ctl_write("gated-cli", "");
+    app.ui_source("ui-a", "third");
+    wait_for("the app build", || app.cli_calls().len() == 4);
+    app.source("bulk", "v2");
+    watching.seen();
+    assert_eq!(app.cli_calls().len(), 4, "{:?}", app.cli_calls());
+    app.ctl_write("go-cli", "");
+    watching.settle();
+    let calls = app.cli_calls();
+    assert_eq!(calls.len(), 5, "{calls:?}");
+    assert!(calls[4].contains(" app function build "), "{calls:?}");
+    assert_eq!(watching.served("bulk"), "v2", "{}", watching.said());
+
+    // A build that fails: the pages say so, and the last bundle stays.
+    app.ctl_write("fail-cli", "");
+    app.ui_source("ui-a", "broken");
+    watching.settle();
+    let failure = watching.builds.failure("ui-a").expect("a failure");
+    assert!(
+        failure.reason.contains("build failed"),
+        "{}",
+        failure.reason
+    );
+    assert!(
+        failure.output.contains("[targeting.0.module]: Required"),
+        "{}",
+        failure.output
+    );
+    assert!(
+        app.bundle("ui-a").contains("third"),
+        "the last bundle stays"
+    );
 }
 
 #[test]

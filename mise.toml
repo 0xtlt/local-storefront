@@ -46,6 +46,11 @@ run = "cargo clippy --workspace --all-targets -- -D warnings"
 description = "Regenerate the Function API schemas of lsf-checkout (crates/checkout/schemas) from the pinned @shopify/dev-mcp package"
 run = "node tools/checkout/function_schemas.mjs"
 
+[tasks."shopify-cli:test"]
+description = "Check that lsf's builds with Shopify's CLI write, to the byte, what the CLI writes on its own (crates/cli/tests/fixtures/shopify-cli); needs Node, npm and the network"
+env = { LSF_SHOPIFY_CLI = "npx --yes @shopify/cli@5.0.0", SHOPIFY_CLI_NO_ANALYTICS = "1" }
+run = "cargo test -p lsf --bin lsf -- --ignored lsf_s_builds_are_shopify_s_cli_s_to_the_byte"
+
 [tasks."fixtures:functions"]
 description = "Rebuild the Wasm Functions of the lsf-checkout test app (crates/checkout/tests/fixtures/app); the built modules are committed"
 run = "tools/checkout/build_function_fixtures.sh"

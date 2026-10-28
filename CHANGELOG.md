@@ -100,6 +100,15 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   checkout, and a panel lists each target as shown, without a place on the page, or waiting for
   something the cart lacks.
 - **`lsf function run --scenario <name>`** runs the Functions for a scenario.
+- **`lsf function build`** builds the Functions of an app. A JavaScript or TypeScript Function
+  without a build command, as Shopify's CLI generates it, is built by Shopify's CLI
+  (`shopify app function build`, from the app's folder): the app's own (`node_modules/.bin`),
+  `shopify` on the PATH, or the command `LSF_SHOPIFY_CLI` names. `--build` and `--watch` build it
+  too.
+- **`lsf checkout build`** builds the extensions of an app: with a checkout UI extension whose
+  targets name their sources, `shopify app build`, which bundles it into `dist/<handle>.js` (and
+  builds every other extension). `--build` and `--watch` build those too: `--watch` again when
+  their files change.
 
 ## 0.1.18 - 2026-10-21
 

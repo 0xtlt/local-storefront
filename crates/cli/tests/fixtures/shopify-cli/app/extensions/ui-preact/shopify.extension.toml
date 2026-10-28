@@ -1,0 +1,18 @@
+# A checkout UI extension of the playground built from its sources: Shopify's template in Preact
+# (`shopify app generate extension --template checkout_ui --flavor preact`), as it comes.
+# `shopify app build` bundles it (`lsf checkout build ui-preact`, `--build`, `--watch` run it)
+# into dist/ui-preact.js.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: Preact template"
+handle = "ui-preact"
+type = "ui_extension"
+description = "Shopify's template in Preact, as it comes: a banner and a checkbox that sets a cart metafield, built by Shopify's CLI."
+
+[[extensions.targeting]]
+module = "./src/Checkout.jsx"
+target = "purchase.checkout.block.render"
+
+[extensions.capabilities]
+api_access = true

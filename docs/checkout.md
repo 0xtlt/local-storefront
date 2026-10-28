@@ -34,17 +34,66 @@ the extensions of the app, see [scenarios](#scenarios).
 The app is a directory with `shopify.app.toml` and `extensions/*/shopify.extension.toml`. API
 versions 2026-10 and 2027-01 are supported. Functions run from their built Wasm module and
 extensions from their built bundle, which `shopify app build` writes (`dist/function.wasm`,
-`dist/<handle>.js`). Build first, or let `--build` run the `[extensions.build] command` of each
-Function:
+`dist/<handle>.js`). Build first (`lsf checkout build`), or let `--build` build them before it
+serves:
 
 ```bash
+npx local-storefront checkout build --app ../my-app      # every extension
 npx local-storefront checkout --app ../my-app --build
 ```
 
-A Function written in JavaScript or TypeScript runs as a Rust one does: Shopify's CLI builds it
-with Javy, and lsf runs its module with Shopify's Javy plugin. In an app that Shopify's CLI
-generates, such a Function has an empty build command, so `--build` and `--watch` do not build
-it: run `shopify app build` after changing it.
+### What lsf builds, and with what
+
+| Extension | Built by | Output |
+|---|---|---|
+| A Function with a build command (Rust, …) | its command, run by lsf in its folder | its module |
+| A Function in JavaScript or TypeScript (`src/index.js`, `src/index.ts`), no build command | Shopify's CLI: `shopify app function build` ([below](#javascript-and-typescript-functions)) | `dist/function.wasm` |
+| A checkout UI extension whose targets name their sources (`module`), and the sources are there | Shopify's CLI: `shopify app build` ([below](#checkout-ui-extensions)) | `dist/<handle>.js` |
+| A checkout UI extension with only its bundle | nothing: the bundle is used as it is | |
+
+What Shopify's CLI builds is its own, to the byte: lsf runs it, from the app's folder, as
+`shopify app build` would. That takes Node, Shopify's CLI, and the dependencies of each extension
+installed (`npm install`), as `shopify app dev` does. lsf runs, in this order:
+
+1. the command `LSF_SHOPIFY_CLI` names (`LSF_SHOPIFY_CLI="npx --yes @shopify/cli@5.0.0"`);
+2. the app's own CLI, `node_modules/.bin/shopify` (Shopify's app templates install it);
+3. `shopify` on the `PATH`.
+
+Without any, the build says so, with how to install one. The CLI checks the whole app before it
+builds anything (its `[auth]` and `[webhooks]`, the `module` of each checkout UI target): an app
+that `shopify app build` refuses is refused here too.
+
+### JavaScript and TypeScript Functions
+
+A Function written in JavaScript or TypeScript (`src/index.js` or `src/index.ts`) with no build
+command, as `shopify app generate extension` makes it, is built by Shopify's CLI:
+
+```bash
+npx local-storefront function build --app ../my-app        # every Function
+npx local-storefront function build discount --app ../my-app
+```
+
+`--build` and `--watch` build it the same way: `shopify app function build --path <its folder>`,
+run from the app's folder (esbuild names its modules from there, as in `shopify app build`). The
+CLI writes the types of its typegen (`generated/api.ts`) from its `schema.graphql`, which
+`shopify app function schema` writes (it takes a Partner account), then the module.
+
+### Checkout UI extensions
+
+A checkout UI extension whose targets name their sources (`module = "./src/Checkout.jsx"`) is
+bundled by `shopify app build`:
+
+```bash
+npx local-storefront checkout build banner --app ../my-app
+```
+
+Shopify's CLI has no command that builds one extension: `shopify app build` builds every
+extension of the app, the Functions too (their build command, then what the CLI does after it).
+So `lsf checkout build` and `--build`, when a selected checkout UI extension is built from its
+sources, run `shopify app build` once, and nothing else. `--watch` runs it when the files of such
+an extension change, then reloads the open pages; at start, when a bundle is missing or older
+than the files of its extension. It takes a few seconds, the time the CLI takes to start and
+check the app: the builds of Functions wait for it, and it for them.
 
 What is wrong with the app (a missing build, an unknown Function target, a checkout UI target
 the page has no place for, an `owner_type` that is missing or not one of Shopify's) is printed
@@ -55,7 +104,7 @@ page.
 |---|---|
 | `--app <dir>` (`LSF_APP`) | The app. Required by `checkout` and `function run`. |
 | `--extension <handle>` | Uses only this extension, a Function or a checkout UI extension. Repeat it for several. Without it, every extension of the app is used. |
-| `--build` | Runs the build command of each Function first. |
+| `--build` | Builds the extensions first, as `lsf checkout build` does: the build command of each Function, or Shopify's CLI for what it builds itself. |
 | `--watch` | Develops the app as `shopify app dev` does: builds a Function again when its files change, and reloads the open pages. With `--build`, builds every Function at start. See [watch mode](#watch-mode). |
 | `--variant <standard\|shop>` | The look of the page: Shopify's one-page checkout, or the Shop app's. A URL can ask for the other with `?variant=shop`. |
 
@@ -69,7 +118,10 @@ npx local-storefront checkout --app ../my-app --watch
 ```
 
 Save a file of a Function and its build runs; when it is over, the open pages reload with the new
-module. It works with `serve --app` too.
+module. It works with `serve --app` too. A JavaScript Function without a build command counts as
+one with a build command: Shopify's CLI builds it (`shopify app function build`). A checkout UI
+extension built from its sources is bundled again by `shopify app build` when its files change
+([above](#checkout-ui-extensions)).
 
 - **At the start**, the modules that are there are used, as without `--watch`, when nothing
   changed since the last watch of the app. For each Function that has a build command
@@ -106,8 +158,10 @@ module. It works with `serve --app` too.
   store data and its scenarios are watched as always.
 - **What is not**: `target/`, `node_modules/`, `.git/` and other dot folders, editors' temporary
   files, Markdown documents (in any folder), the store data folder (`shopify-local/`, or the one `--data` names),
-  and what a build writes: the `dist/` folder of a Function that has a build command, its module
-  (`[extensions.build] path`), and `schema.graphql`. A build does not start itself again.
+  and what a build writes: the `dist/` folder of a Function that has a build command (or that
+  Shopify's CLI builds) and of a checkout UI extension built from its sources, a Function's
+  module (`[extensions.build] path`), `schema.graphql`, and the types of a JavaScript Function's
+  typegen (`generated/api.ts`). A build does not start itself again.
 - **A change to a Function** with a build command runs that command in its folder, as `--build`
   does. A save that writes several files builds once. One build at a time per Function: a change
   during its build makes one more build after it. Up to 3 Functions build at once (the Functions
@@ -744,7 +798,7 @@ instructions: 34977
 | `--locale <iso>` | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--step interaction\|completion` | The step of the buyer journey, which validation Functions read as `buyerJourney.step`: `completion` (default) is the placing of the order, `interaction` is the page and its updates. |
 | `--format json` | The checkout as the page reads it, with every run in `runs`. For tools. |
-| `--build` | Runs the build command of each Function first. |
+| `--build` | Builds each Function first, as `lsf function build` does: its build command, or Shopify's CLI for a JavaScript Function. |
 
 It exits with `1` when a Function fails to run (no module, a trap, an output that does not
 parse). Errors that a validation Function reports are part of the checkout, not a failure.

@@ -1,0 +1,16 @@
+# A Shopify app as Shopify's CLI takes it (it checks every extension of the app it builds), with
+# the extensions of the checkout playground written in JavaScript and TypeScript: what the test
+# of lsf's builds with Shopify's CLI builds (`mise run shopify-cli:test`).
+client_id = "00000000000000000000000000000000"
+name = "build"
+application_url = "https://example.com"
+embedded = true
+
+[access_scopes]
+scopes = ""
+
+[auth]
+redirect_urls = ["https://example.com/auth/callback"]
+
+[webhooks]
+api_version = "2026-10"

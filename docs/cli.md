@@ -47,7 +47,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--no-compression` | | Sends responses uncompressed. Without it, they are compressed (Brotli or gzip) for clients that accept it, as on Shopify. |
 | `--app <dir>` | `LSF_APP` | A Shopify app. `/checkout` then runs its Functions and shows its checkout UI extensions. See [checkout](checkout.md). |
 | `--extension <handle>` | | With `--app`: uses only this extension of the app. Repeat it for several. Without it, every extension is used. |
-| `--build` | | With `--app`: runs the build command of each Function first. |
+| `--build` | | With `--app`: builds the extensions first, as `checkout build` does. |
 | `--watch` | | With `--app`: builds a Function again when its files change, and reloads the open pages (it implies `--live-reload`). At start, builds only the Functions that have no module or changed since the last watch; with `--build`, all of them. See [watch mode](checkout.md#watch-mode). |
 | `--variant <standard\|shop>` | | With `--app`: the look of the checkout page, `standard` by default. |
 
@@ -94,6 +94,36 @@ npx local-storefront checkout init --app ../my-app
 | `--app <dir>` | `LSF_APP` | The app the scenarios are made for. |
 | `--force` | | Overwrites the scenarios that exist. |
 
+## checkout build
+
+`npx local-storefront checkout build [handle]... --app <dir>`
+
+Builds the extensions of an app, as `shopify app build` does: its Functions (as `function build`),
+or, when a checkout UI extension names its sources (`module`), `shopify app build`, which bundles
+it into `dist/<handle>.js` and builds every other extension. Takes Shopify's CLI for what it
+builds itself. Guide: [checkout](checkout.md#what-lsf-builds-and-with-what).
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The extensions to build. Every extension of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+| | `LSF_SHOPIFY_CLI` | The command of Shopify's CLI (`npx --yes @shopify/cli@5.0.0`). Defaults to the app's (`node_modules/.bin/shopify`), then `shopify` on the PATH. |
+
+## function build
+
+`npx local-storefront function build [handle]... --app <dir>`
+
+Builds the Functions of an app, as `shopify app build` does. A Function written in JavaScript or
+TypeScript without a build command is built by Shopify's CLI (`shopify app function build`, from
+the app's folder). The others run their `[extensions.build] command`. Guide:
+[checkout](checkout.md#javascript-and-typescript-functions).
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The Functions to build. Every Function of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+| | `LSF_SHOPIFY_CLI` | The command of Shopify's CLI, as for `checkout build`. |
+
 ## function run
 
 `npx local-storefront function run [handle]... --app <dir>`
@@ -110,7 +140,7 @@ npx local-storefront function run volume-discount --app ../my-app --session '{"c
 |---|---|---|
 | `[handle]...` | | The Functions to run. Every Function of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Required. |
-| `--build` | | Runs the build command of each Function first. |
+| `--build` | | Builds each Function first, as `function build` does. |
 | `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
 | `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it. Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |

@@ -1,5 +1,5 @@
-//! `lsf checkout`: serves the checkout of an app, or with `init` writes the scenarios to try it
-//! with.
+//! `lsf checkout`: serves the checkout of an app, with `init` writes the scenarios to try it
+//! with, and with `build` builds its extensions.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -23,6 +23,23 @@ enum Subcommand {
     /// data folder with the demo store when it does not exist. Nothing that exists is
     /// overwritten without `--force`.
     Init(checkout_init::InitArgs),
+    /// Build the extensions of an app with Shopify's CLI, as `shopify app build` does: its
+    /// Functions (as `lsf function build`), and its checkout UI extensions that name their
+    /// sources (`module`), bundled by `shopify app build` (`dist/<handle>.js`), which builds
+    /// every extension of the app.
+    Build(BuildArgs),
+}
+
+#[derive(clap::Args)]
+pub struct BuildArgs {
+    /// The extensions to build, by handle. Every extension of the app when none is given.
+    #[arg(value_name = "HANDLE")]
+    handles: Vec<String>,
+
+    /// The directory of a Shopify app (the one with shopify.app.toml). Defaults to the app the
+    /// current folder is in.
+    #[arg(long, env = "LSF_APP", value_name = "DIR")]
+    app: Option<std::path::PathBuf>,
 }
 
 pub fn run(
@@ -33,6 +50,12 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     match args.command {
         Some(Subcommand::Init(init)) => checkout_init::run(theme, data, init),
+        Some(Subcommand::Build(args)) => crate::checkout::run_build(
+            args.app.as_deref(),
+            &args.handles,
+            "lsf checkout build",
+            crate::checkout::build,
+        ),
         None => serve::run(theme, data, previews, args.serve, true),
     }
 }
