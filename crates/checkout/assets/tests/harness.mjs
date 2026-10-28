@@ -37,9 +37,10 @@ export const bundle = (handle) => readFileSync(join(fixtures, handle, 'dist', `$
 
 /**
  * A browser window for the sandbox scripts. `scripts` are the files of the sandbox to run, in
- * order; `bundles` maps the URL of an extension script to its source; `onPost` hears each
- * message the frame posts to the page. Returns the window and what it posted to the page;
- * `receive(message)` plays a message of the page.
+ * order; `bundles` maps the URL of an extension script to its source, which `receive` puts in an
+ * `init` that has none, as the page does; `onPost` hears each message the frame posts to the
+ * page. Returns the window and what it posted to the page; `receive(message)` plays a message of
+ * the page.
  */
 export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, customElements, onPost } = {}) {
   const posted = [];
@@ -52,7 +53,24 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
       onPost?.(copy);
     },
   };
+  // `blob:` URLs, as the frame makes them for the text of a bundle.
+  const blobs = new Map();
+  class Blob {
+    constructor(parts) {
+      this.text = parts.join('');
+    }
+  }
+  const URL = {
+    createObjectURL: (blob) => {
+      const url = `blob:null/${blobs.size + 1}`;
+      blobs.set(url, blob.text);
+      return url;
+    },
+    revokeObjectURL: (url) => blobs.delete(url),
+  };
   const context = vm.createContext({
+    Blob,
+    URL,
     document,
     parent,
     console,
@@ -90,18 +108,19 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     };
   }
 
-  // A script put into the head runs the bundle behind its `src`, then says it loaded. As in a
+  // A script put into the head runs the blob behind its `src`, then says it loaded. As in a
   // browser, what the bundle throws goes to the `error` listeners of the window, and the script
-  // still loaded.
+  // still loaded. Stacks name the script by its `sourceURL`.
   const append = document.head.appendChild.bind(document.head);
   document.head.appendChild = (node) => {
     append(node);
     if (node.localName !== 'script') return node;
-    const source = bundles[node.src];
+    const source = blobs.get(node.src);
     setImmediate(() => {
       if (source === undefined) return node.onerror?.();
+      const filename = /\/\/# sourceURL=(.*)$/.exec(source)?.[1] ?? node.src;
       try {
-        vm.runInContext(source, context, { filename: node.src });
+        vm.runInContext(source, context, { filename });
       } catch (error) {
         for (const listener of listeners.get('error') ?? []) listener({ message: `Uncaught ${error}`, error });
       }
@@ -130,7 +149,9 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     },
     /** Plays a message of the page. */
     receive(message, source = parent) {
-      for (const listener of listeners.get('message') ?? []) listener({ source, data: { lsf: true, ...message } });
+      const data = { lsf: true, ...message };
+      if (data.type === 'init' && !('source' in data)) data.source = bundles[data.script] ?? null;
+      for (const listener of listeners.get('message') ?? []) listener({ source, data });
     },
     posts: (type) => posted.filter((message) => message.type === type),
     run: (source) => vm.runInContext(source, context),

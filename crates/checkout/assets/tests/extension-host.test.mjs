@@ -18,6 +18,12 @@ function setup({ extensions, storage, state, server = false } = {}) {
     open(...args) {
       this.opened.push(args);
     },
+    fetched: [],
+    // The bundles, from the server of the page.
+    async fetch(url) {
+      this.fetched.push(url);
+      return { ok: !url.endsWith('/missing.js'), text: async () => `/* ${url} */` };
+    },
   };
   let current = { ...(state ?? checkoutState()), extensions: extensions ?? checkoutState().extensions };
   const dispatched = [];
@@ -122,18 +128,22 @@ test('extensions without a bundle are left out', () => {
   assert.equal(host.hasTarget(BLOCK), false);
 });
 
-test('answers a frame that is ready with everything it needs', () => {
-  const { host, slot, connect, from, windows } = setup();
+test('answers a frame that is ready with everything it needs', async () => {
+  const { host, slot, connect, from, windows, window } = setup();
   host.attach(slot, 'purchase.checkout.cart-line-item.render-after', { key: 'l1', lineId: 'gid://shopify/CartLine/1' });
   connect();
   const [frame] = host.instances();
   from(frame, { type: 'ready' });
+  await settle();
   const [init] = windows.get('gift-messagepurchase.checkout.cart-line-item.render-after').posted;
   assert.equal(init.lsf, true);
   assert.equal(init.type, 'init');
   assert.equal(init.handle, 'gift-message');
   assert.equal(init.target, 'purchase.checkout.cart-line-item.render-after');
-  assert.equal(init.script, 'http://localhost/__lsf/extensions/gift-message/gift-message.js', 'an absolute URL, for a frame of another origin');
+  assert.equal(init.script, 'http://localhost/__lsf/extensions/gift-message/gift-message.js', 'an absolute URL, to name the bundle in stacks');
+  // The page fetches the bundle (same origin) and sends its text: the frame loads nothing itself.
+  assert.deepEqual(window.fetched, [init.script]);
+  assert.equal(init.source, `/* ${init.script} */`);
   assert.equal(init.apiVersion, '2026-10');
   assert.equal('names' in init, false);
   assert.deepEqual(init.ctx, { key: 'l1', lineId: 'gid://shopify/CartLine/1' });
@@ -148,11 +158,31 @@ test('answers a frame that is ready with everything it needs', () => {
   assert.equal('diagnostics' in init.state, false);
 });
 
-test('tells each extension its own API version', () => {
+test('a bundle that does not load reaches the frame as no source, and a frame dropped meanwhile gets nothing', async () => {
+  const { host, slot, connect, from, windows } = setup({ extensions: [{ handle: 'gone', apiVersion: '2026-10', script: '/missing.js', targets: [BLOCK] }] });
+  host.attach(slot, BLOCK);
+  connect();
+  from(host.instances()[0], { type: 'ready' });
+  await settle();
+  const [init] = windows.get('gone' + BLOCK).posted;
+  assert.equal(init.source, null);
+
+  const other = setup();
+  other.host.attach(other.slot, BLOCK);
+  other.connect();
+  const [frame] = other.host.instances();
+  other.from(frame, { type: 'ready' });
+  other.host.detach(other.slot);
+  await settle();
+  assert.deepEqual(frame.iframe.contentWindow.posted, []);
+});
+
+test('tells each extension its own API version', async () => {
   const { host, slot, connect, from, windows } = setup();
   host.attach(slot, 'purchase.checkout.reductions.render-after');
   connect();
   from(host.instances()[0], { type: 'ready' });
+  await settle();
   const [init] = windows.get('order-noticepurchase.checkout.reductions.render-after').posted;
   assert.equal(init.apiVersion, '2027-01');
   assert.equal('mode' in init, false);
@@ -373,6 +403,8 @@ test('asks the interceptors before the buyer pays, and tells them how it went', 
   const [gift, notice] = host.instances();
   from(gift, { type: 'ready' });
   from(notice, { type: 'ready' });
+  // A frame registers interceptors once it has run, after `init`.
+  await settle();
   from(gift, { type: 'interceptors', count: 1 });
   const pending = host.intercept();
   const asked = gift.iframe.contentWindow.posted.find((message) => message.type === 'intercept');

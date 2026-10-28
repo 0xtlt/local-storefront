@@ -31,17 +31,28 @@
     post({ type: 'error', message: String(message), stack });
   }
 
-  // The bundle is fetched with CORS (the server allows it): a script of another origin than the
-  // frame's (an opaque one) would have its errors hidden ("Script error.") and its unhandled
-  // rejections dropped by the browser. The frame keeps its opaque origin.
-  function loadScript(url) {
+  // The page fetched the bundle and sent its text (`source`): this frame has an opaque origin,
+  // and a script it loaded from the server would have its errors hidden ("Script error.") and its
+  // unhandled rejections dropped. Run from a `blob:` URL the frame makes, the bundle is a script
+  // of the frame's own origin, whose errors the browser shows. `sourceURL` names it in stacks.
+  function loadScript(init) {
     return new Promise((resolve, reject) => {
+      if (typeof init.source !== 'string') {
+        reject(new Error('Could not load ' + init.script + '. Run `shopify app build` so the extension has a bundle in dist/.'));
+        return;
+      }
+      const blob = new Blob([init.source, '\n//# sourceURL=' + init.script], { type: 'text/javascript' });
+      const url = URL.createObjectURL(blob);
       const script = document.createElement('script');
-      script.crossOrigin = 'anonymous';
       script.src = url;
-      script.onload = resolve;
-      script.onerror = () =>
-        reject(new Error('Could not load ' + url + '. Run `shopify app build` so the extension has a bundle in dist/.'));
+      script.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      script.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Could not run the bundle of ' + init.script + '.'));
+      };
       document.head.appendChild(script);
     });
   }
@@ -94,7 +105,7 @@
     try {
       loading = null;
       phase = 'load';
-      await loadScript(init.script);
+      await loadScript(init);
     } catch (error) {
       fail(error && error.message ? error.message : error, error);
       if (init.probe) probed(false);

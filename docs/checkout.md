@@ -692,9 +692,10 @@ extensions (2025-07 and older) do not run: lsf runs 2026-10 and 2027-01 only.
 
 What an extension throws, while its bundle loads, when a target renders or in a listener, and
 the promises it rejects with nobody to catch them, show above its frame with their message and
-stack, and in the overview of the Functions dialog. The frame keeps an opaque origin: lsf serves
-the bundles with CORS (`Access-Control-Allow-Origin: *`) so that the browser does not hide those
-errors ("Script error.").
+stack, and in the overview of the Functions dialog. The frame keeps an opaque origin. The page
+fetches the bundle (same origin) and hands its text to the frame, which runs it from a `blob:`
+URL of its own: the browser does not hide those errors ("Script error."), and lsf serves the
+bundles without CORS, so another site cannot read them.
 
 An extension needs a supported `api_version`, or it is reported as an error and not shown. From
 2027-01, each `[[extensions.metafields]]` entry needs an `owner_type` (`CART`, `CUSTOMER`, ...),

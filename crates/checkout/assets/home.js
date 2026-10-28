@@ -10,8 +10,11 @@
 //   sandbox, as the checkout loads it, to see the targets it registers. A bundle that does not
 //   load, throws while it loads, or does not register a target it declares, is listed with the
 //   problems, and the scenarios that run it take its level. A bundle can itself call the
-//   network as it loads. The sandbox loads it with CORS, so what it throws reaches the page with
-//   its message, though the frame has an opaque origin.
+//   network as it loads. The page fetches the bundle and hands its text to the sandbox, which
+//   runs it from a `blob:` URL of its own: what it throws reaches the page with its message,
+//   though the frame has an opaque origin.
+
+import { bundleSource } from './extension-host.js';
 
 /** How long the page waits for the check, in milliseconds. */
 export const CHECK_TIMEOUT = 30000;
@@ -196,6 +199,9 @@ export function verdict(declared, registered, errors, loaded = true) {
 export function probe(document, window, sandboxUrl, row, timeout = PROBE_TIMEOUT) {
   const data = row.dataset;
   const targets = (data.targets ?? '').split(' ').filter(Boolean);
+  const script = new URL(data.probe, document.baseURI).href;
+  // Fetched while the frame loads.
+  const source = bundleSource(window, script);
   return new Promise((resolve) => {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
@@ -217,18 +223,22 @@ export function probe(document, window, sandboxUrl, row, timeout = PROBE_TIMEOUT
       const message = event.data;
       if (done || event.source !== frame.contentWindow || !message || message.lsf !== true) return;
       if (message.type === 'ready') {
-        frame.contentWindow.postMessage({
-          lsf: true,
-          type: 'init',
-          probe: true,
-          handle: data.uiExtension,
-          target: targets[0],
-          script: new URL(data.probe, document.baseURI).href,
-          apiVersion: data.api,
-          ctx: {},
-          ext: { settings: {}, capabilities: {}, translations: {}, defaultLocale: null },
-          state: {},
-        }, '*');
+        source.then((text) => {
+          if (done) return;
+          frame.contentWindow.postMessage({
+            lsf: true,
+            type: 'init',
+            probe: true,
+            handle: data.uiExtension,
+            target: targets[0],
+            script,
+            source: text,
+            apiVersion: data.api,
+            ctx: {},
+            ext: { settings: {}, capabilities: {}, translations: {}, defaultLocale: null },
+            state: {},
+          }, '*');
+        });
       } else if (message.type === 'error') {
         errors.push(String(message.message));
       } else if (message.type === 'probed') {

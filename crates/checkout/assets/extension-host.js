@@ -72,6 +72,20 @@ export function sessionToken(state, ext, now = Date.now()) {
 const INTERCEPT_TIMEOUT_MS = 5000;
 
 /**
+ * The text of the bundle at `url`, or null when it does not load. The page fetches it, with the
+ * origin of the server: the frame has an opaque origin, and would need CORS to load it with its
+ * errors shown, which would let any site read the bundles.
+ */
+export async function bundleSource(window, url) {
+  try {
+    const response = await window.fetch(url);
+    return response.ok ? await response.text() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param {object} options
  * @param {Document} options.document
  * @param {Window} options.window       where the iframes post their messages
@@ -110,14 +124,20 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     instance.iframe.contentWindow?.postMessage({ lsf: true, ...message }, '*');
   }
 
-  function init(instance) {
-    const state = getState();
+  /** Sends the frame what it runs, once the page has the text of the bundle. */
+  async function init(instance) {
     const { ext } = instance;
+    const script = new URL(ext.script, document.baseURI ?? sandboxUrl).href;
+    const source = await bundleSource(window, script);
+    // The frame was reloaded or dropped while the bundle was fetched.
+    if (!instance.ready || !instances.has(instance)) return;
+    const state = getState();
     post(instance, {
       type: 'init',
       handle: ext.handle,
       target: instance.target,
-      script: new URL(ext.script, document.baseURI ?? sandboxUrl).href,
+      script,
+      source,
       apiVersion: ext.apiVersion,
       ctx: instance.ctx,
       variant: state.variant,

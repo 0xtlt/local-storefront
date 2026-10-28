@@ -150,10 +150,12 @@ const BUNDLE_URL = 'http://127.0.0.1:9292/__lsf/extensions/probed/probed.js';
  * A page that loads one bundle in a frame. `behave(frame, send)` plays the frame: `send(message)`
  * posts a message of it to the page, and `frame.onMessage` hears what the page posts to it.
  */
-function probePage(behave) {
+function probePage(behave, bundles = {}) {
   const listeners = new Set();
   const frames = [];
   const window = {
+    // The page fetches the bundle, with its own origin.
+    fetch: async (url) => ({ ok: url in bundles, text: async () => bundles[url] }),
     setTimeout,
     clearTimeout,
     addEventListener: (type, listener) => type === 'message' && listeners.add(listener),
@@ -198,9 +200,9 @@ function probePage(behave) {
 function sandboxedProbe(bundles) {
   let win = null;
   const page = probePage((frame, send) => {
-    win = sandboxWindow({ scripts: SANDBOX, bundles, onPost: send });
+    win = sandboxWindow({ scripts: SANDBOX, onPost: send });
     frame.onMessage = (message) => win.receive(message);
-  });
+  }, bundles);
   return { ...page, sandbox: () => win };
 }
 

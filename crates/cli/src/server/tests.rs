@@ -5288,8 +5288,8 @@ fn the_files_of_the_page_and_of_the_extensions_are_served() {
         Some("sandbox allow-scripts")
     );
     assert_eq!(header(&bundle, "x-content-type-options"), Some("nosniff"));
-    // The sandbox (an opaque origin) loads it with CORS, so that its errors are not hidden.
-    assert_eq!(header(&bundle, "access-control-allow-origin"), Some("*"));
+    // No CORS: the page fetches it and hands its text to the sandbox, so no other site reads it.
+    assert_eq!(header(&bundle, "access-control-allow-origin"), None);
     for missing in [
         "/__lsf/extensions/gift-message/nope.js",
         "/__lsf/extensions/gift-message/../shopify.extension.toml",
