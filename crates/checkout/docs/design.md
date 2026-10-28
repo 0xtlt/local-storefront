@@ -184,8 +184,8 @@ too.
   checkout.
 - `GET /` of `lsf checkout` and `GET /__lsf/checkouts` → the home page (`server/home.rs`), HTML
   drawn from the JSON that `?format=json` answers: the Functions and UI extensions of the app
-  (`placement.rs` says where the page renders each UI target; a test keeps it equal to
-  `RENDERED_TARGETS` of `extension-host.js`) and the scenarios with a summary.
+  (`placement.rs` says where the page renders each UI target, from the `placements` of
+  `assets/api.json`, which `RENDERED_TARGETS` of `extension-host.js` reads too) and the scenarios with a summary.
 - `GET /checkouts/cn/<token>` → HTML shell: `crates/checkout/assets/checkout.html` with
   `<!--LSF_STATE-->` replaced by the state JSON (escaped for a `<script type="application/json"
   id="lsf-checkout-state">`), `<!--LSF_ASSETS-->` by the asset base `/__lsf/checkout/assets`.
@@ -268,7 +268,8 @@ Cart lines, note and attributes live in the session cart (the same one the theme
   panel (`targetsPanel`) of every target of every loaded extension: `shown` (a slot exists),
   without a place (not in `RENDERED_TARGETS`), or waiting for something (`whyNotShown`).
 - `api-versions.js`: the API releases the host runs, `2026-10` and the `2027-01` release
-  candidate; an extension on another version, or declaring its metafields against the rules of
+  candidate, from `api.json` (which lsf-checkout reads too, with the owner types and the
+  targets the page renders); an extension on another version, or declaring its metafields against the rules of
   its version, is not loaded and the page shows why. See `ui-api-versions.md`.
 
 ## Contract between `pipeline` and `input`

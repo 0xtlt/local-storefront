@@ -1,0 +1,33 @@
+{
+  "releases": [
+    { "version": "2026-10", "metafieldOwnerType": "optional" },
+    { "version": "2027-01", "metafieldOwnerType": "required" }
+  ],
+  "ownerTypes": ["CART", "COMPANY", "COMPANY_LOCATION", "CUSTOMER", "PRODUCT", "PRODUCTVARIANT", "SHOP"],
+  "placements": [
+    { "target": "purchase.checkout.header.render-after", "place": "Checkout: at the top, above the contact step" },
+    { "target": "purchase.checkout.block.render", "place": "Checkout: a block between the shipping method and the payment" },
+    { "target": "purchase.checkout.contact.render-after", "place": "Checkout: under the contact field" },
+    { "target": "purchase.checkout.delivery-address.render-before", "place": "Checkout: above the delivery address" },
+    { "target": "purchase.checkout.delivery-address.render-after", "place": "Checkout: under the delivery address" },
+    { "target": "purchase.checkout.shipping-option-list.render-before", "place": "Checkout: above the list of shipping methods" },
+    { "target": "purchase.checkout.shipping-option-list.render-after", "place": "Checkout: under the list of shipping methods" },
+    { "target": "purchase.checkout.shipping-option-item.render-after", "place": "Checkout: under each shipping method" },
+    { "target": "purchase.checkout.shipping-option-item.details.render", "place": "Checkout: inside the selected shipping method" },
+    { "target": "purchase.checkout.payment-method-list.render-before", "place": "Checkout: above the list of payment methods" },
+    { "target": "purchase.checkout.payment-method-list.render-after", "place": "Checkout: under the list of payment methods" },
+    { "target": "purchase.checkout.cart-line-list.render-after", "place": "Checkout summary: under the lines" },
+    { "target": "purchase.checkout.cart-line-item.render-after", "place": "Checkout summary: under each line" },
+    { "target": "purchase.checkout.reductions.render-before", "place": "Checkout summary: above the discount code field" },
+    { "target": "purchase.checkout.reductions.render-after", "place": "Checkout summary: under the discount code field" },
+    { "target": "purchase.checkout.actions.render-before", "place": "Checkout: above the pay button" },
+    { "target": "purchase.checkout.footer.render-after", "place": "Checkout: at the bottom, under the pay button" },
+    { "target": "purchase.thank-you.announcement.render", "place": "Thank-you page: at the top, above the confirmation" },
+    { "target": "purchase.thank-you.header.render-after", "place": "Thank-you page: under the confirmation" },
+    { "target": "purchase.thank-you.block.render", "place": "Thank-you page: a block under the confirmation message" },
+    { "target": "purchase.thank-you.customer-information.render-after", "place": "Thank-you page: under the order details" },
+    { "target": "purchase.thank-you.cart-line-list.render-after", "place": "Thank-you summary: under the lines" },
+    { "target": "purchase.thank-you.cart-line-item.render-after", "place": "Thank-you summary: under each line" },
+    { "target": "purchase.thank-you.footer.render-after", "place": "Thank-you page: at the bottom" }
+  ]
+}

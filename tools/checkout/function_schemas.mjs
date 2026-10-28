@@ -10,9 +10,9 @@
 // function schema` needs one). The tarball is checked against the pinned SHA-256, so the
 // result is reproducible. Needs network access and `npm`.
 //
-// To add a version: add it to VERSIONS, pin a @shopify/dev-mcp release that has it, run
-// `mise run checkout:schemas`, then add the version to crates/checkout/src/version.rs, and the
-// files the run wrote for it (if any) to `SCHEMA_FILES` there.
+// To add a version: add it to the releases of crates/checkout/assets/api.json, pin a
+// @shopify/dev-mcp release that has it, run `mise run checkout:schemas`, then add the files the
+// run wrote for it (if any) to `SCHEMA_FILES` in crates/checkout/src/version.rs.
 //
 // The introspection carries no `@oneOf`, which the Rust Function typegen needs to turn an
 // operation into an enum: an input object whose fields are all optional is a `@oneOf`, but for
@@ -28,7 +28,11 @@ import { gunzipSync } from "node:zlib";
 const PACKAGE = "@shopify/dev-mcp@1.17.0";
 const SHA256 = "f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a";
 
-const VERSIONS = ["2026-10", "2027-01"];
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// The releases lsf-checkout runs, oldest first.
+const VERSIONS = JSON.parse(readFileSync(join(root, "crates/checkout/assets/api.json"), "utf8")).releases.map(
+  (release) => release.version,
+);
 // The file name in the package -> the name in lsf-checkout (`FunctionApi`).
 const APIS = {
   cart_checkout_validation: "cart_checkout_validation",
@@ -51,7 +55,6 @@ const isFetchResult = (name) => name.endsWith("FetchResult");
 
 const PLACEHOLDER = "_noField"; // also in crates/checkout/src/schema.rs
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const out = join(root, "crates/checkout/schemas");
 
 const work = mkdtempSync(join(tmpdir(), "lsf-function-schemas-"));

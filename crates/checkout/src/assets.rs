@@ -23,6 +23,7 @@ macro_rules! embed {
 embed!(
     "account.js",
     "api-versions.js",
+    "api.json",
     "checkout.css",
     "checkout.html",
     "checkout.js",

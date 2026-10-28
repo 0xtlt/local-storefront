@@ -2,8 +2,9 @@
 
 The local checkout runs checkout UI extensions built for **2026-10** (stable) and **2027-01**
 (release candidate, stable on 2027-01-01). Nothing else: an extension on another `apiVersion` is
-not loaded and the page says why. The list is `API_VERSIONS` in
-`crates/checkout/assets/api-versions.js`; adding a release is one entry there.
+not loaded and the page says why. The list is the `releases` of `crates/checkout/assets/api.json`,
+which the page (`api-versions.js`) and lsf-checkout (`ApiVersion`) both read; adding a release is
+one entry there. The same file has the owner types and the targets the page renders.
 
 ## What differs between 2026-10 and 2027-01
 

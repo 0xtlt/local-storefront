@@ -94,10 +94,11 @@ and the three legacy discount APIs have no `fetch` target.
 
 ## What is version aware now
 
-- **`ApiVersion`** (`version.rs`): the supported releases in one table (`VERSIONS`), and the schema
+- **`ApiVersion`** (`version.rs`): the supported releases (the `releases` of
+  `crates/checkout/assets/api.json`, which the page reads too), and the schema
   of each Function API (`FunctionApi`) per release, embedded with `include_str!` (`SCHEMA_FILES`).
   Releases that share a schema share its file and its parsed `Schema`. `target_spec` maps a target
-  to its API and result type. Adding a release = one table line, plus a `SCHEMA_FILES` line for
+  to its API and result type. Adding a release = one entry in `api.json`, plus a `SCHEMA_FILES` line for
   each schema file the generator wrote for it (a test checks the list against the folder).
 - **Schemas** (`crates/checkout/schemas/<since>/<api>.graphql`, SDL, generated, committed): the
   schema of an API from release `<since>` on, until a newer file of the same API. A release gets a

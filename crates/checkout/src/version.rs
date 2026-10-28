@@ -4,9 +4,9 @@
 //! query of a Function is checked against the schema of that release, and its output has to fit
 //! the result type of the target in that schema (see [`crate::schema`]).
 //!
-//! Adding a release takes one line in [`VERSIONS`]; `mise run checkout:schemas` (which reads the
-//! same list of versions) writes a schema file only for an API whose schema changed in it, to be
-//! listed in [`SCHEMA_FILES`].
+//! The releases are the `releases` of `assets/api.json`, which the page reads too. Adding one
+//! takes an entry there; `mise run checkout:schemas` (which reads the same list) writes a schema
+//! file only for an API whose schema changed in it, to be listed in [`SCHEMA_FILES`].
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -16,9 +16,6 @@ use crate::schema::Schema;
 /// A Shopify API release: `2026-10`, `2027-01`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ApiVersion(&'static str);
-
-/// The supported releases, oldest first. The only place a release is listed.
-static VERSIONS: &[&str] = &["2026-10", "2027-01"];
 
 /// One schema of a Function API, in `crates/checkout/schemas/<since>/<api>.graphql`: the schema
 /// of the API from release `since` on, until a newer file of the same API. Releases that share a
@@ -60,7 +57,10 @@ static SCHEMA_FILES: [SchemaFile; SCHEMA_COUNT] = [
 impl ApiVersion {
     /// Every supported release, oldest first.
     pub fn all() -> impl Iterator<Item = ApiVersion> {
-        VERSIONS.iter().copied().map(ApiVersion)
+        crate::metadata::get()
+            .releases
+            .iter()
+            .map(|release| ApiVersion(&release.version))
     }
 
     /// The release written as `api_version` (`2026-10`), or the error to show: it names the
@@ -90,13 +90,17 @@ impl ApiVersion {
 
     /// The most recent release.
     pub fn latest() -> ApiVersion {
-        ApiVersion(VERSIONS.last().expect("at least one release"))
+        ApiVersion::all().last().expect("at least one release")
     }
 
     /// Whether a checkout UI extension has to give the `owner_type` of each of its metafield
-    /// declarations: from 2027-01 on. `refusalOf` in `assets/api-versions.js` has the same rule.
+    /// declarations (from 2027-01 on): `metafieldOwnerType` in `assets/api.json`, which
+    /// `refusalOf` in `assets/api-versions.js` reads too.
     pub fn requires_metafield_owner_type(self) -> bool {
-        self.as_str() >= "2027-01"
+        crate::metadata::get()
+            .releases
+            .iter()
+            .any(|release| release.version == self.0 && release.metafield_owner_type == "required")
     }
 
     /// The schema of a Function API in this release, parsed once for every release that shares

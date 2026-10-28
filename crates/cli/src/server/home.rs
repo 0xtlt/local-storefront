@@ -2377,23 +2377,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_owner_types_are_the_ones_of_the_page() {
-        let script = String::from_utf8(
-            lsf_checkout::assets::get("api-versions.js")
-                .expect("api-versions.js")
-                .to_vec(),
-        )
-        .unwrap();
-        let list = script
-            .split("OWNER_TYPES = [")
-            .nth(1)
-            .and_then(|rest| rest.split("];").next())
-            .expect("the list of owner types");
-        let names: Vec<&str> = list.split('\'').skip(1).step_by(2).collect();
-        assert_eq!(names, lsf_checkout::app::OWNER_TYPES);
-    }
-
-    #[test]
     fn only_targets_the_checkout_does_not_know_are_unknown() {
         assert!(is_listed_target(
             "cart.pickup-point-delivery-option-generator.fetch"

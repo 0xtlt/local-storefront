@@ -1,19 +1,18 @@
 // The Shopify API releases of checkout UI extensions the local checkout implements: exactly
-// these, nothing older (2025-07 was the last one built on React and remote-ui). To support
-// another release, add it here and, if it changes something, read the change in `refusalOf`
-// or in the sandbox; `crates/checkout/docs/ui-api-versions.md` says what each release changed.
+// these, nothing older (2025-07 was the last one built on React and remote-ui). They are in
+// `api.json`, which lsf-checkout reads too. To support another release, add it there and, if it
+// changes something, read the change in `refusalOf` or in the sandbox;
+// `crates/checkout/docs/ui-api-versions.md` says what each release changed. 2027-01 is a release
+// candidate until 2027-01-01: the API of 2026-10, but declaring a metafield without `owner_type`
+// blocks the deployment.
 
-export const API_VERSIONS = {
-  '2026-10': { metafieldOwnerType: 'optional' },
-  // A release candidate until 2027-01-01: the API of 2026-10, but declaring a metafield
-  // without `owner_type` blocks the deployment.
-  '2027-01': { metafieldOwnerType: 'required' },
-};
+import api from './api.json' with { type: 'json' };
+
+/** Each release, with what it requires: `{'2026-10': {metafieldOwnerType: 'optional'}, ...}`. */
+export const API_VERSIONS = Object.fromEntries(api.releases.map(({ version, ...rules }) => [version, rules]));
 
 /** The resources a metafield declaration (`owner_type`) can name. */
-export const OWNER_TYPES = [
-  'CART', 'COMPANY', 'COMPANY_LOCATION', 'CUSTOMER', 'PRODUCT', 'PRODUCTVARIANT', 'SHOP',
-];
+export const OWNER_TYPES = api.ownerTypes;
 
 const named = (list) => list.map((entry) => `${entry.namespace}.${entry.key}`).join(', ');
 

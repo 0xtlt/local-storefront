@@ -837,21 +837,15 @@ fn load_ui_extension(
     }
 }
 
-/// The resources a metafield declaration of a checkout UI extension can name (`owner_type`), as
-/// `api-versions.js` has them.
-pub const OWNER_TYPES: [&str; 7] = [
-    "CART",
-    "COMPANY",
-    "COMPANY_LOCATION",
-    "CUSTOMER",
-    "PRODUCT",
-    "PRODUCTVARIANT",
-    "SHOP",
-];
+/// The resources a metafield declaration of a checkout UI extension can name (`owner_type`):
+/// the `ownerTypes` of `assets/api.json`.
+pub fn owner_types() -> &'static [String] {
+    &crate::metadata::get().owner_types
+}
 
 /// `[[extensions.metafields]]`. An entry without `namespace` or `key` is an error and left out;
 /// one without `owner_type` is an error when the API version requires it, and one whose
-/// `owner_type` is not a resource of [`OWNER_TYPES`] always is (the declaration is kept: the page
+/// `owner_type` is not a resource of [`owner_types`] always is (the declaration is kept: the page
 /// says why the extension is refused).
 fn load_metafield_declarations(
     app: &mut App,
@@ -889,14 +883,14 @@ fn load_metafield_declarations(
             );
         }
         if let Some(owner) = owner_type.as_deref()
-            && !OWNER_TYPES.contains(&owner)
+            && !owner_types().iter().any(|known| known == owner)
         {
             app.error(
                 Some(handle),
                 format!(
                     "`owner_type` of `{namespace}.{key}` is `{owner}`, which is not one of {}: \
                      the checkout does not load the extension",
-                    OWNER_TYPES.join(", ")
+                    owner_types().join(", ")
                 ),
             );
         }

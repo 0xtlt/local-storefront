@@ -5,36 +5,12 @@
 // global it builds from the state we send. Everything an extension changes comes back as a
 // message, becomes operations (`operations.js`) and ends in a new state, sent to every iframe.
 
+import api from './api.json' with { type: 'json' };
 import { refusalOf } from './api-versions.js';
 import { operationsForChange } from './operations.js';
 
 /** The targets the page renders (the others of the API need things a local checkout lacks). */
-export const RENDERED_TARGETS = [
-  'purchase.checkout.header.render-after',
-  'purchase.checkout.block.render',
-  'purchase.checkout.contact.render-after',
-  'purchase.checkout.delivery-address.render-before',
-  'purchase.checkout.delivery-address.render-after',
-  'purchase.checkout.shipping-option-list.render-before',
-  'purchase.checkout.shipping-option-list.render-after',
-  'purchase.checkout.shipping-option-item.render-after',
-  'purchase.checkout.shipping-option-item.details.render',
-  'purchase.checkout.payment-method-list.render-before',
-  'purchase.checkout.payment-method-list.render-after',
-  'purchase.checkout.cart-line-list.render-after',
-  'purchase.checkout.cart-line-item.render-after',
-  'purchase.checkout.reductions.render-before',
-  'purchase.checkout.reductions.render-after',
-  'purchase.checkout.actions.render-before',
-  'purchase.checkout.footer.render-after',
-  'purchase.thank-you.announcement.render',
-  'purchase.thank-you.header.render-after',
-  'purchase.thank-you.block.render',
-  'purchase.thank-you.customer-information.render-after',
-  'purchase.thank-you.cart-line-list.render-after',
-  'purchase.thank-you.cart-line-item.render-after',
-  'purchase.thank-you.footer.render-after',
-];
+export const RENDERED_TARGETS = api.placements.map((placement) => placement.target);
 
 /** The part of the state extensions see: the runs of Functions are the page's business. */
 export function stateForExtensions(state) {
