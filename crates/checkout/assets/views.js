@@ -520,15 +520,28 @@ function header(ctx) {
       : h('a', { class: 'lsf-cart-link', href: storefrontLink(state, '/cart'), 'aria-label': 'Return to cart' }, icon('cart')));
 }
 
-/** What is wrong with the app: the server's diagnostics and the extensions the host does not load.
- * They open the main column, on its panel, so the order summary's panel starts under the header. */
+/** A build of `--watch` that failed, with the end of its output: the Function runs the last
+ * module that built. */
+function buildFailure(build) {
+  return [
+    h('p', null, h('strong', null, build.handle), `: ${build.reason}. The checkout runs the last module that built.`),
+    build.output && h('pre', { class: 'lsf-build-output' }, build.output),
+  ];
+}
+
+/** What is wrong with the app: the builds that failed, the server's diagnostics and the
+ * extensions the host does not load. They open the main column, on its panel, so the order
+ * summary's panel starts under the header. */
 function diagnostics({ state, refusals = [] }) {
+  const builds = state.builds ?? [];
   const messages = [
     ...(state.diagnostics ?? []),
     ...refusals.map((refusal) => `${refusal.handle}: not loaded. ${refusal.reason}`),
   ];
-  return messages.length > 0
-    ? h('div', { class: 'lsf-diagnostics' }, messages.map((message) => banner('warning', h('p', null, message))))
+  return messages.length > 0 || builds.length > 0
+    ? h('div', { class: 'lsf-diagnostics' },
+      builds.map((build) => banner('critical', buildFailure(build), { 'data-banner': 'build', 'data-build': build.handle })),
+      messages.map((message) => banner('warning', h('p', null, message))))
     : null;
 }
 
@@ -714,19 +727,22 @@ export function selectedRun(runs = [], view) {
   return fallback === 'overview' ? -1 : selectedRun(runs, fallback);
 }
 
-/** How the Functions went: the runs, those that failed, the errors that block the checkout. */
+/** How the Functions went: the runs, those that failed, the errors that block the checkout, the
+ * builds of `--watch` that failed. */
 function functionsSummary(state) {
   const runs = state.runs ?? [];
   const failed = runs.filter((entry) => entry.error).length;
   const errors = (state.errors ?? []).length;
-  return { runs, failed, errors, ok: failed === 0 && errors === 0 };
+  const builds = (state.builds ?? []).length;
+  return { runs, failed, errors, builds, ok: failed === 0 && errors === 0 && builds === 0 };
 }
 
 /** The chips of that summary, after the number of runs. */
-function summaryChips({ failed, errors }) {
+function summaryChips({ failed, errors, builds }) {
   return [
     failed > 0 && h('span', { class: 'lsf-chip is-error' }, `${failed} failed`),
     errors > 0 && h('span', { class: 'lsf-chip is-error' }, plural(errors, 'checkout error')),
+    builds > 0 && h('span', { class: 'lsf-chip is-error' }, plural(builds, 'build error')),
   ];
 }
 
@@ -738,7 +754,8 @@ function functionsBadge(ctx) {
   const { state, actions } = ctx;
   const summary = functionsSummary(state);
   const count = summary.runs.length === 0 ? 'No runs' : plural(summary.runs.length, 'run');
-  const label = ['Functions', count, summary.failed > 0 && `${summary.failed} failed`, summary.errors > 0 && plural(summary.errors, 'checkout error')]
+  const label = ['Functions', count, summary.failed > 0 && `${summary.failed} failed`, summary.errors > 0 && plural(summary.errors, 'checkout error'),
+    summary.builds > 0 && plural(summary.builds, 'build error')]
     .filter(Boolean).join(', ');
   return h('button', {
       type: 'button', class: 'lsf-fn-badge', key: 'badge', 'aria-haspopup': 'dialog', 'aria-label': label, title: label,
@@ -752,7 +769,8 @@ function functionsBadge(ctx) {
       h('span', { class: 'lsf-fn-badge-title' }, 'Functions'),
       h('span', { class: 'lsf-fn-badge-count' }, count),
       summary.failed > 0 && h('span', { class: 'lsf-chip is-error' }, `${summary.failed} failed`),
-      summary.errors > 0 && h('span', { class: 'lsf-chip is-error' }, plural(summary.errors, 'error'))));
+      summary.errors > 0 && h('span', { class: 'lsf-chip is-error' }, plural(summary.errors, 'error')),
+      summary.builds > 0 && h('span', { class: 'lsf-chip is-error' }, plural(summary.builds, 'build error'))));
 }
 
 const okChip = (entry) => h('span', { class: `lsf-chip ${entry.error ? 'is-error' : 'is-ok'}` }, entry.error ? 'error' : 'ok');
@@ -839,6 +857,8 @@ function functionsOverview(ctx) {
       h('code', null, focus),
       ran && target ? [' has no run of ', h('code', null, target), ' in this checkout.'] : ' did not run or load in this checkout.',
       state.home && [' ', h('a', { class: 'lsf-link', href: state.home }, 'The home page says why.')]),
+    (state.builds ?? []).length > 0 && h('div', { 'data-test': 'build-errors' }, h('h4', null, 'Builds that failed'),
+      h('ul', null, state.builds.map((build) => h('li', { key: build.handle, class: focused(build.handle) }, buildFailure(build))))),
     (state.runs ?? []).length === 0 && h('p', { class: 'lsf-muted' }, 'No Function ran.'),
     (state.errors ?? []).length > 0 && h('div', null, h('h4', null, 'Errors that block the checkout'),
       h('ul', null, state.errors.map((error) => h('li', { class: focused(error.function) }, error.message, error.function && h('code', null, error.function), error.target && h('code', null, error.target))))),

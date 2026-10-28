@@ -729,6 +729,8 @@ fn compute(
     });
     object.insert("selectedPayment".into(), json!(selected));
     object.insert("extensions".into(), extensions_json(&app, &selection));
+    // The Functions whose last build of `--watch` failed: they run their last module.
+    object.insert("builds".into(), state.builds.to_json());
     object.insert(
         "diagnostics".into(),
         Json::Array(
@@ -939,8 +941,11 @@ fn control_state(state: &ServerState, incoming: &Incoming) -> Reply {
     }
 }
 
-/// The HTML of the page with the state in it.
-fn shell(json: &Json) -> Reply {
+/// The HTML of the page with the state in it, and the builds that failed as they are now (a
+/// placed order keeps the state it had).
+fn shell(server: &ServerState, json: &Json) -> Reply {
+    let mut json = json.clone();
+    json["builds"] = server.builds.to_json();
     let template = lsf_checkout::assets::get("checkout.html").expect("checkout.html is embedded");
     let template = String::from_utf8_lossy(template);
     // Inside a script element: nothing in the JSON may close it or open a comment.
@@ -958,10 +963,13 @@ fn shell(json: &Json) -> Reply {
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
         .collect();
-    let html = template
+    let mut html = template
         .replacen("<html lang=\"en\">", &format!("<html lang=\"{lang}\">"), 1)
         .replace("<!--LSF_ASSETS-->", ASSETS)
         .replace("<!--LSF_STATE-->", &state);
+    if server.options.live_reload {
+        super::live_reload::inject(&mut html);
+    }
     Reply::html(200, html).cached(cache::PRIVATE)
 }
 
@@ -971,7 +979,7 @@ fn page(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
         Err(reply) => return reply,
     };
     let reply = match current(state, &id, incoming) {
-        Ok(json) => shell(&json),
+        Ok(json) => shell(state, &json),
         Err(reply) => reply,
     };
     with_cookie(reply, &id, is_new)
@@ -984,7 +992,7 @@ fn thank_you(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     };
     let completed = state.with_session(&id, |entry| entry.checkout.completed.clone());
     let reply = match completed {
-        Some(json) => shell(&in_request_language(state, &id, incoming, json)),
+        Some(json) => shell(state, &in_request_language(state, &id, incoming, json)),
         None => Reply::redirect(&checkout_path(&request_root(state, &id, incoming), token)),
     };
     with_cookie(reply, &id, is_new)

@@ -10,6 +10,7 @@ use crate::checkout::{self, AppArgs, CheckoutOptions, Variant};
 use crate::output::print_diagnostics;
 use crate::server::throttle::Throttle;
 use crate::server::{ServeOptions, ServerState, run as run_server};
+use crate::watch::{self, Watcher};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -31,6 +32,13 @@ pub struct Args {
     /// runs against files that do not change.
     #[arg(long = "static")]
     static_files: bool,
+
+    /// Develop the app of `--app`, as `shopify app dev` does: build its Functions first (as
+    /// `--build`), build a Function again when its files change, and reload the open pages
+    /// (`--live-reload`) when a build is over or another file of the app or the data changes.
+    /// A build that fails keeps the last module that built, and the pages show its error.
+    #[arg(long, conflicts_with = "static_files")]
+    watch: bool,
 
     /// Do not log requests.
     #[arg(long, short)]
@@ -121,9 +129,17 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     // The app is read before the store data and the theme, so that a wrong `--app` is the first
     // thing said. `--build` runs here too.
+    if args.watch && args.app.app.is_none() {
+        return Err("--watch needs the app: `--app DIR` (or LSF_APP)".to_string());
+    }
     let checkout = match &args.app.app {
         Some(dir) => {
-            let (app, selection) = checkout::open(&args.app, dir)?;
+            // The watcher builds the Functions itself, without stopping at one that fails.
+            let opening = AppArgs {
+                build: args.app.build && !args.watch,
+                ..args.app.clone()
+            };
+            let (app, selection) = checkout::open(&opening, dir)?;
             checkout::print_app_diagnostics(&app, &selection);
             Some((
                 CheckoutOptions {
@@ -165,7 +181,7 @@ pub fn run(
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
-            live_reload: args.live_reload,
+            live_reload: args.live_reload || args.watch,
             watch: !args.static_files,
             quiet: args.quiet,
             compress: !args.no_compression,
@@ -187,6 +203,22 @@ pub fn run(
     if args.strict && diagnostics.has_errors() {
         return Err("the store data has errors (see above)".to_string());
     }
+
+    let state = Arc::new(state);
+    let watcher = match (&args.app.app, args.watch) {
+        (Some(dir), true) => {
+            let changed = state.clone();
+            Some(Watcher::start(
+                dir,
+                state.builds.clone(),
+                watch::Options::new(args.app.extensions.clone(), true),
+                // What the home page found when it ran the Functions is for the old modules.
+                Box::new(move || changed.home_check.clear()),
+                Arc::new(|line: &str| eprintln!("{line}")),
+            ))
+        }
+        _ => None,
+    };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -248,10 +280,17 @@ pub fn run(
                 );
             }
         }
-        run_server(Arc::new(state), listener)
+        if args.watch {
+            eprintln!("watch:  the Functions build again when their files change, and the pages reload (Ctrl-C to stop)");
+        }
+        run_server(state, listener)
             .await
             .map_err(|error| error.to_string())
     })?;
+    // Interrupted: the builds that run stop too.
+    if let Some(watcher) = watcher {
+        watcher.stop();
+    }
     Ok(ExitCode::SUCCESS)
 }
 

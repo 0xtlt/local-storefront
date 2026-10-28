@@ -338,6 +338,20 @@ a:focus-visible { outline-offset: 3px; border-radius: 2px; }
 .lsf-banner.is-warning { --tone: var(--lsf-color-warning); border-color: var(--lsf-color-warning-wash-3); background: var(--lsf-color-warning-wash-1); color: var(--lsf-color-warning-text); }
 /* At the top of the main column, on its panel. */
 .lsf-diagnostics { display: flex; flex-direction: column; gap: var(--lsf-space-m); }
+/* The end of the output of a build that failed (`--watch`), in its banner and in the dialog. */
+.lsf-banner > div { min-width: 0; }
+.lsf-build-output {
+  margin: var(--lsf-space-s) 0 0;
+  padding: var(--lsf-space-s) var(--lsf-space-m);
+  max-height: 14rem;
+  overflow: auto;
+  border-radius: var(--lsf-radius-small);
+  background: var(--lsf-color-bg-subdued);
+  color: var(--lsf-color-text);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 /* --- The summary ---------------------------------------------------------------------- */
 
@@ -878,6 +892,7 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-hp-full { display: flex; flex-direction: column; gap: var(--lsf-space-xs); padding: var(--lsf-space-xs) 0 var(--lsf-space-m) calc(6.5rem + 40px); font-size: var(--lsf-size-s); }
 .lsf-hp-full pre { margin: 0; padding: var(--lsf-space-s) var(--lsf-space-m); border-radius: var(--lsf-radius-small); background: var(--lsf-color-bg-subdued); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* What a message has between backticks: plain in a block that is all code already. */
+.lsf-hp-full pre.lsf-hp-output { max-height: 20rem; overflow: auto; }
 .lsf-hp-full pre code, .lsf-home-problem code { padding: 0; background: none; font: inherit; }
 .lsf-hp-more > summary { display: inline-flex; align-items: center; gap: var(--lsf-space-m); padding: var(--lsf-space-xs) var(--lsf-space-xs) var(--lsf-space-s); color: var(--lsf-color-accent); font-size: var(--lsf-size-s); }
 .lsf-hp-more[open] > summary { display: none; }

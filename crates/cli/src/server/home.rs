@@ -22,6 +22,7 @@ use super::home_check::Report;
 use super::reply::{Reply, cache};
 use super::{Incoming, ServerState};
 use crate::checkout::CheckoutOptions;
+use crate::watch::Failure;
 
 /// Where the files of the checkout page are served from.
 pub const ASSETS: &str = "/__lsf/checkout/assets";
@@ -305,6 +306,7 @@ fn function_json(
     selection: &Selection,
     function: &FunctionExtension,
     report: Option<&Report>,
+    build: Option<&Failure>,
     used_by: usize,
 ) -> Json {
     let targets: Vec<Json> = function
@@ -355,10 +357,17 @@ fn function_json(
         "built": function.built(),
         "buildCommand": function.build_command,
         "selected": selected,
-        "status": extension_status(&problems, &failures, selected),
+        // A build of `--watch` that failed is an error, even if the last module runs.
+        "status": if build.is_some() {
+            "error".to_string()
+        } else {
+            extension_status(&problems, &failures, selected)
+        },
         "problems": problems_json(&problems),
         // Its runs that fail when the scenarios run, once the check ran.
         "failures": failures,
+        // Its last build of `--watch`, when it failed.
+        "build": build.map(|failure| json!({"reason": failure.reason, "output": failure.output})),
         // How many scenarios that open run it.
         "scenarios": used_by,
     })
@@ -780,8 +789,9 @@ fn scenario_json(context: &Context, scenario: &CheckoutScenario) -> Json {
 /// One line of the list of problems.
 struct Problem {
     level: Level,
-    /// What it is about: `store`, `app`, `crash` (a Function that fails when a scenario
-    /// runs), `function`, `uiExtension` or `scenario`. Within a level, in this order.
+    /// What it is about: `store`, `app`, `build` (a build of `--watch` that failed), `crash` (a
+    /// Function that fails when a scenario runs), `function`, `uiExtension` or `scenario`.
+    /// Within a level, in this order.
     kind: &'static str,
     /// The handle, the scenario or the file it is about.
     subject: Option<String>,
@@ -794,6 +804,8 @@ struct Problem {
     scenarios: Vec<String>,
     /// The checkout where it shows (see [`Open`]).
     open: Option<Open>,
+    /// What else to read: the end of the output of a build that failed.
+    detail: Option<String>,
 }
 
 /// A fresh checkout where a problem shows: the scenario that runs the extension (or the
@@ -837,10 +849,11 @@ impl Problem {
         let kind = match self.kind {
             "store" => 0,
             "app" => 1,
-            "crash" => 2,
-            "function" => 3,
-            "uiExtension" => 4,
-            _ => 5,
+            "build" => 2,
+            "crash" => 3,
+            "function" => 4,
+            "uiExtension" => 5,
+            _ => 6,
         };
         (self.level, kind)
     }
@@ -875,6 +888,7 @@ impl Problem {
             // The checkout where it shows, and for a run that fails, each scenario's.
             "open": open,
             "runs": runs,
+            "detail": self.detail,
         })
     }
 }
@@ -954,6 +968,7 @@ fn problem_list(
             link,
             scenarios: Vec::new(),
             open: None,
+            detail: None,
         });
     };
     for item in &state.loaded().diagnostics.items {
@@ -1004,9 +1019,38 @@ fn problem_list(
                     )),
                     scenarios: Vec::new(),
                     open: Some(open_for(kind, extension, message)),
+                    detail: None,
                 });
             }
         }
+    }
+    // The builds of `--watch` that failed: the Function runs its last module meanwhile.
+    for function in functions {
+        let build = &function["build"];
+        if !build.is_object() {
+            continue;
+        }
+        let message = format!(
+            "{}: the checkout runs the last module that built",
+            text_of(&build["reason"])
+        );
+        list.push(Problem {
+            level: Level::Error,
+            kind: "build",
+            subject: function["handle"].as_str().map(str::to_string),
+            open: Some(open_for("function", function, &message)),
+            message,
+            target: None,
+            link: Some((
+                format!("#{}", text_of(&function["anchor"])),
+                "Functions".to_string(),
+            )),
+            scenarios: Vec::new(),
+            detail: build["output"]
+                .as_str()
+                .filter(|output| !output.is_empty())
+                .map(str::to_string),
+        });
     }
     for scenario in scenarios {
         let problems = scenario["problems"].as_array().cloned().unwrap_or_default();
@@ -1067,6 +1111,7 @@ fn problem_list(
                 functions: Some(functions),
                 run: true,
             }),
+            detail: None,
         });
     }
     list.sort_by_key(Problem::rank);
@@ -1146,7 +1191,17 @@ pub fn build(
     let functions: Vec<Json> = app
         .functions
         .iter()
-        .map(|function| function_json(&app, &selection, function, report, used(&function.handle)))
+        .map(|function| {
+            let build = state.builds.failure(&function.handle);
+            function_json(
+                &app,
+                &selection,
+                function,
+                report,
+                build.as_ref(),
+                used(&function.handle),
+            )
+        })
         .map(runs_in)
         .collect();
     let ui_extensions: Vec<Json> = app
@@ -1277,7 +1332,11 @@ pub fn page(
     if incoming.query_param("format") == Some("json") {
         return Reply::json(200, &home).cached(cache::PRIVATE);
     }
-    Reply::html(200, render(&home, &check_now_href(incoming))).cached(cache::PRIVATE)
+    let mut html = render(&home, &check_now_href(incoming));
+    if state.options.live_reload {
+        super::live_reload::inject(&mut html);
+    }
+    Reply::html(200, html).cached(cache::PRIVATE)
 }
 
 /// The page itself with `check=1`: what a browser without the script follows to run the check.
@@ -1436,6 +1495,7 @@ fn problem_html(problem: &Json, dir: &str) -> String {
     let kind = text_of(&problem["kind"]);
     let label = match kind {
         "crash" => "fails",
+        "build" => "build",
         "function" => "Function",
         "uiExtension" => "UI extension",
         "scenario" => "scenario",
@@ -1496,6 +1556,12 @@ fn problem_html(problem: &Json, dir: &str) -> String {
         esc(message),
         message_html(message, dir)
     ));
+    if let Some(detail) = problem["detail"].as_str() {
+        full.push_str(&format!(
+            "<p>The end of its output:</p><pre class=\"lsf-hp-output\">{}</pre>",
+            esc(&shorten(detail, dir))
+        ));
+    }
     if scenarios.len() > 1 {
         // Each with the checkout of that scenario on the run.
         let links: Vec<String> = problem["runs"]

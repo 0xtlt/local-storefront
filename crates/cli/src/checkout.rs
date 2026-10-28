@@ -105,18 +105,9 @@ pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
             continue;
         };
         eprintln!("build:  {}: {command}", function.handle);
-        let status = if cfg!(windows) {
-            Command::new("cmd")
-                .args(["/C", command])
-                .current_dir(&function.dir)
-                .status()
-        } else {
-            Command::new("sh")
-                .args(["-c", command])
-                .current_dir(&function.dir)
-                .status()
-        }
-        .map_err(|error| format!("cannot run the build of {}: {error}", function.handle))?;
+        let status = build_command(command, &function.dir)
+            .status()
+            .map_err(|error| format!("cannot run the build of {}: {error}", function.handle))?;
         if !status.success() {
             return Err(format!(
                 "the build of {} failed ({status})",
@@ -125,6 +116,21 @@ pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The build command of a Function, to run in its folder `dir` through the shell.
+pub fn build_command(command: &str, dir: &Path) -> Command {
+    let mut process = if cfg!(windows) {
+        let mut process = Command::new("cmd");
+        process.args(["/C", command]);
+        process
+    } else {
+        let mut process = Command::new("sh");
+        process.args(["-c", command]);
+        process
+    };
+    process.current_dir(dir);
+    process
 }
 
 /// The checkout settings of the store data, as the checkout library takes them.

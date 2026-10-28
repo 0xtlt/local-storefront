@@ -37,6 +37,12 @@ percent-encoding = "2"
 bytes = "1"
 futures-util = { version = "0.3", default-features = false }
 indexmap.workspace = true
+# What tells `--watch` that a file of the app changed: FSEvents, inotify, ReadDirectoryChangesW.
+notify = "8"
+
+# Stops a build of `--watch` and what it started.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util"] }

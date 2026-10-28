@@ -233,6 +233,11 @@ pub struct Cache {
 }
 
 impl Cache {
+    /// Forgets the last check: a build of `--watch` is over.
+    pub fn clear(&self) {
+        *self.last.lock().expect("check cache poisoned") = None;
+    }
+
     /// The last check, if it was run on this app and this store.
     pub fn get(&self, app: &App, store: &Arc<Store>) -> Option<Arc<Report>> {
         let key = Key::of(app, store);

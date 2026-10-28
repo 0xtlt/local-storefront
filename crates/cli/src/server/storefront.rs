@@ -313,10 +313,7 @@ fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     let timings = timing::of_render(&rendered.timings, visit.state.options.timings);
     let mut body = rendered.body;
     if visit.state.options.live_reload && *target == Target::Page {
-        match body.rfind("</body>") {
-            Some(index) => body.insert_str(index, live_reload::SCRIPT),
-            None => body.push_str(live_reload::SCRIPT),
-        }
+        live_reload::inject(&mut body);
     }
     let mut reply = Reply::new(rendered.status, rendered.content_type, body.into_bytes())
         .header("x-lsf-template", rendered.template)

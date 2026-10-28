@@ -6,6 +6,7 @@ mod commands;
 mod output;
 mod profile;
 mod server;
+mod watch;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

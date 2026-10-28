@@ -445,6 +445,23 @@ test('problems with the app show as banners', () => {
   assert.match(text(byClass(tree, 'lsf-diagnostics')[0]), /shopify app build/);
 });
 
+test('a build of --watch that failed shows in a banner, in the badge and on the overview', () => {
+  const builds = [{ handle: 'volume-discount', reason: 'build failed (exit status: 101)', output: 'error[E0425]: cannot find value `x`' }];
+  const tree = page(checkoutState({ builds }));
+  const [banner] = findAll(tree, (node) => node.props['data-banner'] === 'build');
+  assert.equal(banner.props['data-build'], 'volume-discount');
+  assert.match(text(banner), /volume-discount: build failed \(exit status: 101\)\. The checkout runs the last module that built\..*E0425/);
+  const [badge] = byClass(tree, 'lsf-fn-badge');
+  assert.equal(badge.props['data-status'], 'failed');
+  assert.match(badge.props['aria-label'], /1 build error/);
+  const overview = byClass(page(checkoutState({ builds }), { functionsOpen: true, functionsView: 'overview' }), 'lsf-fn-overview')[0];
+  const [listed] = findAll(overview, (node) => node.props['data-test'] === 'build-errors');
+  assert.match(text(listed), /Builds that failed.*volume-discount.*E0425/);
+  const none = page(checkoutState({ builds: [] }));
+  assert.equal(findAll(none, (node) => node.props['data-banner'] === 'build').length, 0);
+  assert.equal(byClass(none, 'lsf-diagnostics').length, 0);
+});
+
 test('the banners open the main column, so the summary panel starts under the header', () => {
   const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle'] }));
   const main = byClass(tree, 'lsf-main')[0];

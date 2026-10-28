@@ -7542,3 +7542,102 @@ fn the_run_to_show_survives_the_redirect_of_a_scenario() {
         "{location}"
     );
 }
+
+#[test]
+fn the_live_reload_token_changes_when_a_build_of_watch_is_over() {
+    let state = server();
+    let before = state.observe_changes();
+    assert_eq!(state.observe_changes(), before);
+    state.builds.bump();
+    assert_ne!(state.observe_changes(), before);
+}
+
+#[test]
+fn with_watch_the_pages_reload_and_say_which_builds_failed() {
+    let mut state = checkout_server(&[], true);
+    state.options.live_reload = true;
+    state.builds.set(
+        "volume-discount",
+        Some(crate::watch::Failure {
+            reason: "build failed (exit status: 101)".to_string(),
+            output: "error[E0425]: cannot find value `x` in this scope".to_string(),
+        }),
+    );
+    let path = start_checkout(
+        &state,
+        "co-watch",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    let html = text(&get(&state, &path, "co-watch"));
+    assert!(html.contains("data-lsf-live-reload"), "{html}");
+    let builds = &page_state(&html)["builds"];
+    assert_eq!(builds[0]["handle"], "volume-discount");
+    assert_eq!(builds[0]["reason"], "build failed (exit status: 101)");
+    assert!(builds[0]["output"].as_str().unwrap().contains("E0425"));
+    // The state the page updates itself with says so too.
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-watch"));
+    assert_eq!(json["builds"], *builds);
+
+    // The home page: the script, the Function in error, and the build first among its problems.
+    let home = get(&state, "/", "co-watch");
+    assert!(text(&home).contains("data-lsf-live-reload"));
+    assert!(text(&home).contains("E0425"), "the end of the output");
+    let home = body_json(&get(&state, "/?format=json", "co-watch"));
+    let function = home["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "volume-discount")
+        .unwrap();
+    assert_eq!(function["status"], "error");
+    let problem = home["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| problem["kind"] == "build")
+        .expect("the build is a problem");
+    assert_eq!(problem["subject"], "volume-discount");
+    assert_eq!(problem["severity"], "error");
+    assert!(
+        problem["message"]
+            .as_str()
+            .unwrap()
+            .contains("the checkout runs the last module that built")
+    );
+    assert!(problem["detail"].as_str().unwrap().contains("E0425"));
+    assert!(
+        problem["open"]["href"]
+            .as_str()
+            .unwrap()
+            .contains("functions=volume-discount")
+    );
+
+    // Fixed: the problem is gone.
+    state.builds.set("volume-discount", None);
+    let home = body_json(&get(&state, "/?format=json", "co-watch"));
+    assert!(
+        !home["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|problem| problem["kind"] == "build")
+    );
+}
+
+#[test]
+fn without_live_reload_the_checkout_pages_have_no_script() {
+    let state = checkout_server(&[], true);
+    let path = start_checkout(
+        &state,
+        "co-nowatch",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert!(!text(&get(&state, &path, "co-nowatch")).contains("data-lsf-live-reload"));
+    assert!(!text(&get(&state, "/", "co-nowatch")).contains("data-lsf-live-reload"));
+    assert_eq!(
+        page_state(&text(&get(&state, &path, "co-nowatch")))["builds"],
+        json!([])
+    );
+}

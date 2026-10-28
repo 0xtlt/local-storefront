@@ -120,6 +120,8 @@ pub struct ServerState {
     pub(crate) timings: timing::Totals,
     /// The Functions that fail when the scenarios run, as the home page last found them.
     pub(crate) home_check: home_check::Cache,
+    /// The builds of `--watch`: the ones that failed, and when the pages should reload.
+    pub(crate) builds: Arc<crate::watch::Builds>,
 }
 
 /// One HTTP request, decoded.
@@ -225,6 +227,7 @@ impl ServerState {
             changes: live_reload::Changes::new(),
             timings: timing::Totals::default(),
             home_check: home_check::Cache::default(),
+            builds: Default::default(),
         };
         (state, diagnostics)
     }
@@ -275,9 +278,11 @@ impl ServerState {
 
     /// A token that changes whenever the theme or the data change, for live reload. Only the
     /// directories a theme is made of are looked at: what else lives next to them (sources,
-    /// `node_modules`) is not served, and can be large.
+    /// `node_modules`) is not served, and can be large. With `--watch`, also when a build is over
+    /// or a file of the app changed.
     fn change_token(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write_u64(self.builds.generation());
         let root = self.app.theme.files().root();
         for directory in THEME_DIRECTORIES {
             hasher.write_u64(fingerprint(&root.join(directory)));
