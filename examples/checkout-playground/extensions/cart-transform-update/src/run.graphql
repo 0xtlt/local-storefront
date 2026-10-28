@@ -1,0 +1,24 @@
+# $tags comes from the settings of the cart transform ([extensions.input.variables]).
+query Input($tags: [String!]!) {
+  cart {
+    buyerIdentity {
+      customer {
+        hasAnyTag(tags: $tags)
+      }
+    }
+    lines {
+      id
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            title
+            memberPrice: metafield(namespace: "custom", key: "member_price") {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Operations from line properties"
+handle = "cart-transform-properties"
+type = "function"
+description = "Updates, expands and merges lines as their properties ask: engraving, gift wrap, sets"
+
+  [[extensions.targeting]]
+  target = "cart.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. cart-transform-properties"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

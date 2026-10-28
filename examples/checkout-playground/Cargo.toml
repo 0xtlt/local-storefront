@@ -34,6 +34,11 @@ members = [
   "extensions/validation-street-number",
   "extensions/validation-legacy",
   "extensions/validation-network",
+  "extensions/cart-transform-expand",
+  "extensions/cart-transform-merge",
+  "extensions/cart-transform-update",
+  "extensions/cart-transform-properties",
+  "extensions/cart-transform-legacy",
 ]
 
 [profile.release]

@@ -1,0 +1,21 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Member price"
+handle = "cart-transform-update"
+type = "function"
+description = "Gives logged-in customers with a tag the member price of a product metafield, and says so in the title"
+
+  [[extensions.targeting]]
+  target = "cart.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. cart-transform-update"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

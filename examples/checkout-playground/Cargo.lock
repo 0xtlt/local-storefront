@@ -89,6 +89,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "cart-transform-expand"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "cart-transform-legacy"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
+name = "cart-transform-merge"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "cart-transform-properties"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shopify_function",
+]
+
+[[package]]
+name = "cart-transform-update"
+version = "1.0.0"
+dependencies = [
+ "shopify_function",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
