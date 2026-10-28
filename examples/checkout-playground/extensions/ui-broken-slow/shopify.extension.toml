@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-slow.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI broken: slow"
+handle = "ui-broken-slow"
+type = "ui_extension"
+description = "Renders after 4 seconds, and its buyer journey interceptor answers after 7, past the 5 seconds the checkout waits."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

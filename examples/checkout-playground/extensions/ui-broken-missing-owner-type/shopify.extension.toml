@@ -1,0 +1,17 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-missing-owner-type.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI broken: missing-owner-type"
+handle = "ui-broken-missing-owner-type"
+type = "ui_extension"
+description = "Declares a metafield without owner_type, which 2027-01 requires: not loaded."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  # Wrong on purpose: 2027-01 requires `owner_type` (CART, CUSTOMER, ...).
+  [[extensions.metafields]]
+  namespace = "$app:playground"
+  key = "no_owner"
