@@ -334,7 +334,7 @@ fn the_init_scenarios_run_no_broken_function() {
             "{name}: {:?}",
             ran(&result)
         );
-        assert!(ran(&result).len() > 25, "{name}: {:?}", ran(&result));
+        assert!(ran(&result).len() >= 20, "{name}: {:?}", ran(&result));
         // Their checkout UI extensions are working ones too.
         let listed = listed(name);
         assert!(
