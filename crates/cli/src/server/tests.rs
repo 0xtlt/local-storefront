@@ -7073,9 +7073,20 @@ fn without_the_script_the_page_runs_the_check_when_asked() {
 
 #[test]
 fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
+    let app = app_with_oddities("statuses");
     let data = ScenarioData::new(
         "home-statuses",
         &[
+            // It runs a Function that is not built: an error, as the problem of the Function.
+            (
+                "unbuilt.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["remote-rules"]}"#,
+            ),
+            // A warning and an error: the worst wins.
+            (
+                "mixed.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["quantity-limit", "remote-rules"]}"#,
+            ),
             (
                 "plain.json",
                 r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["volume-discount"]}"#,
@@ -7091,7 +7102,7 @@ fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
             ("unreadable.json", "{ nope"),
         ],
     );
-    let state = data.server(&[], true);
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
     let json = body_json(&get(&state, "/?format=json", "home"));
     let statuses: HashMap<&str, &str> = json["scenarios"]
         .as_array()
@@ -7100,8 +7111,10 @@ fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
         .map(|s| (s["name"].as_str().unwrap(), s["status"].as_str().unwrap()))
         .collect();
     assert_eq!(statuses["plain"], "ok");
-    // It uses a Function with a legacy target.
+    // It uses a Function with a legacy target: a warning, as the problem is.
     assert_eq!(statuses["legacy"], "warning");
+    assert_eq!(statuses["unbuilt"], "error");
+    assert_eq!(statuses["mixed"], "error");
     assert_eq!(statuses["ghost"], "error");
     assert_eq!(statuses["unreadable"], "error");
     let legacy = json["scenarios"]
@@ -7116,8 +7129,11 @@ fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
 
     // The page lists them problems first, then by name, each with what the filter reads.
     let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
     let at = |name: &str| position(&html, &format!("data-scenario=\"{name}\""));
-    assert!(at("ghost") < at("unreadable"));
+    assert!(at("ghost") < at("mixed"));
+    assert!(at("mixed") < at("unbuilt"));
+    assert!(at("unbuilt") < at("unreadable"));
     assert!(at("unreadable") < at("legacy"));
     assert!(at("legacy") < at("plain"));
     assert!(

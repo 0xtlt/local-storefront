@@ -324,10 +324,13 @@ fn the_init_scenarios_run_no_broken_function() {
         let result = run(name);
         assert_ok(&result);
         assert!(result.errors.is_empty(), "{name}: {:?}", errors(&result));
+        // Nor a legacy target: an everyday scenario has nothing to warn about.
         assert!(
             ran(&result)
                 .iter()
-                .all(|handle| !handle.starts_with("broken-") && !handle.contains("network")),
+                .all(|handle| !handle.starts_with("broken-")
+                    && !handle.contains("network")
+                    && !handle.ends_with("-legacy")),
             "{name}: {:?}",
             ran(&result)
         );
@@ -388,6 +391,13 @@ fn the_mix_scenarios_run_functions_and_checkout_ui_extensions_together() {
             .filter(|handle| handle.starts_with("ui-"))
             .count();
         assert!(ui > 0 && ui < listed.len(), "{name}: {listed:?}");
+        // The legacy targets have scenarios of their own (`fn-*-legacy`).
+        assert!(
+            listed
+                .iter()
+                .all(|handle| handle.starts_with("ui-") || !handle.ends_with("-legacy")),
+            "{name}: {listed:?}"
+        );
         let result = run(name);
         assert_ok(&result);
         assert!(result.errors.is_empty(), "{name}: {:?}", errors(&result));

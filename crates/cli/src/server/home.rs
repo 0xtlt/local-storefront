@@ -689,8 +689,9 @@ struct Context<'a> {
     selection: &'a Selection,
     root: &'a str,
     report: Option<&'a Report>,
-    /// The status of each extension, by handle, from its own problems only.
-    statuses: HashMap<String, &'static str>,
+    /// The worst level of the problems of each extension, by handle, from its own problems
+    /// only (`None`: it has none).
+    statuses: HashMap<String, Option<Level>>,
 }
 
 /// The extensions a scenario runs: the ones it names, or every one that is selected.
@@ -750,20 +751,16 @@ fn scenario_json(context: &Context, scenario: &CheckoutScenario) -> Json {
         (Some(report), true) => report.failing_in(&scenario.name),
         _ => Vec::new(),
     };
-    // Its own problems and the Functions that fail in it are errors; an extension with a
-    // problem that it uses is a warning.
-    let status = if !problems.is_empty() || !failing.is_empty() {
-        "error"
-    } else if handles.iter().any(|handle| {
-        context
-            .statuses
-            .get(*handle)
-            .is_some_and(|status| *status != "ok")
-    }) {
-        "warning"
-    } else {
-        "ok"
-    };
+    // The worst of its own problems and the Functions that fail in it (errors), and of the
+    // problems of the extensions it runs (each at its own level).
+    let own = (!problems.is_empty() || !failing.is_empty()).then_some(Level::Error);
+    let status = status_of(
+        own.into_iter().chain(
+            handles
+                .iter()
+                .filter_map(|handle| context.statuses.get(*handle).copied().flatten()),
+        ),
+    );
     json!({
         "name": scenario.name,
         "anchor": anchor("scenario", &scenario.name),
@@ -1230,7 +1227,7 @@ pub fn build(
             .map(Level::of_json);
         context
             .statuses
-            .insert(text_of(&extension["handle"]).to_string(), status_of(levels));
+            .insert(text_of(&extension["handle"]).to_string(), levels.min());
     }
     let scenarios: Vec<Json> = store
         .scenarios

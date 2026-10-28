@@ -22,7 +22,6 @@
   "extensions": [
     "discount-b2b-location",
     "payment-hide-for-b2b",
-    "payment-legacy",
     "validation-minimum-order",
     "ui-checkout-inspector",
     "ui-payment-notes"

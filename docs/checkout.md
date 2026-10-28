@@ -195,7 +195,10 @@ can call a server (see below).
 - **Open a checkout:** with the cart of the store data, with [every extension
   target](#every-extension-target), or in the Shop look.
 - **Every [scenario](#scenarios)**, those with problems first, then by name. A row has a status
-  dot, the title and the file, a few words for its cart, buyer, country, language and codes,
+  dot: the worst of its own problems (it does not validate, it names an extension the app does
+  not have) and of the Functions that fail in it, which are errors, and of the problems of the
+  extensions it runs, each at its own level (a Function that is not built makes it an error, a
+  legacy target a warning). Then the title and the file, a few words for its cart, buyer, country, language and codes,
   the description, how many Functions and UI extensions it runs ("all extensions" without an
   `extensions` list), and buttons that open a fresh checkout for it. Its details list the cart,
   the buyer, what was entered, the settings it overrides, and the extensions it runs. The
@@ -245,8 +248,8 @@ The page also loads the bundle of each checkout UI extension in a hidden frame o
 as the checkout does, without rendering it. Unlike the check of the Functions, this loads the
 real bundles: a bundle that calls the network as it loads does so. A bundle that does not load
 (no file), throws while it loads, or does not register a target it declares (`shopify.extend`),
-is listed with the problems, and the scenarios that run it get a warning, as for any extension
-with a problem. A frame that says nothing within 5 s is a warning that the page could not tell;
+is listed with the problems, and the scenarios that run it take the level of that problem, as
+for any extension with a problem. A frame that says nothing within 5 s is a warning that the page could not tell;
 one that reported an error and never finished is that error. The frame has an opaque origin, so
 the browser hides what the bundle threw ("Script error."): open a checkout with the extension to
 read it. An extension that throws only when it renders or when the buyer acts is not found this

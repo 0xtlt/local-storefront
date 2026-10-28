@@ -348,26 +348,28 @@ function report(document, { row, problem }) {
   }
   // The row of the extension.
   const { severity, message } = problem;
-  if (row.dataset.status !== 'error') {
+  if (row.dataset.status !== 'error' && row.dataset.status !== severity) {
     row.dataset.status = severity;
     row.querySelector('.lsf-dot')?.replaceWith(dot(document, severity));
   }
   row.querySelector('.lsf-h-main')?.appendChild(
     element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, ...richText(document, message)));
-  markScenarios(document, handle);
+  markScenarios(document, handle, severity);
 }
 
 /**
- * The scenarios that run the extension `handle`, once its bundle showed a problem: as on the
- * server, an extension with a problem makes the scenarios that use it warnings (a scenario
- * that is an error stays one).
+ * The scenarios that run the extension `handle`, once its bundle showed a problem of
+ * `severity`: as on the server, a scenario takes the worst of its own status and of the
+ * problems of the extensions it runs (an error stays one, a warning becomes an error only when
+ * the problem is an error).
  */
-export function markScenarios(document, handle) {
+export function markScenarios(document, handle, severity = 'warning') {
+  const rank = (status) => ({ error: 0, warning: 1 })[status] ?? 2;
   for (const row of document.querySelectorAll('[data-scenario]')) {
     const uses = (row.dataset.uiExtensions ?? '').split(' ');
-    if (!uses.includes(handle) || row.dataset.status === 'error' || row.dataset.status === 'warning') continue;
-    row.dataset.status = 'warning';
-    row.querySelector('.lsf-dot')?.replaceWith(dot(document, 'warning'));
+    if (!uses.includes(handle) || rank(row.dataset.status) <= rank(severity)) continue;
+    row.dataset.status = severity;
+    row.querySelector('.lsf-dot')?.replaceWith(dot(document, severity));
   }
 }
 

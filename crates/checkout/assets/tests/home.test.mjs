@@ -326,29 +326,39 @@ test('a message shows what is between backticks as code, and never as HTML', () 
   assert.deepEqual(nodes.slice(1), [' is a <b>legacy</b> target, ', '`x']);
 });
 
-test('a scenario that runs a broken bundle becomes a warning, and moves up', () => {
+test('a scenario that runs a broken bundle takes the severity of its problem, and moves up', () => {
   const document = new FakeDocument();
   const list = fakeList([
     ['a', '', 'ok', ''],
     ['b', '', 'ok', ''],
     ['c', '', 'error', ''],
     ['d', '', 'warning', ''],
+    ['e', '', 'warning', ''],
+    ['f', '', 'ok', ''],
   ]);
-  const [a, b, c] = list.children;
-  const ui = { a: 'other', b: 'probed other', c: 'probed', d: '' };
+  const [a, b, c, d, e, f] = list.children;
+  const ui = { a: 'other', b: 'warns other', c: 'warns', d: '', e: 'fails', f: 'fails warns' };
   for (const row of list.children) {
     row.dataset.uiExtensions = ui[row.id];
-    row.dot = { replaceWith: (node) => (row.dot = node) };
-    row.querySelector = (selector) => (selector === '.lsf-dot' ? row.dot : null);
+    row.dot = null;
+    row.querySelector = (selector) => (selector === '.lsf-dot' ? { replaceWith: (node) => (row.dot = node) } : null);
   }
   const page = { querySelectorAll: (selector) => (selector === '[data-scenario]' ? list.children : []), createElement: (tag) => document.createElement(tag) };
-  markScenarios(page, 'probed');
+  markScenarios(page, 'warns', 'warning');
   assert.equal(a.dataset.status, 'ok');
   assert.equal(b.dataset.status, 'warning');
   assert.equal(b.dot.className, 'lsf-dot is-warning');
   assert.equal(c.dataset.status, 'error', 'an error stays one');
+  assert.equal(f.dataset.status, 'warning');
+  markScenarios(page, 'fails', 'error');
+  assert.equal(d.dataset.status, 'warning', 'a scenario that does not run it keeps its status');
+  assert.equal(e.dataset.status, 'error', 'a warning becomes an error when the bundle fails');
+  assert.equal(e.dot.className, 'lsf-dot is-error');
+  assert.equal(f.dataset.status, 'error', 'the worst problem wins');
+  markScenarios(page, 'warns', 'warning');
+  assert.equal(f.dataset.status, 'error', 'a warning never makes an error milder');
   sortRows(list);
-  assert.deepEqual(list.children.map((row) => row.id), ['c', 'b', 'd', 'a']);
+  assert.deepEqual(list.children.map((row) => row.id), ['c', 'e', 'f', 'b', 'd', 'a']);
 });
 
 test('a problem the page finds in a bundle opens the checkout of the first scenario that runs it', () => {
