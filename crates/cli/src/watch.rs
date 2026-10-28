@@ -17,8 +17,9 @@
 //!   `Cargo.lock`, a `package.json`, a crate the Functions share) builds every Function.
 //! - The checkout never runs the module a build writes: it runs a copy of the last one that
 //!   built ([`Modules`]), outside the app, replaced in one step once a build is over and its
-//!   module is whole. A build that fails leaves that copy, and the pages say that the build
-//!   failed, with its first error and the end of its output.
+//!   module compiles as a run compiles it. A build that fails (or writes a module that does not
+//!   compile) leaves that copy, and the pages say that the build failed, with its first error
+//!   and the end of its output.
 //! - Any other change (a checkout UI extension's bundle, an extension without a build,
 //!   `shopify.app.toml`, an extension added or removed) reloads the pages.
 //!
@@ -115,13 +116,24 @@ impl Builds {
         failures.retain(|handle, _| handles.contains(handle));
     }
 
-    /// The builds that failed, as the checkout page reads them: `builds` of its state.
+    /// The builds that failed, as the checkout page reads them: `builds` of its state. `built`
+    /// says whether the Function has a module the checkout runs meanwhile: with `--watch`, one
+    /// was published.
     pub fn to_json(&self) -> Json {
         Json::Array(
             self.failures()
                 .into_iter()
                 .map(|(handle, failure)| {
-                    json!({"handle": handle, "reason": failure.reason, "output": failure.output})
+                    let built = self
+                        .modules
+                        .as_ref()
+                        .is_none_or(|modules| modules.path(&handle).is_file());
+                    json!({
+                        "handle": handle,
+                        "reason": failure.reason,
+                        "output": failure.output,
+                        "built": built,
+                    })
                 })
                 .collect(),
         )
@@ -219,11 +231,11 @@ impl Modules {
         })
     }
 
-    /// Publishes the module the build of `job` left, if it is a whole one. Returns whether it
+    /// Publishes the module the build of `job` left, if a run can load it. Returns whether it
     /// did.
     fn adopt(&self, job: &Job) -> bool {
         match std::fs::read(&job.module) {
-            Ok(bytes) if is_module(&bytes) => self.publish(&job.handle, &bytes).is_ok(),
+            Ok(bytes) if check_module(&bytes).is_ok() => self.publish(&job.handle, &bytes).is_ok(),
             _ => false,
         }
     }
@@ -280,38 +292,11 @@ fn remove_stale(base: &Path) {
     let _ = base;
 }
 
-/// Whether `bytes` are a whole Wasm module: its header, then sections that end where the bytes
-/// do. A module cut short (a build still writing it) is not.
-pub fn is_module(bytes: &[u8]) -> bool {
-    if bytes.len() < 8 || &bytes[..4] != b"\0asm" {
-        return false;
-    }
-    let mut at = 8;
-    while at < bytes.len() {
-        // The section's id, then its size.
-        at += 1;
-        let mut size: usize = 0;
-        let mut shift = 0;
-        loop {
-            let Some(&byte) = bytes.get(at) else {
-                return false;
-            };
-            at += 1;
-            size |= usize::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                break;
-            }
-            shift += 7;
-            if shift > 28 {
-                return false;
-            }
-        }
-        at = match at.checked_add(size) {
-            Some(end) if end <= bytes.len() => end,
-            _ => return false,
-        };
-    }
-    true
+/// Whether `bytes` are a module a run of the checkout can load: they compile with the runner's
+/// engine and settings, and export a function. Says why not. A module cut short (a build still
+/// writing it), one whose sections are not what they say, and an empty one are not.
+pub fn check_module(bytes: &[u8]) -> Result<(), String> {
+    lsf_checkout::runner::check_module(bytes)
 }
 
 /// How the watcher looks at the files and runs the builds.
@@ -686,9 +671,9 @@ fn worth_a_look(event: &notify::Event) -> bool {
 // --- What changed --------------------------------------------------------------------------
 
 /// Whether a file is left alone, by its path in the extension's folder (or in the app's):
-/// version control, dependencies and build folders, editors' temporary files, the copy of the
-/// Function API's schema a build writes (`schema.graphql`), and `outputs`, what the build of the
-/// extension writes.
+/// version control, dependencies and build folders, editors' temporary files, Markdown
+/// documents, the copy of the Function API's schema a build writes (`schema.graphql`), and
+/// `outputs`, what the build of the extension writes.
 pub fn ignored(relative: &Path, outputs: &[PathBuf]) -> bool {
     let mut names = relative.iter().map(|name| name.to_string_lossy());
     if names.any(|name| name.starts_with('.') || name == "target" || name == "node_modules") {
@@ -699,6 +684,12 @@ pub fn ignored(relative: &Path, outputs: &[PathBuf]) -> bool {
         .map(|name| name.to_string_lossy())
         .unwrap_or_default();
     if name.ends_with('~') || name.ends_with(".swp") || name.ends_with(".swx") {
+        return true;
+    }
+    if relative
+        .extension()
+        .is_some_and(|extension| extension == "md")
+    {
         return true;
     }
     relative == Path::new("schema.graphql")
@@ -1013,9 +1004,6 @@ fn shared_input(name: &Path, path: &Path, root: &Path, data: Option<&Path>) -> b
     if ignored(name, &[]) || name == Path::new(crate::app::DEFAULT_DATA_DIRECTORY) {
         return false;
     }
-    if name.extension().is_some_and(|extension| extension == "md") {
-        return false;
-    }
     match data {
         Some(data) => data != path && data != root.join(name),
         None => true,
@@ -1298,14 +1286,13 @@ fn build(job: &Job, timeout: Duration, stop: &AtomicBool, modules: &Modules) -> 
         Some(status) if status.success() => {
             let module = job.module.strip_prefix(&job.dir).unwrap_or(&job.module);
             match std::fs::read(&job.module) {
-                Ok(bytes) if is_module(&bytes) => match modules.publish(&job.handle, &bytes) {
-                    Ok(()) => return Outcome::Built(started.elapsed()),
-                    Err(error) => format!("cannot copy the module it built: {error}"),
+                Ok(bytes) => match check_module(&bytes) {
+                    Ok(()) => match modules.publish(&job.handle, &bytes) {
+                        Ok(()) => return Outcome::Built(started.elapsed()),
+                        Err(error) => format!("cannot copy the module it built: {error}"),
+                    },
+                    Err(error) => format!("the build wrote an invalid module: {error}"),
                 },
-                Ok(_) => format!(
-                    "the build wrote {}, which is not a whole Wasm module",
-                    module.display()
-                ),
                 Err(_) => format!("the build wrote no module at {}", module.display()),
             }
         }
@@ -1353,25 +1340,57 @@ fn terminate(child: &mut Child) {
 /// What each Function was last built from, by handle: a hash of its files, of the files the
 /// builds share, and of its build command. Kept from one watch to the next in the user's cache
 /// folder, so that a watch builds at start only what changed since.
+///
+/// A Function is also marked while it builds, from before its build starts until its module is
+/// published: a build stopped halfway (Ctrl-C) may leave a module that was not built from what
+/// is recorded, and the next watch builds a marked Function again whatever its hash.
 struct Record {
     path: Option<PathBuf>,
     root: PathBuf,
     /// `None`: nothing was recorded for the app.
     functions: Option<BTreeMap<String, String>>,
+    /// The Functions whose last build started and did not publish its module.
+    building: BTreeSet<String>,
 }
 
 impl Record {
     fn read(path: Option<PathBuf>, root: &Path) -> Record {
-        let functions = path
+        let json = path
             .as_ref()
             .and_then(|path| std::fs::read(path).ok())
-            .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
+            .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok());
+        let functions = json
+            .as_ref()
             .and_then(|json| serde_json::from_value(json.get("functions")?.clone()).ok());
+        let building = json
+            .as_ref()
+            .and_then(|json| serde_json::from_value(json.get("building")?.clone()).ok())
+            .unwrap_or_default();
         Record {
             path,
             root: root.to_path_buf(),
             functions,
+            building,
         }
+    }
+
+    /// Whether the last build of `handle` started and did not publish its module.
+    fn is_building(&self, handle: &str) -> bool {
+        self.building.contains(handle)
+    }
+
+    /// Marks `handle` as building, on disk, before its build starts.
+    fn start(&mut self, handle: &str) {
+        if self.building.insert(handle.to_string()) {
+            self.write();
+        }
+    }
+
+    /// The build of `handle` published its module, built from `inputs`.
+    fn built(&mut self, handle: &str, inputs: u64) {
+        self.building.remove(handle);
+        self.set(handle, inputs);
+        self.write();
     }
 
     fn get(&self, handle: &str) -> Option<&str> {
@@ -1385,10 +1404,18 @@ impl Record {
     }
 
     fn write(&self) {
-        let (Some(path), Some(functions)) = (&self.path, &self.functions) else {
+        let Some(path) = &self.path else {
             return;
         };
-        let json = json!({"app": self.root.display().to_string(), "functions": functions});
+        if self.functions.is_none() && self.building.is_empty() {
+            return;
+        }
+        let functions = self.functions.clone().unwrap_or_default();
+        let json = json!({
+            "app": self.root.display().to_string(),
+            "functions": functions,
+            "building": self.building,
+        });
         let Some(parent) = path.parent() else {
             return;
         };
@@ -1474,7 +1501,10 @@ impl Coordinator {
         let mut first = Vec::new();
         let mut trusted = 0;
         for job in &jobs {
-            if self.options.build_first || !modules.path(&job.handle).is_file() {
+            if self.options.build_first
+                || !modules.path(&job.handle).is_file()
+                || self.record.is_building(&job.handle)
+            {
                 first.push(job.handle.clone());
                 continue;
             }
@@ -1752,6 +1782,8 @@ impl Coordinator {
         }
         // What it builds from, as it starts: what changes later builds again.
         let inputs = self.inputs(&job);
+        // On disk before the build can write anything: a watch stopped during it builds it again.
+        self.record.start(&handle);
         let sender = self.sender.clone();
         let shared = self.shared.clone();
         let builds = self.builds.clone();
@@ -1771,8 +1803,7 @@ impl Coordinator {
             Outcome::Built(took) => {
                 self.builds.set(handle, None);
                 if self.builds.owns(handle) {
-                    self.record.set(handle, inputs);
-                    self.record.write();
+                    self.record.built(handle, inputs);
                 } else {
                     // Gone while it built.
                     self.builds.modules().withdraw(handle);

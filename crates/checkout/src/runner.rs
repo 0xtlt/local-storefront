@@ -306,19 +306,40 @@ impl Runner {
 /// run of a Function does not compile it again). Where that cache cannot be set up, the same
 /// configuration without it does.
 fn new_slot() -> Result<Slot, String> {
-    let engine = new_engine().or_else(|_| {
-        let mut config = Config::new();
-        config
-            .wasm_multi_memory(true)
-            .wasm_threads(false)
-            .consume_fuel(true)
-            .epoch_interruption(true);
-        Engine::new(&config)
-    });
     Ok(Slot {
-        engine: engine.map_err(|error| format!("cannot start the Wasm engine: {error}"))?,
+        engine: engine()?,
         modules: HashMap::new(),
     })
+}
+
+fn engine() -> Result<Engine, String> {
+    new_engine()
+        .or_else(|_| {
+            let mut config = Config::new();
+            config
+                .wasm_multi_memory(true)
+                .wasm_threads(false)
+                .consume_fuel(true)
+                .epoch_interruption(true);
+            Engine::new(&config)
+        })
+        .map_err(|error| format!("cannot start the Wasm engine: {error}"))
+}
+
+/// Whether `bytes` are a module a run can load: compiled as a run compiles it, with the same
+/// engine settings, and exporting a function. Says why not. What it compiles goes to the same
+/// cache as the runs, so the first run of the module does not compile it again.
+pub fn check_module(bytes: &[u8]) -> Result<(), String> {
+    static ENGINE: OnceLock<Result<Engine, String>> = OnceLock::new();
+    let engine = ENGINE.get_or_init(engine).as_ref().map_err(Clone::clone)?;
+    let module = Module::new(engine, bytes).map_err(|error| format!("{error:#}"))?;
+    if !module
+        .exports()
+        .any(|export| matches!(export.ty(), wasmtime::ExternType::Func(_)))
+    {
+        return Err("it exports no function".to_string());
+    }
+    Ok(())
 }
 
 impl Slot {

@@ -620,8 +620,33 @@ pub async fn run(
         .fallback(handle)
         .with_state(state);
     axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(interrupted())
         .await
+}
+
+/// Waits for the process to be asked to stop: Ctrl-C, and on Unix `SIGTERM` (a process manager,
+/// `kill`) and `SIGHUP` (the terminal closed). The server then stops as it does on Ctrl-C: with
+/// `--watch`, the builds that run are stopped and the published modules removed. On Windows,
+/// only Ctrl-C is waited for.
+async fn interrupted() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (Ok(mut term), Ok(mut hangup)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        ) else {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+            _ = hangup.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

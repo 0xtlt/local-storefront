@@ -462,6 +462,14 @@ test('a build of --watch that failed shows in a banner, in the badge and on the 
   assert.equal(byClass(none, 'lsf-diagnostics').length, 0);
 });
 
+test('the banner of a build that failed says whether a module of it runs', () => {
+  const failure = { handle: 'volume-discount', reason: 'build failed (exit status: 101)', output: '' };
+  const said = (build) => text(findAll(page(checkoutState({ builds: [build] })), (node) => node.props['data-banner'] === 'build')[0]);
+  assert.equal(said({ ...failure, built: true }), 'volume-discount: build failed (exit status: 101). The checkout runs the last module that built.');
+  assert.equal(said({ ...failure, built: false }), 'volume-discount: build failed (exit status: 101). No module of it built yet.');
+  assert.doesNotMatch(said({ ...failure, built: false }), /last module/);
+});
+
 test('the banners open the main column, so the summary panel starts under the header', () => {
   const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle'] }));
   const main = byClass(tree, 'lsf-main')[0];

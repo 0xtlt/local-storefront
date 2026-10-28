@@ -62,8 +62,8 @@ Save a file of a Function and its build runs; when it is over, the open pages re
 module. It works with `serve --app` too.
 
 - **At the start**, the modules that are there are used, as without `--watch`. Only the
-  Functions that have no module, and those whose files changed since the last watch of the app,
-  are built. The first watch of an app trusts the modules it finds, and says so: `using the
+  Functions that have no module a run can load, those whose files changed since the last watch
+  of the app, and those whose last build was stopped or failed, are built. The first watch of an app trusts the modules it finds, and says so: `using the
   existing builds; --build rebuilds them all at start`. `--watch --build` builds every Function
   that has a build command (`[extensions.build] command`). A build that fails does not stop the
   server. What each Function was built from is recorded in the user's cache folder
@@ -75,7 +75,7 @@ module. It works with `serve --app` too.
   extension folders that are added or removed. A symbolic link is watched where it leads. The
   store data and its scenarios are watched as always.
 - **What is not**: `target/`, `node_modules/`, `.git/` and other dot folders, editors' temporary
-  files, Markdown documents, the store data folder (`shopify-local/`, or the one `--data` names),
+  files, Markdown documents (in any folder), the store data folder (`shopify-local/`, or the one `--data` names),
   and what a build writes: the `dist/` folder of a Function that has a build command, its module
   (`[extensions.build] path`), and `schema.graphql`. A build does not start itself again.
 - **A change to a Function** with a build command runs that command in its folder, as `--build`
@@ -92,17 +92,20 @@ module. It works with `serve --app` too.
   entered is kept, it is in the session. The home page runs the Functions of the scenarios again.
 - **The checkout never runs what a build is writing.** It runs a copy of the last module of each
   Function that built, kept out of the app (in the system's temporary folder, removed when the
-  server stops). Once a build is over and its module is a whole Wasm module, the copy is replaced
-  in one step. The checkout, the Functions dialog and the runs of the home page all read it.
-  `dist/` is only written by the build command.
-- **A build that fails** leaves that copy, as `shopify app dev` does: the checkout runs it. The
+  server stops). Once a build is over and its module compiles as a run compiles it (and exports
+  a function), the copy is replaced in one step. The checkout, the Functions dialog and the runs
+  of the home page all read it. `dist/` is only written by the build command.
+- **A build that fails**, or writes a module that does not compile (`the build wrote an invalid
+  module: …`), leaves that copy, as `shopify app dev` does: the checkout runs it. The
   terminal prints `✗ discount-codes: build failed (exit status: 101)`, the first error (from its
   `error` line to the end of its source context) and the last lines of the output; the checkout
   page shows them in a banner and in the overview of the Functions dialog, and the home page
   lists the build first among its problems. A Function that never built is not built until a
-  build works. The next build that works clears it.
+  build works, and the banner and the home page say `no module of it built yet`. The next build
+  that works clears it.
 - **A build that hangs** does not hold the server: it is stopped after 10 minutes and fails.
-  Ctrl-C stops the builds that run; one stopped halfway is built again at the next start.
+  Ctrl-C stops the builds that run, and so do `SIGTERM` and `SIGHUP` on macOS and Linux; one
+  stopped halfway is built again at the next start. On Windows, only Ctrl-C does.
 
 The files are watched through the system's events (FSEvents on macOS, inotify on Linux, folder
 by folder, without the tools' folders): at rest, watching an app of 90 extensions costs about

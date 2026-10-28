@@ -521,10 +521,11 @@ function header(ctx) {
 }
 
 /** A build of `--watch` that failed, with the end of its output: the Function runs the last
- * module that built. */
+ * module that built, when one did (`built`). */
 function buildFailure(build) {
+  const meanwhile = build.built === false ? 'No module of it built yet.' : 'The checkout runs the last module that built.';
   return [
-    h('p', null, h('strong', null, build.handle), `: ${build.reason}. The checkout runs the last module that built.`),
+    h('p', null, h('strong', null, build.handle), `: ${build.reason}. ${meanwhile}`),
     build.output && h('pre', { class: 'lsf-build-output' }, build.output),
   ];
 }

@@ -3,14 +3,15 @@
 //!
 //! Each test makes a temporary folder with the app in `app/` and what the tests steer the
 //! builds with in `ctl/`, out of the app (which is all watched). The build command is a shell
-//! script: it "builds" a Function by copying `src/main.wasm` (a module whose only section says
-//! its version) to `dist/function.wasm`. It counts its builds in `ctl/count-<handle>`, says it
+//! script: it "builds" a Function by copying `src/main.wasm` (a module that exports a function,
+//! and whose last section says its version) to `dist/function.wasm`. It counts its builds in `ctl/count-<handle>`, says it
 //! runs with `ctl/running-<handle>-<n>` while it does, and notes in `ctl/concurrency` how many
 //! ran when it started. Steered by files of `ctl/`:
 //!
 //! - `gated-<handle>`: build `n` waits for `go-<handle>-<n>`;
 //! - `partial-<handle>`: it removes the module and writes half of one first, as a compiler
 //!   writing its output does (before the gate);
+//! - `early-<handle>`: it writes that file as its module first (before the gate);
 //! - `fail-<handle>`: it fails, after writing half a module.
 //!
 //! The tests wait for what they can see (a file, what the watcher says it did), never for a
@@ -36,6 +37,9 @@ if [ -f "$ctl/partial-$h" ]; then
   rm -f dist/function.wasm
   printf 'half-written' > dist/function.wasm
 fi
+if [ -f "$ctl/early-$h" ]; then
+  cp "$ctl/early-$h" dist/function.wasm
+fi
 if [ -f "$ctl/gated-$h" ]; then
   while [ ! -f "$ctl/go-$h-$n" ]; do sleep 0.01; done
 fi
@@ -51,10 +55,17 @@ echo "type Query" > schema.graphql
 rm -f "$ctl/running-$h-$n"
 "#;
 
-/// A Wasm module whose only section (a custom one) holds `text`.
+/// A module that exports a function, `f`, that does nothing.
+const EXPORTS_F: &[u8] = b"\0asm\x01\0\0\0\
+    \x01\x04\x01\x60\0\0\
+    \x03\x02\x01\0\
+    \x07\x05\x01\x01f\0\0\
+    \x0a\x04\x01\x02\0\x0b";
+
+/// A Wasm module that exports a function, and whose last section (a custom one) holds `text`.
 fn module(text: &str) -> Vec<u8> {
     assert!(text.len() < 120);
-    let mut bytes = b"\0asm\x01\0\0\0".to_vec();
+    let mut bytes = EXPORTS_F.to_vec();
     bytes.push(0);
     bytes.push(text.len() as u8 + 1);
     bytes.push(0);
@@ -62,12 +73,13 @@ fn module(text: &str) -> Vec<u8> {
     bytes
 }
 
-/// What [`module`] made `bytes` from: `missing` without bytes, `invalid` for what is not one.
+/// What [`module`] made `bytes` from: `missing` without bytes, `invalid` for what a run cannot
+/// load.
 fn version(bytes: Option<Vec<u8>>) -> String {
     match bytes {
         None => "missing".to_string(),
-        Some(bytes) if is_module(&bytes) && bytes.len() >= 11 => {
-            String::from_utf8_lossy(&bytes[11..]).into_owned()
+        Some(bytes) if check_module(&bytes).is_ok() && bytes.starts_with(EXPORTS_F) => {
+            String::from_utf8_lossy(&bytes[EXPORTS_F.len() + 3..]).into_owned()
         }
         Some(_) => "invalid".to_string(),
     }
@@ -358,6 +370,8 @@ fn the_build_outputs_and_the_tools_folders_are_not_watched() {
         "src/.main.rs.swp",
         "src/main.rs~",
         ".DS_Store",
+        "README.md",
+        "docs/README.md",
     ] {
         assert!(ignored(Path::new(left_alone), &built), "{left_alone}");
     }
@@ -392,17 +406,29 @@ fn what_every_build_may_read_is_the_rest_of_the_app() {
 }
 
 #[test]
-fn a_module_is_whole_or_not_one() {
-    assert!(is_module(&module("v1")));
-    assert!(is_module(b"\0asm\x01\0\0\0"));
+fn a_module_is_one_a_run_can_load() {
+    assert_eq!(check_module(&module("v1")), Ok(()));
     let whole = module("a longer section");
     for cut in 1..whole.len() {
-        if cut != 8 {
-            assert!(!is_module(&whole[..cut]), "cut at {cut}");
+        // Without its custom section, it is a whole module.
+        if cut != EXPORTS_F.len() {
+            assert!(check_module(&whole[..cut]).is_err(), "cut at {cut}");
         }
     }
-    assert!(!is_module(b"half-written"));
-    assert!(!is_module(b""));
+    // Section boundaries that hold, around a section whose content is cut short.
+    let error = check_module(b"\0asm\x01\0\0\0\x01\x01\xff").unwrap_err();
+    assert!(error.contains("unexpected end"), "{error}");
+    // Another version of the format.
+    let mut other = module("v1");
+    other[4] = 2;
+    assert!(check_module(&other).is_err());
+    // A whole module, with nothing to run.
+    assert_eq!(
+        check_module(b"\0asm\x01\0\0\0"),
+        Err("it exports no function".to_string())
+    );
+    assert!(check_module(b"half-written").is_err());
+    assert!(check_module(b"").is_err());
 }
 
 #[test]
@@ -709,6 +735,7 @@ fn a_build_that_fails_keeps_the_last_module_and_says_why() {
     assert!(failure.output.contains("compiling fn-a"), "{failure:?}");
     assert!(failure.output.contains("expected one of"), "{failure:?}");
     assert_eq!(watching.builds.to_json()[0]["handle"], "fn-a");
+    assert_eq!(watching.builds.to_json()[0]["built"], true);
     let said = watching.said();
     assert!(said.contains("✗ fn-a: build failed (exit"), "{said}");
     assert!(said.contains("\n    error: expected one of"), "{said}");
@@ -733,9 +760,11 @@ fn a_build_that_writes_no_whole_module_fails() {
     app.source("fn-b", "v2");
     watching.settle();
     let failure = watching.builds.failure("fn-a").expect("a failure");
-    assert_eq!(
-        failure.reason,
-        "the build wrote dist/function.wasm, which is not a whole Wasm module"
+    assert!(
+        failure
+            .reason
+            .starts_with("the build wrote an invalid module: "),
+        "{failure:?}"
     );
     assert_eq!(
         watching.builds.failure("fn-b").unwrap().reason,
@@ -743,6 +772,43 @@ fn a_build_that_writes_no_whole_module_fails() {
     );
     assert_eq!(watching.served("fn-a"), "v1");
     assert_eq!(watching.served("fn-b"), "v1");
+}
+
+#[test]
+fn a_build_that_writes_an_invalid_module_keeps_the_last_one() {
+    let app = TempApp::new("invalid");
+    // The header of a module, then a section whose content is cut short.
+    std::fs::write(app.ctl("truncated.wasm"), b"\0asm\x01\0\0\0\x01\x01\xff").unwrap();
+    // A whole module, with nothing to run.
+    std::fs::write(app.ctl("empty.wasm"), b"\0asm\x01\0\0\0").unwrap();
+    app.function_with("fn-a", "cp ../../../ctl/truncated.wasm dist/function.wasm");
+    app.function_with("fn-b", "cp ../../../ctl/empty.wasm dist/function.wasm");
+    let watching = Watching::start(&app, |_| {});
+    assert_eq!(watching.served("fn-a"), "v1");
+    app.source("fn-a", "v2");
+    app.source("fn-b", "v2");
+    watching.settle();
+
+    let failure = watching.builds.failure("fn-a").expect("a failure");
+    assert!(
+        failure
+            .reason
+            .starts_with("the build wrote an invalid module: ")
+            && failure.reason.contains("unexpected end"),
+        "{failure:?}"
+    );
+    assert_eq!(
+        watching.builds.failure("fn-b").unwrap().reason,
+        "the build wrote an invalid module: it exports no function"
+    );
+    assert_eq!(watching.served("fn-a"), "v1", "the last module that built");
+    assert_eq!(watching.served("fn-b"), "v1");
+    assert_eq!(app.dist("fn-a"), "invalid");
+    let said = watching.said();
+    assert!(
+        said.contains("✗ fn-a: the build wrote an invalid module: "),
+        "{said}"
+    );
 }
 
 #[test]
@@ -756,6 +822,7 @@ fn a_function_that_never_built_is_not_built() {
     assert_eq!(app.builds("fn-a"), 1, "built at start: it has no module");
     assert_eq!(watching.served("fn-a"), "missing");
     assert!(watching.builds.failure("fn-a").is_some());
+    assert_eq!(watching.builds.to_json()[0]["built"], false);
     let app_now = app.load(&watching.builds);
     assert!(!app_now.function("fn-a").unwrap().built());
     assert!(
@@ -1139,6 +1206,94 @@ fn a_build_stopped_halfway_builds_again_at_the_next_start() {
     let watching = Watching::start(&app, |_| {});
     assert_eq!(app.builds("fn-a"), 2);
     assert_eq!(watching.served("fn-a"), "a2");
+}
+
+/// What the record says is building.
+fn marked(record: &Path) -> Json {
+    let json: Json = serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+    json["building"].clone()
+}
+
+#[test]
+fn a_forced_build_stopped_halfway_builds_again_at_the_next_start() {
+    let app = TempApp::new("forced");
+    app.function("fn-a");
+    let record = app.ctl("record/app.json");
+    let options = |options: &mut Options| options.record = Some(app.ctl("record/app.json"));
+
+    // A build that worked, recorded.
+    let mut watching = Watching::start(&app, options);
+    app.source("fn-a", "v2");
+    watching.settle();
+    assert_eq!(watching.served("fn-a"), "v2");
+    watching.stop();
+    assert_eq!(marked(&record), json!([]));
+
+    // `--watch --build`, nothing changed: the build writes a whole module that is not what it
+    // builds, and the watch is stopped before it is over.
+    app.ctl_write("gated-fn-a", "");
+    std::fs::write(app.ctl("early-fn-a"), module("stale")).unwrap();
+    let mut forced = Options::new(Vec::new(), true);
+    forced.events = false;
+    forced.poll = Duration::from_millis(10);
+    forced.record = Some(record.clone());
+    let watcher = Watcher::start(
+        &app.root(),
+        Arc::new(Builds::publishing(Modules::create().unwrap())),
+        forced,
+        Box::new(|| {}),
+        Arc::new(|_: &str| {}),
+    );
+    wait_for("the stale module", || {
+        app.running("fn-a", 2) && app.dist("fn-a") == "stale"
+    });
+    assert_eq!(marked(&record), json!(["fn-a"]), "marked before it built");
+    watcher.stop();
+    assert_eq!(
+        marked(&record),
+        json!(["fn-a"]),
+        "a build stopped is not over"
+    );
+
+    // Its hash is the recorded one, but it is marked: built again.
+    std::fs::remove_file(app.ctl("gated-fn-a")).unwrap();
+    std::fs::remove_file(app.ctl("early-fn-a")).unwrap();
+    let mut watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 3, "{}", watching.said());
+    assert_eq!(watching.served("fn-a"), "v2");
+    assert_eq!(marked(&record), json!([]));
+    watching.stop();
+
+    // A module the build left that a run cannot load (its header only) is not used, whatever
+    // the record says.
+    app.write_bytes("extensions/fn-a/dist/function.wasm", b"\0asm\x01\0\0\0");
+    let watching = Watching::start(&app, options);
+    assert_eq!(app.builds("fn-a"), 4);
+    assert_eq!(watching.served("fn-a"), "v2");
+}
+
+#[test]
+fn markdown_documents_build_nothing_wherever_they_are() {
+    let app = TempApp::new("markdown");
+    app.function("fn-a");
+    app.write("crates/shared/src/lib.rs", "pub fn shared() {}\n");
+    let watching = Watching::start(&app, |_| {});
+    let reloads = watching.reloads();
+
+    app.write("README.md", "# App\n");
+    app.write("docs/README.md", "# Docs\n");
+    app.write("docs/guides/setup.md", "# Setup\n");
+    app.write("crates/shared/README.md", "# Shared\n");
+    app.write("extensions/fn-a/README.md", "# fn-a\n");
+    watching.settle();
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 0, "{}", watching.said());
+    assert_eq!(watching.reloads(), reloads);
+
+    // What else is in those folders is watched.
+    app.write("docs/schema.json", "{}\n");
+    watching.settle();
+    assert_eq!(app.builds("fn-a"), 1, "{}", watching.said());
 }
 
 #[test]
