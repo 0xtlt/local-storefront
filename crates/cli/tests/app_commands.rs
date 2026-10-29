@@ -308,8 +308,14 @@ fn check_says_the_pages_of_classic_customer_accounts_are_not_rendered() {
     )
     .unwrap();
     std::fs::write(theme.join("templates/customers/login.liquid"), "login").unwrap();
+    let text_output = lsf(&theme, &["check"]);
     let output = lsf(&theme, &["check", "--format", "json"]);
     std::fs::remove_dir_all(&theme).ok();
+    assert!(
+        text(&text_output).contains("templates/customers: warning: the 1 page(s)"),
+        "{}",
+        text(&text_output)
+    );
     // A warning, not a problem: the theme is fine on Shopify.
     assert_eq!(output.status.code(), Some(0), "{}", text(&output));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

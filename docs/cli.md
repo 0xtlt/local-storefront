@@ -279,7 +279,8 @@ templates, section groups and `config/settings_data.json`. Guide:
 
 ### The text format
 
-Each problem is a line `<file>:<line>: <message>`, followed by indented details:
+Each problem is a line `<file>:<line>: <message>`, followed by indented details. A warning,
+which is not counted as a problem, has `warning: ` before its message.
 
 | Detail | Meaning |
 |---|---|
@@ -358,6 +359,7 @@ problem), a `code`, a `file`, a `line` when there is one, and a `message`.
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
 | `invalid_json` | A JSON file that does not parse. |
 | `fix_fallback` | A warning: what the code meant could not be written for this file, so only the fixes that keep the output were. |
+| `classic_customer_accounts` | A warning: the theme has `templates/customers`, the pages of classic customer accounts, which lsf never renders (`/account` stands for Shopify's new customer accounts). The theme is fine on Shopify. |
 
 The diagnostics of the strict parser have more keys:
 
