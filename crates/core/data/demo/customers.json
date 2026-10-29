@@ -52,7 +52,6 @@
       "phone": "+1 555 010 9988",
       "tags": ["vip"],
       "accepts_marketing": true,
-      "password": "password",
       "metafields": {
         "custom": { "loyalty_tier": "gold" }
       },

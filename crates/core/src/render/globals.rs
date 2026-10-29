@@ -12,7 +12,7 @@ use super::page::{Page, Resource};
 use crate::drops::cart::CartDrop;
 use crate::drops::collection::CollectionDrop;
 use crate::drops::content::{ArticleDrop, BlogDrop, PageDrop};
-use crate::drops::customer::{CustomerDrop, find_order};
+use crate::drops::customer::CustomerDrop;
 use crate::drops::gift_card::GiftCardDrop;
 use crate::drops::lists::{Kind, Lookup};
 use crate::drops::localization::LocalizationDrop;
@@ -200,12 +200,6 @@ impl Globals {
                 Resource::Policy(handle) => store
                     .policy(handle)
                     .map_or(Value::Nil, |policy| policy_value(site, policy)),
-                _ => return None,
-            },
-            "order" => match &page.resource {
-                Resource::Customers { order: Some(order) } => {
-                    find_order(site, *order).unwrap_or(Value::Nil)
-                }
                 _ => return None,
             },
             // Outside blocks, `closest` is the resource of the page.

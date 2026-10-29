@@ -624,7 +624,6 @@ pub struct Customer {
     pub tax_exempt: bool,
     pub addresses: Vec<Address>,
     pub orders: Vec<Order>,
-    pub password: Option<String>,
     pub metafields: Metafields,
     /// The company the customer buys for, as an index into the store's companies.
     pub company: Option<usize>,
@@ -719,8 +718,6 @@ pub struct Shop {
     pub enabled_payment_types: Vec<String>,
     pub customer_accounts_enabled: bool,
     pub customer_accounts_optional: bool,
-    /// Which customer accounts the store uses; decided by the theme when not set.
-    pub customer_accounts: Option<model::CustomerAccounts>,
     pub taxes_included: bool,
     pub password_message: String,
     /// The password the `/password` page accepts.

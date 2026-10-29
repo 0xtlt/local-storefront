@@ -82,14 +82,6 @@
       },
       "default": []
     },
-    "password": {
-      "description": "The password accepted by the local login form. Any password works when omitted.",
-      "type": [
-        "string",
-        "null"
-      ],
-      "default": null
-    },
     "company": {
       "description": "The name of a company in `companies`: the customer buys for it (B2B).",
       "type": [

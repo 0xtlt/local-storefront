@@ -466,8 +466,7 @@ the checkout token, the choices of delivery and payment, the codes and the scena
 opened from stay. What belonged to the buyer before goes: the email and the phone they typed,
 and an address the customer before had saved (an address typed as a guest stays for a customer
 who has none). The checkout follows a login made anywhere else too (`/__lsf/login`, the control
-API, the login form of a theme with legacy accounts): the next time it is read, it is the new
-customer's.
+API): the next time it is read, it is the new customer's.
 
 - `GET /checkout?customer=<email>` opens the checkout logged in as a customer (`default` for the
   first one, `none` for a guest); `/checkout?scenario=<name>&customer=<email>` opens a scenario
@@ -588,9 +587,6 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
   `s-button-group`, `s-customer-account-action`, `s-image-group`, `s-menu`, `s-page`.
 - `?targets=all` adds a panel that lists the customer account targets of each extension, and where
   each one renders.
-- A theme that renders its accounts (`templates/customers`, or `shop.customer_accounts` set to
-  `"legacy"`) keeps `/account`: Shopify runs customer account UI extensions with new customer
-  accounts only.
 
 ## Set up the checkout
 

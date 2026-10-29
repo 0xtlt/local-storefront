@@ -436,28 +436,28 @@ fn a_submitted_form_shows_its_outcome_once() {
 }
 
 #[test]
-fn customers_log_in_and_out() {
+fn customers_log_in_at_the_account_and_out() {
     let state = server();
-    let wrong = post(
-        &state,
-        "/account/login",
-        json!({"customer": {"email": "jane.doe@example.com", "password": "nope"}}),
-        "login",
-    );
-    // The fixture theme has no login page: accounts are hosted, and `/account` is the way in.
-    assert_eq!(header(&wrong, "location"), Some("/account"));
-    assert_eq!(
-        body_json(&get(&state, "/__lsf/session", "login"))["customer"],
-        Json::Null
-    );
-
-    let right = post(
+    // The login form of a theme logs nobody in: customer accounts are Shopify's, and
+    // `/account` is the way in.
+    let form = post(
         &state,
         "/account/login",
         json!({"customer": {"email": "jane.doe@example.com", "password": "password"}}),
         "login",
     );
-    assert_eq!(header(&right, "location"), Some("/account"));
+    assert_eq!(header(&form, "location"), Some("/account"));
+    assert_eq!(
+        body_json(&get(&state, "/__lsf/session", "login"))["customer"],
+        Json::Null
+    );
+
+    let login = get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "login",
+    );
+    assert_eq!(header(&login, "location"), Some("/account"));
     assert_eq!(
         body_json(&get(&state, "/__lsf/session", "login"))["customer"],
         "jane.doe@example.com"
@@ -959,23 +959,44 @@ fn hosted_accounts_have_a_page_to_choose_the_customer() {
 }
 
 #[test]
-fn legacy_accounts_use_the_theme() {
+fn classic_customer_accounts_are_not_simulated() {
     let state = server();
+    // Data written for them is refused, and says why.
     let set = state.dispatch(&request(
         "PUT",
         "/__lsf/session",
         json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
-        "legacy",
+        "classic",
     ));
-    assert_eq!(set.status, 200, "{}", text(&set));
-    let reply = get(&state, "/account", "legacy");
-    assert_eq!(header(&reply, "location"), Some("/account/login"));
-    let reply = get(&state, "/customer_authentication/login", "legacy");
-    assert_eq!(header(&reply, "location"), Some("/account/login"));
-    assert_eq!(
-        body_json(&get(&state, "/__lsf/status", "legacy"))["customer_accounts"],
-        "new"
+    assert_eq!(set.status, 422, "{}", text(&set));
+    assert!(
+        body_json(&set)["diagnostics"][0]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("new customer accounts only"),
+        "{}",
+        text(&set)
     );
+    // Every page of a classic account leads to `/account`, the theme's templates are never
+    // rendered.
+    for path in [
+        "/account/login",
+        "/account/register",
+        "/account/addresses",
+        "/account/orders/1001",
+        "/customer_authentication/login",
+    ] {
+        let reply = get(&state, path, "classic");
+        assert_eq!(header(&reply, "location"), Some("/account"), "{path}");
+    }
+    let posted = post(
+        &state,
+        "/account/addresses",
+        json!({"address": {"city": "Lyon"}}),
+        "classic",
+    );
+    assert_eq!(header(&posted, "location"), Some("/account"));
+    assert_eq!(get(&state, "/account", "classic").status, 200);
 }
 
 #[test]
@@ -8001,27 +8022,6 @@ fn the_order_placed_in_the_checkout_is_in_the_customer_account() {
 }
 
 #[test]
-fn legacy_accounts_keep_the_account_pages_of_the_theme() {
-    let app = app_with_account("legacy");
-    let state = checkout_server_of(app.clone(), &[], false);
-    let set = state.dispatch(&request(
-        "PUT",
-        "/__lsf/session",
-        json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
-        "ca-legacy",
-    ));
-    assert_eq!(set.status, 200, "{}", text(&set));
-    let reply = get(&state, "/account", "ca-legacy");
-    assert_eq!(header(&reply, "location"), Some("/account/login"));
-    // Hosted accounts: the customer account of the app.
-    assert_eq!(
-        account_state(&get(&state, "/account", "ca-hosted"))["page"],
-        "orders"
-    );
-    std::fs::remove_dir_all(&app).ok();
-}
-
-#[test]
 fn an_order_of_the_store_data_has_its_returns_and_its_shipments() {
     let app = app_with_account("returns");
     let state = checkout_server_of(app.clone(), &[], true);
@@ -8187,17 +8187,9 @@ fn a_checkout_from_the_storefront_ships_to_the_country_of_the_visitor_or_of_the_
 
 #[test]
 fn the_home_page_says_what_never_runs() {
-    // A discount Function no discount names, and a customer account UI extension of a store
-    // whose accounts are the theme's.
+    // A discount Function no discount names.
     let app = app_with_account("never");
     let state = checkout_server_of(app.clone(), &[], false);
-    let set = state.dispatch(&request(
-        "PUT",
-        "/__lsf/session",
-        json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
-        "never",
-    ));
-    assert_eq!(set.status, 200, "{}", text(&set));
     let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "never"));
     std::fs::remove_dir_all(&app).ok();
     let messages = |list: &str, handle: &str| -> Vec<String> {
@@ -8219,19 +8211,14 @@ fn the_home_page_says_what_never_runs() {
             .any(|message| message.starts_with("no discount of the store data runs it")),
         "{json}"
     );
+    // A customer account UI extension renders in the customer account, whatever the theme.
     let ca = json["uiExtensions"]
         .as_array()
         .unwrap()
         .iter()
         .find(|extension| extension["handle"] == "ca-test")
         .unwrap();
-    assert!(
-        messages("uiExtensions", "ca-test")
-            .iter()
-            .any(|message| message.contains("render in new customer accounts only")),
-        "{json}"
-    );
-    assert_eq!(ca["open"], Json::Null, "it renders nowhere");
+    assert_eq!(ca["open"], "/account", "{json}");
     // The note of the discount is the store's: the scenarios that run the Function are not
     // warned of it.
     for scenario in json["scenarios"].as_array().unwrap() {

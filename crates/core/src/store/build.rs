@@ -567,7 +567,6 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput) -> Shop {
         }),
         customer_accounts_enabled: input.customer_accounts_enabled.unwrap_or(true),
         customer_accounts_optional: input.customer_accounts_optional.unwrap_or(true),
-        customer_accounts: input.customer_accounts,
         taxes_included: input.taxes_included,
         password_message: input.password_message.clone().unwrap_or_default(),
         password: input
@@ -2610,7 +2609,6 @@ fn build_customers(
                 .map(|(position, a)| address(a, &format!("{id}/address/{position}")))
                 .collect(),
             orders,
-            password: input.password.clone(),
             metafields: builder.metafields(&input.metafields),
             company,
             company_locations,

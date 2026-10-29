@@ -205,30 +205,6 @@ pub fn run(
         },
     );
     print_diagnostics(&diagnostics);
-    // Customer account UI extensions render in new customer accounts only: say so at once when
-    // the theme renders its own.
-    if let (Some(dir), Some(options)) = (&app_dir, state.options.checkout.as_ref()) {
-        let store = state.loaded().store.clone();
-        if !lsf_core::site::hosted_accounts(&state.app.theme, &store)
-            && let Ok(shopify_app) = state.load_app(dir)
-            && let Ok(selection) =
-                lsf_checkout::app::Selection::resolve(&shopify_app, &options.extensions)
-        {
-            for extension in selection.ui_extensions(&shopify_app) {
-                if extension
-                    .targets
-                    .iter()
-                    .any(|target| target.target.starts_with("customer-account."))
-                {
-                    eprintln!(
-                        "app: {}: {}",
-                        extension.handle,
-                        crate::server::legacy_accounts_note()
-                    );
-                }
-            }
-        }
-    }
     if let Some(who) = &args.customer {
         state
             .loaded()

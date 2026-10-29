@@ -386,7 +386,6 @@ Every field of `shop` is optional.
 - `timezone` is the zone dates are displayed in by the `date` filter.
 - `password` is the password the `/password` page accepts. It is `password` when you do not
   set it. The storefront is never locked: the page is always there, and nothing leads to it.
-- `customer_accounts` says which accounts the store uses: `new` or `legacy` (see below).
 - Each policy that is set gets a page under `/policies/`.
 
 ## Customers and sessions
@@ -402,7 +401,6 @@ what is in the cart, which country is selected.
       "first_name": "Jane",
       "last_name": "Doe",
       "tags": ["vip"],
-      "password": "password",
       "addresses": [{ "address1": "12 Maple Street", "city": "Portland", "country_code": "US" }],
       "orders": [{ "line_items": [{ "variant": "TEE-WHT-S", "quantity": 2 }] }]
     }
@@ -428,17 +426,15 @@ or `"none"`. When the data has no customer at all, there is still one to log in 
 
 ### Logging in
 
-How a visitor logs in depends on the accounts the store uses:
+Customer accounts are Shopify's new customer accounts: they are hosted by Shopify and are not
+part of a theme. Here, `/account` is a page of local-storefront that stands in for them. It
+lists the customers of the data: click one to be logged in as them, or "Nobody" to be logged
+out. Every account link of a theme (`routes.account_login_url`, `routes.storefront_login_url`,
+...) leads to that page, and so do its login and register forms.
 
-- **New customer accounts** are hosted by Shopify and are not part of a theme. Here, `/account`
-  is a page of local-storefront that stands in for them. It lists the customers of the data:
-  click one to be logged in as them, or "Nobody" to be logged out. Every account link of a theme
-  (`routes.account_login_url`, `routes.storefront_login_url`, ...) leads to that page.
-- **Legacy accounts** are rendered by the theme's `templates/customers`. The login form accepts
-  a customer's `password`, or any password when none is set.
-
-local-storefront picks legacy accounts when the theme has `templates/customers/login`, and new
-accounts otherwise. Set `shop.customer_accounts` to `"new"` or `"legacy"` to decide yourself.
+Classic customer accounts are not simulated: the theme's `templates/customers` are never
+rendered, and customers have no password. Data that still has `shop.customer_accounts` or a
+customer's `password` is refused, with a hint to remove the field.
 
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
@@ -886,7 +882,6 @@ General store information (the `shop` object). Every field has a sensible defaul
 | `enabled_payment_types` | array of string | Payment icons to show, e.g. `["visa", "master", "american_express", "paypal"]`. |
 | `customer_accounts_enabled` | boolean | Whether customer accounts exist at all. Defaults to `true`. |
 | `customer_accounts_optional` | boolean | Whether checking out as a guest is possible. Defaults to `true`. |
-| `customer_accounts` | [CustomerAccounts](#customeraccounts) | Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and `/account` is a page of local-storefront where you choose who is logged in. `legacy`: the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has those templates, and to `new` otherwise. |
 | `taxes_included` | boolean | Whether prices include taxes. Defaults to `false`. |
 | `password_message` | string | The message shown on the password page. |
 | `password` | string | The password the `/password` page accepts. Defaults to `"password"`. The storefront is never locked: the page is there to be worked on, and nothing leads to it. |
@@ -933,15 +928,6 @@ A store policy (`shop.refund_policy`, `/policies/refund-policy`).
 |---|---|---|
 | `title` | string | Defaults to the standard title of the policy. |
 | `body` | string | **Required.** HTML body. |
-
-### CustomerAccounts
-
-The customer accounts of a store.
-
-One of:
-
-- `"new"`: Accounts hosted by Shopify, outside the theme.
-- `"legacy"`: Accounts rendered by the theme's `templates/customers`.
 
 ### Brand
 
@@ -1397,7 +1383,6 @@ with their addresses (the first is the default) and, for a B2B customer, their l
 | `tax_exempt` | boolean |  |
 | `addresses` | array of [Address](#address) | The first address is the default one (`customer.default_address`). |
 | `orders` | array of [Order](#order) |  |
-| `password` | string | The password accepted by the local login form. Any password works when omitted. |
 | `company` | string | The name of a company in `companies`: the customer buys for it (B2B). |
 | `company_locations` | array of string | The names of the locations of the company the customer can buy for. Defaults to all of them. |
 | `company_contact` | [CompanyContact](#companycontact) | What the company knows of the customer as a buyer: their job title, language, dates. Checkout Functions read it as `purchasingCompany.contact`. |
@@ -1421,6 +1406,7 @@ An order of a customer, shown on account pages.
 | `tax_price` | [Money](#money) |  |
 | `cancelled` | boolean |  |
 | `note` | string |  |
+| `returns` | array of [OrderReturn](#orderreturn) | What the customer sent back, as the customer account shows it. |
 
 ### OrderLine
 
@@ -1440,6 +1426,15 @@ One of:
 
 - integer
 - string
+
+### OrderReturn
+
+A return of an order.
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string | `requested`, `open` or `closed`. Defaults to `open`. |
+| `line_items` | array of [OrderLine](#orderline) | The lines sent back, by their variant, and how many of each. Defaults to every line of the order. |
 
 ### CompanyContact
 

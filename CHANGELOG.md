@@ -144,6 +144,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Changed
 
+- **Customer accounts are Shopify's new ones only.** Classic customer accounts are no longer
+  simulated: the theme's `templates/customers` are never rendered, every `/account/…` page and
+  account form (login, register, password reset, addresses) leads to `/account`, and customers
+  have no password. Data that still sets `shop.customer_accounts` or a customer's `password` is
+  refused, with a hint to remove the field; `/__lsf/status` no longer has `customer_accounts`.
 - **Smaller binaries.** lsf runs Functions with only what it uses of wasmtime (the compiler for
   the machine it runs on) and Shopify's providers compressed (1.6 MB instead of 9.7 MB), and has
   one copy of each Wasm library; the release binaries leave out their symbol table and are

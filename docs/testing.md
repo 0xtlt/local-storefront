@@ -426,12 +426,12 @@ Everything a theme talks to on a storefront:
 | Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. |
 | Cart Ajax API | `GET /cart.js`, `POST /cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js` (with `sections` and `sections_url`), and the form posts `/cart/add`, `/cart`. Stock limits answer `422` like Shopify. |
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
-| Forms | Contact, newsletter (`customer`), blog comment, customer login and logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
+| Forms | Contact, newsletter (`customer`), blog comment, customer logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
 | Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`, `GET` and `DELETE /__lsf/timings`, `/__lsf/profile?path=<path>`. |
 
 Not simulated: Shopify's checkout (`/checkout` shows a summary of the cart, or, with `--app`,
-the local [checkout](checkout.md) of a Shopify app), customer registration, password reset and address editing (the forms answer with an error saying so),
+the local [checkout](checkout.md) of a Shopify app), classic customer accounts (the theme's `templates/customers`; its account forms lead to `/account`),
 and anything served by apps. See [compatibility.md](compatibility.md).
 
 ## Reproducibility

@@ -11,7 +11,6 @@ mod customer_account;
 pub use control::{apply_session_input, routes};
 mod forms;
 mod home;
-pub use home::legacy_accounts_note;
 mod home_check;
 pub use home_check::run as check_scenarios;
 mod live_reload;

@@ -31,10 +31,6 @@ pub enum Resource {
     Search,
     Policy(String),
     Password,
-    /// A classic customer account page: `login`, `register`, `account`, `addresses`, `order`...
-    Customers {
-        order: Option<u64>,
-    },
     GiftCard(usize),
     /// Why: what the URL asks for and the store does not have.
     NotFound(String),

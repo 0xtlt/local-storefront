@@ -206,15 +206,6 @@ fn ui_problems(app: &App, extension: &UiExtension) -> Vec<(Level, String)> {
         .collect()
 }
 
-/// What a customer account UI extension of an app whose store has legacy customer accounts is
-/// told: it never renders.
-pub fn legacy_accounts_note() -> String {
-    "customer account UI extensions render in new customer accounts only, and the store's are \
-     legacy (the theme renders `templates/customers`, or `shop.customer_accounts` is `legacy`): \
-     it never renders. Set `shop.customer_accounts` to `new` in the store data to see it at `/account`"
-        .to_string()
-}
-
 fn problems_json(problems: &[(Level, String)]) -> Vec<Json> {
     problems
         .iter()
@@ -365,7 +356,6 @@ fn ui_extension_json(
     selection: &Selection,
     extension: &UiExtension,
     used_by: usize,
-    accounts_hosted: bool,
 ) -> Json {
     let targets: Vec<Json> = extension
         .targets
@@ -389,11 +379,7 @@ fn ui_extension_json(
         .filter(|(_, value)| value.as_bool() == Some(true))
         .map(|(name, _)| name.as_str())
         .collect();
-    let mut problems = ui_problems(app, extension);
-    // Customer account UI extensions render in new customer accounts only.
-    if !accounts_hosted && surfaces.contains(&"customer-account") {
-        problems.push(problem(Level::Warning, legacy_accounts_note()));
-    }
+    let problems = ui_problems(app, extension);
     let selected = selection.contains(&extension.handle);
     // Whether the checkout loads it: every error keeps it out (not built, an API version it
     // does not run, an `owner_type` that is wrong or missing); a warning does not.
@@ -1032,10 +1018,7 @@ fn problem_list(
                         label.to_string(),
                     )),
                     scenarios: Vec::new(),
-                    // An extension that renders nowhere (the customer account of a store with legacy
-                    // accounts) has no page to open.
-                    open: (!(only_in_account(extension) && extension["open"].is_null()))
-                        .then(|| open_for(kind, extension, message)),
+                    open: Some(open_for(kind, extension, message)),
                     detail: None,
                 });
             }
@@ -1164,7 +1147,6 @@ fn build(
 ) -> Json {
     let selection =
         Selection::resolve(app, &options.extensions).unwrap_or_else(|_| Selection::all());
-    let accounts_hosted = super::customer_account::serves(state, store);
     // The discount Functions a discount of the store data, or of a scenario, runs.
     let discounted: std::collections::HashSet<&str> = store
         .checkout
@@ -1239,27 +1221,14 @@ fn build(
     let ui_extensions: Vec<Json> = app
         .ui_extensions
         .iter()
-        .map(|extension| {
-            ui_extension_json(
-                app,
-                &selection,
-                extension,
-                used(&extension.handle),
-                accounts_hosted,
-            )
-        })
+        .map(|extension| ui_extension_json(app, &selection, extension, used(&extension.handle)))
         .map(runs_in)
         .map(|mut extension| {
             // Where a problem the page finds when it loads the bundle shows (`home.js`): the
             // customer account for an extension that only renders there.
             extension["open"] = if only_in_account(&extension) {
                 extension["runsIn"] = Json::Null;
-                // Where it would render; with legacy accounts, nowhere.
-                if accounts_hosted {
-                    json!(format!("{root}/account"))
-                } else {
-                    Json::Null
-                }
+                json!(format!("{root}/account"))
             } else {
                 json!(checkout_href(root, extension["runsIn"].as_str(), None))
             };
@@ -1355,9 +1324,8 @@ fn build(
             "checkout": format!("{root}/checkout"),
             "allTargets": format!("{root}/checkout?targets=all"),
             "shop": format!("{root}/checkout?variant=shop"),
-            // Where the customer account UI extensions render: none when the theme renders the
-            // accounts.
-            "account": super::customer_account::serves(state, store).then(|| format!("{root}/account")),
+            // Where the customer account UI extensions render.
+            "account": format!("{root}/account"),
         },
     })
 }
@@ -2423,7 +2391,7 @@ fn customer_facts(customer: &Json) -> Vec<(&'static str, String)> {
     facts
 }
 
-fn customer_html(customer: &Json, account: Option<&str>) -> String {
+fn customer_html(customer: &Json, account: &str) -> String {
     let badges: String = customer_facts(customer)
         .iter()
         .map(|(kind, text)| {
@@ -2445,15 +2413,11 @@ fn customer_html(customer: &Json, account: Option<&str>) -> String {
         .flat_map(char::to_uppercase)
         .collect();
     // Their customer account, logged in as them.
-    let account = account
-        .map(|path| {
-            format!(
-                "<a class=\"lsf-h-btn\" href=\"{}\" data-account-of=\"{}\">Account</a>",
-                esc(&super::account::login_link(email, path)),
-                esc(email)
-            )
-        })
-        .unwrap_or_default();
+    let account = format!(
+        "<a class=\"lsf-h-btn\" href=\"{}\" data-account-of=\"{}\">Account</a>",
+        esc(&super::account::login_link(email, account)),
+        esc(email)
+    );
     format!(
         "<li class=\"lsf-h-person\" data-customer=\"{}\"><div class=\"lsf-h-person-head\">\
          <span class=\"lsf-avatar\" aria-hidden=\"true\">{}</span><div class=\"lsf-h-person-who\">\
@@ -2512,7 +2476,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
         .as_str()
         .unwrap_or("the `checkouts` folder of the store data");
     let customers = home["customers"].as_array().cloned().unwrap_or_default();
-    let account_link = links["account"].as_str();
+    let account_link = text_of(&links["account"]);
 
     // The extensions, in three lists: an extension with targets in both the checkout and the
     // customer account is in both; its second row is a copy that does not load the bundle again.
@@ -2565,16 +2529,11 @@ pub fn render(home: &Json, check_now: &str) -> String {
             heading: "Customer account UI extensions",
             row: ui_extension_html,
             empty: "The app has no customer account UI extension.",
-            about: match account_link {
-                Some(href) => format!(
-                    "Where each one renders in the customer account. <a class=\"lsf-link\" href=\"{}\">Open the customer account</a> \
-                     as one of the customers, and add <code>?targets=all</code> to list where each target is.",
-                    esc(href)
-                ),
-                None => "The theme renders its own customer accounts, where Shopify does not run them: set \
-                         <code>shop.customer_accounts</code> to <code>\"new\"</code> in the store data to see them."
-                    .to_string(),
-            },
+            about: format!(
+                "Where each one renders in the customer account. <a class=\"lsf-link\" href=\"{}\">Open the customer account</a> \
+                 as one of the customers, and add <code>?targets=all</code> to list where each target is.",
+                esc(account_link)
+            ),
         },
     ];
     let n = |count: usize| format!("<span class=\"lsf-h-n\">{count}</span>");
@@ -2586,7 +2545,8 @@ pub fn render(home: &Json, check_now: &str) -> String {
          <div class=\"lsf-h-top-actions\" data-section=\"open\">{}\
          <details class=\"lsf-h-more\"><summary class=\"lsf-h-btn\" aria-label=\"More ways to open a checkout\">More</summary>\
          <div class=\"lsf-h-menu\"><a href=\"{}\">Every extension target</a><a href=\"{}\">Shop look</a></div></details>\
-         {}<a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a></div></div>\
+         <a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>\
+         <a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a></div></div>\
          <nav class=\"lsf-h-tabs\" role=\"tablist\" aria-label=\"Home\">{}{}{}{}</nav></header>",
         esc(title),
         esc(text_of(&home["data"])),
@@ -2594,12 +2554,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
         problem_pill(home),
         esc(text_of(&links["allTargets"])),
         esc(text_of(&links["shop"])),
-        account_link
-            .map(|href| format!(
-                "<a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>",
-                esc(href)
-            ))
-            .unwrap_or_default(),
+        esc(account_link),
         esc(text_of(&links["checkout"])),
         tab_html("scenarios", "Scenarios", n(scenarios.len()), true),
         lists

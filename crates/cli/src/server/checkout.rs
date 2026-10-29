@@ -137,7 +137,7 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
     let method = incoming.method.as_str();
     // The customer account, where the app's customer account UI extensions render.
     if let ("GET" | "HEAD", ["account", rest @ ..]) = (method, segments.as_slice())
-        && super::customer_account::serves(state, &state.store_of(incoming))
+        && super::customer_account::serves(state)
         && let Some(reply) = super::customer_account::route(state, incoming, rest)
     {
         return Some(reply);

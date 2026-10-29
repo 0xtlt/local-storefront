@@ -322,18 +322,6 @@
           ],
           "default": null
         },
-        "customer_accounts": {
-          "description": "Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and\n`/account` is a page of local-storefront where you choose who is logged in. `legacy`:\nthe theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has\nthose templates, and to `new` otherwise.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CustomerAccounts"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "taxes_included": {
           "description": "Whether prices include taxes. Defaults to `false`.",
           "type": "boolean",
@@ -565,21 +553,6 @@
       "additionalProperties": false,
       "required": [
         "body"
-      ]
-    },
-    "CustomerAccounts": {
-      "description": "The customer accounts of a store.",
-      "oneOf": [
-        {
-          "description": "Accounts hosted by Shopify, outside the theme.",
-          "type": "string",
-          "const": "new"
-        },
-        {
-          "description": "Accounts rendered by the theme's `templates/customers`.",
-          "type": "string",
-          "const": "legacy"
-        }
       ]
     },
     "BrandInput": {
@@ -2241,14 +2214,6 @@
             "$ref": "#/$defs/OrderInput"
           },
           "default": []
-        },
-        "password": {
-          "description": "The password accepted by the local login form. Any password works when omitted.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         },
         "company": {
           "description": "The name of a company in `companies`: the customer buys for it (B2B).",

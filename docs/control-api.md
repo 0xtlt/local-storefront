@@ -87,7 +87,6 @@ gives:
 | `throttle` | The server's delays. |
 | `templates` | The templates of the theme. |
 | `locales` | The languages of the store. |
-| `customer_accounts` | `new` (Shopify's hosted accounts) or `legacy` (`templates/customers`). |
 | `customers` | Each customer's `email` and `company`. |
 | `counts` | How many `products`, `collections`, `pages`, `blogs`, `customers`, `sessions`. |
 | `routes` | Every page the data creates, as `npx local-storefront routes` lists them. |

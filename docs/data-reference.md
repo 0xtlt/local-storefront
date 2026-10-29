@@ -55,7 +55,6 @@ General store information (the `shop` object). Every field has a sensible defaul
 | `enabled_payment_types` | array of string | Payment icons to show, e.g. `["visa", "master", "american_express", "paypal"]`. |
 | `customer_accounts_enabled` | boolean | Whether customer accounts exist at all. Defaults to `true`. |
 | `customer_accounts_optional` | boolean | Whether checking out as a guest is possible. Defaults to `true`. |
-| `customer_accounts` | [CustomerAccounts](#customeraccounts) | Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and `/account` is a page of local-storefront where you choose who is logged in. `legacy`: the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has those templates, and to `new` otherwise. |
 | `taxes_included` | boolean | Whether prices include taxes. Defaults to `false`. |
 | `password_message` | string | The message shown on the password page. |
 | `password` | string | The password the `/password` page accepts. Defaults to `"password"`. The storefront is never locked: the page is there to be worked on, and nothing leads to it. |
@@ -102,15 +101,6 @@ A store policy (`shop.refund_policy`, `/policies/refund-policy`).
 |---|---|---|
 | `title` | string | Defaults to the standard title of the policy. |
 | `body` | string | **Required.** HTML body. |
-
-## CustomerAccounts
-
-The customer accounts of a store.
-
-One of:
-
-- `"new"`: Accounts hosted by Shopify, outside the theme.
-- `"legacy"`: Accounts rendered by the theme's `templates/customers`.
 
 ## Brand
 
@@ -566,7 +556,6 @@ with their addresses (the first is the default) and, for a B2B customer, their l
 | `tax_exempt` | boolean |  |
 | `addresses` | array of [Address](#address) | The first address is the default one (`customer.default_address`). |
 | `orders` | array of [Order](#order) |  |
-| `password` | string | The password accepted by the local login form. Any password works when omitted. |
 | `company` | string | The name of a company in `companies`: the customer buys for it (B2B). |
 | `company_locations` | array of string | The names of the locations of the company the customer can buy for. Defaults to all of them. |
 | `company_contact` | [CompanyContact](#companycontact) | What the company knows of the customer as a buyer: their job title, language, dates. Checkout Functions read it as `purchasingCompany.contact`. |

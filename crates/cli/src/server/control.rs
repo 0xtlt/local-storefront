@@ -91,7 +91,6 @@ fn status(state: &ServerState) -> Json {
         "throttle": state.options.throttle.to_json(),
         "templates": state.app.theme.template_names(),
         "locales": store.languages.iter().map(|language| language.iso_code.clone()).collect::<Vec<_>>(),
-        "customer_accounts": if lsf_core::site::hosted_accounts(&state.app.theme, store) { "new" } else { "legacy" },
         "customers": store.customers.iter().map(|customer| json!({
             "email": customer.email,
             "company": customer.company.map(|index| store.companies[index].name.clone()),

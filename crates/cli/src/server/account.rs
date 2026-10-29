@@ -13,11 +13,6 @@ use lsf_liquid::filters::escape_html;
 use super::reply::Reply;
 use super::storefront::Visit;
 
-/// Whether the accounts are hosted by Shopify, in which case `/account` is lsf's page.
-pub fn hosted(visit: &Visit<'_>) -> bool {
-    lsf_core::site::hosted_accounts(&visit.state.app.theme, &visit.store)
-}
-
 /// A path of this storefront, from a `return_to` parameter. Anything else is ignored, so that
 /// a link cannot send the visitor to another site.
 pub fn local_path(value: Option<&str>) -> Option<String> {
@@ -35,13 +30,9 @@ fn return_to(visit: &Visit<'_>) -> Option<String> {
     )
 }
 
-/// Where a visitor who has to log in is sent: the stand-in, or the theme's login page.
+/// Where a visitor who has to log in is sent: the stand-in for the customer account.
 pub fn entry(visit: &Visit<'_>) -> Reply {
-    let page = visit.localized(if hosted(visit) {
-        "/account"
-    } else {
-        "/account/login"
-    });
+    let page = visit.localized("/account");
     Reply::redirect(&match return_to(visit) {
         Some(target) => format!("{page}?return_to={}", encode_component(&target)),
         None => page,

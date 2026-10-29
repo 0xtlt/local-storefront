@@ -9,10 +9,8 @@
 //! - `/account/orders/<id>/pages/<handle>/…`: the full page of an extension for an order
 //!   (`customer-account.order.page.render`).
 //!
-//! These pages replace lsf's stand-in for hosted accounts (`account.rs`) when the server has an
-//! app, and only then: a theme that renders its accounts (`templates/customers`) keeps them, as
-//! Shopify does not run customer account UI extensions with them. Logged out, the page lists
-//! the customers of the store data to log in as.
+//! These pages replace lsf's stand-in for the customer account (`account.rs`) when the server
+//! has an app. Logged out, the page lists the customers of the store data to log in as.
 //!
 //! The orders are those of the customer in the store data, and the one the session placed last
 //! in the local checkout. An order is written like the state of a checkout (lines, cost,
@@ -74,10 +72,9 @@ impl<'a> Page<'a> {
     }
 }
 
-/// Whether `/account` is the customer account of the app: the store's accounts are Shopify's
-/// (hosted), not the theme's.
-pub fn serves(state: &ServerState, store: &Store) -> bool {
-    state.options.checkout.is_some() && lsf_core::site::hosted_accounts(&state.app.theme, store)
+/// Whether `/account` is the customer account of the app: when the server runs one.
+pub fn serves(state: &ServerState) -> bool {
+    state.options.checkout.is_some()
 }
 
 /// A page of the customer account, for the segments after `account`; `None` for a path that is

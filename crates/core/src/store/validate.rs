@@ -200,9 +200,24 @@ fn report(
                     &format!("{path}/{field}"),
                     format!("unknown field \"{field}\""),
                 );
-                match closest_match(field, known.iter().copied()) {
-                    Some(suggestion) => diagnostic.hint(format!("did you mean \"{suggestion}\"?")),
-                    None => diagnostic.hint(format!("allowed fields here: {}", known.join(", "))),
+                // What classic customer accounts had: local-storefront has Shopify's new ones only.
+                let classic = match field.as_str() {
+                    "customer_accounts" => Some(
+                        "local-storefront has Shopify's new customer accounts only, which `/account` stands for: remove this field",
+                    ),
+                    "password" if known.contains(&"addresses") => Some(
+                        "customers log in without a password (new customer accounts): remove this field",
+                    ),
+                    _ => None,
+                };
+                match (classic, closest_match(field, known.iter().copied())) {
+                    (Some(hint), _) => diagnostic.hint(hint),
+                    (None, Some(suggestion)) => {
+                        diagnostic.hint(format!("did you mean \"{suggestion}\"?"))
+                    }
+                    (None, None) => {
+                        diagnostic.hint(format!("allowed fields here: {}", known.join(", ")))
+                    }
                 };
             }
         }

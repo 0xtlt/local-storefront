@@ -386,7 +386,6 @@ Every field of `shop` is optional.
 - `timezone` is the zone dates are displayed in by the `date` filter.
 - `password` is the password the `/password` page accepts. It is `password` when you do not
   set it. The storefront is never locked: the page is always there, and nothing leads to it.
-- `customer_accounts` says which accounts the store uses: `new` or `legacy` (see below).
 - Each policy that is set gets a page under `/policies/`.
 
 ## Customers and sessions
@@ -402,7 +401,6 @@ what is in the cart, which country is selected.
       "first_name": "Jane",
       "last_name": "Doe",
       "tags": ["vip"],
-      "password": "password",
       "addresses": [{ "address1": "12 Maple Street", "city": "Portland", "country_code": "US" }],
       "orders": [{ "line_items": [{ "variant": "TEE-WHT-S", "quantity": 2 }] }]
     }
@@ -428,17 +426,15 @@ or `"none"`. When the data has no customer at all, there is still one to log in 
 
 ### Logging in
 
-How a visitor logs in depends on the accounts the store uses:
+Customer accounts are Shopify's new customer accounts: they are hosted by Shopify and are not
+part of a theme. Here, `/account` is a page of local-storefront that stands in for them. It
+lists the customers of the data: click one to be logged in as them, or "Nobody" to be logged
+out. Every account link of a theme (`routes.account_login_url`, `routes.storefront_login_url`,
+...) leads to that page, and so do its login and register forms.
 
-- **New customer accounts** are hosted by Shopify and are not part of a theme. Here, `/account`
-  is a page of local-storefront that stands in for them. It lists the customers of the data:
-  click one to be logged in as them, or "Nobody" to be logged out. Every account link of a theme
-  (`routes.account_login_url`, `routes.storefront_login_url`, ...) leads to that page.
-- **Legacy accounts** are rendered by the theme's `templates/customers`. The login form accepts
-  a customer's `password`, or any password when none is set.
-
-local-storefront picks legacy accounts when the theme has `templates/customers/login`, and new
-accounts otherwise. Set `shop.customer_accounts` to `"new"` or `"legacy"` to decide yourself.
+Classic customer accounts are not simulated: the theme's `templates/customers` are never
+rendered, and customers have no password. Data that still has `shop.customer_accounts` or a
+customer's `password` is refused, with a hint to remove the field.
 
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.

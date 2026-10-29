@@ -164,16 +164,6 @@ pub struct MediaDetail {
     pub aspect_ratio: Option<f64>,
 }
 
-/// The customer accounts of a store.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CustomerAccounts {
-    /// Accounts hosted by Shopify, outside the theme.
-    New,
-    /// Accounts rendered by the theme's `templates/customers`.
-    Legacy,
-}
-
 /// The kind of a piece of media that is not an image.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1061,9 +1051,6 @@ pub struct CustomerInput {
     pub addresses: Vec<AddressInput>,
     #[serde(default)]
     pub orders: Vec<OrderInput>,
-    /// The password accepted by the local login form. Any password works when omitted.
-    #[serde(default)]
-    pub password: Option<String>,
     /// The name of a company in `companies`: the customer buys for it (B2B).
     #[serde(default)]
     pub company: Option<String>,
@@ -1254,12 +1241,6 @@ pub struct ShopInput {
     /// Whether checking out as a guest is possible. Defaults to `true`.
     #[serde(default)]
     pub customer_accounts_optional: Option<bool>,
-    /// Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and
-    /// `/account` is a page of local-storefront where you choose who is logged in. `legacy`:
-    /// the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has
-    /// those templates, and to `new` otherwise.
-    #[serde(default)]
-    pub customer_accounts: Option<CustomerAccounts>,
     /// Whether prices include taxes. Defaults to `false`.
     #[serde(default)]
     pub taxes_included: bool,

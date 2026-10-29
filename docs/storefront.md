@@ -31,8 +31,8 @@ npx local-storefront serve --customer default
 
 A link can log a browser in too: `/__lsf/login?customer=jane.doe@example.com&return_to=/cart`.
 
-A theme with `templates/customers/login` (legacy accounts) keeps its own login page. It
-accepts a customer's `password`, or any password when none is set. See the
+Classic customer accounts are not simulated: the theme's `templates/customers` are never
+rendered, and its login and register forms lead to `/account` too. See the
 [data guide](data-format.md#logging-in).
 
 ### B2B

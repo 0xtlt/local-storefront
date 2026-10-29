@@ -149,21 +149,6 @@ impl Session {
     }
 }
 
-/// Whether customer accounts are hosted by Shopify rather than rendered by the theme: what
-/// the store data says, and otherwise whether the theme has a login template.
-pub fn hosted_accounts(theme: &Theme, store: &Store) -> bool {
-    use crate::store::model::CustomerAccounts;
-    match store.shop.customer_accounts {
-        Some(CustomerAccounts::New) => true,
-        Some(CustomerAccounts::Legacy) => false,
-        None => !["json", "liquid"].iter().any(|extension| {
-            theme
-                .files()
-                .exists(&format!("templates/customers/login.{extension}"))
-        }),
-    }
-}
-
 pub struct Site {
     pub theme: Arc<Theme>,
     pub store: Arc<Store>,
@@ -237,10 +222,5 @@ impl Site {
         self.session
             .customer_id
             .and_then(|id| self.store.customer_by_id(id))
-    }
-
-    /// Whether customer accounts are hosted by Shopify rather than rendered by the theme.
-    pub fn hosted_accounts(&self) -> bool {
-        hosted_accounts(&self.theme, &self.store)
     }
 }
