@@ -128,10 +128,61 @@ pub fn validate(
     instance: &Json,
     pointer_prefix: &str,
     diagnostics: &mut Diagnostics,
-) {
+) -> Unknown {
     let compiled = compiled(kind);
+    let mut unknown = Unknown::default();
     for error in compiled.validator.iter_errors(instance) {
-        report(&compiled.schema, &error, file, pointer_prefix, diagnostics);
+        report(
+            &compiled.schema,
+            &error,
+            file,
+            pointer_prefix,
+            diagnostics,
+            &mut unknown,
+        );
+    }
+    unknown
+}
+
+/// The fields of a data file that its schema does not have: reported (as an error, or as a
+/// warning for those of classic customer accounts), and left out of what is read, so that the
+/// rest of the file is used.
+#[derive(Debug, Default)]
+pub struct Unknown {
+    /// Their JSON pointers, from the root of the instance.
+    pub pointers: Vec<String>,
+    /// How many of them are errors.
+    pub errors: usize,
+}
+
+impl Unknown {
+    /// `instance` without the unknown fields.
+    pub fn without(&self, instance: &Json) -> Json {
+        let mut instance = instance.clone();
+        for pointer in &self.pointers {
+            let Some((parent, field)) = pointer.rsplit_once('/') else {
+                continue;
+            };
+            let field = field.replace("~1", "/").replace("~0", "~");
+            if let Some(object) = instance.pointer_mut(parent).and_then(Json::as_object_mut) {
+                object.remove(&field);
+            }
+        }
+        instance
+    }
+}
+
+/// The hint for a field of classic customer accounts, which local-storefront does not have: it
+/// is ignored rather than refused, so that data written for them still loads.
+fn classic_field(field: &str, known: &[&str]) -> Option<&'static str> {
+    match field {
+        "customer_accounts" => Some(
+            "ignored: local-storefront has Shopify's new customer accounts only, which `/account` stands for. Remove this field",
+        ),
+        "password" if known.contains(&"addresses") => Some(
+            "ignored: customers log in without a password (new customer accounts). Remove this field",
+        ),
+        _ => None,
     }
 }
 
@@ -182,6 +233,7 @@ fn report(
     file: &str,
     prefix: &str,
     diagnostics: &mut Diagnostics,
+    unknown: &mut Unknown,
 ) {
     let path = format!("{prefix}{}", error.instance_path());
     let node = schema_node(schema, error);
@@ -194,30 +246,33 @@ fn report(
                 .map(|properties| properties.keys().map(String::as_str).collect())
                 .unwrap_or_default();
             for field in unexpected {
+                let escaped = field.replace('~', "~0").replace('/', "~1");
+                unknown
+                    .pointers
+                    .push(format!("{}/{escaped}", error.instance_path()));
+                let at = format!("{path}/{escaped}");
+                // What classic customer accounts had: a warning, the rest of the data is used.
+                if let Some(hint) = classic_field(field, &known) {
+                    diagnostics
+                        .warning(
+                            "classic_customer_accounts",
+                            file,
+                            &at,
+                            format!("unknown field \"{field}\""),
+                        )
+                        .hint(hint);
+                    continue;
+                }
+                unknown.errors += 1;
                 let diagnostic = diagnostics.error(
                     "unknown_field",
                     file,
-                    &format!("{path}/{field}"),
+                    &at,
                     format!("unknown field \"{field}\""),
                 );
-                // What classic customer accounts had: local-storefront has Shopify's new ones only.
-                let classic = match field.as_str() {
-                    "customer_accounts" => Some(
-                        "local-storefront has Shopify's new customer accounts only, which `/account` stands for: remove this field",
-                    ),
-                    "password" if known.contains(&"addresses") => Some(
-                        "customers log in without a password (new customer accounts): remove this field",
-                    ),
-                    _ => None,
-                };
-                match (classic, closest_match(field, known.iter().copied())) {
-                    (Some(hint), _) => diagnostic.hint(hint),
-                    (None, Some(suggestion)) => {
-                        diagnostic.hint(format!("did you mean \"{suggestion}\"?"))
-                    }
-                    (None, None) => {
-                        diagnostic.hint(format!("allowed fields here: {}", known.join(", ")))
-                    }
+                match closest_match(field, known.iter().copied()) {
+                    Some(suggestion) => diagnostic.hint(format!("did you mean \"{suggestion}\"?")),
+                    None => diagnostic.hint(format!("allowed fields here: {}", known.join(", "))),
                 };
             }
         }
@@ -294,7 +349,7 @@ fn report(
                 .collect();
             if let [branch] = matching.as_slice() {
                 for inner in branch.iter() {
-                    report(schema, inner, file, prefix, diagnostics);
+                    report(schema, inner, file, prefix, diagnostics, unknown);
                 }
                 return;
             }

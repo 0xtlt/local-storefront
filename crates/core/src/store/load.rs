@@ -101,6 +101,20 @@ fn demo_files() -> Vec<DataFile> {
         .collect()
 }
 
+/// Validates one entity: what can be read of it, without the fields it does not know (reported,
+/// and left out, so that the rest is used). `None` when another problem keeps it out.
+fn checked(
+    kind: FileKind,
+    file: &str,
+    json: &Json,
+    pointer: &str,
+    diagnostics: &mut Diagnostics,
+) -> Option<Json> {
+    let errors_before = diagnostics.error_count();
+    let unknown = validate(kind, file, json, pointer, diagnostics);
+    (diagnostics.error_count() - errors_before <= unknown.errors).then(|| unknown.without(json))
+}
+
 /// Parses, validates and deserializes one entity. Reports problems and returns `None` when the
 /// entity cannot be used.
 fn entity<T: DeserializeOwned>(
@@ -110,12 +124,8 @@ fn entity<T: DeserializeOwned>(
     pointer: &str,
     diagnostics: &mut Diagnostics,
 ) -> Option<T> {
-    let errors_before = diagnostics.error_count();
-    validate(kind, file, json, pointer, diagnostics);
-    if diagnostics.error_count() > errors_before {
-        return None;
-    }
-    match serde_json::from_value::<T>(json.clone()) {
+    let json = checked(kind, file, json, pointer, diagnostics)?;
+    match serde_json::from_value::<T>(json) {
         Ok(value) => Some(value),
         Err(error) => {
             diagnostics.error("invalid_value", file, pointer, error.to_string());
@@ -489,10 +499,15 @@ fn merge_json(base: &mut Json, patch: &Json) {
 /// Applies a data file on top of the merged data: entities with the handle of an existing one
 /// replace it, the others are added, and `shop` is merged field by field.
 fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Diagnostics) {
-    let Some(input) =
-        entity::<model::StoreInput>(FileKind::Store, OVERLAY_FILE, overlay, "", diagnostics)
-    else {
+    let Some(overlay) = checked(FileKind::Store, OVERLAY_FILE, overlay, "", diagnostics) else {
         return;
+    };
+    let input = match serde_json::from_value::<model::StoreInput>(overlay.clone()) {
+        Ok(input) => input,
+        Err(error) => {
+            diagnostics.error("invalid_value", OVERLAY_FILE, "", error.to_string());
+            return;
+        }
     };
     let origin = |pointer: String| Origin::new(OVERLAY_FILE, pointer);
     if let Some(patch) = overlay.get("shop") {
@@ -593,7 +608,24 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
             origin: origin("/session".to_string()),
         });
     }
-    if let Some(value) = input.checkout {
+    if let Some(patch) = input.checkout {
+        // As a scenario's: what it gives replaces the store data's, field by field, and the
+        // settings of the Functions are merged by Function.
+        let value = match merged.checkout.take() {
+            Some(base) => {
+                let base = base.value;
+                let mut functions = base.functions;
+                functions.extend(patch.functions);
+                model::CheckoutInput {
+                    shipping_rates: patch.shipping_rates.or(base.shipping_rates),
+                    payment_methods: patch.payment_methods.or(base.payment_methods),
+                    discounts: patch.discounts.or(base.discounts),
+                    functions,
+                    tax_rate: patch.tax_rate.or(base.tax_rate),
+                }
+            }
+            None => patch,
+        };
         merged.checkout = Some(Sourced {
             value,
             origin: origin("/checkout".to_string()),
@@ -943,6 +975,44 @@ mod tests {
     }
 
     #[test]
+    fn a_field_the_format_does_not_have_leaves_the_rest_of_the_file_in() {
+        let directory = std::env::temp_dir().join(format!("lsf-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{
+                "shop": {"name": "Kept", "nmae": "typo", "customer_accounts": "legacy"},
+                "products": [{"title": "Thing", "price": 100}],
+                "customers": [{"email": "old@example.com", "password": "secret"}]
+            }"#,
+        )
+        .expect("store");
+        let (store, diagnostics) = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        // One error for the typo, not one for everything the file held.
+        assert_eq!(diagnostics.error_count(), 1, "{diagnostics}");
+        assert!(diagnostics.to_string().contains("unknown field \"nmae\""));
+        assert_eq!(store.shop.name, "Kept");
+        assert_eq!(store.products.len(), 1);
+        // What classic customer accounts had is ignored, with a warning.
+        assert_eq!(store.customers.len(), 1);
+        let classic: Vec<_> = diagnostics
+            .items
+            .iter()
+            .filter(|item| item.code == "classic_customer_accounts")
+            .collect();
+        assert_eq!(classic.len(), 2, "{diagnostics}");
+        assert!(
+            classic
+                .iter()
+                .all(|item| item.severity == crate::diagnostics::Severity::Warning)
+        );
+    }
+
+    #[test]
     fn locations_and_selling_plan_groups_have_unique_names() {
         let directory = std::env::temp_dir().join(format!("lsf-duplicates-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("directory");
@@ -1012,6 +1082,45 @@ mod tests {
             .collect();
         assert_eq!(methods, ["Credit card", "Cash on Delivery", "Bank Deposit"]);
         assert_eq!(store.checkout.tax_rate_bps, 0);
+    }
+
+    #[test]
+    fn the_checkout_of_a_session_keeps_what_it_does_not_give() {
+        let directory =
+            std::env::temp_dir().join(format!("lsf-checkout-overlay-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{
+                "products": [{"title": "Thing", "price": 100}],
+                "checkout": {
+                    "shipping_rates": [{"handle": "express", "price": "12.90"}],
+                    "functions": {
+                        "delivery-rules": {"metafields": {"$app:config.mode": "strict"}},
+                        "payment-rules": {"metafields": {"$app:config.mode": "off"}}
+                    }
+                }
+            }"#,
+        )
+        .expect("store");
+        let overlay = serde_json::json!({"checkout": {
+            "discounts": [{"function": "volume-discount", "code": "SAVE"}],
+            "functions": {"payment-rules": {"metafields": {"$app:config.mode": "on"}}}
+        }});
+        let (store, diagnostics) = load_with_overlay(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+            Some(&overlay),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(!diagnostics.has_errors(), "{diagnostics}");
+        let checkout = &store.checkout;
+        // What the session gives replaces the store data's; the rest stays.
+        assert_eq!(checkout.discounts[0].code.as_deref(), Some("SAVE"));
+        assert_eq!(checkout.shipping_rates[0].title, "express");
+        // The settings of the Functions, Function by Function.
+        assert_eq!(checkout.functions["delivery-rules"][0].value, "strict");
+        assert_eq!(checkout.functions["payment-rules"][0].value, "on");
     }
 
     #[test]

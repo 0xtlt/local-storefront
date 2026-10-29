@@ -5,6 +5,7 @@ document describes those files. It is printed by `npx local-storefront docs`, an
 `npx local-storefront init` writes it next to the data as `README.md`.
 
 The format is strict on purpose: unknown fields, wrong types and broken references are errors.
+An unknown field is left out, and the rest of its file is still read.
 Run `npx local-storefront validate` after every change. Each problem is reported with a code,
 the file, a JSON pointer to the value, and usually a hint:
 
@@ -433,8 +434,9 @@ out. Every account link of a theme (`routes.account_login_url`, `routes.storefro
 ...) leads to that page, and so do its login and register forms.
 
 Classic customer accounts are not simulated: the theme's `templates/customers` are never
-rendered, and customers have no password. Data that still has `shop.customer_accounts` or a
-customer's `password` is refused, with a hint to remove the field.
+rendered (`serve` and `check` say so), and customers have no password. Data that still has
+`shop.customer_accounts` or a customer's `password` is read as before: those fields are ignored,
+with a warning to remove them.
 
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
@@ -805,7 +807,8 @@ The Functions of the [local checkout](checkout.md) read the same metaobjects as
 |---|---|
 | `invalid_json` | The file is not valid JSON. The hint gives the line and column. |
 | `unreadable_file` | The file could not be read. |
-| `unknown_field` | A field that does not exist. The hint suggests the closest one. |
+| `unknown_field` | A field that does not exist. The hint suggests the closest one. The field is left out, the rest of the file is read. |
+| `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
 | `invalid_value`, `invalid_format` | A value outside what the field accepts. |

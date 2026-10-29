@@ -227,7 +227,7 @@ exits with `1` on an error of it.
 |---|---|
 | `--app <dir>` | The app to check too (`LSF_APP`). Defaults to the app the current folder is in. |
 | `--format text` | Default. One block per problem, for a person. |
-| `--format json` | One JSON document, for a tool: `errors` and `warnings` count those of the data and of the app together, `app` has the app's own when there is one. |
+| `--format json` | One JSON document, for a tool: `errors`, `warnings` and `diagnostics` are those of the data and of the app together (an app's has the code `app` and its extension as `file`), `app` has the app's own when there is one. |
 
 The text format:
 

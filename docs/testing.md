@@ -211,8 +211,9 @@ export default defineConfig({
 test only go through `PUT /__lsf/session`, as above; `/checkout` opens the checkout of that cart
 (`/checkout?scenario=<name>` the one of a [scenario](checkout.md#scenarios), with its cart and
 buyer). A discount Function runs only for a discount that names it: give one in
-`data.checkout`, which replaces the whole `checkout` section of the store data for the session
-(its shipping rates, payment methods and discounts: write all of what the test needs). A
+`data.checkout`. As in a scenario, each field it gives (`shipping_rates`, `payment_methods`,
+`discounts`, `tax_rate`) replaces the store data's for the session, and the settings of the
+Functions (`functions`) are merged Function by Function: what it does not give stays. A
 discount has the settings of its Function in `metafields`, the metafield its
 `[extensions.input.variables]` (or its input query) reads: without them, the Function has nothing
 to apply.

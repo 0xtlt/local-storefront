@@ -162,6 +162,28 @@ fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
         "{}",
         text(&output)
     );
+
+    // What is missing from the file is added to it again, and what is filled in stays.
+    app.write(
+        "shopify-local/app-settings.json",
+        r#"{"checkout": {"functions": {"other": {"metafields": {"$app:config.mode": "kept"}}}}}"#,
+    );
+    let output = lsf(&app.0, &["checkout", "init"]);
+    assert!(
+        text(&output).contains("added   to app-settings.json"),
+        "{}",
+        text(&output)
+    );
+    let settings: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(app.0.join("shopify-local/app-settings.json")).unwrap(),
+    )
+    .unwrap();
+    let functions = &settings["checkout"]["functions"];
+    assert_eq!(functions["other"]["metafields"]["$app:config.mode"], "kept");
+    assert_eq!(
+        functions["quantity-limit"]["metafields"]["$app:config.settings"]["value"],
+        serde_json::json!({"tags": []})
+    );
 }
 
 #[test]
@@ -187,6 +209,15 @@ fn validate_checks_the_app_of_the_folder_too() {
     assert_eq!(json["ok"], false);
     // The errors of the app count with those of the data.
     assert_eq!(json["errors"], json["app"]["errors"], "{json}");
+    assert!(
+        json["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "app"
+                && diagnostic["file"] == "extensions/old-ui"),
+        "{json}"
+    );
     assert!(json["errors"].as_u64() > Some(0), "{json}");
     assert!(
         json["app"]["diagnostics"]

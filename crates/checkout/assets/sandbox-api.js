@@ -751,8 +751,9 @@
       }
     }
 
-    // The language of what the extension renders: that of its strings, else the buyer's.
-    const language = extensionLanguage || locale;
+    // The language of what the extension renders: that of its strings. One without any writes
+    // its text in its code, most likely in the shop's primary language.
+    const language = extensionLanguage || (state.shop && state.shop.locale) || 'en';
     return { shopify, api, registered, receive, refresh, run: runTarget, language };
   }
 

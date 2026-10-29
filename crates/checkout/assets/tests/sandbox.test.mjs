@@ -74,9 +74,10 @@ test('what a listener throws and a promise nobody catches reach the page with th
 });
 
 test('the frame is in the language the extension renders in', async () => {
-  const frame = async (locale, translations) => {
+  const frame = async (locale, translations, shop = locale) => {
     const state = structuredClone(checkoutState());
-    state.shop = { ...state.shop, locale };
+    state.shop = { ...state.shop, locale: shop };
+    state.localization = { ...state.localization, language: { isoCode: locale } };
     const win = sandboxWindow({ scripts: SANDBOX, bundles: { [url('i18n')]: '' } });
     win.receive(init({ handle: 'i18n', target: TARGET, state, ext: { translations } }));
     for (let i = 0; i < 4; i++) await settle();
@@ -85,6 +86,8 @@ test('the frame is in the language the extension renders in', async () => {
   // French strings for a French buyer; English ones for a buyer whose language it lacks.
   assert.equal(await frame('fr', { fr: { hi: 'Bonjour' }, en: { hi: 'Hello' } }), 'fr');
   assert.equal(await frame('de', { fr: { hi: 'Bonjour' }, en: { hi: 'Hello' } }), 'en');
-  // No strings: the buyer's language.
-  assert.equal(await frame('fr', {}), 'fr');
+  // No strings: its text is in its code, in the shop's primary language more likely than the
+  // buyer's.
+  assert.equal(await frame('fr', {}, 'en'), 'en');
+  assert.equal(await frame('fr', {}, 'fr'), 'fr');
 });

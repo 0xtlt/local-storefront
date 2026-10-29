@@ -175,6 +175,59 @@ pub fn empty_variables(query: &str) -> serde_json::Map<String, Json> {
     values
 }
 
+/// The metafields of its owner (the discount, the customization, the validation) that `query`
+/// reads by name, `(namespace, key)`: where the Function keeps its settings when they are not
+/// the variables of the query.
+pub fn owner_metafields(query: &str) -> Vec<(String, String)> {
+    use graphql_parser::query::{Definition, OperationDefinition, Selection, SelectionSet, Value};
+    const OWNERS: [&str; 6] = [
+        "discount",
+        "discountNode",
+        "cartTransform",
+        "deliveryCustomization",
+        "paymentCustomization",
+        "validation",
+    ];
+    fn fields<'q>(
+        set: &'q SelectionSet<'q, String>,
+    ) -> impl Iterator<Item = &'q graphql_parser::query::Field<'q, String>> {
+        set.items.iter().filter_map(|item| match item {
+            Selection::Field(field) => Some(field),
+            _ => None,
+        })
+    }
+    let text = |field: &graphql_parser::query::Field<'_, String>, name: &str| {
+        field
+            .arguments
+            .iter()
+            .find_map(|(argument, value)| match value {
+                Value::String(value) if argument == name => Some(value.clone()),
+                _ => None,
+            })
+    };
+    let Ok(document) = graphql_parser::parse_query::<String>(query) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for definition in &document.definitions {
+        let set = match definition {
+            Definition::Operation(OperationDefinition::Query(query)) => &query.selection_set,
+            Definition::Operation(OperationDefinition::SelectionSet(set)) => set,
+            _ => continue,
+        };
+        for owner in fields(set).filter(|field| OWNERS.contains(&field.name.as_str())) {
+            for field in fields(&owner.selection_set).filter(|field| field.name == "metafield") {
+                if let (Some(namespace), Some(key)) = (text(field, "namespace"), text(field, "key"))
+                    && !found.contains(&(namespace.clone(), key.clone()))
+                {
+                    found.push((namespace, key));
+                }
+            }
+        }
+    }
+    found
+}
+
 /// [`build`] without the check against the schema: what the executor says about a query.
 #[cfg(test)]
 fn build_unchecked(

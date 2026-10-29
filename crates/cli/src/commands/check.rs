@@ -733,6 +733,9 @@ fn check_theme(
     let env = Arc::new(lsf_core::environment_with(previews));
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
         .map_err(|error| error.to_string())?;
+    if args.format != Format::Json {
+        crate::app::note_classic_accounts(&theme);
+    }
     let mut files = 0;
     let mut tally = Tally {
         json: args.format == Format::Json,

@@ -902,6 +902,31 @@ fn write_settings(directory: &Path, settings: &[(String, Json, Source)]) -> Resu
         ));
     }
     let said = said.join("; ");
+    // A file written before keeps what the developer filled in: only what it lacks is added.
+    let path = directory.join(SETTINGS_FILE);
+    if path.exists() {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let mut file: Json = serde_json::from_str(&lsf_core::json::strip_comments(&text))
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if !file["checkout"]["functions"].is_object() {
+            file["checkout"]["functions"] = json!({});
+        }
+        let known = &mut file["checkout"]["functions"];
+        for (handle, value) in &functions {
+            if !known[handle]["metafields"].is_object() {
+                known[handle]["metafields"] = json!({});
+            }
+            for (name, metafield) in value["metafields"].as_object().into_iter().flatten() {
+                known[handle]["metafields"][name] = metafield.clone();
+            }
+        }
+        let mut text = serde_json::to_string_pretty(&file).map_err(|error| error.to_string())?;
+        text.push('\n');
+        std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
+        eprintln!("  added   to {SETTINGS_FILE}: the settings of {said}");
+        return Ok(());
+    }
     if let Some(file) = checkout_file(directory) {
         let snippet = serde_json::to_string_pretty(&json!(functions)).unwrap_or_default();
         eprintln!(
@@ -915,10 +940,8 @@ fn write_settings(directory: &Path, settings: &[(String, Json, Source)]) -> Resu
     }))
     .map_err(|error| error.to_string())?;
     text.push('\n');
-    // Written again only when it is not there: what the developer filled in stays.
-    if init::write_file(directory, SETTINGS_FILE, &text, false)? {
-        eprintln!("  wrote   {SETTINGS_FILE}: the settings of {said}");
-    }
+    init::write_file(directory, SETTINGS_FILE, &text, false)?;
+    eprintln!("  wrote   {SETTINGS_FILE}: the settings of {said}");
     Ok(())
 }
 

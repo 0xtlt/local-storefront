@@ -154,7 +154,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   simulated: the theme's `templates/customers` are never rendered, every `/account/…` page and
   account form (login, register, password reset, addresses) leads to `/account`, and customers
   have no password. Data that still sets `shop.customer_accounts` or a customer's `password` is
-  refused, with a hint to remove the field; `/__lsf/status` no longer has `customer_accounts`.
+  read as before: those fields are ignored, with a warning. `serve` and `check` say that the
+  theme's `templates/customers` are not rendered. `/__lsf/status` no longer has
+  `customer_accounts`.
+- **A field the format does not have no longer drops its file.** It is still an error, and is
+  left out: the rest of the file is read, and one typo gives one error. `data.checkout` of
+  `PUT /__lsf/session` replaces the store data's field by field, as a scenario's does, and keeps
+  the settings of the Functions it does not name.
 - **Smaller binaries.** lsf runs Functions with only what it uses of wasmtime (the compiler for
   the machine it runs on) and Shopify's providers compressed (1.6 MB instead of 9.7 MB), and has
   one copy of each Wasm library; the release binaries leave out their symbol table and are

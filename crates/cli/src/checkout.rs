@@ -176,17 +176,25 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
 }
 
 /// A discount of `checkout.discounts` that runs `function`, for a hint: with its settings, the
-/// metafield its `[extensions.input.variables]` names, when it reads one.
+/// metafield its `[extensions.input.variables]` names, or the one of the discount its input
+/// query reads.
 pub fn discount_example(function: &app::FunctionExtension) -> String {
-    let settings = function
+    let metafield = function
         .input_variables
         .as_ref()
-        .map_or_else(String::new, |variables| {
-            format!(
-                ", \"metafields\": {{\"{}.{}\": {{\"type\": \"json\", \"value\": {{…}}}}}}",
-                variables.namespace, variables.key
-            )
+        .map(|variables| (variables.namespace.clone(), variables.key.clone()))
+        .or_else(|| {
+            function.targets.iter().find_map(|target| {
+                lsf_checkout::input::owner_metafields(&target.input_query)
+                    .into_iter()
+                    .next()
+            })
         });
+    let settings = metafield.map_or_else(String::new, |(namespace, key)| {
+        format!(
+            ", \"metafields\": {{\"{namespace}.{key}\": {{\"type\": \"json\", \"value\": {{…}}}}}}"
+        )
+    });
     format!(
         "{{\"function\": \"{}\", \"title\": \"10% off\"{settings}}}",
         function.handle

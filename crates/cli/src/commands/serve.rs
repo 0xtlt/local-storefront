@@ -186,6 +186,7 @@ pub fn run(
     } else {
         let app = App::open(theme, data, revalidate, previews)?;
         crate::app::note_missing_previews(&app.theme, previews);
+        crate::app::note_classic_accounts(&app.theme);
         app
     };
     let source = app.describe_source();

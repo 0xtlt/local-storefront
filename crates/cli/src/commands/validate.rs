@@ -80,14 +80,34 @@ pub fn run(
     let failed = diagnostics.has_errors() || app_errors > 0;
     match args.format {
         Format::Json => {
-            // The counts are those of the store data and of the app together; `app` has the
-            // app's own.
+            // The counts and the diagnostics are those of the store data and of the app
+            // together (an app's has the code `app`, and its extension as the file); `app` has
+            // the app's own.
+            let mut all =
+                serde_json::to_value(&diagnostics.items).map_err(|error| error.to_string())?;
+            if let Some(items) = all.as_array_mut() {
+                items.extend(app_problems.iter().map(|diagnostic| {
+                    serde_json::json!({
+                        "severity": match diagnostic.severity {
+                            lsf_checkout::app::Severity::Error => "error",
+                            _ => "warning",
+                        },
+                        "code": "app",
+                        "file": diagnostic.extension.as_ref().map_or_else(
+                            || "shopify.app.toml".to_string(),
+                            |handle| format!("extensions/{handle}"),
+                        ),
+                        "path": "",
+                        "message": diagnostic.message,
+                    })
+                }));
+            }
             let report = serde_json::json!({
                 "ok": !failed,
                 "errors": diagnostics.error_count() + app_errors,
                 "warnings": diagnostics.warning_count() + app_problems.len() - app_errors,
                 "data": app.describe_source(),
-                "diagnostics": diagnostics.items,
+                "diagnostics": all,
                 // What the app gets wrong, when there is one.
                 "app": shopify_app.as_ref().map(|_| serde_json::json!({
                     "errors": app_errors,

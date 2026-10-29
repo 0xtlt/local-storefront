@@ -373,7 +373,9 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
         Err(error) => return Reply::json(422, &json!({"ok": false, "error": error.to_string()})),
     };
 
-    // Session-specific data: the files plus the overlay.
+    // Session-specific data: the files plus the overlay. What it says of the data without
+    // refusing it (a field it ignores) comes back with the session.
+    let mut warnings = Vec::new();
     let custom_store = match &overlay {
         Some(overlay) => {
             let (store, overlay_diagnostics) = load_with_overlay(
@@ -390,6 +392,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
             if relevant.has_errors() {
                 return Reply::json(422, &diagnostics_json(&relevant));
             }
+            warnings = relevant.items;
             Some(Arc::new(store))
         }
         None => None,
@@ -414,7 +417,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
     });
     let reply = Reply::json(
         200,
-        &json!({ "ok": true, "session": session_json(state, &id) }),
+        &json!({ "ok": true, "session": session_json(state, &id), "diagnostics": warnings }),
     );
     if is_new {
         reply.header(

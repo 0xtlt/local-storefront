@@ -254,6 +254,20 @@ fn settings_still_to_fill_in_have_values_of_the_type_of_each_variable() {
 }
 
 #[test]
+fn the_metafields_of_the_owner_a_query_reads_are_its_settings() {
+    let query = r#"query Input {
+        cart { lines { merchandise { ... on ProductVariant { product { metafield(namespace: "custom", key: "tier") { value } } } } } }
+        discount { metafield(namespace: "$app:config", key: "settings") { value } }
+    }"#;
+    // The product's metafield is not a setting of the Function.
+    assert_eq!(
+        owner_metafields(query),
+        [("$app:config".to_string(), "settings".to_string())]
+    );
+    assert!(owner_metafields("query Input { cart { note } }").is_empty());
+}
+
+#[test]
 fn money_is_a_decimal_string_as_shopify_writes_it() {
     assert_eq!(decimal(1999), "19.99");
     assert_eq!(decimal(1990), "19.9");

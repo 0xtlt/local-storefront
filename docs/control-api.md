@@ -7,7 +7,7 @@ there is ever delayed by `--throttle`. How to use it in tests: [testing](testing
 
 | Request | What it does | Answer |
 |---|---|---|
-| `PUT /__lsf/session` | Sets the state of the caller's session. The body is a [session](data-reference.md#session): `customer`, `company_location`, `cart`, `country`, `data`, `throttle`. | `200` `{ "ok": true, "session": … }`, or `422` with diagnostics |
+| `PUT /__lsf/session` | Sets the state of the caller's session. The body is a [session](data-reference.md#session): `customer`, `company_location`, `cart`, `country`, `data`, `throttle`. | `200` `{ "ok": true, "session": …, "diagnostics": [] }` (the warnings of `data`, such as a field it ignores), or `422` with diagnostics |
 | `GET /__lsf/session` | The state of the caller's session. | The session |
 | `DELETE /__lsf/session` | Resets the session to what the data files define. | `{ "ok": true }` |
 | `DELETE /__lsf/sessions` | Forgets every session, with its cart, its checkout and the order it placed: a clean server between two test runs. | `{ "ok": true, "sessions": 3 }` |

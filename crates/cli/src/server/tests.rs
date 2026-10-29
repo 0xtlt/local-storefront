@@ -961,22 +961,28 @@ fn hosted_accounts_have_a_page_to_choose_the_customer() {
 #[test]
 fn classic_customer_accounts_are_not_simulated() {
     let state = server();
-    // Data written for them is refused, and says why.
+    // Data written for them still loads: what they had is ignored, and a warning says why.
     let set = state.dispatch(&request(
         "PUT",
         "/__lsf/session",
-        json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
+        json!({"data": {
+            "shop": {"customer_accounts": "legacy", "name": "Classic shop"},
+            "customers": [{"email": "old@example.com", "password": "secret"}]
+        }}),
         "classic",
     ));
-    assert_eq!(set.status, 422, "{}", text(&set));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let warnings = body_json(&set)["diagnostics"].clone();
+    assert_eq!(warnings.as_array().unwrap().len(), 2, "{warnings}");
     assert!(
-        body_json(&set)["diagnostics"][0]["hint"]
+        warnings[0]["hint"]
             .as_str()
             .unwrap()
             .contains("new customer accounts only"),
-        "{}",
-        text(&set)
+        "{warnings}"
     );
+    assert_eq!(warnings[0]["severity"], "warning");
+    assert!(text(&get(&state, "/", "classic")).contains("Classic shop"));
     // Every page of a classic account leads to `/account`, the theme's templates are never
     // rendered.
     for path in [

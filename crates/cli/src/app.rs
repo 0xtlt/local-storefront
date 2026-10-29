@@ -203,6 +203,24 @@ pub fn note_missing_previews(theme: &Theme, previews: &[Preview]) {
     }
 }
 
+/// Says that the theme's `templates/customers`, the pages of classic customer accounts, are
+/// never rendered: local-storefront has Shopify's new customer accounts only.
+pub fn note_classic_accounts(theme: &Theme) {
+    let pages = theme
+        .files()
+        .list("templates/customers")
+        .iter()
+        .filter(|name| name.ends_with(".json") || name.ends_with(".liquid"))
+        .count();
+    if pages > 0 {
+        eprintln!(
+            "note: the {pages} page(s) of templates/customers/ are for classic customer accounts, \
+             which lsf does not have: they are never rendered. Every account link leads to \
+             `/account`, which stands for Shopify's new customer accounts."
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
