@@ -247,9 +247,9 @@ fn why_not_run(
     if discount && !discounted.contains(&function.handle) {
         return format!(
             "a discount Function runs for a discount of the store, and none names it: add one to \
-             `checkout.discounts` (store.json, or the scenario), e.g. \
-             {{\"function\": \"{}\", \"title\": \"10% off\"}} (automatic), with \"code\" for a code",
-            function.handle
+             `checkout.discounts` (store.json, or the scenario), e.g. {} (automatic), with \"code\" \
+             for a code",
+            crate::checkout::discount_example(function)
         );
     }
     if empty_cart {

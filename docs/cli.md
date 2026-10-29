@@ -79,8 +79,10 @@ npx local-storefront checkout --app ../my-app --extension volume-discount --vari
 `npx local-storefront checkout init [--app <dir>]`
 
 Writes checkout scenarios, the files of `checkouts/` in the store data, made for the Functions
-and checkout UI extensions of the app (a generic set without `--app`, or when nothing matches).
-It creates the data folder with the demo store when it does not exist, refreshes `schema/`, never
+and checkout UI extensions of the app (a generic set outside an app, or when nothing matches).
+It gives each Function the settings its input query reads (`[extensions.input.variables]`) when
+the store data has none: those of the app's own `shopify-local/`, or empty values of the type of
+each variable, in `app-settings.json` (to fill in). It creates the data folder with the demo store when it does not exist, refreshes `schema/`, never
 overwrites a scenario or a data file without `--force`, and prints what it wrote, what it kept
 and what it skipped and why. It is a subcommand of `checkout` because the scenarios are the
 checkout's, and the same data folder as `init`, `--data` and `LSF_DATA` included. Guide:
@@ -92,7 +94,7 @@ npx local-storefront checkout init --app ../my-app
 
 | Option | Environment variable | What it does |
 |---|---|---|
-| `--app <dir>` | `LSF_APP` | The app the scenarios are made for. |
+| `--app <dir>` | `LSF_APP` | The app the scenarios are made for. Defaults to the app the current folder is in. |
 | `--force` | | Overwrites the scenarios that exist. |
 
 ## checkout build
@@ -114,15 +116,16 @@ Builds the extensions of an app, as `shopify app build` does, without Node: its 
 
 Runs the Functions of every checkout scenario, as the home page checks them, without a server:
 for CI. Prints each scenario that does not validate and each Function that fails, with the
-scenarios it fails in, and exits with `1` when there is one, or when the time ran out. No
-request of a `.fetch` target is sent.
+scenarios it fails in, and exits with `1` when there is one, when the time ran out, or when
+there is no scenario at all (`checkout init` writes a set). No request of a `.fetch` target is
+sent.
 
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 | `--extension <handle>` | | Only these extensions. Repeat it for several. |
 | `--format text` | | Default. One line per problem, then a summary. |
-| `--format json` | | `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}]}`. |
+| `--format json` | | `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}]}`, and `error` when there is no scenario. |
 | `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
 
 ## function build
@@ -210,11 +213,11 @@ Prints what the render of one page spends its time on: sections, blocks, snippet
 
 Checks the store data and explains every problem, its checkout scenarios included.
 
-In a theme, the data is `--data`, or the theme's `shopify-local/`, or the built-in demo store.
-In a folder that is not a theme (an app with a `shopify-local/` folder for `lsf checkout`, such
-as [the checkout playground](../examples/checkout-playground)), it checks that folder's
-`shopify-local/` (or `--data`) alone, with the store's own languages, and needs one: a folder with
-neither a theme nor store data is an error.
+The data is the one `lsf checkout` reads: `--data`, or the folder's `shopify-local/`, or the
+app's (`<app>/shopify-local`), or the built-in demo store. In a folder that is not a theme (an
+app, such as [the checkout playground](../examples/checkout-playground)), it checks the data
+alone, with the store's own languages; an app without any is checked with the demo store, as its
+checkout runs. A folder that is neither a theme nor an app, and has no store data, is an error.
 
 In a Shopify app (or with `--app`), it checks the app too: what its Functions and UI extensions
 get wrong (no build, an API version lsf does not run, an unknown target, an `owner_type`), and
@@ -224,7 +227,7 @@ exits with `1` on an error of it.
 |---|---|
 | `--app <dir>` | The app to check too (`LSF_APP`). Defaults to the app the current folder is in. |
 | `--format text` | Default. One block per problem, for a person. |
-| `--format json` | One JSON document, for a tool, with `app` when there is one. |
+| `--format json` | One JSON document, for a tool: `errors` and `warnings` count those of the data and of the app together, `app` has the app's own when there is one. |
 
 The text format:
 

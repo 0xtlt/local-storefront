@@ -410,6 +410,7 @@ impl<'a> Pipeline<'a> {
             );
             return None;
         };
+        let discount = matches!(owner.kind, OwnerKind::Discount | OwnerKind::DiscountNode);
         let variables = match owner_variables(function, owner.metafields) {
             Ok(variables) => variables,
             Err(error) => {
@@ -450,12 +451,11 @@ impl<'a> Pipeline<'a> {
         let input = match input {
             Ok(input) => input,
             Err(error) => {
-                self.record_failure(
-                    function,
-                    target,
-                    Value::Null,
-                    format!("cannot build the input: {error}"),
-                );
+                let mut message = format!("cannot build the input: {error}");
+                if error.contains("was not given a value") {
+                    message.push_str(&variables_hint(function, discount));
+                }
+                self.record_failure(function, target, Value::Null, message);
                 return None;
             }
         };
@@ -1864,6 +1864,27 @@ fn classes_of(discount: &DiscountConfig) -> Vec<DiscountClass> {
     } else {
         discount.classes.clone()
     }
+}
+
+/// Where the variables of the input query of `function` are given, for a variable without a
+/// value.
+fn variables_hint(function: &FunctionExtension, discount: bool) -> String {
+    let Some(variables) = &function.input_variables else {
+        return ". Nothing gives the query its variables: declare `[extensions.input.variables]` \
+                in shopify.extension.toml, or give the variable a default value"
+            .to_string();
+    };
+    let field = format!("{}.{}", variables.namespace, variables.key);
+    let place = if discount {
+        "the `metafields` of its discount in `checkout.discounts`".to_string()
+    } else {
+        format!("`checkout.functions.{}.metafields`", function.handle)
+    };
+    format!(
+        ". The variables are the keys of the JSON metafield `{field}` (`[extensions.input.variables]`): \
+         give it in {place}, e.g. `\"{field}\": {{\"type\": \"json\", \"value\": {{…}}}}`. \
+         `lsf checkout init --app <dir>` writes it with empty values"
+    )
 }
 
 /// The variables of the input query: the JSON value of the owner's metafield that

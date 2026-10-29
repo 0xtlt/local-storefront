@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use lsf_checkout::app::{App as ShopifyApp, TargetKind};
 use lsf_core::store::load::{DataSource, LoadOptions, load};
-use lsf_core::store::{CheckoutCharge, Store};
+use lsf_core::store::{CheckoutCharge, CheckoutMetafield, Store};
 use serde_json::{Value as Json, json};
 
 use crate::commands::{init, schema};
@@ -17,7 +17,8 @@ use crate::commands::{init, schema};
 #[derive(clap::Args)]
 pub struct InitArgs {
     /// The directory of a Shopify app (the one with shopify.app.toml). The scenarios are made
-    /// for its Functions and checkout UI extensions. Without it, a generic set is written.
+    /// for its Functions and checkout UI extensions. Defaults to the app the current folder is
+    /// in; outside an app, a generic set is written.
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<PathBuf>,
 
@@ -214,17 +215,124 @@ impl Plan {
     }
 }
 
+/// A metafield of the checkout settings, as the store data writes it: a JSON metafield reads
+/// better as JSON than as the text it is stored as.
+fn metafield_json(field: &CheckoutMetafield) -> (String, Json) {
+    let value = if field.kind == "json" {
+        serde_json::from_str(&field.value).unwrap_or_else(|_| json!(field.value))
+    } else {
+        json!(field.value)
+    };
+    (
+        format!("{}.{}", field.namespace, field.key),
+        json!({"type": field.kind, "value": value}),
+    )
+}
+
+/// Where the settings of a Function come from when the store data has none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    /// The store data of the app (`<app>/shopify-local`).
+    App,
+    /// Empty values of the type each variable of the input query has.
+    Empty,
+}
+
+/// The settings `[extensions.input.variables]` of a Function reads when `given` lacks them:
+/// empty values of the type its input query asks for. `None` for a Function whose queries have
+/// no variables, or when `given` has them.
+fn missing_settings(
+    app: &ShopifyApp,
+    handle: &str,
+    given: &[CheckoutMetafield],
+) -> Option<(String, Json, Source)> {
+    let function = app.function(handle)?;
+    let variables = function.input_variables.as_ref()?;
+    if given
+        .iter()
+        .any(|field| field.namespace == variables.namespace && field.key == variables.key)
+    {
+        return None;
+    }
+    let mut values = serde_json::Map::new();
+    for target in &function.targets {
+        for (name, value) in lsf_checkout::input::empty_variables(&target.input_query) {
+            values.entry(name).or_insert(value);
+        }
+    }
+    // A query without variables needs none: the Function reads the metafield, or nothing.
+    if values.is_empty() {
+        return None;
+    }
+    Some((
+        format!("{}.{}", variables.namespace, variables.key),
+        json!({"type": "json", "value": values}),
+        Source::Empty,
+    ))
+}
+
+/// The settings of the Functions of the app that are not discounts, for those the store data
+/// gives none: `checkout.functions` to write, by handle.
+fn function_settings(
+    store: &Store,
+    app_store: Option<&Store>,
+    app: &ShopifyApp,
+    discounts: &[String],
+) -> Vec<(String, Json, Source)> {
+    app.functions
+        .iter()
+        .filter(|function| !discounts.contains(&function.handle))
+        .filter_map(|function| {
+            let given = store.checkout.functions.get(&function.handle);
+            // Every setting the app's own store data gives it, for a Function the store data
+            // gives none.
+            if given.is_none()
+                && let Some(own) = app_store
+                    .and_then(|store| store.checkout.functions.get(&function.handle))
+                    .filter(|own| !own.is_empty())
+            {
+                let metafields: serde_json::Map<String, Json> =
+                    own.iter().map(metafield_json).collect();
+                return Some((
+                    function.handle.clone(),
+                    json!({"metafields": metafields}),
+                    Source::App,
+                ));
+            }
+            let given = given.map_or(&[][..], Vec::as_slice);
+            let (name, value, source) = missing_settings(app, &function.handle, given)?;
+            Some((
+                function.handle.clone(),
+                json!({"metafields": {name: value}}),
+                source,
+            ))
+        })
+        .collect()
+}
+
 /// The discounts a scenario sets up for the discount Functions of the app. The ones the store
-/// data configures already keep their settings; the others get an entry without any.
-fn discounts(store: &Store, app: &ShopifyApp, handles: &[String], code: Option<&str>) -> Json {
+/// data (or else the store data of the app) configures keep their settings; the others get the
+/// settings their input query reads, with empty values.
+fn discounts(
+    store: &Store,
+    app_store: Option<&Store>,
+    app: &ShopifyApp,
+    handles: &[String],
+    code: Option<&str>,
+) -> Json {
     let entries: Vec<Json> = handles
         .iter()
         .map(|handle| {
-            let configured = store
-                .checkout
-                .discounts
-                .iter()
-                .find(|discount| discount.function == *handle);
+            let configured = |store: &Store| {
+                store
+                    .checkout
+                    .discounts
+                    .iter()
+                    .find(|discount| discount.function == *handle)
+                    .cloned()
+            };
+            let configured = configured(store).or_else(|| app_store.and_then(configured));
+            let configured = configured.as_ref();
             let title = app
                 .function(handle)
                 .and_then(|function| function.name.clone())
@@ -236,25 +344,17 @@ fn discounts(store: &Store, app: &ShopifyApp, handles: &[String], code: Option<&
                     entry["classes"] = json!(configured.classes);
                 }
                 if !configured.metafields.is_empty() {
-                    let metafields: serde_json::Map<String, Json> = configured
-                        .metafields
-                        .iter()
-                        .map(|field| {
-                            // A JSON metafield reads better as JSON than as the text it is stored as.
-                            let value = if field.kind == "json" {
-                                serde_json::from_str(&field.value)
-                                    .unwrap_or_else(|_| json!(field.value))
-                            } else {
-                                json!(field.value)
-                            };
-                            (
-                                format!("{}.{}", field.namespace, field.key),
-                                json!({"type": field.kind, "value": value}),
-                            )
-                        })
-                        .collect();
+                    let metafields: serde_json::Map<String, Json> =
+                        configured.metafields.iter().map(metafield_json).collect();
                     entry["metafields"] = Json::Object(metafields);
                 }
+            }
+            let given = configured.map_or(&[][..], |discount| discount.metafields.as_slice());
+            if let Some((name, value, _)) = missing_settings(app, handle, given) {
+                if !entry["metafields"].is_object() {
+                    entry["metafields"] = json!({});
+                }
+                entry["metafields"][name] = value;
             }
             // The code the buyer enters, or none for a discount that applies by itself.
             entry["code"] = match code {
@@ -280,8 +380,9 @@ fn codes_of(discounts: &Json) -> Vec<String> {
     codes
 }
 
-/// The scenarios to write for `store` and, when there is one, the app.
-fn plan(store: &Store, app: Option<&ShopifyApp>) -> Plan {
+/// The scenarios to write for `store` and, when there is one, the app (and its own store data,
+/// where the settings of its Functions are taken from when `store` has none).
+fn plan(store: &Store, app: Option<&ShopifyApp>, app_store: Option<&Store>) -> Plan {
     let mut plan = Plan {
         scenarios: Vec::new(),
         skipped: Vec::new(),
@@ -485,7 +586,7 @@ fn plan(store: &Store, app: Option<&ShopifyApp>) -> Plan {
     if kinds.discount.is_empty() {
         plan.skip("discount", "the app has no discount Function");
     } else {
-        let automatic = discounts(store, app, &kinds.discount, None);
+        let automatic = discounts(store, app_store, app, &kinds.discount, None);
         plan.add(
             "discount-automatic",
             json!({
@@ -499,7 +600,7 @@ fn plan(store: &Store, app: Option<&ShopifyApp>) -> Plan {
                 "extensions": kinds.only(&kinds.discount),
             }),
         );
-        let with_code = discounts(store, app, &kinds.discount, Some("SAVE10"));
+        let with_code = discounts(store, app_store, app, &kinds.discount, Some("SAVE10"));
         plan.add(
             "discount-code",
             json!({
@@ -618,7 +719,13 @@ fn plan(store: &Store, app: Option<&ShopifyApp>) -> Plan {
 }
 
 pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode, String> {
-    let shopify_app = match &args.app {
+    // The app: `--app`, or the one the current folder is in.
+    let app_dir = args.app.clone().or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|dir| crate::checkout::app_around(&dir))
+    });
+    let shopify_app = match &app_dir {
         Some(dir) => {
             let app = lsf_checkout::app::load(dir)?;
             Some(app)
@@ -676,7 +783,15 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         );
     }
 
-    let plan = plan(&store, shopify_app.as_ref());
+    // The store data of the app, where the settings of its Functions are taken from when the
+    // store data has none.
+    let app_store = app_dir
+        .as_ref()
+        .map(|dir| dir.join("shopify-local"))
+        .filter(|own| own.is_dir() && !same_directory(own, &directory))
+        .map(|own| load(&DataSource::Directory(own), &LoadOptions::default()).0);
+
+    let plan = plan(&store, shopify_app.as_ref(), app_store.as_ref());
     let mut written = 0;
     let mut kept = 0;
     for (name, scenario) in &plan.scenarios {
@@ -694,6 +809,11 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
     for (name, reason) in &plan.skipped {
         eprintln!("  skipped {name}: {reason}");
     }
+    if let Some(app) = &shopify_app {
+        let discounts = Kinds::of(app).discount;
+        let settings = function_settings(&store, app_store.as_ref(), app, &discounts);
+        write_settings(&directory, &settings)?;
+    }
     let target = match &shopify_app {
         Some(app) => format!(
             "{} Function(s) and {} checkout UI extension(s) of {}",
@@ -707,7 +827,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         "{}: wrote {written} scenario(s), kept {kept} existing one(s), for {target}",
         directory.join("checkouts").display()
     );
-    match &args.app {
+    match &app_dir {
         Some(app) => eprintln!(
             "next: `lsf checkout --app {}` lists them on its home page",
             app.display()
@@ -717,6 +837,89 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         ),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Whether two paths are the same directory.
+fn same_directory(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// The data file `checkout init` writes the settings of the Functions in.
+const SETTINGS_FILE: &str = "app-settings.json";
+
+/// The data file of `directory` (other than [`SETTINGS_FILE`]) that has a `checkout` section:
+/// only one file may have it.
+fn checkout_file(directory: &Path) -> Option<String> {
+    let entries = std::fs::read_dir(directory).ok()?;
+    let mut names: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".json") && name != SETTINGS_FILE)
+        .collect();
+    names.sort();
+    names.into_iter().find(|name| {
+        std::fs::read_to_string(directory.join(name))
+            .ok()
+            .and_then(|text| {
+                serde_json::from_str::<Json>(&lsf_core::json::strip_comments(&text)).ok()
+            })
+            .is_some_and(|json| json.get("checkout").is_some())
+    })
+}
+
+/// Writes the settings of the Functions the store data has none for in [`SETTINGS_FILE`], or
+/// says what to add when another file has the `checkout` section.
+fn write_settings(directory: &Path, settings: &[(String, Json, Source)]) -> Result<(), String> {
+    if settings.is_empty() {
+        return Ok(());
+    }
+    let functions: serde_json::Map<String, Json> = settings
+        .iter()
+        .map(|(handle, value, _)| (handle.clone(), value.clone()))
+        .collect();
+    let handles = |source: Source| {
+        settings
+            .iter()
+            .filter(|(_, _, from)| *from == source)
+            .map(|(handle, _, _)| handle.as_str())
+            .collect::<Vec<_>>()
+    };
+    let (copied, empty) = (handles(Source::App), handles(Source::Empty));
+    let mut said = Vec::new();
+    if !copied.is_empty() {
+        said.push(format!(
+            "{} from the store data of the app",
+            copied.join(", ")
+        ));
+    }
+    if !empty.is_empty() {
+        said.push(format!(
+            "{} with empty values of the type their input query asks for: fill them in",
+            empty.join(", ")
+        ));
+    }
+    let said = said.join("; ");
+    if let Some(file) = checkout_file(directory) {
+        let snippet = serde_json::to_string_pretty(&json!(functions)).unwrap_or_default();
+        eprintln!(
+            "  settings: the Functions {said}. {file} has the `checkout` section: add them to its `checkout.functions`:\n{snippet}"
+        );
+        return Ok(());
+    }
+    let mut text = serde_json::to_string_pretty(&json!({
+        "$schema": "./schema/store.schema.json",
+        "checkout": {"functions": functions},
+    }))
+    .map_err(|error| error.to_string())?;
+    text.push('\n');
+    // Written again only when it is not there: what the developer filled in stays.
+    if init::write_file(directory, SETTINGS_FILE, &text, false)? {
+        eprintln!("  wrote   {SETTINGS_FILE}: the settings of {said}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1007,6 +1210,92 @@ mod tests {
                 .all(|scenario| scenario.problems.is_empty())
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// An app with a validation Function whose input query reads `$tags`, and its own store
+    /// data `own` (`shopify-local/store.json`).
+    fn app_with_settings(label: &str, own: Option<&str>) -> PathBuf {
+        let app = root(&format!("app-{label}"));
+        let extension = app.join("extensions/tagged");
+        std::fs::create_dir_all(extension.join("src")).unwrap();
+        std::fs::write(app.join("shopify.app.toml"), "name = \"Tagged\"\n").unwrap();
+        std::fs::write(
+            extension.join("shopify.extension.toml"),
+            r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Tagged"
+handle = "tagged"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            extension.join("src/run.graphql"),
+            "query Input($tags: [String!]!) { cart { buyerIdentity { customer { hasAnyTag(tags: $tags) } } } }",
+        )
+        .unwrap();
+        if let Some(own) = own {
+            std::fs::create_dir_all(app.join("shopify-local")).unwrap();
+            std::fs::write(app.join("shopify-local/store.json"), own).unwrap();
+        }
+        app
+    }
+
+    fn settings_of(root: &Path) -> Option<Json> {
+        let text = std::fs::read_to_string(root.join("data/app-settings.json")).ok()?;
+        Some(serde_json::from_str::<Json>(&text).unwrap()["checkout"]["functions"].clone())
+    }
+
+    #[test]
+    fn the_settings_of_the_functions_come_from_the_store_data_of_the_app() {
+        let app = app_with_settings(
+            "own",
+            Some(
+                r#"{"checkout": {"functions": {"tagged": {"metafields": {
+                    "$app:config.settings": {"type": "json", "value": {"tags": ["vip"]}}
+                }}}}}"#,
+            ),
+        );
+        let root = root("own-settings");
+        init_in(&root, Some(app.clone()), false).unwrap();
+        assert_eq!(
+            settings_of(&root).unwrap()["tagged"]["metafields"]["$app:config.settings"]["value"],
+            json!({"tags": ["vip"]})
+        );
+        let (_, diagnostics) = load(
+            &DataSource::Directory(root.join("data")),
+            &LoadOptions::default(),
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&app).ok();
+    }
+
+    #[test]
+    fn a_store_data_with_a_checkout_section_is_told_what_to_add() {
+        let app = app_with_settings("section", None);
+        let root = root("section");
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::write(
+            root.join("data/store.json"),
+            r#"{"products": [{"title": "Teapot", "price": "30.00"}], "checkout": {"tax_rate": 20}}"#,
+        )
+        .unwrap();
+        init_in(&root, Some(app.clone()), false).unwrap();
+        // Only one file may have the `checkout` section: no second one.
+        assert_eq!(settings_of(&root), None);
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&app).ok();
     }
 
     #[test]

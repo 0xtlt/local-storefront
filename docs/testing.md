@@ -212,7 +212,10 @@ test only go through `PUT /__lsf/session`, as above; `/checkout` opens the check
 (`/checkout?scenario=<name>` the one of a [scenario](checkout.md#scenarios), with its cart and
 buyer). A discount Function runs only for a discount that names it: give one in
 `data.checkout`, which replaces the whole `checkout` section of the store data for the session
-(its shipping rates, payment methods and discounts: write all of what the test needs).
+(its shipping rates, payment methods and discounts: write all of what the test needs). A
+discount has the settings of its Function in `metafields`, the metafield its
+`[extensions.input.variables]` (or its input query) reads: without them, the Function has nothing
+to apply.
 
 ```ts
 await setSession(page, {
@@ -222,7 +225,14 @@ await setSession(page, {
     now: '2025-01-15T10:00:00Z',
     checkout: {
       shipping_rates: [{ handle: 'standard', title: 'Standard', price: '4.90' }],
-      discounts: [{ function: 'discount-codes', title: '10% off', code: 'SAVE10' }],
+      discounts: [
+        {
+          function: 'discount-codes',
+          title: '10% off',
+          code: 'SAVE10',
+          metafields: { '$app:config.settings': { type: 'json', value: { percentage: 10 } } },
+        },
+      ],
     },
   },
 });
@@ -259,7 +269,7 @@ kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every
 | Command | Exits with 1 when |
 |---|---|
 | `lsf validate` (in the app, or `--app`) | the store data or the app has errors |
-| `lsf checkout check` | a scenario does not validate, or a Function fails in one |
+| `lsf checkout check` | a scenario does not validate, a Function fails in one, or there is no scenario |
 | `lsf function run <handle> --scenario <name>` | the Function fails, or did not run (with why) |
 | `lsf render <path> --strict` | the page has Liquid errors, or nothing is at the path |
 
@@ -393,8 +403,8 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
   });
   ```
 
-  A test of the theme's own 404 page can leave this out. There is no option that turns 404s
-  into errors, since a 404 is also what a test of the 404 page expects.
+  A test of the theme's own 404 page can leave this out: a 404 is what it expects. Outside a
+  browser, `lsf render <path> --strict` fails on a 404.
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.
 - **Render time.** Every response carries `Server-Timing`, as on Shopify: `processing` for the
   whole request, `render` for the Liquid, and with `--timings` one entry per section and per

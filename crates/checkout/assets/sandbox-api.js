@@ -751,7 +751,9 @@
       }
     }
 
-    return { shopify, api, registered, receive, refresh, run: runTarget };
+    // The language of what the extension renders: that of its strings, else the buyer's.
+    const language = extensionLanguage || locale;
+    return { shopify, api, registered, receive, refresh, run: runTarget, language };
   }
 
   Sandbox.createRuntime = createRuntime;

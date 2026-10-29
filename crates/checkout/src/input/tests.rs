@@ -242,6 +242,18 @@ impl Fixture {
 }
 
 #[test]
+fn settings_still_to_fill_in_have_values_of_the_type_of_each_variable() {
+    let values = empty_variables(
+        "query Input($tags: [String!]!, $note: String, $max: Int!, $rate: Float, $on: Boolean!, $id: ID!, $when: DateTime) { cart { cost { totalAmount { amount } } } }",
+    );
+    assert_eq!(
+        Value::Object(values),
+        json!({"tags": [], "note": "", "max": 0, "rate": 0, "on": false, "id": "", "when": null})
+    );
+    assert!(empty_variables("query Input { cart { note } }").is_empty());
+}
+
+#[test]
 fn money_is_a_decimal_string_as_shopify_writes_it() {
     assert_eq!(decimal(1999), "19.99");
     assert_eq!(decimal(1990), "19.9");

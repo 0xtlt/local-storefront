@@ -144,6 +144,37 @@ pub fn build(query: &str, variables: Option<&Json>, ctx: &InputContext) -> Resul
     execute(&document, variables, ctx)
 }
 
+/// A value of the right type for each variable of `query`, for settings still to be filled in:
+/// an empty list, an empty string, `0`, `false`, even for a variable that may be left out (it
+/// can still be the argument a field requires); `null` for a type with no empty value.
+pub fn empty_variables(query: &str) -> serde_json::Map<String, Json> {
+    use graphql_parser::query::{Definition, OperationDefinition, Type};
+    fn empty(var_type: &Type<'_, String>) -> Json {
+        match var_type {
+            Type::NonNullType(inner) => empty(inner),
+            Type::ListType(_) => Json::Array(Vec::new()),
+            Type::NamedType(name) => match name.as_str() {
+                "String" | "ID" => Json::String(String::new()),
+                "Int" | "Float" => Json::from(0),
+                "Boolean" => Json::Bool(false),
+                _ => Json::Null,
+            },
+        }
+    }
+    let mut values = serde_json::Map::new();
+    let Ok(document) = graphql_parser::parse_query::<String>(query) else {
+        return values;
+    };
+    for definition in &document.definitions {
+        if let Definition::Operation(OperationDefinition::Query(query)) = definition {
+            for variable in &query.variable_definitions {
+                values.insert(variable.name.clone(), empty(&variable.var_type));
+            }
+        }
+    }
+    values
+}
+
 /// [`build`] without the check against the schema: what the executor says about a query.
 #[cfg(test)]
 fn build_unchecked(

@@ -10,7 +10,7 @@ use crate::output::print_diagnostics;
 enum Format {
     /// Human-readable diagnostics.
     Text,
-    /// A JSON document: `{ok, errors, warnings, diagnostics: [{severity, code, file, path, message, hint}]}`.
+    /// A JSON document: `{ok, errors, warnings, data, diagnostics: [{severity, code, file, path, message, hint}], app}`.
     Json,
 }
 
@@ -38,17 +38,26 @@ pub fn run(
     previews: &[lsf_core::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
+    // The app: `--app`, else the one the current folder is in.
+    let app_dir = args.app.clone().or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|dir| crate::checkout::app_around(&dir))
+    });
+    // The store data, as `lsf checkout` reads it: the theme's, else the app's.
+    let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
     let app = if looks_like_a_theme(theme) {
-        App::open(theme, data, Revalidate::Never, previews)?
+        App::open(theme, data.as_deref(), Revalidate::Never, previews)?
     } else {
         // An app's store data (its checkout scenarios) has no theme: validate it alone, with
-        // the store's own languages.
-        let app = App::open_without_theme(theme, data, previews)?;
-        if app.data_dir().is_none() {
+        // the store's own languages. An app without any is checked with the demo store, the
+        // one its checkout runs with.
+        let app = App::open_without_theme(theme, data.as_deref(), previews)?;
+        if app.data_dir().is_none() && app_dir.is_none() {
             return Err(format!(
                 "{} has no store data to validate: no {}/ directory, and it does not look like a \
-                 Shopify theme (neither a layout/ nor a templates/ directory). Run it in a theme \
-                 or an app with store data, or give `--data <directory>`.",
+                 Shopify theme (neither a layout/ nor a templates/ directory) or app (no \
+                 shopify.app.toml). Run it in a theme or an app, or give `--data <directory>`.",
                 theme.display(),
                 crate::app::DEFAULT_DATA_DIRECTORY
             ));
@@ -56,13 +65,8 @@ pub fn run(
         app
     };
     let (store, diagnostics) = app.load_store();
-    // The app: `--app`, else the one the current folder is in.
-    let shopify_app = match args.app.clone().or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .and_then(|dir| crate::checkout::app_around(&dir))
-    }) {
-        Some(dir) => Some(lsf_checkout::app::load(&dir)?),
+    let shopify_app = match &app_dir {
+        Some(dir) => Some(lsf_checkout::app::load(dir)?),
         None => None,
     };
     let app_problems: Vec<&lsf_checkout::app::Diagnostic> = shopify_app
@@ -76,10 +80,13 @@ pub fn run(
     let failed = diagnostics.has_errors() || app_errors > 0;
     match args.format {
         Format::Json => {
+            // The counts are those of the store data and of the app together; `app` has the
+            // app's own.
             let report = serde_json::json!({
                 "ok": !failed,
-                "errors": diagnostics.error_count(),
-                "warnings": diagnostics.warning_count(),
+                "errors": diagnostics.error_count() + app_errors,
+                "warnings": diagnostics.warning_count() + app_problems.len() - app_errors,
+                "data": app.describe_source(),
                 "diagnostics": diagnostics.items,
                 // What the app gets wrong, when there is one.
                 "app": shopify_app.as_ref().map(|_| serde_json::json!({

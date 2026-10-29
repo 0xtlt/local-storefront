@@ -175,6 +175,24 @@ pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), Strin
     Ok(())
 }
 
+/// A discount of `checkout.discounts` that runs `function`, for a hint: with its settings, the
+/// metafield its `[extensions.input.variables]` names, when it reads one.
+pub fn discount_example(function: &app::FunctionExtension) -> String {
+    let settings = function
+        .input_variables
+        .as_ref()
+        .map_or_else(String::new, |variables| {
+            format!(
+                ", \"metafields\": {{\"{}.{}\": {{\"type\": \"json\", \"value\": {{…}}}}}}",
+                variables.namespace, variables.key
+            )
+        });
+    format!(
+        "{{\"function\": \"{}\", \"title\": \"10% off\"{settings}}}",
+        function.handle
+    )
+}
+
 /// The app `dir` is in: the closest folder, from `dir` up, that has a `shopify.app.toml`.
 pub fn app_around(dir: &Path) -> Option<PathBuf> {
     dir.ancestors()

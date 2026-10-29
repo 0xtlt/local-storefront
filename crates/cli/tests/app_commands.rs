@@ -74,6 +74,14 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
     let app = App::new("check");
     // The demo store, as `lsf init` writes it.
     assert!(lsf(&app.0, &["init"]).status.success());
+    // No scenario: nothing is checked, and that is not a pass.
+    let output = lsf(&app.0, &["checkout", "check"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("no scenario to check"),
+        "{}",
+        text(&output)
+    );
     app.write(
         "shopify-local/checkouts/tees.json",
         r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
@@ -97,8 +105,73 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
 }
 
 #[test]
+fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
+    let app = App::new("settings");
+    // `quantity-limit` reads its settings as the variables of its input query.
+    let query = std::fs::read_to_string(app.0.join("extensions/quantity-limit/src/run.graphql"))
+        .unwrap()
+        .replacen("query Input {", "query Input($tags: [String!]!) {", 1)
+        .replacen(
+            "buyerIdentity {",
+            "buyerIdentity {\n      customer { hasAnyTag(tags: $tags) }",
+            1,
+        );
+    app.write("extensions/quantity-limit/src/run.graphql", &query);
+    let toml = std::fs::read_to_string(
+        app.0
+            .join("extensions/quantity-limit/shopify.extension.toml"),
+    )
+    .unwrap();
+    app.write(
+        "extensions/quantity-limit/shopify.extension.toml",
+        &format!("{toml}\n  [extensions.input.variables]\n  namespace = \"$app:config\"\n  key = \"settings\"\n"),
+    );
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "shopify-local/checkouts/tees.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+    );
+    // Without its settings, it cannot run, and the check says where they go.
+    let output = lsf(&app.0, &["checkout", "check"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("`checkout.functions.quantity-limit.metafields`"),
+        "{}",
+        text(&output)
+    );
+
+    // `checkout init` writes them, with empty values: every Function runs.
+    let output = lsf(&app.0, &["checkout", "init"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("app-settings.json"),
+        "{}",
+        text(&output)
+    );
+    let settings: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(app.0.join("shopify-local/app-settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings["checkout"]["functions"]["quantity-limit"]["metafields"]["$app:config.settings"],
+        serde_json::json!({"type": "json", "value": {"tags": []}})
+    );
+    let output = lsf(&app.0, &["checkout", "check"]);
+    assert!(
+        !text(&output).contains("quantity-limit ·"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
 fn validate_checks_the_app_of_the_folder_too() {
     let app = App::new("validate");
+    // Without store data, the app is checked with the demo store, as its checkout runs.
+    let output = lsf(&app.0, &["validate"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(text(&output).contains("demo store"), "{}", text(&output));
+
     app.write(
         "shopify-local/shop.json",
         r#"{"shop": {"name": "Test shop", "currency": "USD"}}"#,
@@ -112,6 +185,9 @@ fn validate_checks_the_app_of_the_folder_too() {
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["ok"], false);
+    // The errors of the app count with those of the data.
+    assert_eq!(json["errors"], json["app"]["errors"], "{json}");
+    assert!(json["errors"].as_u64() > Some(0), "{json}");
     assert!(
         json["app"]["diagnostics"]
             .as_array()

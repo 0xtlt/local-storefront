@@ -8,14 +8,20 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 ### Added
 
 - **Testing an app's checkout in CI.** `lsf checkout check` runs the Functions of every scenario
-  and exits with 1 when one fails or does not validate. `lsf validate` checks the app of the folder
-  too. The checkout and the customer account set `data-lsf-ready` on the document once nothing is
+  and exits with 1 when one fails or does not validate, or when there is no scenario. `lsf validate`
+  checks the app of the folder too (with the demo store when the app has no store data), and its
+  JSON counts the app's errors with the data's. The checkout and the customer account set `data-lsf-ready` on the document once nothing is
   on its way and every extension rendered (`aria-busy` meanwhile). `DELETE /__lsf/sessions` resets
   every session. The orders of a session are numbered after the last one of the store data, one
   after the other whatever the other sessions do, and placed at its `now`: a test reads the same
   number and date every time. [Testing guide](docs/testing.md#a-checkout-in-a-test).
-- **Commands of an app need no `--app` in its folder** (`lsf checkout`, `lsf function run`,
-  `lsf checkout check`), and read its `shopify-local/` from anywhere. `lsf function run` says why a
+- **Commands of an app need no `--app` in its folder** (`lsf checkout`, `lsf checkout init`,
+  `lsf function run`, `lsf checkout check`), and read its `shopify-local/` from anywhere.
+  `lsf checkout init` gives every Function the settings its input query reads
+  (`[extensions.input.variables]`): those of the app's own store data, or empty values of the
+  right type in `app-settings.json`, so that the scenarios it writes pass `checkout check`; a
+  variable without a value says where to give it. The frame of an extension is in the language
+  it renders in (`lang`). `lsf function run` says why a
   Function asked for did not run (no discount names it, an empty cart, an error of the app) and
   exits with 1; a handle or a scenario close to an existing one is suggested.
 

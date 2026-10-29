@@ -431,6 +431,14 @@ countries, languages and selling plans it has, and says which scenarios it skipp
 never overwrites a file without `--force`, and refreshes `schema/` so that editors complete the
 scenarios (`"$schema": "../schema/checkout-scenario.schema.json"`).
 
+A Function that reads its settings as the variables of its input query
+(`[extensions.input.variables]`) cannot run without them. `checkout init` gives each one the
+settings the store data lacks: those of the app's own `shopify-local/` when it has them, or empty
+values of the type of each variable (`[]`, `""`, `0`, `false`) to fill in. Those of a discount
+Function go in the `metafields` of its discounts in the scenarios; the others in
+`checkout.functions` of `app-settings.json`. When another data file has the `checkout` section,
+it prints what to add to it instead.
+
 ## Log in as a customer
 
 The customers of the [store data](data-format.md#customers-and-sessions) are the login profiles

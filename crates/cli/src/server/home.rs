@@ -305,8 +305,8 @@ fn function_json(
             format!(
                 "no discount of the store data runs it, so it never runs: a discount Function runs for a discount, \
                  which `checkout.discounts` of `store.json` (or of a scenario) declares, e.g. \
-                 `{{\"function\": \"{}\", \"title\": \"10% off\"}}`, with `\"code\"` for a discount code",
-                function.handle
+                 `{}`, with `\"code\"` for a discount code",
+                crate::checkout::discount_example(function)
             ),
         ));
     }

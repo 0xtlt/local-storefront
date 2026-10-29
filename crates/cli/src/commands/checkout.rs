@@ -93,6 +93,9 @@ pub fn run(
     }
 }
 
+/// What `checkout check` says of store data without a scenario.
+const NO_SCENARIO: &str = "no scenario to check: `lsf checkout init` writes a set for the app in `shopify-local/checkouts/`";
+
 /// `lsf checkout check`: the check of the home page, from the command line.
 fn check(
     theme: &Path,
@@ -149,11 +152,16 @@ fn check(
         .filter(|scenario| !scenario.problems.is_empty())
         .collect();
     let complete = report.checked == report.total;
-    let ok = report.failures.is_empty() && invalid.is_empty() && complete;
+    // No scenario, nothing checked: a check that cannot fail is not one.
+    let empty = report.total == 0;
+    let ok = report.failures.is_empty() && invalid.is_empty() && complete && !empty;
     match args.format {
         Format::Json => {
             let mut json = report.to_json();
             json["ok"] = serde_json::json!(ok);
+            if empty {
+                json["error"] = serde_json::json!(NO_SCENARIO);
+            }
             json["invalid"] = serde_json::json!(invalid
                 .iter()
                 .map(|scenario| serde_json::json!({"scenario": scenario.name, "file": scenario.file, "problems": scenario.problems}))
@@ -186,6 +194,8 @@ fn check(
                 report.elapsed.as_secs_f64(),
                 if ok {
                     "every Function ran".to_string()
+                } else if empty {
+                    NO_SCENARIO.to_string()
                 } else if !complete {
                     "out of time for the others (raise --budget)".to_string()
                 } else {

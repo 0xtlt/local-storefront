@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { init, sandboxWindow, settle } from './harness.mjs';
+import { checkoutState, init, sandboxWindow, settle } from './harness.mjs';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
 const TARGET = 'purchase.checkout.block.render';
@@ -71,4 +71,20 @@ test('what a listener throws and a promise nobody catches reach the page with th
   assert.equal(errors[0].stack, thrown.stack);
   assert.match(errors[1].stack, /Error: nobody caught this/);
   assert.equal(errors[2].stack, undefined);
+});
+
+test('the frame is in the language the extension renders in', async () => {
+  const frame = async (locale, translations) => {
+    const state = structuredClone(checkoutState());
+    state.shop = { ...state.shop, locale };
+    const win = sandboxWindow({ scripts: SANDBOX, bundles: { [url('i18n')]: '' } });
+    win.receive(init({ handle: 'i18n', target: TARGET, state, ext: { translations } }));
+    for (let i = 0; i < 4; i++) await settle();
+    return win.document.documentElement.lang;
+  };
+  // French strings for a French buyer; English ones for a buyer whose language it lacks.
+  assert.equal(await frame('fr', { fr: { hi: 'Bonjour' }, en: { hi: 'Hello' } }), 'fr');
+  assert.equal(await frame('de', { fr: { hi: 'Bonjour' }, en: { hi: 'Hello' } }), 'en');
+  // No strings: the buyer's language.
+  assert.equal(await frame('fr', {}), 'fr');
 });
