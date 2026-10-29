@@ -7261,7 +7261,8 @@ fn the_home_page_of_an_app_with_nothing_says_so() {
     assert!(html.contains("No problems."), "{html}");
     assert!(html.contains("lsf-hp is-clear"));
     assert!(html.contains("The app has no Function."));
-    assert!(html.contains("The app has no checkout or customer account UI extension."));
+    assert!(html.contains("The app has no checkout UI extension."));
+    assert!(html.contains("The app has no customer account UI extension."));
     assert!(html.contains("None yet"));
     // Nothing to filter.
     assert!(!html.contains("data-filter"));
@@ -8047,4 +8048,55 @@ fn an_order_of_the_store_data_has_its_returns_and_its_shipments() {
         json!([{"lineId": lines[0]["id"], "quantity": 1}])
     );
     std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
+    let app = app_with_account("home");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let json = body_json(&get(&state, "/?format=json", "ca-home"));
+    let ca = json["uiExtensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|extension| extension["handle"] == "ca-test")
+        .expect("ca-test");
+    assert_eq!(ca["surfaces"], json!(["customer-account"]));
+    assert_eq!(ca["open"], "/account");
+    let html = text(&get(&state, "/", "ca-home"));
+    std::fs::remove_dir_all(&app).ok();
+    let section = |name: &str| {
+        let start = position(&html, &format!("data-section=\"{name}\""));
+        let end = html[start..]
+            .find("</section>")
+            .map_or(html.len(), |end| start + end);
+        html[start..end].to_string()
+    };
+    let checkout = section("ui-extensions");
+    let account = section("account-extensions");
+    assert!(
+        account.contains("Customer account UI extensions"),
+        "{account}"
+    );
+    assert!(
+        account.contains("data-ui-extension=\"ca-test\""),
+        "{account}"
+    );
+    assert!(account.contains("in the customer account"), "{account}");
+    assert!(
+        account.contains("Orders and order status: in the actions of each order"),
+        "{account}"
+    );
+    assert!(
+        !checkout.contains("data-ui-extension=\"ca-test\""),
+        "{checkout}"
+    );
+    assert!(
+        checkout.contains("data-ui-extension=\"gift-message\""),
+        "{checkout}"
+    );
+    assert!(
+        !account.contains("data-ui-extension=\"gift-message\""),
+        "{account}"
+    );
 }

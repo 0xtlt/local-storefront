@@ -328,6 +328,15 @@ fn ui_extension_json(
         .iter()
         .map(|target| json!({"target": target.target, "place": placement(&target.target)}))
         .collect();
+    // Where it renders: `checkout` (the checkout and the thank-you page), `customer-account`.
+    let mut surfaces: Vec<&str> = Vec::new();
+    for target in &extension.targets {
+        if let Some(surface) = lsf_checkout::placement::surface(&target.target)
+            && !surfaces.contains(&surface)
+        {
+            surfaces.push(surface);
+        }
+    }
     let capabilities: Vec<&str> = extension
         .capabilities
         .as_object()
@@ -358,6 +367,7 @@ fn ui_extension_json(
         "apiVersion": extension.api_version,
         "supported": extension.version.is_some(),
         "targets": targets,
+        "surfaces": surfaces,
         "capabilities": capabilities,
         "built": extension.built(),
         "selected": selected,
@@ -749,10 +759,16 @@ struct Open {
     functions: Option<String>,
     /// Whether the dialog opens on a run (otherwise the page, or the overview of the dialog).
     run: bool,
+    /// The customer account rather than a checkout: a problem of an extension that only renders
+    /// there.
+    account: bool,
 }
 
 impl Open {
     fn href(&self, root: &str, scenario: Option<&str>) -> String {
+        if self.account {
+            return format!("{root}/account");
+        }
         checkout_href(
             root,
             scenario.or(self.scenario.as_deref()),
@@ -793,12 +809,17 @@ impl Problem {
 
     fn to_json(&self, root: &str) -> Json {
         let open = self.open.as_ref().map(|open| {
-            json!({
+            let mut json = json!({
                 "href": open.href(root, None),
                 "scenario": open.scenario,
                 "functions": open.functions,
                 "run": open.run,
-            })
+            });
+            // Only said of a problem shown in the customer account.
+            if open.account {
+                json["account"] = json!(true);
+            }
+            json
         });
         // Each scenario a Function fails in, with the checkout of that scenario on the run.
         let runs: Vec<Json> = match &self.open {
@@ -849,10 +870,12 @@ fn open_for(kind: &str, extension: &Json, message: &str) -> Open {
     let handle = text_of(&extension["handle"]);
     let scenario = extension["runsIn"].as_str().map(str::to_string);
     if kind == "uiExtension" {
+        let account = only_in_account(extension);
         return Open {
-            scenario,
-            functions: (extension["loads"] != true).then(|| handle.to_string()),
+            scenario: scenario.filter(|_| !account),
+            functions: (extension["loads"] != true && !account).then(|| handle.to_string()),
             run: false,
+            account,
         };
     }
     let targets: Vec<&Json> = extension["targets"]
@@ -877,7 +900,17 @@ fn open_for(kind: &str, extension: &Json, message: &str) -> Open {
         scenario,
         functions: Some(functions),
         run,
+        account: false,
     }
+}
+
+/// Whether every target of a UI extension that has a place is one of the customer account.
+fn only_in_account(extension: &Json) -> bool {
+    let surfaces = strings(&extension["surfaces"]);
+    !surfaces.is_empty()
+        && surfaces
+            .iter()
+            .all(|surface| *surface == "customer-account")
 }
 
 /// Everything that is wrong, errors first: the store data, the app, the Functions that fail
@@ -1048,6 +1081,7 @@ fn problem_list(
                 scenario: Some(first.clone()),
                 functions: Some(functions),
                 run: true,
+                account: false,
             }),
             detail: None,
         });
@@ -1142,8 +1176,14 @@ fn build(
         .map(|extension| ui_extension_json(app, &selection, extension, used(&extension.handle)))
         .map(runs_in)
         .map(|mut extension| {
-            // Where a problem the page finds when it loads the bundle shows (`home.js`).
-            extension["open"] = json!(checkout_href(root, extension["runsIn"].as_str(), None));
+            // Where a problem the page finds when it loads the bundle shows (`home.js`): the
+            // customer account for an extension that only renders there.
+            extension["open"] = if only_in_account(&extension) {
+                extension["runsIn"] = Json::Null;
+                json!(format!("{root}/account"))
+            } else {
+                json!(checkout_href(root, extension["runsIn"].as_str(), None))
+            };
             extension
         })
         .collect();
@@ -1457,6 +1497,11 @@ fn problem_html(problem: &Json, dir: &str) -> String {
     };
     let open = &problem["open"];
     let place = match (open["href"].as_str(), problem["href"].as_str()) {
+        (Some(href), _) if open["account"] == true => format!(
+            "<a class=\"lsf-hp-where lsf-hp-open\" href=\"{}\" title=\"Opens the customer account, where it renders\">\
+             Open the customer account{more}</a>",
+            esc(href)
+        ),
         (Some(href), _) => {
             let run = open["run"] == true;
             let label = if run {
@@ -2099,9 +2144,14 @@ fn extension_row(
     // The checkout where a problem found that way shows.
     let open = match extension["open"].as_str() {
         Some(href) if !probe.is_empty() => format!(
-            " data-open=\"{}\" data-open-in=\"{}\"",
+            " data-open=\"{}\" data-open-in=\"{}\"{}",
             esc(href),
-            esc(extension["runsIn"].as_str().unwrap_or_default())
+            esc(extension["runsIn"].as_str().unwrap_or_default()),
+            if only_in_account(extension) {
+                " data-open-account"
+            } else {
+                ""
+            }
         ),
         _ => String::new(),
     };
@@ -2199,7 +2249,11 @@ fn ui_extension_html(extension: &Json, dir: &str) -> String {
     if extension["selected"] != true {
         meta.push("left out by --extension".to_string());
     }
-    meta.push(used_by(extension));
+    if only_in_account(extension) {
+        meta.push("in the customer account".to_string());
+    } else {
+        meta.push(used_by(extension));
+    }
     let targets_list = extension["targets"].as_array().cloned().unwrap_or_default();
     let targets: Vec<&str> = targets_list
         .iter()
@@ -2293,6 +2347,20 @@ fn customer_html(customer: &Json, account: Option<&str>) -> String {
         esc(text_of(&customer["name"])),
         email = esc(text_of(&customer["email"])),
     )
+}
+
+/// A list of extensions of the home page: its rows, and what the section says of them.
+struct ExtensionSection {
+    extensions: Vec<Json>,
+    section: &'static str,
+    heading: &'static str,
+    /// What the ids of the section are made from.
+    data: &'static str,
+    row: fn(&Json, &str) -> String,
+    empty: &'static str,
+    about: String,
+    /// What one of them is called: "Function".
+    noun: &'static str,
 }
 
 /// The home page, drawn from what [`build`] says. `check_now` is the page that runs the check
@@ -2457,28 +2525,97 @@ pub fn render(home: &Json, check_now: &str) -> String {
     }
     main.push_str("</section>");
 
-    // The extensions.
-    for (key, section, heading, data, render_row, empty, about) in [
-        (
-            "functions",
-            "functions",
-            "Functions",
-            "function",
-            function_html as fn(&Json, &str) -> String,
-            "The app has no Function.",
-            "The Functions of the app: what each one is, its targets, and the scenarios that run it.",
-        ),
-        (
-            "uiExtensions",
-            "ui-extensions",
-            "UI extensions",
-            "ui",
-            ui_extension_html,
-            "The app has no checkout or customer account UI extension.",
-            "The checkout and customer account UI extensions of the app: where each one renders, and the scenarios that show it.",
-        ),
-    ] {
-        let extensions = home[key].as_array().cloned().unwrap_or_default();
+    // The extensions: the Functions, the checkout UI extensions, the customer account ones. An
+    // extension with targets in both is in both lists; its second row is a copy that does not
+    // load the bundle again.
+    let all_ui = home["uiExtensions"].as_array().cloned().unwrap_or_default();
+    let surfaces = |extension: &Json| {
+        strings(&extension["surfaces"])
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+    };
+    let checkout_ui: Vec<Json> = all_ui
+        .iter()
+        .filter(|extension| !only_in_account(extension))
+        .cloned()
+        .collect();
+    let account_ui: Vec<Json> = all_ui
+        .iter()
+        .filter(|extension| {
+            surfaces(extension)
+                .iter()
+                .any(|surface| surface == "customer-account")
+        })
+        .map(|extension| {
+            if only_in_account(extension) {
+                return extension.clone();
+            }
+            let mut copy = extension.clone();
+            copy["anchor"] = json!(anchor("account-ui", text_of(&extension["handle"])));
+            copy["script"] = Json::Null;
+            copy
+        })
+        .collect();
+    let account_link = links["account"].as_str();
+    let sections = [
+        ExtensionSection {
+            extensions: home["functions"].as_array().cloned().unwrap_or_default(),
+            section: "functions",
+            heading: "Functions",
+            data: "function",
+            row: function_html,
+            empty: "The app has no Function.",
+            about: "The Functions of the app: what each one is, its targets, and the scenarios that run it."
+                .to_string(),
+            noun: "Function",
+        },
+        ExtensionSection {
+            extensions: checkout_ui,
+            section: "ui-extensions",
+            heading: "Checkout UI extensions",
+            data: "ui",
+            row: ui_extension_html,
+            empty: "The app has no checkout UI extension.",
+            about: format!(
+                "Where each one renders in the checkout and the thank-you page, and the scenarios that show it. \
+                 <a class=\"lsf-link\" href=\"{}\">Open a checkout where each renders at every target it declares.</a>",
+                esc(text_of(&links["allTargets"]))
+            ),
+            noun: "checkout UI extension",
+        },
+        ExtensionSection {
+            extensions: account_ui,
+            section: "account-extensions",
+            heading: "Customer account UI extensions",
+            data: "account-ui",
+            row: ui_extension_html,
+            empty: "The app has no customer account UI extension.",
+            about: match account_link {
+                Some(href) => format!(
+                    "Where each one renders in the customer account: the orders, an order, the profile, a full page of its own. \
+                     <a class=\"lsf-link\" href=\"{}\">Open the customer account</a>, logged in as one of the customers \
+                     (\"Account\" next to each), and add <code>?targets=all</code> to list where each target is.",
+                    esc(href)
+                ),
+                None => "The theme renders its own customer accounts, where Shopify does not run them: set \
+                         <code>shop.customer_accounts</code> to <code>\"new\"</code> in the store data to see them."
+                    .to_string(),
+            },
+            noun: "customer account UI extension",
+        },
+    ];
+    for ExtensionSection {
+        extensions,
+        section,
+        heading,
+        data,
+        row: render_row,
+        empty,
+        about,
+        noun,
+    } in sections
+    {
         let with_problems = extensions
             .iter()
             .filter(|extension| matches!(text_of(&extension["status"]), "error" | "warning"))
@@ -2494,19 +2631,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
         if extensions.is_empty() {
             main.push_str(&format!("<p class=\"lsf-muted lsf-h-empty\">{empty}</p>"));
         } else {
-            main.push_str(&format!("<p class=\"lsf-muted lsf-h-note\">{about}"));
-            if key == "uiExtensions" {
-                main.push_str(&format!(
-                    " <a class=\"lsf-link\" href=\"{}\">Open a checkout where each renders at every target it declares.</a>",
-                    esc(text_of(&links["allTargets"]))
-                ));
-            }
             main.push_str(&format!(
-                "</p><details class=\"lsf-h-fold\"><summary>Show the {}</summary><ul class=\"lsf-h-list\">",
-                esc(&match key {
-                    "functions" => count(extensions.len(), "Function", "Functions"),
-                    _ => count(extensions.len(), "UI extension", "UI extensions"),
-                })
+                "<p class=\"lsf-muted lsf-h-note\">{about}</p><details class=\"lsf-h-fold\"><summary>Show the {}</summary><ul class=\"lsf-h-list\">",
+                esc(&count(extensions.len(), noun, &format!("{noun}s")))
             ));
             for extension in &extensions {
                 main.push_str(&render_row(extension, app_dir(home)));

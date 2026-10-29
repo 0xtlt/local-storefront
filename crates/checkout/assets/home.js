@@ -340,6 +340,10 @@ function dot(document, status) {
 export function openLink(document, row) {
   const href = row.dataset.open;
   if (!href) return element(document, 'a', { class: 'lsf-hp-where', href: `#${row.id}` }, 'details');
+  // An extension that only renders in the customer account shows its problem there.
+  if ('openAccount' in row.dataset) {
+    return element(document, 'a', { class: 'lsf-hp-where lsf-hp-open', href, title: 'Opens the customer account, where it renders' }, 'Open the customer account');
+  }
   const scenario = row.dataset.openIn || '';
   return element(document, 'a', {
     class: 'lsf-hp-where lsf-hp-open',
@@ -378,7 +382,7 @@ function report(document, { row, problem }) {
           element(document, 'pre', {}, ...richText(document, message)),
           element(document, 'p', {}, 'Found by loading its bundle in this page, as the checkout does.'),
           element(document, 'p', { class: 'lsf-hp-rowlinks' }, 'On this page: ',
-            element(document, 'a', { href: `#${row.id}` }, handle), ' in the UI extensions'))),
+            element(document, 'a', { href: `#${row.id}` }, handle), 'openAccount' in row.dataset ? ' in the customer account UI extensions' : ' in the checkout UI extensions'))),
       openLink(document, row));
     // In the order of the server (scenarios last), with the rows past the first few folded.
     const list = group.querySelector('.lsf-hp-rows');

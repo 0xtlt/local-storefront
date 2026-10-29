@@ -313,8 +313,10 @@ a server (see below).
   company, tags, orders, saved addresses and country, a link that opens the checkout logged in
   as them (the first scenario's, for its cart, when there is one), and "Account", their
   customer account.
-- **Every Function** and **every UI extension**, folded under "Show the N Functions", one line
-  each: its status, handle and
+- **Every Function**, **every checkout UI extension** and **every customer account UI
+  extension**, three lists folded under "Show the N …". An extension with targets in both the
+  checkout and the customer account is in both. A problem of an extension that only renders in
+  the customer account opens it ("Open the customer account"). One line each: its status, handle and
   name, Function API or capabilities, API version, how many scenarios run it, its targets, and its
   first problem. Its details list each target (the Function API, a `.fetch` target that reaches
   the network, a legacy target; for a UI extension, the place it has on the page, such as
