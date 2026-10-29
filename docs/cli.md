@@ -160,7 +160,7 @@ npx local-storefront function run volume-discount --app ../my-app --session '{"c
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; the store data to its `shopify-local/` when the current folder has none. |
 | `--build` | | Builds each Function first, as `function build` does. |
 | `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
-| `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it. Defaults to the `session` of the store data. |
+| `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it: its `data` goes on top of the store data for this run (a discount for a discount Function, settings in `checkout.functions`). Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |
 | `--locale <iso>` | | The language of the buyer, one of the store's (`fr`, `pt-BR`): Functions read it as `localization.language`. Defaults to the primary language. |
 | `--step <step>` | `completion` | `interaction` or `completion`: the step of the buyer journey, what validation Functions read as `buyerJourney.step`. |

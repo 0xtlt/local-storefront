@@ -6,6 +6,7 @@ use lsf_checkout::pipeline;
 use lsf_checkout::{BuyerJourneyStep, CheckoutResult};
 use lsf_core::Session;
 use lsf_core::diagnostics::{Diagnostics, Severity};
+use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, validate};
 use serde_json::Value as Json;
@@ -286,10 +287,30 @@ fn compute(
     }
     checkout::print_app_diagnostics(&shopify_app, &selection);
 
+    // `--session`, as `PUT /__lsf/session` takes it: its `data` goes on top of the store data
+    // for this run (and `throttle`, a matter of a server, is left aside).
+    let mut session_json = match &args.session {
+        Some(value) => Some(read_json("session", value)?),
+        None => None,
+    };
+    let overlay = session_json
+        .as_mut()
+        .and_then(Json::as_object_mut)
+        .and_then(|object| {
+            object.remove("throttle");
+            object.remove("data")
+        });
+
     // The app's store data when the folder lsf runs in has none.
     let data = crate::app::data_with_app(theme, data, Some(app_dir));
     let local = App::open_without_theme(theme, data.as_deref(), previews)?;
-    let (store, diagnostics) = local.load_store();
+    let (store, mut diagnostics) =
+        load_with_overlay(&local.source(), &local.load_options(), overlay.as_ref());
+    for item in &mut diagnostics.items {
+        if item.file == OVERLAY_FILE {
+            item.file = "--session data".to_string();
+        }
+    }
     print_diagnostics(&diagnostics);
     // A scenario with errors is reported, and refused when it is the one asked for; the others
     // do not matter to this run.
@@ -323,9 +344,8 @@ fn compute(
         }
         entered = Some(state);
     }
-    if let Some(value) = &args.session {
+    if let Some(json) = session_json {
         let mut problems = Diagnostics::new();
-        let json = read_json("session", value)?;
         validate(FileKind::Session, "--session", &json, "", &mut problems);
         if !problems.has_errors() {
             let input: SessionInput =

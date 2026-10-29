@@ -23,7 +23,8 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   variable without a value says where to give it. The frame of an extension is in the language
   it renders in (`lang`). `lsf function run` says why a
   Function asked for did not run (no discount names it, an empty cart, an error of the app) and
-  exits with 1; a handle or a scenario close to an existing one is suggested.
+  exits with 1; a handle or a scenario close to an existing one is suggested. Its `--session`
+  takes `data` as `PUT /__lsf/session` does: a discount or settings for one run.
 
 - **Customer account UI extensions, and every checkout target.** With an app, `/account` is the
   customer account of Shopify's new customer accounts: the orders of the customer logged in (from
@@ -155,7 +156,7 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   account form (login, register, password reset, addresses) leads to `/account`, and customers
   have no password. Data that still sets `shop.customer_accounts` or a customer's `password` is
   read as before: those fields are ignored, with a warning. `serve` and `check` say that the
-  theme's `templates/customers` are not rendered. `/__lsf/status` no longer has
+  theme's `templates/customers` are not rendered (a warning of `check`, which does not fail). `/__lsf/status` no longer has
   `customer_accounts`.
 - **A field the format does not have no longer drops its file.** It is still an error, and is
   left out: the rest of the file is read, and one typo gives one error. `data.checkout` of

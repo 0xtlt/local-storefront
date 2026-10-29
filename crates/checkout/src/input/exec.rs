@@ -48,9 +48,24 @@ pub(super) trait Graph {
 
 /// The arguments of a field, evaluated. A resolver takes the ones it knows.
 #[derive(Default)]
-pub(super) struct Args(IndexMap<String, Json>);
+pub(super) struct Args(IndexMap<String, Json>, Unset);
+
+/// The arguments given a variable without a value, with the name of the variable: what a
+/// missing argument says.
+#[derive(Default)]
+pub(super) struct Unset(IndexMap<String, String>);
 
 impl Args {
+    /// The error of an argument the field requires and was not given.
+    fn missing(&self, name: &str) -> String {
+        match self.1.0.get(name) {
+            Some(variable) => format!(
+                "missing required argument `{name}`: the variable `${variable}` it is given was not given a value"
+            ),
+            None => format!("missing required argument `{name}`"),
+        }
+    }
+
     pub(super) fn take(&mut self, name: &str) -> Option<Json> {
         self.0.shift_remove(name).filter(|value| !value.is_null())
     }
@@ -64,15 +79,17 @@ impl Args {
     }
 
     pub(super) fn required_string(&mut self, name: &str) -> Result<String, String> {
-        self.string(name)?
-            .ok_or_else(|| format!("missing required argument `{name}`"))
+        match self.string(name)? {
+            Some(text) => Ok(text),
+            None => Err(self.missing(name)),
+        }
     }
 
     /// A list of strings (or ids: numbers are read as their text). A single value counts as a
     /// list of one, as GraphQL coerces it.
     pub(super) fn string_list(&mut self, name: &str) -> Result<Vec<String>, String> {
         let Some(value) = self.take(name) else {
-            return Err(format!("missing required argument `{name}`"));
+            return Err(self.missing(name));
         };
         let items = match value {
             Json::Array(items) => items,
@@ -302,7 +319,11 @@ impl<'q, G: Graph> Executor<'q, '_, G> {
                 Ok(Some(value)) => {
                     args.0.insert(arg.clone(), value);
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    if let Value::Variable(variable) = value {
+                        args.1.0.insert(arg.clone(), variable.clone());
+                    }
+                }
                 Err(message) => return self.fail(path, first.position, message),
             }
         }

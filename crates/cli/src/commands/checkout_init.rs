@@ -238,9 +238,9 @@ enum Source {
     Empty,
 }
 
-/// The settings `[extensions.input.variables]` of a Function reads when `given` lacks them:
-/// empty values of the type its input query asks for. `None` for a Function whose queries have
-/// no variables, or when `given` has them.
+/// The settings `[extensions.input.variables]` of a Function reads when `given` lacks some:
+/// those it has, and empty values of the type its input query asks for for the others. `None`
+/// for a Function whose queries have no variables, or when `given` has them all.
 fn missing_settings(
     app: &ShopifyApp,
     handle: &str,
@@ -248,21 +248,34 @@ fn missing_settings(
 ) -> Option<(String, Json, Source)> {
     let function = app.function(handle)?;
     let variables = function.input_variables.as_ref()?;
-    if given
-        .iter()
-        .any(|field| field.namespace == variables.namespace && field.key == variables.key)
-    {
-        return None;
-    }
-    let mut values = serde_json::Map::new();
+    let mut empty = serde_json::Map::new();
     for target in &function.targets {
         for (name, value) in lsf_checkout::input::empty_variables(&target.input_query) {
-            values.entry(name).or_insert(value);
+            empty.entry(name).or_insert(value);
         }
     }
     // A query without variables needs none: the Function reads the metafield, or nothing.
-    if values.is_empty() {
+    if empty.is_empty() {
         return None;
+    }
+    // Settings already given keep their values, and get the variables they lack.
+    let mut values = match given
+        .iter()
+        .find(|field| field.namespace == variables.namespace && field.key == variables.key)
+    {
+        Some(field) => match serde_json::from_str::<Json>(&field.value) {
+            Ok(Json::Object(values)) => values,
+            // Not an object of values: not what this can complete.
+            _ => return None,
+        },
+        None => serde_json::Map::new(),
+    };
+    let lacking = empty.keys().any(|name| !values.contains_key(name));
+    if !lacking {
+        return None;
+    }
+    for (name, value) in empty {
+        values.entry(name).or_insert(value);
     }
     Some((
         format!("{}.{}", variables.namespace, variables.key),
@@ -1235,8 +1248,8 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// An app with a validation Function whose input query reads `$tags`, and its own store
-    /// data `own` (`shopify-local/store.json`).
+    /// An app with a validation Function whose input query reads `$tags` and `$note`, and its
+    /// own store data `own` (`shopify-local/store.json`).
     fn app_with_settings(label: &str, own: Option<&str>) -> PathBuf {
         let app = root(&format!("app-{label}"));
         let extension = app.join("extensions/tagged");
@@ -1264,7 +1277,7 @@ type = "function"
         .unwrap();
         std::fs::write(
             extension.join("src/run.graphql"),
-            "query Input($tags: [String!]!) { cart { buyerIdentity { customer { hasAnyTag(tags: $tags) } } } }",
+            "query Input($tags: [String!]!, $note: String) { cart { attribute(key: $note) { value } buyerIdentity { customer { hasAnyTag(tags: $tags) } } } }",
         )
         .unwrap();
         if let Some(own) = own {
@@ -1300,6 +1313,33 @@ type = "function"
             &LoadOptions::default(),
         );
         assert!(diagnostics.is_empty(), "{diagnostics}");
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&app).ok();
+    }
+
+    #[test]
+    fn settings_half_filled_in_get_the_variables_they_lack() {
+        let app = app_with_settings("half", None);
+        let root = root("half");
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::write(
+            root.join("data/store.json"),
+            r#"{"products": [{"title": "Teapot", "price": "30.00"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("data/app-settings.json"),
+            r#"{"checkout": {"functions": {"tagged": {"metafields": {
+                "$app:config.settings": {"type": "json", "value": {"tags": ["vip"]}}
+            }}}}}"#,
+        )
+        .unwrap();
+        init_in(&root, Some(app.clone()), false).unwrap();
+        // What was filled in stays; what the query also reads is added, empty.
+        assert_eq!(
+            settings_of(&root).unwrap()["tagged"]["metafields"]["$app:config.settings"]["value"],
+            json!({"tags": ["vip"], "note": ""})
+        );
         std::fs::remove_dir_all(&root).ok();
         std::fs::remove_dir_all(&app).ok();
     }

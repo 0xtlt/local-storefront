@@ -1389,6 +1389,17 @@ fn a_required_variable_without_a_value_is_an_error() {
 }
 
 #[test]
+fn an_optional_variable_a_required_argument_is_given_says_it_has_no_value() {
+    let f = Fixture::new();
+    let query = "query Input($note: String) { cart { attribute(key: $note) { value } } }";
+    let error = f.run_as(OwnerKind::Discount, query, None).unwrap_err();
+    assert!(
+        error.contains("missing required argument `key`: the variable `$note` it is given was not given a value"),
+        "{error}"
+    );
+}
+
+#[test]
 fn unknown_fields_name_their_path_and_type() {
     let f = Fixture::new();
     let error = f.fail(

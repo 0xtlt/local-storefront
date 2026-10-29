@@ -251,6 +251,21 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
         "{}",
         text(&output)
     );
+    // `--session` brings data for this run, as `PUT /__lsf/session` does: a discount that names
+    // it, and it runs.
+    let output = lsf(
+        &app.0,
+        &[
+            "function",
+            "run",
+            "volume-discount",
+            "--session",
+            r#"{"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 3}]},
+                "data": {"checkout": {"discounts": [{"function": "volume-discount", "title": "Volume"}]}}}"#,
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(!text(&output).contains("not run"), "{}", text(&output));
     // A typo is suggested.
     let output = lsf(&app.0, &["function", "run", "volume-discont"]);
     assert!(
@@ -279,4 +294,29 @@ fn render_strict_fails_on_a_page_that_is_not_there() {
         &["--theme", theme, "render", "/", "--strict"],
     );
     assert_eq!(output.status.code(), Some(0), "{}", text(&output));
+}
+
+#[test]
+fn check_says_the_pages_of_classic_customer_accounts_are_not_rendered() {
+    let theme = std::env::temp_dir().join(format!("lsf-classic-theme-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&theme);
+    std::fs::create_dir_all(theme.join("layout")).unwrap();
+    std::fs::create_dir_all(theme.join("templates/customers")).unwrap();
+    std::fs::write(
+        theme.join("layout/theme.liquid"),
+        "{{ content_for_layout }}",
+    )
+    .unwrap();
+    std::fs::write(theme.join("templates/customers/login.liquid"), "login").unwrap();
+    let output = lsf(&theme, &["check", "--format", "json"]);
+    std::fs::remove_dir_all(&theme).ok();
+    // A warning, not a problem: the theme is fine on Shopify.
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["ok"], true, "{json}");
+    assert_eq!(
+        json["diagnostics"][0]["code"], "classic_customer_accounts",
+        "{json}"
+    );
+    assert_eq!(json["diagnostics"][0]["severity"], "warning", "{json}");
 }

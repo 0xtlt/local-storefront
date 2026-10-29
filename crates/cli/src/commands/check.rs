@@ -733,14 +733,20 @@ fn check_theme(
     let env = Arc::new(lsf_core::environment_with(previews));
     let theme = Theme::open(theme_dir, env.clone(), Revalidate::Never)
         .map_err(|error| error.to_string())?;
-    if args.format != Format::Json {
-        crate::app::note_classic_accounts(&theme);
-    }
     let mut files = 0;
     let mut tally = Tally {
         json: args.format == Format::Json,
         ..Tally::default()
     };
+    // A warning, which is not a problem: the theme is fine on Shopify.
+    if let Some(note) = crate::app::classic_accounts_note(&theme) {
+        tally.report(Diagnostic::new(
+            "warning",
+            "classic_customer_accounts",
+            Location::file("templates/customers", None),
+            note,
+        ));
+    }
     for directory in [
         "layout",
         "templates",

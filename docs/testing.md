@@ -151,8 +151,10 @@ await page.goto('/products/sold-out-thing');
 - A product, collection, page or blog with the handle of an existing one **replaces** it; the
   others are **added**. Customers are matched by email, menus by handle, gift cards by code,
   companies, locations and selling plan groups by name.
-- `shop` is merged field by field. `localization`, `session`, `now` and `checkout` replace what
-  the files say.
+- `shop` is merged field by field. `localization`, `session` and `now` replace what the files
+  say. `checkout` is merged as a scenario's is: each field it gives (`shipping_rates`,
+  `payment_methods`, `discounts`, `tax_rate`) replaces the files', and `functions` is merged
+  Function by Function.
 - `theme_settings`, `files` and `swatches` are merged key by key.
 
 Other sessions keep seeing the data on disk. This is the way to test edge cases (an empty
