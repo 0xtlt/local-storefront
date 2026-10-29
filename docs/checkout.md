@@ -256,13 +256,19 @@ radii in the same file.
 ## The home page
 
 `GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
-page says, for tools) shows what is wrong first, then everything the checkout can do for the
-app, in dense rows whose details open under them. It has the look of the checkout and needs no
-network: it sends no request of the Functions, only the checkout UI extensions loaded to check them
-can call a server (see below).
+page says, for tools) starts with the ways in, then says what is wrong, then lists everything
+the checkout can do for the app, in rows whose details open under them. The long lists are
+folded and say how many they hold. It has the look of the checkout and needs no network: it
+sends no request of the Functions, only the checkout UI extensions loaded to check them can call
+a server (see below).
 
-- **Problems**, at the top, errors first, each on one line. The first eight of each kind show, a
-  "Show N more" opens the others. The link on the right of a problem opens a fresh checkout
+- **Three cards**, at the top: the **checkout** (open it with the cart of the store data, with
+  [every extension target](#every-extension-target), or in the Shop look), the **[customer
+  account](#customer-account)** (or why there is none: the theme renders its accounts), and the
+  **scenarios** (how many, and where they are).
+- **Problems**, errors first, each on one line, under a line that says what they are. Past five,
+  they are folded under "Show the N errors and M warnings". In each kind, the first eight show,
+  a "Show N more" opens the others. The link on the right of a problem opens a fresh checkout
   where it shows, as the Open button of a scenario does, and its name is under the link. Its
   details also link to the rows of this page it is about.
   - A Function that fails: "Open the run", the first scenario it fails in, with the [Functions
@@ -287,23 +293,28 @@ can call a server (see below).
     error in the store data, and **a Function that fails when a scenario runs**.
   - Warnings: legacy targets, targets the local checkout knows of and does not run, targets the
     page has no place for, and what else the loader says that does not stop anything.
-- **Open a checkout:** with the cart of the store data, with [every extension
-  target](#every-extension-target), or in the Shop look.
-- **Every [scenario](#scenarios)**, those with problems first, then by name. A row has a status
+- **Every [scenario](#scenarios)**, in groups: the part of their titles before `: `
+  ("Discount: buy 2, get 1" is in "Discount") when two scenarios or more share it, the others
+  first under "Checkouts". A group is folded and says how many scenarios it has, how many have
+  problems, and the worst of their dots; in it, a row drops what the group says of its title. In
+  a group, those with problems come first, then by name. A row has a status
   dot: the worst of its own problems (it does not validate, it names an extension the app does
   not have) and of the Functions that fail in it, which are errors, and of the problems of the
   extensions it runs, each at its own level (a Function that is not built makes it an error, a
-  legacy target a warning). Then the title and the file, a few words for its cart, buyer, country, language and codes,
-  the description, how many Functions and UI extensions it runs ("all extensions" without an
-  `extensions` list), and buttons that open a fresh checkout for it. Its details list the cart,
-  the buyer, what was entered, the settings it overrides, and the extensions it runs. The
-  discounts are listed only when the scenario sets its own (`checkout.discounts`); otherwise
-  they are "the store's N discounts". A search box and chips (with problems, uses Functions,
-  uses UI extensions) filter the list.
+  legacy target a warning). Then the title, its description (else a few words for its cart,
+  buyer, country, language and codes), and Open, a fresh checkout for it. Its details say what it
+  runs ("every extension of the app" without an `extensions` list), its name and file, the cart,
+  the buyer, what was entered, the settings it overrides, the extensions it runs, and a link that
+  opens it with every target. The discounts are listed only when the scenario sets its own
+  (`checkout.discounts`); otherwise they are "the store's N discounts". A search box and chips
+  (with problems, uses Functions, uses UI extensions) filter the scenarios, and open the groups
+  that have some. A link to a row (`#scenario-…`, from a problem) opens its group.
 - **Every customer of the store data** ([login profiles](#log-in-as-a-customer)): name, email,
-  company, tags, orders, saved addresses and country, and a link that opens the checkout logged
-  in as them: the first scenario's, for its cart, when there is one.
-- **Every Function** and **every checkout UI extension**, one line each: its status, handle and
+  company, tags, orders, saved addresses and country, a link that opens the checkout logged in
+  as them (the first scenario's, for its cart, when there is one), and "Account", their
+  customer account.
+- **Every Function** and **every UI extension**, folded under "Show the N Functions", one line
+  each: its status, handle and
   name, Function API or capabilities, API version, how many scenarios run it, its targets, and its
   first problem. Its details list each target (the Function API, a `.fetch` target that reaches
   the network, a legacy target; for a UI extension, the place it has on the page, such as

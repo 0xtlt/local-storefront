@@ -1,7 +1,10 @@
 // The home page of `lsf checkout`. The page is complete without this script; it adds:
 // - the filter of the scenarios: a search on their title, file and extension handles, and
 //   chips (all, with problems, uses Functions, uses UI extensions), with the count of the rows
-//   shown;
+//   shown. The scenarios are in groups (`data-group`) that open while a filter is on, and say
+//   how many of their scenarios have problems;
+// - a link to a part of the page (`#scenario-…`, `#function-…`) opens the groups and folds
+//   around it;
 // - the check of the Functions: when the server has not run the Functions of the scenarios yet,
 //   the page asks `/__lsf/checkouts/check` once it is shown, and puts what it found in place
 //   (the list of problems, the rows of the scenarios and Functions that fail, the order of the
@@ -66,7 +69,8 @@ export function sortRows(list) {
   reorder(list, rows.map((row) => row.id));
 }
 
-/** Puts the rows of `list` in the order of `ids` (the others stay after them). */
+/** Puts the rows of `list` in the order of `ids` (the others stay after them); the ids of
+ * rows of other lists are skipped. */
 export function reorder(list, ids) {
   for (const id of ids) {
     const row = list.querySelector(`[id="${id}"]`);
@@ -74,19 +78,59 @@ export function reorder(list, ids) {
   }
 }
 
+/** The lists of scenarios: one, or one in each group. */
+const scenarioLists = (document) => [...document.querySelectorAll('[data-list="scenarios"]')];
+
+/**
+ * Brings each group of scenarios in line with its rows: the worst status of its rows as its
+ * dot, how many have problems, hidden when the filter shows none of them, and open while a
+ * filter is on (closed again once it is off, unless the visitor opened it).
+ */
+export function updateGroups(document, filtering = false) {
+  const rank = (status) => ({ error: 0, warning: 1 })[status] ?? 2;
+  for (const group of document.querySelectorAll('[data-group]')) {
+    const rows = [...group.querySelectorAll('[data-scenario]')];
+    const statuses = rows.map((row) => row.getAttribute('data-status') ?? 'ok');
+    group.hidden = rows.every((row) => row.hidden);
+    if (filtering && !group.open) {
+      group.open = true;
+      group.setAttribute('data-opened-by-filter', '');
+    } else if (!filtering && group.hasAttribute('data-opened-by-filter')) {
+      group.open = false;
+      group.removeAttribute('data-opened-by-filter');
+    }
+    const worst = [...statuses].sort((a, b) => rank(a) - rank(b))[0] ?? 'ok';
+    group.setAttribute('data-worst', worst);
+    const slot = group.querySelector('[data-group-dot]');
+    if (slot && !slot.querySelector(`.lsf-dot.is-${worst}`)) {
+      slot.replaceChildren(worst === 'ok' ? element(document, 'span', { class: 'lsf-dot is-ok', role: 'img', 'aria-label': 'OK' }) : dot(document, worst));
+    }
+    const troubled = statuses.filter((status) => rank(status) < 2).length;
+    const problems = group.querySelector('[data-group-problems]');
+    if (problems) problems.textContent = troubled ? `${troubled} with problems` : '';
+  }
+}
+
 function setUpFilter(document) {
   const box = document.querySelector('[data-filter]');
-  const list = document.querySelector('[data-list="scenarios"]');
-  if (!box || !list) return () => {};
+  const lists = scenarioLists(document);
+  if (!box || lists.length === 0) return () => {};
   const query = box.querySelector('[data-filter-query]');
   const count = box.querySelector('[data-filter-count]');
   const empty = document.querySelector('[data-filter-empty]');
   const chips = [...box.querySelectorAll('[data-filter-chip]')];
   const filter = { query: '', chip: 'all' };
   const apply = () => {
-    const { shown, total } = applyFilter(list, filter);
+    let shown = 0;
+    let total = 0;
+    for (const list of lists) {
+      const counted = applyFilter(list, filter);
+      shown += counted.shown;
+      total += counted.total;
+    }
     count.textContent = countText(shown, total);
     if (empty) empty.hidden = shown > 0;
+    updateGroups(document, filter.query.trim() !== '' || filter.chip !== 'all');
   };
   query.addEventListener('input', () => {
     filter.query = query.value;
@@ -138,8 +182,7 @@ async function check(document, window, refilter) {
     const row = document.getElementById(id);
     if (row) row.outerHTML = html;
   }
-  const list = document.querySelector('[data-list="scenarios"]');
-  if (list && Array.isArray(answer.order)) reorder(list, answer.order);
+  if (Array.isArray(answer.order)) for (const list of scenarioLists(document)) reorder(list, answer.order);
   refilter();
 }
 
@@ -308,14 +351,15 @@ function report(document, { row, problem }) {
   const section = document.querySelector('[data-section="problems"]');
   if (section) {
     const { severity, message } = problem;
+    const groups = section.querySelector('[data-problem-groups]') ?? section;
     let group = section.querySelector(`.lsf-hp-group.is-${severity}`);
     if (!group) {
       group = element(document, 'div', { class: `lsf-hp-group is-${severity}` },
         element(document, 'h3', {}, severity === 'error' ? 'Errors ' : 'Warnings ', element(document, 'span', { class: 'lsf-h-n' }, '0')),
         element(document, 'ul', { class: 'lsf-hp-rows' }));
-      const warnings = section.querySelector('.lsf-hp-group.is-warning');
-      if (severity === 'error' && warnings) section.insertBefore(group, warnings);
-      else section.appendChild(group);
+      const warnings = groups.querySelector('.lsf-hp-group.is-warning');
+      if (severity === 'error' && warnings) groups.insertBefore(group, warnings);
+      else groups.appendChild(group);
       section.querySelector('.lsf-hp-clear')?.remove();
     }
     const line = element(document, 'li', { class: `lsf-hp-row is-${severity}`, 'data-problem': 'load', 'data-subject': handle },
@@ -353,6 +397,8 @@ function report(document, { row, problem }) {
     let count = head.querySelector('.lsf-h-count');
     if (!count) count = head.appendChild(element(document, 'p', { class: 'lsf-h-count' }));
     count.textContent = counts.join(' · ');
+    const fold = section.querySelector('[data-problem-summary]');
+    if (fold) fold.textContent = `Show the ${counts.join(' and ')}`;
     section.classList.remove('is-clear', 'has-warnings', 'has-errors');
     section.classList.add(errors ? 'has-errors' : 'has-warnings');
   }
@@ -398,12 +444,32 @@ async function probeAll(document, window, refilter) {
   };
   await Promise.all(Array.from({ length: Math.min(PROBES_AT_ONCE, rows.length) }, worker));
   // The scenarios that now have problems move up with the others.
-  const list = document.querySelector('[data-list="scenarios"]');
-  if (list) sortRows(list);
+  for (const list of scenarioLists(document)) sortRows(list);
   refilter();
 }
 
+/** Opens what holds the element `#id` of the page (its group, its row, a fold), then shows it. */
+export function reveal(document, id) {
+  const target = id && document.getElementById(id);
+  if (!target) return false;
+  for (let node = target.parentNode; node; node = node.parentNode) {
+    if (node.localName === 'details') node.open = true;
+  }
+  // A row opens too: its details are what the link is about.
+  const details = (target.childNodes ?? []).find((child) => child.localName === 'details');
+  if (details) details.open = true;
+  target.scrollIntoView?.({ block: 'start' });
+  return true;
+}
+
+function setUpLinks(document, window) {
+  const follow = () => reveal(document, decodeURIComponent((window.location?.hash ?? '').slice(1)));
+  window.addEventListener?.('hashchange', follow);
+  follow();
+}
+
 export async function start(document, window) {
+  setUpLinks(document, window);
   const refilter = setUpFilter(document);
   await check(document, window, refilter);
   // After the check: its answer replaces the list of problems.

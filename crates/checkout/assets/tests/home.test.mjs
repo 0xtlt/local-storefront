@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { FakeDocument } from './fake-dom.mjs';
 import { init as sandboxInit, sandboxWindow } from './harness.mjs';
-import { applyFilter, countText, markScenarios, openLink, probe, reorder, richText, rowMatches, sortRows, start, verdict } from '../home.js';
+import { applyFilter, countText, markScenarios, openLink, probe, reorder, reveal, richText, rowMatches, sortRows, start, updateGroups, verdict } from '../home.js';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
 
@@ -72,6 +72,68 @@ test('the rows take the order the check gives them', () => {
   const list = fakeList([['scenario-a'], ['scenario-b'], ['scenario-c']]);
   reorder(list, ['scenario-c', 'scenario-a', 'scenario-gone']);
   assert.deepEqual(list.children.map((child) => child.id), ['scenario-b', 'scenario-c', 'scenario-a']);
+});
+
+/** A page of groups of scenarios, in the fake DOM: `{name: [[id, status], ...]}`. */
+function groupedPage(groups) {
+  const document = new FakeDocument();
+  for (const [name, rows] of Object.entries(groups)) {
+    const group = document.createElement('details');
+    group.setAttribute('data-group', name);
+    const summary = document.createElement('summary');
+    const dotSlot = document.createElement('span');
+    dotSlot.setAttribute('data-group-dot', '');
+    const problems = document.createElement('span');
+    problems.setAttribute('data-group-problems', '');
+    summary.append(dotSlot, problems);
+    const list = document.createElement('ul');
+    list.setAttribute('data-list', 'scenarios');
+    for (const [id, status] of rows) {
+      const row = document.createElement('li');
+      row.setAttribute('id', id);
+      row.setAttribute('data-scenario', id);
+      row.setAttribute('data-status', status);
+      list.appendChild(row);
+    }
+    group.append(summary, list);
+    document.body.appendChild(group);
+  }
+  const group = (name) => document.querySelector(`[data-group="${name}"]`);
+  return { document, group };
+}
+
+test('a group says the worst of its scenarios and how many have problems, and opens while a filter is on', () => {
+  const { document, group } = groupedPage({
+    Discount: [['scenario-a', 'ok'], ['scenario-b', 'warning']],
+    Broken: [['scenario-c', 'error'], ['scenario-d', 'error']],
+    Mix: [['scenario-e', 'ok']],
+  });
+  updateGroups(document);
+  assert.equal(group('Discount').getAttribute('data-worst'), 'warning');
+  assert.equal(group('Discount').querySelector('[data-group-problems]').textContent, '1 with problems');
+  assert.equal(group('Broken').querySelector('[data-group-problems]').textContent, '2 with problems');
+  assert.ok(group('Broken').querySelector('[data-group-dot] .lsf-dot.is-error'));
+  assert.equal(group('Mix').querySelector('[data-group-problems]').textContent, '');
+  // A filter that keeps none of a group hides it, and opens the others.
+  document.getElementById('scenario-e').hidden = true;
+  updateGroups(document, true);
+  assert.equal(group('Mix').hidden, true);
+  assert.equal(group('Discount').open, true);
+  // Off again: the groups the filter opened close.
+  document.getElementById('scenario-e').hidden = false;
+  updateGroups(document, false);
+  assert.equal(group('Discount').open, false);
+  assert.equal(group('Mix').hidden, false);
+});
+
+test('a link to a scenario opens its group and its row', () => {
+  const { document, group } = groupedPage({ Discount: [['scenario-a', 'ok']] });
+  const details = document.createElement('details');
+  document.getElementById('scenario-a').appendChild(details);
+  assert.equal(reveal(document, 'scenario-a'), true);
+  assert.equal(group('Discount').open, true);
+  assert.equal(details.open, true);
+  assert.equal(reveal(document, 'scenario-gone'), false);
 });
 
 /** A page with the problems still to check, and the window that answers the check. */

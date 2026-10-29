@@ -799,9 +799,10 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
   background: #fff;
 }
 
-/* --- The home page: what is wrong, the scenarios, the customers and the extensions ----------
- * A dashboard of white panels on a grey page. Everything is a dense row whose details open
- * under it (<details>); strong colors only say what is wrong. */
+/* --- The home page: the ways in, what is wrong, the scenarios, the customers, the extensions --
+ * White panels on a grey page. Three cards say where to go first; the long lists (problems,
+ * scenarios by group, extensions) are folded and say how many they hold. Everything is a row
+ * whose details open under it (<details>); strong colors only say what is wrong. */
 
 .lsf-home { background: var(--lsf-color-bg-subdued); }
 .lsf-h-header { padding: var(--lsf-space-base) max(var(--lsf-space-3xl), calc((100% - 1240px) / 2 + var(--lsf-space-3xl))); }
@@ -830,13 +831,45 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-hp, .lsf-h-section { min-width: 0; padding: var(--lsf-space-xl) var(--lsf-space-xl) var(--lsf-space-m); border: var(--lsf-border-width) solid var(--lsf-color-border); border-radius: var(--lsf-radius-panel); background: var(--lsf-color-bg); }
 .lsf-h-layout { display: flex; flex-direction: column; gap: var(--lsf-space-xl); }
 @media (min-width: 1100px) {
-  .lsf-h-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto auto 1fr; align-items: start; gap: var(--lsf-space-xl) var(--lsf-space-2xl); }
-  .lsf-h-layout > * { grid-column: 1; }
-  .lsf-h-layout > .lsf-h-scenarios { grid-row: 1 / span 3; }
-  .lsf-h-layout > .lsf-h-open { grid-column: 2; grid-row: 1; }
-  .lsf-h-layout > .lsf-h-customers { grid-column: 2; grid-row: 2; }
-  .lsf-h-layout > .lsf-h-extensions, .lsf-h-layout > .lsf-h-others { grid-column: 1 / -1; }
+  .lsf-h-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; gap: var(--lsf-space-xl) var(--lsf-space-2xl); }
+  .lsf-h-layout > * { grid-column: 1 / -1; }
+  .lsf-h-layout > .lsf-h-scenarios { grid-column: 1; grid-row: 1; }
+  .lsf-h-layout > .lsf-h-customers { grid-column: 2; grid-row: 1; }
 }
+
+/* The ways in: three cards side by side, each with what it is and its buttons. */
+.lsf-h-start { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--lsf-space-xl); }
+.lsf-h-card { display: flex; flex-direction: column; gap: var(--lsf-space-m); padding: var(--lsf-space-xl); border: var(--lsf-border-width) solid var(--lsf-color-border); border-radius: var(--lsf-radius-panel); background: var(--lsf-color-bg); }
+.lsf-h-card h2 { font-size: var(--lsf-size-l); }
+.lsf-h-card > p { flex: 1; font-size: var(--lsf-size-s); }
+
+/* What folds: the problems past a few, each group of scenarios, the extensions. */
+.lsf-hp-all > summary, .lsf-h-fold > summary { display: inline-flex; align-items: center; gap: var(--lsf-space-m); padding: var(--lsf-space-xs) var(--lsf-space-xs) var(--lsf-space-s); color: var(--lsf-color-accent); font-size: var(--lsf-size-s); font-weight: var(--lsf-font-weight-bold); }
+.lsf-hp.has-errors .lsf-hp-all > summary { color: var(--lsf-color-critical); }
+.lsf-hp-all > summary::before, .lsf-h-fold > summary::before, .lsf-h-group > summary::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--lsf-duration-fast) var(--lsf-ease);
+}
+.lsf-hp-all[open] > summary { margin-bottom: var(--lsf-space-s); }
+.lsf-h-fold { margin-bottom: var(--lsf-space-s); }
+.lsf-h-groups { display: flex; flex-direction: column; margin-bottom: var(--lsf-space-s); }
+.lsf-h-group { border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
+.lsf-h-group:first-child { border-top: 0; }
+.lsf-h-group > summary { display: flex; align-items: center; gap: var(--lsf-space-m); min-height: 40px; padding: var(--lsf-space-xs); border-radius: var(--lsf-radius-small); color: var(--lsf-color-text-subdued); }
+.lsf-h-group > summary:hover { background: var(--lsf-color-bg-subdued); }
+.lsf-h-group > summary > [data-group-dot] { display: inline-flex; }
+.lsf-h-group-name { color: var(--lsf-color-text); }
+.lsf-h-group-problems { color: var(--lsf-color-critical); font-size: var(--lsf-size-s); }
+.lsf-h-group[data-worst='warning'] .lsf-h-group-problems { color: var(--lsf-color-warning); }
+.lsf-h-group > .lsf-h-list { margin: 0 0 var(--lsf-space-m) var(--lsf-space-2xl); }
+.lsf-h-account { margin-left: var(--lsf-space-s); font-size: var(--lsf-size-s); }
 .lsf-h-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--lsf-space-2xs) var(--lsf-space-l); margin-bottom: var(--lsf-space-m); }
 .lsf-h-head h2 { font-size: var(--lsf-size-l); }
 .lsf-h-count { min-width: 0; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); overflow-wrap: anywhere; }

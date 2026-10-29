@@ -50,6 +50,9 @@ fn is_listed_target(target: &str) -> bool {
 /// How many problems a group shows before the others are folded.
 const SHOWN_PROBLEMS: usize = 8;
 
+/// Past this many problems, the list is folded under one line that says how many.
+const FOLDED_PROBLEMS: usize = 5;
+
 fn esc(text: &str) -> String {
     escape_html(text)
 }
@@ -1311,11 +1314,21 @@ pub fn check(
     answer["problems"] = json!(problems_html(&home, ""));
     let mut rows = serde_json::Map::new();
     let failing = |list: &Json| list.as_array().is_some_and(|list| !list.is_empty());
-    for scenario in home["scenarios"].as_array().into_iter().flatten() {
-        if failing(&scenario["failing"]) {
+    // A row is drawn again as the page drew it: in its group.
+    let groups = scenario_groups(&sorted_scenarios(&home));
+    let grouped = groups.len() > 1;
+    for (group, scenarios) in &groups {
+        for scenario in scenarios
+            .iter()
+            .filter(|scenario| failing(&scenario["failing"]))
+        {
             rows.insert(
                 text_of(&scenario["anchor"]).to_string(),
-                json!(scenario_html(scenario, app_dir(&home))),
+                json!(scenario_html(
+                    scenario,
+                    app_dir(&home),
+                    grouped.then_some(group.as_str())
+                )),
             );
         }
     }
@@ -1621,7 +1634,7 @@ fn problems_html(home: &Json, check_now: &str) -> String {
         counts.push(count(warnings, "warning", "warnings"));
     }
     let mut out = format!(
-        "<section class=\"lsf-hp{}\" data-section=\"problems\" aria-labelledby=\"lsf-h-problems\" \
+        "<section class=\"lsf-hp{}\" id=\"problems\" data-section=\"problems\" aria-labelledby=\"lsf-h-problems\" \
          data-check=\"{}\" data-check-url=\"{}\">{}{}",
         if errors > 0 {
             " has-errors"
@@ -1645,7 +1658,21 @@ fn problems_html(home: &Json, check_now: &str) -> String {
                 "No problems."
             }
         ));
+    } else {
+        out.push_str(
+            "<p class=\"lsf-muted lsf-h-note\">What the app, the store data and the scenarios get wrong. \
+             Each one opens the checkout where it shows.</p>",
+        );
     }
+    // Many problems are folded under one line that says how many: the ways in come first.
+    let folded = problems.len() > FOLDED_PROBLEMS;
+    if folded {
+        out.push_str(&format!(
+            "<details class=\"lsf-hp-all\"><summary data-problem-summary>Show the {}</summary>",
+            esc(&counts.join(" and "))
+        ));
+    }
+    out.push_str("<div class=\"lsf-hp-groups\" data-problem-groups>");
     for (severity, title) in [("error", "Errors"), ("warning", "Warnings")] {
         let rows: Vec<String> = problems
             .iter()
@@ -1669,6 +1696,10 @@ fn problems_html(home: &Json, check_now: &str) -> String {
             ));
         }
         out.push_str("</div>");
+    }
+    out.push_str("</div>");
+    if folded {
+        out.push_str("</details>");
     }
     out.push_str("</section>");
     out
@@ -1704,9 +1735,96 @@ fn extension_chips(handles: &[&str], prefix: &str) -> String {
         .collect()
 }
 
-fn scenario_html(scenario: &Json, dir: &str) -> String {
+/// The scenarios by the part of their title before `: ` ("Discount: buy 2, get 1"), when two or
+/// more share it, in the order of the names of the groups; the others first, under
+/// "Checkouts". Every scenario in one group when none shares a part.
+fn scenario_groups<'a>(scenarios: &[&'a Json]) -> Vec<(String, Vec<&'a Json>)> {
+    let prefix = |scenario: &Json| {
+        text_of(&scenario["title"])
+            .split_once(": ")
+            .map(|(prefix, _)| prefix.trim().to_string())
+            .filter(|prefix| !prefix.is_empty())
+    };
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for scenario in scenarios {
+        if let Some(prefix) = prefix(scenario) {
+            *counts.entry(prefix).or_default() += 1;
+        }
+    }
+    let mut groups: Vec<(String, Vec<&Json>)> = Vec::new();
+    let mut others = Vec::new();
+    for scenario in scenarios {
+        match prefix(scenario).filter(|prefix| counts[prefix] > 1) {
+            Some(prefix) => match groups.iter_mut().find(|(name, _)| *name == prefix) {
+                Some((_, list)) => list.push(scenario),
+                None => groups.push((prefix, vec![scenario])),
+            },
+            None => others.push(*scenario),
+        }
+    }
+    groups.sort_by_key(|(name, _)| name.to_lowercase());
+    if !others.is_empty() {
+        groups.insert(0, ("Checkouts".to_string(), others));
+    }
+    groups
+}
+
+/// `text` with its first letter in capitals: "legacy API" → "Legacy API".
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// A group of scenarios that opens: its name, how many, how many have problems, then the rows.
+fn scenario_group_html(name: &str, scenarios: &[&Json], open: bool, dir: &str) -> String {
+    let rank = |status: &str| match status {
+        "error" => 0,
+        "warning" => 1,
+        _ => 2,
+    };
+    let worst = scenarios
+        .iter()
+        .map(|scenario| text_of(&scenario["status"]))
+        .min_by_key(|status| rank(status))
+        .unwrap_or("ok");
+    let troubled = scenarios
+        .iter()
+        .filter(|scenario| rank(text_of(&scenario["status"])) < 2)
+        .count();
+    let rows: String = scenarios
+        .iter()
+        .map(|scenario| scenario_html(scenario, dir, Some(name)))
+        .collect();
+    format!(
+        "<details class=\"lsf-h-group\" data-group=\"{}\" data-worst=\"{worst}\"{}><summary><span data-group-dot>{}</span>\
+         <strong class=\"lsf-h-group-name\">{}</strong><span class=\"lsf-h-n\">{}</span>\
+         <span class=\"lsf-h-group-problems\" data-group-problems>{}</span></summary>\
+         <ul class=\"lsf-h-list\" data-list=\"scenarios\">{rows}</ul></details>",
+        esc(name),
+        if open { " open" } else { "" },
+        dot(worst),
+        esc(name),
+        scenarios.len(),
+        match troubled {
+            0 => String::new(),
+            n => format!("{n} with problems"),
+        },
+    )
+}
+
+/// `scenario` as a row: its title (without the part its group says), what it is about, and the
+/// way to open it; the rest under it, when it opens.
+fn scenario_html(scenario: &Json, dir: &str, group: Option<&str>) -> String {
     let name = text_of(&scenario["name"]);
     let title = text_of(&scenario["title"]);
+    let short = group
+        .and_then(|group| title.strip_prefix(group))
+        .and_then(|rest| rest.strip_prefix(": "))
+        .map(capitalized)
+        .unwrap_or_else(|| title.to_string());
     let status = text_of(&scenario["status"]);
     let functions = strings(&scenario["functions"]);
     let ui = strings(&scenario["uiExtensions"]);
@@ -1715,18 +1833,18 @@ fn scenario_html(scenario: &Json, dir: &str) -> String {
     let description = scenario["description"].as_str().unwrap_or_default();
 
     let uses = if scenario["allExtensions"] == true {
-        "all extensions".to_string()
+        "every extension of the app".to_string()
     } else if functions.is_empty() && ui.is_empty() {
-        "no extensions".to_string()
+        "no extension".to_string()
     } else {
         let mut parts = Vec::new();
         if !functions.is_empty() {
             parts.push(count(functions.len(), "Function", "Functions"));
         }
         if !ui.is_empty() {
-            parts.push(format!("{} UI", ui.len()));
+            parts.push(count(ui.len(), "UI extension", "UI extensions"));
         }
-        parts.join(" · ")
+        parts.join(" and ")
     };
     let mut kinds = Vec::new();
     if !functions.is_empty() {
@@ -1754,22 +1872,17 @@ fn scenario_html(scenario: &Json, dir: &str) -> String {
             "<span class=\"lsf-h-meta is-error\">Fails: {}</span>",
             esc(&failing.join(", "))
         ),
+        // What it is about: its description, else the cart and the buyer in a few words.
         (None, true) => {
-            let facts = strings(&scenario["facts"]).join(" · ");
             let text = if description.is_empty() {
-                facts.clone()
+                strings(&scenario["facts"]).join(" · ")
             } else {
-                format!("{facts} — {description}")
+                description.to_string()
             };
             format!(
-                "<span class=\"lsf-h-meta\" title=\"{}\">{}{}</span>",
+                "<span class=\"lsf-h-meta\" title=\"{}\">{}</span>",
                 esc(&text),
-                esc(&facts),
-                if description.is_empty() {
-                    String::new()
-                } else {
-                    format!(" <span class=\"lsf-h-desc\">— {}</span>", esc(description))
-                }
+                esc(&text)
             )
         }
     };
@@ -1778,6 +1891,12 @@ fn scenario_html(scenario: &Json, dir: &str) -> String {
     if !description.is_empty() {
         body.push_str(&format!("<p class=\"lsf-h-text\">{}</p>", esc(description)));
     }
+    body.push_str(&format!(
+        "<p class=\"lsf-muted lsf-h-file\">Runs {} · {} · {}</p>",
+        esc(&uses),
+        code(name),
+        esc(text_of(&scenario["file"]))
+    ));
     for problem in &problems {
         body.push_str(&format!(
             "<pre class=\"lsf-home-problem\" title=\"{}\">{}</pre>",
@@ -1818,27 +1937,26 @@ fn scenario_html(scenario: &Json, dir: &str) -> String {
             }
         }
     }
-    body.push_str(&format!(
-        "<p class=\"lsf-muted lsf-h-file\">{}</p>",
-        esc(text_of(&scenario["file"]))
-    ));
+    if let Some(all) = scenario["openAllTargets"].as_str() {
+        body.push_str(&format!(
+            "<p><a class=\"lsf-link\" href=\"{}\">Open it with every extension at every target it declares</a></p>",
+            esc(all)
+        ));
+    }
 
     let actions = match scenario["open"].as_str() {
         Some(open) => format!(
-            "<a class=\"lsf-h-btn is-primary\" href=\"{}\">Open{}</a>\
-             <a class=\"lsf-h-btn\" href=\"{}\">Every target{}</a>",
+            "<a class=\"lsf-h-btn is-primary\" href=\"{}\">Open{}</a>",
             esc(open),
             hidden(&format!(" {title}")),
-            esc(text_of(&scenario["openAllTargets"])),
-            hidden(&format!(" of {title}")),
         ),
         None => "<span class=\"lsf-chip is-error\">has errors</span>".to_string(),
     };
     format!(
         "<li class=\"lsf-h-row lsf-h-scenario\" id=\"{}\" data-scenario=\"{}\" data-status=\"{status}\" \
          data-uses=\"{}\" data-ui-extensions=\"{}\" data-search=\"{}\"><details class=\"lsf-h-details\"><summary>{}\
-         <span class=\"lsf-h-main\"><span class=\"lsf-h-title\"><strong>{}</strong>{}</span>{meta}</span>\
-         <span class=\"lsf-h-uses\">{}</span></summary><div class=\"lsf-h-body\">{body}</div></details>\
+         <span class=\"lsf-h-main\"><span class=\"lsf-h-title\"><strong title=\"{}\">{}</strong></span>{meta}</span>\
+         </summary><div class=\"lsf-h-body\">{body}</div></details>\
          <div class=\"lsf-h-actions\">{actions}</div></li>",
         esc(text_of(&scenario["anchor"])),
         esc(name),
@@ -1847,12 +1965,7 @@ fn scenario_html(scenario: &Json, dir: &str) -> String {
         esc(&search),
         dot(status),
         esc(title),
-        if title != name {
-            code(name)
-        } else {
-            String::new()
-        },
-        esc(&uses),
+        esc(&short),
     )
 }
 
@@ -2154,7 +2267,7 @@ fn customer_facts(customer: &Json) -> Vec<(&'static str, String)> {
     facts
 }
 
-fn customer_html(customer: &Json) -> String {
+fn customer_html(customer: &Json, account: Option<&str>) -> String {
     let badges: String = customer_facts(customer)
         .iter()
         .map(|(kind, text)| {
@@ -2166,8 +2279,21 @@ fn customer_html(customer: &Json) -> String {
             format!("<span class=\"{class}\">{}</span>", esc(text))
         })
         .collect();
+    // Their customer account, logged in as them.
+    let account = account
+        .map(|path| {
+            format!(
+                " <a class=\"lsf-h-account\" href=\"{}\" data-account-of=\"{}\">Account</a>",
+                esc(&super::account::login_link(
+                    text_of(&customer["email"]),
+                    path
+                )),
+                esc(text_of(&customer["email"]))
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "<li data-customer=\"{email}\"><a class=\"lsf-link\" href=\"{}\">{}</a> \
+        "<li data-customer=\"{email}\"><a class=\"lsf-link\" href=\"{}\">{}</a>{account} \
          <span class=\"lsf-muted lsf-h-email\">{email}</span><span class=\"lsf-badges\">{badges}</span></li>",
         esc(text_of(&customer["open"])),
         esc(text_of(&customer["name"])),
@@ -2190,37 +2316,61 @@ pub fn render(home: &Json, check_now: &str) -> String {
     let title = app["name"].as_str().unwrap_or("Shopify app");
     let links = &home["links"];
 
-    let mut main = problems_html(home, check_now);
-    main.push_str("<div class=\"lsf-h-layout\">");
-
-    // Opening a checkout.
-    main.push_str(&format!(
-        "<section class=\"lsf-h-section lsf-h-open\" data-section=\"open\" aria-labelledby=\"lsf-h-open\">{}\
-         <div class=\"lsf-h-actions\">\
-         <a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a>\
-         <a class=\"lsf-h-btn\" href=\"{}\">Every extension target</a>\
-         <a class=\"lsf-h-btn\" href=\"{}\">Shop look</a>{}</div>\
-         <p class=\"lsf-muted lsf-h-note\">With the cart of the store data. A scenario opens a checkout of its own.</p></section>",
-        section_head("lsf-h-open", "Open a checkout", ""),
-        esc(text_of(&links["checkout"])),
-        esc(text_of(&links["allTargets"])),
-        esc(text_of(&links["shop"])),
-        links["account"]
-            .as_str()
-            .map(|href| format!(
-                "<a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>",
-                esc(href)
-            ))
-            .unwrap_or_default(),
-    ));
-
-    // The scenarios.
     let scenarios = sorted_scenarios(home);
     let folder = home["dataFolder"]
         .as_str()
         .unwrap_or("the `checkouts` folder of the store data");
+
+    // The ways in: the checkout, the customer account, the scenarios.
+    let mut main = format!(
+        "<section class=\"lsf-h-start\" data-section=\"open\" aria-label=\"Open\">\
+         <div class=\"lsf-h-card\" data-card=\"checkout\"><h2>Checkout</h2>\
+         <p class=\"lsf-muted\">A one-page checkout on the cart of the store data. It runs the Functions of \
+         the app and shows its checkout UI extensions.</p>\
+         <div class=\"lsf-h-actions\"><a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a>\
+         <a class=\"lsf-h-btn\" href=\"{}\">Every extension target</a>\
+         <a class=\"lsf-h-btn\" href=\"{}\">Shop look</a></div></div>\
+         <div class=\"lsf-h-card\" data-card=\"account\"><h2>Customer account</h2>{}</div>\
+         <div class=\"lsf-h-card\" data-card=\"scenarios\"><h2>Scenarios</h2>\
+         <p class=\"lsf-muted\">{}</p>{}</div></section>",
+        esc(text_of(&links["checkout"])),
+        esc(text_of(&links["allTargets"])),
+        esc(text_of(&links["shop"])),
+        match links["account"].as_str() {
+            Some(href) => format!(
+                "<p class=\"lsf-muted\">The orders, an order and the profile of a customer of the store data. \
+                 The customer account UI extensions of the app render there.</p>\
+                 <div class=\"lsf-h-actions\"><a class=\"lsf-h-btn is-primary\" href=\"{}\" data-link=\"account\">\
+                 Open the customer account</a></div>",
+                esc(href)
+            ),
+            None => "<p class=\"lsf-muted\">The theme renders its own customer accounts. Shopify runs customer \
+                     account UI extensions with new customer accounts only: set <code>shop.customer_accounts</code> \
+                     to <code>\"new\"</code> in the store data to see them.</p>"
+                .to_string(),
+        },
+        if scenarios.is_empty() {
+            "Checkouts ready to open: a cart, a buyer, what they entered. There are none yet.".to_string()
+        } else {
+            format!(
+                "{} ready to open: each is a cart, a buyer and what they entered, in {}.",
+                count(scenarios.len(), "checkout", "checkouts"),
+                code(&shorten(folder, app_dir(home)))
+            )
+        },
+        if scenarios.is_empty() {
+            String::new()
+        } else {
+            "<div class=\"lsf-h-actions\"><a class=\"lsf-h-btn\" href=\"#scenarios\">See the scenarios</a></div>"
+                .to_string()
+        },
+    );
+    main.push_str(&problems_html(home, check_now));
+    main.push_str("<div class=\"lsf-h-layout\">");
+
+    // The scenarios, by group.
     main.push_str(&format!(
-        "<section class=\"lsf-h-section lsf-h-scenarios\" data-section=\"scenarios\" aria-labelledby=\"lsf-h-scenarios\">{}",
+        "<section class=\"lsf-h-section lsf-h-scenarios\" id=\"scenarios\" data-section=\"scenarios\" aria-labelledby=\"lsf-h-scenarios\">{}",
         section_head(
             "lsf-h-scenarios",
             "Checkout scenarios",
@@ -2245,7 +2395,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
         ));
     } else {
         main.push_str(
-            "<div class=\"lsf-h-filter\" data-filter hidden>\
+            "<p class=\"lsf-muted lsf-h-note\">Open one to get a checkout of its own. A dot says how it went: \
+             green, it opens and its Functions run; amber or red, something is wrong (the row says what).</p>\
+             <div class=\"lsf-h-filter\" data-filter hidden>\
              <input class=\"lsf-h-search\" type=\"search\" placeholder=\"Filter by title, file or extension\" \
              aria-label=\"Filter the scenarios\" data-filter-query>\
              <div class=\"lsf-h-chips\" role=\"group\" aria-label=\"Show\">\
@@ -2253,14 +2405,24 @@ pub fn render(home: &Json, check_now: &str) -> String {
              <button type=\"button\" data-filter-chip=\"problems\" aria-pressed=\"false\">With problems</button>\
              <button type=\"button\" data-filter-chip=\"functions\" aria-pressed=\"false\">Uses Functions</button>\
              <button type=\"button\" data-filter-chip=\"ui\" aria-pressed=\"false\">Uses UI extensions</button></div>\
-             <p class=\"lsf-h-shown\" data-filter-count aria-live=\"polite\"></p></div>\
-             <ul class=\"lsf-h-list\" data-list=\"scenarios\">",
+             <p class=\"lsf-h-shown\" data-filter-count aria-live=\"polite\"></p></div>",
         );
-        for scenario in &scenarios {
-            main.push_str(&scenario_html(scenario, app_dir(home)));
+        let groups = scenario_groups(&scenarios);
+        if groups.len() > 1 {
+            main.push_str("<div class=\"lsf-h-groups\">");
+            for (name, list) in &groups {
+                main.push_str(&scenario_group_html(name, list, false, app_dir(home)));
+            }
+            main.push_str("</div>");
+        } else {
+            main.push_str("<ul class=\"lsf-h-list\" data-list=\"scenarios\">");
+            for scenario in &scenarios {
+                main.push_str(&scenario_html(scenario, app_dir(home), None));
+            }
+            main.push_str("</ul>");
         }
         main.push_str(
-            "</ul><p class=\"lsf-muted lsf-h-empty\" data-filter-empty hidden>No scenario matches the filter.</p>",
+            "<p class=\"lsf-muted lsf-h-empty\" data-filter-empty hidden>No scenario matches the filter.</p>",
         );
     }
     main.push_str("</section>");
@@ -2271,7 +2433,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
         "<section class=\"lsf-h-section lsf-h-customers\" data-section=\"customers\" aria-labelledby=\"lsf-h-customers\">{}",
         section_head(
             "lsf-h-customers",
-            "Log in as a customer",
+            "Customers",
             &if customers.is_empty() {
                 String::new()
             } else {
@@ -2284,18 +2446,19 @@ pub fn render(home: &Json, check_now: &str) -> String {
             "<p class=\"lsf-muted lsf-h-empty\">The store data has no customers: add some to <code>customers.json</code> to log the checkout in as them.</p>",
         );
     } else {
-        main.push_str("<ul class=\"lsf-h-people\">");
-        for customer in &customers {
-            main.push_str(&customer_html(customer));
-        }
         main.push_str(
-            "</ul><p class=\"lsf-muted lsf-h-note\">Each opens a checkout logged in as them; the Log in of the Contact section switches between them too.</p>",
+            "<p class=\"lsf-muted lsf-h-note\">The customers of the store data. A name opens a checkout logged in as them; \
+             \"Account\" opens their customer account.</p><ul class=\"lsf-h-people\">",
         );
+        for customer in &customers {
+            main.push_str(&customer_html(customer, links["account"].as_str()));
+        }
+        main.push_str("</ul>");
     }
     main.push_str("</section>");
 
     // The extensions.
-    for (key, section, heading, data, render_row, empty) in [
+    for (key, section, heading, data, render_row, empty, about) in [
         (
             "functions",
             "functions",
@@ -2303,6 +2466,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
             "function",
             function_html as fn(&Json, &str) -> String,
             "The app has no Function.",
+            "The Functions of the app: what each one is, its targets, and the scenarios that run it.",
         ),
         (
             "uiExtensions",
@@ -2311,6 +2475,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
             "ui",
             ui_extension_html,
             "The app has no checkout or customer account UI extension.",
+            "The checkout and customer account UI extensions of the app: where each one renders, and the scenarios that show it.",
         ),
     ] {
         let extensions = home[key].as_array().cloned().unwrap_or_default();
@@ -2329,17 +2494,24 @@ pub fn render(home: &Json, check_now: &str) -> String {
         if extensions.is_empty() {
             main.push_str(&format!("<p class=\"lsf-muted lsf-h-empty\">{empty}</p>"));
         } else {
+            main.push_str(&format!("<p class=\"lsf-muted lsf-h-note\">{about}"));
             if key == "uiExtensions" {
                 main.push_str(&format!(
-                    "<p class=\"lsf-muted lsf-h-note\"><a class=\"lsf-link\" href=\"{}\">Open a checkout where each renders at every target it declares.</a></p>",
+                    " <a class=\"lsf-link\" href=\"{}\">Open a checkout where each renders at every target it declares.</a>",
                     esc(text_of(&links["allTargets"]))
                 ));
             }
-            main.push_str("<ul class=\"lsf-h-list\">");
+            main.push_str(&format!(
+                "</p><details class=\"lsf-h-fold\"><summary>Show the {}</summary><ul class=\"lsf-h-list\">",
+                esc(&match key {
+                    "functions" => count(extensions.len(), "Function", "Functions"),
+                    _ => count(extensions.len(), "UI extension", "UI extensions"),
+                })
+            ));
             for extension in &extensions {
                 main.push_str(&render_row(extension, app_dir(home)));
             }
-            main.push_str("</ul>");
+            main.push_str("</ul></details>");
         }
         main.push_str("</section>");
     }
@@ -2395,6 +2567,48 @@ mod tests {
             "cart.fulfillment-constraints.generate.run"
         ));
         assert!(!is_listed_target("cart.validations.generate.later"));
+    }
+
+    #[test]
+    fn scenarios_are_grouped_by_what_their_titles_start_with() {
+        let scenario = |name: &str, title: &str| json!({"name": name, "title": title});
+        let list = [
+            scenario("a", "Discount: buy 2, get 1"),
+            scenario("b", "Discount: free shipping"),
+            scenario("c", "A logged-in customer"),
+            scenario("d", "Network: alone"),
+            scenario("e", "Cart transform: expand"),
+            scenario("f", "Cart transform: merge"),
+        ];
+        let refs: Vec<&Json> = list.iter().collect();
+        let groups: Vec<(String, Vec<&str>)> = scenario_groups(&refs)
+            .into_iter()
+            .map(|(name, scenarios)| {
+                (
+                    name,
+                    scenarios.iter().map(|s| text_of(&s["name"])).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                ("Checkouts".to_string(), vec!["c", "d"]),
+                ("Cart transform".to_string(), vec!["e", "f"]),
+                ("Discount".to_string(), vec!["a", "b"]),
+            ]
+        );
+        // A row in its group drops what the group says.
+        let row = scenario_html(
+            &json!({"name": "a", "title": "Discount: buy 2, get 1", "status": "ok", "anchor": "scenario-a"}),
+            "",
+            Some("Discount"),
+        );
+        assert!(row.contains(">Buy 2, get 1</strong>"), "{row}");
+        assert!(row.contains("title=\"Discount: buy 2, get 1\""), "{row}");
+        // Without a part in common, one group.
+        let alone = [scenario("x", "Tees"), scenario("y", "Abroad")];
+        assert_eq!(scenario_groups(&alone.iter().collect::<Vec<_>>()).len(), 1);
     }
 
     #[test]

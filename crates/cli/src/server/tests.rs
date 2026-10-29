@@ -6751,9 +6751,10 @@ fn the_problems_of_the_home_page_come_first_errors_first() {
     assert_eq!(broken["href"], "#scenario-broken");
     assert_eq!(broken["where"], "checkouts/broken.json");
 
-    // On the page, the problems are the first thing, errors before warnings, each on a line.
+    // On the page, the ways in come first, then the problems, errors before warnings, each on
+    // a line, folded under how many there are when there are many.
     let problems_at = position(&html, "data-section=\"problems\"");
-    assert!(problems_at < position(&html, "data-section=\"open\""));
+    assert!(position(&html, "data-section=\"open\"") < problems_at);
     assert!(problems_at < position(&html, "data-section=\"scenarios\""));
     assert!(position(&html, "lsf-hp-group is-error") < position(&html, "lsf-hp-group is-warning"));
     assert!(html.contains(&format!("{errors} errors")), "{html}");
@@ -7184,7 +7185,7 @@ fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
         html.contains("data-status=\"warning\" data-uses=\"functions ui\""),
         "{html}"
     );
-    assert!(html.contains("1 Function · 1 UI"));
+    assert!(html.contains("Runs 1 Function and 1 UI extension"));
     assert!(html.contains("data-filter hidden"));
 }
 
@@ -7314,7 +7315,14 @@ fn the_home_page_lists_the_customers_to_log_in_as() {
     );
     assert_eq!(customers[2]["company"], "Northwind Hotels");
     let html = text(&get(&state, "/", "home"));
-    assert!(html.contains("Log in as a customer"), "{html}");
+    assert!(html.contains(">Customers</h2>"), "{html}");
+    // Their customer account, logged in as them.
+    assert!(
+        html.contains(
+            "href=\"/__lsf/login?customer=jane.doe%40example.com&amp;return_to=%2Faccount\""
+        ),
+        "{html}"
+    );
     assert!(
         html.contains("<li data-customer=\"alex.morgan@example.com\">"),
         "{html}"
