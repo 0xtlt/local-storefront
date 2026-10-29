@@ -1,5 +1,5 @@
-//! The pipeline against the Functions of the fixture app: real Wasm modules, run by
-//! function-runner.
+//! The pipeline against the Functions of the fixture app: real Wasm modules, run as
+//! function-runner runs them.
 
 mod common;
 

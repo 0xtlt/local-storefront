@@ -50,3 +50,5 @@ libc = "0.2"
 tokio = { version = "1", features = ["io-util"] }
 # Draws the images of the tests.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# The modules of the tests' Functions, written as text.
+wasmtime = { version = "=39.0.1", default-features = false, features = ["wat"] }

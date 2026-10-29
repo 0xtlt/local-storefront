@@ -3,7 +3,7 @@
 //!
 //! The module holds no JavaScript engine. It holds the QuickJS bytecode of the Function, which
 //! Shopify's Javy plugin compiles (its `compile-src`), and imports the engine from that plugin,
-//! which whoever runs the Function links: Shopify, and function-runner here. Each export
+//! which whoever runs the Function links: Shopify, and [`crate::runner`] here. Each export
 //! allocates the bytecode in the plugin's memory and asks the plugin to run it (`invoke`), then
 //! to call the JavaScript function of the same name.
 //!
@@ -20,12 +20,10 @@ use wasm_encoder::{
 };
 use wasmtime::{Cache, Config, Engine, Instance, Module, Store};
 
-/// Shopify's Javy plugin, version 4: QuickJS and the `ShopifyFunction` global the Functions read
-/// their input from. The copy function-runner links when it runs a module that imports it
-/// (`providers/` of function-runner v9.2.2), so that a module runs on the plugin that compiled it.
-pub const PLUGIN: &[u8] = include_bytes!("../../javy/shopify_functions_javy_v4.wasm");
-
-/// The module the plugin is imported from (its `import_namespace` custom section).
+/// The module Shopify's Javy plugin, version 4, is imported from (its `import_namespace` custom
+/// section): QuickJS and the `ShopifyFunction` global the Functions read their input from. lsf
+/// compiles with the provider it runs the modules with ([`crate::providers`]), so that a module
+/// runs on the plugin that compiled it.
 const PLUGIN_NAMESPACE: &str = "shopify_functions_javy_v4";
 
 /// The Javy the producers section names: the module is the one it writes.
@@ -241,7 +239,7 @@ fn compile(js: &str) -> Result<Vec<u8>, String> {
 }
 
 /// The engine and the compiled plugin, once per process. Compiled modules go to wasmtime's cache
-/// on disk, as function-runner's do, so that a build does not compile the plugin again; where
+/// on disk, as the runs' do, so that a build does not compile the plugin again; where
 /// that cache cannot be set up, the plugin is compiled without it.
 fn plugin() -> Result<&'static (Engine, Module), String> {
     static PLUGIN_MODULE: OnceLock<Result<(Engine, Module), String>> = OnceLock::new();
@@ -255,7 +253,9 @@ fn plugin() -> Result<&'static (Engine, Module), String> {
                     Engine::new(&config).ok()
                 })
                 .unwrap_or_default();
-            let module = Module::new(&engine, PLUGIN)
+            let plugin = crate::providers::get(PLUGIN_NAMESPACE)
+                .ok_or_else(|| format!("lsf has no {PLUGIN_NAMESPACE}"))?;
+            let module = Module::new(&engine, plugin)
                 .map_err(|error| format!("cannot load the Javy plugin: {error:#}"))?;
             Ok((engine, module))
         })

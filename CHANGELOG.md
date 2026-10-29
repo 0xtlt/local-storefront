@@ -117,6 +117,14 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   `@preact/signals`, `@shopify/ui-extensions` and `@shopify/shopify_function` come from lsf's
   own copy.
 
+### Changed
+
+- **Smaller binaries.** lsf runs Functions with only what it uses of wasmtime (the compiler for
+  the machine it runs on) and Shopify's providers compressed (1.6 MB instead of 9.7 MB), and has
+  one copy of each Wasm library; the release binaries leave out their symbol table and are
+  optimized as a whole. `lsf` for macOS on Apple silicon is 40 MB (18 MB to download) instead of
+  82 MB. Functions run as before, to the instruction.
+
 ## 0.1.18 - 2026-10-21
 
 ### Changed

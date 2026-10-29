@@ -1,0 +1,12 @@
+# Shopify's shopify-function-trampoline 2.0.1 (MIT): see README.md.
+[package]
+name = "shopify_function_trampoline"
+version = "2.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+walrus = "=0.24.5"
+anyhow = "1.0"
+wasmparser = "0.240"

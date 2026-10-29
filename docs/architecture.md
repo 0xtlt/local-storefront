@@ -77,7 +77,7 @@ Its design, and what each supported Shopify API release changes, are in
 |---|---|
 | `app` | Reads `shopify.app.toml` and `extensions/*/shopify.extension.toml`: Functions, checkout UI extensions, the others listed and ignored. What is wrong with the app (a missing build, an unknown target) is a diagnostic, not an error. `Selection` is the set of extensions in use (`--extension`). |
 | `input` | Builds the input of a Function: runs its GraphQL input query against the cart, the buyer and the store (a small executor over a resolver of the Function input graph). |
-| `runner` | Runs a Wasm module with Shopify's own `function-runner` as a library, caches the compiled modules by path, time and size, stops a Function after 10 seconds, and reports logs, instructions and errors. |
+| `runner` | Runs a Wasm module as Shopify's own `function-runner` runs it (`runner::host`, its engine ported, with the providers of `providers/`), caches the compiled modules by path, time and size, stops a Function after 10 seconds, and reports logs, instructions and errors. |
 | `pipeline` | `compute`: the Functions in the order Shopify runs them, applying each output, to a `CheckoutResult`. |
 | `types` | The state the buyer builds, the configuration (`CheckoutConfig`, which `lsf` maps from the `checkout` section of the store data) and the result, which is the JSON the page reads. |
 | `assets` | The page and the sandbox of its extensions, embedded in the binary: the files of `assets/`, except `tests/` and `preview/`. |

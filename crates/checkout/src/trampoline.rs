@@ -1,8 +1,9 @@
 //! What `shopify app build` does to a Function's module after its build command. A Rust Function
 //! calls the Function Wasm API of the host by name (`shopify_function_v2::shopify_function_input_get`),
 //! and Shopify's `shopify-function-trampoline` links it to the host's provider. lsf runs that same
-//! trampoline, as a library, at the version Shopify's CLI 5.0.0 runs (2.0.1), so that a module
-//! `cargo build` writes runs without the CLI.
+//! trampoline, as a library, at the version Shopify's CLI 5.0.0 runs (2.0.1,
+//! `vendor/shopify_function_trampoline`), so that a module `cargo build` writes runs without the
+//! CLI.
 
 use std::path::Path;
 

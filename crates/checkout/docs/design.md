@@ -65,6 +65,12 @@ Findings from the implementation:
 - function-runner v9.2.2 builds and runs as a library (`function_runner::engine::run`, with
   wasmtime 39 and the providers embedded). It enables `serde_json/arbitrary_precision` for the
   whole build: the workspace tests pass with it.
+- As a library, it also brought what its command line uses: every compiler and architecture of
+  wasmtime, its profiler, its GraphQL validator, and its providers uncompressed (9.7 MB), 23 MB
+  of lsf's binary in all. `runner::host` is therefore its `engine::run` ported, with the same
+  wasmtime, WASI and MessagePack: the 588 runs of the test suite give the same output, logs and
+  instructions. The providers are function-runner's, to the byte, in one Brotli stream
+  (`providers/`, 1.6 MB). `lsf-checkout` keeps `serde_json/arbitrary_precision`.
 - It does not stop a Function (fuel is `u64::MAX`, the epoch never moves): `runner` moves the
   engine's epoch after 10 seconds.
 - A Rust Function built for `wasm32-unknown-unknown` (`shopify_function` 2.x, Wasm API) only runs
@@ -72,7 +78,8 @@ Findings from the implementation:
   builds an app, and so does lsf after a build command (`trampoline`, Shopify's trampoline as a
   library). An unlinked module fails with "unknown import", so `runner` says so instead.
   `mise run fixtures:functions` does it for the test Functions.
-- Failures come back as one string: function-runner appends the trap or exit code to the logs.
+- Failures come back as one string: function-runner (and `runner::host`) appends the trap or
+  exit code to the logs.
   `runner` splits them again (a Rust panic message becomes the error).
 
 ## API versions

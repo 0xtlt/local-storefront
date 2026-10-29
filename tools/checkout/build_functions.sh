@@ -14,7 +14,7 @@
 #
 # A Rust Function built for `wasm32-unknown-unknown` calls the Function Wasm API of the host by
 # name. Shopify's CLI links it to the host's provider with `shopify-function-trampoline` when it
-# builds an app, and function-runner (what lsf runs Functions with) only runs trampolined
+# builds an app, and function-runner (which lsf runs Functions as) only runs trampolined
 # modules, so the modules in dist/ are trampolined the same way.
 #
 # A JavaScript Function is built by lsf (`lsf function build`), as Shopify's CLI builds it, without
