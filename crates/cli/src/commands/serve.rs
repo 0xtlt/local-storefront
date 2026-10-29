@@ -131,10 +131,16 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     // The app is read before the store data and the theme, so that a wrong `--app` is the first
     // thing said. `--build` runs here too.
-    if args.watch && args.app.app.is_none() {
+    // `lsf checkout` serves the app the current folder is in when `--app` is not given.
+    let found = match (&args.app.app, standalone) {
+        (None, true) => Some(checkout::app_of(None, "lsf checkout")?),
+        _ => None,
+    };
+    if args.watch && args.app.app.is_none() && found.is_none() {
         return Err("--watch needs the app: `--app DIR` (or LSF_APP)".to_string());
     }
-    let checkout = match &args.app.app {
+    let app_dir = args.app.app.clone().or(found);
+    let checkout = match &app_dir {
         Some(dir) => {
             // The watcher builds the Functions itself, without stopping at one that fails.
             let opening = AppArgs {
@@ -172,6 +178,9 @@ pub fn run(
     };
     let throttle = Throttle::parse(args.throttle.iter().map(String::as_str))
         .map_err(|problem| format!("--throttle: {problem}"))?;
+    // The app's store data when the theme has none.
+    let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
+    let data = data.as_deref();
     let app = if standalone {
         App::open_without_theme(theme, data, previews)?
     } else {
@@ -180,7 +189,7 @@ pub fn run(
         app
     };
     let source = app.describe_source();
-    let data_dir = app.data_dir().cloned();
+    let data_dir = app.data_dir();
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
@@ -196,6 +205,30 @@ pub fn run(
         },
     );
     print_diagnostics(&diagnostics);
+    // Customer account UI extensions render in new customer accounts only: say so at once when
+    // the theme renders its own.
+    if let (Some(dir), Some(options)) = (&app_dir, state.options.checkout.as_ref()) {
+        let store = state.loaded().store.clone();
+        if !lsf_core::site::hosted_accounts(&state.app.theme, &store)
+            && let Ok(shopify_app) = state.load_app(dir)
+            && let Ok(selection) =
+                lsf_checkout::app::Selection::resolve(&shopify_app, &options.extensions)
+        {
+            for extension in selection.ui_extensions(&shopify_app) {
+                if extension
+                    .targets
+                    .iter()
+                    .any(|target| target.target.starts_with("customer-account."))
+                {
+                    eprintln!(
+                        "app: {}: {}",
+                        extension.handle,
+                        crate::server::legacy_accounts_note()
+                    );
+                }
+            }
+        }
+    }
     if let Some(who) = &args.customer {
         state
             .loaded()
@@ -216,7 +249,7 @@ pub fn run(
     }
     let builds = state.builds.clone();
     let state = Arc::new(state);
-    let watcher = match (&args.app.app, args.watch) {
+    let watcher = match (&app_dir, args.watch) {
         (Some(dir), true) => {
             let changed = state.clone();
             let mut options = watch::Options::new(args.app.extensions.clone(), args.app.build);
@@ -252,7 +285,7 @@ pub fn run(
         if !standalone {
             eprintln!("theme:  {}", theme.display());
         }
-        if let (Some(dir), Some((functions, ui_extensions))) = (&args.app.app, extensions) {
+        if let (Some(dir), Some((functions, ui_extensions))) = (&app_dir, extensions) {
             eprintln!(
                 "app:    {} ({functions} Functions, {ui_extensions} UI extensions)",
                 dir.display()
@@ -265,7 +298,7 @@ pub fn run(
         if !throttle.is_empty() {
             eprintln!("throttle: {throttle}");
         }
-        if let Some(dir) = &args.app.app {
+        if let Some(dir) = &app_dir {
             let scenarios = &state.loaded().store.scenarios;
             let broken = scenarios.iter().filter(|s| !s.problems.is_empty()).count();
             if scenarios.is_empty() {
@@ -288,7 +321,7 @@ pub fn run(
             );
         } else {
             eprintln!("ready:  http://{local}/   (status and control API: http://{local}/__lsf)");
-            if args.app.app.is_some() {
+            if app_dir.is_some() {
                 eprintln!(
                     "home:   http://{local}/__lsf/checkouts   (extensions and checkout scenarios of the app)"
                 );

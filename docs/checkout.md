@@ -32,6 +32,12 @@ npx local-storefront serve --app ../my-app
 No scenarios yet? `npx local-storefront checkout init --app ../my-app` writes a set made for
 the extensions of the app, see [scenarios](#scenarios).
 
+In the app's folder, `--app` can be left out: `lsf checkout`, `lsf function run` and the other
+commands of an app take the app the current folder is in. The store data is `--data`, else the
+`shopify-local/` of the current folder (or of the theme), else the app's
+(`<app>/shopify-local`), else the built-in demo store. One that `lsf init` creates while the
+server runs is read at its next reload.
+
 The app is a directory with `shopify.app.toml` and `extensions/*/shopify.extension.toml`. API
 versions 2026-10 and 2027-01 are supported. Functions run from their built Wasm module and
 extensions from their built bundle (`dist/function.wasm`, `dist/<handle>.js`). lsf builds them
@@ -558,8 +564,12 @@ extension's `order.action.menu-item.render` opens its `order.action.render` in a
 - **Logged out**, the page lists the customers of the store data to log in as
   ([log in as a customer](#log-in-as-a-customer)); the avatar in the header switches customer or
   logs out.
-- **The orders** are those of the customer in the store data (`orders` of a customer), and the
-  last one the session placed in the local checkout, logged in as them. An order's shipments come
+- **The orders** are those of the customer in the store data (`orders` of a customer), the most
+  recent first, and the last one the session placed in the local checkout, logged in as them.
+  The orders of a session are numbered after the last one of the store data (#1003 when its last
+  is #1002), one after the other, whatever the other sessions do, and placed at the frozen clock
+  of the data (`now`) if it has one: a test reads the same number and date every time. They live
+  as long as the session (`DELETE /__lsf/sessions` forgets every one). An order's shipments come
   from its `fulfillment_status` (`fulfilled`: one shipment of every line; `partial`: its first
   line), its returns from its `returns` ([data reference](data-reference.md#orderreturn)).
 - **The `shopify` global** of a customer account target has what every target has (`i18n`,
@@ -623,6 +633,11 @@ settings of your other Functions, and a tax rate.
 - A **discount** is a discount Function with its title, its metafields and, if it has one, the
   code that triggers it. Without a code it is automatic. `classes` lists what it may reduce:
   `PRODUCT`, `ORDER`, `SHIPPING`. All three when omitted.
+- **A discount Function runs only for a discount that names it**, as on Shopify, where the
+  merchant creates the discount: one that no discount of the store data (nor of a scenario)
+  names never runs, and the home page and `lsf function run` say so. The demo store of
+  `lsf init` has none: add yours here, in a scenario, or for one test in the `data.checkout` of
+  `PUT /__lsf/session` (see [testing](testing.md#a-checkout-in-a-test)).
 - A Function that is not a discount (cart transform, delivery or payment customization,
   validation) has its metafields under `functions`, by its handle.
 - A metafield is written `"namespace.key"`, with a [typed value](data-format.md#metafields-and-metaobjects).
@@ -959,7 +974,7 @@ The token is the one of the session's cart. Another session gets a `404`.
 
 ### Language
 
-The checkout is in the language its URL names, as the storefront is: every path above also
+The buyer reads the checkout in the language its URL names, as the storefront is: every path above also
 exists under a locale prefix (`/fr/checkout`, `/fr/checkouts/cn/<token>`,
 `/fr/checkouts/cn/<token>/update`, …). The cart form of a theme leads to `/fr/checkout` from the
 French storefront, the redirect keeps the prefix, and so do the page's own requests, the links
@@ -969,9 +984,11 @@ the primary language of the store. `/__lsf/checkout` has no prefix to read: it t
 
 The state tells both languages apart: `shop.locale` is the primary language of the store, and
 `localization.language` the one the buyer reads. Extensions get the latter as
-`shopify.localization.language`, translate and format numbers and money with it, and the page
-sets it as the `lang` of the document. The Functions read it too, as `localization.language` of
-their input. A thank-you page is read in the language of its URL, not the one the order was
+`shopify.localization.language`, translate and format numbers and money with it. The Functions
+read it too, as `localization.language` of their input. The words of lsf's own pages (the
+checkout, the thank-you page, the customer account: "Delivery", "Pay now", "Orders") are not
+translated: they are English, and the document says so (`lang="en"`), whatever the language of
+the URL. A thank-you page is read in the language of its URL, not the one the order was
 placed in. A language that a session adds with `data.localization.languages` is a locale of that
 session's checkout.
 

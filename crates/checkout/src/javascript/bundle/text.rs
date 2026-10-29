@@ -20,12 +20,30 @@ pub(super) fn display(path: &Path, root: &Path) -> String {
         .join("/")
 }
 
-/// `name:line:column: message` for a diagnostic of oxc about `text`.
+/// `name:line:column: message` for a diagnostic of oxc about `text`, then the line it is on with
+/// a caret under the place:
+///
+/// ```text
+/// src/run.ts:3:17: Unexpected token
+///    3 |   const total = (;
+///      |                 ^
+/// ```
 pub(super) fn describe(error: &OxcDiagnostic, name: &str, text: &str) -> String {
     match error.labels.first() {
         Some(label) => {
             let (line, column) = position(text, label.offset() as usize);
-            format!("{name}:{line}:{column}: {}", error.message)
+            let source = text.lines().nth(line - 1).unwrap_or_default();
+            // The caret goes under the character, tabs and wide characters counted as one.
+            let pad: String = source
+                .chars()
+                .take(column.saturating_sub(1))
+                .map(|c| if c == '\t' { '\t' } else { ' ' })
+                .collect();
+            let gutter = " ".repeat(line.to_string().len());
+            format!(
+                "{name}:{line}:{column}: {}\n {line} | {source}\n {gutter} | {pad}^",
+                error.message
+            )
         }
         None => format!("{name}: {}", error.message),
     }

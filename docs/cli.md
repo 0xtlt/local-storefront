@@ -19,7 +19,7 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | Code | Meaning |
 |---|---|
 | `0` | Done, nothing to report. |
-| `1` | Done, and something to fix: data errors (`validate`), problems in the theme (`check`), Liquid errors in the page (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run (`function run`). |
+| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`function run`), a scenario that fails (`checkout check`). |
 | `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write. The message is on stderr, after `error:`. |
 
 ## serve
@@ -67,7 +67,8 @@ Serves the checkout of a Shopify app alone, without a theme: `serve --app` witho
 storefront. `/` is the [home page](checkout.md#the-home-page), which lists the extensions of the
 app and the checkout scenarios and opens a checkout for each; `/checkout` starts a checkout. The
 control API and `/cdn` are there, other pages answer `404`. It takes the options of
-[`serve`](#serve), and `--app` is required. Guide: [checkout](checkout.md).
+[`serve`](#serve). `--app` defaults to the app the current folder is in, and the store data to
+the app's `shopify-local/`. Guide: [checkout](checkout.md).
 
 ```bash
 npx local-storefront checkout --app ../my-app --extension volume-discount --variant shop
@@ -107,6 +108,23 @@ Builds the extensions of an app, as `shopify app build` does, without Node: its 
 | `[handle]...` | | The extensions to build. Every extension of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
 
+## checkout check
+
+`npx local-storefront checkout check [--app <dir>]`
+
+Runs the Functions of every checkout scenario, as the home page checks them, without a server:
+for CI. Prints each scenario that does not validate and each Function that fails, with the
+scenarios it fails in, and exits with `1` when there is one, or when the time ran out. No
+request of a `.fetch` target is sent.
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+| `--extension <handle>` | | Only these extensions. Repeat it for several. |
+| `--format text` | | Default. One line per problem, then a summary. |
+| `--format json` | | `{ok, checked, total, elapsedMs, failures: [{handle, target, error, scenarios}], invalid: [{scenario, file, problems}]}`. |
+| `--budget <seconds>` | | How long the Functions may run in all. Default 300. |
+
 ## function build
 
 `npx local-storefront function build [handle]... --app <dir>`
@@ -136,7 +154,7 @@ npx local-storefront function run volume-discount --app ../my-app --session '{"c
 | Option | Environment variable | What it does |
 |---|---|---|
 | `[handle]...` | | The Functions to run. Every Function of the app when none is given. |
-| `--app <dir>` | `LSF_APP` | The app. Required. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; the store data to its `shopify-local/` when the current folder has none. |
 | `--build` | | Builds each Function first, as `function build` does. |
 | `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
 | `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it. Defaults to the `session` of the store data. |
@@ -146,8 +164,10 @@ npx local-storefront function run volume-discount --app ../my-app --session '{"c
 | `--format text` | | Default. Each run, then the checkout. |
 | `--format json` | | The checkout as the checkout page reads it, with every run in `runs`. |
 
-Exits with `1` when a Function fails to run. Errors a validation Function reports are part of
-the checkout and do not change the exit code.
+Exits with `1` when a Function fails to run, or when a Function named on the command line did not
+run: it says why (no discount names a discount Function, the cart is empty, an error of the
+app…). A handle or a scenario that is close to an existing one is suggested. Errors a validation
+Function reports are part of the checkout and do not change the exit code.
 
 ## render
 
@@ -164,7 +184,7 @@ npx local-storefront render '/collections/all?sort_by=price-ascending' --strict 
 | `<path>` | The path, with its query string. Default `/`. |
 | `--section-id <id>` | Renders one section, as the Section Rendering API does. |
 | `--host <host>` | The host of the URLs in the page. Default `localhost:9292`. |
-| `--strict` | Exits with `1` when the page has Liquid errors. |
+| `--strict` | Exits with `1` when the page has Liquid errors, or when nothing is at the path (the theme's 404 page). |
 
 ## profile
 
@@ -196,10 +216,15 @@ as [the checkout playground](../examples/checkout-playground)), it checks that f
 `shopify-local/` (or `--data`) alone, with the store's own languages, and needs one: a folder with
 neither a theme nor store data is an error.
 
+In a Shopify app (or with `--app`), it checks the app too: what its Functions and UI extensions
+get wrong (no build, an API version lsf does not run, an unknown target, an `owner_type`), and
+exits with `1` on an error of it.
+
 | Option | What it does |
 |---|---|
+| `--app <dir>` | The app to check too (`LSF_APP`). Defaults to the app the current folder is in. |
 | `--format text` | Default. One block per problem, for a person. |
-| `--format json` | One JSON document, for a tool. |
+| `--format json` | One JSON document, for a tool, with `app` when there is one. |
 
 The text format:
 

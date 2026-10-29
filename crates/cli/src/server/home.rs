@@ -206,6 +206,15 @@ fn ui_problems(app: &App, extension: &UiExtension) -> Vec<(Level, String)> {
         .collect()
 }
 
+/// What a customer account UI extension of an app whose store has legacy customer accounts is
+/// told: it never renders.
+pub fn legacy_accounts_note() -> String {
+    "customer account UI extensions render in new customer accounts only, and the store's are \
+     legacy (the theme renders `templates/customers`, or `shop.customer_accounts` is `legacy`): \
+     it never renders. Set `shop.customer_accounts` to `new` in the store data to see it at `/account`"
+        .to_string()
+}
+
 fn problems_json(problems: &[(Level, String)]) -> Vec<Json> {
     problems
         .iter()
@@ -252,6 +261,7 @@ fn function_json(
     report: Option<&Report>,
     build: Option<&Failure>,
     used_by: usize,
+    discounted: &std::collections::HashSet<&str>,
 ) -> Json {
     let targets: Vec<Json> = function
         .targets
@@ -285,7 +295,30 @@ fn function_json(
             }
         }
     }
-    let problems = function_problems(app, function);
+    let mut problems = function_problems(app, function);
+    // A discount Function runs for a discount of the store: one that none names never runs.
+    let discount = function.targets.iter().any(|target| {
+        matches!(
+            target.kind,
+            TargetKind::LinesDiscounts
+                | TargetKind::ProductDiscount
+                | TargetKind::OrderDiscount
+                | TargetKind::DeliveryDiscounts
+                | TargetKind::ShippingDiscount
+        )
+    });
+    let store_note = discount && !discounted.contains(function.handle.as_str());
+    if store_note {
+        problems.push(problem(
+            Level::Warning,
+            format!(
+                "no discount of the store data runs it, so it never runs: a discount Function runs for a discount, \
+                 which `checkout.discounts` of `store.json` (or of a scenario) declares, e.g. \
+                 `{{\"function\": \"{}\", \"title\": \"10% off\"}}`, with `\"code\"` for a discount code",
+                function.handle
+            ),
+        ));
+    }
     let failures = failures_json(report, &function.handle);
     let selected = selection.contains(&function.handle);
     json!({
@@ -307,7 +340,17 @@ fn function_json(
         } else {
             extension_status(&problems, &failures, selected)
         },
-        "problems": problems_json(&problems),
+        // The note that no discount names it is the store's, not of the scenarios that run it.
+        "problems": problems_json(&problems)
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut problem)| {
+                if store_note && index == problems.len() - 1 {
+                    problem["store"] = json!(true);
+                }
+                problem
+            })
+            .collect::<Vec<_>>(),
         // Its runs that fail when the scenarios run, once the check ran.
         "failures": failures,
         // Its last build of `--watch`, when it failed.
@@ -322,6 +365,7 @@ fn ui_extension_json(
     selection: &Selection,
     extension: &UiExtension,
     used_by: usize,
+    accounts_hosted: bool,
 ) -> Json {
     let targets: Vec<Json> = extension
         .targets
@@ -345,7 +389,11 @@ fn ui_extension_json(
         .filter(|(_, value)| value.as_bool() == Some(true))
         .map(|(name, _)| name.as_str())
         .collect();
-    let problems = ui_problems(app, extension);
+    let mut problems = ui_problems(app, extension);
+    // Customer account UI extensions render in new customer accounts only.
+    if !accounts_hosted && surfaces.contains(&"customer-account") {
+        problems.push(problem(Level::Warning, legacy_accounts_note()));
+    }
     let selected = selection.contains(&extension.handle);
     // Whether the checkout loads it: every error keeps it out (not built, an API version it
     // does not run, an `owner_type` that is wrong or missing); a warning does not.
@@ -984,7 +1032,10 @@ fn problem_list(
                         label.to_string(),
                     )),
                     scenarios: Vec::new(),
-                    open: Some(open_for(kind, extension, message)),
+                    // An extension that renders nowhere (the customer account of a store with legacy
+                    // accounts) has no page to open.
+                    open: (!(only_in_account(extension) && extension["open"].is_null()))
+                        .then(|| open_for(kind, extension, message)),
                     detail: None,
                 });
             }
@@ -1113,6 +1164,20 @@ fn build(
 ) -> Json {
     let selection =
         Selection::resolve(app, &options.extensions).unwrap_or_else(|_| Selection::all());
+    let accounts_hosted = super::customer_account::serves(state, store);
+    // The discount Functions a discount of the store data, or of a scenario, runs.
+    let discounted: std::collections::HashSet<&str> = store
+        .checkout
+        .discounts
+        .iter()
+        .chain(
+            store
+                .scenarios
+                .iter()
+                .flat_map(|scenario| &scenario.checkout.discounts),
+        )
+        .map(|discount| discount.function.as_str())
+        .collect();
     let mut context = Context {
         store,
         app,
@@ -1166,6 +1231,7 @@ fn build(
                 report,
                 build.as_ref(),
                 used(&function.handle),
+                &discounted,
             )
         })
         .map(runs_in)
@@ -1173,14 +1239,27 @@ fn build(
     let ui_extensions: Vec<Json> = app
         .ui_extensions
         .iter()
-        .map(|extension| ui_extension_json(app, &selection, extension, used(&extension.handle)))
+        .map(|extension| {
+            ui_extension_json(
+                app,
+                &selection,
+                extension,
+                used(&extension.handle),
+                accounts_hosted,
+            )
+        })
         .map(runs_in)
         .map(|mut extension| {
             // Where a problem the page finds when it loads the bundle shows (`home.js`): the
             // customer account for an extension that only renders there.
             extension["open"] = if only_in_account(&extension) {
                 extension["runsIn"] = Json::Null;
-                json!(format!("{root}/account"))
+                // Where it would render; with legacy accounts, nowhere.
+                if accounts_hosted {
+                    json!(format!("{root}/account"))
+                } else {
+                    Json::Null
+                }
             } else {
                 json!(checkout_href(root, extension["runsIn"].as_str(), None))
             };
@@ -1188,12 +1267,14 @@ fn build(
         })
         .collect();
     // What a scenario reads of the extensions it uses: their own problems, not the runs that
-    // fail (those are the scenario's own).
+    // fail (those are the scenario's own), nor what is the store's rather than the scenario's (a
+    // discount Function no discount names).
     for extension in functions.iter().chain(&ui_extensions) {
         let levels = extension["problems"]
             .as_array()
             .into_iter()
             .flatten()
+            .filter(|problem| problem["store"] != true)
             .map(Level::of_json);
         context
             .statuses

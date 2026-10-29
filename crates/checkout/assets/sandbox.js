@@ -4,7 +4,8 @@
 // bundle registered with `shopify.extend` for the target.
 //
 // Messages to the page: `ready`, `resize`, `overlay`, `change`, `storage`, `sessionToken`,
-// `analytics`, `log`, `error`, `interceptors`, `intercepted`, `dismiss`, `reload`, `navigate`.
+// `analytics`, `log`, `error`, `interceptors`, `intercepted`, `dismiss`, `reload`, `navigate`,
+// and `rendered` once the target's function returned (or threw): the page is ready then.
 // With `probe` in `init` (the home page), the bundle is only loaded, and the frame answers
 // `probed`: whether the bundle loaded, and the targets it registered. With `runnable` (a target
 // that renders nothing, the address autocomplete), it waits for `run` and answers `ran` with
@@ -113,6 +114,7 @@
     } catch (error) {
       fail(error && error.message ? error.message : error, error);
       if (init.probe) probed(false);
+      else post({ type: 'rendered' });
       return;
     }
     phase = 'run';
@@ -120,12 +122,16 @@
       probed(true);
       return;
     }
-    if (init.runnable) return;
+    if (init.runnable) {
+      post({ type: 'rendered' });
+      return;
+    }
     try {
       await run(init);
     } catch (error) {
       fail(error && error.message ? error.message : error, error);
     }
+    post({ type: 'rendered' });
   }
 
   global.addEventListener('message', (event) => {

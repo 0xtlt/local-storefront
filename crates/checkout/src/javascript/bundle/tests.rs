@@ -349,6 +349,15 @@ fn a_syntax_error_says_where() {
     let folder = Folder::new(&[("src/index.ts", "export function run() {\n  return {;\n}\n")]);
     let error = folder.bundle(&["run"]).unwrap_err();
     assert!(error.starts_with("src/index.ts:2:"), "{error}");
+    // The line, and a caret under the place.
+    let lines: Vec<&str> = error.lines().collect();
+    assert_eq!(lines[1], " 2 |   return {;", "{error}");
+    assert_eq!(
+        lines[2].trim_end().len(),
+        lines[1].find(';').unwrap() + 1,
+        "{error}"
+    );
+    assert!(lines[2].ends_with('^'), "{error}");
 }
 
 #[test]

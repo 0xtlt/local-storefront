@@ -655,13 +655,14 @@ test('the state is read with the currency of the checkout', () => {
   assert.deepEqual(pageState(page.engine()).lines[0].total, { amount: 49, currencyCode: 'EUR' });
 });
 
-test('a buyer in French keeps the language in the requests, the links and the page', async () => {
+test('a buyer in French keeps the language in the requests and the links; the page says its own words are English', async () => {
   const page = app({
     mutate: (engine) => {
       engine.localization = { language: { isoCode: 'fr' }, rootUrl: '/fr' };
     },
   });
-  assert.equal(page.document.documentElement.lang, 'fr');
+  // lsf's words are English, whatever the buyer reads the Functions and the extensions in.
+  assert.notEqual(page.document.documentElement.lang, 'fr');
   await page.checkout.actions.commit('email', 'a@b.c');
   assert.match(page.requests[0].url, /^\/fr\/checkouts\/cn\/preview\/update$/);
   const hrefs = [...page.root.querySelectorAll('a')].map((link) => link.getAttribute('href'));
@@ -670,7 +671,6 @@ test('a buyer in French keeps the language in the requests, the links and the pa
 
   // Without a language of the buyer, the page is in the one of the shop and under no root.
   const plain = app();
-  assert.equal(plain.document.documentElement.lang, 'en');
   await plain.checkout.actions.commit('email', 'a@b.c');
   assert.equal(plain.requests[0].url, '/checkouts/cn/preview/update');
 });

@@ -7,6 +7,18 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Added
 
+- **Testing an app's checkout in CI.** `lsf checkout check` runs the Functions of every scenario
+  and exits with 1 when one fails or does not validate. `lsf validate` checks the app of the folder
+  too. The checkout and the customer account set `data-lsf-ready` on the document once nothing is
+  on its way and every extension rendered (`aria-busy` meanwhile). `DELETE /__lsf/sessions` resets
+  every session. The orders of a session are numbered after the last one of the store data, one
+  after the other whatever the other sessions do, and placed at its `now`: a test reads the same
+  number and date every time. [Testing guide](docs/testing.md#a-checkout-in-a-test).
+- **Commands of an app need no `--app` in its folder** (`lsf checkout`, `lsf function run`,
+  `lsf checkout check`), and read its `shopify-local/` from anywhere. `lsf function run` says why a
+  Function asked for did not run (no discount names it, an empty cart, an error of the app) and
+  exits with 1; a handle or a scenario close to an existing one is suggested.
+
 - **Customer account UI extensions, and every checkout target.** With an app, `/account` is the
   customer account of Shopify's new customer accounts: the orders of the customer logged in (from
   the store data, and the last order placed in the local checkout), the status of an order (its

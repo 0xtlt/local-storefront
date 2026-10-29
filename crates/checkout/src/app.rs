@@ -327,8 +327,22 @@ impl Selection {
             .filter(|handle| !known.contains(handle))
             .collect();
         if !unknown.is_empty() {
+            // One close to a name of the app is a typo of it; otherwise every name.
+            let close: Vec<&str> = unknown
+                .iter()
+                .filter_map(|handle| lsf_core::util::closest_match(handle, known.iter().copied()))
+                .collect();
             let known = if known.is_empty() {
-                "the app has no Function or checkout UI extension".to_string()
+                "the app has no Function or UI extension".to_string()
+            } else if close.len() == unknown.len() {
+                format!(
+                    "did you mean {}?",
+                    close
+                        .iter()
+                        .map(|handle| format!("`{handle}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             } else {
                 format!("the app has: {}", known.join(", "))
             };

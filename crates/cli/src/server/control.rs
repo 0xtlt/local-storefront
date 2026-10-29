@@ -62,6 +62,12 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             state.reset_session(&id);
             Reply::json(200, &json!({ "ok": true }))
         }
+        // Every session at once, with its checkout and its orders: a clean server between two
+        // test runs.
+        ("DELETE", ["sessions"]) => {
+            let count = state.reset_sessions();
+            Reply::json(200, &json!({ "ok": true, "sessions": count }))
+        }
         _ => Reply::not_found(),
     }
 }
@@ -371,8 +377,11 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
     // Session-specific data: the files plus the overlay.
     let custom_store = match &overlay {
         Some(overlay) => {
-            let (store, overlay_diagnostics) =
-                load_with_overlay(&state.app.source, &state.app.load_options(), Some(overlay));
+            let (store, overlay_diagnostics) = load_with_overlay(
+                &state.app.source(),
+                &state.app.load_options(),
+                Some(overlay),
+            );
             let mut relevant = Diagnostics::new();
             relevant.items = overlay_diagnostics
                 .items

@@ -146,8 +146,22 @@ pub fn run(
         app: shopify_app,
         result,
         scenario,
+        discounted,
     } = compute(theme, data, previews, &args)?;
     let failed = result.runs.iter().any(|run| run.error.is_some());
+    // A Function asked for by name that did not run is a failure, with why.
+    let not_run: Vec<(String, String)> = args
+        .handles
+        .iter()
+        .filter_map(|handle| shopify_app.function(handle))
+        .filter(|function| !result.runs.iter().any(|run| run.handle == function.handle))
+        .map(|function| {
+            (
+                function.handle.clone(),
+                why_not_run(&shopify_app, function, &discounted, result.lines.is_empty()),
+            )
+        })
+        .collect();
 
     match args.format {
         Format::Json => {
@@ -163,6 +177,12 @@ pub fn run(
                     .map(|diagnostic| Json::String(diagnostic.to_string()))
                     .collect(),
             );
+            json["notRun"] = Json::Array(
+                not_run
+                    .iter()
+                    .map(|(handle, reason)| serde_json::json!({"handle": handle, "reason": reason}))
+                    .collect(),
+            );
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
@@ -175,7 +195,10 @@ pub fn run(
             print_text(&result);
         }
     }
-    Ok(if failed {
+    for (handle, reason) in &not_run {
+        eprintln!("not run: {handle}: {reason}");
+    }
+    Ok(if failed || !not_run.is_empty() {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
@@ -188,6 +211,52 @@ struct Ran {
     result: CheckoutResult,
     /// The name and the title of the scenario it ran for.
     scenario: Option<(String, String)>,
+    /// The discount Functions a discount of the checkout runs.
+    discounted: Vec<String>,
+}
+
+/// Why a Function asked for by name did not run: what the app says is wrong with it, a
+/// discount Function no discount names, or targets the local checkout does not run.
+fn why_not_run(
+    app: &lsf_checkout::app::App,
+    function: &lsf_checkout::app::FunctionExtension,
+    discounted: &[String],
+    empty_cart: bool,
+) -> String {
+    use lsf_checkout::app::TargetKind;
+    if let Some(diagnostic) = app.diagnostics.iter().find(|diagnostic| {
+        diagnostic.extension.as_deref() == Some(function.handle.as_str())
+            && diagnostic.severity == lsf_checkout::app::Severity::Error
+    }) {
+        return diagnostic.message.clone();
+    }
+    let kinds: Vec<TargetKind> = function.targets.iter().map(|target| target.kind).collect();
+    if !kinds.is_empty() && kinds.iter().all(|kind| *kind == TargetKind::Unsupported) {
+        return "its targets are not run by the local checkout".to_string();
+    }
+    let discount = kinds.iter().any(|kind| {
+        matches!(
+            kind,
+            TargetKind::LinesDiscounts
+                | TargetKind::ProductDiscount
+                | TargetKind::OrderDiscount
+                | TargetKind::DeliveryDiscounts
+                | TargetKind::ShippingDiscount
+        )
+    });
+    if discount && !discounted.contains(&function.handle) {
+        return format!(
+            "a discount Function runs for a discount of the store, and none names it: add one to \
+             `checkout.discounts` (store.json, or the scenario), e.g. \
+             {{\"function\": \"{}\", \"title\": \"10% off\"}} (automatic), with \"code\" for a code",
+            function.handle
+        );
+    }
+    if empty_cart {
+        return "the cart is empty: give one with `--scenario <name>` or `--session '{\"cart\": …}'`"
+            .to_string();
+    }
+    "it had nothing to run on in this checkout (its target does not apply to this cart)".to_string()
 }
 
 /// Builds the input of each Function from the store data and runs them, for the step, the
@@ -198,11 +267,10 @@ fn compute(
     previews: &[lsf_core::Preview],
     args: &RunArgs,
 ) -> Result<Ran, String> {
-    let Some(app_dir) = &args.app else {
-        return Err("`lsf function run` needs the app: `--app DIR` (or LSF_APP)".to_string());
-    };
+    // The app the current folder is in when `--app` is not given.
+    let app_dir = &checkout::app_of(args.app.as_deref(), "lsf function run")?;
     let app_args = checkout::AppArgs {
-        app: args.app.clone(),
+        app: Some(app_dir.clone()),
         extensions: args.handles.clone(),
         build: args.build,
     };
@@ -218,7 +286,9 @@ fn compute(
     }
     checkout::print_app_diagnostics(&shopify_app, &selection);
 
-    let local = App::open_without_theme(theme, data, previews)?;
+    // The app's store data when the folder lsf runs in has none.
+    let data = crate::app::data_with_app(theme, data, Some(app_dir));
+    let local = App::open_without_theme(theme, data.as_deref(), previews)?;
     let (store, diagnostics) = local.load_store();
     print_diagnostics(&diagnostics);
     // A scenario with errors is reported, and refused when it is the one asked for; the others
@@ -317,10 +387,16 @@ fn compute(
         &config,
     );
     let scenario = scenario.map(|scenario| (scenario.name.clone(), scenario.title.clone()));
+    let discounted = config
+        .discounts
+        .iter()
+        .map(|discount| discount.function.clone())
+        .collect();
     Ok(Ran {
         app: shopify_app,
         result,
         scenario,
+        discounted,
     })
 }
 
@@ -336,10 +412,14 @@ fn scenario_to_run<'a>(
                 "--scenario {name}: the store data has no scenario (`lsf checkout init` writes a set in `checkouts/`)"
             )
         } else {
-            format!(
-                "--scenario {name}: no such scenario (the store data has {})",
-                known.join(", ")
-            )
+            match lsf_core::util::closest_match(name, known.iter().copied()) {
+                Some(close) => format!("--scenario {name}: no such scenario: did you mean {close}?"),
+                None => format!(
+                    "--scenario {name}: no such scenario (the store data has {}: {})",
+                    known.len(),
+                    known.join(", ")
+                ),
+            }
         }
     })?;
     if !scenario.problems.is_empty() {
@@ -901,7 +981,7 @@ mod tests {
         };
         let missing = error("nope");
         assert!(
-            missing.contains("--scenario nope: no such scenario (the store data has ok, typo)"),
+            missing.contains("--scenario nope: no such scenario (the store data has 2: ok, typo)"),
             "{missing}"
         );
         let broken = error("typo");

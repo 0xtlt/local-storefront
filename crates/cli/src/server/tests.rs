@@ -3581,7 +3581,8 @@ fn the_language_of_the_buyer_stays_through_the_whole_checkout() {
     let page = get(&state, &path, "co-fr");
     assert_eq!(page.status, 200);
     let html = text(&page);
-    assert!(html.contains("<html lang=\"fr\">"), "{html}");
+    // The words of the page are lsf's, in English; the buyer's language is in the state.
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
     let json = page_state(&html);
     assert_eq!(json["localization"]["language"]["isoCode"], "fr");
     assert_eq!(json["localization"]["rootUrl"], "/fr");
@@ -3607,7 +3608,8 @@ fn the_language_of_the_buyer_stays_through_the_whole_checkout() {
     let thanks = get(&state, &format!("{path}/thank-you"), "co-fr");
     assert_eq!(thanks.status, 200);
     let html = text(&thanks);
-    assert!(html.contains("<html lang=\"fr\">"), "{html}");
+    // The words of the page are lsf's, in English; the buyer's language is in the state.
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
     let json = page_state(&html);
     assert_eq!(json["status"], "completed");
     assert_eq!(json["localization"]["language"]["isoCode"], "fr");
@@ -3690,7 +3692,7 @@ fn an_overlay_locale_is_a_locale_of_the_checkout(standalone: bool) {
     let page = get(&state, &path, session);
     assert_eq!(page.status, 200, "{}", text(&page));
     let html = text(&page);
-    assert!(html.contains("<html lang=\"de\">"), "{html}");
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
     assert_eq!(page_state(&html)["localization"]["rootUrl"], "/de");
     let json = body_json(&get(&state, &format!("{path}.json"), session));
     assert_eq!(json["localization"]["language"]["isoCode"], "de");
@@ -3706,7 +3708,7 @@ fn an_overlay_locale_is_a_locale_of_the_checkout(standalone: bool) {
     assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
     let thanks = get(&state, &format!("{path}/thank-you"), session);
     assert_eq!(thanks.status, 200);
-    assert!(text(&thanks).contains("<html lang=\"de\">"));
+    assert!(text(&thanks).contains("<html lang=\"en\">"));
 
     // Another visitor's store has no German.
     let other = get(&state, "/de/checkout", "co-without-de");
@@ -4712,7 +4714,7 @@ fn a_checkout_is_completed_when_nothing_is_missing() {
     assert_eq!(thanks.status, 200);
     let html = text(&thanks);
     assert!(html.contains("\"status\":\"completed\""), "{html}");
-    assert!(html.contains("\"number\":\"#1001\""), "{html}");
+    assert!(html.contains("\"number\":\"#1004\""), "{html}");
     let json = body_json(&get(&state, &format!("{path}.json"), "co-done"));
     assert_eq!(json["status"], "completed");
     assert_eq!(json["lines"][0]["quantity"], 2);
@@ -4741,7 +4743,8 @@ fn a_checkout_is_completed_when_nothing_is_missing() {
     );
     post(&state, &format!("{again}/complete"), json!({}), "co-done");
     let json = body_json(&get(&state, &format!("{again}.json"), "co-done"));
-    assert_eq!(json["order"]["number"], "#1002");
+    // The orders of a session follow the last one of the store data (#1003), one after the other.
+    assert_eq!(json["order"]["number"], "#1005");
 
     // Without a completed order, the thank-you page leads back to the checkout.
     let reply = get(&state, &format!("{path}/thank-you"), "co-fresh");
@@ -4817,13 +4820,13 @@ fn a_cart_change_while_completing_is_kept_and_buys_nothing() {
         get(&state, &format!("{path}/thank-you"), "co-race").status,
         302
     );
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(state.placed_orders(), 0);
 
     // The buyer completes what they now see.
     let reply = post(&state, &format!("{path}/complete"), json!({}), "co-race");
     assert_eq!(reply.status, 200, "{}", text(&reply));
     assert_eq!(cart_count(&state, "co-race"), 0);
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.placed_orders(), 1);
 }
 
 /// Completes the checkout of `session` while `change` happens after the Functions ran, and
@@ -4866,7 +4869,7 @@ fn completion_buys_nothing_when(session: &str, own_store: bool, change: impl FnO
         get(&state, &format!("{path}/thank-you"), session).status,
         302
     );
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(state.placed_orders(), 0);
 }
 
 #[test]
@@ -4915,7 +4918,7 @@ fn an_update_after_the_completion_is_refused() {
     assert_eq!(reply.status, 409, "{}", text(&reply));
     let json = body_json(&reply);
     assert_eq!(json["status"], "completed");
-    assert_eq!(json["order"]["number"], "#1001");
+    assert_eq!(json["order"]["number"], "#1004");
 
     // The order is still the order: the thank-you page, the state, another completion.
     assert_eq!(
@@ -4927,7 +4930,7 @@ fn an_update_after_the_completion_is_refused() {
     let reply = post(&state, &format!("{path}/complete"), json!({}), "co-late");
     assert_eq!(reply.status, 200, "{}", text(&reply));
     assert_eq!(cart_count(&state, "co-late"), 0);
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.placed_orders(), 1);
 }
 
 #[test]
@@ -4951,7 +4954,7 @@ fn an_update_that_read_the_cart_before_the_completion_writes_nothing() {
     assert_eq!(reply.status, 409, "{}", text(&reply));
     let json = body_json(&reply);
     assert_eq!(json["status"], "completed");
-    assert_eq!(json["order"]["number"], "#1001");
+    assert_eq!(json["order"]["number"], "#1004");
 
     // The lines the order consumed did not come back, and the order stays one.
     assert_eq!(cart_count(&state, "co-stale"), 0);
@@ -4964,7 +4967,7 @@ fn an_update_that_read_the_cart_before_the_completion_writes_nothing() {
         body_json(&reply)["redirect"],
         format!("/checkouts/cn/{token}/thank-you")
     );
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.placed_orders(), 1);
 }
 
 #[test]
@@ -5012,14 +5015,14 @@ fn completing_again_places_no_second_order() {
     );
     assert_eq!(reply.status, 200, "{}", text(&reply));
     assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.placed_orders(), 1);
 
     // And one that comes after: the same thank-you page, not a new order.
     let reply = post(&state, &format!("{path}/complete"), json!({}), "co-twice");
     assert_eq!(reply.status, 200, "{}", text(&reply));
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.placed_orders(), 1);
     let json = body_json(&get(&state, &format!("{path}.json"), "co-twice"));
-    assert_eq!(json["order"]["number"], "#1001");
+    assert_eq!(json["order"]["number"], "#1004");
 }
 
 #[test]
@@ -5040,7 +5043,7 @@ fn concurrent_completions_place_one_order() {
         .map(|thread| thread.join().expect("a reply"))
         .collect();
     assert!(replies.iter().all(|status| *status == 200), "{replies:?}");
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(state.placed_orders(), 1);
     assert_eq!(cart_count(&state, "co-threads"), 0);
 }
 
@@ -5173,7 +5176,7 @@ fn a_validation_function_sees_the_step_of_the_buyer_journey() {
         "Not possible to order more than 2 of each"
     );
     // Nothing was bought, and the checkout is still an interaction.
-    assert_eq!(state.orders.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(state.placed_orders(), 0);
     let json = body_json(&get(&state, &format!("{path}.json"), "co-step"));
     assert_eq!(step_of(&json), "CHECKOUT_INTERACTION");
     assert_eq!(json["errors"], json!([]));
@@ -5636,7 +5639,7 @@ fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
     // The page asks for nothing the scenario did not fill.
     let page = get(&state, &location, &id);
     assert_eq!(page.status, 200);
-    assert!(text(&page).contains("<html lang=\"fr\">"));
+    assert!(text(&page).contains("<html lang=\"en\">"));
 }
 
 #[test]
@@ -7862,7 +7865,9 @@ fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
     assert_eq!(json["buyer"]["customer"]["id"], json["customer"]["id"]);
     let orders = json["orders"].as_array().unwrap();
     assert_eq!(orders.len(), 2);
-    let first = &orders[0];
+    // The most recent first: #1002 (May), then #1001 (March).
+    assert_eq!(orders[0]["name"], "#1002");
+    let first = &orders[1];
     assert_eq!(first["name"], "#1001");
     assert_eq!(first["fulfillmentStatus"], "fulfilled");
     assert_eq!(
@@ -7965,7 +7970,8 @@ fn the_order_placed_in_the_checkout_is_in_the_customer_account() {
     assert_eq!(orders.len(), 3);
     let placed = &orders[0];
     assert_eq!(placed["placedHere"], true);
-    assert_eq!(placed["name"], "#1001");
+    // After the last order of the store data.
+    assert_eq!(placed["name"], "#1004");
     assert_eq!(placed["lines"][0]["quantity"], 2);
     assert_eq!(placed["unfulfilledLineIds"].as_array().unwrap().len(), 1);
     assert!(placed["processedAt"].is_string());
@@ -8112,4 +8118,123 @@ fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
         !account.contains("data-ui-extension=\"gift-message\""),
         "{account}"
     );
+}
+
+// --- What a test of a checkout reads the same every time ---
+
+/// Places an order of two tees in `session`, logged in as Jane, and answers its state.
+fn place_an_order(state: &ServerState, session: &str, data: Json) -> Json {
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}, "data": data}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let path = header(&get(state, "/checkout", session), "location")
+        .expect("a location")
+        .to_string();
+    let reply = operations(state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    body_json(&get(state, &format!("{path}.json"), session))
+}
+
+#[test]
+fn the_orders_of_a_session_have_the_same_number_and_date_every_time() {
+    let state = checkout_server(&[], true);
+    let frozen = json!({"now": "2025-01-15T10:00:00Z"});
+    // Two sessions at once: each numbers its orders after the last of the store data (#1003).
+    let a = place_an_order(&state, "orders-a", frozen.clone());
+    let b = place_an_order(&state, "orders-b", frozen.clone());
+    assert_eq!(a["order"]["number"], "#1004");
+    assert_eq!(b["order"]["number"], "#1004");
+    // At the frozen clock of the data.
+    assert_eq!(a["order"]["processedAt"], "2025-01-15T10:00:00+00:00");
+    // The next order of the session is the next number.
+    let again = place_an_order(&state, "orders-a", frozen);
+    assert_eq!(again["order"]["number"], "#1005");
+
+    // Every session forgotten at once.
+    let reset = state.dispatch(&request("DELETE", "/__lsf/sessions", json!({}), "orders-a"));
+    assert_eq!(body_json(&reset)["ok"], true);
+    assert_eq!(state.placed_orders(), 0);
+}
+
+#[test]
+fn a_checkout_from_the_storefront_ships_to_the_country_of_the_visitor_or_of_the_store() {
+    let state = checkout_server(&[], false);
+    // A guest: the store's country (the demo store is in Ottawa).
+    let path = header(&get(&state, "/checkout", "country-guest"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), "country-guest"));
+    assert_eq!(json["shippingAddress"]["countryCode"], "CA");
+    // The country the visitor picked on the storefront.
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"country": "FR"}),
+        "country-fr",
+    ));
+    let path = header(&get(&state, "/checkout", "country-fr"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), "country-fr"));
+    assert_eq!(json["shippingAddress"]["countryCode"], "FR");
+}
+
+#[test]
+fn the_home_page_says_what_never_runs() {
+    // A discount Function no discount names, and a customer account UI extension of a store
+    // whose accounts are the theme's.
+    let app = app_with_account("never");
+    let state = checkout_server_of(app.clone(), &[], false);
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
+        "never",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "never"));
+    std::fs::remove_dir_all(&app).ok();
+    let messages = |list: &str, handle: &str| -> Vec<String> {
+        json[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|extension| extension["handle"] == handle)
+            .unwrap_or_else(|| panic!("{handle}"))["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|problem| problem["message"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(
+        messages("functions", "volume-discount")
+            .iter()
+            .any(|message| message.starts_with("no discount of the store data runs it")),
+        "{json}"
+    );
+    let ca = json["uiExtensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|extension| extension["handle"] == "ca-test")
+        .unwrap();
+    assert!(
+        messages("uiExtensions", "ca-test")
+            .iter()
+            .any(|message| message.contains("render in new customer accounts only")),
+        "{json}"
+    );
+    assert_eq!(ca["open"], Json::Null, "it renders nowhere");
+    // The note of the discount is the store's: the scenarios that run the Function are not
+    // warned of it.
+    for scenario in json["scenarios"].as_array().unwrap() {
+        assert_ne!(scenario["status"], "warning", "{scenario}");
+    }
 }

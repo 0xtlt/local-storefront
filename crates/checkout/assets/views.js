@@ -560,10 +560,16 @@ function costRows(ctx) {
   const { cost } = state;
   const later = dueLater(state);
   const count = state.lines.reduce((sum, line) => sum + line.quantity, 0);
-  const hasShipping = state.deliveryGroups?.some((group) => group.selected);
+  // Shipping is known once there is a country to ship to, as the shipping methods show then:
+  // before, the summary says so and leaves it out of the total.
+  const addressKnown = state.status === 'completed' || Boolean(state.shippingAddress?.countryCode);
+  const hasShipping = addressKnown && state.deliveryGroups?.some((group) => group.selected);
   const shipping = state.status === 'completed' || hasShipping
     ? priceOrFree(cost.shipping, state.shop)
     : h('span', { class: 'lsf-muted' }, state.lines.some((line) => line.requiresShipping) ? 'Enter shipping address' : 'Free');
+  const withoutShipping = (money) => (hasShipping || state.status === 'completed' || !money
+    ? money
+    : { ...money, amount: Math.round((money.amount - (cost.shipping?.amount ?? 0)) * 100) / 100 });
   return h('dl', { class: 'lsf-costs' },
     h('div', null, h('dt', null, `Subtotal · ${count} item${count === 1 ? '' : 's'}`), h('dd', null, price(cost.subtotal, state.shop))),
     (state.discounts ?? []).map((discount, index) =>
@@ -579,7 +585,7 @@ function costRows(ctx) {
       : null,
     h('div', { class: 'lsf-total', ...(later ? { 'data-due': 'now' } : {}) },
       h('dt', null, later ? 'Due today' : 'Total'),
-      h('dd', null, h('span', { class: 'lsf-muted lsf-currency' }, cost.currencyCode), h('strong', null, price(dueNow(state), state.shop)))),
+      h('dd', null, h('span', { class: 'lsf-muted lsf-currency' }, cost.currencyCode), h('strong', null, price(withoutShipping(dueNow(state)), state.shop)))),
     later && h('div', { class: 'lsf-cost-later', 'data-due': 'later' }, h('dt', null, 'Due later'), h('dd', null, price(later, state.shop))),
   );
 }

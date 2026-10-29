@@ -11,7 +11,9 @@ mod customer_account;
 pub use control::{apply_session_input, routes};
 mod forms;
 mod home;
+pub use home::legacy_accounts_note;
 mod home_check;
+pub use home_check::run as check_scenarios;
 mod live_reload;
 mod minify;
 pub mod params;
@@ -111,8 +113,6 @@ pub struct ServerState {
     /// `None` for the ones that are served as written.
     pub(crate) minified: Mutex<HashMap<String, Option<Arc<minify::Minified>>>>,
     session_counter: AtomicU64,
-    /// How many orders the checkout completed, for their numbers.
-    orders: AtomicU64,
     started: Instant,
     /// The token of the files when live reload last looked at them.
     last_token: AtomicU64,
@@ -208,7 +208,9 @@ fn fingerprint(root: &Path) -> u64 {
 impl ServerState {
     pub fn new(app: App, options: ServeOptions) -> (ServerState, Diagnostics) {
         let (store, diagnostics) = app.load_store();
-        let fingerprint = app.data_dir().map_or(0, |directory| fingerprint(directory));
+        let fingerprint = app
+            .data_dir()
+            .map_or(0, |directory| fingerprint(&directory));
         let state = ServerState {
             loaded: RwLock::new(Arc::new(Loaded {
                 store: Arc::new(store),
@@ -222,7 +224,6 @@ impl ServerState {
             image_cache: Mutex::new(HashMap::new()),
             minified: Mutex::new(HashMap::new()),
             session_counter: AtomicU64::new(0),
-            orders: AtomicU64::new(0),
             started: Instant::now(),
             last_token: AtomicU64::new(0),
             changes: live_reload::Changes::new(),
@@ -254,7 +255,7 @@ impl ServerState {
             fingerprint: self
                 .app
                 .data_dir()
-                .map_or(0, |directory| fingerprint(directory)),
+                .map_or(0, |directory| fingerprint(&directory)),
         });
         *self.loaded.write().expect("store lock poisoned") = loaded.clone();
         loaded
@@ -276,7 +277,7 @@ impl ServerState {
             }
             *last_check = Instant::now();
         }
-        if fingerprint(directory) != self.loaded().fingerprint {
+        if fingerprint(&directory) != self.loaded().fingerprint {
             let loaded = self.reload();
             if !self.options.quiet {
                 eprintln!("store data reloaded");
@@ -297,7 +298,7 @@ impl ServerState {
             hasher.write_u64(fingerprint(&root.join(directory)));
         }
         if let Some(directory) = self.app.data_dir() {
-            hasher.write_u64(fingerprint(directory));
+            hasher.write_u64(fingerprint(&directory));
         }
         hasher.finish()
     }
@@ -419,13 +420,28 @@ impl ServerState {
         action(entry)
     }
 
-    /// The number of the next order of the checkout, from 1.
-    fn next_order(&self) -> u64 {
-        self.orders.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
     pub fn reset_session(&self, id: &str) {
         self.sessions.lock().expect("sessions poisoned").remove(id);
+    }
+
+    /// How many orders the sessions placed, all together.
+    #[cfg(test)]
+    pub fn placed_orders(&self) -> u64 {
+        self.sessions
+            .lock()
+            .expect("sessions poisoned")
+            .values()
+            .map(|entry| entry.checkout.placed)
+            .sum()
+    }
+
+    /// Forgets every session, with its cart, its checkout and the order it placed. Returns how
+    /// many there were.
+    pub fn reset_sessions(&self) -> usize {
+        let mut sessions = self.sessions.lock().expect("sessions poisoned");
+        let count = sessions.len();
+        sessions.clear();
+        count
     }
 
     pub fn session_count(&self) -> usize {

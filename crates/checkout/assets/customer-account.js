@@ -4,7 +4,7 @@
 // state: a navigation, a login or a switch of customer loads another page.
 
 import { createExtensionHost } from './extension-host.js';
-import { languageOf, withCurrency } from './format.js';
+import { withCurrency } from './format.js';
 import { renderAccount } from './account-views.js';
 import { h, render } from './vdom.js';
 
@@ -67,11 +67,15 @@ export function startAccount({ root, initial, document, window, location, storag
     .map((ext) => ext.handle);
   let toastCounter = 0;
 
+  // For tests: `data-lsf-ready` on the document, `true` once every extension on the page
+  // rendered (or threw, or said nothing for 5 s).
+  const markReady = () => document.documentElement?.setAttribute?.('data-lsf-ready', String(host.pending() === 0));
   const host = createExtensionHost({
     document,
     window,
     sandboxUrl,
     storage,
+    onRendered: () => markReady(),
     getState: () => state,
     // Nothing an extension of the customer account asks changes the account.
     dispatch: () => Promise.reject(new Error('The customer account has nothing to change.')),
@@ -141,9 +145,9 @@ export function startAccount({ root, initial, document, window, location, storag
   };
 
   function paint() {
-    if (document.documentElement) document.documentElement.lang = languageOf(state);
     render(root, renderAccount({ state, ui, slot, actions, here, preview, refusals: host.refusals(), extensionErrors: host.errors() }));
     host.update(state);
+    markReady();
   }
 
   paint();

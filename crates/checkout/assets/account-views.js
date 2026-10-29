@@ -19,10 +19,11 @@ const ACTION = 'customer-account.order.action.render';
 const fullName = (customer) =>
   [customer?.firstName, customer?.lastName].filter(Boolean).join(' ') || customer?.email || '';
 
-const date = (iso, locale) => {
+/** A date in the words of the page, which are English. */
+const date = (iso) => {
   if (!iso) return '';
   try {
-    return new Intl.DateTimeFormat(locale ?? 'en', { dateStyle: 'medium' }).format(new Date(iso));
+    return new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(new Date(iso));
   } catch {
     return iso.slice(0, 10);
   }
@@ -141,7 +142,7 @@ function orderCard(ctx, order) {
   return h('li', { class: 'lsf-ca-order', key: order.legacyId, 'data-order': order.legacyId },
     h('div', { class: 'lsf-ca-order-head' },
       badge(orderStatus(order)),
-      h('span', { class: 'lsf-muted' }, date(order.processedAt, state.localization?.language?.isoCode))),
+      h('span', { class: 'lsf-muted' }, date(order.processedAt))),
     thumbnails(order),
     h('div', { class: 'lsf-ca-order-facts' },
       h('a', { class: 'lsf-ca-order-name', href: orderPath(state, order) }, `Order ${order.name}`),
@@ -205,7 +206,6 @@ function orderPage(ctx) {
   const { state, slot } = ctx;
   const order = state.order;
   const countries = countriesOf(state);
-  const language = state.localization?.language?.isoCode;
   const where = { orderId: order.id };
   return h('div', { class: 'lsf-ca-layout' },
     h('main', { class: 'lsf-ca-main', 'data-page': 'order' },
@@ -213,7 +213,7 @@ function orderPage(ctx) {
       slot('customer-account.order-status.announcement.render', { key: 'announcement', ...where }),
       h('div', { class: 'lsf-ca-title' },
         h('h1', null, `Order ${order.name}`),
-        h('p', { class: 'lsf-muted' }, `Confirmation ${order.confirmationNumber} · ${date(order.processedAt, language)}`)),
+        h('p', { class: 'lsf-muted' }, `Confirmation ${order.confirmationNumber} · ${date(order.processedAt)}`)),
       orderActions(ctx, order),
       card({ 'data-section': 'status' },
         badge(orderStatus(order)),

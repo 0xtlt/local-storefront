@@ -314,6 +314,33 @@ fn start(state: &ServerState, incoming: &Incoming) -> Reply {
             checkout.prepared = Some(Identity::of(&store, &entry.session));
         });
     }
+    // The country of the delivery is chosen, as Shopify chooses it: the one the visitor picked
+    // on the storefront, else the store's own. The shipping methods show at once.
+    let (_, store) = state.snapshot(&id);
+    state.with_session(&id, |entry| {
+        // The customer of the session first: their default address wins.
+        let checkout = &mut entry.checkout;
+        checkout_account::prepare(
+            &store,
+            &mut entry.session,
+            &mut checkout.state,
+            &mut checkout.prepared,
+        );
+        let address = &mut entry.checkout.state.shipping_address;
+        if address
+            .as_ref()
+            .and_then(|address| address.country_code.as_ref())
+            .is_none()
+        {
+            let country = entry.session.country.clone().or_else(|| {
+                Some(store.shop.address.country_code.clone()).filter(|code| !code.is_empty())
+            });
+            if let Some(code) = country {
+                address.get_or_insert_with(Default::default).country_code =
+                    Some(code.to_ascii_uppercase());
+            }
+        }
+    });
     let root = request_root(state, &id, incoming);
     let mut location = checkout_path(&root, &token_of(state, &id));
     location.push_str(&carried_query(incoming, CARRIED));
@@ -983,15 +1010,9 @@ pub(super) fn shell_of(server: &ServerState, json: &Json, template: &str) -> Rep
         .replace('&', "\\u0026")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
-    // The page is in the language of the buyer.
-    let lang: String = json["localization"]["language"]["isoCode"]
-        .as_str()
-        .unwrap_or("en")
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .collect();
+    // The words of the page are lsf's, in English (`lang="en"`). The language of the buyer is
+    // what the Functions and the extensions read (`localization`), not the page's.
     let mut html = template
-        .replacen("<html lang=\"en\">", &format!("<html lang=\"{lang}\">"), 1)
         .replace("<!--LSF_ASSETS-->", ASSETS)
         .replace("<!--LSF_STATE-->", &state);
     if server.options.live_reload {
@@ -1650,13 +1671,25 @@ pub(super) fn place_order(
         return Reply::json(422, &computed.json).cached(cache::PRIVATE);
     }
     let mut order = computed.json;
+    // The orders of a session are numbered after the last one of the store data (#1001 when it
+    // has none), one after the other, whatever the other sessions do: a test reads the same
+    // number every time. They are placed at the frozen clock of the data, if it has one.
+    let (_, store) = state.snapshot(id);
+    let last = store
+        .customers
+        .iter()
+        .flat_map(|customer| customer.orders.iter().map(|order| order.order_number))
+        .max()
+        .unwrap_or(1000)
+        .max(1000);
+    let placed_at = store.now.unwrap_or_else(chrono::Utc::now).to_rfc3339();
     // The cart is taken only if it is still the one that was priced; the check and the take are
     // one step of the session.
     let taken = state.with_session(id, |entry| {
         if !computed.basis.matches(entry, &state.loaded().store) {
             return false;
         }
-        let number = 1000 + state.next_order();
+        let number = last + entry.checkout.placed + 1;
         order["status"] = json!("completed");
         // The order costs the whole price: what is paid now is received, and what a selling
         // plan defers is outstanding (`totalReceivedSet` and `totalOutstandingSet` of Shopify's
@@ -1668,7 +1701,7 @@ pub(super) fn place_order(
             "totalReceived": received,
             "totalOutstanding": outstanding,
             // When it was placed, which the customer account shows.
-            "processedAt": chrono::Utc::now().to_rfc3339(),
+            "processedAt": placed_at,
         });
         entry.checkout.completed = Some(order);
         entry.checkout.placed += 1;

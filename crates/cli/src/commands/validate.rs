@@ -19,6 +19,12 @@ pub struct Args {
     /// How to print the result.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
+
+    /// A Shopify app to check too: what its Functions and UI extensions get wrong (no build, an
+    /// API version lsf does not run, an unknown target, an `owner_type`…). Defaults to the app
+    /// the current folder is in, if any.
+    #[arg(long, env = "LSF_APP")]
+    app: Option<std::path::PathBuf>,
 }
 
 /// Whether `directory` is a theme, as `Theme::open` sees one.
@@ -50,13 +56,44 @@ pub fn run(
         app
     };
     let (store, diagnostics) = app.load_store();
+    // The app: `--app`, else the one the current folder is in.
+    let shopify_app = match args.app.clone().or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|dir| crate::checkout::app_around(&dir))
+    }) {
+        Some(dir) => Some(lsf_checkout::app::load(&dir)?),
+        None => None,
+    };
+    let app_problems: Vec<&lsf_checkout::app::Diagnostic> = shopify_app
+        .iter()
+        .flat_map(|app| &app.diagnostics)
+        .collect();
+    let app_errors = app_problems
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == lsf_checkout::app::Severity::Error)
+        .count();
+    let failed = diagnostics.has_errors() || app_errors > 0;
     match args.format {
         Format::Json => {
             let report = serde_json::json!({
-                "ok": !diagnostics.has_errors(),
+                "ok": !failed,
                 "errors": diagnostics.error_count(),
                 "warnings": diagnostics.warning_count(),
                 "diagnostics": diagnostics.items,
+                // What the app gets wrong, when there is one.
+                "app": shopify_app.as_ref().map(|_| serde_json::json!({
+                    "errors": app_errors,
+                    "warnings": app_problems.len() - app_errors,
+                    "diagnostics": app_problems.iter().map(|diagnostic| serde_json::json!({
+                        "severity": match diagnostic.severity {
+                            lsf_checkout::app::Severity::Error => "error",
+                            _ => "warning",
+                        },
+                        "extension": diagnostic.extension,
+                        "message": diagnostic.message,
+                    })).collect::<Vec<_>>(),
+                })),
             });
             println!(
                 "{}",
@@ -65,6 +102,22 @@ pub fn run(
         }
         Format::Text => {
             print_diagnostics(&diagnostics);
+            for diagnostic in &app_problems {
+                eprintln!("app: {diagnostic}");
+            }
+            if let Some(app) = &shopify_app {
+                println!(
+                    "app {}: {} ({} error(s), {} warning(s))",
+                    app.name.as_deref().unwrap_or("(no name)"),
+                    if app_errors == 0 {
+                        "valid"
+                    } else {
+                        "not valid"
+                    },
+                    app_errors,
+                    app_problems.len() - app_errors
+                );
+            }
             if !diagnostics.has_errors() {
                 println!(
                     "{}: valid ({} products, {} collections, {} pages, {} blogs, {} customers, {} menus, {} checkout scenarios)",
@@ -80,7 +133,7 @@ pub fn run(
             }
         }
     }
-    Ok(if diagnostics.has_errors() {
+    Ok(if failed {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

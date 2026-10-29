@@ -5,7 +5,7 @@
 
 import { MENU_ITEMS } from './account.js';
 import { ACCOUNT_TARGETS, RENDERED_TARGETS, RUN_TARGETS, createExtensionHost } from './extension-host.js';
-import { languageOf, withCurrency } from './format.js';
+import { withCurrency } from './format.js';
 import { missingFields, op } from './operations.js';
 import { defaultRunView, functionsRequest, renderPage, requestedView } from './views.js';
 import { h, render } from './vdom.js';
@@ -76,7 +76,17 @@ export function startCheckout({ root, initial, document, window, location, fetch
     onError: () => {
       if (ui.functionsOpen) paint();
     },
+    onRendered: () => markReady(),
   });
+
+  // For tests: `aria-busy` on the page while a change is on its way to the server, and
+  // `data-lsf-ready` on the document, `true` once nothing is on its way and every extension
+  // on the page rendered (or threw, or said nothing for 5 s).
+  let inFlight = 0;
+  function markReady() {
+    root.setAttribute?.('aria-busy', String(inFlight > 0));
+    document.documentElement?.setAttribute?.('data-lsf-ready', String(inFlight === 0 && host.pending() === 0));
+  }
 
   function slot(target, instance = {}) {
     if (!host.hasTarget(target)) return null;
@@ -94,11 +104,11 @@ export function startCheckout({ root, initial, document, window, location, fetch
 
   function paint() {
     document.body?.setAttribute?.('data-variant', state.variant);
-    if (document.documentElement) document.documentElement.lang = languageOf(state);
     const has = (target) => host.hasTarget(target);
     render(root, renderPage({ state, ui, slot, has, actions, location: location.href, refusals: host.refusals(), extensionErrors: host.errors(), preview }));
     badgeLift();
     host.update(state);
+    markReady();
   }
 
   // The bar of the Shop skin stays at the bottom of the screen, as tall as its errors make it: the
@@ -180,8 +190,15 @@ export function startCheckout({ root, initial, document, window, location, fetch
   // talks to the server about this checkout, the payment included, goes through this queue.
   let queue = Promise.resolve();
   function enqueue(task) {
+    inFlight += 1;
+    markReady();
     const request = queue.then(task);
     queue = request.catch(() => {});
+    const done = () => {
+      inFlight -= 1;
+      markReady();
+    };
+    request.then(done, done);
     return request;
   }
 

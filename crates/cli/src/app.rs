@@ -14,7 +14,11 @@ pub const DEFAULT_DATA_DIRECTORY: &str = "shopify-local";
 pub struct App {
     pub theme: Arc<Theme>,
     pub renderer: Renderer,
-    pub source: DataSource,
+    /// Where the store data is read from. The demo store, until `pending` appears.
+    source: std::sync::RwLock<DataSource>,
+    /// Where the data would be when `--data` was not given and none was there yet: once a
+    /// directory appears there (`lsf init`), it is read from it.
+    pending: Option<PathBuf>,
     /// The empty theme of an app opened without one, removed when the app is dropped.
     _scratch: Option<Scratch>,
 }
@@ -26,6 +30,13 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// Where the data of a theme without any would be: its `shopify-local/`, which `lsf init`
+/// writes.
+fn pending_data(theme_dir: &Path, data_dir: Option<&Path>) -> Option<PathBuf> {
+    let default = theme_dir.join(DEFAULT_DATA_DIRECTORY);
+    (data_dir.is_none() && !default.is_dir()).then_some(default)
 }
 
 /// Where the store data is read from: `--data`, then `<theme>/shopify-local`, then the demo.
@@ -52,6 +63,24 @@ fn data_source(theme_dir: &Path, data_dir: Option<&Path>) -> Result<DataSource, 
     }
 }
 
+/// The store data of a theme served with an app: `--data`, else the theme's own
+/// `shopify-local/`, else the app's (`<app>/shopify-local`), else none (the demo store).
+pub fn data_with_app(
+    theme_dir: &Path,
+    data: Option<&Path>,
+    app_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(data) = data {
+        return Some(data.to_path_buf());
+    }
+    if theme_dir.join(DEFAULT_DATA_DIRECTORY).is_dir() {
+        return None;
+    }
+    app_dir
+        .map(|app| app.join(DEFAULT_DATA_DIRECTORY))
+        .filter(|directory| directory.is_dir())
+}
+
 impl App {
     /// Opens a theme with the feature previews of Shopify that `--preview` turned on: none
     /// renders it as a live store does.
@@ -68,7 +97,8 @@ impl App {
         Ok(App {
             renderer: Renderer::new(theme.clone()),
             theme,
-            source,
+            source: std::sync::RwLock::new(source),
+            pending: pending_data(theme_dir, data_dir),
             _scratch: None,
         })
     }
@@ -99,14 +129,27 @@ impl App {
         Ok(App {
             renderer: Renderer::new(theme.clone()),
             theme,
-            source,
+            source: std::sync::RwLock::new(source),
+            pending: pending_data(theme_dir, data_dir),
             _scratch: Some(scratch),
         })
     }
 
+    /// Where the store data is read from now: the demo store gives way to the directory that
+    /// appeared where it was looked for.
+    pub fn source(&self) -> DataSource {
+        if let Some(pending) = &self.pending {
+            let mut source = self.source.write().expect("source lock poisoned");
+            if matches!(*source, DataSource::Demo) && pending.is_dir() {
+                *source = DataSource::Directory(pending.clone());
+            }
+        }
+        self.source.read().expect("source lock poisoned").clone()
+    }
+
     /// The directory the store data is read from, if it is on disk.
-    pub fn data_dir(&self) -> Option<&PathBuf> {
-        match &self.source {
+    pub fn data_dir(&self) -> Option<PathBuf> {
+        match self.source() {
             DataSource::Directory(directory) => Some(directory),
             DataSource::Demo => None,
         }
@@ -130,11 +173,11 @@ impl App {
     }
 
     pub fn load_store(&self) -> (Store, Diagnostics) {
-        load(&self.source, &self.load_options())
+        load(&self.source(), &self.load_options())
     }
 
     pub fn describe_source(&self) -> String {
-        match &self.source {
+        match &self.source() {
             DataSource::Directory(directory) => directory.display().to_string(),
             DataSource::Demo => {
                 "built-in demo store (the `init` command writes an editable copy)".to_string()
@@ -157,5 +200,23 @@ pub fn note_missing_previews(theme: &Theme, previews: &[Preview]) {
                 preview.name()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_data_that_appears_after_the_start_is_read() {
+        let theme = std::env::temp_dir().join(format!("lsf-pending-data-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&theme);
+        std::fs::create_dir_all(theme.join("layout")).unwrap();
+        let app = App::open_without_theme(&theme, None, &[]).unwrap();
+        assert_eq!(app.data_dir(), None, "the demo store");
+        // `lsf init`, while the server runs.
+        std::fs::create_dir_all(theme.join(DEFAULT_DATA_DIRECTORY)).unwrap();
+        assert_eq!(app.data_dir(), Some(theme.join(DEFAULT_DATA_DIRECTORY)));
+        let _ = std::fs::remove_dir_all(&theme);
     }
 }

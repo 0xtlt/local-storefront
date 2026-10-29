@@ -114,13 +114,11 @@ fn state_json(
         .with_session(session_id, |entry| entry.checkout.completed.clone())
         .filter(|order| belongs_to(order, customer));
     let mut orders: Vec<Json> = placed.into_iter().map(placed_order_json).collect();
+    // The most recent first, as Shopify lists them; the one placed here is the latest.
     if let Some(customer) = customer {
-        orders.extend(
-            customer
-                .orders
-                .iter()
-                .map(|order| order_json(&store, order)),
-        );
+        let mut theirs: Vec<&Order> = customer.orders.iter().collect();
+        theirs.sort_by_key(|order| std::cmp::Reverse(order.created_at));
+        orders.extend(theirs.into_iter().map(|order| order_json(&store, order)));
     }
 
     let order = match page {

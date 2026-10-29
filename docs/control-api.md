@@ -10,6 +10,7 @@ there is ever delayed by `--throttle`. How to use it in tests: [testing](testing
 | `PUT /__lsf/session` | Sets the state of the caller's session. The body is a [session](data-reference.md#session): `customer`, `company_location`, `cart`, `country`, `data`, `throttle`. | `200` `{ "ok": true, "session": … }`, or `422` with diagnostics |
 | `GET /__lsf/session` | The state of the caller's session. | The session |
 | `DELETE /__lsf/session` | Resets the session to what the data files define. | `{ "ok": true }` |
+| `DELETE /__lsf/sessions` | Forgets every session, with its cart, its checkout and the order it placed: a clean server between two test runs. | `{ "ok": true, "sessions": 3 }` |
 | `GET /__lsf/login?customer=<email>&return_to=<path>` | Logs the browser in as a customer, then redirects to `return_to` (default `/account`). Also `default` or `none`. A link a person can click. The [checkout](checkout.md#log-in-as-a-customer) of the session follows. | A redirect |
 | `GET /__lsf/status` | The theme, the data and its diagnostics, the templates, the customers, every page. | JSON, below |
 | `POST /__lsf/reload` | Reads the data files again. | The diagnostics of the data |

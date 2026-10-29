@@ -58,6 +58,8 @@ export function sessionToken(state, ext, now = Date.now()) {
 }
 
 const INTERCEPT_TIMEOUT_MS = 5000;
+/** How long a frame may take to render before the page is ready without it. */
+const RENDER_TIMEOUT_MS = 5000;
 
 /**
  * The text of the bundle at `url`, or null when it does not load. The page fetches it, with the
@@ -85,11 +87,13 @@ export async function bundleSource(window, url) {
  * @param {Storage} [options.storage]
  * @param {() => void} [options.onError]  called when an extension reports an error the page has
  *   not seen yet (see `errors`)
+ * @param {() => void} [options.onRendered]  called when a frame is done: its target rendered,
+ *   threw, or did not answer in time (see `pending`)
  * @param {(request: object, instance: object) => boolean} [options.onRequest]  what the page does
  *   for a message of the customer account (`navigate`, `toast`, `action`, `close`): true when it
  *   handled it. Without it, `navigate` opens a web page in a new tab, and the others do nothing.
  */
-export function createExtensionHost({ document, window, sandboxUrl, getState, dispatch, storage, onError, onRequest, console: log = console }) {
+export function createExtensionHost({ document, window, sandboxUrl, getState, dispatch, storage, onError, onRequest, onRendered, console: log = console }) {
   /** Every live iframe. */
   const instances = new Set();
   /** What the extensions threw, by handle, target and message: `{handle, target, message, stack}`. */
@@ -159,10 +163,19 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     el.insertBefore(frame, before);
     const instance = {
       id: ++counter, ext, target, ctx, frame, iframe, ready: false, interceptors: 0, pending: new Map(),
-      error: null, initialized: null,
+      error: null, initialized: null, rendered: false,
     };
     instances.add(instance);
+    // A frame that says nothing in time counts as done: the page is ready without it.
+    setTimeout(() => settle(instance), RENDER_TIMEOUT_MS);
     return instance;
+  }
+
+  /** A frame is done: its target rendered, threw, or did not answer in time. */
+  function settle(instance) {
+    if (instance.rendered) return;
+    instance.rendered = true;
+    onRendered?.();
   }
 
   /** Stops an instance: its frame leaves the page, and the buyer journey no longer asks it. */
@@ -336,6 +349,9 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         instance.ready = true;
         instance.initialized = init(instance);
         break;
+      case 'rendered':
+        settle(instance);
+        break;
       case 'ran':
         instance.pending.get(data.id)?.(data.error ? null : data.result);
         instance.pending.delete(data.id);
@@ -395,6 +411,8 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         break;
       case 'reload':
         instance.ready = false;
+        instance.rendered = false;
+        setTimeout(() => settle(instance), RENDER_TIMEOUT_MS);
         instance.iframe.setAttribute('src', sandboxUrl);
         break;
       default:
@@ -495,6 +513,8 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     hasTarget,
     hasTargetFor,
     run,
+    /** How many frames on the page have not rendered yet. */
+    pending: () => [...instances].filter((instance) => !instance.runnable && !instance.rendered).length,
     refusals,
     /** `[{handle, target, message, stack}]`: what the extensions threw since the page loaded. */
     errors: () => [...reported.values()],

@@ -151,7 +151,8 @@ await page.goto('/products/sold-out-thing');
 - A product, collection, page or blog with the handle of an existing one **replaces** it; the
   others are **added**. Customers are matched by email, menus by handle, gift cards by code,
   companies, locations and selling plan groups by name.
-- `shop` is merged field by field. `localization`, `session`, `now` replace what the files say.
+- `shop` is merged field by field. `localization`, `session`, `now` and `checkout` replace what
+  the files say.
 - `theme_settings`, `files` and `swatches` are merged key by key.
 
 Other sessions keep seeing the data on disk. This is the way to test edge cases (an empty
@@ -183,6 +184,84 @@ await page.goto('/cart');
 
 `GET /__lsf/session` returns the current state, and `DELETE /__lsf/session` resets the
 session to what the data files define.
+
+## A checkout in a test
+
+With an app, the same server runs its checkout, its thank-you page and its customer account
+(see [checkout](checkout.md)). Start it with the theme and the app, or without a theme:
+
+```bash
+npx local-storefront serve --theme . --app ../my-app --port 0 --static --quiet --strict
+npx local-storefront checkout --app ../my-app --port 0 --quiet --strict    # no theme
+```
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  webServer: {
+    command: 'npx local-storefront serve --app ../my-app --port 9292 --static --quiet --strict',
+    url: 'http://127.0.0.1:9292/__lsf/status',
+    reuseExistingServer: !process.env.CI,
+  },
+  use: { baseURL: 'http://127.0.0.1:9292' },
+});
+```
+
+**Put the session in a state, then open the checkout.** The cart, the customer and data for this
+test only go through `PUT /__lsf/session`, as above; `/checkout` opens the checkout of that cart
+(`/checkout?scenario=<name>` the one of a [scenario](checkout.md#scenarios), with its cart and
+buyer). A discount Function runs only for a discount that names it: give one in
+`data.checkout`, which replaces the whole `checkout` section of the store data for the session
+(its shipping rates, payment methods and discounts: write all of what the test needs).
+
+```ts
+await setSession(page, {
+  customer: 'jane.doe@example.com',
+  cart: { items: [{ variant: 'TEE-BLK-M', quantity: 2 }] },
+  data: {
+    now: '2025-01-15T10:00:00Z',
+    checkout: {
+      shipping_rates: [{ handle: 'standard', title: 'Standard', price: '4.90' }],
+      discounts: [{ function: 'discount-codes', title: '10% off', code: 'SAVE10' }],
+    },
+  },
+});
+await page.goto('/checkout');
+await expect(page.locator('html')).toHaveAttribute('data-lsf-ready', 'true');
+```
+
+**Wait for the page, not for a time.** The checkout and the customer account set
+`data-lsf-ready="true"` on `<html>` once no change is on its way to the server and every UI
+extension on the page rendered (or threw, or said nothing for 5 s); it goes back to `false` while
+a change is on its way, and the page has `aria-busy="true"` then. Wait for it after each action
+that changes the checkout:
+
+```ts
+await page.getByRole('textbox', { name: 'Discount code' }).fill('SAVE10');
+await page.getByRole('button', { name: 'Apply' }).click();
+await expect(page.locator('html')).toHaveAttribute('data-lsf-ready', 'true');
+```
+
+**Select by role and name.** The fields have labels ("Email", "Address", "Discount code"), the
+choices are radios named by their title, and the buttons say what they do ("Pay now",
+"Complete order", "Apply"): `getByRole` finds them. What the Functions did is in the state too:
+`GET /__lsf/checkout` answers the state of the session's checkout (its `runs`, `cost`,
+`discounts`, `errors`), with the same session header or cookie.
+
+**Orders are reproducible.** The orders a session places are numbered after the last one of the
+store data, one after the other, whatever the other sessions do, and placed at `now` when the
+data sets it: the thank-you page and the customer account (`/account`) read the same number and
+date on every run. An order lives as long as its session; only the last one a session placed is
+kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every one.
+
+**In CI, without a browser:**
+
+| Command | Exits with 1 when |
+|---|---|
+| `lsf validate` (in the app, or `--app`) | the store data or the app has errors |
+| `lsf checkout check` | a scenario does not validate, or a Function fails in one |
+| `lsf function run <handle> --scenario <name>` | the Function fails, or did not run (with why) |
+| `lsf render <path> --strict` | the page has Liquid errors, or nothing is at the path |
 
 ## Simulating a slow network
 

@@ -636,10 +636,33 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
     }
     schema::write_all(&directory.join("schema"))?;
 
-    let (store, diagnostics) = load(
+    let (mut store, mut diagnostics) = load(
         &DataSource::Directory(directory.clone()),
         &LoadOptions::default(),
     );
+    // The demo store `lsf init` wrote has no plan with a deposit: it gets the one the pre-order
+    // scenario needs, as a store `checkout init` creates does.
+    let deposit = |store: &lsf_core::Store| {
+        store
+            .selling_plan_groups
+            .iter()
+            .flat_map(|group| &group.plans)
+            .any(|plan| plan.checkout_charge != CheckoutCharge::Percentage(100))
+    };
+    if !created
+        && !deposit(&store)
+        && store.product_by_handle("wool-beanie").is_some()
+        && init::write_file(&directory, "pre-order.json", PRE_ORDER, false)?
+    {
+        eprintln!(
+            "{}: added pre-order.json, a selling plan with a deposit for the pre-order scenario",
+            directory.display()
+        );
+        (store, diagnostics) = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+    }
     // Scenarios that already exist are not the store's problem.
     let store_errors = diagnostics
         .items

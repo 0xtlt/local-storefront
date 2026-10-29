@@ -596,3 +596,24 @@ test('the storage of the customer account is apart from the checkout\'s', () => 
   from(host.instances()[0], { type: 'storage', op: 'write', key: 'seen', value: 1, id: 1 });
   assert.match([...values.keys()][0], /:customer-account:gift-message:seen$/);
 });
+
+test('a frame is pending until its target rendered, threw, or said nothing in time', () => {
+  let rendered = 0;
+  const document = new FakeDocument();
+  const window = { addEventListener: () => {}, removeEventListener: () => {}, fetch: async () => ({ ok: true, text: async () => '' }) };
+  const host = createExtensionHost({
+    document, window, sandboxUrl: SANDBOX, getState: () => checkoutState(), dispatch: async () => {},
+    onRendered: () => (rendered += 1), console: { warn() {}, error() {}, debug() {} },
+  });
+  const slot = document.createElement('div');
+  host.attach(slot, BLOCK);
+  assert.equal(host.pending(), 1);
+  const [frame] = host.instances();
+  frame.iframe.contentWindow = { postMessage: () => {} };
+  host.onMessage({ source: frame.iframe.contentWindow, data: { lsf: true, type: 'rendered' } });
+  assert.equal(host.pending(), 0);
+  assert.equal(rendered, 1);
+  // Once: a second word changes nothing.
+  host.onMessage({ source: frame.iframe.contentWindow, data: { lsf: true, type: 'rendered' } });
+  assert.equal(rendered, 1);
+});

@@ -193,7 +193,7 @@ fn current(visit: &Visit<'_>, customer: &Customer, here: &str) -> String {
 pub fn chooser(store: &Store, current: Option<u64>, target: &str) -> String {
     let mark = |active: bool| {
         if active {
-            " <span class=\"badge on\">logged in</span>"
+            " <span class=\"badge on\">current</span>"
         } else {
             ""
         }
