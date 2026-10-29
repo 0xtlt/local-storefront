@@ -256,21 +256,22 @@ radii in the same file.
 ## The home page
 
 `GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
-page says, for tools) starts with the ways in, then says what is wrong, then lists everything
-the checkout can do for the app, in rows whose details open under them. The long lists are
-folded and say how many they hold. It has the look of the checkout and needs no network: it
-sends no request of the Functions, only the checkout UI extensions loaded to check them can call
-a server (see below).
+page says, for tools) has a bar at the top and four tabs. It has the look of the checkout and
+needs no network: it sends no request of the Functions, only the checkout UI extensions loaded to
+check them can call a server (see below).
 
-- **Three cards**, at the top: the **checkout** (open it with the cart of the store data, with
-  [every extension target](#every-extension-target), or in the Shop look), the **[customer
-  account](#customer-account)** (or why there is none: the theme renders its accounts), and the
-  **scenarios** (how many, and where they are).
-- **Problems**, errors first, each on one line, folded under "Show the N errors and M warnings"
-  (or "No problems"): one line whatever the check finds, so that the page does not move when it
-  answers. In each kind, the first eight show, a "Show N more" opens the others. The link on the right of a problem opens a fresh checkout
-  where it shows, as the Open button of a scenario does, and its name is under the link. Its
-  details also link to the rows of this page it is about.
+- **The bar**: the app and its store data, how many problems there are (a link to the Problems
+  tab), "More" (a checkout with [every extension target](#every-extension-target), the Shop
+  look), the [customer account](#customer-account) and "Open the checkout".
+- **Scenarios**: the groups on the left, the scenarios on the right (see below).
+- **Extensions**: the Functions, the checkout UI extensions, or the customer account UI
+  extensions, one list at a time.
+- **Customers**: a card for each customer of the store data, with a checkout logged in as them
+  and their customer account.
+- **Problems**, errors first, each on one line. The first eight of each kind show, a "Show N
+  more" opens the others. The link on the right of a problem opens a fresh checkout where it
+  shows, as the Open button of a scenario does, and its name is under the link. Its details also
+  link to the rows of this page it is about: a link opens the tab of what it leads to.
   - A Function that fails: "Open the run", the first scenario it fails in, with the [Functions
     dialog](#what-runs) open on that run (`?functions=<handle>`, and `:<target>` when the
     Function has several). The details link to the run in each of the other scenarios.
@@ -293,29 +294,28 @@ a server (see below).
     error in the store data, and **a Function that fails when a scenario runs**.
   - Warnings: legacy targets, targets the local checkout knows of and does not run, targets the
     page has no place for, and what else the loader says that does not stop anything.
-- **Every [scenario](#scenarios)**, in groups: the part of their titles before `: `
-  ("Discount: buy 2, get 1" is in "Discount") when two scenarios or more share it, the others
-  first under "Checkouts". A group is folded and says how many scenarios it has, how many have
-  problems, and the worst of their dots; in it, a row drops what the group says of its title. In
-  a group, those with problems come first, then by name. A row has a status
-  dot: the worst of its own problems (it does not validate, it names an extension the app does
-  not have) and of the Functions that fail in it, which are errors, and of the problems of the
+- **The scenarios** ([scenarios](#scenarios)) are in groups: the part of their titles before
+  `: ` ("Discount: buy 2, get 1" is in "Discount") when two scenarios or more share it, the others
+  first under "Checkouts". The menu on the left shows them all or one group, with the worst of
+  their dots and how many they hold; a row in its group drops what the group says of its title.
+  In a group, those with problems come first, then by name. A row has a status dot: the worst
+  of its own problems (it does not validate, it names an extension the app does not have) and of the Functions that fail in it, which are errors, and of the problems of the
   extensions it runs, each at its own level (a Function that is not built makes it an error, a
   legacy target a warning). Then the title, its description (else a few words for its cart,
   buyer, country, language and codes), and Open, a fresh checkout for it. Its details say what it
   runs ("every extension of the app" without an `extensions` list), its name and file, the cart,
   the buyer, what was entered, the settings it overrides, the extensions it runs, and a link that
   opens it with every target. The discounts are listed only when the scenario sets its own
-  (`checkout.discounts`); otherwise they are "the store's N discounts". A search box and chips
-  (with problems, uses Functions, uses UI extensions) filter the scenarios, and open the groups
-  that have some. A link to a row (`#scenario-…`, from a problem) opens its group.
-- **Every customer of the store data** ([login profiles](#log-in-as-a-customer)): name, email,
-  company, tags, orders, saved addresses and country, a link that opens the checkout logged in
-  as them (the first scenario's, for its cart, when there is one), and "Account", their
-  customer account.
-- **Every Function**, **every checkout UI extension** and **every customer account UI
-  extension**, three lists folded under "Show the N …". An extension with targets in both the
-  checkout and the customer account is in both. A problem of an extension that only renders in
+  (`checkout.discounts`); otherwise they are "the store's N discounts". A search box (it looks in
+  every group) and a filter (all, with problems, Functions, UI) narrow the list. A link to a row
+  (`#scenario-…`, from a problem) shows every group and opens the row.
+- **The customers** ([login profiles](#log-in-as-a-customer)): name, email, company, tags,
+  orders, saved addresses and country, "Checkout as …", which opens the checkout logged in as
+  them (the first scenario's, for its cart, when there is one), and "Account", their customer
+  account.
+- **The extensions**: the Functions, the checkout UI extensions and the customer account UI
+  extensions, one list at a time. An extension with targets in both the checkout and the
+  customer account is in both. A problem of an extension that only renders in
   the customer account opens it ("Open the customer account"). One line each: its status, handle and
   name, Function API or capabilities, API version, how many scenarios run it, its targets, and its
   first problem. Its details list each target (the Function API, a `.fetch` target that reaches

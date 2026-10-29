@@ -6751,11 +6751,12 @@ fn the_problems_of_the_home_page_come_first_errors_first() {
     assert_eq!(broken["href"], "#scenario-broken");
     assert_eq!(broken["where"], "checkouts/broken.json");
 
-    // On the page, the ways in come first, then the problems, errors before warnings, each on
-    // a line, folded under how many there are when there are many.
+    // On the page, the bar comes first, with how many problems there are and the ways in; then
+    // the tabs, the problems last, errors before warnings, each on a line.
     let problems_at = position(&html, "data-section=\"problems\"");
-    assert!(position(&html, "data-section=\"open\"") < problems_at);
-    assert!(problems_at < position(&html, "data-section=\"scenarios\""));
+    assert!(position(&html, "data-problem-pill") < position(&html, "data-section=\"scenarios\""));
+    assert!(position(&html, "data-section=\"scenarios\"") < problems_at);
+    assert!(html.contains("data-problem-tab-count>"), "{html}");
     assert!(position(&html, "lsf-hp-group is-error") < position(&html, "lsf-hp-group is-warning"));
     assert!(html.contains(&format!("{errors} errors")), "{html}");
     assert!(html.contains("href=\"#scenario-broken\""));
@@ -7328,7 +7329,7 @@ fn the_home_page_lists_the_customers_to_log_in_as() {
         "{html}"
     );
     assert!(
-        html.contains("<li data-customer=\"alex.morgan@example.com\">"),
+        html.contains("data-customer=\"alex.morgan@example.com\""),
         "{html}"
     );
     assert!(html.contains("B2B · Northwind Hotels"), "{html}");
@@ -8065,17 +8066,20 @@ fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
     assert_eq!(ca["open"], "/account");
     let html = text(&get(&state, "/", "ca-home"));
     std::fs::remove_dir_all(&app).ok();
+    // A list of the Extensions tab, up to the next one.
     let section = |name: &str| {
         let start = position(&html, &format!("data-section=\"{name}\""));
-        let end = html[start..]
-            .find("</section>")
-            .map_or(html.len(), |end| start + end);
+        let rest = &html[start + 1..];
+        let end = rest
+            .find("class=\"lsf-h-extlist\"")
+            .or_else(|| rest.find("</section>"))
+            .map_or(html.len(), |end| start + 1 + end);
         html[start..end].to_string()
     };
     let checkout = section("ui-extensions");
     let account = section("account-extensions");
     assert!(
-        account.contains("Customer account UI extensions"),
+        account.contains("Customer account UI</strong>"),
         "{account}"
     );
     assert!(
