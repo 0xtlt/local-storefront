@@ -10,6 +10,12 @@
 
 html { overflow-x: hidden; }
 
+/* On a desktop, the place of the scrollbar is kept even when nothing scrolls: the page does not
+ * move sideways when a fold opens and it starts to scroll. */
+@media (hover: hover) and (pointer: fine) {
+  html { scrollbar-gutter: stable; }
+}
+
 body {
   margin: 0;
   background: var(--lsf-color-page);
@@ -618,6 +624,8 @@ html:has(.lsf-fn-dialog[open]) { overflow: hidden; }
 .lsf-json-number { color: var(--lsf-code-number); }
 .lsf-json-boolean, .lsf-json-null { color: var(--lsf-code-literal); }
 .lsf-fn-copy {
+  /* As wide for "Copied" as for "Copy". */
+  min-width: 5.5em;
   padding: 2px var(--lsf-space-l);
   border: var(--lsf-border-width) solid var(--lsf-color-border);
   border-radius: 999px;
@@ -862,7 +870,7 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-h-groups { display: flex; flex-direction: column; margin-bottom: var(--lsf-space-s); }
 .lsf-h-group { border-top: var(--lsf-border-width) solid var(--lsf-color-border); }
 .lsf-h-group:first-child { border-top: 0; }
-.lsf-h-group > summary { display: flex; align-items: center; gap: var(--lsf-space-m); min-height: 40px; padding: var(--lsf-space-xs); border-radius: var(--lsf-radius-small); color: var(--lsf-color-text-subdued); }
+.lsf-h-group > summary { display: flex; align-items: center; gap: var(--lsf-space-m); min-height: 40px; white-space: nowrap; padding: var(--lsf-space-xs); border-radius: var(--lsf-radius-small); color: var(--lsf-color-text-subdued); }
 .lsf-h-group > summary:hover { background: var(--lsf-color-bg-subdued); }
 .lsf-h-group > summary > [data-group-dot] { display: inline-flex; }
 .lsf-h-group-name { color: var(--lsf-color-text); }
@@ -905,7 +913,7 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-hp.has-warnings { border-left: 3px solid var(--lsf-color-warning); }
 .lsf-hp.is-clear { padding-bottom: var(--lsf-space-xl); }
 .lsf-hp.is-clear .lsf-h-head { margin-bottom: var(--lsf-space-xs); }
-.lsf-hp-check { display: flex; align-items: center; gap: var(--lsf-space-s); margin: calc(-1 * var(--lsf-space-xs)) 0 var(--lsf-space-m); color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); }
+.lsf-hp-check { display: flex; align-items: center; gap: var(--lsf-space-s); margin: calc(-1 * var(--lsf-space-xs)) 0 var(--lsf-space-m); overflow: hidden; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); white-space: nowrap; text-overflow: ellipsis; }
 .lsf-hp-check.is-error { color: var(--lsf-color-critical); }
 .lsf-hp-clear { display: flex; align-items: center; gap: var(--lsf-space-m); }
 .lsf-hp-group + .lsf-hp-group { margin-top: var(--lsf-space-m); }
@@ -976,6 +984,8 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-h-title > .lsf-h-handle { flex: 0 0 auto; max-width: 100%; padding: 0; background: none; color: var(--lsf-color-text); font-size: 12.5px; font-weight: var(--lsf-font-weight-bold); }
 .lsf-h-name { min-width: 0; overflow: hidden; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); text-overflow: ellipsis; }
 .lsf-h-meta { overflow: hidden; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); text-overflow: ellipsis; white-space: nowrap; }
+/* The line a row keeps for what loading its bundle finds: one line tall while empty. */
+.lsf-h-issue:empty::before { content: '\200b'; }
 .lsf-h-meta.is-error { color: var(--lsf-color-critical); }
 .lsf-h-meta.is-warning { color: var(--lsf-color-warning); }
 .lsf-h-desc { color: var(--lsf-color-text-subdued); }
@@ -1012,7 +1022,11 @@ body[data-variant='shop'] { background: var(--lsf-color-page); }
 .lsf-h-chips button { height: 28px; padding: 0 var(--lsf-space-l); border: var(--lsf-border-width) solid var(--lsf-color-border); border-radius: 999px; background: var(--lsf-color-bg); color: var(--lsf-color-text); font: inherit; font-size: var(--lsf-size-s); cursor: pointer; }
 .lsf-h-chips button:hover { border-color: var(--lsf-color-border-emphasis); }
 .lsf-h-chips button[aria-pressed='true'] { border-color: var(--lsf-color-text); background: var(--lsf-color-text); color: var(--lsf-color-bg); }
-.lsf-h-shown { margin-left: auto; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); }
+.lsf-h-shown { display: grid; justify-items: end; margin-left: auto; color: var(--lsf-color-text-subdued); font-size: var(--lsf-size-s); white-space: nowrap; }
+/* The count and its longest text in the same cell: the longest sets the width, and stays unseen. */
+.lsf-h-shown > * { grid-area: 1 / 1; }
+.lsf-h-shown-size { visibility: hidden; }
+.lsf-h-search:disabled, .lsf-h-chips button:disabled { cursor: progress; }
 
 /* The customers and the ways to open a checkout. */
 .lsf-h-open .lsf-h-actions { margin-bottom: var(--lsf-space-xs); }

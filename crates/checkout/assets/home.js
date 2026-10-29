@@ -143,7 +143,9 @@ function setUpFilter(document) {
       apply();
     });
   }
-  box.hidden = false;
+  // The filter is on the page from the start, waiting for this script: it only wakes up.
+  query.disabled = false;
+  for (const chip of chips) chip.disabled = false;
   apply();
   return apply;
 }
@@ -152,6 +154,7 @@ function say(section, text) {
   const line = section.querySelector('[data-check-line]');
   if (!line) return;
   line.textContent = text;
+  line.title = text;
   line.classList.add('is-error');
 }
 
@@ -360,7 +363,10 @@ function report(document, { row, problem }) {
       const warnings = groups.querySelector('.lsf-hp-group.is-warning');
       if (severity === 'error' && warnings) groups.insertBefore(group, warnings);
       else groups.appendChild(group);
+      // The fold takes the place of "No problems", on the same line.
       section.querySelector('.lsf-hp-clear')?.remove();
+      const fold = section.querySelector('.lsf-hp-all');
+      if (fold) fold.hidden = false;
     }
     const line = element(document, 'li', { class: `lsf-hp-row is-${severity}`, 'data-problem': 'load', 'data-subject': handle },
       element(document, 'details', {},
@@ -408,8 +414,18 @@ function report(document, { row, problem }) {
     row.dataset.status = severity;
     row.querySelector('.lsf-dot')?.replaceWith(dot(document, severity));
   }
-  row.querySelector('.lsf-h-main')?.appendChild(
-    element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, ...richText(document, message)));
+  // On the line the row keeps for it: the row does not grow.
+  const issue = row.querySelector('[data-issue]');
+  if (issue && issue.childNodes.length === 0) {
+    issue.setAttribute('class', `lsf-h-meta is-${severity}`);
+    issue.setAttribute('title', message);
+    issue.append(...richText(document, message));
+  } else if (issue) {
+    issue.append(' · ', ...richText(document, message));
+  } else {
+    row.querySelector('.lsf-h-main')?.appendChild(
+      element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, ...richText(document, message)));
+  }
   markScenarios(document, handle, severity);
 }
 

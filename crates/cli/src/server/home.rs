@@ -50,9 +50,6 @@ fn is_listed_target(target: &str) -> bool {
 /// How many problems a group shows before the others are folded.
 const SHOWN_PROBLEMS: usize = 8;
 
-/// Past this many problems, the list is folded under one line that says how many.
-const FOLDED_PROBLEMS: usize = 5;
-
 fn esc(text: &str) -> String {
     escape_html(text)
 }
@@ -1648,6 +1645,8 @@ fn problems_html(home: &Json, check_now: &str) -> String {
         section_head("lsf-h-problems", "Problems", &counts.join(" · ")),
         check_line(home, check_now),
     );
+    // One line whatever the check finds, so that nothing under it moves: that there are none,
+    // or the fold of the list (hidden while it is empty, for the problems the page may find).
     if problems.is_empty() {
         out.push_str(&format!(
             "<p class=\"lsf-hp-clear\">{}{}</p>",
@@ -1658,20 +1657,14 @@ fn problems_html(home: &Json, check_now: &str) -> String {
                 "No problems."
             }
         ));
-    } else {
-        out.push_str(
-            "<p class=\"lsf-muted lsf-h-note\">What the app, the store data and the scenarios get wrong. \
-             Each one opens the checkout where it shows.</p>",
-        );
     }
-    // Many problems are folded under one line that says how many: the ways in come first.
-    let folded = problems.len() > FOLDED_PROBLEMS;
-    if folded {
-        out.push_str(&format!(
-            "<details class=\"lsf-hp-all\"><summary data-problem-summary>Show the {}</summary>",
-            esc(&counts.join(" and "))
-        ));
-    }
+    out.push_str(&format!(
+        "<details class=\"lsf-hp-all\"{}><summary data-problem-summary>Show the {}</summary>\
+         <p class=\"lsf-muted lsf-h-note\">What the app, the store data and the scenarios get wrong. \
+         Each one opens the checkout where it shows.</p>",
+        if problems.is_empty() { " hidden" } else { "" },
+        esc(&counts.join(" and "))
+    ));
     out.push_str("<div class=\"lsf-hp-groups\" data-problem-groups>");
     for (severity, title) in [("error", "Errors"), ("warning", "Warnings")] {
         let rows: Vec<String> = problems
@@ -1697,11 +1690,7 @@ fn problems_html(home: &Json, check_now: &str) -> String {
         }
         out.push_str("</div>");
     }
-    out.push_str("</div>");
-    if folded {
-        out.push_str("</details>");
-    }
-    out.push_str("</section>");
+    out.push_str("</div></details></section>");
     out
 }
 
@@ -2033,11 +2022,16 @@ fn issue_line(extension: &Json, dir: &str) -> String {
             ),
         ),
         (None, None, Some(problem)) => ("warning", text_of(&problem["message"]).to_string()),
+        // A UI extension whose bundle the page loads keeps the line of what loading it finds:
+        // the row does not grow when it is found.
+        (None, None, None) if extension["script"].is_string() => {
+            return "<span class=\"lsf-h-meta lsf-h-issue\" data-issue></span>".to_string();
+        }
         (None, None, None) => return String::new(),
     };
     let others = problems.len() + failures.len() - 1;
     format!(
-        "<span class=\"lsf-h-meta is-{severity}\" title=\"{}\">{}{}</span>",
+        "<span class=\"lsf-h-meta is-{severity}\" title=\"{}\" data-issue>{}{}</span>",
         esc(&text),
         message_html(&text, dir),
         if others > 0 {
@@ -2397,16 +2391,22 @@ pub fn render(home: &Json, check_now: &str) -> String {
         main.push_str(
             "<p class=\"lsf-muted lsf-h-note\">Open one to get a checkout of its own. A dot says how it went: \
              green, it opens and its Functions run; amber or red, something is wrong (the row says what).</p>\
-             <div class=\"lsf-h-filter\" data-filter hidden>\
+             <div class=\"lsf-h-filter\" data-filter>\
              <input class=\"lsf-h-search\" type=\"search\" placeholder=\"Filter by title, file or extension\" \
-             aria-label=\"Filter the scenarios\" data-filter-query>\
+             aria-label=\"Filter the scenarios\" data-filter-query disabled>\
              <div class=\"lsf-h-chips\" role=\"group\" aria-label=\"Show\">\
-             <button type=\"button\" data-filter-chip=\"all\" aria-pressed=\"true\">All</button>\
-             <button type=\"button\" data-filter-chip=\"problems\" aria-pressed=\"false\">With problems</button>\
-             <button type=\"button\" data-filter-chip=\"functions\" aria-pressed=\"false\">Uses Functions</button>\
-             <button type=\"button\" data-filter-chip=\"ui\" aria-pressed=\"false\">Uses UI extensions</button></div>\
-             <p class=\"lsf-h-shown\" data-filter-count aria-live=\"polite\"></p></div>",
+             <button type=\"button\" data-filter-chip=\"all\" aria-pressed=\"true\" disabled>All</button>\
+             <button type=\"button\" data-filter-chip=\"problems\" aria-pressed=\"false\" disabled>With problems</button>\
+             <button type=\"button\" data-filter-chip=\"functions\" aria-pressed=\"false\" disabled>Uses Functions</button>\
+             <button type=\"button\" data-filter-chip=\"ui\" aria-pressed=\"false\" disabled>Uses UI extensions</button></div>",
         );
+        // The count takes the room of its longest text, so that the chips stay where they are.
+        main.push_str(&format!(
+            "<p class=\"lsf-h-shown\"><span class=\"lsf-h-shown-size\" aria-hidden=\"true\">{total} of {total} scenarios shown</span>\
+             <span data-filter-count aria-live=\"polite\">{}</span></p></div>",
+            count(scenarios.len(), "scenario", "scenarios"),
+            total = scenarios.len(),
+        ));
         let groups = scenario_groups(&scenarios);
         if groups.len() > 1 {
             main.push_str("<div class=\"lsf-h-groups\">");

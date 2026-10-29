@@ -7186,7 +7186,10 @@ fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
         "{html}"
     );
     assert!(html.contains("Runs 1 Function and 1 UI extension"));
-    assert!(html.contains("data-filter hidden"));
+    // The filter is there from the start, waiting for the script, and its count takes the room
+    // of its longest text: nothing moves when the script wakes it.
+    assert!(html.contains("data-filter-query disabled"), "{html}");
+    assert!(html.contains("6 of 6 scenarios shown</span>"), "{html}");
 }
 
 #[test]

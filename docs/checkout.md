@@ -266,9 +266,9 @@ a server (see below).
   [every extension target](#every-extension-target), or in the Shop look), the **[customer
   account](#customer-account)** (or why there is none: the theme renders its accounts), and the
   **scenarios** (how many, and where they are).
-- **Problems**, errors first, each on one line, under a line that says what they are. Past five,
-  they are folded under "Show the N errors and M warnings". In each kind, the first eight show,
-  a "Show N more" opens the others. The link on the right of a problem opens a fresh checkout
+- **Problems**, errors first, each on one line, folded under "Show the N errors and M warnings"
+  (or "No problems"): one line whatever the check finds, so that the page does not move when it
+  answers. In each kind, the first eight show, a "Show N more" opens the others. The link on the right of a problem opens a fresh checkout
   where it shows, as the Open button of a scenario does, and its name is under the link. Its
   details also link to the rows of this page it is about.
   - A Function that fails: "Open the run", the first scenario it fails in, with the [Functions
