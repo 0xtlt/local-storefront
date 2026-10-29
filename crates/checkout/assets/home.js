@@ -1,11 +1,12 @@
 // The home page of `lsf checkout`. The page is complete without this script; it adds:
-// - the tabs (scenarios, extensions, customers, problems), the menu of the groups of scenarios
-//   and the kinds of extensions: without the script, the first tab shows;
+// - the tabs (the scenarios, the Functions, the checkout UI extensions, the customer account UI
+//   extensions, the customers, the problems) and the menu of the groups of scenarios: without
+//   the script, the first tab shows;
 // - the filter of the scenarios: a search on their title, file and extension handles, and
 //   chips (all, with problems, uses Functions, uses UI extensions), with the count of the rows
 //   shown. The groups (`data-group`) say how many of their scenarios have problems;
-// - a link to a part of the page (`#problems`, `#scenario-…`, `#function-…`) opens its tab, its
-//   group or its list, and the folds around it;
+// - a link to a part of the page (`#problems`, `#scenario-…`, `#function-…`) opens its tab and
+//   the folds around it;
 // - the check of the Functions: when the server has not run the Functions of the scenarios yet,
 //   the page asks `/__lsf/checkouts/check` once it is shown, and puts what it found in place
 //   (the list of problems, the rows of the scenarios and Functions that fail, the order of the
@@ -116,19 +117,13 @@ export function updateGroups(document, selected = null) {
   setDot(document.querySelector('[data-group-nav=""] [data-group-dot]'), worstOf(all));
 }
 
-/** The tab of the page that shows `id` (`scenarios`, `extensions`, `customers`, `problems`). */
+/** The tab of the page that shows `id` (`scenarios`, `functions`, `customers`, `problems`, …). */
 export function selectTab(document, id) {
   const panels = [...document.querySelectorAll('[data-panel]')];
   if (!panels.some((panel) => panel.getAttribute('data-panel') === id)) return false;
   for (const panel of panels) panel.hidden = panel.getAttribute('data-panel') !== id;
   for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-selected', String(tab.getAttribute('data-tab') === id));
   return true;
-}
-
-/** The list of the Extensions tab that shows: `functions`, `ui-extensions`, `account-extensions`. */
-export function selectExtensions(document, id) {
-  for (const list of document.querySelectorAll('[data-ext-list]')) list.hidden = list.getAttribute('data-ext-list') !== id;
-  for (const button of document.querySelectorAll('[data-ext-nav]')) button.setAttribute('aria-pressed', String(button.getAttribute('data-ext-nav') === id));
 }
 
 function setUpTabs(document, window) {
@@ -147,9 +142,6 @@ function setUpTabs(document, window) {
       selectTab(document, id);
       window.history?.replaceState?.(window.history.state, '', `#${id}`);
     });
-  }
-  for (const button of document.querySelectorAll('[data-ext-nav]')) {
-    button.addEventListener('click', () => selectExtensions(document, button.getAttribute('data-ext-nav')));
   }
 }
 
@@ -573,8 +565,6 @@ export function reveal(document, id, choose = null) {
   for (let node = target; node; node = node.parentNode) {
     const panel = node.getAttribute?.('data-panel');
     if (panel) selectTab(document, panel);
-    const list = node.getAttribute?.('data-ext-list');
-    if (list) selectExtensions(document, list);
     // A scenario shows among all of them, whatever group was chosen.
     if (node.getAttribute?.('data-group') !== null && node.getAttribute?.('data-group') !== undefined && choose) choose(null);
     if (node.localName === 'details' && node !== target) node.open = true;

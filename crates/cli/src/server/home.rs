@@ -2391,6 +2391,8 @@ fn customer_html(customer: &Json, account: Option<&str>) -> String {
 /// A list of extensions of the Extensions tab: its rows, and what it says of them.
 struct ExtensionList {
     extensions: Vec<Json>,
+    /// Its tab: `functions`, `checkout-ui-extensions`, `customer-account-ui-extensions`.
+    tab: &'static str,
     /// Its name in the page: `functions`, `ui-extensions`, `account-extensions`.
     section: &'static str,
     heading: &'static str,
@@ -2455,6 +2457,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
     let lists = [
         ExtensionList {
             extensions: home["functions"].as_array().cloned().unwrap_or_default(),
+            tab: "functions",
             section: "functions",
             heading: "Functions",
             row: function_html,
@@ -2463,8 +2466,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
         },
         ExtensionList {
             extensions: checkout_ui,
+            tab: "checkout-ui-extensions",
             section: "ui-extensions",
-            heading: "Checkout UI",
+            heading: "Checkout UI extensions",
             row: ui_extension_html,
             empty: "The app has no checkout UI extension.",
             about: format!(
@@ -2475,8 +2479,9 @@ pub fn render(home: &Json, check_now: &str) -> String {
         },
         ExtensionList {
             extensions: account_ui,
+            tab: "customer-account-ui-extensions",
             section: "account-extensions",
-            heading: "Customer account UI",
+            heading: "Customer account UI extensions",
             row: ui_extension_html,
             empty: "The app has no customer account UI extension.",
             about: match account_link {
@@ -2491,7 +2496,6 @@ pub fn render(home: &Json, check_now: &str) -> String {
             },
         },
     ];
-    let extension_count: usize = lists.iter().map(|list| list.extensions.len()).sum();
     let n = |count: usize| format!("<span class=\"lsf-h-n\">{count}</span>");
 
     // The bar: the app, the problems, the ways in.
@@ -2517,7 +2521,10 @@ pub fn render(home: &Json, check_now: &str) -> String {
             .unwrap_or_default(),
         esc(text_of(&links["checkout"])),
         tab_html("scenarios", "Scenarios", n(scenarios.len()), true),
-        tab_html("extensions", "Extensions", n(extension_count), false),
+        lists
+            .iter()
+            .map(|list| tab_html(list.tab, list.heading, n(list.extensions.len()), false))
+            .collect::<String>(),
         tab_html("customers", "Customers", n(customers.len()), false),
         tab_html(
             "problems",
@@ -2625,23 +2632,12 @@ pub fn render(home: &Json, check_now: &str) -> String {
     }
     body.push_str("</div></section>");
 
-    // Extensions: Functions, checkout UI, customer account UI.
-    body.push_str(
-        "<section class=\"lsf-h-panel\" id=\"panel-extensions\" role=\"tabpanel\" aria-labelledby=\"tab-extensions\" data-panel=\"extensions\" hidden>\
-         <span id=\"extensions\" class=\"lsf-h-anchor\"></span><div class=\"lsf-h-card\"><div class=\"lsf-h-cardhead\"><div><h2>Extensions</h2>\
-         <p class=\"lsf-muted\">The extensions of the app, and what is wrong with them.</p></div>\
-         <div class=\"lsf-h-seg\" role=\"group\" aria-label=\"Kind\">",
-    );
-    for (index, list) in lists.iter().enumerate() {
-        body.push_str(&format!(
-            "<button type=\"button\" data-ext-nav=\"{}\" aria-pressed=\"{}\">{} <span class=\"lsf-h-n\">{}</span></button>",
-            list.section,
-            index == 0,
-            list.heading,
-            list.extensions.len()
-        ));
-    }
-    body.push_str("</div></div>");
+    // The extensions: a tab for the Functions, one for the checkout UI extensions, one for the
+    // customer account UI extensions. The others of the app close the last one.
+    let others = home["otherExtensions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     for (index, list) in lists.iter().enumerate() {
         let with_problems = list
             .extensions
@@ -2649,17 +2645,17 @@ pub fn render(home: &Json, check_now: &str) -> String {
             .filter(|extension| matches!(text_of(&extension["status"]), "error" | "warning"))
             .count();
         body.push_str(&format!(
-            "<div class=\"lsf-h-extlist\" data-section=\"{}\" data-ext-list=\"{}\"{}>\
-             <p class=\"lsf-muted lsf-h-note\"><strong class=\"lsf-h-extname\">{}</strong> {}{}</p>",
+            "<section class=\"lsf-h-panel\" id=\"panel-{tab}\" role=\"tabpanel\" aria-labelledby=\"tab-{tab}\" data-panel=\"{tab}\" hidden>\
+             <span id=\"{tab}\" class=\"lsf-h-anchor\"></span><div class=\"lsf-h-card\" data-section=\"{}\">\
+             <div class=\"lsf-h-cardhead\"><div><h2>{}</h2><p class=\"lsf-muted\">{}{}</p></div></div>",
             list.section,
-            list.section,
-            if index == 0 { "" } else { " hidden" },
             list.heading,
             list.about,
             match with_problems {
                 0 => String::new(),
                 n => format!(" <span class=\"lsf-h-group-problems\">{n} with problems</span>"),
-            }
+            },
+            tab = list.tab,
         ));
         if list.extensions.is_empty() {
             body.push_str(&format!(
@@ -2667,37 +2663,32 @@ pub fn render(home: &Json, check_now: &str) -> String {
                 list.empty
             ));
         } else {
-            body.push_str("<ul class=\"lsf-h-list\">");
+            body.push_str("<ul class=\"lsf-h-list lsf-h-extlist\">");
             for extension in &list.extensions {
                 body.push_str(&(list.row)(extension, dir));
             }
             body.push_str("</ul>");
         }
-        body.push_str("</div>");
+        if index == lists.len() - 1 && !others.is_empty() {
+            let items: String = others
+                .iter()
+                .map(|other| {
+                    format!(
+                        "<li>{} <span class=\"lsf-muted\">{}</span></li>",
+                        code(text_of(&other["handle"])),
+                        esc(text_of(&other["type"]))
+                    )
+                })
+                .collect();
+            body.push_str(&format!(
+                "<div class=\"lsf-h-others\" data-section=\"other\"><h3>Other extensions <span class=\"lsf-h-n\">{}</span></h3>\
+                 <p class=\"lsf-muted lsf-h-note\">Not part of the checkout or the customer account, so not used here.</p>\
+                 <ul class=\"lsf-h-plain\">{items}</ul></div>",
+                others.len()
+            ));
+        }
+        body.push_str("</div></section>");
     }
-    // The others.
-    let others = home["otherExtensions"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if !others.is_empty() {
-        let list: String = others
-            .iter()
-            .map(|other| {
-                format!(
-                    "<li>{} <span class=\"lsf-muted\">{}</span></li>",
-                    code(text_of(&other["handle"])),
-                    esc(text_of(&other["type"]))
-                )
-            })
-            .collect();
-        body.push_str(&format!(
-            "<div class=\"lsf-h-others\" data-section=\"other\"><h3>Other extensions <span class=\"lsf-h-n\">{}</span></h3>\
-             <p class=\"lsf-muted lsf-h-note\">Not part of the checkout, so not used here.</p><ul class=\"lsf-h-plain\">{list}</ul></div>",
-            others.len()
-        ));
-    }
-    body.push_str("</div></section>");
 
     // Customers.
     body.push_str(

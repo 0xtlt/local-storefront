@@ -256,7 +256,7 @@ radii in the same file.
 ## The home page
 
 `GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
-page says, for tools) has a bar at the top and four tabs. It has the look of the checkout and
+page says, for tools) has a bar at the top and six tabs. It has the look of the checkout and
 needs no network: it sends no request of the Functions, only the checkout UI extensions loaded to
 check them can call a server (see below).
 
@@ -264,8 +264,8 @@ check them can call a server (see below).
   tab), "More" (a checkout with [every extension target](#every-extension-target), the Shop
   look), the [customer account](#customer-account) and "Open the checkout".
 - **Scenarios**: the groups on the left, the scenarios on the right (see below).
-- **Extensions**: the Functions, the checkout UI extensions, or the customer account UI
-  extensions, one list at a time.
+- **Functions**, **Checkout UI extensions**, **Customer account UI extensions**: a tab for
+  each kind of extension of the app.
 - **Customers**: a card for each customer of the store data, with a checkout logged in as them
   and their customer account.
 - **Problems**, errors first, each on one line. The first eight of each kind show, a "Show N
@@ -314,8 +314,8 @@ check them can call a server (see below).
   them (the first scenario's, for its cart, when there is one), and "Account", their customer
   account.
 - **The extensions**: the Functions, the checkout UI extensions and the customer account UI
-  extensions, one list at a time. An extension with targets in both the checkout and the
-  customer account is in both. A problem of an extension that only renders in
+  extensions, each in its tab. An extension with targets in both the checkout and the customer
+  account is in both. A problem of an extension that only renders in
   the customer account opens it ("Open the customer account"). One line each: its status, handle and
   name, Function API or capabilities, API version, how many scenarios run it, its targets, and its
   first problem. Its details list each target (the Function API, a `.fetch` target that reaches

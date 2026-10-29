@@ -8079,8 +8079,17 @@ fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
     let checkout = section("ui-extensions");
     let account = section("account-extensions");
     assert!(
-        account.contains("Customer account UI</strong>"),
+        account.contains("<h2>Customer account UI extensions</h2>"),
         "{account}"
+    );
+    // Each kind of extension has a tab of its own, named in full.
+    assert!(
+        html.contains(">Checkout UI extensions<span class=\"lsf-h-n\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains(">Customer account UI extensions<span class=\"lsf-h-n\">"),
+        "{html}"
     );
     assert!(
         account.contains("data-ui-extension=\"ca-test\""),
