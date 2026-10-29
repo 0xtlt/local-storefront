@@ -1,0 +1,3 @@
+fragment A on User { friends { id } }
+fragment B on User { friends { name } }
+query TF { me { ...A ...B } }

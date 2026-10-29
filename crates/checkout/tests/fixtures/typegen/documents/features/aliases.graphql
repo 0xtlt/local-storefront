@@ -1,0 +1,1 @@
+query Alias { me { n: name, id, mail: email, __typename, t: __typename, friends { id, name2: name } , f2: friends { id } } }

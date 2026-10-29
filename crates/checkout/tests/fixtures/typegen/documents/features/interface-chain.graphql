@@ -1,0 +1,1 @@
+query IC { everything { ... on Node { id } } search(q: "") { ... on Named { name } ... on Node { id } } }

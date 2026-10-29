@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ValueEnum;
-use lsf_checkout::app::{self, App, Selection};
+use lsf_checkout::app::{self, App, Build, Selection};
 use lsf_checkout::pipeline::DELIVERY_GROUP_HANDLE;
 use lsf_checkout::{
     Address, CheckoutConfig, CheckoutState, DeliveryKind, DiscountClass, DiscountConfig, Metafield,
@@ -98,35 +98,183 @@ pub fn print_app_diagnostics(app: &App, selection: &Selection) {
     }
 }
 
-/// Runs the build command of each selected Function, in its directory, as `shopify app build`
-/// does.
+/// Builds the selected extensions, as `shopify app build` does: the Functions
+/// ([`build_functions`]), then the checkout UI extensions ([`build_ui_extensions`]).
 pub fn build(app: &App, selection: &Selection) -> Result<(), String> {
+    build_functions(app, selection)?;
+    build_ui_extensions(app, selection)
+}
+
+/// Builds each selected Function: its build command, run in its directory, or for a JavaScript
+/// Function without one, lsf's build of it.
+pub fn build_functions(app: &App, selection: &Selection) -> Result<(), String> {
     for function in selection.functions(app) {
-        let Some(command) = &function.build_command else {
-            eprintln!("build:  {} has no build command", function.handle);
-            continue;
-        };
-        eprintln!("build:  {}: {command}", function.handle);
-        let status = build_command(command, &function.dir)
-            .status()
-            .map_err(|error| format!("cannot run the build of {}: {error}", function.handle))?;
-        if !status.success() {
-            return Err(format!(
-                "the build of {} failed ({status})",
-                function.handle
-            ));
+        match function.build() {
+            None => eprintln!("build:  {} has no build command", function.handle),
+            Some(Build::Command(command)) => {
+                eprintln!("build:  {}: {command}", function.handle);
+                let status = build_command(command, &function.dir)
+                    .status()
+                    .map_err(|error| {
+                        format!("cannot run the build of {}: {error}", function.handle)
+                    })?;
+                if !status.success() {
+                    return Err(format!(
+                        "the build of {} failed ({status})",
+                        function.handle
+                    ));
+                }
+                link(function)?;
+            }
+            Some(Build::JavaScript) => {
+                eprintln!("build:  {}: JavaScript, built by lsf", function.handle);
+                lsf_checkout::javascript::build(function, &app.root)
+                    .map_err(|error| format!("the build of {} failed: {error}", function.handle))?;
+            }
         }
     }
     Ok(())
 }
 
+/// What `shopify app build` does after a Function's build command: a module that calls the
+/// Function Wasm API by name (a Rust Function's, as `cargo build` writes it) is linked to the
+/// host's provider with Shopify's trampoline. A module the command did not write is left to the
+/// diagnostics that say so.
+pub fn link(function: &app::FunctionExtension) -> Result<(), String> {
+    if !function.wasm_path.is_file() {
+        return Ok(());
+    }
+    if lsf_checkout::trampoline::apply(&function.wasm_path)
+        .map_err(|error| format!("the build of {} failed: {error}", function.handle))?
+    {
+        eprintln!(
+            "build:  {}: linked to the Function Wasm API (shopify-function-trampoline)",
+            function.handle
+        );
+    }
+    Ok(())
+}
+
+/// Bundles each selected checkout UI extension that names its sources (`module`), as
+/// `shopify app build` does, without Node. One that does not is left as it is: its bundle is
+/// the one `dist/` holds.
+pub fn build_ui_extensions(app: &App, selection: &Selection) -> Result<(), String> {
+    for extension in selection.ui_extensions(app) {
+        if !extension.buildable() {
+            continue;
+        }
+        let started = std::time::Instant::now();
+        lsf_checkout::javascript::build_extension(extension, &app.root)
+            .map_err(|error| format!("the build of {} failed: {error}", extension.handle))?;
+        eprintln!(
+            "build:  {}: built by lsf in {}ms",
+            extension.handle,
+            started.elapsed().as_millis()
+        );
+    }
+    Ok(())
+}
+
+/// The app `dir` is in: the closest folder, from `dir` up, that has a `shopify.app.toml`.
+pub fn app_around(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .find(|dir| dir.join("shopify.app.toml").is_file())
+        .map(Path::to_path_buf)
+}
+
+/// The app of a command: `--app`, or the one the current folder is in.
+pub fn app_of(app: Option<&Path>, command: &str) -> Result<PathBuf, String> {
+    match app {
+        Some(app) => Ok(app.to_path_buf()),
+        None => std::env::current_dir()
+            .ok()
+            .and_then(|dir| app_around(&dir))
+            .ok_or_else(|| {
+                format!(
+                    "`{command}` needs the app: run it in the app's folder, or give `--app DIR` \
+                     (or LSF_APP)"
+                )
+            }),
+    }
+}
+
+/// `lsf function build` and `lsf checkout build`: builds the extensions of an app (`handles`, or
+/// all), with `build`, and says what it wrote.
+pub fn run_build(
+    app: Option<&Path>,
+    handles: &[String],
+    command: &str,
+    build: fn(&App, &Selection) -> Result<(), String>,
+) -> Result<std::process::ExitCode, String> {
+    let app_dir = app_of(app, command)?;
+    let shopify_app = app::load(&app_dir)?;
+    let selection = Selection::resolve(&shopify_app, handles)?;
+    build(&shopify_app, &selection)?;
+    let shopify_app = app::load(&app_dir)?;
+    let mut built = 0;
+    for function in selection.functions(&shopify_app) {
+        if function.built() {
+            eprintln!(
+                "built:  {}: {}",
+                function.handle,
+                function.wasm_path.display()
+            );
+            built += 1;
+        }
+    }
+    for extension in selection.ui_extensions(&shopify_app) {
+        if extension.buildable() && extension.built() {
+            eprintln!(
+                "built:  {}: {}",
+                extension.handle,
+                extension.bundle.display()
+            );
+            built += 1;
+        }
+    }
+    if built == 0 {
+        return Err(
+            "nothing was built: the app has no extension lsf or its build command builds"
+                .to_string(),
+        );
+    }
+    Ok(std::process::ExitCode::SUCCESS)
+}
+
+/// The command `--watch` runs to build a JavaScript Function: lsf itself
+/// (`lsf function build`), in a process of its own as any build.
+pub fn javascript_build_command(app_root: &Path, handle: &str) -> String {
+    let lsf = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("lsf"));
+    format!(
+        "{} function build --app {} {}",
+        shell_quote(&lsf.to_string_lossy()),
+        shell_quote(&app_root.to_string_lossy()),
+        shell_quote(handle)
+    )
+}
+
+/// `text` as one word of the shell [`build_command`] runs (a path on Windows has no `"`).
+fn shell_quote(text: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{text}\"")
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
+}
+
 /// The build command of a Function, to run in its folder `dir` through the shell.
 pub fn build_command(command: &str, dir: &Path) -> Command {
-    let mut process = if cfg!(windows) {
+    #[cfg(windows)]
+    let mut process = {
+        use std::os::windows::process::CommandExt as _;
         let mut process = Command::new("cmd");
-        process.args(["/C", command]);
+        // The command as written: an argument would be quoted again the way programs read
+        // their arguments, which cmd does not. `/S` takes off the quotes around it only.
+        process.raw_arg(format!("/S /C \"{command}\""));
         process
-    } else {
+    };
+    #[cfg(not(windows))]
+    let mut process = {
         let mut process = Command::new("sh");
         process.args(["-c", command]);
         process
@@ -435,6 +583,65 @@ mod tests {
             overrides: Vec::new(),
             problems: Vec::new(),
         }
+    }
+
+    /// A Rust Function's build command writes the module `cargo build` writes; the build links
+    /// it to the Function Wasm API, as `shopify app build` does, and it runs.
+    #[test]
+    fn a_build_links_what_a_build_command_wrote_with_shopify_s_trampoline() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures");
+        let root = std::env::temp_dir().join(format!("lsf-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("extensions/limit");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(root.join("shopify.app.toml"), "name = \"App\"\n").unwrap();
+        std::fs::copy(
+            fixtures.join("app/extensions/quantity-limit/src/run.graphql"),
+            dir.join("src/run.graphql"),
+        )
+        .unwrap();
+        let raw = fixtures.join("trampoline/quantity-limit.raw.wasm");
+        std::fs::write(
+            dir.join("shopify.extension.toml"),
+            format!(
+                r#"api_version = "2027-01"
+
+[[extensions]]
+name = "Limit"
+handle = "limit"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "purchase.validation.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "mkdir -p dist && cp '{}' dist/function.wasm"
+"#,
+                raw.display()
+            ),
+        )
+        .unwrap();
+        let shopify_app = app::load(&root).unwrap();
+        build_functions(&shopify_app, &Selection::all()).unwrap();
+        let module = dir.join("dist/function.wasm");
+        assert_eq!(
+            std::fs::read(&module).unwrap(),
+            std::fs::read(fixtures.join("app/extensions/quantity-limit/dist/function.wasm"))
+                .unwrap()
+        );
+        let execution = lsf_checkout::runner::run(
+            &module,
+            "run",
+            &serde_json::json!({
+                "cart": { "lines": [{ "quantity": 1 }], "buyerIdentity": null },
+                "buyerJourney": { "step": "CHECKOUT_COMPLETION" },
+                "validation": { "metafield": null }
+            }),
+        );
+        assert_eq!(execution.error, None, "{}", execution.logs);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

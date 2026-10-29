@@ -94,6 +94,33 @@ npx local-storefront checkout init --app ../my-app
 | `--app <dir>` | `LSF_APP` | The app the scenarios are made for. |
 | `--force` | | Overwrites the scenarios that exist. |
 
+## checkout build
+
+`npx local-storefront checkout build [handle]... --app <dir>`
+
+Builds the extensions of an app, as `shopify app build` does, without Node: its Functions (as
+`function build`) and its checkout UI extensions that name their sources (`module`), bundled into
+`dist/<handle>.js`. Guide: [checkout](checkout.md#what-lsf-builds-without-node).
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The extensions to build. Every extension of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+
+## function build
+
+`npx local-storefront function build [handle]... --app <dir>`
+
+Builds the Functions of an app, as `shopify app build` does. A Function written in JavaScript or
+TypeScript without a build command is built by lsf, without Node: its types
+(`generated/api.ts`), `dist/function.js`, then its Wasm module. The others run their
+`[extensions.build] command`. Guide: [checkout](checkout.md#javascript-and-typescript-functions).
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `[handle]...` | | The Functions to build. Every Function of the app when none is given. |
+| `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+
 ## function run
 
 `npx local-storefront function run [handle]... --app <dir>`
@@ -110,7 +137,7 @@ npx local-storefront function run volume-discount --app ../my-app --session '{"c
 |---|---|---|
 | `[handle]...` | | The Functions to run. Every Function of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Required. |
-| `--build` | | Runs the build command of each Function first. |
+| `--build` | | Builds each Function first, as `function build` does. |
 | `--scenario <name>` | | A [checkout scenario](data-format.md#checkout-scenarios) of the store data (`checkouts/<name>.json`): its cart, buyer, language, `checkout` settings and the extensions it names. `--session`, `--checkout` and `--locale` go on top of it. |
 | `--session <file or JSON>` | | The session to run for, as `PUT /__lsf/session` takes it. Defaults to the `session` of the store data. |
 | `--checkout <file or JSON>` | | What the buyer entered: `email`, `phone`, `shippingAddress`, `selectedDelivery`, `selectedPayment`, `discountCodes`, `metafields`. |

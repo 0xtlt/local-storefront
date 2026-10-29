@@ -1,0 +1,2 @@
+fragment F on User { id }
+query Q1 { me { ...F } }

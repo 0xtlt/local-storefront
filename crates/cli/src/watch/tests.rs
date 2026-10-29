@@ -433,6 +433,53 @@ fn the_build_outputs_and_the_tools_folders_are_not_watched() {
 }
 
 #[test]
+fn a_javascript_function_is_built_by_lsf_without_watching_its_types() {
+    let app = TempApp::new("javascript");
+    app.write(
+        "extensions/bulk/shopify.extension.toml",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Bulk"
+handle = "bulk"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+"#,
+    );
+    app.write(
+        "extensions/bulk/package.json",
+        r#"{ "codegen": { "schema": "schema.graphql", "documents": "src/*.graphql",
+  "generates": { "./generated/api.ts": { "plugins": ["typescript", "typescript-operations"] } } } }"#,
+    );
+    app.write("extensions/bulk/src/index.ts", "export function run() {}\n");
+    let shopify_app = app::load(&app.root()).unwrap();
+    let rules = rules_of(&shopify_app, &Selection::all());
+    let rules = &rules["bulk"];
+    let job = rules.build.as_ref().expect("a build");
+    assert!(
+        job.command.contains(" function build --app "),
+        "{}",
+        job.command
+    );
+    assert!(job.command.ends_with(" 'bulk'"), "{}", job.command);
+    assert!(
+        ignored(Path::new("generated/api.ts"), &rules.outputs),
+        "{:?}",
+        rules.outputs
+    );
+    assert!(ignored(Path::new("dist/function.js"), &rules.outputs));
+    assert!(!ignored(Path::new("src/index.ts"), &rules.outputs));
+    assert!(!ignored(Path::new("package.json"), &rules.outputs));
+}
+
+#[test]
 fn what_every_build_may_read_is_the_rest_of_the_app() {
     let root = Path::new("/app");
     let data = Path::new("/app/fixtures");
@@ -1044,6 +1091,96 @@ fn a_change_to_an_extension_without_a_build_reloads_the_pages_at_once() {
         "{}",
         watching.said()
     );
+}
+
+#[test]
+fn what_a_build_command_wrote_is_linked_to_the_function_wasm_api_before_it_runs() {
+    let raw = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../checkout/tests/fixtures/trampoline/quantity-limit.raw.wasm");
+    let app = TempApp::new("link");
+    // A Rust Function's build: the module `cargo build` writes.
+    app.function_with(
+        "rust",
+        &format!("mkdir -p dist && cp '{}' dist/function.wasm", raw.display()),
+    );
+    let watching = Watching::start(&app, |options| options.build_first = true);
+    let published = std::fs::read(watching.builds.module_path("rust").unwrap()).unwrap();
+    assert_eq!(
+        lsf_checkout::trampoline::unlinked(&published),
+        None,
+        "{}",
+        watching.said()
+    );
+    assert_eq!(
+        published,
+        std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../checkout/tests/fixtures/app/extensions/quantity-limit/dist/function.wasm"
+            )
+        )
+        .unwrap()
+    );
+    assert!(
+        watching.builds.failure("rust").is_none(),
+        "{}",
+        watching.said()
+    );
+}
+
+#[test]
+fn a_checkout_ui_extension_with_its_sources_is_bundled_when_they_change() {
+    let app = TempApp::new("ui-build");
+    app.ui_extension("ui-a");
+    app.write(
+        "extensions/ui-a/tsconfig.json",
+        r#"{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }"#,
+    );
+    let source = |text: &str| {
+        format!(
+            "import '@shopify/ui-extensions/preact';\nimport {{ render }} from 'preact';\nexport default async () => {{ render(<s-text>{text}</s-text>, document.body); }};\n"
+        )
+    };
+    // Written after its bundle: the bundle is older than its sources, and built at start.
+    app.write("extensions/ui-a/src/Checkout.jsx", &source("first"));
+    let watching = Watching::start(&app, |_| {});
+    let bundle = || std::fs::read_to_string(app.path("extensions/ui-a/dist/ui-a.js")).unwrap();
+    assert!(bundle().contains("first"), "{}", watching.said());
+    assert!(
+        watching.said().contains("✓ ui-a built in"),
+        "{}",
+        watching.said()
+    );
+
+    let reloads = watching.reloads();
+    app.write("extensions/ui-a/src/Checkout.jsx", &source("second"));
+    watching.settle();
+    assert!(bundle().contains("second"), "{}", watching.said());
+    assert!(watching.reloads() > reloads);
+    assert!(
+        watching.said().contains("↻ ui-a changed: bundling ui-a"),
+        "{}",
+        watching.said()
+    );
+    // What it writes in `dist/` does not bundle it again.
+    assert_eq!(
+        watching.said().matches("✓ ui-a built in").count(),
+        2,
+        "{}",
+        watching.said()
+    );
+
+    app.write(
+        "extensions/ui-a/src/Checkout.jsx",
+        "export default () => {\n",
+    );
+    watching.settle();
+    let failure = watching.builds.failure("ui-a").expect("a failure");
+    assert!(
+        failure.reason.contains("src/Checkout.jsx:"),
+        "{}",
+        failure.reason
+    );
+    assert!(bundle().contains("second"), "the last bundle stays");
 }
 
 #[test]

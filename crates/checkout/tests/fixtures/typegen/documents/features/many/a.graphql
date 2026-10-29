@@ -1,0 +1,4 @@
+query Vars($id: ID!, $n: Int, $m: Int = 5, $l: [String!]!, $l2: [String], $l3: [[Int!]!], $f: Filter, $fs: [Filter!], $k: Kind, $ks: [Kind!] = [PHYSICAL], $b: Boolean! = true, $d: DateTime, $j: JSON, $money: Money!) {
+    node(id: $id) { id }
+    search(q: "x", first: $m, filter: $f, kinds: $ks) { __typename }
+  }

@@ -1,0 +1,22 @@
+query CartInput {
+  cart {
+    lines {
+      id
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            title
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      jsonValue
+    }
+  }
+}

@@ -116,6 +116,12 @@ impl ApiVersion {
         })
     }
 
+    /// The text of the schema of a Function API in this release: what the typegen of a
+    /// JavaScript Function reads when the Function has no `schema.graphql`.
+    pub fn schema_source(self, api: FunctionApi) -> &'static str {
+        SCHEMA_FILES[self.schema_file(api)].source
+    }
+
     /// The index in [`SCHEMA_FILES`] of the schema of `api` in this release: the file of the
     /// newest release at or before it.
     fn schema_file(self, api: FunctionApi) -> usize {

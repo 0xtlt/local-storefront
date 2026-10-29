@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Validation: at most 30 items, in JavaScript",
+  "description": "validation-javascript, a Function written in plain JavaScript and built without Node: 40 items, 30 per order at most: an error on the cart.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 20
+        },
+        {
+          "variant": "TEE-WHT-M",
+          "quantity": 20
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "validation-javascript"
+  ]
+}

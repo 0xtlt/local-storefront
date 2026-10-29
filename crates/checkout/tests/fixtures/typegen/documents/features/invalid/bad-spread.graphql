@@ -1,0 +1,2 @@
+query E { me { ...P } }
+fragment P on Product { id }

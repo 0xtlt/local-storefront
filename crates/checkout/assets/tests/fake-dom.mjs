@@ -66,6 +66,13 @@ class Node {
   }
 }
 
+/**
+ * The event handler properties of a real element (`onclick`, `onchange`, ...): libraries read
+ * whether an element has one to know the name of its event (Preact listens to `change` for
+ * `onChange` when `onchange` is one).
+ */
+const HANDLERS = ['onclick', 'onchange', 'oninput', 'onfocus', 'onblur', 'onkeydown', 'onkeyup', 'onsubmit', 'onpointerdown', 'onpointerup'];
+
 export class FakeText extends Node {
   constructor(doc, text) {
     super(doc);
@@ -332,3 +339,5 @@ export class FakeDocument extends FakeElement {
 
 /** Waits for the promises (and timers set to 0) the code under test started. */
 export const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+for (const handler of HANDLERS) FakeElement.prototype[handler] = null;

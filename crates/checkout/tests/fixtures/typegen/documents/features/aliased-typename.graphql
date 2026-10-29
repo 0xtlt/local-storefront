@@ -1,0 +1,1 @@
+query AT { me { tn: __typename } node(id: "1") { tn: __typename ... on User { t2: __typename } } search(q: "") { a: __typename ... on User { b: __typename } } }

@@ -100,6 +100,30 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   checkout, and a panel lists each target as shown, without a place on the page, or waiting for
   something the cart lacks.
 - **`lsf function run --scenario <name>`** runs the Functions for a scenario.
+- **`lsf function build`** builds the Functions of an app. A JavaScript or TypeScript Function
+  without a build command, as Shopify's CLI generates it, is built by lsf as
+  `shopify app function build` builds it, without Node: its types (`generated/api.ts`, as
+  graphql-codegen writes them), `dist/function.js` (bundled as esbuild does, enums inlined and
+  unused code left out), then its module, the bytes Javy writes. `--build` and `--watch` build
+  it too.
+- **Rust Functions run as `cargo build` writes them**: after a Function's build command
+  (`--build`, `--watch`, `lsf function build`), a module that calls the Function Wasm API by name
+  is linked to it with Shopify's `shopify-function-trampoline` (2.0.1, as a library), as
+  `shopify app build` does, to the byte.
+- **`lsf checkout build`** builds the extensions of an app as `shopify app build` does, without
+  Node: its Functions, and its checkout UI extensions whose targets name their sources, bundled
+  (JSX with the `jsxImportSource` of their `tsconfig.json`, minified) into `dist/<handle>.js`.
+  `--build` and `--watch` build those too. Without a `node_modules`, `preact`,
+  `@preact/signals`, `@shopify/ui-extensions` and `@shopify/shopify_function` come from lsf's
+  own copy.
+
+### Changed
+
+- **Smaller binaries.** lsf runs Functions with only what it uses of wasmtime (the compiler for
+  the machine it runs on) and Shopify's providers compressed (1.6 MB instead of 9.7 MB), and has
+  one copy of each Wasm library; the release binaries leave out their symbol table and are
+  optimized as a whole. `lsf` for macOS on Apple silicon is 40 MB (18 MB to download) instead of
+  82 MB. Functions run as before, to the instruction.
 
 ## 0.1.18 - 2026-10-21
 

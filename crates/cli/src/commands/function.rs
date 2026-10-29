@@ -27,6 +27,12 @@ enum Subcommand {
     /// store data, runs them in checkout order, and prints each input, output and log with the
     /// checkout that results. Exits with 1 when a Function fails to run.
     Run(RunArgs),
+    /// Build the Functions of an app, as `shopify app build` does. A Function written in
+    /// JavaScript or TypeScript without a build command (as Shopify's CLI generates them) is
+    /// built by lsf, without Node: the GraphQL typegen (`generated/api.ts`), one JavaScript file
+    /// (`dist/function.js`), then its Wasm module. The others run their
+    /// `[extensions.build] command`.
+    Build(BuildArgs),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -44,6 +50,18 @@ enum Step {
     Interaction,
     /// The buyer places the order (`CHECKOUT_COMPLETION`).
     Completion,
+}
+
+#[derive(clap::Args)]
+struct BuildArgs {
+    /// The Functions to build, by handle. Every Function of the app when none is given.
+    #[arg(value_name = "HANDLE")]
+    handles: Vec<String>,
+
+    /// The directory of a Shopify app (the one with shopify.app.toml). Defaults to the app the
+    /// current folder is in.
+    #[arg(long, env = "LSF_APP", value_name = "DIR")]
+    app: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -94,6 +112,16 @@ struct RunArgs {
     format: Format,
 }
 
+/// `lsf function build`: builds the Functions, and says what it wrote.
+fn build(args: &BuildArgs) -> Result<ExitCode, String> {
+    checkout::run_build(
+        args.app.as_deref(),
+        &args.handles,
+        "lsf function build",
+        checkout::build_functions,
+    )
+}
+
 /// JSON given on the command line, or the path of a file that holds it.
 fn read_json(what: &str, value: &str) -> Result<Json, String> {
     let text = if value.trim_start().starts_with(['{', '[']) {
@@ -110,7 +138,10 @@ pub fn run(
     previews: &[lsf_core::Preview],
     args: Args,
 ) -> Result<ExitCode, String> {
-    let Subcommand::Run(args) = args.command;
+    let args = match args.command {
+        Subcommand::Run(args) => args,
+        Subcommand::Build(args) => return build(&args),
+    };
     let Ran {
         app: shopify_app,
         result,
@@ -588,6 +619,18 @@ mod tests {
     }
 
     #[test]
+    fn function_build_finds_the_app_the_current_folder_is_in() {
+        let root = std::env::temp_dir().join(format!("lsf-app-around-{}", std::process::id()));
+        let nested = root.join("extensions/bulk/src");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(root.join("shopify.app.toml"), "name = \"App\"\n").unwrap();
+        assert_eq!(checkout::app_around(&nested), Some(root.clone()));
+        assert_eq!(checkout::app_around(&root), Some(root.clone()));
+        assert_eq!(checkout::app_around(&std::env::temp_dir()), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn the_step_defaults_to_the_completion() {
         #[derive(clap::Parser)]
         struct Cli {
@@ -597,7 +640,9 @@ mod tests {
         let step = |extra: &[&str]| {
             let mut words = vec!["lsf", "run", "quantity-limit"];
             words.extend_from_slice(extra);
-            let Subcommand::Run(run) = Cli::parse_from(words).args.command;
+            let Subcommand::Run(run) = Cli::parse_from(words).args.command else {
+                panic!("not `run`");
+            };
             run.step
         };
         assert!(matches!(step(&[]), Step::Completion));

@@ -1,0 +1,1 @@
+query P { products(sort: PRICE) { edges { cursor node { id name price image { url } variants(first: 3) { id sku } } } pageInfo { hasNext end } } }

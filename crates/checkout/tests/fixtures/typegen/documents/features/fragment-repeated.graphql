@@ -1,0 +1,3 @@
+fragment U on User { id friends { id } }
+query R1 { me { ...U } viewer { ...U } }
+query R2 { me { ...U ...U } }

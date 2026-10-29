@@ -1,0 +1,1 @@
+fragment A on User { friends { ...A } }

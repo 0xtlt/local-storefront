@@ -1,0 +1,1 @@
+query V { oneOf(input: {id: "1", name: "x"}) }

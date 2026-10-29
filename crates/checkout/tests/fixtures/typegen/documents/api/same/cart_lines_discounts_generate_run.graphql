@@ -1,0 +1,14 @@
+query Input {
+  cart {
+    lines {
+      id
+      quantity
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

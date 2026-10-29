@@ -1,0 +1,2 @@
+fragment N on Named { name ... on User { email } ... on Product { price } }
+fragment M on Node { id ...N }

@@ -286,7 +286,7 @@ fn concurrent_runs_are_bounded_and_the_others_wait() {
 
 #[test]
 fn a_deadline_that_passes_before_the_run_starts_still_stops_it() {
-    // The timeout is over before function-runner has set up the store: the tick that moves the
+    // The timeout is over before the host has set up the store: the tick that moves the
     // epoch lands before the deadline exists, and a single tick would be lost (the run would
     // never stop). The run is on a thread of its own so that the test fails instead of hanging.
     let dir = temp_dir("early");

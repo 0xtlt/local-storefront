@@ -1,0 +1,10 @@
+query my_query { me { id } }
+query URLQuery { me { id } }
+query Foo2Bar { me { id } }
+query user { me { id } }
+query CartLinesQ { me { id } }
+query lowercase_name_2x { me { id } }
+query _under { me { id } }
+query ABC { me { id } }
+query HTTPRequest { me { id } }
+query getUserV2 { me { id } }

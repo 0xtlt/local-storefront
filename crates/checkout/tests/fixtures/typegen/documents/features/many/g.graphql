@@ -1,0 +1,7 @@
+fragment UserBits on User { id name email }
+fragment NamedBits on Named { id name }
+fragment NodeBits on Node { id }
+fragment SearchBits on SearchResult { ... on User { name } ... on Product { price } }
+fragment ProductBits on Product { id image { ...ImageBits } collections { ...NamedBits } }
+fragment ImageBits on Image { url w }
+query Frags { me { ...UserBits friends { ...UserBits ...NamedBits } } node(id: "1") { ...NodeBits ...NamedBits } search(q: "") { ...SearchBits ... on Product { ...ProductBits } } named { ...NamedBits } }

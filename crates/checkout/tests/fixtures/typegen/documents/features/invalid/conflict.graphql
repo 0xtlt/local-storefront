@@ -1,0 +1,1 @@
+query Q { me { x: id x: name } }

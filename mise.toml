@@ -46,6 +46,14 @@ run = "cargo clippy --workspace --all-targets -- -D warnings"
 description = "Regenerate the Function API schemas of lsf-checkout (crates/checkout/schemas) from the pinned @shopify/dev-mcp package"
 run = "node tools/checkout/function_schemas.mjs"
 
+[tasks."checkout:packages"]
+description = "Copy the npm packages lsf builds extensions with when an app has no node_modules (crates/checkout/javascript-packages), at the versions of tools/checkout/javascript_packages.mjs"
+run = "node tools/checkout/javascript_packages.mjs"
+
+[tasks."checkout:providers"]
+description = "Rebuild the providers lsf links Functions with (crates/checkout/providers) from those of Shopify's function-runner, at the tag of tools/checkout/providers.sh"
+run = "tools/checkout/providers.sh"
+
 [tasks."fixtures:functions"]
 description = "Rebuild the Wasm Functions of the lsf-checkout test app (crates/checkout/tests/fixtures/app); the built modules are committed"
 run = "tools/checkout/build_function_fixtures.sh"

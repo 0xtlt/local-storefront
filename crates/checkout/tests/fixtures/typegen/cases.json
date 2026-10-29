@@ -1,0 +1,727 @@
+[
+  {
+    "name": "api-discount",
+    "schema": "discount",
+    "documents": [ "api/discount-typescript.graphql" ],
+    "full": true
+  },
+  {
+    "name": "api-discount-metafields",
+    "schema": "discount",
+    "documents": [ "api/discount-from-metafields.graphql" ]
+  },
+  {
+    "name": "api-discount-tag-percentage",
+    "schema": "discount",
+    "documents": [ "api/discount-tag-percentage.graphql" ]
+  },
+  {
+    "name": "api-order-discount",
+    "schema": "order_discount",
+    "documents": [ "api/discount-legacy-order.graphql" ]
+  },
+  {
+    "name": "api-product-discount",
+    "schema": "product_discount",
+    "documents": [ "api/discount-legacy-product.graphql" ]
+  },
+  {
+    "name": "api-shipping-discount",
+    "schema": "shipping_discount",
+    "documents": [ "api/discount-legacy-shipping.graphql" ]
+  },
+  {
+    "name": "api-payment-customization",
+    "schema": "payment_customization",
+    "documents": [ "api/payment-hide-for-b2b.graphql" ]
+  },
+  {
+    "name": "api-delivery-customization",
+    "schema": "delivery_customization",
+    "documents": [ "api/delivery-rename-by-language.graphql" ]
+  },
+  {
+    "name": "api-cart-transform",
+    "schema": "cart_transform",
+    "documents": [ "api/cart-transform-properties.graphql" ]
+  },
+  {
+    "name": "api-cart-checkout-validation",
+    "schema": "cart_checkout_validation",
+    "documents": [ "api/validation-max-quantity.graphql" ]
+  },
+  {
+    "name": "api-two-documents",
+    "schema": "discount",
+    "documents": [ "api/two/cart_lines_discounts_generate_run.graphql", "api/two/cart_delivery_options_discounts_generate_run.graphql" ]
+  },
+  {
+    "name": "api-same-operation-name",
+    "schema": "discount",
+    "documents": [ "api/same/cart_lines_discounts_generate_run.graphql", "api/same/cart_delivery_options_discounts_generate_run.graphql" ]
+  },
+  {
+    "name": "features-variables",
+    "schema": "features",
+    "documents": [ "features/variables.graphql" ]
+  },
+  {
+    "name": "features-aliases",
+    "schema": "features",
+    "documents": [ "features/aliases.graphql" ]
+  },
+  {
+    "name": "features-interface-fields",
+    "schema": "features",
+    "documents": [ "features/interface-fields.graphql" ]
+  },
+  {
+    "name": "features-interface-typename",
+    "schema": "features",
+    "documents": [ "features/interface-typename.graphql" ]
+  },
+  {
+    "name": "features-union-partial",
+    "schema": "features",
+    "documents": [ "features/union-partial.graphql" ]
+  },
+  {
+    "name": "features-union-members",
+    "schema": "features",
+    "documents": [ "features/union-members.graphql" ]
+  },
+  {
+    "name": "features-union-typename",
+    "schema": "features",
+    "documents": [ "features/union-typename.graphql" ]
+  },
+  {
+    "name": "features-union-many",
+    "schema": "features",
+    "documents": [ "features/union-many.graphql" ]
+  },
+  {
+    "name": "features-fragments",
+    "schema": "features",
+    "documents": [ "features/fragments.graphql" ]
+  },
+  {
+    "name": "features-fragments-on-unions",
+    "schema": "features",
+    "documents": [ "features/fragments-on-unions.graphql" ]
+  },
+  {
+    "name": "features-fragment-only",
+    "schema": "features",
+    "documents": [ "features/fragment-only.graphql" ]
+  },
+  {
+    "name": "features-fragments-on-interfaces",
+    "schema": "features",
+    "documents": [ "features/fragments-on-interfaces.graphql" ]
+  },
+  {
+    "name": "features-include-skip",
+    "schema": "features",
+    "documents": [ "features/include-skip.graphql" ]
+  },
+  {
+    "name": "features-fields-merged",
+    "schema": "features",
+    "documents": [ "features/fields-merged.graphql" ]
+  },
+  {
+    "name": "features-fields-merged-deep",
+    "schema": "features",
+    "documents": [ "features/fields-merged-deep.graphql" ]
+  },
+  {
+    "name": "features-mutation",
+    "schema": "features",
+    "documents": [ "features/mutation.graphql" ]
+  },
+  {
+    "name": "features-subscription",
+    "schema": "features",
+    "documents": [ "features/subscription.graphql" ]
+  },
+  {
+    "name": "features-anonymous",
+    "schema": "features",
+    "documents": [ "features/anonymous.graphql" ]
+  },
+  {
+    "name": "features-shorthand",
+    "schema": "features",
+    "documents": [ "features/shorthand.graphql" ]
+  },
+  {
+    "name": "features-anonymous-variables",
+    "schema": "features",
+    "documents": [ "features/anonymous-variables.graphql" ]
+  },
+  {
+    "name": "features-lists",
+    "schema": "features",
+    "documents": [ "features/lists.graphql" ]
+  },
+  {
+    "name": "features-operation-names",
+    "schema": "features",
+    "documents": [ "features/operation-names.graphql" ]
+  },
+  {
+    "name": "features-scalars",
+    "schema": "features",
+    "documents": [ "features/scalars.graphql" ]
+  },
+  {
+    "name": "features-enums",
+    "schema": "features",
+    "documents": [ "features/enums.graphql" ]
+  },
+  {
+    "name": "features-aliased-typename",
+    "schema": "features",
+    "documents": [ "features/aliased-typename.graphql" ]
+  },
+  {
+    "name": "features-alias-twice",
+    "schema": "features",
+    "documents": [ "features/alias-twice.graphql" ]
+  },
+  {
+    "name": "features-fields-twice",
+    "schema": "features",
+    "documents": [ "features/fields-twice.graphql" ]
+  },
+  {
+    "name": "features-inline-fragment-order",
+    "schema": "features",
+    "documents": [ "features/inline-fragment-order.graphql" ]
+  },
+  {
+    "name": "features-inline-fragments-nested",
+    "schema": "features",
+    "documents": [ "features/inline-fragments-nested.graphql" ]
+  },
+  {
+    "name": "features-inline-fragment-no-type",
+    "schema": "features",
+    "documents": [ "features/inline-fragment-no-type.graphql" ]
+  },
+  {
+    "name": "features-interface-on-interface",
+    "schema": "features",
+    "documents": [ "features/interface-on-interface.graphql" ]
+  },
+  {
+    "name": "features-interface-chain",
+    "schema": "features",
+    "documents": [ "features/interface-chain.graphql" ]
+  },
+  {
+    "name": "features-union-on-object",
+    "schema": "features",
+    "documents": [ "features/union-on-object.graphql" ]
+  },
+  {
+    "name": "features-interface-fields-nested",
+    "schema": "features",
+    "documents": [ "features/interface-fields-nested.graphql" ]
+  },
+  {
+    "name": "features-spread-in-inline-fragment",
+    "schema": "features",
+    "documents": [ "features/spread-in-inline-fragment.graphql" ]
+  },
+  {
+    "name": "features-three-operations",
+    "schema": "features",
+    "documents": [ "features/three-operations.graphql" ]
+  },
+  {
+    "name": "features-operation-and-fragment-name",
+    "schema": "features",
+    "documents": [ "features/operation-and-fragment-name.graphql" ]
+  },
+  {
+    "name": "features-connection",
+    "schema": "features",
+    "documents": [ "features/connection.graphql" ]
+  },
+  {
+    "name": "features-object-typename",
+    "schema": "features",
+    "documents": [ "features/object-typename.graphql" ]
+  },
+  {
+    "name": "features-typename-only",
+    "schema": "features",
+    "documents": [ "features/typename-only.graphql" ]
+  },
+  {
+    "name": "features-object-aliases",
+    "schema": "features",
+    "documents": [ "features/object-aliases.graphql" ]
+  },
+  {
+    "name": "features-fragment-repeated",
+    "schema": "features",
+    "documents": [ "features/fragment-repeated.graphql" ]
+  },
+  {
+    "name": "features-fragment-include",
+    "schema": "features",
+    "documents": [ "features/fragment-include.graphql" ]
+  },
+  {
+    "name": "features-fragment-conditional",
+    "schema": "features",
+    "documents": [ "features/fragment-conditional.graphql" ]
+  },
+  {
+    "name": "features-field-name-underscore",
+    "schema": "features",
+    "documents": [ "features/field-name-underscore.graphql" ]
+  },
+  {
+    "name": "features-variable-names",
+    "schema": "features",
+    "documents": [ "features/variable-names.graphql" ]
+  },
+  {
+    "name": "features-input-objects",
+    "schema": "features",
+    "documents": [ "features/input-objects.graphql" ]
+  },
+  {
+    "name": "features-fragments-merged",
+    "schema": "features",
+    "documents": [ "features/fragments-merged.graphql" ]
+  },
+  {
+    "name": "features-cache-swapped-inline-fragments",
+    "schema": "features",
+    "documents": [ "features/cache-a.graphql", "features/cache-b.graphql" ]
+  },
+  {
+    "name": "features-documents-sorted",
+    "schema": "features",
+    "documents": [ "features/sorted/z.graphql", "features/sorted/a.graphql", "features/sorted/B.graphql", "features/sorted/a2.graphql", "features/sorted/a-1.graphql", "features/sorted/a_1.graphql", "features/sorted/a10.graphql", "features/sorted/a9.graphql" ]
+  },
+  {
+    "name": "features-fragment-in-two-documents",
+    "schema": "features",
+    "documents": [ "features/dup/a.graphql", "features/dup/b.graphql" ]
+  },
+  {
+    "name": "features-document-without-operations",
+    "schema": "features",
+    "documents": [ "features/mixed/a.graphql", "features/mixed/comments.graphql", "features/mixed/types.graphql" ]
+  },
+  {
+    "name": "features-many-operations",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "full": true
+  },
+  {
+    "name": "config-operation-suffix",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {}
+    }
+  },
+  {
+    "name": "config-dedupe-operation-suffix",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "dedupeOperationSuffix": true
+      }
+    }
+  },
+  {
+    "name": "config-operation-result-suffix",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "operationResultSuffix": "Result"
+      }
+    }
+  },
+  {
+    "name": "config-enums-as-types",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "enumsAsTypes": true
+      }
+    }
+  },
+  {
+    "name": "config-enums-as-const",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "enumsAsConst": true
+      }
+    },
+    "full": true
+  },
+  {
+    "name": "config-const-enums",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "constEnums": true
+      }
+    }
+  },
+  {
+    "name": "config-immutable-types",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "immutableTypes": true
+      }
+    }
+  },
+  {
+    "name": "config-skip-typename",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "skipTypename": true
+      }
+    }
+  },
+  {
+    "name": "config-skip-typename-for-root",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "skipTypeNameForRoot": true
+      }
+    }
+  },
+  {
+    "name": "config-non-optional-typename",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "nonOptionalTypename": true
+      }
+    }
+  },
+  {
+    "name": "config-scalars",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "scalars": {
+          "Money": {
+            "input": "number",
+            "output": "string"
+          },
+          "DateTime": "Date",
+          "URL": "string | URL"
+        }
+      }
+    }
+  },
+  {
+    "name": "config-default-scalar-type",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "defaultScalarType": "any",
+        "scalars": {}
+      }
+    }
+  },
+  {
+    "name": "config-combined",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "immutableTypes": true,
+        "skipTypename": true,
+        "enumsAsTypes": true,
+        "nonOptionalTypename": true
+      }
+    }
+  },
+  {
+    "name": "config-output-config",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true
+      },
+      "generates": {
+        "./generated/api.ts": {
+          "plugins": [ "typescript", "typescript-operations" ],
+          "config": {
+            "enumsAsTypes": true,
+            "scalars": {
+              "Money": "number"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "config-only-typescript",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "generates": {
+        "./generated/api.ts": {
+          "plugins": [ "typescript" ]
+        }
+      }
+    }
+  },
+  {
+    "name": "config-only-operations",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "generates": {
+        "./generated/api.ts": {
+          "plugins": [ "typescript-operations" ]
+        }
+      }
+    }
+  },
+  {
+    "name": "config-operations-first",
+    "schema": "features",
+    "documents": [ "features/many/a.graphql", "features/many/b.graphql", "features/many/c.graphql", "features/many/d.graphql", "features/many/e.graphql", "features/many/f.graphql", "features/many/g.graphql", "features/many/h.graphql", "features/many/i.graphql", "features/many/j.graphql", "features/many/k.graphql" ],
+    "codegen": {
+      "generates": {
+        "./generated/api.ts": {
+          "plugins": [ "typescript-operations", "typescript" ]
+        }
+      }
+    }
+  },
+  {
+    "name": "config-unused-built-in-scalars",
+    "schema": "unused-scalars",
+    "documents": [ "features/unused-scalars.graphql" ],
+    "codegen": {
+      "config": {
+        "omitOperationSuffix": true,
+        "scalars": {
+          "ID": "number",
+          "Int": "bigint",
+          "Float": "x"
+        }
+      }
+    }
+  },
+  {
+    "name": "invalid-unknown-field",
+    "schema": "features",
+    "documents": [ "features/invalid/unknown-field.graphql" ]
+  },
+  {
+    "name": "invalid-unknown-fragment",
+    "schema": "features",
+    "documents": [ "features/invalid/unknown-fragment.graphql" ]
+  },
+  {
+    "name": "invalid-missing-selection",
+    "schema": "features",
+    "documents": [ "features/invalid/missing-selection.graphql" ]
+  },
+  {
+    "name": "invalid-extra-selection",
+    "schema": "features",
+    "documents": [ "features/invalid/extra-selection.graphql" ]
+  },
+  {
+    "name": "invalid-missing-arg",
+    "schema": "features",
+    "documents": [ "features/invalid/missing-arg.graphql" ]
+  },
+  {
+    "name": "invalid-unknown-arg",
+    "schema": "features",
+    "documents": [ "features/invalid/unknown-arg.graphql" ]
+  },
+  {
+    "name": "invalid-undefined-var",
+    "schema": "features",
+    "documents": [ "features/invalid/undefined-var.graphql" ]
+  },
+  {
+    "name": "invalid-output-var",
+    "schema": "features",
+    "documents": [ "features/invalid/output-var.graphql" ]
+  },
+  {
+    "name": "invalid-unknown-type",
+    "schema": "features",
+    "documents": [ "features/invalid/unknown-type.graphql" ]
+  },
+  {
+    "name": "invalid-scalar-frag",
+    "schema": "features",
+    "documents": [ "features/invalid/scalar-frag.graphql" ]
+  },
+  {
+    "name": "invalid-cycle",
+    "schema": "features",
+    "documents": [ "features/invalid/cycle.graphql" ]
+  },
+  {
+    "name": "invalid-self-cycle",
+    "schema": "features",
+    "documents": [ "features/invalid/self-cycle.graphql" ]
+  },
+  {
+    "name": "invalid-bad-spread",
+    "schema": "features",
+    "documents": [ "features/invalid/bad-spread.graphql" ]
+  },
+  {
+    "name": "invalid-syntax",
+    "schema": "features",
+    "documents": [ "features/invalid/syntax.graphql" ]
+  },
+  {
+    "name": "invalid-union-field",
+    "schema": "features",
+    "documents": [ "features/invalid/union-field.graphql" ]
+  },
+  {
+    "name": "invalid-dup-var",
+    "schema": "features",
+    "documents": [ "features/invalid/dup-var.graphql" ]
+  },
+  {
+    "name": "invalid-typename-sel",
+    "schema": "features",
+    "documents": [ "features/invalid/typename-sel.graphql" ]
+  },
+  {
+    "name": "invalid-anonymous-and-named",
+    "schema": "features",
+    "documents": [ "features/invalid/anonymous-and-named.graphql" ]
+  },
+  {
+    "name": "invalid-two-anonymous",
+    "schema": "features",
+    "documents": [ "features/invalid/two-anonymous.graphql" ]
+  },
+  {
+    "name": "invalid-value-int-overflow",
+    "schema": "features",
+    "documents": [ "features/invalid/value-int-overflow.graphql" ]
+  },
+  {
+    "name": "invalid-value-unknown-enum",
+    "schema": "features",
+    "documents": [ "features/invalid/value-unknown-enum.graphql" ]
+  },
+  {
+    "name": "invalid-value-missing-required-field",
+    "schema": "features",
+    "documents": [ "features/invalid/value-missing-required-field.graphql" ]
+  },
+  {
+    "name": "invalid-value-unknown-input-field",
+    "schema": "features",
+    "documents": [ "features/invalid/value-unknown-input-field.graphql" ]
+  },
+  {
+    "name": "invalid-value-oneof-two",
+    "schema": "features",
+    "documents": [ "features/invalid/value-oneof-two.graphql" ]
+  },
+  {
+    "name": "invalid-value-null-non-null",
+    "schema": "features",
+    "documents": [ "features/invalid/value-null-non-null.graphql" ]
+  },
+  {
+    "name": "invalid-value-var-wrong-type",
+    "schema": "features",
+    "documents": [ "features/invalid/value-var-wrong-type.graphql" ]
+  },
+  {
+    "name": "invalid-value-var-nullable-to-nonnull",
+    "schema": "features",
+    "documents": [ "features/invalid/value-var-nullable-to-nonnull.graphql" ]
+  },
+  {
+    "name": "invalid-value-var-nullable-list",
+    "schema": "features",
+    "documents": [ "features/invalid/value-var-nullable-list.graphql" ]
+  },
+  {
+    "name": "invalid-argument-twice",
+    "schema": "features",
+    "documents": [ "features/invalid/argument-twice.graphql" ]
+  },
+  {
+    "name": "invalid-directive-twice",
+    "schema": "features",
+    "documents": [ "features/invalid/directive-twice.graphql" ]
+  },
+  {
+    "name": "invalid-directive-unknown-argument",
+    "schema": "features",
+    "documents": [ "features/invalid/directive-unknown-argument.graphql" ]
+  },
+  {
+    "name": "invalid-subscription-two-fields",
+    "schema": "features",
+    "documents": [ "features/invalid/subscription-two-fields.graphql" ]
+  },
+  {
+    "name": "invalid-operation-defined-twice",
+    "schema": "features",
+    "documents": [ "features/invalid/twice-a.graphql", "features/invalid/twice-b.graphql" ]
+  },
+  {
+    "name": "invalid-fields-conflict",
+    "schema": "features",
+    "documents": [ "features/invalid/conflict.graphql" ]
+  },
+  {
+    "name": "invalid-no-operation",
+    "schema": "features",
+    "documents": [ "features/invalid/no-operation.graphql" ]
+  }
+]

@@ -1,23 +1,22 @@
-//! Runs the Wasm module of a Function with Shopify's own `function-runner` (the engine behind
-//! `shopify app function run`): the WASI stdin/stdout ABI, the Shopify Function Wasm API
-//! (`shopify_function_v1`/`v2` providers) and Javy (JS Functions) all work the way they do on
-//! Shopify.
+//! Runs the Wasm module of a Function as Shopify's own `function-runner` (the engine behind
+//! `shopify app function run`) runs it ([`host`]): the WASI stdin/stdout ABI, the Shopify
+//! Function Wasm API (`shopify_function_v1`/`v2` providers) and Javy (JS Functions) all work the
+//! way they do on Shopify.
 //!
 //! Compiled modules are cached by path, modification time and size, so a rebuilt Function is
 //! picked up by the next run.
 
+mod host;
+
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use function_runner::engine::{
-    FunctionRunParams, new_engine, run as run_module, uses_msgpack_provider,
-};
-use function_runner::{BytesContainer, BytesContainerType, Codec};
 use indexmap::IndexMap;
 use serde_json::Value;
-use wasmtime::{Config, Engine, Module};
+use wasmtime::{Engine, Module};
 
 /// Shopify stops a Function after 11 million Wasm instructions.
 pub const INSTRUCTIONS_LIMIT: u64 = 11_000_000;
@@ -66,7 +65,7 @@ struct Cached {
 
 /// An engine and the modules compiled with it.
 ///
-/// function-runner arms the engine's epoch deadline itself, at the next epoch, so the epoch
+/// A run arms the engine's epoch deadline itself ([`host`]), at the next epoch, so the epoch
 /// of an engine stops every run that uses it at the time. A slot is therefore used by one run at
 /// a time: the watchdog of a run moves the epoch of its own engine only.
 struct Slot {
@@ -74,6 +73,8 @@ struct Slot {
     /// The modules compiled, the least recently used first: at most [`MODULES_PER_ENGINE`], so
     /// that the modules of Functions gone from the app (or of other apps) do not stay forever.
     modules: IndexMap<PathBuf, Cached>,
+    /// The providers compiled, by name: a handful.
+    providers: HashMap<String, Module>,
     /// [`MODULES_PER_ENGINE`], or fewer in tests.
     capacity: usize,
 }
@@ -235,36 +236,25 @@ impl Runner {
             Ok(module) => module,
             Err(error) => return Execution::failed(error),
         };
-        let engine = &slot.engine;
-
         if let Some(error) = untrampolined(&module) {
             return Execution::failed(error);
         }
 
-        let codec = if uses_msgpack_provider(&module) {
-            Codec::Messagepack
-        } else {
-            Codec::Json
-        };
-        let raw = match serde_json::to_vec(input) {
-            Ok(raw) => raw,
-            Err(error) => return Execution::failed(format!("cannot serialize the input: {error}")),
-        };
-        let input = match BytesContainer::new(BytesContainerType::Input, codec, raw) {
-            Ok(input) => input,
-            Err(error) => return Execution::failed(error.to_string()),
+        let msgpack = host::uses_msgpack_provider(&module);
+        let encoded = match host::encode_input(input, msgpack) {
+            Ok(encoded) => encoded,
+            Err(error) => return Execution::failed(error),
         };
 
-        let watchdog = Watchdog::start(engine.clone(), self.timeout);
-        let result = run_module(FunctionRunParams {
-            function_path: wasm.to_path_buf(),
-            input,
+        let watchdog = Watchdog::start(slot.engine.clone(), self.timeout);
+        let result = host::run(
+            &slot.engine,
+            &module,
+            &mut slot.providers,
             export,
-            profile_opts: None,
-            scale_factor: 1.0,
-            module,
-            engine: engine.clone(),
-        });
+            encoded,
+            msgpack,
+        );
         let timed_out = watchdog.stop();
 
         let result = match result {
@@ -298,40 +288,29 @@ impl Runner {
             execution.logs = logs;
             return execution;
         }
-        if let Some(error) = &result.output.encoding_error {
-            execution.error = Some(format!("the output is not valid: {error}"));
-            return execution;
-        }
-        execution.output = result.output.json_value;
-        if execution.output.is_none() {
-            execution.error = Some("the Function produced no output".to_string());
+        match result.output {
+            Ok(output) => execution.output = Some(output),
+            Err(error) => execution.error = Some(format!("the output is not valid: {error}")),
         }
         execution
     }
 }
 
-/// A new engine. function-runner's engine keeps wasmtime's compilation cache on disk (a second
-/// run of a Function does not compile it again). Where that cache cannot be set up, the same
-/// configuration without it does.
+/// A new engine. The engine keeps wasmtime's compilation cache on disk, as function-runner's
+/// does (a second run of a Function does not compile it again). Where that cache cannot be set
+/// up, the same configuration without it does.
 fn new_slot() -> Result<Slot, String> {
     Ok(Slot {
         engine: engine()?,
         modules: IndexMap::new(),
+        providers: HashMap::new(),
         capacity: MODULES_PER_ENGINE,
     })
 }
 
 fn engine() -> Result<Engine, String> {
-    new_engine()
-        .or_else(|_| {
-            let mut config = Config::new();
-            config
-                .wasm_multi_memory(true)
-                .wasm_threads(false)
-                .consume_fuel(true)
-                .epoch_interruption(true);
-            Engine::new(&config)
-        })
+    host::engine()
+        .or_else(|_| Engine::new(&host::config()))
         .map_err(|error| format!("cannot start the Wasm engine: {error}"))
 }
 
@@ -389,9 +368,10 @@ impl Slot {
     }
 }
 
-/// A Rust Function calls the Function Wasm API of the host by name; the CLI links it to the
-/// host's provider (with `shopify-function-trampoline`) when it builds the app. function-runner
-/// only runs linked modules, and says so with an unhelpful "unknown import".
+/// A Rust Function calls the Function Wasm API of the host by name; lsf (`--build`,
+/// `lsf function build`) and Shopify's CLI link it to the host's provider with
+/// `shopify-function-trampoline` after its build command ([`crate::trampoline`]). function-runner
+/// and the host only run linked modules, and say so with an unhelpful "unknown import".
 fn untrampolined(module: &Module) -> Option<String> {
     module
         .imports()
@@ -403,14 +383,15 @@ fn untrampolined(module: &Module) -> Option<String> {
         .map(|import| {
             format!(
                 "the module calls `{}::{}` directly: it was not processed by \
-                 shopify-function-trampoline, which `shopify app build` runs after compiling a Rust Function",
+                 shopify-function-trampoline, which lsf (`lsf function build`, `--build`) and \
+                 `shopify app build` run after compiling a Rust Function",
                 import.module(),
                 import.name()
             )
         })
 }
 
-/// function-runner appends why a run failed to what the Function logged. Splits the two: a trap
+/// The host appends why a run failed to what the Function logged. Splits the two: a trap
 /// is reported as `error while executing at wasm backtrace: ...`, an exit as `module exited with
 /// code: N`; other failures are one line at the end.
 fn split_failure(logs: &str) -> (String, String) {
@@ -462,7 +443,7 @@ impl Watchdog {
         let (cancel, cancelled) = mpsc::channel();
         let handle = std::thread::spawn(move || match cancelled.recv_timeout(timeout) {
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // function-runner sets the deadline one epoch after the current one when it
+                // The host sets the deadline one epoch after the current one when it
                 // creates the store, and again around the initialization of the input: a single
                 // tick that lands before one of those is absorbed, and an endless run never
                 // stops. Keep ticking until the run is over.

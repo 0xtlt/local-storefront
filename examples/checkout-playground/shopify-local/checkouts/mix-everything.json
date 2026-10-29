@@ -84,6 +84,7 @@
     "validation-blocked-country",
     "validation-gift-note",
     "validation-max-quantity",
+    "validation-javascript",
     "validation-minimum-order",
     "validation-network",
     "validation-street-number",
@@ -112,6 +113,8 @@
     "ui-settings-empty",
     "ui-network-fetch",
     "ui-api-access",
-    "ui-change-refusals"
+    "ui-change-refusals",
+    "ui-preact",
+    "ui-preact-typescript"
   ]
 }

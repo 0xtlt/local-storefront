@@ -1,0 +1,1 @@
+query En($k: Kind, $r: Role) { me { role } search(q: "", kinds: [A1]) { ... on Product { kind } } address { country } }

@@ -1,0 +1,1 @@
+query V { search(q: "x", kinds: NOPE) { __typename } }

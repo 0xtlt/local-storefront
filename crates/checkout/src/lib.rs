@@ -8,11 +8,14 @@ pub mod app;
 pub mod assets;
 pub mod fetch;
 pub mod input;
+pub mod javascript;
 mod metadata;
 pub mod pipeline;
 pub mod placement;
+pub mod providers;
 pub mod runner;
 pub mod schema;
+pub mod trampoline;
 pub mod types;
 pub mod version;
 

@@ -91,6 +91,7 @@
     "validation-gift-note",
     "validation-legacy",
     "validation-max-quantity",
+    "validation-javascript",
     "validation-minimum-order",
     "validation-network",
     "validation-street-number"

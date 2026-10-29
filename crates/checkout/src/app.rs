@@ -68,6 +68,9 @@ pub struct FunctionExtension {
     pub targets: Vec<FunctionTarget>,
     /// `[extensions.build] command`.
     pub build_command: Option<String>,
+    /// The entry of a Function written in JavaScript or TypeScript, as Shopify's CLI finds it:
+    /// `src/index.js`, else `src/index.ts`.
+    pub javascript: Option<PathBuf>,
     /// The Wasm module (`[extensions.build] path`, `dist/function.wasm` by default), absolute.
     pub wasm_path: PathBuf,
     /// `[extensions.input.variables]`: which metafield of the owner holds the query variables.
@@ -78,6 +81,33 @@ impl FunctionExtension {
     pub fn built(&self) -> bool {
         self.wasm_path.is_file()
     }
+
+    /// The command that builds the Function, as the pages and messages say it.
+    pub fn build_hint(&self) -> Option<String> {
+        self.build().map(|build| match build {
+            Build::Command(command) => command.to_string(),
+            Build::JavaScript => format!("lsf function build {}", self.handle),
+        })
+    }
+
+    /// How the Function is built: its build command, or, for a JavaScript Function without one
+    /// (Shopify's CLI builds those itself), lsf's build of it ([`crate::javascript`]).
+    pub fn build(&self) -> Option<Build<'_>> {
+        match self.build_command.as_deref() {
+            Some(command) if !command.trim().is_empty() => Some(Build::Command(command)),
+            _ if self.javascript.is_some() => Some(Build::JavaScript),
+            _ => None,
+        }
+    }
+}
+
+/// How a Function is built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Build<'a> {
+    /// `[extensions.build] command`, run in the Function's folder.
+    Command(&'a str),
+    /// A JavaScript Function, built by lsf as `shopify app function build` builds it.
+    JavaScript,
 }
 
 #[derive(Clone, Debug)]
@@ -195,6 +225,24 @@ pub struct UiExtension {
 impl UiExtension {
     pub fn built(&self) -> bool {
         self.bundle.is_file()
+    }
+
+    /// Whether lsf can build the extension, as `shopify app build` bundles it: a target names
+    /// its source (`module`), and the source is there. One that has only its bundle (`dist/`)
+    /// is used as it is.
+    pub fn buildable(&self) -> bool {
+        self.targets.iter().any(|target| {
+            target
+                .module
+                .as_ref()
+                .is_some_and(|module| self.dir.join(module).is_file())
+        })
+    }
+
+    /// The command that builds the extension, as the pages and messages say it.
+    pub fn build_hint(&self) -> Option<String> {
+        self.buildable()
+            .then(|| format!("lsf checkout build {}", self.handle))
     }
 }
 
@@ -328,11 +376,11 @@ impl Selection {
 }
 
 /// What the diagnostic of a Function whose module is not at `wasm_path` says.
-fn missing_module(wasm_path: &Path, build_command: Option<&str>) -> String {
-    match build_command {
-        Some(command) => format!(
-            "no Wasm module at {}: build it with `{command}` (or `shopify app build`)",
-            wasm_path.display()
+fn missing_module(wasm_path: &Path, build: Option<String>) -> String {
+    match build {
+        Some(build) => format!(
+            "no Wasm module at {}: build it with `{build}` (or `shopify app build`)",
+            wasm_path.display(),
         ),
         None => format!(
             "no Wasm module at {}: run `shopify app build`",
@@ -391,14 +439,13 @@ impl App {
             return;
         };
         let function = &self.functions[index];
-        let before = missing_module(&function.wasm_path, function.build_command.as_deref());
+        let before = missing_module(&function.wasm_path, function.build_hint());
         let built = module.is_file();
         let message = format!(
             "no Wasm module yet: the watch builds it with `{}`",
             function
-                .build_command
-                .as_deref()
-                .unwrap_or("shopify app build")
+                .build_hint()
+                .unwrap_or_else(|| "shopify app build".to_string())
         );
         self.diagnostics.retain(|diagnostic| {
             !(diagnostic.extension.as_deref() == Some(handle) && diagnostic.message == before)
@@ -657,12 +704,7 @@ fn load_function(
             .and_then(|v| v.as_str())
             .unwrap_or("dist/function.wasm"),
     );
-    if !wasm_path.is_file() {
-        app.warn(
-            Some(handle),
-            missing_module(&wasm_path, build_command.as_deref()),
-        );
-    }
+    let javascript = crate::javascript::entry(dir);
 
     let input_variables = entry
         .get("input")
@@ -676,7 +718,7 @@ fn load_function(
             })
         });
 
-    FunctionExtension {
+    let function = FunctionExtension {
         handle: handle.to_string(),
         name,
         dir: dir.to_path_buf(),
@@ -684,9 +726,17 @@ fn load_function(
         version,
         targets,
         build_command,
+        javascript,
         wasm_path,
         input_variables,
+    };
+    if !function.built() {
+        app.warn(
+            Some(handle),
+            missing_module(&function.wasm_path, function.build_hint()),
+        );
     }
+    function
 }
 
 /// Why a `purchase.*` target is to be left, and what its release still takes from it.
@@ -814,12 +864,20 @@ fn load_ui_extension(
 
     let bundle = dir.join("dist").join(format!("{handle}.js"));
     if !bundle.is_file() {
+        let has_source = targets.iter().any(|target| {
+            target
+                .module
+                .as_ref()
+                .is_some_and(|module| dir.join(module).is_file())
+        });
+        let build = if has_source {
+            format!("build it with `lsf checkout build {handle}` (or `shopify app build`)")
+        } else {
+            "run `shopify app build`".to_string()
+        };
         app.warn(
             Some(handle),
-            format!(
-                "not built (missing {}): run `shopify app build`",
-                bundle.display()
-            ),
+            format!("not built (missing {}): {build}", bundle.display()),
         );
     }
 
