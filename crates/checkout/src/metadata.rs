@@ -1,7 +1,7 @@
-//! What lsf-checkout and the checkout page share of the API of checkout UI extensions, in one
-//! file, `assets/api.json`: the releases the checkout runs and what each requires, the resources
-//! a metafield declaration can name, and the targets the page renders with their place. The page
-//! imports the same file (`api-versions.js`, `extension-host.js`).
+//! What lsf-checkout and the pages share of the API of checkout and customer account UI
+//! extensions, in one file, `assets/api.json`: the releases lsf runs and what each requires, the
+//! resources a metafield declaration can name, and every target of Shopify's with its place. The
+//! pages import the same file (`api-versions.js`, `extension-host.js`).
 
 use std::sync::OnceLock;
 
@@ -30,6 +30,12 @@ pub(crate) struct Release {
 pub(crate) struct Placement {
     pub target: String,
     pub place: String,
+    /// `checkout` (the checkout and the thank-you page) or `customer-account`.
+    pub surface: String,
+    /// A target that renders nothing: the page runs it and reads what it returns (the address
+    /// autocomplete).
+    #[serde(default)]
+    pub runs: bool,
 }
 
 /// `assets/api.json`, read once.
@@ -65,7 +71,22 @@ mod tests {
             .iter()
             .map(|p| p.target.as_str())
             .collect();
-        assert!(targets.iter().all(|target| target.starts_with("purchase.")));
+        for placement in &metadata.placements {
+            let prefix = match placement.surface.as_str() {
+                "checkout" => "purchase.",
+                "customer-account" => "customer-account.",
+                other => panic!("{}: surface {other}", placement.target),
+            };
+            assert!(placement.target.starts_with(prefix), "{}", placement.target);
+            assert_eq!(
+                placement.runs,
+                !placement.target.ends_with(".render")
+                    && !placement.target.ends_with(".render-before")
+                    && !placement.target.ends_with(".render-after"),
+                "{}",
+                placement.target
+            );
+        }
         targets.sort();
         targets.dedup();
         assert_eq!(

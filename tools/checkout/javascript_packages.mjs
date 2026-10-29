@@ -1,7 +1,7 @@
 // Copies the npm packages lsf builds extensions with when an app has no node_modules into
 // crates/checkout/javascript-packages/node_modules, and writes the list lsf embeds
 // (crates/checkout/src/javascript/packages.rs). Only the files the entries of a Function or a
-// checkout UI extension reach are copied, with each package's package.json and license.
+// checkout or customer account UI extension reach are copied, with each package's package.json and license.
 //
 //   node tools/checkout/javascript_packages.mjs        (or: mise run checkout:packages)
 //
@@ -22,7 +22,7 @@ const PACKAGES = {
   '@shopify/ui-extensions': '2026.10.0',
 };
 
-// What a Function's entry and a Preact checkout UI extension import.
+// What a Function's entry and a Preact checkout or customer account UI extension import.
 const ENTRIES = [
   '@shopify/shopify_function/run',
   'preact',
@@ -34,6 +34,8 @@ const ENTRIES = [
   '@shopify/ui-extensions/preact',
   '@shopify/ui-extensions/checkout',
   '@shopify/ui-extensions/checkout/preact',
+  '@shopify/ui-extensions/customer-account',
+  '@shopify/ui-extensions/customer-account/preact',
 ];
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');

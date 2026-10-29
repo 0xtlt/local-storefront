@@ -7,6 +7,19 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Added
 
+- **Customer account UI extensions, and every checkout target.** With an app, `/account` is the
+  customer account of Shopify's new customer accounts: the orders of the customer logged in (from
+  the store data, and the last order placed in the local checkout), the status of an order (its
+  shipments, what is not shipped, its returns), the profile (addresses, and the company and
+  locations of a B2B customer), and the full pages of extensions. The 24 targets of customer
+  account UI extensions render there, with the `shopify` global they read (the account logged in,
+  the order, navigation, toasts) and the components only customer accounts have (`s-page`,
+  `s-customer-account-action`, `s-menu`, …); an order action opens its dialog. The checkout gains
+  the 14 targets it lacked: pickup locations and points, the targets of payment apps (with the
+  form dialog), the gift card form, bundle lines, the chat, and the address autocomplete, which
+  suggests addresses as the buyer types. An order of the store data can list its `returns`. See
+  [customer account](docs/checkout.md#customer-account).
+
 - **Watch mode for the checkout of an app.** `lsf checkout --app <dir> --watch` (and `serve
   --app <dir> --watch`) builds a Function again when its files (or the files the Functions
   share, such as a Cargo workspace's `Cargo.toml`) change, and reloads the open checkout,

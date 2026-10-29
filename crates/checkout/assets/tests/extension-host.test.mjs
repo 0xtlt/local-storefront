@@ -8,7 +8,7 @@ import { checkoutState, settle } from './harness.mjs';
 
 const SANDBOX = 'http://localhost/__lsf/checkout/assets/sandbox.html';
 
-function setup({ extensions, storage, state, server = false } = {}) {
+function setup({ extensions, storage, state, server = false, onRequest } = {}) {
   const document = new FakeDocument();
   const listeners = [];
   const window = {
@@ -40,6 +40,7 @@ function setup({ extensions, storage, state, server = false } = {}) {
           if (dispatched.failWith) throw new Error(dispatched.failWith);
         },
     storage,
+    onRequest,
     console: log,
   });
   const slot = document.createElement('div');
@@ -513,4 +514,85 @@ test('shows what extensions see of the state', () => {
   const state = { ...checkoutState(), diagnostics: ['x'], builds: [] };
   const visible = stateForExtensions(state);
   assert.deepEqual(Object.keys(state).filter((key) => !(key in visible)).sort(), ['account', 'builds', 'diagnostics', 'extensions', 'runs']);
+});
+
+// --- Targets that render nothing, full pages and dialogs, and the customer account ---
+
+const SUGGEST = 'purchase.address-autocomplete.suggest';
+
+test('runs a target that renders nothing in a hidden frame, and answers what it returned', async () => {
+  const extensions = [
+    { handle: 'block-only', apiVersion: '2026-10', script: '/b.js', targets: [BLOCK] },
+    { handle: 'autocomplete', apiVersion: '2026-10', script: '/a.js', targets: [SUGGEST] },
+  ];
+  const { host, document, connect, from } = setup({ extensions });
+  const asked = host.run(SUGGEST, { value: 'harb', field: 'address1' }, 1000);
+  await settle();
+  connect();
+  const [frame] = host.instances();
+  assert.equal(frame.ext.handle, 'autocomplete');
+  assert.equal(frame.runnable, true);
+  assert.ok(document.querySelector('.lsf-runnables').contains(frame.frame), 'out of sight');
+  from(frame, { type: 'ready' });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const init = frame.iframe.contentWindow.posted.find((message) => message.type === 'init');
+  assert.equal(init.runnable, true);
+  const run = frame.iframe.contentWindow.posted.find((message) => message.type === 'run');
+  assert.deepEqual(run.payload, { value: 'harb', field: 'address1' });
+  from(frame, { type: 'ran', id: run.id, result: { suggestions: [{ label: '815 Harbor Way' }] } });
+  assert.deepEqual(await asked, { suggestions: [{ label: '815 Harbor Way' }] });
+
+  // The frame stays for the next run; a failure answers null.
+  const again = host.run(SUGGEST, { value: 'harbo' }, 1000);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(host.instances().length, 1);
+  const second = frame.iframe.contentWindow.posted.filter((message) => message.type === 'run')[1];
+  from(frame, { type: 'ran', id: second.id, error: 'boom', result: null });
+  assert.equal(await again, null);
+  assert.equal(await host.run('purchase.address-autocomplete.format-suggestion', {}), null, 'no extension declares it');
+});
+
+test('a slot for one extension (a full page, a dialog) holds that one only', () => {
+  const PAGE = 'customer-account.page.render';
+  const extensions = [
+    { handle: 'loyalty', apiVersion: '2026-10', script: '/l.js', targets: [PAGE] },
+    { handle: 'returns', apiVersion: '2026-10', script: '/r.js', targets: [PAGE] },
+  ];
+  const { host, slot } = setup({ extensions });
+  assert.equal(host.hasTargetFor(PAGE, 'returns'), true);
+  assert.equal(host.hasTargetFor(PAGE, 'nobody'), false);
+  host.attach(slot, PAGE, { key: 'page', handle: 'returns' });
+  assert.deepEqual(host.instances().map((instance) => instance.ext.handle), ['returns']);
+});
+
+test('hands the page what an extension of the customer account asks', () => {
+  const MENU = 'customer-account.order.action.menu-item.render';
+  const requests = [];
+  const { host, slot, connect, from, window } = setup({
+    extensions: [{ handle: 'ask', apiVersion: '2026-10', script: '/a.js', targets: [MENU] }],
+    onRequest: (request, instance) => {
+      requests.push([request.type, instance.ctx.orderId]);
+      return request.type !== 'navigate' || !request.url.startsWith('https:');
+    },
+  });
+  host.attach(slot, MENU, { key: 'menu', orderId: 'gid://shopify/Order/1' });
+  connect();
+  const [frame] = host.instances();
+  for (const type of ['action', 'toast', 'close']) from(frame, { type });
+  from(frame, { type: 'navigate', url: 'shopify:customer-account/profile' });
+  // What the page leaves to the host: a web page, in a new tab.
+  from(frame, { type: 'navigate', url: 'https://example.com/' });
+  assert.deepEqual(requests.map(([type]) => type), ['action', 'toast', 'close', 'navigate', 'navigate']);
+  assert.equal(requests[0][1], 'gid://shopify/Order/1');
+  assert.deepEqual(window.opened, [['https://example.com/', '_blank', 'noopener']]);
+});
+
+test('the storage of the customer account is apart from the checkout\'s', () => {
+  const values = new Map();
+  const storage = { setItem: (key, value) => values.set(key, value), getItem: (key) => values.get(key) ?? null, removeItem: (key) => values.delete(key) };
+  const { host, slot, connect, from } = setup({ storage, state: { ...checkoutState(), surface: 'customer-account' } });
+  host.attach(slot, BLOCK);
+  connect();
+  from(host.instances()[0], { type: 'storage', op: 'write', key: 'seen', value: 1, id: 1 });
+  assert.match([...values.keys()][0], /:customer-account:gift-message:seen$/);
 });

@@ -1,7 +1,7 @@
 # Checkout playground
 
-A Shopify app made to try `lsf checkout` on: many Functions and checkout UI extensions, and a
-scenario for each case. Nothing here is deployed.
+A Shopify app made to try `lsf checkout` on: many Functions, checkout UI extensions and customer
+account UI extensions, and a scenario for each case. Nothing here is deployed.
 
 ```bash
 cd examples/checkout-playground
@@ -197,9 +197,23 @@ change). The scenario `ui-preact` shows both. `crates/checkout/assets/tests/buil
 draws each bundle next to the one Shopify's CLI 5.0.0 builds from the same sources
 (`crates/checkout/tests/fixtures/shopify-cli`), acts on them, and compares.
 
+## Customer account UI extensions
+
+`/account` is the customer account of the app ([docs](../../docs/checkout.md#customer-account)):
+log in as one of the customers, then open the orders, an order and the profile. Jane Doe has two
+orders, one delivered with a return, one partly shipped; Alex Morgan, a B2B buyer, has a company
+with two locations on the profile.
+
+| Extension | API | Targets | What it shows |
+|---|---|---|---|
+| `ca-every-target` | 2026-10 | the 24 targets of customer accounts | A badge naming each target and what it is for (order, shipment, return, location); a full page with a route of its own (`/account/pages/ca-every-target`); an order action, "Ask about this order", whose dialog shows a toast |
+| `ca-preact` | 2026-10 | `order-status.block.render`, `profile.block.render` | Built from its sources in Preact with the hooks of `@shopify/ui-extensions/customer-account/preact`: the order, its items and total; the customer logged in, and a toast |
+
+Add `?targets=all` to a page of the account for the list of every target and where it renders.
+
 ## Checkout UI extensions
 
-The `extensions/ui-*` folders are checkout UI extensions. Each bundle, `dist/<handle>.js`, is
+The `extensions/ui-*` folders are checkout UI extensions (`ca-*`, customer account ones). Each bundle, `dist/<handle>.js`, is
 written by hand: a plain script that registers its targets with `shopify.extend` and draws
 Polaris web components (`s-banner`, `s-stack`, ...) into `document.body`. There is no build
 step and no source to rebuild from: edit the bundle and reload the page. Each bundle starts with
@@ -223,7 +237,7 @@ React and remote-ui extensions stopped at 2025-07 (`ui-broken-old-api` shows the
 | `ui-order-summary` | 2026-10 | `checkout.cart-line-list.render-after` | Lines, units and the four amounts of `shopify.cost` | `ui-static-targets` |
 | `ui-footer-links` | 2026-10 | `checkout.footer.render-after` | Links (opened in a new tab) and `shopify.extension` | `ui-static-targets` |
 | `ui-thank-you` | 2027-01 | the 7 `thank-you.*` targets | The order confirmation, the customer, the lines; a closable announcement | `ui-thank-you` |
-| `ui-every-target` | 2026-10 | the 24 targets the page renders | A badge naming each target: a map of the page | `ui-every-target` |
+| `ui-every-target` | 2026-10 | the 36 targets of the checkout and the thank-you page that render | A badge naming each target: a map of the page | `ui-every-target` |
 | `ui-gift-wrap` | 2027-01 | `checkout.block.render` | A checkbox that adds the Gift Wrap line and a `gift_wrap` attribute, and takes them back | `ui-cart-edits` |
 | `ui-upsell` | 2026-10 | `checkout.block.render` | Three offers: one added, one sold out, one unknown variant (both refused, with the message) | `ui-cart-edits` |
 | `ui-note-attributes` | 2026-10 | `checkout.block.render` | Edits the cart note and two attributes; lists the attributes, each removable | `ui-note-attributes` |
@@ -238,6 +252,7 @@ React and remote-ui extensions stopped at 2025-07 (`ui-broken-old-api` shows the
 | `ui-network-fetch` | 2027-01 | `checkout.block.render` | `fetch` to `http://localhost:8787/` (`network_access`), or a warning when the fake API is down | `ui-capabilities` |
 | `ui-api-access` | 2026-10 | `checkout.block.render` | `query` rejected (no Storefront API locally), the session token's claims, `storage`, `analytics` | `ui-capabilities` |
 | `ui-change-refusals` | 2026-10 | `checkout.block.render` | One button per change the checkout refuses, and its answer | `ui-change-refusals` |
+| `ui-address-autocomplete` | 2026-10 | `address-autocomplete.suggest`, `.format-suggestion` | Suggests addresses as the buyer types the address field; Seattle's needs `format-suggestion` | `ui-address-autocomplete` |
 
 `ui-everything` runs all of the above at once, and `ui-shop-look` a set of them in the Shop
 look. The upsell and gift wrap add the products `shopify-local/products/ui-*.json`, whose
@@ -253,7 +268,7 @@ The `ui-broken-*` extensions fail on purpose. They are in no scenario but their 
 | `ui-broken-renders-nothing` | 2027-01 | Draws nothing: a frame 0px tall | `ui-broken-runtime` |
 | `ui-broken-unregistered-target` | 2026-10 | Registers the footer target while its toml declares the block one | `ui-broken-runtime` |
 | `ui-broken-slow` | 2026-10 | Renders after 4 s; its interceptor answers after 7 s, past the 5 s the checkout waits | `ui-broken-runtime` |
-| `ui-broken-unknown-target` | 2026-10 | Declares `purchase.checkout.nowhere.render` and `chat.render` (no place) next to the block | `ui-broken-loader` |
+| `ui-broken-unknown-target` | 2026-10 | Declares `purchase.checkout.nowhere.render` and `customer-account.orders.block.render` (no such targets) next to the block | `ui-broken-loader` |
 | `ui-broken-old-api` | 2025-07 | A remote-ui bundle on an API version that is not supported | `ui-broken-loader` |
 | `ui-broken-no-api-version` | none | No `api_version` | `ui-broken-loader` |
 | `ui-broken-not-built` | 2026-10 | No `dist/` bundle | `ui-broken-loader` |

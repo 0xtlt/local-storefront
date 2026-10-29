@@ -1915,6 +1915,18 @@ fn initial_lines(store: &lsf_core::Store, session: &lsf_core::Session) -> Vec<Re
         .collect()
 }
 
+/// A line of an order of the store data, as a line of the checkout: what the customer account
+/// shows of an order, and its extensions read, is what the checkout shows of a cart.
+pub fn order_line(store: &lsf_core::Store, variant_id: u64, quantity: u32) -> Option<ResultLine> {
+    let cart_line = CartLine {
+        variant_id,
+        quantity,
+        properties: Default::default(),
+        selling_plan: None,
+    };
+    line_from_variant(store, &cart_line, Vec::new())
+}
+
 /// A checkout line for a cart line, priced as the storefront cart prices it: with the selling
 /// plan of the line and the quantity price breaks of the variant ([`ResolvedLine`]).
 fn line_from_variant(

@@ -4,7 +4,7 @@
 // extensions are hosted by `extension-host.js`.
 
 import { MENU_ITEMS } from './account.js';
-import { RENDERED_TARGETS, createExtensionHost } from './extension-host.js';
+import { ACCOUNT_TARGETS, RENDERED_TARGETS, RUN_TARGETS, createExtensionHost } from './extension-host.js';
 import { languageOf, withCurrency } from './format.js';
 import { missingFields, op } from './operations.js';
 import { defaultRunView, functionsRequest, renderPage, requestedView } from './views.js';
@@ -16,6 +16,13 @@ const ADDRESS_FIELDS = [
 ];
 
 const JSON_HEADERS = { 'content-type': 'application/json', accept: 'application/json' };
+
+const SUGGEST = 'purchase.address-autocomplete.suggest';
+const FORMAT_SUGGESTION = 'purchase.address-autocomplete.format-suggestion';
+const ACTION_REQUIRED = 'purchase.checkout.payment-option-item.action-required.render';
+/** What the buyer types in the address field waits this long before the extension is asked. */
+const SUGGEST_DELAY_MS = 250;
+const ACCEPTED_FIELDS = ['address1', 'address2', 'city', 'company', 'countryCode', 'provinceCode', 'zip'];
 
 /**
  * Starts the page in `root` from `initial` (the state JSON). Everything the page touches comes
@@ -40,6 +47,11 @@ export function startCheckout({ root, initial, document, window, location, fetch
     busy: false,
     block: null,
     failure: null,
+    // The answer of the address autocomplete, `{value, list}`; the payment method whose form an
+    // extension shows in a dialog; whether "Pay with a gift card" is ticked.
+    suggestions: null,
+    actionRequired: null,
+    giftCard: false,
   };
 
   // Under the locale root of the buyer's language (`/fr`), so that every request of the page
@@ -50,7 +62,7 @@ export function startCheckout({ root, initial, document, window, location, fetch
   // `?targets=all` asks for a page where every extension renders at every target it declares;
   // without it there is no preview at all.
   const showAll = new URL(location.href ?? 'http://localhost/', 'http://localhost/').searchParams.get('targets') === 'all';
-  const preview = showAll ? { all: true, rendered: RENDERED_TARGETS } : null;
+  const preview = showAll ? { all: true, rendered: RENDERED_TARGETS, runs: RUN_TARGETS, account: ACCOUNT_TARGETS } : null;
 
   const host = createExtensionHost({
     document,
@@ -83,7 +95,8 @@ export function startCheckout({ root, initial, document, window, location, fetch
   function paint() {
     document.body?.setAttribute?.('data-variant', state.variant);
     if (document.documentElement) document.documentElement.lang = languageOf(state);
-    render(root, renderPage({ state, ui, slot, actions, location: location.href, refusals: host.refusals(), extensionErrors: host.errors(), preview }));
+    const has = (target) => host.hasTarget(target);
+    render(root, renderPage({ state, ui, slot, has, actions, location: location.href, refusals: host.refusals(), extensionErrors: host.errors(), preview }));
     badgeLift();
     host.update(state);
   }
@@ -251,11 +264,78 @@ export function startCheckout({ root, initial, document, window, location, fetch
     return operations;
   }
 
+  // The address autocomplete: what was typed last, and the timer that waits for the buyer to
+  // stop typing.
+  let suggestTimer = null;
+  let asked = null;
+  function suggest(value) {
+    clearTimeout(suggestTimer);
+    if (!host.hasTarget(SUGGEST) || value.trim().length < 2) {
+      asked = null;
+      if (ui.suggestions) {
+        ui.suggestions = null;
+        paint();
+      }
+      return;
+    }
+    suggestTimer = setTimeout(async () => {
+      asked = value;
+      const answer = await host.run(SUGGEST, {
+        value,
+        field: 'address1',
+        selectedCountryCode: ui.draft.address.countryCode ?? state.shippingAddress?.countryCode ?? undefined,
+        acceptedAddressInputFields: ACCEPTED_FIELDS,
+      });
+      // The buyer typed on meanwhile: a later answer will come.
+      if (asked !== value) return;
+      const list = Array.isArray(answer?.suggestions) ? answer.suggestions.filter((entry) => entry && typeof entry.label === 'string') : [];
+      ui.suggestions = list.length > 0 ? { value, list: list.slice(0, 5) } : null;
+      paint();
+    }, SUGGEST_DELAY_MS);
+  }
+
   const actions = {
     draft(name, value) {
       if (name === 'email') ui.draft.email = value;
       else if (name === 'discount') ui.discountInput = value;
       else ui.draft.address[name] = value;
+      if (name === 'address1') suggest(value);
+    },
+
+    /** Fills the address from a suggestion of the autocomplete: its own address, else the one
+     * `format-suggestion` makes of it. */
+    async pickSuggestion(index) {
+      const suggestion = ui.suggestions?.list?.[index];
+      ui.suggestions = null;
+      asked = null;
+      clearTimeout(suggestTimer);
+      if (!suggestion) return paint();
+      let address = suggestion.formattedAddress;
+      if (!address) {
+        const answer = await host.run(FORMAT_SUGGESTION, { selectedSuggestion: suggestion, acceptedAddressInputFields: ACCEPTED_FIELDS });
+        address = answer?.formattedAddress;
+      }
+      if (!address || typeof address !== 'object') return paint();
+      for (const name of ACCEPTED_FIELDS) {
+        if (typeof address[name] === 'string') ui.draft.address[name] = address[name];
+      }
+      paint();
+      // The page does not write into the field that has the focus: the address field, where the
+      // buyer typed, gets the street by hand.
+      const field = root.querySelector?.('#lsf-address1');
+      if (field && typeof address.address1 === 'string') field.value = address.address1;
+      return run(() => [op.shippingAddress(addressToSend())]);
+    },
+
+    /** Opens the dialog where an extension asks for the form of a payment method, or closes it. */
+    openActionRequired(handle) {
+      ui.actionRequired = handle;
+      paint();
+    },
+
+    toggleGiftCard(open) {
+      ui.giftCard = open;
+      paint();
     },
 
     commit(name, value) {
@@ -276,7 +356,11 @@ export function startCheckout({ root, initial, document, window, location, fetch
     },
 
     chooseDelivery: (group, handle) => run([op.deliveryOption(group, handle)]),
-    choosePayment: (handle) => run([op.paymentMethod(handle)]),
+    choosePayment(handle) {
+      // A form an extension shows for the method opens with it, as Shopify's does.
+      if (host.hasTarget(ACTION_REQUIRED) && !preview) ui.actionRequired = handle;
+      return run([op.paymentMethod(handle)]);
+    },
 
     async addDiscount() {
       const code = ui.discountInput.trim();

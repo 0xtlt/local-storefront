@@ -11,6 +11,7 @@ name = "lsf"
 path = "src/main.rs"
 
 [dependencies]
+chrono.workspace = true
 lsf-core.workspace = true
 lsf-fmt.workspace = true
 lsf-liquid.workspace = true

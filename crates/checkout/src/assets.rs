@@ -21,16 +21,20 @@ macro_rules! embed {
 }
 
 embed!(
+    "account-views.js",
     "account.js",
     "api-versions.js",
     "api.json",
     "checkout.css",
     "checkout.html",
     "checkout.js",
+    "customer-account.html",
+    "customer-account.js",
     "extension-host.js",
     "format.js",
     "home.js",
     "operations.js",
+    "sandbox-account-api.js",
     "sandbox-api.js",
     "sandbox-components.js",
     "sandbox.html",

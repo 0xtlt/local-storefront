@@ -1,4 +1,5 @@
-// The checkout UI extensions of the playground app (`examples/checkout-playground/extensions/ui-*`):
+// The checkout and customer account UI extensions of the playground app
+// (`examples/checkout-playground/extensions/ui-*` and `ca-*`):
 // each toml is well formed, each bundle registers the targets its toml declares, and each one
 // that should work boots in the sandbox at every target without an error. The `ui-broken-*`
 // ones fail the way their case says.
@@ -8,12 +9,12 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { refusalOf } from '../api-versions.js';
-import { RENDERED_TARGETS } from '../extension-host.js';
+import { ACCOUNT_TARGETS, RENDERED_TARGETS, RUN_TARGETS } from '../extension-host.js';
 import { assets, checkoutState, init, plain, sandboxWindow, settle } from './harness.mjs';
 
-const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
+const SANDBOX = ['sandbox-api.js', 'sandbox-account-api.js', 'sandbox-components.js', 'sandbox.js'];
 const extensions = join(assets, '..', '..', '..', 'examples', 'checkout-playground', 'extensions');
-const handles = readdirSync(extensions).filter((name) => name.startsWith('ui-')).sort();
+const handles = readdirSync(extensions).filter((name) => name.startsWith('ui-') || name.startsWith('ca-')).sort();
 const toml = (handle) => readFileSync(join(extensions, handle, 'shopify.extension.toml'), 'utf8');
 const bundlePath = (handle) => join(extensions, handle, 'dist', `${handle}.js`);
 const bundle = (handle) => readFileSync(bundlePath(handle), 'utf8');
@@ -72,7 +73,8 @@ test('the working extensions run on a supported API version and render where the
     }
     assert.equal(reason, null, handle);
     if (handle.startsWith('ui-broken-')) continue;
-    for (const target of manifest(handle).targets) assert.ok(RENDERED_TARGETS.includes(target), `${handle}: ${target}`);
+    const placed = [...RENDERED_TARGETS, ...RUN_TARGETS, ...ACCOUNT_TARGETS];
+    for (const target of manifest(handle).targets) assert.ok(placed.includes(target), `${handle}: ${target}`);
   }
   // Both releases are used, and a metafield is declared the way each one wants.
   const versions = new Set(handles.map((handle) => manifest(handle).apiVersion));
@@ -85,7 +87,7 @@ test('each bundle says what it shows and registers the targets its toml declares
   for (const handle of handles.filter((name) => !NOT_BUILT.includes(name))) {
     const source = bundle(handle);
     if (!fromSources(handle)) {
-      assert.match(source, /^\/\/ ui-/, `${handle} starts with a comment that says what it shows`);
+      assert.match(source, /^\/\/ (ui|ca)-/, `${handle} starts with a comment that says what it shows`);
     }
     const win = sandboxWindow();
     win.run('globalThis.__names = []; globalThis.shopify = { extend: (name) => { globalThis.__names.push(name); } };');
@@ -109,7 +111,7 @@ test('each bundle says what it shows and registers the targets its toml declares
 });
 
 /** Boots an extension at a target and waits for it to draw. */
-async function boot(handle, target, ctx) {
+async function boot(handle, target, ctx, state = checkoutState()) {
   const win = sandboxWindow({ scripts: SANDBOX, bundles: { [url(handle)]: bundle(handle) } });
   // What a browser frame has and the test window lacks: the network is down.
   Object.assign(win.context, {
@@ -130,7 +132,7 @@ async function boot(handle, target, ctx) {
       if (file.includes('.default.')) ext.defaultLocale = language;
     }
   }
-  win.receive(init({ handle, target, apiVersion: manifest(handle).apiVersion ?? '2026-10', ctx, ext }));
+  win.receive(init({ handle, target, apiVersion: manifest(handle).apiVersion ?? '2026-10', ctx, ext, state }));
   for (let i = 0; i < 6; i++) await settle();
   // Storage and the session token wait for the page: answer them.
   for (const request of [...win.posts('storage'), ...win.posts('sessionToken')]) {
@@ -140,13 +142,35 @@ async function boot(handle, target, ctx) {
   return win;
 }
 
+/** The state of the customer account on the page of an order, as `customer-account.rs` writes it. */
+function accountState() {
+  const checkout = checkoutState();
+  return {
+    ...checkout,
+    surface: 'customer-account',
+    buyer: { customer: { id: 'gid://shopify/Customer/7', email: 'jane@example.com', firstName: 'Jane' } },
+    order: {
+      id: 'gid://shopify/Order/42', legacyId: 42, name: '#1042', confirmationNumber: 'ABC123XYZ', processedAt: '2024-03-04T00:00:00Z',
+      lines: checkout.lines,
+      cost: { subtotal: checkout.cost.subtotal, shipping: checkout.cost.shipping, tax: checkout.cost.tax, total: checkout.cost.total },
+    },
+  };
+}
+
 test('each working extension draws at each of its targets without an error', async () => {
   const state = checkoutState();
-  const ctxFor = (target) => (/cart-line-item/.test(target) ? { lineId: state.lines[0].id } : {});
+  const ctxFor = (target) => {
+    if (/cart-line-item/.test(target)) return { lineId: state.lines[0].id, orderId: 'gid://shopify/Order/42' };
+    if (target === 'customer-account.page.render') return { handle: 'x', path: '/' };
+    if (target.startsWith('customer-account.')) {
+      return { orderId: 'gid://shopify/Order/42', fulfillmentId: 'gid://shopify/Fulfillment/1', returnId: 'gid://shopify/Return/1', locationId: 'gid://shopify/CompanyLocation/1' };
+    }
+    return {};
+  };
   for (const handle of handles) {
     if (NOT_LOADED[handle] || NOT_BUILT.includes(handle) || FAILS_AT_RUN[handle] || NOT_BOOTED.includes(handle)) continue;
-    for (const target of manifest(handle).targets.filter((name) => RENDERED_TARGETS.includes(name))) {
-      const win = await boot(handle, target, ctxFor(target));
+    for (const target of manifest(handle).targets.filter((name) => RENDERED_TARGETS.includes(name) || ACCOUNT_TARGETS.includes(name))) {
+      const win = await boot(handle, target, ctxFor(target), target.startsWith('customer-account.') ? accountState() : state);
       assert.deepEqual(win.posts('error'), [], `${handle} at ${target}`);
       const drawn = win.document.body.childNodes.length > 0;
       assert.equal(drawn, handle !== 'ui-broken-renders-nothing', `${handle} at ${target} draws something`);
@@ -175,4 +199,24 @@ test('the interceptors block the order the way their scenarios say', async () =>
   assert.equal((await ask(limit, true))[0].behavior, units > 5 ? 'block' : 'allow');
   const nocap = await boot('ui-intercept-no-capability', 'purchase.checkout.block.render', {});
   assert.equal((await ask(nocap, false))[0].behavior, 'allow', 'no block_progress: the buyer goes on');
+});
+
+test('the address autocomplete of the playground suggests, and formats the suggestion without an address', async () => {
+  const handle = 'ui-address-autocomplete';
+  const win = sandboxWindow({ scripts: SANDBOX, bundles: { [url(handle)]: bundle(handle) } });
+  const run = async (target, payload) => {
+    win.receive({ ...init({ handle, target }), runnable: true });
+    win.receive({ type: 'run', id: target, payload });
+    for (let i = 0; i < 6; i++) await settle();
+    return win.posts('ran').find((post) => post.id === target).result;
+  };
+  const { suggestions } = await run('purchase.address-autocomplete.suggest', { value: 'harbor', field: 'address1', selectedCountryCode: 'US' });
+  assert.deepEqual(suggestions.map((suggestion) => suggestion.id), ['pdx', 'sea']);
+  assert.equal(suggestions[1].formattedAddress, undefined);
+  const again = sandboxWindow({ scripts: SANDBOX, bundles: { [url(handle)]: bundle(handle) } });
+  again.receive({ ...init({ handle, target: 'purchase.address-autocomplete.format-suggestion' }), runnable: true });
+  again.receive({ type: 'run', id: 'f', payload: { selectedSuggestion: suggestions[1] } });
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(again.posts('ran')[0].result.formattedAddress.city, 'Seattle');
+  assert.deepEqual([...win.posts('error'), ...again.posts('error')], []);
 });

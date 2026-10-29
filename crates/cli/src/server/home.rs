@@ -1234,6 +1234,9 @@ fn build(
             "checkout": format!("{root}/checkout"),
             "allTargets": format!("{root}/checkout?targets=all"),
             "shop": format!("{root}/checkout?variant=shop"),
+            // Where the customer account UI extensions render: none when the theme renders the
+            // accounts.
+            "account": super::customer_account::serves(state, store).then(|| format!("{root}/account")),
         },
     })
 }
@@ -2196,12 +2199,19 @@ pub fn render(home: &Json, check_now: &str) -> String {
          <div class=\"lsf-h-actions\">\
          <a class=\"lsf-h-btn is-primary\" href=\"{}\">Open the checkout</a>\
          <a class=\"lsf-h-btn\" href=\"{}\">Every extension target</a>\
-         <a class=\"lsf-h-btn\" href=\"{}\">Shop look</a></div>\
+         <a class=\"lsf-h-btn\" href=\"{}\">Shop look</a>{}</div>\
          <p class=\"lsf-muted lsf-h-note\">With the cart of the store data. A scenario opens a checkout of its own.</p></section>",
         section_head("lsf-h-open", "Open a checkout", ""),
         esc(text_of(&links["checkout"])),
         esc(text_of(&links["allTargets"])),
         esc(text_of(&links["shop"])),
+        links["account"]
+            .as_str()
+            .map(|href| format!(
+                "<a class=\"lsf-h-btn\" href=\"{}\" data-link=\"account\">Customer account</a>",
+                esc(href)
+            ))
+            .unwrap_or_default(),
     ));
 
     // The scenarios.
@@ -2297,10 +2307,10 @@ pub fn render(home: &Json, check_now: &str) -> String {
         (
             "uiExtensions",
             "ui-extensions",
-            "Checkout UI extensions",
+            "UI extensions",
             "ui",
             ui_extension_html,
-            "The app has no checkout UI extension.",
+            "The app has no checkout or customer account UI extension.",
         ),
     ] {
         let extensions = home[key].as_array().cloned().unwrap_or_default();

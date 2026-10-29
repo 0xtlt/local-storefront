@@ -343,6 +343,14 @@
             "null"
           ],
           "default": null
+        },
+        "returns": {
+          "description": "What the customer sent back, as the customer account shows it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrderReturnInput"
+          },
+          "default": []
         }
       },
       "additionalProperties": false
@@ -394,6 +402,29 @@
           "pattern": "^-?\\d+(\\.\\d{1,2})?$"
         }
       ]
+    },
+    "OrderReturnInput": {
+      "description": "A return of an order.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "description": "`requested`, `open` or `closed`. Defaults to `open`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "line_items": {
+          "description": "The lines sent back, by their variant, and how many of each. Defaults to every line of\nthe order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrderLineInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
     },
     "CompanyContactInput": {
       "description": "A customer as a contact of their company (B2B): `purchasingCompany.contact` of a checkout\nFunction.",

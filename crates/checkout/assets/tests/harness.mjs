@@ -131,6 +131,7 @@ export function sandboxWindow({ scripts = ['sandbox-api.js'], bundles = {}, cust
     Intl,
     Event: FakeEvent,
     Promise,
+    AbortController,
     setTimeout,
     queueMicrotask,
     JSON,

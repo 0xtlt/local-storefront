@@ -590,6 +590,7 @@ An order of a customer, shown on account pages.
 | `tax_price` | [Money](#money) |  |
 | `cancelled` | boolean |  |
 | `note` | string |  |
+| `returns` | array of [OrderReturn](#orderreturn) | What the customer sent back, as the customer account shows it. |
 
 ## OrderLine
 
@@ -609,6 +610,15 @@ One of:
 
 - integer
 - string
+
+## OrderReturn
+
+A return of an order.
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string | `requested`, `open` or `closed`. Defaults to `open`. |
+| `line_items` | array of [OrderLine](#orderline) | The lines sent back, by their variant, and how many of each. Defaults to every line of the order. |
 
 ## CompanyContact
 

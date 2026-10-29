@@ -6,6 +6,7 @@
 //   state    the checkout, amounts as `{amount, currencyCode}` (see `withCurrency`)
 //   ui       what only the page knows: drafts of the fields, what is open, what failed
 //   slot     `slot(target, instance)` → the node where extensions of that target render, or null
+//   has      `has(target)` → whether an extension renders at that target
 //   actions  what the buyer's gestures do
 //   refusals the extensions the host does not load, `[{handle, reason}]` (see `api-versions.js`)
 //   extensionErrors what the extensions threw, `[{handle, target, message, stack}]`
@@ -228,6 +229,41 @@ function savedAddresses(ctx) {
   });
 }
 
+/** What `purchase.address-autocomplete.suggest` answered for what the buyer typed: a list under
+ * the address field. A click fills the address (`purchase.address-autocomplete.format-suggestion`
+ * first, when the suggestion has no address of its own). */
+function suggestions(ctx) {
+  const { ui, actions } = ctx;
+  const list = ui.suggestions?.list ?? [];
+  if (list.length === 0) return null;
+  return h('ul', { class: 'lsf-suggestions', role: 'listbox', 'aria-label': 'Address suggestions', key: 'suggestions' },
+    list.map((suggestion, index) => h('li', { key: `${index}:${suggestion.label}`, role: 'option' },
+      h('button', {
+        type: 'button',
+        class: 'lsf-suggestion',
+        'data-suggestion': index,
+        // The field keeps the focus: leaving it would commit what was typed first.
+        onMousedown: (event) => event.preventDefault(),
+        onClick: () => actions.pickSuggestion(index),
+      }, highlighted(suggestion)))));
+}
+
+/** The label of a suggestion, the parts that match what was typed in bold. */
+function highlighted(suggestion) {
+  const label = String(suggestion.label ?? '');
+  const parts = [];
+  let last = 0;
+  const matches = [...(suggestion.matchedSubstrings ?? [])].sort((a, b) => a.offset - b.offset);
+  for (const { offset, length } of matches) {
+    if (!(offset >= last && length > 0)) continue;
+    if (offset > last) parts.push(label.slice(last, offset));
+    parts.push(h('strong', null, label.slice(offset, offset + length)));
+    last = offset + length;
+  }
+  if (last < label.length) parts.push(label.slice(last));
+  return parts;
+}
+
 function addressSection(ctx) {
   const { state, actions, slot } = ctx;
   const errors = fieldErrors(ctx);
@@ -251,6 +287,7 @@ function addressSection(ctx) {
     h('div', { class: 'lsf-row' }, text('firstName', 'First name (optional)', 'given-name'), text('lastName', 'Last name', 'family-name')),
     text('company', 'Company (optional)', 'organization'),
     text('address1', 'Address', 'address-line1'),
+    suggestions(ctx),
     text('address2', 'Apartment, suite, etc. (optional)', 'address-line2'),
     h('div', { class: 'lsf-row' }, text('zip', 'Postal code', 'postal-code'), text('city', 'City', 'address-level2')),
     text('provinceCode', 'State / Province (optional)', 'address-level1'),
@@ -259,8 +296,72 @@ function addressSection(ctx) {
   );
 }
 
-function deliverySection(ctx) {
+const isPickup = (option) => option.kind === 'PICK_UP';
+
+/** A delivery option of a group: its radio, its price, and the targets under it (those of a
+ * shipping method, or of a pickup location). */
+function optionCard(ctx, group, option) {
   const { state, actions, slot } = ctx;
+  const selected = group.selected === option.handle;
+  const where = { group: group.handle, option: option.handle };
+  return h(
+    'div',
+    { class: `lsf-radio-card${selected ? ' is-selected' : ''}`, key: option.handle },
+    h(
+      'label',
+      { class: 'lsf-radio' },
+      h('input', {
+        type: 'radio',
+        name: `delivery-${group.handle}`,
+        value: option.handle,
+        checked: selected,
+        onChange: () => actions.chooseDelivery(group.handle, option.handle),
+      }),
+      h('span', { class: 'lsf-radio-text' },
+        h('span', { class: 'lsf-radio-title' }, option.title),
+        option.description && h('span', { class: 'lsf-muted' }, option.description)),
+      h('span', { class: 'lsf-radio-price' },
+        option.cost.amount !== option.originalCost.amount &&
+          h('s', { class: 'lsf-muted' }, price(option.originalCost, state.shop)),
+        priceOrFree(option.cost, state.shop)),
+    ),
+    isPickup(option)
+      ? slot('purchase.checkout.pickup-location-option-item.render-after', { key: `${group.handle}:${option.handle}`, ...where })
+      : [
+        slot('purchase.checkout.shipping-option-item.render-after', { key: `${group.handle}:${option.handle}`, ...where }),
+        selected && slot('purchase.checkout.shipping-option-item.details.render', { key: `${group.handle}:${option.handle}:details`, ...where }),
+      ],
+  );
+}
+
+/** The pickup locations of a group (the shipping rates of kind `pick_up`), with their targets. */
+function pickupLocations(ctx, group) {
+  const { slot } = ctx;
+  const options = group.options.filter(isPickup);
+  if (options.length === 0) return null;
+  return h('div', { class: 'lsf-pickup', key: `${group.handle}:pickup`, 'data-pickup': group.handle },
+    h('h3', null, 'Pick up'),
+    slot('purchase.checkout.pickup-location-list.render-before', { key: `${group.handle}:pickup-before`, group: group.handle }),
+    h('div', { class: 'lsf-radio-list', role: 'radiogroup' }, options.map((option) => optionCard(ctx, group, option))),
+    slot('purchase.checkout.pickup-location-list.render-after', { key: `${group.handle}:pickup-after`, group: group.handle }));
+}
+
+/** The pickup points, which Shopify's pickup point Functions find and the local checkout does
+ * not run: only the targets around the list, with an extension at one of them. */
+function pickupPoints(ctx) {
+  const { slot } = ctx;
+  const before = slot('purchase.checkout.pickup-point-list.render-before', { key: 'pickup-points-before' });
+  const after = slot('purchase.checkout.pickup-point-list.render-after', { key: 'pickup-points-after' });
+  if (!before && !after) return null;
+  return h('div', { class: 'lsf-pickup lsf-pickup-points', key: 'pickup-points', 'data-pickup': 'points' },
+    h('h3', null, 'Pickup points'),
+    before,
+    h('p', { class: 'lsf-placeholder' }, 'No pickup points: the local checkout does not run the pickup point Functions.'),
+    after);
+}
+
+function deliverySection(ctx) {
+  const { state, slot } = ctx;
   const errors = fieldErrors(ctx);
   const known = Boolean(state.shippingAddress?.countryCode);
   const titles = new Map(state.lines.map((line) => [line.id, line.title]));
@@ -280,43 +381,12 @@ function deliverySection(ctx) {
               { class: 'lsf-group', key: group.handle, 'data-group': group.handle },
               groups.length > 1 &&
                 h('h3', null, `Shipment ${index + 1} of ${groups.length}`, h('span', { class: 'lsf-muted' }, ` · ${group.lineIds.map((id) => titles.get(id)).filter(Boolean).join(', ')}`)),
-              h(
-                'div',
-                { class: 'lsf-radio-list', role: 'radiogroup' },
-                group.options.map((option) => {
-                  const selected = group.selected === option.handle;
-                  return h(
-                    'div',
-                    { class: `lsf-radio-card${selected ? ' is-selected' : ''}`, key: option.handle },
-                    h(
-                      'label',
-                      { class: 'lsf-radio' },
-                      h('input', {
-                        type: 'radio',
-                        name: `delivery-${group.handle}`,
-                        value: option.handle,
-                        checked: selected,
-                        onChange: () => actions.chooseDelivery(group.handle, option.handle),
-                      }),
-                      h('span', { class: 'lsf-radio-text' },
-                        h('span', { class: 'lsf-radio-title' }, option.title),
-                        option.description && h('span', { class: 'lsf-muted' }, option.description)),
-                      h('span', { class: 'lsf-radio-price' },
-                        option.cost.amount !== option.originalCost.amount &&
-                          h('s', { class: 'lsf-muted' }, price(option.originalCost, state.shop)),
-                        priceOrFree(option.cost, state.shop)),
-                    ),
-                    slot('purchase.checkout.shipping-option-item.render-after', {
-                      key: `${group.handle}:${option.handle}`, group: group.handle, option: option.handle,
-                    }),
-                    selected && slot('purchase.checkout.shipping-option-item.details.render', {
-                      key: `${group.handle}:${option.handle}:details`, group: group.handle, option: option.handle,
-                    }),
-                  );
-                }),
-              ),
+              h('div', { class: 'lsf-radio-list', role: 'radiogroup' },
+                group.options.filter((option) => !isPickup(option)).map((option) => optionCard(ctx, group, option))),
+              pickupLocations(ctx, group),
             ),
           ),
+    known && pickupPoints(ctx),
     firstError(errors, 'delivery') && h('p', { class: 'lsf-field-error' }, icon('warning'), firstError(errors, 'delivery')),
     slot('purchase.checkout.shipping-option-list.render-after', { key: 'shipping-after' }),
   );
@@ -344,6 +414,44 @@ function cardForm() {
     h('p', { class: 'lsf-muted lsf-demo-note' }, 'Demo checkout: card details are not sent anywhere.'));
 }
 
+const ACTION_REQUIRED = 'purchase.checkout.payment-option-item.action-required.render';
+
+/** What shows when a payment method is selected: its form or its note, then the targets of the
+ * method. The form an extension asks the buyer to fill (`action-required`) is a dialog over the
+ * page, which opens when the buyer selects the method; showing every target, it is inline. */
+function paymentPanel(ctx, method) {
+  const { ui, actions, slot, has } = ctx;
+  const where = { payment: method.handle };
+  const card = method.handle === 'card';
+  return h('div', { class: 'lsf-radio-panel' },
+    card ? cardForm() : h('p', null, paymentNote(method)),
+    card && slot('purchase.checkout.payment-option-item.hosted-fields.render-after', { key: `${method.handle}:hosted-fields`, ...where }),
+    slot('purchase.checkout.payment-option-item.details.render', { key: `${method.handle}:details`, ...where }),
+    ctx.preview
+      ? slot(ACTION_REQUIRED, { key: `${method.handle}:action-required`, ...where })
+      : has?.(ACTION_REQUIRED) && h('button', {
+        type: 'button', class: 'lsf-link lsf-action-required', onClick: () => actions.openActionRequired(method.handle),
+      }, 'Complete the payment form'),
+    !ctx.preview && ui.actionRequired === method.handle && h('div', { class: 'lsf-modal', key: 'action-required', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Payment form' },
+      h('div', { class: 'lsf-modal-card' },
+        h('button', { type: 'button', class: 'lsf-fn-close lsf-modal-close', 'aria-label': 'Close', onClick: () => actions.openActionRequired(null) }, icon('close')),
+        slot(ACTION_REQUIRED, { key: `${method.handle}:action-required`, ...where }))));
+}
+
+/** "Pay with a gift card", where the gift card form of an extension shows once it is ticked:
+ * only when an extension has that form. */
+function giftCard(ctx) {
+  const { ui, actions, slot, has } = ctx;
+  const target = 'purchase.checkout.gift-card.render';
+  if (!ctx.preview && !has?.(target)) return null;
+  const open = ui.giftCard || Boolean(ctx.preview);
+  return h('div', { class: 'lsf-gift-card', key: 'gift-card' },
+    h('label', { class: 'lsf-check' },
+      h('input', { type: 'checkbox', checked: open, onChange: (event) => actions.toggleGiftCard(event.target.checked) }),
+      h('span', null, 'Pay with a gift card')),
+    open && slot(target, { key: 'gift-card' }));
+}
+
 function paymentSection(ctx) {
   const { state, actions, slot } = ctx;
   const errors = fieldErrors(ctx);
@@ -356,8 +464,10 @@ function paymentSection(ctx) {
     h(
       'div',
       { class: 'lsf-radio-list', role: 'radiogroup' },
-      (state.paymentMethods ?? []).map((method) => {
+      (state.paymentMethods ?? []).map((method, index) => {
         const selected = state.selectedPayment === method.handle;
+        // Showing every target, the first method shows its panel while none is selected.
+        const open = selected || (Boolean(ctx.preview) && !state.selectedPayment && index === 0);
         return h(
           'div',
           { class: `lsf-radio-card${selected ? ' is-selected' : ''}`, key: method.handle },
@@ -365,11 +475,12 @@ function paymentSection(ctx) {
             h('input', { type: 'radio', name: 'payment', value: method.handle, checked: selected, onChange: () => actions.choosePayment(method.handle) }),
             h('span', { class: 'lsf-radio-text' }, h('span', { class: 'lsf-radio-title' }, method.name)),
             method.handle === 'card' && h('span', { class: 'lsf-card-brands', 'aria-hidden': 'true' }, ['VISA', 'MC', 'AMEX'].map((brand) => h('span', { class: 'lsf-card-brand', key: brand }, brand)))),
-          selected && h('div', { class: 'lsf-radio-panel' }, method.handle === 'card' ? cardForm() : h('p', null, paymentNote(method))),
+          open && paymentPanel(ctx, method),
         );
       }),
     ),
     firstError(errors, 'payment') && h('p', { class: 'lsf-field-error' }, icon('warning'), firstError(errors, 'payment')),
+    giftCard(ctx),
     slot('purchase.checkout.payment-method-list.render-after', { key: 'payment-after' }),
   );
 }
@@ -407,6 +518,16 @@ function actionsSection(ctx) {
 
 // --- The summary -------------------------------------------------------------------------
 
+/** The products of a bundle line: an extension's, or their list. */
+function lineComponents(ctx, line) {
+  const components = line.components ?? [];
+  if (components.length === 0) return null;
+  return ctx.slot('purchase.cart-line-item.line-components.render', { key: `${line.id}:components`, lineId: line.id })
+    ?? h('ul', { class: 'lsf-components', key: `${line.id}:components` },
+      components.map((component, index) => h('li', { key: component.id ?? index, class: 'lsf-muted' },
+        `${component.quantity} × ${component.title}${component.variantTitle ? ` · ${component.variantTitle}` : ''}`)));
+}
+
 function lineItem(ctx, line, { thankYou = false } = {}) {
   const { state, slot } = ctx;
   const discounted = line.total.amount !== line.subtotal.amount;
@@ -425,7 +546,8 @@ function lineItem(ctx, line, { thankYou = false } = {}) {
         (line.attributes ?? []).map((attribute) => h('span', { class: 'lsf-muted' }, `${attribute.key}: ${attribute.value}`)),
         (line.discountAllocations ?? []).map((allocation) =>
           h('span', { class: 'lsf-tag' }, allocation.code ?? allocation.title, ` (−${price(allocation.amount, state.shop)})`)),
-        line.transformedBy && h('span', { class: 'lsf-muted' }, `Changed by a cart transform (${line.transformedBy})`)),
+        line.transformedBy && h('span', { class: 'lsf-muted' }, `Changed by a cart transform (${line.transformedBy})`),
+        lineComponents(ctx, line)),
       h('div', { class: 'lsf-line-price' },
         discounted && h('s', { class: 'lsf-muted' }, price(line.subtotal, state.shop)),
         price(line.total, state.shop))),
@@ -581,7 +703,15 @@ function checkoutPage(ctx) {
       paymentSection(ctx),
       actionsSection(ctx),
       slot('purchase.checkout.footer.render-after', { key: 'footer' })),
-    summary(ctx));
+    summary(ctx),
+    chat(ctx, 'purchase.checkout.chat.render'));
+}
+
+/** The chat of an extension, over the page in the bottom right corner (in the page, under the
+ * checkout that shows every target). */
+function chat(ctx, target) {
+  const node = ctx.slot(target, { key: 'chat' });
+  return node && h('div', { class: `lsf-chat${ctx.underCheckout ? ' is-inline' : ''}`, key: `chat:${target}` }, node);
 }
 
 function addressLines(address, countries) {
@@ -635,7 +765,8 @@ function thankYouPage(ctx) {
       h('div', { class: 'lsf-actions-row' },
         h('a', { class: 'lsf-pay lsf-continue', href: storefrontLink(state), onClick: actions.continueShopping }, 'Continue shopping')),
       slot('purchase.thank-you.footer.render-after', { key: 'footer' })),
-    summary(ctx, { thankYou: true }));
+    summary(ctx, { thankYou: true }),
+    chat(ctx, 'purchase.thank-you.chat.render'));
 }
 
 // --- The Functions: a badge on every page, and a dialog with their runs ------------------
@@ -912,6 +1043,11 @@ function functions(ctx) {
 
 /** Why a target that has a place on the page is not on it right now. */
 function whyNotShown(target, state) {
+  if (target.includes('pickup-location')) return 'needs a pickup location: a shipping rate of kind `pick_up` in the store data, and a delivery address';
+  if (target.includes('pickup-point')) return 'needs a delivery address';
+  if (target.includes('line-components')) return 'needs a bundle line: a cart transform that expands a line';
+  if (target.includes('hosted-fields')) return 'needs the credit card method, selected';
+  if (target.includes('payment-option-item')) return 'needs a selected payment method';
   if (target.includes('shipping-option-item.details')) return 'needs a selected shipping method: enter a delivery address and choose one';
   if (target.includes('shipping-option-item')) return 'needs shipping methods: enter a delivery address';
   if (target.includes('cart-line-item')) return 'needs a line in the cart';
@@ -929,6 +1065,8 @@ function targetsPanel({ state, preview, refusals = [] }) {
     let status;
     if (refused.has(ext.handle)) status = h('span', { class: 'lsf-chip is-error' }, 'not loaded');
     else if (preview.shown.has(target)) status = h('span', { class: 'lsf-chip is-ok' }, 'shown');
+    else if (preview.runs.includes(target)) status = h('span', { class: 'lsf-muted' }, 'runs as the buyer types the address');
+    else if (preview.account.includes(target)) status = h('span', { class: 'lsf-muted' }, 'in the customer account');
     else if (!preview.rendered.includes(target)) status = h('span', { class: 'lsf-chip is-error' }, 'no place on the page');
     else status = h('span', { class: 'lsf-muted' }, whyNotShown(target, state));
     return h('li', { key: `${ext.handle}:${target}`, 'data-for': ext.handle, 'data-for-target': target }, h('strong', null, ext.handle), h('code', null, target), status);
@@ -952,7 +1090,9 @@ function thankYouPreview(ctx) {
 export function renderPage(ctx) {
   const { state } = ctx;
   // With `preview`, every target is asked for: note the slots that exist, which the panel lists.
-  const preview = ctx.preview?.all ? { shown: new Set(), rendered: ctx.preview.rendered ?? [] } : null;
+  const preview = ctx.preview?.all
+    ? { shown: new Set(), rendered: ctx.preview.rendered ?? [], runs: ctx.preview.runs ?? [], account: ctx.preview.account ?? [] }
+    : null;
   const page = preview
     ? {
       ...ctx,
