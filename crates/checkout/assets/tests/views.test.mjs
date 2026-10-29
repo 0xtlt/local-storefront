@@ -547,7 +547,7 @@ test('showing every target shows the steps of a cart that does not ship, and the
 test('the targets panel says which targets are shown and why the others are not', () => {
   const state = withExtensions(checkoutState(), [
     { handle: 'gift', targets: ['purchase.checkout.block.render', 'purchase.thank-you.block.render'] },
-    { handle: 'chat', targets: ['purchase.checkout.chat.render', 'purchase.checkout.shipping-option-item.render-after', 'purchase.checkout.shipping-option-item.details.render'] },
+    { handle: 'chat', targets: ['purchase.checkout.nowhere.render', 'purchase.checkout.shipping-option-item.render-after', 'purchase.checkout.shipping-option-item.details.render'] },
     { handle: 'old', targets: ['purchase.checkout.footer.render-after'] },
   ]);
   const { tree } = everyTarget(state, {
@@ -558,7 +558,7 @@ test('the targets panel says which targets are shown and why the others are not'
   const row = (handle, target) => text(findAll(panel, (node) => node.tag === 'li' && node.props['data-for'] === handle && node.props['data-for-target'] === target)[0]);
   assert.match(row('gift', 'purchase.checkout.block.render'), /gift.*purchase\.checkout\.block\.render.*shown/);
   assert.match(row('gift', 'purchase.thank-you.block.render'), /shown/);
-  assert.match(row('chat', 'purchase.checkout.chat.render'), /no place on the page/);
+  assert.match(row('chat', 'purchase.checkout.nowhere.render'), /no place on the page/);
   assert.match(row('chat', 'purchase.checkout.shipping-option-item.render-after'), /needs shipping methods: enter a delivery address/);
   assert.match(row('chat', 'purchase.checkout.shipping-option-item.details.render'), /needs a selected shipping method/);
   assert.match(row('old', 'purchase.checkout.footer.render-after'), /not loaded/);
@@ -671,3 +671,112 @@ test('every target still shows with an empty cart', () => {
   assert.equal(findAll(tree, (node) => node.props['data-section'] === 'empty-cart').length, 0);
 });
 
+
+// --- Pickup, payment apps, gift cards, bundles, chat and the autocomplete ---
+
+/** The page with a slot (a node) at each of `declared`, and the targets asked for. */
+function withSlots(state, declared, ui = {}, extra = {}) {
+  const asked = [];
+  const slot = (target, instance) => {
+    asked.push([target, instance]);
+    return declared.includes(target) ? h('div', { class: 'lsf-slot', 'data-target': target }) : null;
+  };
+  const actions = new Proxy({}, { get: () => () => {} });
+  const tree = renderPage({
+    state, ui: { draft: { address: {} }, ...ui }, slot, has: (target) => declared.includes(target), actions,
+    location: 'http://localhost/checkouts/cn/preview', ...extra,
+  });
+  return { tree, asked };
+}
+
+const GROUP = {
+  handle: 'g1',
+  lineIds: ['gid://shopify/CartLine/1'],
+  selected: 'standard',
+  options: [
+    { handle: 'standard', title: 'Standard', kind: 'SHIPPING', cost: { amount: 5 }, originalCost: { amount: 5 } },
+    { handle: 'pickup', title: 'Pick up in store', kind: 'PICK_UP', cost: { amount: 0 }, originalCost: { amount: 0 } },
+  ],
+};
+
+test('pickup options are a list of their own, with the targets of pickup locations', () => {
+  const state = withCurrency(checkoutState({ shippingAddress: ADDRESS, deliveryGroups: [GROUP] }));
+  const { tree, asked } = withSlots(state, ['purchase.checkout.pickup-point-list.render-after']);
+  const pickup = findAll(tree, (node) => node.props['data-pickup'] === 'g1')[0];
+  assert.match(text(pickup), /Pick up.*Pick up in store/);
+  const where = (target) => asked.filter(([name]) => name === target).map(([, instance]) => instance.option ?? instance.group ?? instance.key);
+  assert.deepEqual(where('purchase.checkout.pickup-location-option-item.render-after'), ['pickup']);
+  assert.deepEqual(where('purchase.checkout.shipping-option-item.render-after'), ['standard'], 'a pickup option is not a shipping method');
+  assert.deepEqual(where('purchase.checkout.pickup-location-list.render-before'), ['g1']);
+  // Pickup points: no Function finds them, the list only holds the targets.
+  const points = findAll(tree, (node) => node.props['data-pickup'] === 'points')[0];
+  assert.match(text(points), /does not run the pickup point Functions/);
+  assert.equal(findAll(withSlots(state, []).tree, (node) => node.props['data-pickup'] === 'points').length, 0, 'not without an extension there');
+});
+
+test('a selected payment method holds the targets of payment apps, and its form opens as a dialog', () => {
+  const card = withCurrency(checkoutState({ selectedPayment: 'card' }));
+  const ACTION = 'purchase.checkout.payment-option-item.action-required.render';
+  const { asked } = withSlots(card, [ACTION]);
+  const names = asked.map(([target]) => target);
+  assert.ok(names.includes('purchase.checkout.payment-option-item.hosted-fields.render-after'), 'under the card fields');
+  assert.ok(names.includes('purchase.checkout.payment-option-item.details.render'));
+  assert.ok(!names.includes(ACTION), 'the dialog is closed');
+  const opened = withSlots(card, [ACTION], { actionRequired: 'card' });
+  assert.equal(byClass(opened.tree, 'lsf-modal').length, 1);
+  assert.ok(opened.asked.some(([target, instance]) => target === ACTION && instance.payment === 'card'));
+  const cod = withSlots(withCurrency(checkoutState({ selectedPayment: 'cod' })), []).asked.map(([target]) => target);
+  assert.ok(!cod.includes('purchase.checkout.payment-option-item.hosted-fields.render-after'), 'only the card has hosted fields');
+});
+
+test('the gift card form of an extension shows once "Pay with a gift card" is ticked', () => {
+  const TARGET = 'purchase.checkout.gift-card.render';
+  const state = withCurrency(checkoutState());
+  assert.equal(byClass(withSlots(state, []).tree, 'lsf-gift-card').length, 0, 'no extension, no checkbox');
+  const closed = withSlots(state, [TARGET]);
+  assert.match(text(byClass(closed.tree, 'lsf-gift-card')[0]), /Pay with a gift card/);
+  assert.ok(!closed.asked.some(([target]) => target === TARGET));
+  assert.ok(withSlots(state, [TARGET], { giftCard: true }).asked.some(([target]) => target === TARGET));
+});
+
+test('a bundle line lists its products, or an extension renders them instead', () => {
+  const TARGET = 'purchase.cart-line-item.line-components.render';
+  const state = withCurrency(checkoutState());
+  state.lines[0] = { ...state.lines[0], components: [{ id: 'c1', title: 'White tee', variantTitle: 'M', quantity: 1 }, { id: 'c2', title: 'Tote', quantity: 2 }] };
+  assert.deepEqual(byClass(withSlots(state, []).tree, 'lsf-components').map(text), ['1 × White tee · M2 × Tote']);
+  const replaced = withSlots(state, [TARGET]);
+  assert.equal(byClass(replaced.tree, 'lsf-components').length, 0);
+  assert.ok(replaced.asked.some(([target, instance]) => target === TARGET && instance.lineId === state.lines[0].id));
+});
+
+test('a chat sits over the checkout and the thank-you page', () => {
+  const state = withCurrency(checkoutState());
+  assert.equal(byClass(withSlots(state, ['purchase.checkout.chat.render']).tree, 'lsf-chat').length, 1);
+  const thanks = withCurrency(checkoutState({ status: 'completed', order: { number: '#1001' } }));
+  assert.equal(byClass(withSlots(thanks, ['purchase.thank-you.chat.render']).tree, 'lsf-chat').length, 1);
+  assert.equal(byClass(withSlots(state, []).tree, 'lsf-chat').length, 0);
+});
+
+test('the suggestions of the address autocomplete show under the address, the match in bold', () => {
+  const state = withCurrency(checkoutState());
+  const ui = { suggestions: { value: 'harb', list: [{ label: '815 Harbor Way', matchedSubstrings: [{ offset: 4, length: 4 }] }] } };
+  const { tree } = withSlots(state, [], ui);
+  const [list] = byClass(tree, 'lsf-suggestions');
+  assert.equal(text(list), '815 Harbor Way');
+  assert.equal(text(findAll(list, (node) => node.tag === 'strong')[0]), 'Harb');
+});
+
+test('showing every target, the address autocomplete runs and the customer account is elsewhere', () => {
+  const state = withExtensions(checkoutState(), [
+    { handle: 'auto', targets: ['purchase.address-autocomplete.suggest'] },
+    { handle: 'ca', targets: ['customer-account.order-status.block.render'] },
+  ]);
+  const actions = new Proxy({}, { get: () => () => {} });
+  const tree = renderPage({
+    state, ui: { draft: { address: {} } }, slot: () => null, actions, location: 'http://localhost/?targets=all',
+    preview: { all: true, rendered: RENDERED_TARGETS, runs: ['purchase.address-autocomplete.suggest'], account: ['customer-account.order-status.block.render'] },
+  });
+  const panel = findAll(tree, (node) => node.props['data-section'] === 'targets')[0];
+  assert.match(text(panel), /runs as the buyer types the address/);
+  assert.match(text(panel), /in the customer account/);
+});

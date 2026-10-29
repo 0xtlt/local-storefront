@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-address-autocomplete.js, is
+# written by hand (no build step): read it for what the extension answers.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: address autocomplete"
+handle = "ui-address-autocomplete"
+type = "ui_extension"
+description = "Suggests addresses as the buyer types the address field, from a fixed list; one suggestion needs format-suggestion to become an address."
+
+  [[extensions.targeting]]
+  target = "purchase.address-autocomplete.suggest"
+
+  [[extensions.targeting]]
+  target = "purchase.address-autocomplete.format-suggestion"

@@ -6,13 +6,17 @@
 // Messages to the page: `ready`, `resize`, `overlay`, `change`, `storage`, `sessionToken`,
 // `analytics`, `log`, `error`, `interceptors`, `intercepted`, `dismiss`, `reload`, `navigate`.
 // With `probe` in `init` (the home page), the bundle is only loaded, and the frame answers
-// `probed`: whether the bundle loaded, and the targets it registered.
+// `probed`: whether the bundle loaded, and the targets it registered. With `runnable` (a target
+// that renders nothing, the address autocomplete), it waits for `run` and answers `ran` with
+// what the extension returned.
 (function (global) {
   'use strict';
   const Sandbox = global.LsfSandbox;
   const post = (message) => global.parent.postMessage({ lsf: true, ...message }, '*');
 
   let runtime = null;
+  /** The bundle being loaded: a request to run waits for it. */
+  let starting = null;
   /** What the bundle threw while it was evaluated, for the error that says it registered nothing. */
   let loading = null;
   /** `load` while the bundle is evaluated, `run` after. */
@@ -116,6 +120,7 @@
       probed(true);
       return;
     }
+    if (init.runnable) return;
     try {
       await run(init);
     } catch (error) {
@@ -127,7 +132,18 @@
     const data = event.data;
     if (event.source !== global.parent || !data || data.lsf !== true) return;
     if (data.type === 'init') {
-      if (!runtime) start(data);
+      if (!runtime) starting = start(data);
+    } else if (data.type === 'run' && runtime) {
+      Promise.resolve(starting)
+        .then(() => runtime.run(data.payload))
+        .then(
+          (result) => post({ type: 'ran', id: data.id, result: JSON.parse(JSON.stringify(result === undefined ? null : result)) }),
+          (error) => {
+            const thrown = describe(error);
+            fail(thrown.message, thrown);
+            post({ type: 'ran', id: data.id, result: null, error: thrown.message });
+          },
+        );
     } else if (runtime) {
       runtime.receive(data);
     }

@@ -1011,6 +1011,22 @@ pub struct OrderInput {
     pub cancelled: bool,
     #[serde(default)]
     pub note: Option<String>,
+    /// What the customer sent back, as the customer account shows it.
+    #[serde(default)]
+    pub returns: Vec<OrderReturnInput>,
+}
+
+/// A return of an order.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OrderReturnInput {
+    /// `requested`, `open` or `closed`. Defaults to `open`.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// The lines sent back, by their variant, and how many of each. Defaults to every line of
+    /// the order.
+    #[serde(default)]
+    pub line_items: Vec<OrderLineInput>,
 }
 
 /// A customer. Sessions log in as a customer by email (see `session.customer`), and the checkout

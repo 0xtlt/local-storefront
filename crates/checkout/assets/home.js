@@ -1,7 +1,12 @@
 // The home page of `lsf checkout`. The page is complete without this script; it adds:
+// - the tabs (the scenarios, the Functions, the checkout UI extensions, the customer account UI
+//   extensions, the customers, the problems) and the menu of the groups of scenarios: without
+//   the script, the first tab shows;
 // - the filter of the scenarios: a search on their title, file and extension handles, and
 //   chips (all, with problems, uses Functions, uses UI extensions), with the count of the rows
-//   shown;
+//   shown. The groups (`data-group`) say how many of their scenarios have problems;
+// - a link to a part of the page (`#problems`, `#scenario-…`, `#function-…`) opens its tab and
+//   the folds around it;
 // - the check of the Functions: when the server has not run the Functions of the scenarios yet,
 //   the page asks `/__lsf/checkouts/check` once it is shown, and puts what it found in place
 //   (the list of problems, the rows of the scenarios and Functions that fail, the order of the
@@ -66,7 +71,8 @@ export function sortRows(list) {
   reorder(list, rows.map((row) => row.id));
 }
 
-/** Puts the rows of `list` in the order of `ids` (the others stay after them). */
+/** Puts the rows of `list` in the order of `ids` (the others stay after them); the ids of
+ * rows of other lists are skipped. */
 export function reorder(list, ids) {
   for (const id of ids) {
     const row = list.querySelector(`[id="${id}"]`);
@@ -74,23 +80,124 @@ export function reorder(list, ids) {
   }
 }
 
+/** The lists of scenarios: one, or one in each group. */
+const scenarioLists = (document) => [...document.querySelectorAll('[data-list="scenarios"]')];
+
+/**
+ * Brings each group of scenarios in line with its rows: the worst status of its rows as its
+ * dot (in the list and in the menu), how many have problems, and hidden when it is not the
+ * group chosen in the menu (`selected`, none for all) or the filter shows none of its rows.
+ */
+export function updateGroups(document, selected = null) {
+  const rank = (status) => ({ error: 0, warning: 1 })[status] ?? 2;
+  const worstOf = (statuses) => [...statuses].sort((a, b) => rank(a) - rank(b))[0] ?? 'ok';
+  const setDot = (slot, worst) => {
+    if (slot && !slot.querySelector(`.lsf-dot.is-${worst}`)) {
+      slot.replaceChildren(worst === 'ok' ? element(document, 'span', { class: 'lsf-dot is-ok', role: 'img', 'aria-label': 'OK' }) : dot(document, worst));
+    }
+  };
+  const all = [];
+  for (const group of document.querySelectorAll('[data-group]')) {
+    const name = group.getAttribute('data-group');
+    const rows = [...group.querySelectorAll('[data-scenario]')];
+    const statuses = rows.map((row) => row.getAttribute('data-status') ?? 'ok');
+    all.push(...statuses);
+    group.hidden = (selected !== null && selected !== name) || rows.every((row) => row.hidden);
+    const worst = worstOf(statuses);
+    group.setAttribute('data-worst', worst);
+    setDot(group.querySelector('[data-group-dot]'), worst);
+    setDot(document.querySelector(`[data-group-nav="${name}"] [data-group-dot]`), worst);
+    const troubled = statuses.filter((status) => rank(status) < 2).length;
+    const problems = group.querySelector('[data-group-problems]');
+    if (problems) problems.textContent = troubled ? `${troubled} with problems` : '';
+  }
+  if (all.length === 0) {
+    for (const row of document.querySelectorAll('[data-scenario]')) all.push(row.getAttribute('data-status') ?? 'ok');
+  }
+  setDot(document.querySelector('[data-group-nav=""] [data-group-dot]'), worstOf(all));
+}
+
+/** The tab of the page that shows `id` (`scenarios`, `functions`, `customers`, `problems`, …). */
+export function selectTab(document, id) {
+  const panels = [...document.querySelectorAll('[data-panel]')];
+  if (!panels.some((panel) => panel.getAttribute('data-panel') === id)) return false;
+  for (const panel of panels) panel.hidden = panel.getAttribute('data-panel') !== id;
+  for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-selected', String(tab.getAttribute('data-tab') === id));
+  return true;
+}
+
+function setUpTabs(document, window) {
+  for (const tab of document.querySelectorAll('[data-tab]')) {
+    tab.addEventListener('click', (event) => {
+      event.preventDefault();
+      const id = tab.getAttribute('data-tab');
+      selectTab(document, id);
+      window.history?.replaceState?.(window.history.state, '', `#${id}`);
+    });
+  }
+  for (const link of document.querySelectorAll('[data-tab-link]')) {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const id = link.getAttribute('data-tab-link');
+      selectTab(document, id);
+      window.history?.replaceState?.(window.history.state, '', `#${id}`);
+    });
+  }
+}
+
 function setUpFilter(document) {
   const box = document.querySelector('[data-filter]');
-  const list = document.querySelector('[data-list="scenarios"]');
-  if (!box || !list) return () => {};
-  const query = box.querySelector('[data-filter-query]');
+  const lists = scenarioLists(document);
+  if (!box || lists.length === 0) return () => {};
+  const query = document.querySelector('[data-filter-query]');
   const count = box.querySelector('[data-filter-count]');
   const empty = document.querySelector('[data-filter-empty]');
   const chips = [...box.querySelectorAll('[data-filter-chip]')];
-  const filter = { query: '', chip: 'all' };
+  const nav = [...document.querySelectorAll('[data-group-nav]')];
+  const title = document.querySelector('[data-list-title]');
+  const meta = document.querySelector('[data-list-meta]');
+  const allMeta = meta?.innerHTML;
+  const filter = { query: '', chip: 'all', group: null };
   const apply = () => {
-    const { shown, total } = applyFilter(list, filter);
+    let shown = 0;
+    let total = 0;
+    for (const list of lists) {
+      const group = list.parentNode?.getAttribute?.('data-group');
+      const counted = applyFilter(list, filter);
+      // Only the rows of the chosen group count.
+      if (filter.group === null || group === filter.group) {
+        shown += counted.shown;
+        total += counted.total;
+      }
+    }
     count.textContent = countText(shown, total);
     if (empty) empty.hidden = shown > 0;
+    updateGroups(document, filter.group);
   };
-  query.addEventListener('input', () => {
-    filter.query = query.value;
+  /** Shows a group, or every scenario (`null`). */
+  const card = document.querySelector('.lsf-h-scenarios');
+  const choose = (group) => {
+    filter.group = group;
+    // The heading of the card says the group: the one of the group goes.
+    if (group === null) card?.removeAttribute('data-one-group');
+    else card?.setAttribute('data-one-group', '');
+    for (const button of nav) button.setAttribute('aria-current', String((button.getAttribute('data-group-nav') || null) === group));
+    if (title) title.textContent = group ?? 'All scenarios';
+    if (meta) {
+      if (group === null) meta.innerHTML = allMeta;
+      else {
+        const rows = [...document.querySelectorAll(`[data-group="${group}"] [data-scenario]`)];
+        const troubled = rows.filter((row) => ['error', 'warning'].includes(row.getAttribute('data-status'))).length;
+        meta.textContent = `${rows.length} scenario${rows.length === 1 ? '' : 's'}${troubled ? ` · ${troubled} with problems` : ''}`;
+      }
+    }
     apply();
+  };
+  query?.addEventListener('input', () => {
+    filter.query = query.value;
+    // A search looks in every scenario.
+    if (filter.query.trim() && filter.group !== null) choose(null);
+    else apply();
   });
   for (const chip of chips) {
     chip.addEventListener('click', () => {
@@ -99,15 +206,48 @@ function setUpFilter(document) {
       apply();
     });
   }
-  box.hidden = false;
+  for (const button of nav) button.addEventListener('click', () => choose(button.getAttribute('data-group-nav') || null));
+  // The filter is on the page from the start, waiting for this script: it only wakes up.
+  if (query) query.disabled = false;
+  for (const control of [...chips, ...nav]) control.disabled = false;
   apply();
+  apply.choose = choose;
   return apply;
+}
+
+/** The bar and the tab say how many problems there are, as the list of problems does. */
+export function updateProblemCounts(document) {
+  const section = document.querySelector('[data-section="problems"]');
+  if (!section?.querySelectorAll) return;
+  const errors = section.querySelectorAll('.lsf-hp-row.is-error').length;
+  const warnings = section.querySelectorAll('.lsf-hp-row.is-warning').length;
+  const counts = [];
+  if (errors) counts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+  if (warnings) counts.push(`${warnings} warning${warnings === 1 ? '' : 's'}`);
+  const pill = document.querySelector('[data-problem-pill]');
+  if (pill) {
+    const status = errors ? 'error' : warnings ? 'warning' : 'ok';
+    const text = counts.join(' · ') || (section.dataset.check === 'pending' ? 'No problems so far' : 'No problems');
+    pill.setAttribute('class', `lsf-h-pill is-${status}`);
+    const label = pill.querySelector('span:last-child');
+    if (label) label.textContent = text;
+    const slot = pill.querySelector('.lsf-dot');
+    if (slot && !slot.classList.contains(`is-${status}`)) {
+      slot.replaceWith(status === 'ok' ? element(document, 'span', { class: 'lsf-dot is-ok', role: 'img', 'aria-label': 'OK' }) : dot(document, status));
+    }
+  }
+  const badge = document.querySelector('[data-problem-tab-count]');
+  if (badge) {
+    badge.textContent = String(errors + warnings);
+    badge.hidden = errors + warnings === 0;
+  }
 }
 
 function say(section, text) {
   const line = section.querySelector('[data-check-line]');
   if (!line) return;
   line.textContent = text;
+  line.title = text;
   line.classList.add('is-error');
 }
 
@@ -138,8 +278,8 @@ async function check(document, window, refilter) {
     const row = document.getElementById(id);
     if (row) row.outerHTML = html;
   }
-  const list = document.querySelector('[data-list="scenarios"]');
-  if (list && Array.isArray(answer.order)) reorder(list, answer.order);
+  if (Array.isArray(answer.order)) for (const list of scenarioLists(document)) reorder(list, answer.order);
+  updateProblemCounts(document);
   refilter();
 }
 
@@ -294,6 +434,10 @@ function dot(document, status) {
 export function openLink(document, row) {
   const href = row.dataset.open;
   if (!href) return element(document, 'a', { class: 'lsf-hp-where', href: `#${row.id}` }, 'details');
+  // An extension that only renders in the customer account shows its problem there.
+  if ('openAccount' in row.dataset) {
+    return element(document, 'a', { class: 'lsf-hp-where lsf-hp-open', href, title: 'Opens the customer account, where it renders' }, 'Open the customer account');
+  }
   const scenario = row.dataset.openIn || '';
   return element(document, 'a', {
     class: 'lsf-hp-where lsf-hp-open',
@@ -308,14 +452,15 @@ function report(document, { row, problem }) {
   const section = document.querySelector('[data-section="problems"]');
   if (section) {
     const { severity, message } = problem;
+    const groups = section.querySelector('[data-problem-groups]') ?? section;
     let group = section.querySelector(`.lsf-hp-group.is-${severity}`);
     if (!group) {
       group = element(document, 'div', { class: `lsf-hp-group is-${severity}` },
         element(document, 'h3', {}, severity === 'error' ? 'Errors ' : 'Warnings ', element(document, 'span', { class: 'lsf-h-n' }, '0')),
         element(document, 'ul', { class: 'lsf-hp-rows' }));
-      const warnings = section.querySelector('.lsf-hp-group.is-warning');
-      if (severity === 'error' && warnings) section.insertBefore(group, warnings);
-      else section.appendChild(group);
+      const warnings = groups.querySelector('.lsf-hp-group.is-warning');
+      if (severity === 'error' && warnings) groups.insertBefore(group, warnings);
+      else groups.appendChild(group);
       section.querySelector('.lsf-hp-clear')?.remove();
     }
     const line = element(document, 'li', { class: `lsf-hp-row is-${severity}`, 'data-problem': 'load', 'data-subject': handle },
@@ -328,7 +473,7 @@ function report(document, { row, problem }) {
           element(document, 'pre', {}, ...richText(document, message)),
           element(document, 'p', {}, 'Found by loading its bundle in this page, as the checkout does.'),
           element(document, 'p', { class: 'lsf-hp-rowlinks' }, 'On this page: ',
-            element(document, 'a', { href: `#${row.id}` }, handle), ' in the UI extensions'))),
+            element(document, 'a', { href: `#${row.id}` }, handle), 'openAccount' in row.dataset ? ' in the customer account UI extensions' : ' in the checkout UI extensions'))),
       openLink(document, row));
     // In the order of the server (scenarios last), with the rows past the first few folded.
     const list = group.querySelector('.lsf-hp-rows');
@@ -355,6 +500,7 @@ function report(document, { row, problem }) {
     count.textContent = counts.join(' · ');
     section.classList.remove('is-clear', 'has-warnings', 'has-errors');
     section.classList.add(errors ? 'has-errors' : 'has-warnings');
+    updateProblemCounts(document);
   }
   // The row of the extension.
   const { severity, message } = problem;
@@ -362,8 +508,18 @@ function report(document, { row, problem }) {
     row.dataset.status = severity;
     row.querySelector('.lsf-dot')?.replaceWith(dot(document, severity));
   }
-  row.querySelector('.lsf-h-main')?.appendChild(
-    element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, ...richText(document, message)));
+  // On the line the row keeps for it: the row does not grow.
+  const issue = row.querySelector('[data-issue]');
+  if (issue && issue.childNodes.length === 0) {
+    issue.setAttribute('class', `lsf-h-meta is-${severity}`);
+    issue.setAttribute('title', message);
+    issue.append(...richText(document, message));
+  } else if (issue) {
+    issue.append(' · ', ...richText(document, message));
+  } else {
+    row.querySelector('.lsf-h-main')?.appendChild(
+      element(document, 'span', { class: `lsf-h-meta is-${severity}`, title: message }, ...richText(document, message)));
+  }
   markScenarios(document, handle, severity);
 }
 
@@ -398,13 +554,38 @@ async function probeAll(document, window, refilter) {
   };
   await Promise.all(Array.from({ length: Math.min(PROBES_AT_ONCE, rows.length) }, worker));
   // The scenarios that now have problems move up with the others.
-  const list = document.querySelector('[data-list="scenarios"]');
-  if (list) sortRows(list);
+  for (const list of scenarioLists(document)) sortRows(list);
   refilter();
 }
 
+/** Opens what holds the element `#id` of the page (its group, its row, a fold), then shows it. */
+export function reveal(document, id, choose = null) {
+  const target = id && document.getElementById(id);
+  if (!target) return false;
+  for (let node = target; node; node = node.parentNode) {
+    const panel = node.getAttribute?.('data-panel');
+    if (panel) selectTab(document, panel);
+    // A scenario shows among all of them, whatever group was chosen.
+    if (node.getAttribute?.('data-group') !== null && node.getAttribute?.('data-group') !== undefined && choose) choose(null);
+    if (node.localName === 'details' && node !== target) node.open = true;
+  }
+  // A row opens too: its details are what the link is about.
+  const details = (target.childNodes ?? []).find((child) => child.localName === 'details');
+  if (details) details.open = true;
+  target.scrollIntoView?.({ block: 'start' });
+  return true;
+}
+
+function setUpLinks(document, window, choose) {
+  const follow = () => reveal(document, decodeURIComponent((window.location?.hash ?? '').slice(1)), choose);
+  window.addEventListener?.('hashchange', follow);
+  follow();
+}
+
 export async function start(document, window) {
+  setUpTabs(document, window);
   const refilter = setUpFilter(document);
+  setUpLinks(document, window, refilter.choose);
   await check(document, window, refilter);
   // After the check: its answer replaces the list of problems.
   await probeAll(document, window, refilter);

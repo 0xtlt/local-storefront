@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import { FakeEvent } from './fake-dom.mjs';
 import { plain, sandboxWindow } from './harness.mjs';
 
-/** `SUPPORTED_COMPONENTS` of `@shopify/ui-extensions` 2026.10 (checkout). */
+/** `SUPPORTED_COMPONENTS` of `@shopify/ui-extensions` 2026.10: checkout's, and the ones only
+ * customer accounts have. */
 const SUPPORTED = [
   'Abbreviation', 'Announcement', 'Badge', 'Banner', 'Box', 'Button', 'Chat', 'Checkbox', 'Chip', 'Choice', 'ChoiceList',
   'Clickable', 'ClickableChip', 'ClipboardItem', 'ConsentCheckbox', 'ConsentPhoneField', 'DateField', 'DatePicker', 'Details',
@@ -15,6 +16,8 @@ const SUPPORTED = [
   'PhoneField', 'Popover', 'PressButton', 'ProductThumbnail', 'Progress', 'QueryContainer', 'QRCode', 'ScrollBox', 'Section',
   'Select', 'Sheet', 'SkeletonParagraph', 'Spinner', 'Stack', 'Summary', 'Switch', 'Text', 'TextArea', 'TextField', 'Time',
   'Tooltip', 'UnorderedList', 'UrlField',
+  // Customer accounts only (`StandardComponents` of the customer account surface).
+  'Avatar', 'ButtonGroup', 'CustomerAccountAction', 'ImageGroup', 'Menu', 'Page',
 ].map((name) => (name === 'QRCode' ? 's-qr-code' : 's-' + name.replace(/(?<=.)([A-Z])/g, '-$1').toLowerCase()));
 
 /** Lets the timers set to 0 run: the action of a click comes after the click listeners. */
@@ -33,9 +36,9 @@ function components() {
   return { defined, win, make, Sandbox: win.context.LsfSandbox, document: win.document };
 }
 
-test('defines every component of the checkout UI extension API', () => {
+test('defines every component of the checkout and customer account UI extension APIs', () => {
   const { defined, Sandbox } = components();
-  assert.equal(SUPPORTED.length, 63);
+  assert.equal(SUPPORTED.length, 69);
   assert.deepEqual(SUPPORTED.filter((tag) => !defined.has(tag)), []);
   assert.deepEqual(plain(Sandbox.components.TAGS).sort(), [...SUPPORTED].sort());
 });

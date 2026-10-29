@@ -7,6 +7,7 @@ mod checkout;
 mod checkout_account;
 mod compress;
 mod control;
+mod customer_account;
 pub use control::{apply_session_input, routes};
 mod forms;
 mod home;

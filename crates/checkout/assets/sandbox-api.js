@@ -1,4 +1,5 @@
-// The `shopify` global of checkout UI extensions, built from the state of the checkout.
+// The `shopify` global of checkout UI extensions, built from the state of the checkout. The
+// customer account adds its own (`sandbox-account-api.js`) to what every target has here.
 //
 // A classic script (not a module): the sandboxed iframe has an opaque origin, where the
 // browser refuses module scripts that the server did not mark with CORS headers. It adds
@@ -233,6 +234,8 @@
       },
     };
   }
+
+  Sandbox.mappers = { allocation, mapLine, mapAddress, mapOption, mapCustomer, mapPurchasingCompany, mapMetafield };
 
   /** The names of the capabilities an extension was granted: `[extensions.capabilities]`. */
   function capabilityNames(capabilities) {
@@ -469,136 +472,190 @@
       return market ? { id: market.id, handle: market.handle } : { id: 'gid://shopify/Market/1', handle: 'primary' };
     });
 
-    // --- Checkout state, on every target
-    signalProperty(api, 'lines', (s) => s.lines.map(mapLine));
-    signalProperty(api, 'attributes', (s) => s.attributes || []);
-    signalProperty(api, 'note', (s) => s.note || undefined);
-    signalProperty(api, 'discountCodes', (s) => (s.discountCodes || []).map((entry) => ({ code: entry.code })));
-    signalProperty(api, 'discountAllocations', (s) =>
-      (s.discounts || []).filter((entry) => entry.class === 'ORDER').map(allocation));
-    signalProperty(api, 'appliedGiftCards', () => []);
-    signalProperty(api, 'deliveryGroups', (s) => (s.deliveryGroups || []).map(mapGroup));
-    signalProperty(api, 'availablePaymentOptions', (s) => (s.paymentMethods || []).map(paymentOption));
-    signalProperty(api, 'selectedPaymentOptions', (s) =>
-      (s.paymentMethods || []).filter((m) => m.handle === s.selectedPayment).map(paymentOption));
-    signalProperty(api, 'shippingAddress', (s) => mapAddress(s.shippingAddress));
-    signalProperty(api, 'billingAddress', (s) => mapAddress(s.shippingAddress));
-    signalProperty(api, 'checkoutToken', (s) => s.token);
-    signalProperty(api, 'metafields', (s) =>
-      (s.metafields || []).map((m) => ({ namespace: m.namespace, key: m.key, value: m.value, valueType: m.type })));
-    signalProperty(api, 'appMetafields', (s) => (s.metafields || []).map((m) => mapMetafield(m, s.token)));
-    signalProperty(api, 'localizedFields', () => []);
-    signalProperty(api, 'checkoutSettings', () => ({ orderSubmission: 'ORDER', shippingAddress: { isEditable: true } }));
-    signalProperty(api, 'customerPrivacy', () => ({
-      allowedProcessing: { analytics: true, marketing: true, preferences: true, saleOfData: true },
-      metafields: [],
-      visitorConsent: {},
-      shouldShowBanner: false,
-      saleOfDataRegion: false,
-    }));
-    signalProperty(api, 'instructions', () => ({
-      attributes: { canUpdateAttributes: true },
-      delivery: { canSelectCustomAddress: true },
-      discounts: { canUpdateDiscountCodes: true },
-      lines: { canAddCartLine: true, canRemoveCartLine: true, canUpdateCartLine: true },
-      metafields: { canSetCartMetafields: true, canDeleteCartMetafield: true },
-      notes: { canUpdateNote: true },
-    }));
-    api.cost = {};
-    signalProperty(api.cost, 'subtotalAmount', (s) => s.cost.subtotal);
-    signalProperty(api.cost, 'totalShippingAmount', (s) => s.cost.shipping);
-    signalProperty(api.cost, 'totalTaxAmount', (s) => s.cost.tax);
-    signalProperty(api.cost, 'totalAmount', (s) => s.cost.total);
-    api.buyerIdentity = {};
-    signalProperty(api.buyerIdentity, 'email', (s) => (s.buyer && s.buyer.email) || undefined);
-    signalProperty(api.buyerIdentity, 'phone', (s) => (s.buyer && s.buyer.phone) || undefined);
-    signalProperty(api.buyerIdentity, 'customer', (s) => mapCustomer(s.buyer && s.buyer.customer));
-    signalProperty(api.buyerIdentity, 'purchasingCompany', (s) => mapPurchasingCompany(s.buyer && s.buyer.purchasingCompany));
-    api.applyTrackingConsentChange = () => Promise.resolve({ type: 'success' });
-
-    // --- The buyer journey
     const interceptors = [];
     let requests = [];
-    api.buyerJourney = {};
-    signalProperty(api.buyerJourney, 'completed', (s) => s.status === 'completed');
-    signalProperty(api.buyerJourney, 'activeStep', (s) => ({ handle: s.status === 'completed' ? 'thank-you' : 'checkout' }));
-    signalProperty(api.buyerJourney, 'steps', (s) =>
-      s.status === 'completed'
-        ? [{ handle: 'thank-you', label: 'Thank you', to: '', disabled: false }]
-        : [{ handle: 'checkout', label: 'Checkout', to: '', disabled: false }]);
-    api.buyerJourney.intercept = (interceptor) => {
-      interceptors.push(interceptor);
-      post({ type: 'interceptors', count: interceptors.length });
-      return Promise.resolve(() => {
-        const index = interceptors.indexOf(interceptor);
-        if (index >= 0) interceptors.splice(index, 1);
-        post({ type: 'interceptors', count: interceptors.length });
-      });
-    };
-
-    // --- Changes, on checkout targets
-    if (target.indexOf('purchase.checkout.') === 0 || target === 'purchase.cart-line-item.line-components.render') {
-      for (const method of [
-        'applyAttributeChange', 'applyCartLinesChange', 'applyDiscountCodeChange', 'applyGiftCardChange',
-        'applyMetafieldChange', 'applyNoteChange', 'applyShippingAddressChange', 'applyRedeemableChange',
-        'applyPaymentMethodAttributesChange',
-      ]) {
-        api[method] = (change) => call('change', { method, change });
-      }
-      api.experimentalIsShopAppStyle = init.variant === 'shop';
+    if (target.indexOf('customer-account.') === 0) {
+      Sandbox.customerAccountApi({ api, init, signalProperty, call, post, languageOf, getCtx: () => ctx });
+    } else {
+      checkoutApi();
     }
 
-    // --- What a target adds
-    const line = (s, c) => s.lines.map(mapLine).find((candidate) => candidate.id === c.lineId);
-    const groupOf = (s, c) => (s.deliveryGroups || []).find((group) => group.handle === c.group);
-    if (/cart-line-item|line-components/.test(target)) signalProperty(api, 'target', line);
-    if (/shipping-option-item/.test(target)) {
-      signalProperty(api, 'target', (s, c) => {
-        const group = groupOf(s, c);
-        const option = group && group.options.find((candidate) => candidate.handle === c.option);
-        return option && mapOption(option);
-      });
-      signalProperty(api, 'isTargetSelected', (s, c) => {
-        const group = groupOf(s, c);
-        return Boolean(group && group.selected === c.option);
-      });
-      api.renderMode = { overlay: false };
-    }
-    if (/shipping-option-list/.test(target)) {
-      signalProperty(api, 'target', (s) =>
-        s.deliveryGroups && s.deliveryGroups.length
-          ? { groupType: 'oneTimePurchase', deliveryGroups: s.deliveryGroups.map(mapGroup) }
-          : undefined);
-      signalProperty(api, 'deliverySelectionGroups', (s) =>
-        (s.deliveryGroups || []).flatMap((group) => group.options.map((option) => ({
-          handle: option.handle,
-          selected: group.selected === option.handle,
-          title: option.title,
-          associatedDeliveryOptions: [{ handle: option.handle }],
-          cost: option.originalCost,
-          costAfterDiscounts: option.cost,
-        }))));
-    }
-    if (target.indexOf('purchase.thank-you.') === 0) {
-      signalProperty(api, 'orderConfirmation', (s) => ({
-        order: { id: (s.order && s.order.id) || 'gid://shopify/Order/' + s.token },
-        number: (s.order && s.order.number) || undefined,
-        isFirstOrder: true,
+    /** What the targets of the checkout and the thank-you page read and change. */
+    function checkoutApi() {
+      // --- Checkout state, on every target
+      signalProperty(api, 'lines', (s) => s.lines.map(mapLine));
+      signalProperty(api, 'attributes', (s) => s.attributes || []);
+      signalProperty(api, 'note', (s) => s.note || undefined);
+      signalProperty(api, 'discountCodes', (s) => (s.discountCodes || []).map((entry) => ({ code: entry.code })));
+      signalProperty(api, 'discountAllocations', (s) =>
+        (s.discounts || []).filter((entry) => entry.class === 'ORDER').map(allocation));
+      signalProperty(api, 'appliedGiftCards', () => []);
+      signalProperty(api, 'deliveryGroups', (s) => (s.deliveryGroups || []).map(mapGroup));
+      signalProperty(api, 'availablePaymentOptions', (s) => (s.paymentMethods || []).map(paymentOption));
+      signalProperty(api, 'selectedPaymentOptions', (s) =>
+        (s.paymentMethods || []).filter((m) => m.handle === s.selectedPayment).map(paymentOption));
+      signalProperty(api, 'shippingAddress', (s) => mapAddress(s.shippingAddress));
+      signalProperty(api, 'billingAddress', (s) => mapAddress(s.shippingAddress));
+      signalProperty(api, 'checkoutToken', (s) => s.token);
+      signalProperty(api, 'metafields', (s) =>
+        (s.metafields || []).map((m) => ({ namespace: m.namespace, key: m.key, value: m.value, valueType: m.type })));
+      signalProperty(api, 'appMetafields', (s) => (s.metafields || []).map((m) => mapMetafield(m, s.token)));
+      signalProperty(api, 'localizedFields', () => []);
+      signalProperty(api, 'checkoutSettings', () => ({ orderSubmission: 'ORDER', shippingAddress: { isEditable: true } }));
+      signalProperty(api, 'customerPrivacy', () => ({
+        allowedProcessing: { analytics: true, marketing: true, preferences: true, saleOfData: true },
+        metafields: [],
+        visitorConsent: {},
+        shouldShowBanner: false,
+        saleOfDataRegion: false,
       }));
-    }
-    if (target === 'purchase.thank-you.announcement.render') {
-      const listeners = [];
-      api.announcement = {
-        close: () => {
-          post({ type: 'dismiss' });
-          listeners.forEach((listener) => listener());
-        },
-        addEventListener: (type, listener) => listeners.push(listener),
-        removeEventListener: (type, listener) => {
-          const index = listeners.indexOf(listener);
-          if (index >= 0) listeners.splice(index, 1);
-        },
+      signalProperty(api, 'instructions', () => ({
+        attributes: { canUpdateAttributes: true },
+        delivery: { canSelectCustomAddress: true },
+        discounts: { canUpdateDiscountCodes: true },
+        lines: { canAddCartLine: true, canRemoveCartLine: true, canUpdateCartLine: true },
+        metafields: { canSetCartMetafields: true, canDeleteCartMetafield: true },
+        notes: { canUpdateNote: true },
+      }));
+      api.cost = {};
+      signalProperty(api.cost, 'subtotalAmount', (s) => s.cost.subtotal);
+      signalProperty(api.cost, 'totalShippingAmount', (s) => s.cost.shipping);
+      signalProperty(api.cost, 'totalTaxAmount', (s) => s.cost.tax);
+      signalProperty(api.cost, 'totalAmount', (s) => s.cost.total);
+      api.buyerIdentity = {};
+      signalProperty(api.buyerIdentity, 'email', (s) => (s.buyer && s.buyer.email) || undefined);
+      signalProperty(api.buyerIdentity, 'phone', (s) => (s.buyer && s.buyer.phone) || undefined);
+      signalProperty(api.buyerIdentity, 'customer', (s) => mapCustomer(s.buyer && s.buyer.customer));
+      signalProperty(api.buyerIdentity, 'purchasingCompany', (s) => mapPurchasingCompany(s.buyer && s.buyer.purchasingCompany));
+      api.applyTrackingConsentChange = () => Promise.resolve({ type: 'success' });
+
+      // --- The buyer journey
+      api.buyerJourney = {};
+      signalProperty(api.buyerJourney, 'completed', (s) => s.status === 'completed');
+      signalProperty(api.buyerJourney, 'activeStep', (s) => ({ handle: s.status === 'completed' ? 'thank-you' : 'checkout' }));
+      signalProperty(api.buyerJourney, 'steps', (s) =>
+        s.status === 'completed'
+          ? [{ handle: 'thank-you', label: 'Thank you', to: '', disabled: false }]
+          : [{ handle: 'checkout', label: 'Checkout', to: '', disabled: false }]);
+      api.buyerJourney.intercept = (interceptor) => {
+        interceptors.push(interceptor);
+        post({ type: 'interceptors', count: interceptors.length });
+        return Promise.resolve(() => {
+          const index = interceptors.indexOf(interceptor);
+          if (index >= 0) interceptors.splice(index, 1);
+          post({ type: 'interceptors', count: interceptors.length });
+        });
       };
+
+      // --- Changes, on checkout targets
+      if (target.indexOf('purchase.checkout.') === 0 || target === 'purchase.cart-line-item.line-components.render') {
+        for (const method of [
+          'applyAttributeChange', 'applyCartLinesChange', 'applyDiscountCodeChange', 'applyGiftCardChange',
+          'applyMetafieldChange', 'applyNoteChange', 'applyShippingAddressChange', 'applyRedeemableChange',
+          'applyPaymentMethodAttributesChange',
+        ]) {
+          api[method] = (change) => call('change', { method, change });
+        }
+        api.experimentalIsShopAppStyle = init.variant === 'shop';
+      }
+
+      // --- What a target adds
+      const line = (s, c) => s.lines.map(mapLine).find((candidate) => candidate.id === c.lineId);
+      const groupOf = (s, c) => (s.deliveryGroups || []).find((group) => group.handle === c.group);
+      if (/cart-line-item|line-components/.test(target)) signalProperty(api, 'target', line);
+      if (/shipping-option-item/.test(target)) {
+        signalProperty(api, 'target', (s, c) => {
+          const group = groupOf(s, c);
+          const option = group && group.options.find((candidate) => candidate.handle === c.option);
+          return option && mapOption(option);
+        });
+        signalProperty(api, 'isTargetSelected', (s, c) => {
+          const group = groupOf(s, c);
+          return Boolean(group && group.selected === c.option);
+        });
+        api.renderMode = { overlay: false };
+      }
+      if (/pickup-location-option-item/.test(target)) {
+        signalProperty(api, 'target', (s, c) => {
+          const group = groupOf(s, c);
+          const option = group && group.options.find((candidate) => candidate.handle === c.option);
+          return option && mapOption(option);
+        });
+        signalProperty(api, 'isTargetSelected', (s, c) => {
+          const group = groupOf(s, c);
+          return Boolean(group && group.selected === c.option);
+        });
+      }
+      // The page has no form to search for a location or a pickup point.
+      if (/pickup-location-list|pickup-point-list/.test(target)) signalProperty(api, 'isLocationFormVisible', () => false);
+      // The payment method the target sits in. The local checkout keeps no attributes for it,
+      // and knows no card number.
+      if (/payment-option-item/.test(target)) {
+        signalProperty(api, 'target', (s, c) => {
+          const method = (s.paymentMethods || []).find((candidate) => candidate.handle === c.payment);
+          return method && paymentOption(method);
+        });
+        signalProperty(api, 'paymentMethodAttributes', () => undefined);
+        signalProperty(api, 'bankIdNumber', () => undefined);
+      }
+      if (/shipping-option-list/.test(target)) {
+        signalProperty(api, 'target', (s) =>
+          s.deliveryGroups && s.deliveryGroups.length
+            ? { groupType: 'oneTimePurchase', deliveryGroups: s.deliveryGroups.map(mapGroup) }
+            : undefined);
+        signalProperty(api, 'deliverySelectionGroups', (s) =>
+          (s.deliveryGroups || []).flatMap((group) => group.options.map((option) => ({
+            handle: option.handle,
+            selected: group.selected === option.handle,
+            title: option.title,
+            associatedDeliveryOptions: [{ handle: option.handle }],
+            cost: option.originalCost,
+            costAfterDiscounts: option.cost,
+          }))));
+      }
+      if (target.indexOf('purchase.thank-you.') === 0) {
+        signalProperty(api, 'orderConfirmation', (s) => ({
+          order: { id: (s.order && s.order.id) || 'gid://shopify/Order/' + s.token },
+          number: (s.order && s.order.number) || undefined,
+          isFirstOrder: true,
+        }));
+      }
+      if (target === 'purchase.thank-you.announcement.render') {
+        const listeners = [];
+        api.announcement = {
+          close: () => {
+            post({ type: 'dismiss' });
+            listeners.forEach((listener) => listener());
+          },
+          addEventListener: (type, listener) => listeners.push(listener),
+          removeEventListener: (type, listener) => {
+            const index = listeners.indexOf(listener);
+            if (index >= 0) listeners.splice(index, 1);
+          },
+        };
+      }
+    }
+
+    // --- The address autocomplete: no signals, and what the buyer typed (`run`)
+    if (target.indexOf('purchase.address-autocomplete.') === 0) {
+      const plain = {
+        settings: () => ext.settings || {},
+        attributes: (s) => s.attributes || [],
+        appMetafields: (s) => (s.metafields || []).map((m) => mapMetafield(m, s.token)),
+        shippingAddress: (s) => mapAddress(s.shippingAddress),
+        billingAddress: (s) => mapAddress(s.shippingAddress),
+        checkoutToken: (s) => s.token,
+      };
+      for (const name of Object.keys(plain)) {
+        Object.defineProperty(api, name, { enumerable: true, configurable: true, get: () => plain[name](state) });
+      }
+      for (const name of ['lines', 'cost', 'buyerIdentity', 'buyerJourney', 'deliveryGroups', 'discountCodes', 'discountAllocations',
+        'note', 'metafields', 'availablePaymentOptions', 'selectedPaymentOptions', 'appliedGiftCards', 'checkoutSettings',
+        'customerPrivacy', 'instructions', 'localizedFields']) {
+        delete api[name];
+      }
+      api.target = undefined;
+      api.signal = undefined;
     }
 
     // --- The global
@@ -650,6 +707,20 @@
       return results;
     }
 
+    /** A target that renders nothing: the page asks, with what the buyer did (`payload`), and
+     * the extension answers what the callback it registered returns. Only the last request
+     * counts: the one before is aborted. */
+    let aborter = null;
+    async function runTarget(payload) {
+      const callback = registered.get(target);
+      if (!callback) throw new Error('The bundle did not register ' + target + ' with shopify.extend.');
+      if (aborter) aborter.abort();
+      aborter = typeof AbortController === 'function' ? new AbortController() : null;
+      api.target = payload;
+      api.signal = aborter ? aborter.signal : undefined;
+      return callback(api);
+    }
+
     /** Handles what the page sends: `state`, `result`, `intercept`, `perform`. */
     function receive(message) {
       switch (message.type) {
@@ -680,7 +751,7 @@
       }
     }
 
-    return { shopify, api, registered, receive, refresh };
+    return { shopify, api, registered, receive, refresh, run: runTarget };
   }
 
   Sandbox.createRuntime = createRuntime;

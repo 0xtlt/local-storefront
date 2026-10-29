@@ -564,6 +564,15 @@ pub struct Order {
     pub tax_price: i64,
     pub cancelled: bool,
     pub note: String,
+    pub returns: Vec<OrderReturn>,
+}
+
+/// A return of an order: what was sent back, as lines of the order.
+#[derive(Clone, Debug)]
+pub struct OrderReturn {
+    pub status: String,
+    /// `(index of the line in the order, quantity)`.
+    pub lines: Vec<(usize, u32)>,
 }
 
 #[derive(Clone, Debug)]

@@ -758,11 +758,6 @@ fn legacy_note(target: &str, spec: TargetSpec, version: ApiVersion) -> String {
     note
 }
 
-/// The targets of the checkout UI extensions the extension host knows how to place.
-fn renders_in_checkout(target: &str) -> bool {
-    target.starts_with("purchase.checkout.") || target.starts_with("purchase.thank-you.")
-}
-
 fn load_ui_extension(
     app: &mut App,
     dir: &Path,
@@ -832,32 +827,19 @@ fn load_ui_extension(
             "the extension has no target, nothing will render".to_string(),
         );
     }
-    for target in &targets {
-        if !renders_in_checkout(&target.target) {
-            app.warn(
-                Some(handle),
-                format!(
-                    "target `{}` is not a checkout or thank-you page target: it is not rendered",
-                    target.target
-                ),
-            );
-        }
-    }
-    // A checkout target the page has no place for: a typo, or one the local checkout lacks.
+    // A target Shopify does not have: a typo, or one of another kind of extension.
     let unplaced: Vec<String> = targets
         .iter()
-        .filter(|target| {
-            renders_in_checkout(&target.target)
-                && crate::placement::placement(&target.target).is_none()
-        })
+        .filter(|target| crate::placement::placement(&target.target).is_none())
         .map(|target| format!("`{}`", target.target))
         .collect();
     if !unplaced.is_empty() {
         app.warn(
             Some(handle),
             format!(
-                "the local checkout has no place for {}: the extension is not rendered there",
-                unplaced.join(", ")
+                "{} {} not a target of checkout or customer account UI extensions: the extension is not rendered there",
+                unplaced.join(", "),
+                if unplaced.len() == 1 { "is" } else { "are" }
             ),
         );
     }
@@ -1129,11 +1111,9 @@ handle = "banner"
                     && m.contains("cargo build")),
             "{messages:?}"
         );
+        // A customer account target is placed like a checkout one.
         assert!(
-            messages
-                .iter()
-                .any(|m| m
-                    .starts_with("banner: target `customer-account.order-status.block.render`")),
+            !messages.iter().any(|m| m.starts_with("banner:")),
             "{messages:?}"
         );
         let _ = std::fs::remove_dir_all(root);
@@ -1367,7 +1347,7 @@ handle = "odd"
         );
         assert!(
             said.contains(
-                &"Warning: the local checkout has no place for `purchase.checkout.nowhere.render`: the extension is not rendered there"
+                &"Warning: `purchase.checkout.nowhere.render` is not a target of checkout or customer account UI extensions: the extension is not rendered there"
                     .to_string()
             ),
             "{said:?}"

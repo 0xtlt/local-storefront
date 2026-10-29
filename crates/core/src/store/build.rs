@@ -2506,6 +2506,49 @@ fn build_customers(
                             quantity: line.quantity,
                         })
                     })
+                    .collect::<Vec<OrderLine>>();
+                let returns = order
+                    .returns
+                    .iter()
+                    .enumerate()
+                    .map(|(return_position, sent)| {
+                        let return_origin = order_origin.child("returns").child(return_position);
+                        let lines = if sent.line_items.is_empty() {
+                            line_items
+                                .iter()
+                                .enumerate()
+                                .map(|(index, line)| (index, line.quantity))
+                                .collect()
+                        } else {
+                            sent.line_items
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(line_position, line)| {
+                                    let variant = resolve_variant(store, &line.variant);
+                                    let index = variant.and_then(|variant| {
+                                        line_items.iter().position(|item| item.variant == variant)
+                                    });
+                                    if index.is_none() {
+                                        builder
+                                            .error(
+                                                "unknown_return_line",
+                                                &return_origin
+                                                    .child("line_items")
+                                                    .child(line_position)
+                                                    .child("variant"),
+                                                "the return names a variant that is not a line of the order",
+                                            )
+                                            .hint("name the variant of one of the order's line_items");
+                                    }
+                                    index.map(|index| (index, line.quantity))
+                                })
+                                .collect()
+                        };
+                        OrderReturn {
+                            status: sent.status.clone().unwrap_or_else(|| "open".to_string()),
+                            lines,
+                        }
+                    })
                     .collect();
                 Order {
                     id: order
@@ -2546,6 +2589,7 @@ fn build_customers(
                     }),
                     cancelled: order.cancelled,
                     note: order.note.clone().unwrap_or_default(),
+                    returns,
                 }
             })
             .collect();

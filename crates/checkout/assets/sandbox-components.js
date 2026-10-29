@@ -1,5 +1,5 @@
-// The Polaris web components (`s-banner`, `s-stack`, `s-text-field`, …) that checkout UI
-// extensions render, as custom elements. A classic script, like the other files of the
+// The Polaris web components (`s-banner`, `s-stack`, `s-text-field`, …) that checkout and
+// customer account UI extensions render, as custom elements. A classic script, like the other files of the
 // sandbox (see `sandbox-api.js`).
 //
 // Layout and text components are styled from their attributes by a stylesheet of the
@@ -9,7 +9,9 @@
   'use strict';
   const Sandbox = (global.LsfSandbox = global.LsfSandbox || {});
 
-  /** Every tag of `SUPPORTED_COMPONENTS` in `@shopify/ui-extensions` 2026.10, kebab-cased. */
+  /** Every tag of `SUPPORTED_COMPONENTS` in `@shopify/ui-extensions` 2026.10, kebab-cased: those
+   * of checkout, and the six only customer accounts have (`avatar`, `button-group`,
+   * `customer-account-action`, `image-group`, `menu`, `page`). */
   const TAGS = [
     'abbreviation', 'announcement', 'badge', 'banner', 'box', 'button', 'chat', 'checkbox', 'chip',
     'choice', 'choice-list', 'clickable', 'clickable-chip', 'clipboard-item', 'consent-checkbox',
@@ -20,6 +22,7 @@
     'product-thumbnail', 'progress', 'query-container', 'qr-code', 'scroll-box', 'section',
     'select', 'sheet', 'skeleton-paragraph', 'spinner', 'stack', 'summary', 'switch', 'text',
     'text-area', 'text-field', 'time', 'tooltip', 'unordered-list', 'url-field',
+    'avatar', 'button-group', 'customer-account-action', 'image-group', 'menu', 'page',
   ].map((name) => 's-' + name);
 
   // --- Style from attributes --------------------------------------------------------------
@@ -276,6 +279,67 @@
   layout('s-scroll-box');
   layout('s-query-container');
 
+  // --- Customer accounts ---------------------------------------------------------------------
+
+  define('s-avatar', {
+    props: ['initials', 'src', 'alt', 'size'],
+    shadow: '<span class="avatar" part="avatar"><img alt="" hidden><span class="initials"></span></span>',
+    css: ':host{display:inline-block}.avatar{display:grid;place-items:center;width:var(--size,2.5rem);height:var(--size,2.5rem);border-radius:50%;overflow:hidden;background:var(--lsf-color-info-wash-2);color:var(--lsf-color-text);font-weight:var(--lsf-font-weight-bold);font-size:calc(var(--size,2.5rem) * .4)}img{width:100%;height:100%;object-fit:cover}',
+    sync(el) {
+      const sizes = { 'small-200': '1.5rem', small: '2rem', base: '2.5rem', large: '3rem', 'large-200': '4rem' };
+      $(el, '.avatar').style.setProperty('--size', sizes[el.getAttribute('size')] || sizes.base);
+      const img = $(el, 'img');
+      img.hidden = !el.hasAttribute('src');
+      if (el.hasAttribute('src')) img.setAttribute('src', el.getAttribute('src'));
+      img.setAttribute('alt', el.getAttribute('alt') || '');
+      $(el, '.initials').textContent = el.hasAttribute('src') ? '' : el.getAttribute('initials') || '';
+    },
+  });
+
+  define('s-button-group', {
+    props: ['gap', 'accessibilityLabel'],
+    shadow: '<div class="group" role="group"><slot name="secondary-actions"></slot><slot></slot><slot name="primary-action"></slot></div>',
+    css: ':host{display:block}.group{display:flex;flex-wrap:wrap;align-items:center;gap:var(--gap,.75rem)}',
+    sync(el) {
+      $(el, '.group').style.setProperty('--gap', el.getAttribute('gap') ? spacing(el.getAttribute('gap')) : '.75rem');
+      const label = el.getAttribute('accessibilitylabel');
+      if (label) $(el, '.group').setAttribute('aria-label', label);
+    },
+  });
+
+  // What the dialog of an order action holds: the page draws the dialog around the frame.
+  define('s-customer-account-action', {
+    props: ['heading'],
+    shadow: '<div class="action"><h2 class="heading"></h2><div class="body"><slot></slot></div><footer><slot name="secondary-actions"></slot><slot name="primary-action"></slot></footer></div>',
+    css: ':host{display:block}.action{display:flex;flex-direction:column;gap:1rem}.heading{margin:0;font-size:var(--lsf-size-l)}.heading:empty{display:none}footer{display:flex;justify-content:flex-end;gap:.5rem}',
+    sync(el) {
+      $(el, '.heading').textContent = el.getAttribute('heading') || '';
+    },
+  });
+
+  define('s-image-group', {
+    props: ['totalItems'],
+    shadow: '<div class="group"><slot></slot><span class="more" hidden></span></div>',
+    css: ':host{display:block}.group{display:flex;flex-wrap:wrap;gap:.25rem}::slotted(*){width:3rem;height:3rem;border-radius:var(--lsf-radius-thumbnail);overflow:hidden}.more{display:grid;place-items:center;width:3rem;height:3rem;border-radius:var(--lsf-radius-thumbnail);background:var(--lsf-color-bg-subdued);font-size:var(--lsf-size-s)}',
+    sync(el) {
+      const shown = el.children.length;
+      const total = Number(el.getAttribute('totalitems')) || shown;
+      const more = $(el, '.more');
+      more.hidden = total <= shown;
+      more.textContent = '+' + (total - shown);
+    },
+  });
+
+  define('s-page', {
+    props: ['heading', 'subheading'],
+    shadow: '<div class="page"><div class="breadcrumbs"><slot name="breadcrumb-actions"></slot></div><header><div class="titles"><h1 class="heading"></h1><p class="subheading"></p></div><div class="actions"><slot name="secondary-actions"></slot><slot name="primary-action"></slot></div></header><div class="body"><slot></slot></div></div>',
+    css: ':host{display:block}.page{display:flex;flex-direction:column;gap:1.25rem}header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:1rem}.heading{margin:0;font-size:var(--lsf-size-3xl,1.75rem)}.subheading{margin:.25rem 0 0;color:var(--lsf-color-text-subdued)}.subheading:empty,.heading:empty{display:none}.actions{display:flex;gap:.5rem}.breadcrumbs:not(:has(*)){display:none}',
+    sync(el) {
+      $(el, '.heading').textContent = el.getAttribute('heading') || '';
+      $(el, '.subheading').textContent = el.getAttribute('subheading') || '';
+    },
+  });
+
   // --- Text and media ----------------------------------------------------------------------
 
   const plain = (tag, props) => define(tag, { props: props || [] });
@@ -525,6 +589,8 @@
   }
   overlay('s-modal');
   overlay('s-popover');
+  // The menu of a button (`commandFor`), whose items are buttons and links.
+  overlay('s-menu', '.body{display:flex;flex-direction:column;gap:.25rem;padding:.5rem}');
   overlay('s-sheet', '.backdrop{align-items:flex-end}.dialog{width:100vw;max-width:none;border-radius:12px 12px 0 0}');
 
   define('s-tooltip', { props: ['id'], shadow: '<span hidden><slot></slot></span>' });
@@ -1121,7 +1187,7 @@
     s-skeleton-paragraph { display: block; height: 1em; border-radius: 4px; background: linear-gradient(90deg, var(--lsf-color-info-wash-2), var(--lsf-color-bg-subdued), var(--lsf-color-info-wash-2)); }
     s-option, s-tooltip { display: none; }
     s-summary { display: block; }
-    s-modal, s-popover, s-sheet { display: contents; }
+    s-modal, s-popover, s-sheet, s-menu { display: contents; }
     ${TAGS.map((tag) => tag + '[hidden]').join(', ')} { display: none !important; }
   `;
 

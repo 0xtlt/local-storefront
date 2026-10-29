@@ -135,6 +135,13 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         path.split('/').collect()
     };
     let method = incoming.method.as_str();
+    // The customer account, where the app's customer account UI extensions render.
+    if let ("GET" | "HEAD", ["account", rest @ ..]) = (method, segments.as_slice())
+        && super::customer_account::serves(state, &state.store_of(incoming))
+        && let Some(reply) = super::customer_account::route(state, incoming, rest)
+    {
+        return Some(reply);
+    }
     let reply = match (method, segments.as_slice()) {
         ("GET" | "HEAD", ["checkout"]) => Some(start(state, incoming)),
         ("GET" | "HEAD", ["checkouts", "cn", token]) => Some(match token.strip_suffix(".json") {
@@ -172,7 +179,7 @@ pub fn control(state: &ServerState, incoming: &Incoming, segments: &[&str]) -> O
     }
 }
 
-fn options(state: &ServerState) -> &CheckoutOptions {
+pub(super) fn options(state: &ServerState) -> &CheckoutOptions {
     state
         .options
         .checkout
@@ -185,7 +192,7 @@ fn error(status: u16, message: impl Into<String>) -> Reply {
 }
 
 /// Gives a new visitor the session cookie, as the storefront does.
-fn with_cookie(reply: Reply, session_id: &str, is_new: bool) -> Reply {
+pub(super) fn with_cookie(reply: Reply, session_id: &str, is_new: bool) -> Reply {
     if is_new {
         reply.header(
             "set-cookie",
@@ -227,7 +234,11 @@ fn checkout_path(root: &str, token: &str) -> String {
 /// The language the buyer reads the checkout in: the one the locale prefix of the URL names
 /// (`/fr/checkouts/cn/<token>`), otherwise the primary language of the store. The control API
 /// has no prefix to read, so it takes `?locale=`.
-fn language_of<'a>(state: &ServerState, store: &'a Store, incoming: &Incoming) -> &'a Language {
+pub(super) fn language_of<'a>(
+    state: &ServerState,
+    store: &'a Store,
+    incoming: &Incoming,
+) -> &'a Language {
     let (iso_code, _, _) = state.localize(store, &incoming.path);
     let asked = incoming
         .path
@@ -240,7 +251,7 @@ fn language_of<'a>(state: &ServerState, store: &'a Store, incoming: &Incoming) -
 }
 
 /// The locale root of a language, which is empty for the primary one.
-fn root_of(language: &Language) -> &str {
+pub(super) fn root_of(language: &Language) -> &str {
     if language.primary {
         ""
     } else {
@@ -364,7 +375,7 @@ fn carried_query(incoming: &Incoming, names: &[&str]) -> String {
 }
 
 /// The page that lists the scenarios, for the notices to lead back to.
-fn home_path(state: &ServerState, root: &str) -> String {
+pub(super) fn home_path(state: &ServerState, root: &str) -> String {
     if options(state).standalone {
         format!("{root}/")
     } else {
@@ -535,7 +546,7 @@ fn variant_of(state: &ServerState, session_id: &str, incoming: &Incoming) -> Var
 }
 
 /// The scheme and host the visitor reached the server by.
-fn origin_of(incoming: &Incoming) -> String {
+pub(super) fn origin_of(incoming: &Incoming) -> String {
     format!(
         "{}://{}",
         incoming.header("x-forwarded-proto").unwrap_or("http"),
@@ -765,7 +776,7 @@ fn compute(
 }
 
 /// The customer as the Buyer Identity API reads it, with what the store knows of them.
-fn customer_json(customer: &Customer) -> Json {
+pub(super) fn customer_json(customer: &Customer) -> Json {
     json!({
         "id": format!("gid://shopify/Customer/{}", customer.id),
         "email": customer.email,
@@ -778,7 +789,7 @@ fn customer_json(customer: &Customer) -> Json {
 }
 
 /// The company and location a B2B customer buys for.
-fn purchasing_company_json(
+pub(super) fn purchasing_company_json(
     customer: &Customer,
     store: &Store,
     selected_location: Option<u64>,
@@ -812,7 +823,7 @@ fn language_json(language: &Language) -> Json {
 /// What the Localization API reads: the language of the buyer (not the primary one of the
 /// store), the country of the shipping address or else the one the visitor selected, the
 /// currency and the market.
-fn localization_json(
+pub(super) fn localization_json(
     store: &Store,
     language: &Language,
     session: &Session,
@@ -839,7 +850,7 @@ fn localization_json(
 }
 
 /// The checkout UI extensions to load: the built ones on a supported API version.
-fn extensions_json(app: &App, selection: &Selection) -> Json {
+pub(super) fn extensions_json(app: &App, selection: &Selection) -> Json {
     Json::Array(
         selection
             .ui_extensions(app)
@@ -954,9 +965,15 @@ fn control_state(state: &ServerState, incoming: &Incoming) -> Reply {
 /// The HTML of the page with the state in it, and the builds that failed as they are now (a
 /// placed order keeps the state it had).
 fn shell(server: &ServerState, json: &Json) -> Reply {
+    shell_of(server, json, "checkout.html")
+}
+
+/// The HTML of a page of lsf's own (`checkout.html`, `customer-account.html`) with `json` as its
+/// state.
+pub(super) fn shell_of(server: &ServerState, json: &Json, template: &str) -> Reply {
     let mut json = json.clone();
     json["builds"] = server.builds.to_json();
-    let template = lsf_checkout::assets::get("checkout.html").expect("checkout.html is embedded");
+    let template = lsf_checkout::assets::get(template).expect("the page is embedded");
     let template = String::from_utf8_lossy(template);
     // Inside a script element: nothing in the JSON may close it or open a comment.
     let state = json
@@ -1650,6 +1667,8 @@ pub(super) fn place_order(
             "number": format!("#{number}"),
             "totalReceived": received,
             "totalOutstanding": outstanding,
+            // When it was placed, which the customer account shows.
+            "processedAt": chrono::Utc::now().to_rfc3339(),
         });
         entry.checkout.completed = Some(order);
         entry.checkout.placed += 1;

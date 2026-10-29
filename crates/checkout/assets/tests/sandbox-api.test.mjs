@@ -543,3 +543,156 @@ test('the country of the shipping address wins over the one the visitor selected
   state.localization = { ...SERVER.customer.localization, country: { isoCode: 'GB', name: 'United Kingdom' } };
   assert.equal(runtime({ state }).shopify.localization.country.value.isoCode, 'GB');
 });
+
+// --- Pickup, payment apps and the address autocomplete ---
+
+const PICKUP_GROUP = {
+  handle: 'g1',
+  lineIds: ['gid://shopify/CartLine/1'],
+  selected: 'pickup',
+  options: [
+    { handle: 'standard', title: 'Standard', kind: 'SHIPPING', cost: { amount: 5 }, originalCost: { amount: 5 } },
+    { handle: 'pickup', title: 'Pick up in store', kind: 'PICK_UP', cost: { amount: 0 }, originalCost: { amount: 0 } },
+  ],
+};
+
+test('a pickup location target reads its location and whether it is selected', () => {
+  const state = checkoutState({ deliveryGroups: [PICKUP_GROUP] });
+  const { shopify } = runtime({ target: 'purchase.checkout.pickup-location-option-item.render-after', state, ctx: { group: 'g1', option: 'pickup' } });
+  assert.equal(shopify.target.value.type, 'pickup');
+  assert.equal(shopify.target.value.title, 'Pick up in store');
+  assert.equal(shopify.isTargetSelected.value, true);
+  const list = runtime({ target: 'purchase.checkout.pickup-point-list.render-after', state }).shopify;
+  assert.equal(list.isLocationFormVisible.value, false);
+});
+
+test('a payment method target reads its method, and has no attributes', () => {
+  const { shopify } = runtime({ target: 'purchase.checkout.payment-option-item.details.render', ctx: { payment: 'cod' } });
+  assert.deepEqual(plain(shopify.target.value), { type: 'paymentOnDelivery', handle: 'cod' });
+  assert.equal(shopify.paymentMethodAttributes.value, undefined);
+  assert.equal(typeof shopify.applyPaymentMethodAttributesChange, 'function');
+});
+
+test('the address autocomplete runs with what the buyer typed, and reads plain values', async () => {
+  const { shopify, registered, run } = runtime({ target: 'purchase.address-autocomplete.suggest', ext: { settings: { limit: 3 } } });
+  assert.equal(shopify.lines, undefined, 'no cart lines for the autocomplete');
+  assert.equal(shopify.applyShippingAddressChange, undefined);
+  assert.deepEqual(plain(shopify.settings), { limit: 3 }, 'a value, not a signal');
+  assert.equal(typeof shopify.checkoutToken, 'string');
+  const seen = [];
+  registered.set('purchase.address-autocomplete.suggest', () => {
+    seen.push([shopify.target.value, Boolean(shopify.signal)]);
+    return { suggestions: [{ label: shopify.target.value.toUpperCase() }] };
+  });
+  assert.deepEqual(plain(await run({ value: 'harb', field: 'address1' })), { suggestions: [{ label: 'HARB' }] });
+  const first = shopify.signal;
+  await run({ value: 'harbo', field: 'address1' });
+  assert.equal(first.aborted, true, 'a new request aborts the one before');
+  assert.deepEqual(seen.map(([value]) => value), ['harb', 'harbo']);
+});
+
+test('the frame of a target that renders nothing answers each run', async () => {
+  const win = sandboxWindow({ scripts: ['sandbox-api.js', 'sandbox-account-api.js', 'sandbox.js'], bundles: {
+    'http://localhost/__lsf/extensions/auto/auto.js':
+      "shopify.extend('purchase.address-autocomplete.suggest', async () => ({ suggestions: [{ label: shopify.target.value + '!' }] }));",
+  } });
+  win.receive({ ...init({ handle: 'auto', target: 'purchase.address-autocomplete.suggest' }), runnable: true });
+  win.receive({ type: 'run', id: 'r1', payload: { value: 'oak' } });
+  await settle();
+  await settle();
+  assert.deepEqual(win.posts('ran'), [{ lsf: true, type: 'ran', id: 'r1', result: { suggestions: [{ label: 'oak!' }] } }]);
+  assert.equal(win.posts('error').length, 0, 'nothing to render, nothing missing');
+});
+
+// --- Customer accounts ---
+
+const ORDER = {
+  id: 'gid://shopify/Order/42',
+  legacyId: 42,
+  name: '#1042',
+  confirmationNumber: 'ABC123XYZ',
+  processedAt: '2024-03-04T00:00:00+00:00',
+  lines: checkoutState().lines,
+  cost: { subtotal: { amount: 73, currencyCode: 'USD' }, shipping: { amount: 5, currencyCode: 'USD' }, tax: { amount: 0, currencyCode: 'USD' }, total: { amount: 78, currencyCode: 'USD' } },
+  shippingAddress: { firstName: 'Jane', lastName: 'Doe', address1: '12 Maple Street', city: 'Portland', countryCode: 'US' },
+  discountCodes: [],
+  discounts: [],
+};
+
+function account(target, { order = ORDER, ctx = {} } = {}) {
+  const state = {
+    surface: 'customer-account',
+    shop: checkoutState().shop,
+    localization: checkoutState().localization,
+    buyer: {
+      customer: { id: 'gid://shopify/Customer/7', email: 'jane@example.com', firstName: 'Jane', lastName: 'Doe' },
+      purchasingCompany: { company: { id: 'gid://shopify/Company/1', name: 'Northwind' }, location: { id: 'gid://shopify/CompanyLocation/2', name: 'Portland' } },
+    },
+    order,
+  };
+  const win = sandboxWindow({ scripts: ['sandbox-api.js', 'sandbox-account-api.js'] });
+  const posted = [];
+  const created = win.context.LsfSandbox.createRuntime({ post: (message) => posted.push(plain(message)), init: init({ handle: 'ca', target, state, ctx }) });
+  return { ...created, posted, win };
+}
+
+test('a customer account target reads the account and has its own platform APIs', async () => {
+  const { shopify, posted } = account('customer-account.profile.block.render');
+  assert.deepEqual(plain(shopify.authenticatedAccount.customer.value), { id: 'gid://shopify/Customer/7' });
+  assert.deepEqual(plain(shopify.authenticatedAccount.purchasingCompany.value), {
+    company: { id: 'gid://shopify/Company/1' },
+    location: { id: 'gid://shopify/CompanyLocation/2' },
+  });
+  // None of the checkout's.
+  for (const name of ['lines', 'buyerJourney', 'applyCartLinesChange', 'order', 'cost']) assert.equal(shopify[name], undefined, name);
+  await assert.rejects(shopify.query('{ shop { name } }'), /Storefront API is not available in the local customer account/);
+  const toast = await shopify.toast.show('Saved');
+  toast.hide();
+  shopify.navigation.navigate('shopify:customer-account/orders');
+  const activity = await shopify.intents.invoke({ action: 'create', type: 'shopify/Product' });
+  assert.deepEqual(plain(await activity.complete), { code: 'closed' });
+  assert.deepEqual(posted.filter((message) => message.type !== 'log'), [
+    { type: 'toast', content: 'Saved' },
+    { type: 'toast', hide: true },
+    { type: 'navigate', url: 'shopify:customer-account/orders' },
+  ]);
+  assert.equal(shopify.navigation.currentEntry.url, null, 'only a full page has an entry');
+});
+
+test('an order status target reads the order as the Order Status API', () => {
+  const { shopify } = account('customer-account.order-status.block.render', { ctx: { orderId: ORDER.id } });
+  assert.deepEqual(plain(shopify.order.value), { id: ORDER.id, name: '#1042', confirmationNumber: 'ABC123XYZ', processedAt: '2024-03-04T00:00:00+00:00' });
+  assert.equal(shopify.lines.value.length, 2);
+  assert.equal(shopify.lines.value[0].merchandise.id, 'gid://shopify/ProductVariant/101');
+  assert.deepEqual(plain(shopify.cost.totalAmount.value), { amount: 78, currencyCode: 'USD' });
+  assert.equal(shopify.shippingAddress.value.city, 'Portland');
+  assert.equal(shopify.billingAddress.value.city, 'Portland', 'the shipping address when the order has no billing one');
+  assert.equal(shopify.buyerIdentity.customer.value.email, 'jane@example.com');
+  assert.equal(shopify.authenticationState.value, 'fully_authenticated');
+  assert.equal(shopify.orderId, ORDER.id);
+});
+
+test('what a slot of the customer account is for comes with the target', () => {
+  const line = account('customer-account.order-status.cart-line-item.render-after', { ctx: { lineId: 'gid://shopify/CartLine/2' } }).shopify;
+  assert.equal(line.target.value.id, 'gid://shopify/CartLine/2');
+  assert.equal(account('customer-account.order-status.fulfillment-details.render-after', { ctx: { fulfillmentId: 'gid://shopify/Fulfillment/1' } }).shopify.fulfillmentId, 'gid://shopify/Fulfillment/1');
+  assert.equal(account('customer-account.order-status.return-details.render-after', { ctx: { returnId: 'gid://shopify/Return/1' } }).shopify.returnId, 'gid://shopify/Return/1');
+  assert.equal(account('customer-account.profile.company-location-staff.render-after', { ctx: { locationId: 'gid://shopify/CompanyLocation/2' } }).shopify.locationId, 'gid://shopify/CompanyLocation/2');
+  const page = account('customer-account.page.render', { ctx: { handle: 'loyalty', path: '/rewards' } }).shopify;
+  assert.equal(page.navigation.currentEntry.url, 'extension:loyalty/rewards');
+  const dialog = account('customer-account.order.action.render', { ctx: { orderId: ORDER.id } });
+  dialog.shopify.close();
+  assert.deepEqual(dialog.posted, [{ type: 'close' }]);
+});
+
+test('pressing the button of an order action menu item opens its dialog, a link does not', () => {
+  const { win, posted } = account('customer-account.order.action.menu-item.render', { ctx: { orderId: ORDER.id } });
+  const button = win.document.createElement('s-button');
+  const link = win.document.createElement('s-button');
+  link.setAttribute('href', 'https://example.com');
+  win.document.body.append(button, link);
+  link.click();
+  assert.deepEqual(posted, []);
+  button.click();
+  assert.deepEqual(posted, [{ type: 'action' }]);
+});

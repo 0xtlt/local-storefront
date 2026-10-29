@@ -254,7 +254,7 @@ pub fn run(
         }
         if let (Some(dir), Some((functions, ui_extensions))) = (&args.app.app, extensions) {
             eprintln!(
-                "app:    {} ({functions} Functions, {ui_extensions} checkout UI extensions)",
+                "app:    {} ({functions} Functions, {ui_extensions} UI extensions)",
                 dir.display()
             );
         }

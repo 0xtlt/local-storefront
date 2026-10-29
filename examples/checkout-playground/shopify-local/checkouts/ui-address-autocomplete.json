@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: address autocomplete",
+  "description": "ui-address-autocomplete suggests addresses as the buyer types the address field: type \"harbor\" or \"avenue\", pick one, and the address fills in. Seattle's suggestion has no address of its own: picking it runs format-suggestion.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-address-autocomplete"
+  ]
+}

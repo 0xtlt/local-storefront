@@ -1,5 +1,7 @@
-// The page side of checkout UI extensions: one sandboxed iframe per (extension, target)
-// placed where the target sits in the page, and the messages between page and iframe.
+// The page side of checkout and customer account UI extensions: one sandboxed iframe per
+// (extension, target) placed where the target sits in the page, and the messages between page
+// and iframe. A target that renders nothing (the address autocomplete) gets a hidden frame the
+// page asks (`run`).
 //
 // The iframe (`sandbox.html`) runs the built bundle of the extension against a `shopify`
 // global it builds from the state we send. Everything an extension changes comes back as a
@@ -9,14 +11,24 @@ import api from './api.json' with { type: 'json' };
 import { refusalOf } from './api-versions.js';
 import { operationsForChange } from './operations.js';
 
-/** The targets the page renders (the others of the API need things a local checkout lacks). */
-export const RENDERED_TARGETS = api.placements.map((placement) => placement.target);
+/** The targets the checkout page renders: those of the checkout and the thank-you page. */
+export const RENDERED_TARGETS = api.placements
+  .filter((placement) => placement.surface === 'checkout' && !placement.runs)
+  .map((placement) => placement.target);
+
+/** The targets the checkout page runs, which render nothing: the address autocomplete. */
+export const RUN_TARGETS = api.placements.filter((placement) => placement.runs).map((placement) => placement.target);
+
+/** The targets the customer account renders. */
+export const ACCOUNT_TARGETS = api.placements
+  .filter((placement) => placement.surface === 'customer-account')
+  .map((placement) => placement.target);
 
 /** The part of the state extensions see: the runs of Functions are the page's business. */
 export function stateForExtensions(state) {
   // `account` is the page's: the customers of the store data to log in as.
   // `builds` too: the builds of `--watch` that failed.
-  const { runs, diagnostics, extensions, account, builds, ...visible } = state;
+  const { runs, diagnostics, extensions, account, builds, profiles, ...visible } = state;
   return visible;
 }
 
@@ -31,7 +43,7 @@ export function sessionToken(state, ext, now = Date.now()) {
     iss: `${shop}/admin`,
     dest: shop,
     aud: state.app?.clientId ?? ext.handle,
-    sub: state.buyer?.customer?.id,
+    sub: state.buyer?.customer?.id ?? state.customer?.id,
     exp: issued + 60,
     nbf: issued - 5,
     iat: issued,
@@ -73,13 +85,18 @@ export async function bundleSource(window, url) {
  * @param {Storage} [options.storage]
  * @param {() => void} [options.onError]  called when an extension reports an error the page has
  *   not seen yet (see `errors`)
+ * @param {(request: object, instance: object) => boolean} [options.onRequest]  what the page does
+ *   for a message of the customer account (`navigate`, `toast`, `action`, `close`): true when it
+ *   handled it. Without it, `navigate` opens a web page in a new tab, and the others do nothing.
  */
-export function createExtensionHost({ document, window, sandboxUrl, getState, dispatch, storage, onError, console: log = console }) {
+export function createExtensionHost({ document, window, sandboxUrl, getState, dispatch, storage, onError, onRequest, console: log = console }) {
   /** Every live iframe. */
   const instances = new Set();
   /** What the extensions threw, by handle, target and message: `{handle, target, message, stack}`. */
   const reported = new Map();
   const slots = new Map();
+  /** The hidden frames of the targets that render nothing, by `handle target`. */
+  const runnables = new Map();
   let counter = 0;
 
   // An extension on an API version we do not run, or declared against its rules, is not loaded.
@@ -117,6 +134,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
       apiVersion: ext.apiVersion,
       ctx: instance.ctx,
       variant: state.variant,
+      runnable: Boolean(instance.runnable),
       ext: {
         settings: ext.settings ?? {},
         capabilities: ext.capabilities ?? {},
@@ -141,7 +159,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     el.insertBefore(frame, before);
     const instance = {
       id: ++counter, ext, target, ctx, frame, iframe, ready: false, interceptors: 0, pending: new Map(),
-      error: null,
+      error: null, initialized: null,
     };
     instances.add(instance);
     return instance;
@@ -159,11 +177,17 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
   /** What makes an extension another one for a frame: its handle, its bundle and how it is set up. */
   const identityOf = (ext) => JSON.stringify(ext);
 
-  /** The extensions that belong in `el`, in order. */
-  const wanted = (target) => extensions().filter((ext) => ext.targets?.includes(target));
+  /** The extensions that belong in a slot of `target`, in order: all of them, or the one a full
+   * page or a dialog is for (`ctx.handle`). */
+  const wanted = (target, ctx = {}) =>
+    extensions().filter((ext) => ext.targets?.includes(target) && (!ctx.handle || ext.handle === ctx.handle));
+
+  function hasTargetFor(target, handle) {
+    return wanted(target, { handle }).length > 0;
+  }
 
   function attach(el, target, ctx = {}) {
-    const created = wanted(target).map((ext) => create(el, target, ext, ctx));
+    const created = wanted(target, ctx).map((ext) => create(el, target, ext, ctx));
     slots.set(el, { el, target, ctx, created });
   }
 
@@ -183,7 +207,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
       const { target, ctx } = slot;
       const current = new Map(slot.created.map((instance) => [identityOf(instance.ext), instance]));
       const next = [];
-      for (const ext of wanted(target)) {
+      for (const ext of wanted(target, ctx)) {
         const key = identityOf(ext);
         const kept = current.get(key);
         if (kept) {
@@ -286,7 +310,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
   function storageKey(instance, key) {
     const state = getState();
     const checkout = `${encodeURIComponent(state.token ?? '')}.${state.orderGeneration ?? 0}`;
-    const stage = state.status === 'completed' ? 'thank-you' : 'checkout';
+    const stage = state.surface === 'customer-account' ? 'customer-account' : state.status === 'completed' ? 'thank-you' : 'checkout';
     return `lsf-extension:${checkout}:${stage}:${instance.ext.handle}:${key}`;
   }
 
@@ -310,7 +334,16 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
     switch (data.type) {
       case 'ready':
         instance.ready = true;
-        init(instance);
+        instance.initialized = init(instance);
+        break;
+      case 'ran':
+        instance.pending.get(data.id)?.(data.error ? null : data.result);
+        instance.pending.delete(data.id);
+        break;
+      case 'toast':
+      case 'action':
+      case 'close':
+        onRequest?.(data, instance);
         break;
       case 'resize':
         instance.iframe.style.height = `${Math.max(0, Math.ceil(data.height))}px`;
@@ -349,6 +382,7 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
         instance.pending.delete(data.id);
         break;
       case 'navigate':
+        if (onRequest?.(data, instance)) break;
         // Always a new tab, whatever the extension asks for: `_self` would take the checkout
         // itself away from the buyer. Only web pages: no `javascript:`, `data:` or relative URL
         // (it would mean the sandbox's, not the shop's).
@@ -406,10 +440,61 @@ export function createExtensionHost({ document, window, sandboxUrl, getState, di
 
   const canBlock = (instance) => Boolean(instance.ext.capabilities?.block_progress);
 
+  /** The hidden frame of `ext` at `target`, a target that renders nothing, made the first time. */
+  function runnable(ext, target) {
+    const key = `${ext.handle} ${target}`;
+    const kept = runnables.get(key);
+    if (kept && instances.has(kept) && identityOf(kept.ext) === identityOf(ext)) return kept;
+    if (kept) drop(kept);
+    let box = document.querySelector?.('.lsf-runnables');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'lsf-runnables';
+      box.setAttribute('hidden', '');
+      document.body.appendChild(box);
+    }
+    const instance = create(box, target, ext, {});
+    instance.runnable = true;
+    runnables.set(key, instance);
+    return instance;
+  }
+
+  /**
+   * Runs `target` (one that renders nothing) of the first extension that declares it, with
+   * `payload` as its `shopify.target`. Resolves to what it returned, or null when no extension
+   * declares it, it threw, or it did not answer in time.
+   */
+  async function run(target, payload, timeout = INTERCEPT_TIMEOUT_MS) {
+    const ext = extensions().find((candidate) => candidate.targets?.includes(target));
+    if (!ext) return null;
+    const instance = runnable(ext, target);
+    const started = Date.now();
+    while (!instance.initialized) {
+      if (Date.now() - started > timeout || !instances.has(instance)) return null;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await instance.initialized;
+    const id = `${instance.id}:${++counter}`;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        instance.pending.delete(id);
+        log.warn?.(`[${ext.handle}] did not answer ${target} in time`);
+        resolve(null);
+      }, timeout);
+      instance.pending.set(id, (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+      post(instance, { type: 'run', id, payload });
+    });
+  }
+
   window.addEventListener('message', onMessage);
 
   return {
     hasTarget,
+    hasTargetFor,
+    run,
     refusals,
     /** `[{handle, target, message, stack}]`: what the extensions threw since the page loaded. */
     errors: () => [...reported.values()],

@@ -6431,7 +6431,7 @@ type = "ui_extension"
   module = "./src/Block.jsx"
 
   [[extensions.targeting]]
-  target = "purchase.checkout.chat.render"
+  target = "purchase.checkout.nowhere.render"
   module = "./src/Chat.jsx"
 "#,
     );
@@ -6573,7 +6573,7 @@ fn the_home_page_says_what_is_wrong_with_the_extensions() {
     std::fs::remove_dir_all(&app).ok();
     assert!(html.contains("no place on the page"), "{html}");
     assert!(
-        html.contains("has no place for <code>purchase.checkout.chat.render</code>"),
+        html.contains("<code>purchase.checkout.nowhere.render</code> is not a target of checkout or customer account UI extensions"),
         "{html}"
     );
     assert!(html.contains("network access"));
@@ -6751,10 +6751,12 @@ fn the_problems_of_the_home_page_come_first_errors_first() {
     assert_eq!(broken["href"], "#scenario-broken");
     assert_eq!(broken["where"], "checkouts/broken.json");
 
-    // On the page, the problems are the first thing, errors before warnings, each on a line.
+    // On the page, the bar comes first, with how many problems there are and the ways in; then
+    // the tabs, the problems last, errors before warnings, each on a line.
     let problems_at = position(&html, "data-section=\"problems\"");
-    assert!(problems_at < position(&html, "data-section=\"open\""));
-    assert!(problems_at < position(&html, "data-section=\"scenarios\""));
+    assert!(position(&html, "data-problem-pill") < position(&html, "data-section=\"scenarios\""));
+    assert!(position(&html, "data-section=\"scenarios\"") < problems_at);
+    assert!(html.contains("data-problem-tab-count>"), "{html}");
     assert!(position(&html, "lsf-hp-group is-error") < position(&html, "lsf-hp-group is-warning"));
     assert!(html.contains(&format!("{errors} errors")), "{html}");
     assert!(html.contains("href=\"#scenario-broken\""));
@@ -7184,8 +7186,11 @@ fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
         html.contains("data-status=\"warning\" data-uses=\"functions ui\""),
         "{html}"
     );
-    assert!(html.contains("1 Function · 1 UI"));
-    assert!(html.contains("data-filter hidden"));
+    assert!(html.contains("Runs 1 Function and 1 UI extension"));
+    // The filter is there from the start, waiting for the script, and its count takes the room
+    // of its longest text: nothing moves when the script wakes it.
+    assert!(html.contains("data-filter-query disabled"), "{html}");
+    assert!(html.contains("6 of 6 scenarios shown</span>"), "{html}");
 }
 
 #[test]
@@ -7258,6 +7263,7 @@ fn the_home_page_of_an_app_with_nothing_says_so() {
     assert!(html.contains("lsf-hp is-clear"));
     assert!(html.contains("The app has no Function."));
     assert!(html.contains("The app has no checkout UI extension."));
+    assert!(html.contains("The app has no customer account UI extension."));
     assert!(html.contains("None yet"));
     // Nothing to filter.
     assert!(!html.contains("data-filter"));
@@ -7314,9 +7320,16 @@ fn the_home_page_lists_the_customers_to_log_in_as() {
     );
     assert_eq!(customers[2]["company"], "Northwind Hotels");
     let html = text(&get(&state, "/", "home"));
-    assert!(html.contains("Log in as a customer"), "{html}");
+    assert!(html.contains(">Customers</h2>"), "{html}");
+    // Their customer account, logged in as them.
     assert!(
-        html.contains("<li data-customer=\"alex.morgan@example.com\">"),
+        html.contains(
+            "href=\"/__lsf/login?customer=jane.doe%40example.com&amp;return_to=%2Faccount\""
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains("data-customer=\"alex.morgan@example.com\""),
         "{html}"
     );
     assert!(html.contains("B2B · Northwind Hotels"), "{html}");
@@ -7772,4 +7785,331 @@ fn a_saved_address_is_trimmed_and_its_blank_fields_dropped() {
     assert_eq!(address.city.as_deref(), Some("Paris"));
     assert_eq!(address.country_code.as_deref(), Some("FR"));
     assert_eq!(address.zip, None);
+}
+
+// --- The customer account ---
+
+/// The fixture app with a customer account UI extension (`ca-test`): a full page, an order
+/// status block and an order action.
+fn app_with_account(label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-account-app-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let directory = root.join("extensions").join("ca-test");
+    std::fs::create_dir_all(directory.join("dist")).unwrap();
+    std::fs::write(
+        directory.join("shopify.extension.toml"),
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Account test"
+handle = "ca-test"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  target = "customer-account.page.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.block.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order.action.menu-item.render"
+"#,
+    )
+    .unwrap();
+    std::fs::write(directory.join("dist").join("ca-test.js"), "// built").unwrap();
+    root
+}
+
+/// The state of a page of the customer account.
+fn account_state(reply: &Reply) -> Json {
+    assert_eq!(reply.status, 200, "{}", text(reply));
+    let html = text(reply);
+    let start = html.find("id=\"lsf-account-state\">").expect("the state") + 23;
+    let end = start + html[start..].find("</script>").expect("its end");
+    serde_json::from_str(&html[start..end]).expect("JSON")
+}
+
+#[test]
+fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
+    let app = app_with_account("orders");
+    let state = checkout_server_of(app.clone(), &[], true);
+
+    // Logged out: the customers to log in as, and no order.
+    let out = account_state(&get(&state, "/account", "ca"));
+    assert_eq!(out["surface"], "customer-account");
+    assert_eq!(out["page"], "orders");
+    assert_eq!(out["customer"], Json::Null);
+    assert!(out["profiles"].as_array().unwrap().len() >= 2);
+    assert_eq!(out["orders"], json!([]));
+    // Only the extensions with a customer account target.
+    let handles: Vec<&Json> = out["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|ext| &ext["handle"])
+        .collect();
+    assert_eq!(handles, [&json!("ca-test")]);
+
+    let login = get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "ca",
+    );
+    assert_eq!(header(&login, "location"), Some("/account"));
+    let json = account_state(&get(&state, "/account", "ca"));
+    assert_eq!(json["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["customer"]["id"], json["customer"]["id"]);
+    let orders = json["orders"].as_array().unwrap();
+    assert_eq!(orders.len(), 2);
+    let first = &orders[0];
+    assert_eq!(first["name"], "#1001");
+    assert_eq!(first["fulfillmentStatus"], "fulfilled");
+    assert_eq!(
+        first["lines"][0]["merchandise"],
+        Json::Null,
+        "written as the checkout writes a line"
+    );
+    assert!(first["lines"][0]["variantId"].is_u64());
+    assert_eq!(first["confirmationNumber"].as_str().unwrap().len(), 9);
+    // A fulfilled order went out in one shipment of every line.
+    assert_eq!(
+        first["fulfillments"][0]["lineIds"]
+            .as_array()
+            .unwrap()
+            .len(),
+        first["lines"].as_array().unwrap().len()
+    );
+    assert_eq!(first["unfulfilledLineIds"], json!([]));
+
+    // The page of an order, and of an order the customer does not have.
+    let id = first["legacyId"].to_string();
+    let order = account_state(&get(&state, &format!("/account/orders/{id}"), "ca"));
+    assert_eq!(order["page"], "order");
+    assert_eq!(order["order"]["name"], "#1001");
+    assert_eq!(get(&state, "/account/orders/12", "ca").status, 404);
+    let profile = account_state(&get(&state, "/account/profile", "ca"));
+    assert_eq!(profile["page"], "profile");
+    assert!(
+        !profile["customer"]["addresses"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(profile["customer"]["addresses"][0]["default"], true);
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn a_full_page_of_the_customer_account_is_the_page_of_an_extension() {
+    let app = app_with_account("pages");
+    let state = checkout_server_of(app.clone(), &[], true);
+    get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "ca-pages",
+    );
+    let page = account_state(&get(&state, "/account/pages/ca-test/rewards/3", "ca-pages"));
+    assert_eq!(page["page"], "page");
+    assert_eq!(
+        page["extensionPage"],
+        json!({"handle": "ca-test", "path": "/rewards/3"})
+    );
+    // An extension without a full page, and one that does not exist.
+    assert_eq!(
+        get(&state, "/account/pages/discount-tags", "ca-pages").status,
+        404
+    );
+    assert_eq!(get(&state, "/account/pages/nobody", "ca-pages").status, 404);
+    let orders = account_state(&get(&state, "/account", "ca-pages"));
+    let id = orders["orders"][0]["legacyId"].to_string();
+    // The full page for an order needs `customer-account.order.page.render`, which it lacks.
+    assert_eq!(
+        get(
+            &state,
+            &format!("/account/orders/{id}/pages/ca-test"),
+            "ca-pages"
+        )
+        .status,
+        404
+    );
+    // Paths of lsf's stand-in are left to the storefront.
+    assert_ne!(get(&state, "/account/login", "ca-pages").status, 200);
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn the_order_placed_in_the_checkout_is_in_the_customer_account() {
+    let app = app_with_account("placed");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "ca-placed";
+    let path = start_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    // The checkout follows a login made elsewhere.
+    get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        session,
+    );
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    let json = account_state(&get(&state, "/account", session));
+    let orders = json["orders"].as_array().unwrap();
+    assert_eq!(orders.len(), 3);
+    let placed = &orders[0];
+    assert_eq!(placed["placedHere"], true);
+    assert_eq!(placed["name"], "#1001");
+    assert_eq!(placed["lines"][0]["quantity"], 2);
+    assert_eq!(placed["unfulfilledLineIds"].as_array().unwrap().len(), 1);
+    assert!(placed["processedAt"].is_string());
+    assert_eq!(
+        placed.get("runs"),
+        None,
+        "the runs of the Functions are the checkout's"
+    );
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", placed["legacyId"]),
+        session,
+    ));
+    assert_eq!(order["order"]["shippingAddress"]["city"], "London");
+
+    // Someone else does not see it.
+    get(
+        &state,
+        "/__lsf/login?customer=new.customer@example.com&return_to=/account",
+        session,
+    );
+    assert_eq!(
+        account_state(&get(&state, "/account", session))["orders"],
+        json!([])
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn legacy_accounts_keep_the_account_pages_of_the_theme() {
+    let app = app_with_account("legacy");
+    let state = checkout_server_of(app.clone(), &[], false);
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
+        "ca-legacy",
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let reply = get(&state, "/account", "ca-legacy");
+    assert_eq!(header(&reply, "location"), Some("/account/login"));
+    // Hosted accounts: the customer account of the app.
+    assert_eq!(
+        account_state(&get(&state, "/account", "ca-hosted"))["page"],
+        "orders"
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn an_order_of_the_store_data_has_its_returns_and_its_shipments() {
+    let app = app_with_account("returns");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "ca-returns";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "jane.doe@example.com", "data": {"customers": [{
+            "email": "jane.doe@example.com",
+            "orders": [{
+                "fulfillment_status": "partial",
+                "line_items": [{"variant": "TEE-BLK-M", "quantity": 2}, {"variant": "TOTE-NAT"}],
+                "returns": [{"status": "requested", "line_items": [{"variant": "TEE-BLK-M", "quantity": 1}]}]
+            }]
+        }]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let json = account_state(&get(&state, "/account", session));
+    let order = &json["orders"][0];
+    let lines = order["lines"].as_array().unwrap();
+    assert_eq!(
+        order["fulfillments"][0]["lineIds"],
+        json!([lines[0]["id"]]),
+        "a partial order sent its first line"
+    );
+    assert_eq!(order["unfulfilledLineIds"], json!([lines[1]["id"]]));
+    assert_eq!(order["returns"][0]["status"], "REQUESTED");
+    assert_eq!(
+        order["returns"][0]["lines"],
+        json!([{"lineId": lines[0]["id"], "quantity": 1}])
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
+    let app = app_with_account("home");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let json = body_json(&get(&state, "/?format=json", "ca-home"));
+    let ca = json["uiExtensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|extension| extension["handle"] == "ca-test")
+        .expect("ca-test");
+    assert_eq!(ca["surfaces"], json!(["customer-account"]));
+    assert_eq!(ca["open"], "/account");
+    let html = text(&get(&state, "/", "ca-home"));
+    std::fs::remove_dir_all(&app).ok();
+    // A list of the Extensions tab, up to the next one.
+    let section = |name: &str| {
+        let start = position(&html, &format!("data-section=\"{name}\""));
+        let rest = &html[start + 1..];
+        let end = rest
+            .find("class=\"lsf-h-extlist\"")
+            .or_else(|| rest.find("</section>"))
+            .map_or(html.len(), |end| start + 1 + end);
+        html[start..end].to_string()
+    };
+    let checkout = section("ui-extensions");
+    let account = section("account-extensions");
+    assert!(
+        account.contains("<h2>Customer account UI extensions</h2>"),
+        "{account}"
+    );
+    // Each kind of extension has a tab of its own, named in full.
+    assert!(
+        html.contains(">Checkout UI extensions<span class=\"lsf-h-n\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains(">Customer account UI extensions<span class=\"lsf-h-n\">"),
+        "{html}"
+    );
+    assert!(
+        account.contains("data-ui-extension=\"ca-test\""),
+        "{account}"
+    );
+    assert!(account.contains("in the customer account"), "{account}");
+    assert!(
+        account.contains("Orders and order status: in the actions of each order"),
+        "{account}"
+    );
+    assert!(
+        !checkout.contains("data-ui-extension=\"ca-test\""),
+        "{checkout}"
+    );
+    assert!(
+        checkout.contains("data-ui-extension=\"gift-message\""),
+        "{checkout}"
+    );
+    assert!(
+        !account.contains("data-ui-extension=\"gift-message\""),
+        "{account}"
+    );
 }

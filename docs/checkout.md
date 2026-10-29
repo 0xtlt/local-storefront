@@ -1,6 +1,7 @@
 # Checkout
 
-Run the Shopify Functions and show the checkout UI extensions of a Shopify app, on your machine.
+Run the Shopify Functions and show the checkout and customer account UI extensions of a Shopify
+app, on your machine.
 local-storefront serves a fake checkout for it: no store, no payment, and no network except the
 requests of the Functions that have [network access](#network-access). It is a way to
 see what your Functions do to a cart, and how your extensions look and behave, not a copy of
@@ -102,9 +103,10 @@ instructions a run costs.
 
 ### Checkout UI extensions
 
-A checkout UI extension whose targets name their sources (`module = "./src/Checkout.jsx"`), in
-JavaScript, TypeScript or JSX, with Preact as Shopify's templates or another runtime, is bundled
-by lsf the way `shopify app build` bundles it, without Node:
+A checkout or customer account UI extension whose targets name their sources
+(`module = "./src/Checkout.jsx"`), in JavaScript, TypeScript or JSX, with Preact as Shopify's
+templates or another runtime, is bundled by lsf the way `shopify app build` bundles it, without
+Node:
 
 ```bash
 npx local-storefront checkout build banner --app ../my-app
@@ -254,15 +256,22 @@ radii in the same file.
 ## The home page
 
 `GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
-page says, for tools) shows what is wrong first, then everything the checkout can do for the
-app, in dense rows whose details open under them. It has the look of the checkout and needs no
-network: it sends no request of the Functions, only the checkout UI extensions loaded to check them
-can call a server (see below).
+page says, for tools) has a bar at the top and six tabs. It has the look of the checkout and
+needs no network: it sends no request of the Functions, only the checkout UI extensions loaded to
+check them can call a server (see below).
 
-- **Problems**, at the top, errors first, each on one line. The first eight of each kind show, a
-  "Show N more" opens the others. The link on the right of a problem opens a fresh checkout
-  where it shows, as the Open button of a scenario does, and its name is under the link. Its
-  details also link to the rows of this page it is about.
+- **The bar**: the app and its store data, how many problems there are (a link to the Problems
+  tab), "More" (a checkout with [every extension target](#every-extension-target), the Shop
+  look), the [customer account](#customer-account) and "Open the checkout".
+- **Scenarios**: the groups on the left, the scenarios on the right (see below).
+- **Functions**, **Checkout UI extensions**, **Customer account UI extensions**: a tab for
+  each kind of extension of the app.
+- **Customers**: a card for each customer of the store data, with a checkout logged in as them
+  and their customer account.
+- **Problems**, errors first, each on one line. The first eight of each kind show, a "Show N
+  more" opens the others. The link on the right of a problem opens a fresh checkout where it
+  shows, as the Open button of a scenario does, and its name is under the link. Its details also
+  link to the rows of this page it is about: a link opens the tab of what it leads to.
   - A Function that fails: "Open the run", the first scenario it fails in, with the [Functions
     dialog](#what-runs) open on that run (`?functions=<handle>`, and `:<target>` when the
     Function has several). The details link to the run in each of the other scenarios.
@@ -285,23 +294,29 @@ can call a server (see below).
     error in the store data, and **a Function that fails when a scenario runs**.
   - Warnings: legacy targets, targets the local checkout knows of and does not run, targets the
     page has no place for, and what else the loader says that does not stop anything.
-- **Open a checkout:** with the cart of the store data, with [every extension
-  target](#every-extension-target), or in the Shop look.
-- **Every [scenario](#scenarios)**, those with problems first, then by name. A row has a status
-  dot: the worst of its own problems (it does not validate, it names an extension the app does
-  not have) and of the Functions that fail in it, which are errors, and of the problems of the
+- **The scenarios** ([scenarios](#scenarios)) are in groups: the part of their titles before
+  `: ` ("Discount: buy 2, get 1" is in "Discount") when two scenarios or more share it, the others
+  first under "Checkouts". The menu on the left shows them all or one group, with the worst of
+  their dots and how many they hold; a row in its group drops what the group says of its title.
+  In a group, those with problems come first, then by name. A row has a status dot: the worst
+  of its own problems (it does not validate, it names an extension the app does not have) and of the Functions that fail in it, which are errors, and of the problems of the
   extensions it runs, each at its own level (a Function that is not built makes it an error, a
-  legacy target a warning). Then the title and the file, a few words for its cart, buyer, country, language and codes,
-  the description, how many Functions and UI extensions it runs ("all extensions" without an
-  `extensions` list), and buttons that open a fresh checkout for it. Its details list the cart,
-  the buyer, what was entered, the settings it overrides, and the extensions it runs. The
-  discounts are listed only when the scenario sets its own (`checkout.discounts`); otherwise
-  they are "the store's N discounts". A search box and chips (with problems, uses Functions,
-  uses UI extensions) filter the list.
-- **Every customer of the store data** ([login profiles](#log-in-as-a-customer)): name, email,
-  company, tags, orders, saved addresses and country, and a link that opens the checkout logged
-  in as them: the first scenario's, for its cart, when there is one.
-- **Every Function** and **every checkout UI extension**, one line each: its status, handle and
+  legacy target a warning). Then the title, its description (else a few words for its cart,
+  buyer, country, language and codes), and Open, a fresh checkout for it. Its details say what it
+  runs ("every extension of the app" without an `extensions` list), its name and file, the cart,
+  the buyer, what was entered, the settings it overrides, the extensions it runs, and a link that
+  opens it with every target. The discounts are listed only when the scenario sets its own
+  (`checkout.discounts`); otherwise they are "the store's N discounts". A search box (it looks in
+  every group) and a filter (all, with problems, Functions, UI) narrow the list. A link to a row
+  (`#scenario-…`, from a problem) shows every group and opens the row.
+- **The customers** ([login profiles](#log-in-as-a-customer)): name, email, company, tags,
+  orders, saved addresses and country, "Checkout as …", which opens the checkout logged in as
+  them (the first scenario's, for its cart, when there is one), and "Account", their customer
+  account.
+- **The extensions**: the Functions, the checkout UI extensions and the customer account UI
+  extensions, each in its tab. An extension with targets in both the checkout and the customer
+  account is in both. A problem of an extension that only renders in
+  the customer account opens it ("Open the customer account"). One line each: its status, handle and
   name, Function API or capabilities, API version, how many scenarios run it, its targets, and its
   first problem. Its details list each target (the Function API, a `.fetch` target that reaches
   the network, a legacy target; for a UI extension, the place it has on the page, such as
@@ -481,15 +496,91 @@ and the B2B settings that depend on the location in Shopify (catalogs, price lis
 terms, deposits, and whether a buyer may ship to another address): a B2B buyer pays what the
 store data says and may type an address.
 
+### Where each target renders
+
+Every target of Shopify's checkout UI extensions has a place (`assets/api.json`), besides those
+of the [customer account](#customer-account):
+
+- **Pickup**: the shipping rates of kind `pick_up` are a "Pick up" list of their own in each
+  delivery group, between `pickup-location-list.render-before` and `-after`, with
+  `pickup-location-option-item.render-after` under each. The pickup points come from Shopify's
+  pickup point Functions, which do not run here: with an extension at `pickup-point-list.render-*`,
+  the page shows the list with no point in it.
+- **Payment apps**: under the selected method, `payment-option-item.details.render`, and under the
+  card fields of the credit card, `payment-option-item.hosted-fields.render-after`.
+  `payment-option-item.action-required.render` is a dialog over the page that opens when the buyer
+  selects a method ("Complete the payment form" opens it again). `shopify.target` is the payment
+  option; there are no payment method attributes.
+- **Gift cards**: with an extension at `gift-card.render`, the payment step has "Pay with a gift
+  card"; ticking it shows the extension. `applyGiftCardChange` and `applyRedeemableChange` are
+  refused.
+- **Bundles**: a line a cart transform expanded lists its products in the summary, or
+  `purchase.cart-line-item.line-components.render` renders in their place, on the checkout and the
+  thank-you page.
+- **Chat**: `purchase.checkout.chat.render` and `purchase.thank-you.chat.render` sit over the page
+  in the bottom right corner.
+- **Address autocomplete**: `purchase.address-autocomplete.suggest` renders nothing. As the buyer
+  types the address field, the page runs it (in a hidden frame) with `shopify.target` (`value`,
+  `field`, `selectedCountryCode`) and shows the suggestions it returns under the field. Picking one
+  fills the address from its `formattedAddress`, or from what
+  `purchase.address-autocomplete.format-suggestion` returns for it. A new request aborts the one
+  before (`shopify.signal`).
+
 ### Every extension target
 
 `/checkout?targets=all` (or `&targets=all` after `?scenario=`) opens a checkout where each
 extension renders at every target it declares: the steps of a cart that ships are shown whatever
 the cart, and the thank-you page is shown under the checkout with the same cart (no order is
 placed), so the thank-you targets are there too. A panel at the top lists every target of every
-extension: shown, without a place on the page, or waiting for something the cart lacks (shipping
-methods need an address, a line target needs a line). The `all-extensions` scenario is made for
-it.
+extension: shown, without a place on the page, waiting for something the cart lacks (shipping
+methods need an address, a line target needs a line, a pickup target a rate of kind `pick_up`),
+run as the buyer types (the address autocomplete), or in the customer account. The
+`all-extensions` and `ui-every-target` scenarios are made for it.
+
+## Customer account
+
+With an app, `/account` is the customer account where its customer account UI extensions render:
+the pages of Shopify's new customer accounts, filled with the customers and orders of the store
+data. The home page links to it ("Customer account").
+
+| Path | Page | Targets |
+|---|---|---|
+| `/account` | The orders of the customer logged in | `order-index.announcement.render`, `order-index.block.render`, `order.action.menu-item.render` on each order |
+| `/account/orders/<id>` | The status of an order: its shipments, what is not shipped, its returns, the details, the payment and the summary | the 9 `order-status.*` targets, `order.action.menu-item.render` |
+| `/account/profile` | Name, contact, addresses, payment methods; for a B2B customer, the company and each location it buys for (addresses, payment, staff) | the 8 `profile.*` targets |
+| `/account/pages/<handle>/…` | The full page of an extension | `customer-account.page.render` |
+| `/account/orders/<id>/pages/<handle>/…` | The full page of an extension for an order | `customer-account.order.page.render` |
+
+`customer-account.footer.render-after` is at the bottom of every page. Pressing the button of an
+extension's `order.action.menu-item.render` opens its `order.action.render` in a dialog, which
+`shopify.close()` closes; a menu item with an `href` leads there instead.
+
+- **Logged out**, the page lists the customers of the store data to log in as
+  ([log in as a customer](#log-in-as-a-customer)); the avatar in the header switches customer or
+  logs out.
+- **The orders** are those of the customer in the store data (`orders` of a customer), and the
+  last one the session placed in the local checkout, logged in as them. An order's shipments come
+  from its `fulfillment_status` (`fulfilled`: one shipment of every line; `partial`: its first
+  line), its returns from its `returns` ([data reference](data-reference.md#orderreturn)).
+- **The `shopify` global** of a customer account target has what every target has (`i18n`,
+  `storage`, `sessionToken`, `settings`, `localization`, `extension`, `analytics`), and:
+  `authenticatedAccount` (`customer`, `purchasingCompany`); `navigation`; `toast.show`, which shows
+  a toast at the bottom of the page; `intents.invoke`, which answers `closed`. The order status
+  targets and the full page of an order have the Order Status API (`order`, `lines`, `cost`,
+  `shippingAddress`, `billingAddress`, `buyerIdentity`, `discountCodes`, `authenticationState`,
+  …), the line, shipment, return, location and order targets their `target`, `fulfillmentId`,
+  `returnId`, `locationId` and `orderId`.
+- **Navigation**: `shopify:customer-account/orders`, `…/orders/<id>` and `…/profile` lead to the
+  pages; `extension://<handle>` (or `extension:<handle>/<path>`) to the full page of another
+  extension; `extension://<route>` and `/<route>`, on a full page, to a route of its own. The page
+  loads again: `navigation.currentEntry.url` is `extension:<handle>/<route>`.
+- **Components**: the ones of checkout, and those only customer accounts have: `s-avatar`,
+  `s-button-group`, `s-customer-account-action`, `s-image-group`, `s-menu`, `s-page`.
+- `?targets=all` adds a panel that lists the customer account targets of each extension, and where
+  each one renders.
+- A theme that renders its accounts (`templates/customers`, or `shop.customer_accounts` set to
+  `"legacy"`) keeps `/account`: Shopify runs customer account UI extensions with new customer
+  accounts only.
 
 ## Set up the checkout
 
@@ -926,8 +1017,8 @@ an order that was placed already leads to the same thank-you page, never to a se
 
 - Payments, gift cards, and payment method attributes. Choosing a payment method pays nothing,
   and the balance of a [deferred payment](#deferred-payments) is never collected.
-- One delivery group holds every line that ships. No pickup points, no split shipments, no
-  prices by address: the rates are the same for every address.
+- One delivery group holds every line that ships. No pickup points (their list stays empty), no
+  split shipments, no prices by address: the rates are the same for every address.
 - Fulfillment constraints, order routing, and the pickup point and local pickup generators (with
   their `.fetch` targets) are listed and not run.
 - Discounts have no `conditions` and no combinations: all of them stack, as described in
@@ -937,14 +1028,17 @@ an order that was placed already leads to the same thank-you page, never to a se
 - Tax is one rate on the discounted subtotal, with no tax lines.
 - The values of the `settings` of an extension are not set: the manifest declares them, and
   `shopify.settings.value` is empty.
-- No Storefront API: `query` in an extension rejects.
+- No Storefront API: `query` in an extension rejects. No Customer Account API either: a customer
+  account extension reads the account through its `shopify` global only.
+- The customer account shows; it changes nothing (no address to edit, no order to cancel or
+  return), and its intents (`shopify.intents.invoke`) are closed at once.
 - Some fields of the Function input hold what the store data says and nothing more. The orders of
   the customers are not counted in the `ordersCount` of a company location, nor spent in its
   `totalSpent` (set them in the data); a `Market` is a country, or the group of countries that
   `localization.markets` declares, with no catalog or price list; the `id` of a `Metaobject`
   is made up from its type and handle.
-- Customer accounts hosted by Shopify, Shop Pay and express checkout. Logging in is picking a
-  customer of the data, see [log in as a customer](#log-in-as-a-customer).
+- Shop Pay and express checkout. Logging in is picking a customer of the data, see
+  [log in as a customer](#log-in-as-a-customer).
 - With `checkout` (no theme), the links to the storefront (return to cart, continue shopping)
   lead to pages the server does not have. Use `serve --app` for those.
 - A scenario is one session per browser: opening another replaces it. The scenario cannot set

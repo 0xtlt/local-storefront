@@ -1,7 +1,7 @@
-//! Where the checkout page places the targets of checkout UI extensions: the `placements` of
-//! `assets/api.json`. The page (`assets/views.js`) renders a slot at each; any other target of
-//! the API needs something a local checkout lacks (pickup points, the chat), and no extension
-//! renders there.
+//! Where the pages place the targets of checkout and customer account UI extensions: the
+//! `placements` of `assets/api.json`, every target of Shopify's. The checkout page
+//! (`assets/views.js`) and the customer account (`assets/account-views.js`) render a slot at each,
+//! but the address autocomplete, which the checkout page runs as the buyer types.
 
 /// Where the page renders `target`, or `None` when it has no place on the page.
 pub fn placement(target: &str) -> Option<&'static str> {
@@ -12,25 +12,52 @@ pub fn placement(target: &str) -> Option<&'static str> {
         .map(|placement| placement.place.as_str())
 }
 
+/// The surface of `target`: `checkout` or `customer-account`, `None` when Shopify has no such
+/// target.
+pub fn surface(target: &str) -> Option<&'static str> {
+    crate::metadata::get()
+        .placements
+        .iter()
+        .find(|placement| placement.target == target)
+        .map(|placement| placement.surface.as_str())
+}
+
+/// Whether `target` renders nothing: the page runs it (the address autocomplete).
+pub fn runs(target: &str) -> bool {
+    crate::metadata::get()
+        .placements
+        .iter()
+        .any(|placement| placement.target == target && placement.runs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn a_slot_of_the_views_is_a_place() {
-        let views = String::from_utf8(crate::assets::get("views.js").unwrap().to_vec()).unwrap();
-        for crate::metadata::Placement { target, .. } in &crate::metadata::get().placements {
-            assert!(
-                views.contains(&format!("'{target}'")),
-                "{target} has no slot in views.js"
-            );
+    fn a_place_is_a_slot_of_the_views() {
+        let file = |name| String::from_utf8(crate::assets::get(name).unwrap().to_vec()).unwrap();
+        let (checkout, account, page) = (
+            file("views.js"),
+            file("account-views.js"),
+            file("checkout.js"),
+        );
+        for placement in &crate::metadata::get().placements {
+            let quoted = format!("'{}'", placement.target);
+            let found = match (placement.surface.as_str(), placement.runs) {
+                ("checkout", false) => checkout.contains(&quoted),
+                ("checkout", true) => page.contains(&quoted),
+                _ => account.contains(&quoted),
+            };
+            assert!(found, "{} has no slot", placement.target);
         }
     }
 
     #[test]
-    fn a_target_without_a_slot_has_no_place() {
+    fn every_target_of_shopify_has_a_place() {
         assert!(placement("purchase.checkout.block.render").is_some());
-        assert!(placement("purchase.checkout.chat.render").is_none());
-        assert!(placement("purchase.checkout.pickup-location-list.render-before").is_none());
+        assert!(placement("purchase.checkout.chat.render").is_some());
+        assert!(placement("customer-account.order-status.block.render").is_some());
+        assert!(placement("purchase.checkout.blocks.render").is_none());
     }
 }

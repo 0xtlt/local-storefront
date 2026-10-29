@@ -6,13 +6,13 @@ api_version = "2026-10"
 name = "UI broken: unknown-target"
 handle = "ui-broken-unknown-target"
 type = "ui_extension"
-description = "Declares a target that does not exist and one the local checkout has no place for, next to the block target."
+description = "Declares two targets that do not exist, a checkout one and a customer account one, next to the block target."
 
   [[extensions.targeting]]
   target = "purchase.checkout.nowhere.render"
 
   [[extensions.targeting]]
-  target = "purchase.checkout.chat.render"
+  target = "customer-account.orders.block.render"
 
   [[extensions.targeting]]
   target = "purchase.checkout.block.render"

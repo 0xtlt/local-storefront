@@ -91,11 +91,16 @@
             { "variant": "TEE-WHT-M", "quantity": 2 },
             { "variant": "canvas-tote-bag", "quantity": 1 }
           ],
-          "shipping_price": 600
+          "shipping_price": 600,
+          "returns": [{ "status": "open", "line_items": [{ "variant": "TEE-WHT-M", "quantity": 1 }] }]
         },
         {
           "created_at": "2024-05-18T11:05:00-04:00",
-          "line_items": [{ "variant": "MUG-OAT", "quantity": 4 }]
+          "fulfillment_status": "partial",
+          "line_items": [
+            { "variant": "MUG-OAT", "quantity": 4 },
+            { "variant": "canvas-tote-bag", "quantity": 1 }
+          ]
         }
       ]
     },

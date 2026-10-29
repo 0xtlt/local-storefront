@@ -6,13 +6,10 @@ api_version = "2026-10"
 name = "UI: every target"
 handle = "ui-every-target"
 type = "ui_extension"
-description = "One extension that declares every target the local checkout renders, and marks each with its name."
+description = "One extension that declares the 36 targets of the checkout and the thank-you page that render, and marks each with its name."
 
   [[extensions.targeting]]
   target = "purchase.checkout.header.render-after"
-
-  [[extensions.targeting]]
-  target = "purchase.checkout.block.render"
 
   [[extensions.targeting]]
   target = "purchase.checkout.contact.render-after"
@@ -27,25 +24,64 @@ description = "One extension that declares every target the local checkout rende
   target = "purchase.checkout.shipping-option-list.render-before"
 
   [[extensions.targeting]]
-  target = "purchase.checkout.shipping-option-list.render-after"
-
-  [[extensions.targeting]]
   target = "purchase.checkout.shipping-option-item.render-after"
 
   [[extensions.targeting]]
   target = "purchase.checkout.shipping-option-item.details.render"
 
   [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.pickup-location-list.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.pickup-location-option-item.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.pickup-location-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.pickup-point-list.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.pickup-point-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  [[extensions.targeting]]
   target = "purchase.checkout.payment-method-list.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.payment-option-item.details.render"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.payment-option-item.hosted-fields.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.payment-option-item.action-required.render"
 
   [[extensions.targeting]]
   target = "purchase.checkout.payment-method-list.render-after"
 
   [[extensions.targeting]]
-  target = "purchase.checkout.cart-line-list.render-after"
+  target = "purchase.checkout.gift-card.render"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.actions.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.footer.render-after"
 
   [[extensions.targeting]]
   target = "purchase.checkout.cart-line-item.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.cart-line-item.line-components.render"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.cart-line-list.render-after"
 
   [[extensions.targeting]]
   target = "purchase.checkout.reductions.render-before"
@@ -54,10 +90,7 @@ description = "One extension that declares every target the local checkout rende
   target = "purchase.checkout.reductions.render-after"
 
   [[extensions.targeting]]
-  target = "purchase.checkout.actions.render-before"
-
-  [[extensions.targeting]]
-  target = "purchase.checkout.footer.render-after"
+  target = "purchase.checkout.chat.render"
 
   [[extensions.targeting]]
   target = "purchase.thank-you.announcement.render"
@@ -72,10 +105,13 @@ description = "One extension that declares every target the local checkout rende
   target = "purchase.thank-you.customer-information.render-after"
 
   [[extensions.targeting]]
-  target = "purchase.thank-you.cart-line-list.render-after"
+  target = "purchase.thank-you.footer.render-after"
 
   [[extensions.targeting]]
   target = "purchase.thank-you.cart-line-item.render-after"
 
   [[extensions.targeting]]
-  target = "purchase.thank-you.footer.render-after"
+  target = "purchase.thank-you.cart-line-list.render-after"
+
+  [[extensions.targeting]]
+  target = "purchase.thank-you.chat.render"

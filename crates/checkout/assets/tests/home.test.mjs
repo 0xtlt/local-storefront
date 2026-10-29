@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { FakeDocument } from './fake-dom.mjs';
 import { init as sandboxInit, sandboxWindow } from './harness.mjs';
-import { applyFilter, countText, markScenarios, openLink, probe, reorder, richText, rowMatches, sortRows, start, verdict } from '../home.js';
+import { applyFilter, countText, markScenarios, openLink, probe, reorder, reveal, richText, rowMatches, selectTab, sortRows, start, updateGroups, verdict } from '../home.js';
 
 const SANDBOX = ['sandbox-api.js', 'sandbox-components.js', 'sandbox.js'];
 
@@ -72,6 +72,97 @@ test('the rows take the order the check gives them', () => {
   const list = fakeList([['scenario-a'], ['scenario-b'], ['scenario-c']]);
   reorder(list, ['scenario-c', 'scenario-a', 'scenario-gone']);
   assert.deepEqual(list.children.map((child) => child.id), ['scenario-b', 'scenario-c', 'scenario-a']);
+});
+
+/** A page of groups of scenarios, in the fake DOM: `{name: [[id, status], ...]}`, with the menu
+ * of the groups and the tabs. */
+function groupedPage(groups) {
+  const document = new FakeDocument();
+  const panel = document.createElement('section');
+  panel.setAttribute('data-panel', 'scenarios');
+  const other = document.createElement('section');
+  other.setAttribute('data-panel', 'problems');
+  other.hidden = true;
+  for (const id of ['scenarios', 'problems']) {
+    const tab = document.createElement('a');
+    tab.setAttribute('data-tab', id);
+    document.body.appendChild(tab);
+  }
+  const nav = (name) => {
+    const button = document.createElement('button');
+    button.setAttribute('data-group-nav', name);
+    const slot = document.createElement('span');
+    slot.setAttribute('data-group-dot', '');
+    button.appendChild(slot);
+    return button;
+  };
+  document.body.appendChild(nav(''));
+  for (const [name, rows] of Object.entries(groups)) {
+    document.body.appendChild(nav(name));
+    const group = document.createElement('section');
+    group.setAttribute('data-group', name);
+    const head = document.createElement('h3');
+    const dotSlot = document.createElement('span');
+    dotSlot.setAttribute('data-group-dot', '');
+    const problems = document.createElement('span');
+    problems.setAttribute('data-group-problems', '');
+    head.append(dotSlot, problems);
+    const list = document.createElement('ul');
+    list.setAttribute('data-list', 'scenarios');
+    for (const [id, status] of rows) {
+      const row = document.createElement('li');
+      row.setAttribute('id', id);
+      row.setAttribute('data-scenario', id);
+      row.setAttribute('data-status', status);
+      list.appendChild(row);
+    }
+    group.append(head, list);
+    panel.appendChild(group);
+  }
+  document.body.append(panel, other);
+  const group = (name) => document.querySelector(`[data-group="${name}"]`);
+  return { document, group, panel, other };
+}
+
+test('a group says the worst of its scenarios and how many have problems, and only the chosen one shows', () => {
+  const { document, group } = groupedPage({
+    Discount: [['scenario-a', 'ok'], ['scenario-b', 'warning']],
+    Broken: [['scenario-c', 'error'], ['scenario-d', 'error']],
+    Mix: [['scenario-e', 'ok']],
+  });
+  updateGroups(document);
+  assert.equal(group('Discount').getAttribute('data-worst'), 'warning');
+  assert.equal(group('Discount').querySelector('[data-group-problems]').textContent, '1 with problems');
+  assert.equal(group('Broken').querySelector('[data-group-problems]').textContent, '2 with problems');
+  assert.ok(group('Broken').querySelector('[data-group-dot] .lsf-dot.is-error'));
+  // The menu says the same, and "All" the worst of all.
+  assert.ok(document.querySelector('[data-group-nav="Broken"] [data-group-dot] .lsf-dot.is-error'));
+  assert.ok(document.querySelector('[data-group-nav=""] [data-group-dot] .lsf-dot.is-error'));
+  assert.equal(group('Mix').querySelector('[data-group-problems]').textContent, '');
+  // A group the filter keeps none of is hidden; a chosen group hides the others.
+  document.getElementById('scenario-e').hidden = true;
+  updateGroups(document);
+  assert.equal(group('Mix').hidden, true);
+  assert.equal(group('Discount').hidden, false);
+  document.getElementById('scenario-e').hidden = false;
+  updateGroups(document, 'Discount');
+  assert.deepEqual(['Discount', 'Broken', 'Mix'].map((name) => group(name).hidden), [false, true, true]);
+});
+
+test('a link to a scenario shows its tab, every group, and opens its row', () => {
+  const { document, panel, other } = groupedPage({ Discount: [['scenario-a', 'ok']] });
+  selectTab(document, 'problems');
+  assert.equal(panel.hidden, true);
+  const details = document.createElement('details');
+  document.getElementById('scenario-a').appendChild(details);
+  const chosen = [];
+  assert.equal(reveal(document, 'scenario-a', (group) => chosen.push(group)), true);
+  assert.equal(panel.hidden, false);
+  assert.equal(other.hidden, true);
+  assert.equal(document.querySelector('[data-tab="scenarios"]').getAttribute('aria-selected'), 'true');
+  assert.deepEqual(chosen, [null]);
+  assert.equal(details.open, true);
+  assert.equal(reveal(document, 'scenario-gone'), false);
 });
 
 /** A page with the problems still to check, and the window that answers the check. */
