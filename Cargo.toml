@@ -5,7 +5,7 @@ members = ["crates/liquid", "crates/core", "crates/fmt", "crates/checkout", "cra
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.1.18"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT"
