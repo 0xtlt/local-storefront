@@ -228,34 +228,38 @@ fn a_rebuilt_module_is_picked_up() {
 }
 
 #[test]
-fn a_burst_of_runs_leaves_only_a_few_idle_engines() {
+fn a_burst_of_runs_loads_each_module_once() {
     let dir = temp_dir("burst");
-    let wasm = write(&dir, "echo.wasm", ECHO);
-    let runner = Runner::new().with_limits(8, 2);
-    // Eight runs at once, each on an engine of its own.
-    let barrier = std::sync::Barrier::new(8);
+    let echo = write(&dir, "echo.wasm", ECHO);
+    let exit = write(&dir, "exit.wasm", EXIT);
+    let runner = Runner::new().with_max_concurrent(8);
+    // Sixteen runs at once, of two modules not compiled yet: each module is loaded once, and every
+    // run uses it.
+    let barrier = std::sync::Barrier::new(16);
     std::thread::scope(|scope| {
-        for number in 0..8 {
-            let (runner, wasm, barrier) = (&runner, &wasm, &barrier);
+        for number in 0..16 {
+            let (runner, echo, exit, barrier) = (&runner, &echo, &exit, &barrier);
             scope.spawn(move || {
                 let input = json!({"run": number});
                 barrier.wait();
-                let execution = runner.run(wasm, "_start", &input);
-                assert_eq!(execution.error, None);
-                assert_eq!(execution.output, Some(input));
+                if number % 2 == 0 {
+                    let execution = runner.run(echo, "_start", &input);
+                    assert_eq!(execution.error, None);
+                    assert_eq!(execution.output, Some(input));
+                } else {
+                    let execution = runner.run(exit, "_start", &input);
+                    assert_eq!(
+                        execution.error.as_deref(),
+                        Some("module exited with code: 3")
+                    );
+                }
             });
         }
     });
-    assert!(
-        runner.idle_engines() <= 2,
-        "{} idle engines kept after a burst",
-        runner.idle_engines()
-    );
-    // What stays is used again.
-    let before = runner.idle_engines();
-    assert!(before >= 1);
-    assert_eq!(runner.run(&wasm, "_start", &json!({})).error, None);
-    assert_eq!(runner.idle_engines(), before);
+    assert_eq!(runner.modules_loaded(), 2);
+    // The next runs use them too.
+    assert_eq!(runner.run(&echo, "_start", &json!({})).error, None);
+    assert_eq!(runner.modules_loaded(), 2);
 }
 
 #[test]
@@ -265,7 +269,7 @@ fn concurrent_runs_are_bounded_and_the_others_wait() {
     let timeout = Duration::from_millis(300);
     // Two at a time: four runs that each last until the timeout take two rounds. The time a run
     // waits is not part of its timeout.
-    let runner = Runner::new().with_timeout(timeout).with_limits(2, 1);
+    let runner = Runner::new().with_timeout(timeout).with_max_concurrent(2);
     let started = std::time::Instant::now();
     std::thread::scope(|scope| {
         for _ in 0..4 {
@@ -281,7 +285,6 @@ fn concurrent_runs_are_bounded_and_the_others_wait() {
         "four runs took {:?} with two at a time",
         started.elapsed()
     );
-    assert!(runner.idle_engines() <= 1);
 }
 
 #[test]

@@ -10,9 +10,10 @@ mod host;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::{Condvar, Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -57,55 +58,38 @@ fn shared() -> &'static Runner {
     RUNNER.get_or_init(Runner::new)
 }
 
-struct Cached {
+/// A module compiled from a file, as the file was then. The runs of a module that is not compiled
+/// yet wait for one compilation.
+struct Compiled {
     modified: Option<SystemTime>,
     size: u64,
-    module: Module,
+    module: OnceLock<Result<Module, String>>,
 }
 
-/// An engine and the modules compiled with it.
-///
-/// A run arms the engine's epoch deadline itself ([`host`]), at the next epoch, so the epoch
-/// of an engine stops every run that uses it at the time. A slot is therefore used by one run at
-/// a time: the watchdog of a run moves the epoch of its own engine only.
-struct Slot {
-    engine: Engine,
-    /// The modules compiled, the least recently used first: at most [`MODULES_PER_ENGINE`], so
-    /// that the modules of Functions gone from the app (or of other apps) do not stay forever.
-    modules: IndexMap<PathBuf, Cached>,
-    /// The providers compiled, by name: a handful.
-    providers: HashMap<String, Module>,
-    /// [`MODULES_PER_ENGINE`], or fewer in tests.
-    capacity: usize,
-}
-
-/// How many compiled modules an engine keeps: more than an app has Functions (the playground
+/// How many compiled modules a runner keeps: more than an app has Functions (the playground
 /// has 50), fewer than a long session of `--watch` and tests can leave behind.
-const MODULES_PER_ENGINE: usize = 64;
+const MODULES_KEPT: usize = 64;
 
-/// How many engines stay in the pool when no run needs them.
-const IDLE_ENGINES: usize = 2;
-
-/// The engines of a runner.
-struct Pool {
-    idle: Vec<Slot>,
-    /// Slots in use.
-    busy: usize,
-    /// Runs waiting for a slot.
-    waiting: usize,
-}
-
-/// Runs Functions, concurrent runs included: each run has an engine of its own (from a pool, so
-/// that the compiled modules are reused).
+/// Runs Functions, concurrent runs included, on one engine: a module is compiled once, and
+/// every run uses it in a store of its own.
 ///
-/// At most as many runs as the machine has CPUs go at once (a run is CPU-bound; every run holds
-/// an engine and the memory of its instance): the others wait for one to finish. Past a small
-/// number of idle engines, the engines of a burst are dropped, with the modules they compiled.
+/// At most as many runs as the machine has CPUs go at once (a run is CPU-bound, and holds the
+/// memory of its instance): the others wait for one to finish.
 pub struct Runner {
     timeout: Duration,
     max_concurrent: usize,
-    keep_idle: usize,
-    pool: Mutex<Pool>,
+    engine: Result<Engine, String>,
+    /// The modules compiled, the least recently used first: at most `capacity`, so that the
+    /// modules of Functions gone from the app (or of other apps) do not stay forever.
+    modules: Mutex<IndexMap<PathBuf, Arc<Compiled>>>,
+    /// [`MODULES_KEPT`], or fewer in tests.
+    capacity: usize,
+    /// The providers compiled, by name: a handful.
+    providers: Mutex<HashMap<String, Module>>,
+    /// How many times a module was loaded: compiled, or read from wasmtime's cache on disk.
+    loads: AtomicUsize,
+    /// Runs going.
+    busy: Mutex<usize>,
     released: Condvar,
 }
 
@@ -115,102 +99,58 @@ impl Default for Runner {
     }
 }
 
-/// A slot taken from the pool: it goes back to it when the run is over, even if the run panics.
-struct Lease<'r> {
-    runner: &'r Runner,
-    slot: Option<Slot>,
-}
+/// A run going: it stops counting when the permit goes, even if the run panics.
+struct Permit<'r>(&'r Runner);
 
-impl Drop for Lease<'_> {
+impl Drop for Permit<'_> {
     fn drop(&mut self) {
-        if let Some(slot) = self.slot.take() {
-            self.runner.release(slot);
-        }
+        *lock(&self.0.busy) -= 1;
+        self.0.released.notify_one();
     }
 }
 
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 impl Runner {
+    /// A runner with an engine of its own. The engine keeps wasmtime's compilation cache on disk,
+    /// as function-runner's does (a second run of a Function does not compile it again). Where
+    /// that cache cannot be set up, the same configuration without it does.
     pub fn new() -> Runner {
         Runner {
             timeout: DEFAULT_TIMEOUT,
             max_concurrent: std::thread::available_parallelism().map_or(4, |count| count.get()),
-            keep_idle: IDLE_ENGINES,
-            pool: Mutex::new(Pool {
-                idle: Vec::new(),
-                busy: 0,
-                waiting: 0,
-            }),
+            engine: engine(),
+            modules: Mutex::new(IndexMap::new()),
+            capacity: MODULES_KEPT,
+            providers: Mutex::new(HashMap::new()),
+            loads: AtomicUsize::new(0),
+            busy: Mutex::new(0),
             released: Condvar::new(),
         }
     }
 
-    /// A runner that runs at most `max_concurrent` Functions at once (at least one) and keeps
-    /// at most `keep_idle` engines when it is idle.
-    pub fn with_limits(mut self, max_concurrent: usize, keep_idle: usize) -> Runner {
+    /// A runner that runs at most `max_concurrent` Functions at once (at least one).
+    pub fn with_max_concurrent(mut self, max_concurrent: usize) -> Runner {
         self.max_concurrent = max_concurrent.max(1);
-        self.keep_idle = keep_idle;
         self
     }
 
-    /// How many engines wait for a run.
-    pub fn idle_engines(&self) -> usize {
-        self.pool().idle.len()
+    /// How many times a module was loaded (compiled, or read from wasmtime's cache on disk):
+    /// once per module and version of it, however many runs use it.
+    pub fn modules_loaded(&self) -> usize {
+        self.loads.load(Ordering::Relaxed)
     }
 
-    fn pool(&self) -> std::sync::MutexGuard<'_, Pool> {
-        self.pool.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// An idle slot, or a new one. Waits while `max_concurrent` runs are going.
-    fn acquire(&self) -> Result<Lease<'_>, String> {
-        let mut pool = self.pool();
-        if pool.busy >= self.max_concurrent {
-            pool.waiting += 1;
-            while pool.busy >= self.max_concurrent {
-                pool = self.released.wait(pool).unwrap_or_else(|e| e.into_inner());
-            }
-            pool.waiting -= 1;
+    /// Waits while `max_concurrent` runs are going.
+    fn permit(&self) -> Permit<'_> {
+        let mut busy = lock(&self.busy);
+        while *busy >= self.max_concurrent {
+            busy = self.released.wait(busy).unwrap_or_else(|e| e.into_inner());
         }
-        pool.busy += 1;
-        let idle = pool.idle.pop();
-        drop(pool);
-        let slot = match idle {
-            Some(slot) => Ok(slot),
-            None => new_slot(),
-        };
-        match slot {
-            Ok(slot) => Ok(Lease {
-                runner: self,
-                slot: Some(slot),
-            }),
-            Err(error) => {
-                self.give_back(None);
-                Err(error)
-            }
-        }
-    }
-
-    fn release(&self, slot: Slot) {
-        self.give_back(Some(slot));
-    }
-
-    /// Ends a run. Its slot stays in the pool if the pool is short of idle engines (or runs wait
-    /// for one), and is dropped otherwise.
-    fn give_back(&self, slot: Option<Slot>) {
-        let mut pool = self.pool();
-        pool.busy -= 1;
-        let keep = self.keep_idle.max(pool.waiting);
-        let dropped = match slot {
-            Some(slot) if pool.idle.len() < keep => {
-                pool.idle.push(slot);
-                None
-            }
-            other => other,
-        };
-        drop(pool);
-        self.released.notify_one();
-        // An engine is torn down outside the lock.
-        drop(dropped);
+        *busy += 1;
+        Permit(self)
     }
 
     /// A runner that stops a Function after `timeout` (10 seconds by default).
@@ -220,19 +160,16 @@ impl Runner {
     }
 
     pub fn run(&self, wasm: &Path, export: &str, input: &Value) -> Execution {
-        let mut lease = match self.acquire() {
-            Ok(lease) => lease,
-            Err(error) => return Execution::failed(error),
+        let engine = match &self.engine {
+            Ok(engine) => engine,
+            Err(error) => return Execution::failed(error.clone()),
         };
-        let Some(slot) = lease.slot.as_mut() else {
-            return Execution::failed("no Wasm engine");
-        };
-        // The watchdog is over when `execute` returns, so the slot is clean for the next run.
-        self.execute(slot, wasm, export, input)
+        let _permit = self.permit();
+        self.execute(engine, wasm, export, input)
     }
 
-    fn execute(&self, slot: &mut Slot, wasm: &Path, export: &str, input: &Value) -> Execution {
-        let module = match slot.module(wasm) {
+    fn execute(&self, engine: &Engine, wasm: &Path, export: &str, input: &Value) -> Execution {
+        let module = match self.module(engine, wasm) {
             Ok(module) => module,
             Err(error) => return Execution::failed(error),
         };
@@ -246,17 +183,39 @@ impl Runner {
             Err(error) => return Execution::failed(error),
         };
 
-        let watchdog = Watchdog::start(slot.engine.clone(), self.timeout);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let deadline = host::Deadline {
+            at: Instant::now() + self.timeout,
+            stopped: stopped.clone(),
+        };
+        let watchdog = Watchdog::start(engine.clone(), self.timeout);
         let result = host::run(
-            &slot.engine,
+            engine,
             &module,
-            &mut slot.providers,
+            &self.providers,
             export,
             encoded,
             msgpack,
+            deadline,
         );
-        let timed_out = watchdog.stop();
+        // The watchdog is over when `run` returns: the next runs are not ticked for.
+        watchdog.stop();
 
+        if stopped.load(Ordering::Relaxed) {
+            let (logs, instructions) = match &result {
+                Ok(result) => (result.logs.clone(), result.instructions),
+                Err(_) => (String::new(), 0),
+            };
+            return Execution {
+                output: None,
+                logs,
+                error: Some(format!(
+                    "the Function ran for more than {:?} and was stopped",
+                    self.timeout
+                )),
+                instructions,
+            };
+        }
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -271,13 +230,6 @@ impl Runner {
             error: None,
             instructions: result.instructions,
         };
-        if timed_out {
-            execution.error = Some(format!(
-                "the Function ran for more than {:?} and was stopped",
-                self.timeout
-            ));
-            return execution;
-        }
         if !result.success {
             // The trap or exit code is appended to the logs after what the Function printed.
             let (logs, error) = split_failure(&result.logs);
@@ -294,18 +246,59 @@ impl Runner {
         }
         execution
     }
-}
 
-/// A new engine. The engine keeps wasmtime's compilation cache on disk, as function-runner's
-/// does (a second run of a Function does not compile it again). Where that cache cannot be set
-/// up, the same configuration without it does.
-fn new_slot() -> Result<Slot, String> {
-    Ok(Slot {
-        engine: engine()?,
-        modules: IndexMap::new(),
-        providers: HashMap::new(),
-        capacity: MODULES_PER_ENGINE,
-    })
+    /// The module at `wasm`, compiled once per version of the file.
+    fn module(&self, engine: &Engine, wasm: &Path) -> Result<Module, String> {
+        let metadata = std::fs::metadata(wasm).map_err(|_| {
+            format!(
+                "no Wasm module at {}: build the Function (`shopify app build`)",
+                wasm.display()
+            )
+        })?;
+        let modified = metadata.modified().ok();
+        let size = metadata.len();
+
+        let compiled = {
+            let mut modules = lock(&self.modules);
+            // Taken out, and put back last: the most recently used.
+            let compiled = match modules.shift_remove(wasm) {
+                Some(compiled) if compiled.modified == modified && compiled.size == size => {
+                    compiled
+                }
+                _ => Arc::new(Compiled {
+                    modified,
+                    size,
+                    module: OnceLock::new(),
+                }),
+            };
+            // Past the capacity, the least recently used goes.
+            while modules.len() >= self.capacity.max(1) {
+                modules.shift_remove_index(0);
+            }
+            modules.insert(wasm.to_path_buf(), compiled.clone());
+            compiled
+        };
+        // Outside the lock: the runs of other modules do not wait for this compilation.
+        let loaded = compiled.module.get_or_init(|| {
+            self.loads.fetch_add(1, Ordering::Relaxed);
+            Module::from_file(engine, wasm)
+                .map_err(|error| format!("cannot load {}: {error:#}", wasm.display()))
+        });
+        match loaded {
+            Ok(module) => Ok(module.clone()),
+            Err(error) => {
+                // Not kept: the next run tries again.
+                let mut modules = lock(&self.modules);
+                if modules
+                    .get(wasm)
+                    .is_some_and(|kept| Arc::ptr_eq(kept, &compiled))
+                {
+                    modules.shift_remove(wasm);
+                }
+                Err(error.clone())
+            }
+        }
+    }
 }
 
 fn engine() -> Result<Engine, String> {
@@ -318,8 +311,7 @@ fn engine() -> Result<Engine, String> {
 /// engine settings, and exporting a function. Says why not. What it compiles goes to the same
 /// cache as the runs, so the first run of the module does not compile it again.
 pub fn check_module(bytes: &[u8]) -> Result<(), String> {
-    static ENGINE: OnceLock<Result<Engine, String>> = OnceLock::new();
-    let engine = ENGINE.get_or_init(engine).as_ref().map_err(Clone::clone)?;
+    let engine = shared().engine.as_ref().map_err(Clone::clone)?;
     let module = Module::new(engine, bytes).map_err(|error| format!("{error:#}"))?;
     if !module
         .exports()
@@ -328,44 +320,6 @@ pub fn check_module(bytes: &[u8]) -> Result<(), String> {
         return Err("it exports no function".to_string());
     }
     Ok(())
-}
-
-impl Slot {
-    fn module(&mut self, wasm: &Path) -> Result<Module, String> {
-        let metadata = std::fs::metadata(wasm).map_err(|_| {
-            format!(
-                "no Wasm module at {}: build the Function (`shopify app build`)",
-                wasm.display()
-            )
-        })?;
-        let modified = metadata.modified().ok();
-        let size = metadata.len();
-
-        // Taken out, and put back last: the most recently used.
-        if let Some(cached) = self.modules.shift_remove(wasm)
-            && cached.modified == modified
-            && cached.size == size
-        {
-            let module = cached.module.clone();
-            self.modules.insert(wasm.to_path_buf(), cached);
-            return Ok(module);
-        }
-        let module = Module::from_file(&self.engine, wasm)
-            .map_err(|error| format!("cannot load {}: {error:#}", wasm.display()))?;
-        // Past the capacity, the least recently used goes.
-        while self.modules.len() >= self.capacity {
-            self.modules.shift_remove_index(0);
-        }
-        self.modules.insert(
-            wasm.to_path_buf(),
-            Cached {
-                modified,
-                size,
-                module: module.clone(),
-            },
-        );
-        Ok(module)
-    }
 }
 
 /// A Rust Function calls the Function Wasm API of the host by name; lsf (`--build`,
@@ -431,39 +385,37 @@ fn summarize_failure(failure: &str) -> String {
     }
 }
 
-/// Stops a run that takes too long by moving the epoch of its engine forward (the run traps at
-/// the next epoch). The engine is the run's own: no other run is stopped with it.
+/// Moves the epoch of the engine forward once a run is overdue, and every 10 ms until the run is
+/// over. Every run on the engine reaches its epoch deadline then: the deadline of each
+/// ([`host::Deadline`]) stops the overdue one only, and the others go on.
 struct Watchdog {
     cancel: mpsc::Sender<()>,
-    handle: std::thread::JoinHandle<bool>,
+    handle: std::thread::JoinHandle<()>,
 }
 
 impl Watchdog {
     fn start(engine: Engine, timeout: Duration) -> Watchdog {
         let (cancel, cancelled) = mpsc::channel();
-        let handle = std::thread::spawn(move || match cancelled.recv_timeout(timeout) {
-            Err(mpsc::RecvTimeoutError::Timeout) => {
+        let handle = std::thread::spawn(move || {
+            if let Err(mpsc::RecvTimeoutError::Timeout) = cancelled.recv_timeout(timeout) {
                 // The host sets the deadline one epoch after the current one when it
                 // creates the store, and again around the initialization of the input: a single
                 // tick that lands before one of those is absorbed, and an endless run never
                 // stops. Keep ticking until the run is over.
-                loop {
+                engine.increment_epoch();
+                while let Err(mpsc::RecvTimeoutError::Timeout) =
+                    cancelled.recv_timeout(Duration::from_millis(10))
+                {
                     engine.increment_epoch();
-                    match cancelled.recv_timeout(Duration::from_millis(10)) {
-                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                        _ => break true,
-                    }
                 }
             }
-            _ => false,
         });
         Watchdog { cancel, handle }
     }
 
-    /// Whether the watchdog had to stop the run.
-    fn stop(self) -> bool {
+    fn stop(self) {
         let _ = self.cancel.send(());
-        self.handle.join().unwrap_or(false)
+        let _ = self.handle.join();
     }
 }
 
@@ -487,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn an_engine_keeps_the_modules_used_last() {
+    fn a_runner_keeps_the_modules_used_last() {
         let dir = std::env::temp_dir().join(format!("lsf-runner-lru-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = |name: &str| dir.join(name);
@@ -495,15 +447,17 @@ mod tests {
             // The smallest module there is.
             std::fs::write(path(name), b"\0asm\x01\0\0\0").unwrap();
         }
-        let mut slot = new_slot().unwrap();
-        slot.capacity = 2;
-        slot.module(&path("a.wasm")).unwrap();
-        slot.module(&path("b.wasm")).unwrap();
+        let mut runner = Runner::new();
+        runner.capacity = 2;
+        let engine = runner.engine.clone().unwrap();
+        runner.module(&engine, &path("a.wasm")).unwrap();
+        runner.module(&engine, &path("b.wasm")).unwrap();
         // `a` is used again: `b` is now the oldest, and goes for `c`.
-        slot.module(&path("a.wasm")).unwrap();
-        slot.module(&path("c.wasm")).unwrap();
-        let kept: Vec<PathBuf> = slot.modules.keys().cloned().collect();
+        runner.module(&engine, &path("a.wasm")).unwrap();
+        runner.module(&engine, &path("c.wasm")).unwrap();
+        let kept: Vec<PathBuf> = lock(&runner.modules).keys().cloned().collect();
         assert_eq!(kept, [path("a.wasm"), path("c.wasm")]);
+        assert_eq!(runner.modules_loaded(), 3);
         std::fs::remove_dir_all(&dir).ok();
     }
 

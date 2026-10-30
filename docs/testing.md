@@ -54,7 +54,8 @@ The server keeps one **session** per browser: the cart, the logged-in customer, 
 country, and optionally data of its own. A session is identified by the `_lsf_session` cookie,
 which the server sets on the first response. A Playwright test gets a fresh browser context,
 hence a fresh cookie jar, hence its own session: tests can run in parallel against one server
-without seeing each other's carts.
+without seeing each other's carts. Their checkouts share the compiled Functions: a Function is
+compiled once, and as many run at once as the machine has CPUs.
 
 Clients without a cookie jar (curl, an API test) can name their session with a header instead:
 

@@ -10,13 +10,16 @@
 //! them uncompressed.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 use wasmtime::{
     AsContext, AsContextMut, Cache, Config, Engine, Instance, Linker, Module, ResourceLimiter,
-    Store,
+    Store, UpdateDeadline,
 };
 use wasmtime_wasi::I32Exit;
 use wasmtime_wasi::WasiCtxBuilder;
@@ -40,6 +43,15 @@ pub(super) struct Run {
     pub success: bool,
     /// The output, or why it does not parse.
     pub output: Result<Value, String>,
+}
+
+/// When a run is stopped. The engine is every run's: its epoch moves for all of them (a watchdog
+/// moves it once a run is overdue), and each run that reaches its epoch deadline checks its own
+/// time.
+pub(super) struct Deadline {
+    pub at: Instant,
+    /// Set when the run was stopped.
+    pub stopped: Arc<AtomicBool>,
 }
 
 /// The engine of the runs: function-runner's configuration, with wasmtime's compilation cache
@@ -87,15 +99,16 @@ pub(super) fn encode_input(input: &Value, msgpack: bool) -> Result<Vec<u8>, Stri
     }
 }
 
-/// Runs `export` of `module` with `input` (as [`encode_input`] writes it). The compiled
-/// providers are kept in `providers`, for the next runs on the same engine.
+/// Runs `export` of `module` with `input` (as [`encode_input`] writes it), until `deadline`. The
+/// compiled providers are kept in `providers`, for the next runs on the same engine.
 pub(super) fn run(
     engine: &Engine,
     module: &Module,
-    providers: &mut HashMap<String, Module>,
+    providers: &Mutex<HashMap<String, Module>>,
     export: &str,
     input: Vec<u8>,
     msgpack: bool,
+    deadline: Deadline,
 ) -> wasmtime::Result<Run> {
     let provider = std_import(module)?;
     let mut io = if provider.as_ref().is_some_and(|p| p.mem_io) {
@@ -134,19 +147,31 @@ pub(super) fn run(
         },
     );
     store.limiter(|s| &mut s.limiter);
+    let Deadline { at, stopped } = deadline;
+    store.epoch_deadline_callback(move |_| {
+        if Instant::now() < at {
+            return Ok(UpdateDeadline::Continue(1));
+        }
+        stopped.store(true, Ordering::Relaxed);
+        Ok(UpdateDeadline::Interrupt)
+    });
 
     // The provider is linked, and given the input, with fuel that does not count.
     store.set_epoch_deadline(1);
     store.set_fuel(u64::MAX)?;
     if let Some(provider) = &provider {
-        let compiled = match providers.get(&provider.name) {
-            Some(compiled) => compiled.clone(),
-            None => {
-                let compiled = Module::from_binary(engine, provider.bytes).map_err(|error| {
-                    error.context(format!("Failed to load module {}", provider.name))
-                })?;
-                providers.insert(provider.name.clone(), compiled.clone());
-                compiled
+        let compiled = {
+            let mut providers = providers.lock().unwrap_or_else(|e| e.into_inner());
+            match providers.get(&provider.name) {
+                Some(compiled) => compiled.clone(),
+                None => {
+                    let compiled =
+                        Module::from_binary(engine, provider.bytes).map_err(|error| {
+                            error.context(format!("Failed to load module {}", provider.name))
+                        })?;
+                    providers.insert(provider.name.clone(), compiled.clone());
+                    compiled
+                }
             }
         };
         let instance = linker
