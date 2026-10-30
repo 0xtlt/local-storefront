@@ -1,0 +1,13 @@
+{
+  "orderHeading": "Customer account: Preact · order {{name}}",
+  "units": {
+    "one": "{{count}} item in this order",
+    "other": "{{count}} items in this order"
+  },
+  "total": "Total {{total}}",
+  "confirmation": "Confirmation {{number}}",
+  "profileHeading": "Customer account: Preact",
+  "customer": "Logged in as customer {{id}}",
+  "save": "Show a toast",
+  "saved": "Preferences saved"
+}

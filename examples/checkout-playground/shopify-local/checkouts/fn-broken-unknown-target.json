@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Broken: an unknown target",
+  "description": "broken-unknown-target declares cart.validations.generate.later, which no API has, next to cart.validations.generate.run: the known target runs, the other is reported as not run.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "broken-unknown-target"
+  ]
+}

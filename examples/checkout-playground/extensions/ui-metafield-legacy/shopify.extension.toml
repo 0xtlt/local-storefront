@@ -1,0 +1,17 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-metafield-legacy.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: metafield, older change"
+handle = "ui-metafield-legacy"
+type = "ui_extension"
+description = "Counts clicks in a cart metafield with the older updateMetafield change, declared without owner_type (allowed on 2026-10)."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  # No `owner_type`: optional on 2026-10, required from 2027-01 on.
+  [[extensions.metafields]]
+  namespace = "$app:playground"
+  key = "clicks"

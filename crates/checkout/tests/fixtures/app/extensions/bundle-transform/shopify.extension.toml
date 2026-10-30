@@ -1,0 +1,16 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Bundle transform"
+handle = "bundle-transform"
+type = "function"
+description = "Updates, expands and merges cart lines as its configuration says"
+
+  [[extensions.targeting]]
+  target = "cart.transform.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../../../../tools/checkout/build_function_fixtures.sh"
+  path = "dist/function.wasm"

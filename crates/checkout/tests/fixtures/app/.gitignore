@@ -1,0 +1,3 @@
+target/
+# Copied from crates/checkout/schemas by `mise run fixtures:functions` (the schema of the API version of each extension).
+extensions/*/schema.graphql

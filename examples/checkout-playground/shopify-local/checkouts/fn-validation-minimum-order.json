@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Validation: minimum order amount",
+  "description": "validation-minimum-order: one pair of socks (16.00) is below the 20.00 minimum: an error on the cart blocks the order.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "SOCK-S",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "validation-minimum-order"
+  ]
+}

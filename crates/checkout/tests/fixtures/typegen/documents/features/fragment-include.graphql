@@ -1,0 +1,2 @@
+fragment FV on User { id }
+query FVQ($a: Boolean!) { me { ...FV @include(if: $a) } }

@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Legacy shipping discount"
+handle = "discount-legacy-shipping"
+type = "function"
+description = "An amount off one delivery option, with the legacy shipping discount API"
+
+  [[extensions.targeting]]
+  target = "purchase.shipping-discount.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-legacy-shipping"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

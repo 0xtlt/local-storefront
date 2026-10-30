@@ -12,11 +12,12 @@ use super::product::{ProductDrop, VariantDrop, product_url};
 use super::selling_plan::{allocation_value, line_allocation_json};
 use super::{Memo, SiteRef, hash};
 use crate::store::{
-    Allocation, CartLine, MediaKind, Product, SellingPlan, SellingPlanGroup, Variant,
+    Allocation, CartLine, Image, MediaKind, Product, SellingPlan, SellingPlanGroup, Store, Variant,
 };
 use crate::util::short_hash;
 
-/// A cart line resolved against the store.
+/// A cart line resolved against the store. Everything the storefront cart and the checkout say
+/// of what a line costs comes from here, so that they cannot drift apart.
 pub struct ResolvedLine<'a> {
     pub line: &'a CartLine,
     pub product_index: usize,
@@ -39,6 +40,17 @@ impl ResolvedLine<'_> {
     pub fn original_price(&self) -> i64 {
         self.allocation()
             .map_or(self.variant.price, |allocation| allocation.price)
+    }
+
+    /// The compare-at price of a unit: the one of its selling plan when it has one (the price of
+    /// the variant when the plan lowers it), the compare-at price of the variant otherwise.
+    /// `None` when there is none; a caller that shows it only when it is above the price checks
+    /// that itself.
+    pub fn compare_at_price(&self) -> Option<i64> {
+        match self.allocation() {
+            Some(allocation) => allocation.compare_at_price,
+            None => self.variant.compare_at_price,
+        }
     }
 
     /// The unit price, taking quantity price breaks into account.
@@ -83,6 +95,33 @@ impl ResolvedLine<'_> {
     pub fn key(&self) -> String {
         line_key(self.line)
     }
+
+    /// The image of the line: the one of its variant when that is an image, the first one of
+    /// its product otherwise.
+    pub fn image(&self) -> Option<&'_ Image> {
+        self.variant
+            .media_index
+            .and_then(|index| self.product.media.get(index))
+            .filter(|media| matches!(media.kind, MediaKind::Image))
+            .and_then(|media| media.preview.as_ref())
+            .or_else(|| self.product.images().next())
+    }
+}
+
+/// Resolves a cart line against the store. `None` when the variant no longer exists.
+pub fn resolve_line<'a>(store: &'a Store, line: &'a CartLine) -> Option<ResolvedLine<'a>> {
+    let (product_index, variant_index) = store.variant_location(line.variant_id)?;
+    let product = &store.products[product_index];
+    Some(ResolvedLine {
+        line,
+        product_index,
+        variant_index,
+        product,
+        variant: &product.variants[variant_index],
+        selling_plan: line
+            .selling_plan
+            .and_then(|id| store.selling_plan_of(product, id)),
+    })
 }
 
 /// The key identifying a line: the variant plus a hash of the line's properties and selling
@@ -108,20 +147,7 @@ pub fn resolve_lines(site: &SiteRef) -> Vec<ResolvedLine<'_>> {
     site.session
         .cart_lines
         .iter()
-        .filter_map(|line| {
-            let (product_index, variant_index) = site.store.variant_location(line.variant_id)?;
-            let product = &site.store.products[product_index];
-            Some(ResolvedLine {
-                line,
-                product_index,
-                variant_index,
-                product,
-                variant: &product.variants[variant_index],
-                selling_plan: line
-                    .selling_plan
-                    .and_then(|id| site.store.selling_plan_of(product, id)),
-            })
-        })
+        .filter_map(|line| resolve_line(&site.store, line))
         .collect()
 }
 
@@ -133,17 +159,8 @@ fn properties_value(properties: &IndexMap<String, String>) -> Value {
     Value::hash(map)
 }
 
-fn line_image<'a>(line: &'a ResolvedLine<'_>) -> Option<&'a crate::store::Image> {
-    line.variant
-        .media_index
-        .and_then(|index| line.product.media.get(index))
-        .filter(|media| matches!(media.kind, MediaKind::Image))
-        .and_then(|media| media.preview.as_ref())
-        .or_else(|| line.product.images().next())
-}
-
 pub fn line_json(site: &SiteRef, line: &ResolvedLine<'_>) -> Json {
-    let image = line_image(line);
+    let image = line.image();
     let url = format!(
         "{}?variant={}",
         product_url(site, line.product),
@@ -391,7 +408,7 @@ impl Object for LineItemDrop {
                 site.request.localized("/cart/change"),
                 crate::urls::encode_component(&line.key())
             )),
-            "image" => ImageDrop::optional(site, line_image(line)),
+            "image" => ImageDrop::optional(site, line.image()),
             "properties" => properties_value(&line.line.properties),
             "options_with_values" => Value::array(
                 line.product
@@ -441,5 +458,107 @@ impl Object for LineItemDrop {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::load::{DataSource, LoadOptions, load};
+    use crate::store::{Adjustment, CheckoutCharge, PriceAdjustment};
+
+    /// The demo store, with the first variant at 32.00 with a compare-at price of 40.00, volume
+    /// prices from 3 units, and a selling plan (5.00 off, half paid at checkout) on its product.
+    /// Returns the store and the id of the variant.
+    fn store_with_plan() -> (Store, u64) {
+        let (mut store, _) = load(&DataSource::Demo, &LoadOptions::default());
+        let group = store.selling_plan_groups.len();
+        store.selling_plan_groups.push(SellingPlanGroup {
+            id: "subscribe".to_string(),
+            name: "Subscribe".to_string(),
+            app_id: None,
+            options: vec!["Delivery".to_string()],
+            plans: vec![SellingPlan {
+                id: 42,
+                name: "Monthly".to_string(),
+                description: None,
+                options: vec!["Monthly".to_string()],
+                price_adjustments: vec![PriceAdjustment {
+                    adjustment: Adjustment::FixedAmount(500),
+                    order_count: None,
+                }],
+                recurring_deliveries: true,
+                checkout_charge: CheckoutCharge::Percentage(50),
+            }],
+        });
+        let product = &mut store.products[0];
+        product.selling_plan_groups = vec![group];
+        let variant = &mut product.variants[0];
+        variant.price = 3200;
+        variant.compare_at_price = Some(4000);
+        variant.quantity_price_breaks = vec![(3, 2500), (10, 2000)];
+        let id = variant.id;
+        (store, id)
+    }
+
+    fn line(variant_id: u64, quantity: u32, selling_plan: Option<u64>) -> CartLine {
+        CartLine {
+            variant_id,
+            quantity,
+            properties: Default::default(),
+            selling_plan,
+        }
+    }
+
+    #[test]
+    fn a_line_costs_the_price_of_its_variant_and_the_breaks_of_its_quantity() {
+        let (store, id) = store_with_plan();
+        let prices = |quantity| {
+            let cart_line = line(id, quantity, None);
+            let resolved = resolve_line(&store, &cart_line).expect("the variant exists");
+            (
+                resolved.unit_price(),
+                resolved.original_price(),
+                resolved.line_price(),
+                resolved.compare_at_price(),
+            )
+        };
+        assert_eq!(prices(2), (3200, 3200, 6400, Some(4000)));
+        assert_eq!(prices(3), (2500, 3200, 7500, Some(4000)));
+        assert_eq!(prices(12), (2000, 3200, 24000, Some(4000)));
+    }
+
+    #[test]
+    fn a_selling_plan_sets_the_price_and_no_break_stacks_with_it() {
+        let (store, id) = store_with_plan();
+        let cart_line = line(id, 12, Some(42));
+        let resolved = resolve_line(&store, &cart_line).expect("the variant exists");
+        assert_eq!(resolved.unit_price(), 2700, "32.00 less 5.00, not 20.00");
+        assert_eq!(resolved.original_price(), 2700);
+        assert_eq!(resolved.line_price(), 32400);
+        assert_eq!(resolved.checkout_charge(), 12 * 1350);
+        assert_eq!(
+            resolved.compare_at_price(),
+            Some(3200),
+            "what the plan lowered"
+        );
+        let (group, plan) = resolved.selling_plan.expect("the plan");
+        assert_eq!((group.name.as_str(), plan.id), ("Subscribe", 42));
+    }
+
+    #[test]
+    fn a_plan_the_product_is_not_sold_with_is_ignored() {
+        let (store, _) = store_with_plan();
+        let other = store.products[1].variants[0].id;
+        let cart_line = line(other, 1, Some(42));
+        let resolved = resolve_line(&store, &cart_line).expect("the variant exists");
+        assert!(resolved.selling_plan.is_none());
+        assert_eq!(resolved.unit_price(), store.products[1].variants[0].price);
+    }
+
+    #[test]
+    fn a_line_of_a_variant_that_is_gone_does_not_resolve() {
+        let (store, _) = store_with_plan();
+        assert!(resolve_line(&store, &line(1, 1, None)).is_none());
     }
 }

@@ -1,0 +1,22 @@
+query Input {
+  buyerJourney {
+    step
+  }
+  cart {
+    lines {
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          sku
+        }
+      }
+    }
+    cost {
+      totalAmount {
+        amount
+        currencyCode
+      }
+    }
+  }
+}

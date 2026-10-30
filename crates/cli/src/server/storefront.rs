@@ -197,24 +197,14 @@ fn route(visit: &Visit<'_>) -> Reply {
         ["blogs", _, _, "comments"] if is_post => forms::comment(visit),
         ["localization"] if is_post => forms::localization(visit),
         ["password"] if is_post => forms::password(visit),
-        ["account", "login"] if is_post => forms::login(visit),
         ["account", "logout"] => forms::logout(visit),
-        ["account"] if is_post => forms::register(visit),
-        ["account", "recover" | "reset" | "activate", ..] if is_post => {
-            forms::unsupported(visit, "recover_customer_password")
-        }
-        ["account", "addresses", ..] if is_post => forms::unsupported(visit, "customer_address"),
         ["company_location", "update"] => account::switch_location(visit),
         // Shopify's own login pages, which a theme links to with `routes.storefront_login_url`.
         ["customer_authentication" | "customer_identity", ..] => account::entry(visit),
-        // Accounts hosted by Shopify have a single page here, whatever the theme links to.
-        ["account"] if account::hosted(visit) => account::page(visit),
-        ["account", ..] if account::hosted(visit) => account::entry(visit),
-        ["account"] | ["account", "addresses"] | ["account", "orders", _]
-            if visit.session().customer_id.is_none() =>
-        {
-            Reply::redirect(&visit.localized("/account/login"))
-        }
+        // Customer accounts are Shopify's (new customer accounts): a single page here, whatever
+        // the theme links to or posts (its login and register forms).
+        ["account"] if !is_post => account::page(visit),
+        ["account", ..] => account::entry(visit),
         ["products.json"] => products_json(visit, None),
         ["products", name] if name.ends_with(".js") || name.ends_with(".json") => {
             product_json(visit, name)
@@ -313,10 +303,7 @@ fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     let timings = timing::of_render(&rendered.timings, visit.state.options.timings);
     let mut body = rendered.body;
     if visit.state.options.live_reload && *target == Target::Page {
-        match body.rfind("</body>") {
-            Some(index) => body.insert_str(index, live_reload::SCRIPT),
-            None => body.push_str(live_reload::SCRIPT),
-        }
+        live_reload::inject(&mut body);
     }
     let mut reply = Reply::new(rendered.status, rendered.content_type, body.into_bytes())
         .header("x-lsf-template", rendered.template)

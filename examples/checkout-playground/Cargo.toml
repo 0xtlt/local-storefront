@@ -1,0 +1,62 @@
+# The Functions of the checkout playground. Not part of the lsf workspace: they build for Wasm.
+# `broken-missing-build` is left out on purpose: it is never built.
+[workspace]
+resolver = "2"
+members = [
+  "extensions/discount-tag-percentage",
+  "extensions/discount-order-fixed",
+  "extensions/discount-buy-two-get-one",
+  "extensions/discount-free-shipping",
+  "extensions/discount-vip-customer",
+  "extensions/discount-b2b-location",
+  "extensions/discount-by-market",
+  "extensions/discount-codes",
+  "extensions/discount-from-metafields",
+  "extensions/discount-lines-and-shipping",
+  "extensions/discount-legacy-product",
+  "extensions/discount-legacy-order",
+  "extensions/discount-legacy-shipping",
+  "extensions/discount-shipping-amount",
+  "extensions/discount-network",
+  "extensions/delivery-hide-express",
+  "extensions/delivery-rename-by-language",
+  "extensions/delivery-reorder",
+  "extensions/delivery-legacy",
+  "extensions/payment-hide-cod",
+  "extensions/payment-hide-for-b2b",
+  "extensions/payment-rename",
+  "extensions/payment-reorder",
+  "extensions/payment-legacy",
+  "extensions/validation-minimum-order",
+  "extensions/validation-max-quantity",
+  "extensions/validation-blocked-country",
+  "extensions/validation-gift-note",
+  "extensions/validation-street-number",
+  "extensions/validation-legacy",
+  "extensions/validation-network",
+  "extensions/cart-transform-expand",
+  "extensions/cart-transform-merge",
+  "extensions/cart-transform-update",
+  "extensions/cart-transform-properties",
+  "extensions/cart-transform-legacy",
+  "extensions/broken-panic",
+  "extensions/broken-instruction-limit",
+  "extensions/broken-bad-output",
+  "extensions/broken-logs",
+  "extensions/broken-huge-output",
+  "extensions/broken-unknown-target",
+  "extensions/broken-api-version",
+  "extensions/broken-big-input",
+  "extensions/broken-fetch-timeout",
+  "extensions/listed-fulfillment-constraints",
+  "extensions/listed-order-routing",
+  "extensions/listed-pickup-points",
+  "extensions/listed-local-pickup",
+]
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
+codegen-units = 1
+panic = "abort"

@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Payment: payment methods for B2B",
+  "description": "payment-hide-for-b2b: a B2B buyer pays by invoice, PayPal and Cash on Delivery are hidden. Log in as another customer: the invoice is hidden instead.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "country": "US",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 6
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "payment-hide-for-b2b"
+  ]
+}

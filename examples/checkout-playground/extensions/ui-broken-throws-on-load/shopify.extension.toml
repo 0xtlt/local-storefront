@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-throws-on-load.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI broken: throws-on-load"
+handle = "ui-broken-throws-on-load"
+type = "ui_extension"
+description = "Throws while its bundle is evaluated, before it registers anything."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Merge lines into a set"
+handle = "cart-transform-merge"
+type = "function"
+description = "Merges the lines of the variants its settings list into one parent product"
+
+  [[extensions.targeting]]
+  target = "cart.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. cart-transform-merge"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

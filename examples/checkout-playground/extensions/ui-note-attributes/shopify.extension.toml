@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-note-attributes.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: note and attributes"
+handle = "ui-note-attributes"
+type = "ui_extension"
+description = "Edits the cart note and cart attributes, and lists the attributes with a button to remove each."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

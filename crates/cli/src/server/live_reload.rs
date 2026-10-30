@@ -21,6 +21,14 @@ pub const SCRIPT: &str = concat!(
     "</script>"
 );
 
+/// Puts the script in a page, at the end of its body.
+pub fn inject(html: &mut String) {
+    match html.rfind("</body>") {
+        Some(index) => html.insert_str(index, SCRIPT),
+        None => html.push_str(SCRIPT),
+    }
+}
+
 /// How often the files are looked at while a page listens.
 const INTERVAL: Duration = Duration::from_millis(100);
 

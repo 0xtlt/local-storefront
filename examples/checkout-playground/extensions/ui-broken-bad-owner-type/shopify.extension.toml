@@ -1,0 +1,18 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-bad-owner-type.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI broken: bad-owner-type"
+handle = "ui-broken-bad-owner-type"
+type = "ui_extension"
+description = "Declares a metafield whose owner_type is not one of the seven: not loaded."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  # Wrong on purpose: ORDER is not an owner type checkout UI extensions can read.
+  [[extensions.metafields]]
+  namespace = "$app:playground"
+  key = "bad_owner"
+  owner_type = "ORDER"

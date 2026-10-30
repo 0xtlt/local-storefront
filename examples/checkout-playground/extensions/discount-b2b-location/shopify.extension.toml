@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "B2B location discount"
+handle = "discount-b2b-location"
+type = "function"
+description = "A percentage off every line for a B2B buyer, by the external id of the company location they buy for"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-b2b-location"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

@@ -1,0 +1,1 @@
+query U4 { everything { ... on Cat { lives } ... on Dog { barks } ... on Image { url } ... on User { id } } }

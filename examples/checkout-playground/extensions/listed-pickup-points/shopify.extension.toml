@@ -1,0 +1,22 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Pickup points"
+handle = "listed-pickup-points"
+type = "function"
+description = "A pickup point delivery option generator, with network access: listed by the local checkout, not run"
+
+  [[extensions.targeting]]
+  target = "cart.pickup-point-delivery-option-generator.fetch"
+  input_query = "src/cart_pickup_point_delivery_option_generator_fetch.graphql"
+  export = "cart_pickup_point_delivery_option_generator_fetch"
+
+  [[extensions.targeting]]
+  target = "cart.pickup-point-delivery-option-generator.run"
+  input_query = "src/cart_pickup_point_delivery_option_generator_run.graphql"
+  export = "cart_pickup_point_delivery_option_generator_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. listed-pickup-points"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

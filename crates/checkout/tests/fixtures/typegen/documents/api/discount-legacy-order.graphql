@@ -1,0 +1,14 @@
+query Input {
+  cart {
+    cost {
+      subtotalAmount {
+        amount
+      }
+    }
+  }
+  discountNode {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

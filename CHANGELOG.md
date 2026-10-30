@@ -3,6 +3,175 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+### Added
+
+- **The commands of a Shopify app are under `lsf app`**, named as Shopify's CLI names them:
+  `app dev` serves the app alone (its checkout and its customer account), `app init` writes
+  checkout scenarios, `app build` builds its extensions, `app check` runs the scenarios for CI,
+  `app function run` and `app function build` its Functions. [CLI reference](docs/cli.md#app).
+- **Testing an app's checkout in CI.** `lsf app check` runs the Functions of every scenario
+  and exits with 1 when one fails or does not validate, or when there is no scenario. `lsf validate`
+  checks the app of the folder too (with the demo store when the app has no store data), and its
+  JSON counts the app's errors with the data's. The checkout and the customer account set `data-lsf-ready` on the document once nothing is
+  on its way and every extension rendered (`aria-busy` meanwhile). `DELETE /__lsf/sessions` resets
+  every session. The orders of a session are numbered after the last one of the store data, one
+  after the other whatever the other sessions do, and placed at its `now`: a test reads the same
+  number and date every time. [Testing guide](docs/testing.md#a-checkout-in-a-test).
+- **Commands of an app need no `--app` in its folder** (`lsf app dev`, `lsf app init`,
+  `lsf app function run`, `lsf app check`), and read its `shopify-local/` from anywhere.
+  `lsf app init` gives every Function the settings its input query reads
+  (`[extensions.input.variables]`): those of the app's own store data, or empty values of the
+  right type in `app-settings.json`, so that the scenarios it writes pass `app check`; a
+  variable without a value says where to give it. The frame of an extension is in the language
+  it renders in (`lang`). `lsf app function run` says why a
+  Function asked for did not run (no discount names it, an empty cart, an error of the app) and
+  exits with 1; a handle or a scenario close to an existing one is suggested. Its `--session`
+  takes `data` as `PUT /__lsf/session` does: a discount or settings for one run.
+
+- **Customer account UI extensions, and every checkout target.** With an app, `/account` is the
+  customer account of Shopify's new customer accounts: the orders of the customer logged in (from
+  the store data, and the last order placed in the local checkout), the status of an order (its
+  shipments, what is not shipped, its returns), the profile (addresses, and the company and
+  locations of a B2B customer), and the full pages of extensions. The 24 targets of customer
+  account UI extensions render there, with the `shopify` global they read (the account logged in,
+  the order, navigation, toasts) and the components only customer accounts have (`s-page`,
+  `s-customer-account-action`, `s-menu`, …); an order action opens its dialog. The checkout gains
+  the 14 targets it lacked: pickup locations and points, the targets of payment apps (with the
+  form dialog), the gift card form, bundle lines, the chat, and the address autocomplete, which
+  suggests addresses as the buyer types. An order of the store data can list its `returns`. See
+  [customer account](docs/checkout.md#customer-account).
+
+- **Watch mode for the checkout of an app.** `lsf app dev --app <dir> --watch` (and `serve
+  --app <dir> --watch`) builds a Function again when its files (or the files the Functions
+  share, such as a Cargo workspace's `Cargo.toml`) change, and reloads the open checkout,
+  thank-you and home pages once the builds are over, as `shopify app dev` does. At start it
+  builds only the Functions that have no module or changed since the last watch (all with
+  `--build`). The checkout runs a copy of the last module that built, never what a build is
+  writing: a build that fails keeps it and shows its first error on the page and on the home
+  page. A checkout UI extension's bundle, `shopify.app.toml` and the scenarios reload the pages
+  too. See [watch mode](docs/checkout.md#watch-mode).
+- **Log in as a customer at the checkout.** "Log in" in the Contact section of the local
+  checkout opens a menu of the customers of the store data. Picking one logs the checkout (and
+  the session) in as them: the Contact section shows the account, Delivery offers their saved
+  addresses with the default one chosen, a B2B buyer picks the location they buy for, and the
+  Functions and extensions read the new buyer. `/checkout?customer=<email>` opens the checkout
+  logged in, and the home page lists the customers. The demo store has a profile of each kind
+  (new, returning, B2B, abroad). See [log in as a customer](docs/checkout.md#log-in-as-a-customer).
+- **The checkout looks like Shopify's.** The standard look of the local checkout now follows
+  Shopify's one-page checkout: its header, the two columns with the grey order summary, floating
+  labels, grouped payment and shipping choices, the order summary with its quantity badges, and
+  a mobile layout with a folded summary. The checkout UI extensions use the same design tokens
+  (`tokens.css`), so they look native in it. See [the look of the page](docs/checkout.md#the-look-of-the-page).
+- **A local checkout for Shopify apps.** `lsf app dev --app <dir>` serves the checkout of an
+  app without a theme, and `lsf serve --app <dir>` leads the `/checkout` of a theme to it. It
+  runs the Shopify Functions of the app (cart transform, discounts, delivery and payment
+  customization, validation) from their built Wasm modules, and shows its checkout UI
+  extensions in the page, in the standard one-page look or in the Shop app's (`--variant shop`).
+  `--extension <handle>` (repeatable) picks the extensions to use, `--build` runs the build
+  command of each Function first. A badge in the corner of the page opens a dialog with the
+  input and output of each Function run side by side. API versions 2026-10 and 2027-01 are
+  supported. Guide: [checkout](docs/checkout.md).
+- **`lsf app function run [handle]... --app <dir>`** runs the Functions once, without a server, and
+  prints each input, output and log with the checkout that results. `--session` and
+  `--checkout` set the cart and what the buyer entered, `--format json` is for tools. It exits
+  with `1` when a Function fails to run.
+- **A `checkout` section in the store data** sets the shipping rates, the payment methods, the
+  discounts that use the Functions of the app, the settings of its other Functions and a tax
+  rate. Without it: one "Standard" rate at 5.00, three payment methods and no tax.
+- **The checkout in the control API.** `/checkouts/cn/<token>` serves the page, `.json` its
+  state, `/update` takes operations and `/complete` places the order, which `/thank-you` shows.
+  `GET /__lsf/checkout?session=<id>` reads the state of a session for tests. Without `--app`,
+  `/checkout` is the summary of the cart, as before.
+- **The Functions of the checkout can read the fields they could not.** An input query that asks
+  for `Cart.deliverableLines`, the discount applications and allocations of the cart, its lines
+  and its delivery groups (each Function sees the discounts the steps before it applied),
+  `PurchasingCompany.contact`, the dates, locale and totals of companies and their locations,
+  `MailingAddress.market`, `PaymentCustomizationPaymentMethod.placements` or `Shop.metaobject`
+  now runs instead of failing with the field's path. The store data sets them: `created_at`,
+  `updated_at`, `locale`, `orders_count` and `total_spent` on companies and locations, a
+  `company_contact` on a customer, `localization.markets`, `placements` on a payment method;
+  everything has a default. Metaobjects are the ones of the data.
+- **Network access for Functions.** The `.fetch` targets of the lines discounts, delivery
+  discounts and cart validation Functions run: the checkout sends the HTTP request they ask for
+  and gives the response to the `.run` target as `fetchResult`, with Shopify's limits (GET and
+  POST, HTTPS, a timeout of 100 to 2000 ms, 100 KB, no redirect; `http` is accepted for
+  `localhost`). The request and the response show in the Functions dialog and in
+  `lsf app function run`.
+- **A deferred payment in the checkout.** A line sold with a selling plan that takes a deposit
+  (a pre-order, try before you buy: `checkout_charge` in the store data) is no longer charged in
+  full. The order summary shows the total, what is **due today** and what is **due later**; the
+  state (`.json`) has `cost.dueNow`, `cost.dueLater` and `cost.checkoutChargeAmount` (the
+  `cart.checkout_charge_amount` of the storefront cart) and `dueLater` on the lines; the order
+  records `totalReceived` and `totalOutstanding`, and the thank-you page shows the remaining
+  balance. `lsf app function run` prints it. Shipping is due today and tax follows the amount it is
+  on. The `shopify` global and the Function input do not change: Shopify exposes no deferred
+  amount there.
+
+- **A home page for the checkout.** `GET /` of `lsf app dev` (and `/__lsf/checkouts`, which
+  `lsf serve --app` prints when it starts, as the theme owns `/`) lists every Function of the
+  app (API, targets, build status, network access with a `.fetch` target, what is wrong with
+  it) and every checkout UI extension (API version, capabilities, targets, and the place each
+  target has on the page, or that it has none), and a card for every checkout scenario, with a
+  link that opens a checkout for it. `?format=json` answers what it says.
+- **Checkout scenarios.** A file of `checkouts/` in the store data (`checkouts/<name>.json`) is a
+  named checkout setup, on top of the store data: the cart (lines, quantities, selling plans,
+  note, attributes), the buyer (a guest, a customer, a company location), the country and
+  language, what the buyer entered (email, address, discount codes, delivery, payment),
+  overrides of the `checkout` section, the look and the extensions that run.
+  `/checkout?scenario=<name>` opens a fresh checkout for it, in a new session. Scenarios are
+  validated (`validate`, with the codes of the data guide), reloaded when they change, have a
+  JSON Schema (`schema checkout-scenario`, and `schema/` written by `init`), and one with errors
+  is listed with them, not hidden.
+- **`lsf app init [--app <dir>]`** writes the scenarios: for the Functions and checkout UI
+  extensions of the app (a cart a cart transform can merge or expand, a cart and a code for a
+  discount, several shipping rates or payment methods, a cart a validation refuses, one with
+  everything for the extensions), and always a guest, a customer, a B2B buyer, another country
+  and language, a subscription, a pre-order with a deposit, the Shop look and a large cart. It
+  creates the data folder with the demo store if there is none, uses the products of an existing
+  one, and never overwrites without `--force`.
+- **`/checkout?targets=all`** opens a checkout where every extension renders at every target it
+  declares: the steps of a cart that ships are always there, the thank-you page is shown under the
+  checkout, and a panel lists each target as shown, without a place on the page, or waiting for
+  something the cart lacks.
+- **`lsf app function run --scenario <name>`** runs the Functions for a scenario.
+- **`lsf app function build`** builds the Functions of an app. A JavaScript or TypeScript Function
+  without a build command, as Shopify's CLI generates it, is built by lsf as
+  `shopify app function build` builds it, without Node: its types (`generated/api.ts`, as
+  graphql-codegen writes them), `dist/function.js` (bundled as esbuild does, enums inlined and
+  unused code left out), then its module, the bytes Javy writes. `--build` and `--watch` build
+  it too.
+- **Rust Functions run as `cargo build` writes them**: after a Function's build command
+  (`--build`, `--watch`, `lsf app function build`), a module that calls the Function Wasm API by name
+  is linked to it with Shopify's `shopify-function-trampoline` (2.0.1, as a library), as
+  `shopify app build` does, to the byte.
+- **`lsf app build`** builds the extensions of an app as `shopify app build` does, without
+  Node: its Functions, and its checkout UI extensions whose targets name their sources, bundled
+  (JSX with the `jsxImportSource` of their `tsconfig.json`, minified) into `dist/<handle>.js`.
+  `--build` and `--watch` build those too. Without a `node_modules`, `preact`,
+  `@preact/signals`, `@shopify/ui-extensions` and `@shopify/shopify_function` come from lsf's
+  own copy.
+
+### Changed
+
+- **Customer accounts are Shopify's new ones only.** Classic customer accounts are no longer
+  simulated: the theme's `templates/customers` are never rendered, every `/account/…` page and
+  account form (login, register, password reset, addresses) leads to `/account`, and customers
+  have no password. Data that still sets `shop.customer_accounts` or a customer's `password` is
+  read as before: those fields are ignored, with a warning. `serve` and `check` say that the
+  theme's `templates/customers` are not rendered (a warning of `check`, which does not fail). `/__lsf/status` no longer has
+  `customer_accounts`.
+- **A field the format does not have no longer drops its file.** It is still an error, and is
+  left out: the rest of the file is read, and one typo gives one error. `data.checkout` of
+  `PUT /__lsf/session` replaces the store data's field by field, as a scenario's does, and keeps
+  the settings of the Functions it does not name.
+- **Smaller binaries.** lsf runs Functions with only what it uses of wasmtime (the compiler for
+  the machine it runs on) and Shopify's providers compressed (1.6 MB instead of 9.7 MB), and has
+  one copy of each Wasm library; the release binaries leave out their symbol table and are
+  optimized as a whole. `lsf` for macOS on Apple silicon is 40 MB (18 MB to download) instead of
+  82 MB. Functions run as before, to the instruction.
+
 ## 0.1.18 - 2026-10-21
 
 ### Changed

@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Legacy validation"
+handle = "validation-legacy"
+type = "function"
+description = "Refuses the emails of a blocked domain, with the legacy validation target"
+
+  [[extensions.targeting]]
+  target = "purchase.validation.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. validation-legacy"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

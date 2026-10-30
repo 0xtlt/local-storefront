@@ -109,9 +109,19 @@ pub fn run(
         rendered.errors.len(),
         rendered.warnings.len()
     );
-    Ok(if args.strict && !rendered.errors.is_empty() {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    })
+    // Strict, a path that leads to nothing fails as Liquid errors do: a snapshot of a product
+    // the data no longer has must not pass.
+    Ok(
+        if args.strict && (!rendered.errors.is_empty() || rendered.status == 404) {
+            if rendered.status == 404 && rendered.errors.is_empty() {
+                eprintln!(
+                    "error: nothing at {}: the page is the theme's 404",
+                    args.path
+                );
+            }
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        },
+    )
 }

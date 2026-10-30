@@ -1,0 +1,12 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Broken: never built"
+handle = "broken-missing-build"
+type = "function"
+description = "Has no Wasm module: the checkout says it is not built"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_validations_generate_run"

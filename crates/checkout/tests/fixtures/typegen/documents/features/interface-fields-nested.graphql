@@ -1,0 +1,1 @@
+query N2 { node2 { id parent { id ... on N2a { extra } } ... on N2a { extra parent { ... on N2b { other } } } ... on N2b { other } } }

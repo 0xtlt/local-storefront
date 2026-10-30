@@ -1,0 +1,1 @@
+mutation Create($input: UserInput!) { createUser(input: $input) { id name } tag(ids: [], tag: "t") { id } }

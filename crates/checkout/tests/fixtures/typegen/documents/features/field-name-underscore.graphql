@@ -1,0 +1,1 @@
+query CF { a_b { id name products { id } } }

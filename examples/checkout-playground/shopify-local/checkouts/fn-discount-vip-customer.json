@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: 20% off for VIP customers",
+  "description": "discount-vip-customer: jane.doe@example.com has the tag vip and gets 20% off the order. Log out, or log in as someone else, and it goes.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TEE-WHT-M",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-vip-customer"
+  ]
+}

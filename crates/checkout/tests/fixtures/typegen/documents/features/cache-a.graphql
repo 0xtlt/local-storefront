@@ -1,0 +1,1 @@
+query CacheA { search(q: "") { ... on User { id } ... on Product { name } } }

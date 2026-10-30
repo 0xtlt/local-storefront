@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: 15% off by tag and collection",
+  "description": "discount-tag-percentage: the overshirt (tag sale) and the mugs (collection Home goods) are 15% off, the tee is not. The tags and collections are input query variables.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        },
+        {
+          "variant": "TEE-WHT-M",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-tag-percentage"
+  ]
+}

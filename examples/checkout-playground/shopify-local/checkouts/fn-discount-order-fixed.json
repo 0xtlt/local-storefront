@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: $10 off orders over $100",
+  "description": "discount-order-fixed: a subtotal of 132.00 gets 10.00 off the order. Remove the overshirt and the discount goes.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TEE-BLK-M",
+          "quantity": 2
+        },
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-order-fixed"
+  ]
+}

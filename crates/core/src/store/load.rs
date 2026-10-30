@@ -7,7 +7,7 @@
 //!   *.json            any number of files, each holding any of: shop, products, collections,
 //!                     pages, blogs, menus, customers, companies, gift_cards, locations,
 //!                     selling_plan_groups, swatches, metaobjects, localization, files,
-//!                     session, now, theme_settings. They are merged.
+//!                     session, checkout, now, theme_settings. They are merged.
 //!   products/*.json   one product per file (or an array); the file name is the default handle
 //!   collections/*.json, pages/*.json, blogs/*.json, customers/*.json, menus/*.json
 //!   files/            images and other files, served under /cdn/shop/files/
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde_json::Value as Json;
 
-use super::build::{BuildOptions, MergedInput, Origin, Sourced, build};
+use super::build::{BuildOptions, MergedInput, MergedScenario, Origin, Sourced, build};
 use super::validate::{FileKind, validate};
 use super::{Store, demo, model};
 use crate::diagnostics::Diagnostics;
@@ -101,6 +101,20 @@ fn demo_files() -> Vec<DataFile> {
         .collect()
 }
 
+/// Validates one entity: what can be read of it, without the fields it does not know (reported,
+/// and left out, so that the rest is used). `None` when another problem keeps it out.
+fn checked(
+    kind: FileKind,
+    file: &str,
+    json: &Json,
+    pointer: &str,
+    diagnostics: &mut Diagnostics,
+) -> Option<Json> {
+    let errors_before = diagnostics.error_count();
+    let unknown = validate(kind, file, json, pointer, diagnostics);
+    (diagnostics.error_count() - errors_before <= unknown.errors).then(|| unknown.without(json))
+}
+
 /// Parses, validates and deserializes one entity. Reports problems and returns `None` when the
 /// entity cannot be used.
 fn entity<T: DeserializeOwned>(
@@ -110,12 +124,8 @@ fn entity<T: DeserializeOwned>(
     pointer: &str,
     diagnostics: &mut Diagnostics,
 ) -> Option<T> {
-    let errors_before = diagnostics.error_count();
-    validate(kind, file, json, pointer, diagnostics);
-    if diagnostics.error_count() > errors_before {
-        return None;
-    }
-    match serde_json::from_value::<T>(json.clone()) {
+    let json = checked(kind, file, json, pointer, diagnostics)?;
+    match serde_json::from_value::<T>(json) {
         Ok(value) => Some(value),
         Err(error) => {
             diagnostics.error("invalid_value", file, pointer, error.to_string());
@@ -167,13 +177,23 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
         let json: Json = match serde_json::from_str(&strip_comments(&file.content)) {
             Ok(json) => json,
             Err(error) => {
-                diagnostics
+                let diagnostic = diagnostics
                     .error("invalid_json", name, "", format!("not valid JSON: {error}"))
                     .hint(format!(
                         "look at line {}, column {}",
                         error.line(),
                         error.column()
-                    ));
+                    ))
+                    .to_string();
+                // A scenario that cannot be read is listed with its error, not hidden.
+                if file.kind == FileKind::CheckoutScenario {
+                    merged.scenarios.push(MergedScenario {
+                        name: file_stem(name),
+                        file: name.to_string(),
+                        input: None,
+                        problems: vec![diagnostic],
+                    });
+                }
                 continue;
             }
         };
@@ -263,6 +283,24 @@ fn merge(files: Vec<DataFile>, diagnostics: &mut Diagnostics) -> MergedInput {
                 }
             }
             FileKind::Session => {}
+            FileKind::CheckoutScenario => {
+                let mut problems = Diagnostics::new();
+                let input = entity::<model::CheckoutScenarioInput>(
+                    FileKind::CheckoutScenario,
+                    name,
+                    &json,
+                    "",
+                    &mut problems,
+                );
+                let problems_text = problems.items.iter().map(ToString::to_string).collect();
+                diagnostics.extend(problems);
+                merged.scenarios.push(MergedScenario {
+                    name: file_stem(name),
+                    file: name.to_string(),
+                    input,
+                    problems: problems_text,
+                });
+            }
         }
     }
     merged
@@ -318,6 +356,17 @@ fn merge_store_file(
         merged.session = Some(Sourced {
             value: session,
             origin: origin("/session".to_string()),
+        });
+    }
+    if let Some(checkout) = input.checkout {
+        singleton(
+            "checkout",
+            merged.checkout.as_ref().map(|c| c.origin.file.as_str()),
+            diagnostics,
+        );
+        merged.checkout = Some(Sourced {
+            value: checkout,
+            origin: origin("/checkout".to_string()),
         });
     }
     if let Some(now) = input.now {
@@ -450,10 +499,15 @@ fn merge_json(base: &mut Json, patch: &Json) {
 /// Applies a data file on top of the merged data: entities with the handle of an existing one
 /// replace it, the others are added, and `shop` is merged field by field.
 fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Diagnostics) {
-    let Some(input) =
-        entity::<model::StoreInput>(FileKind::Store, OVERLAY_FILE, overlay, "", diagnostics)
-    else {
+    let Some(overlay) = checked(FileKind::Store, OVERLAY_FILE, overlay, "", diagnostics) else {
         return;
+    };
+    let input = match serde_json::from_value::<model::StoreInput>(overlay.clone()) {
+        Ok(input) => input,
+        Err(error) => {
+            diagnostics.error("invalid_value", OVERLAY_FILE, "", error.to_string());
+            return;
+        }
     };
     let origin = |pointer: String| Origin::new(OVERLAY_FILE, pointer);
     if let Some(patch) = overlay.get("shop") {
@@ -552,6 +606,29 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
         merged.session = Some(Sourced {
             value,
             origin: origin("/session".to_string()),
+        });
+    }
+    if let Some(patch) = input.checkout {
+        // As a scenario's: what it gives replaces the store data's, field by field, and the
+        // settings of the Functions are merged by Function.
+        let value = match merged.checkout.take() {
+            Some(base) => {
+                let base = base.value;
+                let mut functions = base.functions;
+                functions.extend(patch.functions);
+                model::CheckoutInput {
+                    shipping_rates: patch.shipping_rates.or(base.shipping_rates),
+                    payment_methods: patch.payment_methods.or(base.payment_methods),
+                    discounts: patch.discounts.or(base.discounts),
+                    functions,
+                    tax_rate: patch.tax_rate.or(base.tax_rate),
+                }
+            }
+            None => patch,
+        };
+        merged.checkout = Some(Sourced {
+            value,
+            origin: origin("/checkout".to_string()),
         });
     }
     if let Some(value) = input.now {
@@ -898,6 +975,44 @@ mod tests {
     }
 
     #[test]
+    fn a_field_the_format_does_not_have_leaves_the_rest_of_the_file_in() {
+        let directory = std::env::temp_dir().join(format!("lsf-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{
+                "shop": {"name": "Kept", "nmae": "typo", "customer_accounts": "legacy"},
+                "products": [{"title": "Thing", "price": 100}],
+                "customers": [{"email": "old@example.com", "password": "secret"}]
+            }"#,
+        )
+        .expect("store");
+        let (store, diagnostics) = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        // One error for the typo, not one for everything the file held.
+        assert_eq!(diagnostics.error_count(), 1, "{diagnostics}");
+        assert!(diagnostics.to_string().contains("unknown field \"nmae\""));
+        assert_eq!(store.shop.name, "Kept");
+        assert_eq!(store.products.len(), 1);
+        // What classic customer accounts had is ignored, with a warning.
+        assert_eq!(store.customers.len(), 1);
+        let classic: Vec<_> = diagnostics
+            .items
+            .iter()
+            .filter(|item| item.code == "classic_customer_accounts")
+            .collect();
+        assert_eq!(classic.len(), 2, "{diagnostics}");
+        assert!(
+            classic
+                .iter()
+                .all(|item| item.severity == crate::diagnostics::Severity::Warning)
+        );
+    }
+
+    #[test]
     fn locations_and_selling_plan_groups_have_unique_names() {
         let directory = std::env::temp_dir().join(format!("lsf-duplicates-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("directory");
@@ -948,6 +1063,540 @@ mod tests {
         let tote = store.product_by_handle("canvas-tote-bag").expect("tote");
         assert_eq!(tote.variants[0].price, 100);
         assert!(!tote.available());
+    }
+
+    #[test]
+    fn the_checkout_section_has_defaults() {
+        let (store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let rates = &store.checkout.shipping_rates;
+        assert_eq!(
+            (rates.len(), rates[0].title.as_str(), rates[0].price),
+            (1, "Standard", 500)
+        );
+        let methods: Vec<&str> = store
+            .checkout
+            .payment_methods
+            .iter()
+            .map(|method| method.name.as_str())
+            .collect();
+        assert_eq!(methods, ["Credit card", "Cash on Delivery", "Bank Deposit"]);
+        assert_eq!(store.checkout.tax_rate_bps, 0);
+    }
+
+    #[test]
+    fn the_checkout_of_a_session_keeps_what_it_does_not_give() {
+        let directory =
+            std::env::temp_dir().join(format!("lsf-checkout-overlay-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        std::fs::write(
+            directory.join("store.json"),
+            r#"{
+                "products": [{"title": "Thing", "price": 100}],
+                "checkout": {
+                    "shipping_rates": [{"handle": "express", "price": "12.90"}],
+                    "functions": {
+                        "delivery-rules": {"metafields": {"$app:config.mode": "strict"}},
+                        "payment-rules": {"metafields": {"$app:config.mode": "off"}}
+                    }
+                }
+            }"#,
+        )
+        .expect("store");
+        let overlay = serde_json::json!({"checkout": {
+            "discounts": [{"function": "volume-discount", "code": "SAVE"}],
+            "functions": {"payment-rules": {"metafields": {"$app:config.mode": "on"}}}
+        }});
+        let (store, diagnostics) = load_with_overlay(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+            Some(&overlay),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(!diagnostics.has_errors(), "{diagnostics}");
+        let checkout = &store.checkout;
+        // What the session gives replaces the store data's; the rest stays.
+        assert_eq!(checkout.discounts[0].code.as_deref(), Some("SAVE"));
+        assert_eq!(checkout.shipping_rates[0].title, "express");
+        // The settings of the Functions, Function by Function.
+        assert_eq!(checkout.functions["delivery-rules"][0].value, "strict");
+        assert_eq!(checkout.functions["payment-rules"][0].value, "on");
+    }
+
+    #[test]
+    fn the_checkout_section_is_resolved() {
+        let overlay = serde_json::json!({"checkout": {
+            "shipping_rates": [{"handle": "express", "price": "12.90", "kind": "pick_up"}],
+            "payment_methods": [{"handle": "card", "name": "Card"}],
+            "discounts": [{
+                "function": "volume-discount",
+                "code": "SAVE",
+                "classes": ["PRODUCT"],
+                "metafields": {"$app:config.settings": {"type": "json", "value": {"percent": 10}}}
+            }],
+            "functions": {"delivery-rules": {"metafields": {"$app:config.mode": "strict"}}},
+            "tax_rate": 5.5
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let checkout = &store.checkout;
+        assert_eq!(checkout.shipping_rates[0].title, "express");
+        assert_eq!(checkout.shipping_rates[0].price, 1290);
+        assert_eq!(
+            checkout.shipping_rates[0].kind,
+            model::CheckoutDeliveryKind::PickUp
+        );
+        assert_eq!(checkout.payment_methods.len(), 1);
+        let discount = &checkout.discounts[0];
+        assert_eq!(discount.title, "volume-discount");
+        assert_eq!(discount.code.as_deref(), Some("SAVE"));
+        assert_eq!(discount.classes, [model::CheckoutDiscountClass::Product]);
+        let settings = &discount.metafields[0];
+        assert_eq!(
+            (
+                settings.namespace.as_str(),
+                settings.key.as_str(),
+                settings.kind.as_str()
+            ),
+            ("$app:config", "settings", "json")
+        );
+        assert_eq!(settings.value, r#"{"percent":10}"#);
+        assert_eq!(checkout.functions["delivery-rules"][0].value, "strict");
+        assert_eq!(checkout.tax_rate_bps, 550);
+    }
+
+    #[test]
+    fn a_bad_checkout_section_is_reported() {
+        let overlay = serde_json::json!({"checkout": {
+            "shipping_rates": [
+                {"handle": "a", "price": "-1.00"},
+                {"handle": "a", "price": 100}
+            ],
+            "discounts": [{"function": "f", "metafields": {"nodot": "x"}}],
+            "tax_rate": 120
+        }});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[invalid_money]: a shipping rate cannot cost less than nothing",
+            "error[duplicate_handle]: there are two shipping rates called \"a\"",
+            "error[invalid_value]: \"nodot\" is not a metafield name",
+            "error[invalid_value]: 120 is not a tax rate",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn company_details_have_defaults_and_can_be_set() {
+        let overlay = serde_json::json!({
+            "companies": [{
+                "name": "Dated Co",
+                "created_at": "2025-03-01T08:30:00Z",
+                "locations": [
+                    {"name": "Head office", "locale": "fr", "orders_count": 12, "total_spent": "1234.50",
+                     "updated_at": "2025-04-01", "created_at": "2025-03-02"},
+                    {"name": "Depot"}
+                ]
+            }],
+            "customers": [{
+                "email": "buyer@dated.example", "company": "Dated Co",
+                "company_contact": {"title": "Purchasing manager", "locale": "de", "updated_at": "2025-05-01"}
+            }, {
+                "email": "plain@dated.example", "company": "Dated Co"
+            }]
+        });
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let company = store
+            .companies
+            .iter()
+            .find(|c| c.name == "Dated Co")
+            .unwrap();
+        let date = |text: &str| text.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        assert_eq!(company.created_at, date("2025-03-01T08:30:00Z"));
+        // Without `updated_at`: the creation date.
+        assert_eq!(company.updated_at, company.created_at);
+        let head = &company.locations[0];
+        assert_eq!(head.locale.as_deref(), Some("fr"));
+        assert_eq!((head.orders_count, head.total_spent), (12, 123_450));
+        assert_eq!(head.created_at.date_naive().to_string(), "2025-03-02");
+        assert_eq!(head.updated_at.date_naive().to_string(), "2025-04-01");
+        // A location with nothing set: the company's date, no language, nothing ordered.
+        let depot = &company.locations[1];
+        assert_eq!(depot.created_at, company.created_at);
+        assert_eq!(depot.updated_at, company.created_at);
+        assert_eq!(
+            (depot.locale.clone(), depot.orders_count, depot.total_spent),
+            (None, 0, 0)
+        );
+
+        let buyer = store.customer_by_email("buyer@dated.example").unwrap();
+        let contact = buyer.company_contact.as_ref().unwrap();
+        assert_eq!(contact.title.as_deref(), Some("Purchasing manager"));
+        assert_eq!(contact.locale.as_deref(), Some("de"));
+        assert_eq!(contact.created_at, company.created_at);
+        assert_eq!(contact.updated_at.date_naive().to_string(), "2025-05-01");
+        assert!(
+            store
+                .customer_by_email("plain@dated.example")
+                .unwrap()
+                .company_contact
+                .is_none()
+        );
+
+        // The companies of the demo get fixed, distinct creation dates.
+        let demo = &store.companies[0];
+        assert_eq!(demo.created_at, date("2024-01-01T12:00:00Z"));
+    }
+
+    #[test]
+    fn bad_company_details_are_reported() {
+        let overlay = serde_json::json!({
+            "companies": [{"name": "Bad Co", "created_at": "soon",
+                "locations": [{"name": "A", "updated_at": "never"}]}],
+            "customers": [{"email": "orphan@bad.example", "company_contact": {"title": "x"}}]
+        });
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[invalid_date]: \"soon\" is not a date",
+            "error[invalid_date]: \"never\" is not a date",
+            "error[missing_company]: the customer has a company contact but names no company",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn markets_group_countries() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "de"}, {"iso_code": "CA"}],
+            "markets": [{"handle": "europe", "countries": ["fr", "DE"],
+                "metafields": {"custom": {"tier": "gold"}}}]
+        }});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let market = store.market_of("de").expect("a market");
+        assert_eq!(market.handle, "europe");
+        assert_eq!(market.countries, ["FR", "DE"]);
+        assert!(market.metafields.contains_key("custom"));
+        assert!(store.market_of("CA").is_none());
+        // Without markets, no country is in one.
+        let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(store.markets.is_empty() && store.market_of("US").is_none());
+    }
+
+    #[test]
+    fn bad_markets_are_reported() {
+        let overlay = serde_json::json!({"localization": {
+            "countries": [{"iso_code": "FR"}, {"iso_code": "DE"}],
+            "markets": [
+                {"handle": "a", "countries": ["FR", "XX"]},
+                {"handle": "a", "countries": ["FR"]}
+            ]
+        }});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        let report = diagnostics.to_string();
+        for expected in [
+            "error[unknown_country]: \"XX\" is not one of the countries in \"localization.countries\"",
+            "error[duplicate_handle]: there are two markets called \"a\"",
+            "error[duplicate_market_country]: FR is already in the market \"a\"",
+        ] {
+            assert!(
+                report.contains(expected),
+                "missing {expected:?} in:\n{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn payment_methods_are_offered_in_the_list_by_default() {
+        let overlay = serde_json::json!({"checkout": {"payment_methods": [
+            {"handle": "card"},
+            {"handle": "wallet", "placements": ["ACCELERATED_CHECKOUT", "PAYMENT_METHOD"]}
+        ]}});
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let methods = &store.checkout.payment_methods;
+        assert_eq!(
+            methods[0].placements,
+            [model::CheckoutPaymentPlacement::PaymentMethod]
+        );
+        assert_eq!(
+            methods[1].placements,
+            [
+                model::CheckoutPaymentPlacement::AcceleratedCheckout,
+                model::CheckoutPaymentPlacement::PaymentMethod
+            ]
+        );
+        for method in &store.checkout.payment_methods {
+            assert!(!method.placements.is_empty());
+        }
+        let bad = serde_json::json!({"checkout": {"payment_methods": [
+            {"handle": "card", "placements": ["EVERYWHERE"]}]}});
+        let (_, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&bad));
+        assert!(
+            diagnostics.to_string().contains("EVERYWHERE"),
+            "{diagnostics}"
+        );
+    }
+
+    /// The demo store on disk, with `store_extra` as another data file and `scenarios` in
+    /// `checkouts/` (name of the file, content).
+    fn with_scenarios(
+        label: &str,
+        store_extra: Option<&str>,
+        scenarios: &[(&str, &str)],
+    ) -> (crate::store::Store, Diagnostics) {
+        let directory =
+            std::env::temp_dir().join(format!("lsf-scenarios-{label}-{}", std::process::id()));
+        std::fs::remove_dir_all(&directory).ok();
+        for (name, content) in demo::FILES {
+            let path = directory.join(name);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("directory");
+            std::fs::write(path, content).expect("demo file");
+        }
+        if let Some(content) = store_extra {
+            std::fs::write(directory.join("checkout.json"), content).expect("extra");
+        }
+        std::fs::create_dir_all(directory.join("checkouts")).expect("checkouts");
+        for (name, content) in scenarios {
+            std::fs::write(directory.join("checkouts").join(name), content).expect("scenario");
+        }
+        let loaded = load(
+            &DataSource::Directory(directory.clone()),
+            &LoadOptions::default(),
+        );
+        std::fs::remove_dir_all(&directory).ok();
+        loaded
+    }
+
+    #[test]
+    fn a_scenario_is_read_on_top_of_the_store_data() {
+        let (store, diagnostics) = with_scenarios(
+            "resolved",
+            Some(
+                r#"{"checkout": {
+                    "shipping_rates": [{"handle": "standard", "price": "4.90"}],
+                    "discounts": [{"function": "volume-discount", "code": "SAVE"}],
+                    "functions": {
+                        "delivery-rules": {"metafields": {"$app:config.mode": "strict"}},
+                        "payment-rules": {"metafields": {"$app:config.mode": "loose"}}
+                    },
+                    "tax_rate": 20
+                }}"#,
+            ),
+            &[
+                (
+                    "b2b.json",
+                    r#"{
+                        "title": "A hotel orders",
+                        "description": "Buys for its Seattle location.",
+                        "session": {
+                            "customer": "alex.morgan@example.com",
+                            "company_location": "Northwind Seattle",
+                            "country": "US",
+                            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 4}], "note": "Dock B"}
+                        },
+                        "entered": {
+                            "shipping_address": {"last_name": "Morgan", "country_code": "us"},
+                            "discount_codes": ["SAVE"],
+                            "payment": "cod"
+                        },
+                        "language": "FR",
+                        "variant": "shop",
+                        "extensions": ["gift-message"],
+                        "checkout": {
+                            "payment_methods": [{"handle": "cod"}],
+                            "discounts": [],
+                            "functions": {"delivery-rules": {"metafields": {"$app:config.mode": "off"}}}
+                        }
+                    }"#,
+                ),
+                ("plain.json", "{}"),
+                ("notes.txt", "not a scenario"),
+            ],
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let names: Vec<&str> = store.scenarios.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["b2b", "plain"]);
+
+        let b2b = &store.scenarios[0];
+        assert_eq!(b2b.file, "checkouts/b2b.json");
+        assert_eq!(b2b.title, "A hotel orders");
+        assert!(b2b.problems.is_empty(), "{:?}", b2b.problems);
+        assert_eq!(b2b.language.as_deref(), Some("fr"));
+        assert_eq!(b2b.look, Some(model::ScenarioLook::Shop));
+        assert_eq!(
+            b2b.extensions.as_deref(),
+            Some(&["gift-message".to_string()][..])
+        );
+        assert_eq!(b2b.entered.discount_codes, ["SAVE"]);
+        assert_eq!(b2b.overrides, ["payment_methods", "discounts", "functions"]);
+        // What the scenario sets replaces the store's, the rest is the store's.
+        assert_eq!(b2b.checkout.payment_methods.len(), 1);
+        assert!(b2b.checkout.discounts.is_empty());
+        assert_eq!(b2b.checkout.shipping_rates[0].price, 490);
+        assert_eq!(b2b.checkout.tax_rate_bps, 2000);
+        assert_eq!(b2b.checkout.functions["delivery-rules"][0].value, "off");
+        assert_eq!(b2b.checkout.functions["payment-rules"][0].value, "loose");
+        // The store itself is untouched.
+        assert_eq!(store.checkout.payment_methods.len(), 3);
+        assert_eq!(store.checkout.discounts.len(), 1);
+
+        // The session is the one a checkout opens with.
+        let mut session = crate::Session::initial(&store);
+        let mut problems = Diagnostics::new();
+        crate::store::build::apply_session_input(
+            &store,
+            &b2b.session,
+            &mut session,
+            &mut problems,
+            &b2b.file,
+            "/session",
+        );
+        assert!(problems.is_empty(), "{problems}");
+        assert_eq!(session.cart_lines[0].quantity, 4);
+        assert_eq!(session.cart_note, "Dock B");
+        assert!(session.customer_id.is_some() && session.company_location.is_some());
+
+        let plain = &store.scenarios[1];
+        assert_eq!(plain.title, "plain");
+        assert!(plain.overrides.is_empty());
+        assert_eq!(plain.checkout.tax_rate_bps, 2000);
+    }
+
+    #[test]
+    fn a_scenario_with_mistakes_is_kept_with_what_is_wrong() {
+        let (store, diagnostics) = with_scenarios(
+            "mistakes",
+            None,
+            &[
+                ("typo.json", r#"{"titel": "x"}"#),
+                (
+                    "unknown.json",
+                    r#"{
+                        "session": {
+                            "customer": "nobody@example.com",
+                            "country": "ZZ",
+                            "cart": {"items": [{"variant": "TEE-BLK-Q"}]}
+                        },
+                        "entered": {"shipping_address": {"country_code": "ZZ"}},
+                        "language": "de",
+                        "checkout": {"tax_rate": 120}
+                    }"#,
+                ),
+                ("broken.json", "{ nope"),
+                (
+                    "fine.json",
+                    r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}}"#,
+                ),
+            ],
+        );
+        let by_name = |name: &str| store.scenarios.iter().find(|s| s.name == name).expect(name);
+        assert!(by_name("fine").problems.is_empty());
+
+        let typo = by_name("typo");
+        assert_eq!(typo.problems.len(), 1);
+        assert!(
+            typo.problems[0].contains("unknown_field"),
+            "{:?}",
+            typo.problems
+        );
+        assert!(typo.problems[0].contains("did you mean \"title\"?"));
+
+        let broken = by_name("broken");
+        assert!(
+            broken.problems[0].contains("invalid_json"),
+            "{:?}",
+            broken.problems
+        );
+
+        let unknown = by_name("unknown").problems.join("\n");
+        for expected in [
+            "unknown_customer",
+            "unknown_country",
+            "unknown_variant",
+            "unknown_language",
+            "invalid_value",
+            "checkouts/unknown.json at /session/customer",
+            "checkouts/unknown.json at /session/cart/items/0/variant",
+            "checkouts/unknown.json at /entered/shipping_address/country_code",
+            "checkouts/unknown.json at /language",
+            "checkouts/unknown.json at /checkout/tax_rate",
+        ] {
+            assert!(
+                unknown.contains(expected),
+                "missing {expected:?} in:\n{unknown}"
+            );
+        }
+        // `validate` sees all of it.
+        for file in ["typo", "unknown", "broken"] {
+            assert!(
+                diagnostics
+                    .items
+                    .iter()
+                    .any(|item| item.file == format!("checkouts/{file}.json")),
+                "{file}: {diagnostics}"
+            );
+        }
+        assert!(
+            !diagnostics
+                .items
+                .iter()
+                .any(|item| item.file == "checkouts/fine.json")
+        );
+    }
+
+    #[test]
+    fn what_a_scenario_has_the_buyer_choose_must_be_offered() {
+        let (store, _) = with_scenarios(
+            "choices",
+            None,
+            &[(
+                "choices.json",
+                r#"{
+                    "entered": {"delivery": "expres", "payment": "cod"},
+                    "checkout": {
+                        "shipping_rates": [{"handle": "standard", "price": 1}, {"handle": "express", "price": 2}],
+                        "payment_methods": [{"handle": "card"}]
+                    }
+                }"#,
+            )],
+        );
+        let problems = store.scenarios[0].problems.join("\n");
+        assert!(
+            problems.contains("there is no shipping rate \"expres\"")
+                && problems.contains("did you mean \"express\"?"),
+            "{problems}"
+        );
+        assert!(
+            problems.contains("there is no payment method \"cod\"")
+                && problems.contains("the checkout offers: card"),
+            "{problems}"
+        );
+        assert!(problems.contains("checkouts/choices.json at /entered/payment"));
+    }
+
+    #[test]
+    fn a_store_without_a_checkouts_folder_has_no_scenarios() {
+        let (store, _) = load(&DataSource::Demo, &LoadOptions::default());
+        assert!(store.scenarios.is_empty());
     }
 
     #[test]

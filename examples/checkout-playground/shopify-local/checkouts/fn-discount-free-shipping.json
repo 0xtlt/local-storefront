@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: free shipping over $75",
+  "description": "discount-free-shipping: 92.00 in the cart, shipping is free. Remove the tote (68.00) and it is not.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    }
+  },
+  "extensions": [
+    "discount-free-shipping"
+  ]
+}

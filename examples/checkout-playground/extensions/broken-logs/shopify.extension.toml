@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Logs on a success"
+handle = "broken-logs"
+type = "function"
+description = "Succeeds and writes logs"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. broken-logs"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

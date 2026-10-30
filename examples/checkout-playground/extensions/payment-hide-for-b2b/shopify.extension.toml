@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Payment methods for B2B"
+handle = "payment-hide-for-b2b"
+type = "function"
+description = "Hides some payment methods for B2B buyers, and the invoice for everyone else"
+
+  [[extensions.targeting]]
+  target = "cart.payment-methods.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_payment_methods_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. payment-hide-for-b2b"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

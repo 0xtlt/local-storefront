@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Fixed amount off the order"
+handle = "discount-order-fixed"
+type = "function"
+description = "A fixed amount off the order once the subtotal reaches a minimum"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-order-fixed"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

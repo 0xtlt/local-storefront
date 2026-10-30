@@ -1,0 +1,18 @@
+query Input {
+  cart {
+    lines {
+      id
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            title
+            components: metafield(namespace: "custom", key: "bundle_components") {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}

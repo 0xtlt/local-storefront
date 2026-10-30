@@ -47,15 +47,6 @@ fn not_found(reason: String) -> Page {
     page
 }
 
-fn customers(template: &str, title: &str, path: &str, order: Option<u64>) -> Page {
-    let mut page = Page::new(template, Resource::Customers { order });
-    page.template.directory = Some("customers".to_string());
-    page.page_type = format!("customers/{template}");
-    page.title = title.to_string();
-    page.canonical_path = path.to_string();
-    page
-}
-
 /// Resolves the request's path. Unknown paths and missing resources give the 404 page.
 pub fn resolve(site: &Site) -> Page {
     let store = &site.store;
@@ -343,22 +334,14 @@ pub fn resolve(site: &Site) -> Page {
             page.canonical_path = card.path(store.shop.id);
             page
         }
-        ["account"] => customers("account", "Account", "/account", None),
-        ["account", "login"] => customers("login", "Account", "/account/login", None),
-        ["account", "register"] => {
-            customers("register", "Create Account", "/account/register", None)
+        // Customer accounts are Shopify's new ones, which are not part of a theme: its
+        // `templates/customers` are never rendered.
+        ["account", ..] => {
+            return not_found(format!(
+                "no page at \"{}\": customer accounts are Shopify's, not the theme's",
+                request.path
+            ));
         }
-        ["account", "addresses"] => customers("addresses", "Addresses", "/account/addresses", None),
-        ["account", "reset", ..] => {
-            customers("reset_password", "Reset Account", "/account/reset", None)
-        }
-        ["account", "activate", ..] => customers(
-            "activate_account",
-            "Activate Account",
-            "/account/activate",
-            None,
-        ),
-        ["account", "orders", id] => customers("order", "Order", "/account", id.parse().ok()),
         _ => return not_found(format!("no page at \"{}\"", request.path)),
     };
 

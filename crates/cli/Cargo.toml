@@ -11,9 +11,11 @@ name = "lsf"
 path = "src/main.rs"
 
 [dependencies]
+chrono.workspace = true
 lsf-core.workspace = true
 lsf-fmt.workspace = true
 lsf-liquid.workspace = true
+lsf-checkout.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -36,8 +38,18 @@ percent-encoding = "2"
 bytes = "1"
 futures-util = { version = "0.3", default-features = false }
 indexmap.workspace = true
+# What tells `--watch` that a file of the app changed: FSEvents, inotify, ReadDirectoryChangesW.
+notify = "8"
+# A hash of the module a build of `--watch` published, kept in its record.
+blake3 = { version = "1", default-features = false }
+
+# Stops a build of `--watch` and what it started.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util"] }
 # Draws the images of the tests.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# The modules of the tests' Functions, written as text.
+wasmtime = { version = "=39.0.1", default-features = false, features = ["wat"] }

@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: discount codes from an extension",
+  "description": "SAVE10 is entered already and takes 10% off (discount-codes). Enter WELCOME5 (5.00 off) or BIG20 (needs 200.00) from the extension, or NOPE, which no discount has and is refused; remove a code from the extension too.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "discount_codes": [
+      "SAVE10"
+    ]
+  },
+  "extensions": [
+    "discount-codes",
+    "ui-reductions-codes"
+  ]
+}

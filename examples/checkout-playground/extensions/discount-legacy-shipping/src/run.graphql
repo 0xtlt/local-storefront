@@ -1,0 +1,15 @@
+query Input {
+  cart {
+    deliveryGroups {
+      deliveryOptions {
+        handle
+        title
+      }
+    }
+  }
+  discountNode {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

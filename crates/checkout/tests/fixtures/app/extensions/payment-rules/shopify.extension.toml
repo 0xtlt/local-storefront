@@ -1,0 +1,16 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Payment rules"
+handle = "payment-rules"
+type = "function"
+description = "Hides and renames payment methods"
+
+  [[extensions.targeting]]
+  target = "cart.payment-methods.transform.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../../../../tools/checkout/build_function_fixtures.sh"
+  path = "dist/function.wasm"

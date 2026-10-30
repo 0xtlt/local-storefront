@@ -161,9 +161,21 @@ pub fn reference() -> String {
     let root = schema(FileKind::Store);
     let mut out = String::new();
     describe(&mut out, "Data file", &root);
+    let mut described = Vec::new();
     if let Some(definitions) = root.get("$defs").and_then(Json::as_object) {
         for (name, definition) in definitions {
             describe(&mut out, display_name(name), definition);
+            described.push(name.clone());
+        }
+    }
+    // The file of a checkout scenario, and the types only it uses.
+    let scenario = schema(FileKind::CheckoutScenario);
+    describe(&mut out, "Checkout scenario", &scenario);
+    if let Some(definitions) = scenario.get("$defs").and_then(Json::as_object) {
+        for (name, definition) in definitions {
+            if !described.contains(name) {
+                describe(&mut out, display_name(name), definition);
+            }
         }
     }
     out.trim_end().to_string() + "\n"

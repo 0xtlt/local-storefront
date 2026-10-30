@@ -1,0 +1,19 @@
+query Input {
+  cart {
+    lines {
+      id
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+        }
+      }
+    }
+  }
+  cartTransform {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

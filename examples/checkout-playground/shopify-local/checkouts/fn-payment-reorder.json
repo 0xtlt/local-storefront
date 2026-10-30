@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Payment: PayPal and card first",
+  "description": "payment-reorder: PayPal, then Credit card, move to the top of the list. The express buttons (Shop Pay, Apple Pay) are not in the list.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "payment-reorder"
+  ]
+}

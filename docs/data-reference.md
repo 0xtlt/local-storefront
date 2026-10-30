@@ -29,6 +29,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `selling_plan_groups` | array of [SellingPlanGroup](#sellingplangroup) | Groups of selling plans: subscriptions, pre-orders and other purchase options. |
 | `files` | map of [File](#file) | Metadata for files in `files/`, by path. |
 | `session` | [Session](#session) | What every new browser session starts with: a logged-in customer, a filled cart... |
+| `checkout` | [Checkout](#checkout) | The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
 
@@ -54,7 +55,6 @@ General store information (the `shop` object). Every field has a sensible defaul
 | `enabled_payment_types` | array of string | Payment icons to show, e.g. `["visa", "master", "american_express", "paypal"]`. |
 | `customer_accounts_enabled` | boolean | Whether customer accounts exist at all. Defaults to `true`. |
 | `customer_accounts_optional` | boolean | Whether checking out as a guest is possible. Defaults to `true`. |
-| `customer_accounts` | [CustomerAccounts](#customeraccounts) | Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and `/account` is a page of local-storefront where you choose who is logged in. `legacy`: the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has those templates, and to `new` otherwise. |
 | `taxes_included` | boolean | Whether prices include taxes. Defaults to `false`. |
 | `password_message` | string | The message shown on the password page. |
 | `password` | string | The password the `/password` page accepts. Defaults to `"password"`. The storefront is never locked: the page is there to be worked on, and nothing leads to it. |
@@ -101,15 +101,6 @@ A store policy (`shop.refund_policy`, `/policies/refund-policy`).
 |---|---|---|
 | `title` | string | Defaults to the standard title of the policy. |
 | `body` | string | **Required.** HTML body. |
-
-## CustomerAccounts
-
-The customer accounts of a store.
-
-One of:
-
-- `"new"`: Accounts hosted by Shopify, outside the theme.
-- `"legacy"`: Accounts rendered by the theme's `templates/customers`.
 
 ## Brand
 
@@ -547,7 +538,9 @@ points to `#`.
 
 ## Customer
 
-A customer. Sessions log in as a customer by email (see `session.customer`).
+A customer. Sessions log in as a customer by email (see `session.customer`), and the checkout
+of an app lists the customers as login profiles: "Log in" logs the checkout in as one of them,
+with their addresses (the first is the default) and, for a B2B customer, their locations.
 
 | Field | Type | Description |
 |---|---|---|
@@ -563,9 +556,9 @@ A customer. Sessions log in as a customer by email (see `session.customer`).
 | `tax_exempt` | boolean |  |
 | `addresses` | array of [Address](#address) | The first address is the default one (`customer.default_address`). |
 | `orders` | array of [Order](#order) |  |
-| `password` | string | The password accepted by the local login form. Any password works when omitted. |
 | `company` | string | The name of a company in `companies`: the customer buys for it (B2B). |
 | `company_locations` | array of string | The names of the locations of the company the customer can buy for. Defaults to all of them. |
+| `company_contact` | [CompanyContact](#companycontact) | What the company knows of the customer as a buyer: their job title, language, dates. Checkout Functions read it as `purchasingCompany.contact`. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Order
@@ -586,6 +579,7 @@ An order of a customer, shown on account pages.
 | `tax_price` | [Money](#money) |  |
 | `cancelled` | boolean |  |
 | `note` | string |  |
+| `returns` | array of [OrderReturn](#orderreturn) | What the customer sent back, as the customer account shows it. |
 
 ## OrderLine
 
@@ -606,6 +600,27 @@ One of:
 - integer
 - string
 
+## OrderReturn
+
+A return of an order.
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string | `requested`, `open` or `closed`. Defaults to `open`. |
+| `line_items` | array of [OrderLine](#orderline) | The lines sent back, by their variant, and how many of each. Defaults to every line of the order. |
+
+## CompanyContact
+
+A customer as a contact of their company (B2B): `purchasingCompany.contact` of a checkout
+Function.
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | string | The job title of the contact, e.g. `"Purchasing manager"`. |
+| `locale` | string | The language of the contact, e.g. `"fr"`. None when absent. |
+| `created_at` | string | Defaults to the creation date of the company. |
+| `updated_at` | string | Defaults to `created_at`. |
+
 ## Company
 
 A company that buys from the store (B2B). A customer whose `company` names it is a B2B
@@ -617,6 +632,8 @@ customer: `customer.b2b?` is true, and `customer.current_company` is this compan
 | `name` | string | **Required.** The name customers refer to the company by. |
 | `external_id` | string | The id the merchant gives the company in its own systems. |
 | `locations` | array of [CompanyLocation](#companylocation) | The places the company buys for. The first one is selected when a customer logs in. |
+| `created_at` | string | Defaults to a fixed date, 2024-01-01 plus one day per company. |
+| `updated_at` | string | Defaults to `created_at`. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## CompanyLocation
@@ -630,6 +647,11 @@ A place a company buys for (`customer.current_location`): a branch, a shop, a wa
 | `external_id` | string | The id the merchant gives the location in its own systems. |
 | `shipping_address` | [Address](#address) | Where orders of this location ship to. |
 | `tax_registration_id` | string | The tax number of the location, e.g. a VAT number. |
+| `locale` | string | The preferred language of the location, e.g. `"fr"`. None when absent. |
+| `created_at` | string | Defaults to the creation date of the company. |
+| `updated_at` | string | Defaults to `created_at`. |
+| `orders_count` | integer | The number of orders placed at the location, which checkout Functions read as `ordersCount`. The orders of the customers are not counted: defaults to 0. |
+| `total_spent` | [Money](#money) | The amount spent at the location (`totalSpent`), e.g. `"1250.00"`. Defaults to 0. |
 | `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## GiftCard
@@ -684,6 +706,7 @@ The first language is the primary one and is served at `/`; the others are serve
 |---|---|---|
 | `countries` | array of [Country](#country) |  |
 | `languages` | array of [Language](#language) |  |
+| `markets` | array of [Market](#market) | Groups of countries sold as one market. A country in none of them is a market of its own, named after the country. |
 
 ## Country
 
@@ -706,6 +729,17 @@ A language the store is published in.
 | `iso_code` | string | **Required.** Locale code, e.g. `"en"`, `"fr"`, `"pt-BR"`. |
 | `name` | string | The language's name in English. Defaults to a built-in name. |
 | `endonym_name` | string | The language's name in that language. Defaults to a built-in name. |
+
+## Market
+
+A market: the countries the store sells to as one, as checkout Functions see it in
+`localization.market` and `MailingAddress.market`.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | **Required.** What Functions call the market: `"europe"`. |
+| `countries` | array of string | **Required.** The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`. |
+| `metafields` | map of map of [Metafield](#metafield) |  |
 
 ## Location
 
@@ -843,3 +877,139 @@ One of:
 
 - integer
 - string
+
+## Checkout
+
+How the local checkout (`lsf app dev --app`) is set up. Every field has a default.
+
+| Field | Type | Description |
+|---|---|---|
+| `shipping_rates` | array of [CheckoutShippingRate](#checkoutshippingrate) | The delivery options offered to every address. Defaults to one, "Standard" at 5.00. |
+| `payment_methods` | array of [CheckoutPaymentMethod](#checkoutpaymentmethod) | The payment methods. Defaults to "Credit card", "Cash on Delivery" and "Bank Deposit". |
+| `discounts` | array of [CheckoutDiscount](#checkoutdiscount) | Discounts backed by discount Functions of the app. |
+| `functions` | map of [CheckoutFunction](#checkoutfunction) | The settings of the other Functions, by the handle of the Function. |
+| `tax_rate` | number | Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when omitted. |
+
+## CheckoutShippingRate
+
+A delivery option the local checkout offers to every address.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | **Required.** What Functions and the page call the option: `"standard"`. |
+| `title` | string | What the buyer sees. Defaults to the handle. |
+| `price` | [Money](#money) | **Required.** The cost, e.g. `"4.90"`. |
+| `description` | string |  |
+| `kind` | [CheckoutDeliveryKind](#checkoutdeliverykind) | Defaults to `"shipping"`. |
+
+## CheckoutDeliveryKind
+
+What kind of delivery a shipping rate is.
+
+One of:
+
+- `"shipping"`: Delivered to the address.
+- `"pick_up"`: Picked up in a store.
+- `"local"`: Delivered locally.
+
+## CheckoutPaymentMethod
+
+A payment method the local checkout offers.
+
+| Field | Type | Description |
+|---|---|---|
+| `handle` | string | **Required.** What payment customization Functions and the page call the method: `"card"`. |
+| `name` | string | What the buyer sees. Defaults to the handle. |
+| `placements` | array of [CheckoutPaymentPlacement](#checkoutpaymentplacement) | Where the method is offered, which payment customization Functions read as `placements`. Defaults to `["PAYMENT_METHOD"]`: the list of the checkout. |
+
+## CheckoutPaymentPlacement
+
+Where a payment method is offered.
+
+One of:
+
+- `"PAYMENT_METHOD"`: The list of payment methods of the checkout.
+- `"ACCELERATED_CHECKOUT"`: The express buttons (Shop Pay, Apple Pay, ...).
+
+## CheckoutDiscount
+
+A discount backed by a discount Function of the app.
+
+| Field | Type | Description |
+|---|---|---|
+| `function` | string | **Required.** The handle of the discount Function in the app. |
+| `title` | string | What the buyer sees. Defaults to the handle of the Function. |
+| `code` | string | The code that triggers the discount. Without one the discount is automatic. |
+| `classes` | array of [CheckoutDiscountClass](#checkoutdiscountclass) | What the discount may reduce. All three when omitted. |
+| `metafields` | map of [Metafield](#metafield) | The metafields of the discount, which its Function's input query reads, by `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`. |
+
+## CheckoutDiscountClass
+
+What a discount may reduce.
+
+One of: `"PRODUCT"`, `"ORDER"`, `"SHIPPING"`.
+
+## CheckoutFunction
+
+The settings of a Function that is not a discount: cart transform, delivery or payment
+customization, validation.
+
+| Field | Type | Description |
+|---|---|---|
+| `metafields` | map of [Metafield](#metafield) | The metafields of the object the Function belongs to, by `"namespace.key"`. |
+
+## Checkout scenario
+
+A named setup of the local checkout: a file of `checkouts/`. It sets what a checkout
+depends on on top of the store data, and what it does not set stays as the store data says.
+
+| Field | Type | Description |
+|---|---|---|
+| `$schema` | string | Lets editors validate and autocomplete the file, e.g. `"../schema/checkout-scenario.schema.json"`. |
+| `title` | string | The name shown on the home page. Defaults to the name of the file. |
+| `description` | string | What the scenario is for and what to look at, shown on the home page. |
+| `session` | [Session](#session) | Who buys and what is in the cart, written as the `session` of the store data and applied on top of it: `customer`, `cart` (lines, quantities, selling plans, note, attributes), `country`, `company_location`. |
+| `entered` | [ScenarioEntered](#scenarioentered) | What the buyer already entered: email, address, discount codes, delivery and payment. |
+| `language` | string | The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The checkout opens under its locale root. Defaults to the primary language. |
+| `checkout` | [Checkout](#checkout) | Overrides of the `checkout` section of the store data: every field that is present replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`, `tax_rate`), except `functions`, which replaces the settings of the Functions it names. |
+| `variant` | [ScenarioLook](#scenariolook) | The look of the page. Defaults to the one of the server (`--variant`). |
+| `extensions` | array of string | The handles of the extensions (Functions and checkout UI extensions) that run, among those of the app that `--extension` allows. Every one when omitted. |
+
+## ScenarioEntered
+
+What the buyer already typed and chose when a scenario opens.
+
+| Field | Type | Description |
+|---|---|---|
+| `email` | string | The contact email. A logged-in customer has theirs already. |
+| `phone` | string |  |
+| `shipping_address` | [ScenarioAddress](#scenarioaddress) | The delivery address. Its country is the country of the checkout. |
+| `delivery` | string | The handle of the shipping rate chosen (`checkout.shipping_rates`). The first one available is chosen when omitted. |
+| `payment` | string | The handle of the payment method chosen (`checkout.payment_methods`). |
+| `discount_codes` | array of string | The discount codes entered, in order. A code that no discount of `checkout.discounts` has is entered all the same, and refused as on Shopify. |
+
+## ScenarioAddress
+
+A postal address the buyer already entered.
+
+| Field | Type | Description |
+|---|---|---|
+| `first_name` | string |  |
+| `last_name` | string |  |
+| `company` | string |  |
+| `address1` | string |  |
+| `address2` | string |  |
+| `city` | string |  |
+| `country_code` | string | ISO 3166-1 alpha-2 code of one of the store's countries: `"US"`. |
+| `province_code` | string |  |
+| `zip` | string |  |
+| `phone` | string |  |
+
+## ScenarioLook
+
+The look of the checkout page.
+
+One of:
+
+- `"standard"`: Shopify's one-page checkout.
+- `"shop"`: The look of the Shop app and Shop Pay.

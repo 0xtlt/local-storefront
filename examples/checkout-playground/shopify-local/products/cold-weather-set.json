@@ -1,0 +1,11 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Cold-Weather Set",
+  "description": "<p>A black tee and a navy beanie. Not bought as such: the cart transform `cart-transform-merge` of the checkout playground merges the two lines into this product.</p>",
+  "type": "Apparel",
+  "tags": ["bundle"],
+  "price": "66.00",
+  "variants": [
+    { "sku": "SET-COLD", "inventory_quantity": 25 }
+  ]
+}

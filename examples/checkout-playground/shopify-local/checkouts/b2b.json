@@ -1,0 +1,76 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "A B2B buyer, Northwind Hotels",
+  "description": "A customer who buys for a company, at one of its locations, in larger quantities: what purchasingCompany gives the Functions.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "country": "US",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 6
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 4
+        }
+      ]
+    },
+    "company_location": "Northwind Seattle"
+  },
+  "entered": {
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "1 Test Street",
+      "city": "Testville",
+      "zip": "12345",
+      "country_code": "US"
+    }
+  },
+  "extensions": [
+    "cart-transform-expand",
+    "cart-transform-merge",
+    "cart-transform-properties",
+    "cart-transform-update",
+    "delivery-hide-express",
+    "delivery-rename-by-language",
+    "delivery-reorder",
+    "discount-b2b-location",
+    "discount-buy-two-get-one",
+    "discount-by-market",
+    "discount-codes",
+    "discount-free-shipping",
+    "discount-from-metafields",
+    "discount-lines-and-shipping",
+    "discount-order-fixed",
+    "discount-shipping-amount",
+    "discount-tag-percentage",
+    "discount-typescript",
+    "discount-vip-customer",
+    "payment-hide-cod",
+    "payment-hide-for-b2b",
+    "payment-rename",
+    "payment-reorder",
+    "validation-blocked-country",
+    "validation-gift-note",
+    "validation-max-quantity",
+    "validation-javascript",
+    "validation-minimum-order",
+    "validation-street-number",
+    "ui-header-notice",
+    "ui-contact-newsletter",
+    "ui-address-autofill",
+    "ui-shipping-options",
+    "ui-payment-notes",
+    "ui-reductions-codes",
+    "ui-line-properties",
+    "ui-order-summary",
+    "ui-footer-links",
+    "ui-gift-wrap",
+    "ui-upsell",
+    "ui-note-attributes",
+    "ui-thank-you"
+  ]
+}

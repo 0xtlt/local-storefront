@@ -1,0 +1,1 @@
+query II { node(id: "1") { ... on Named { name } ... on Node { id } } named { ... on Node { id } ... on Named { name } } }

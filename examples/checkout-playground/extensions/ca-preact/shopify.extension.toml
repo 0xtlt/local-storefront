@@ -1,0 +1,18 @@
+# A customer account UI extension of the playground built from its sources, in Preact with the
+# hooks of `@shopify/ui-extensions/customer-account/preact`. lsf bundles it (`lsf app build
+# ca-preact`, `--build`, `--watch`), without Node, into dist/ca-preact.js.
+api_version = "2026-10"
+
+[[extensions]]
+name = "Customer account: Preact"
+handle = "ca-preact"
+type = "ui_extension"
+description = "The order status and the profile of the customer account, read with the Preact hooks: the order and its lines, the customer logged in, a toast."
+
+[[extensions.targeting]]
+module = "./src/OrderStatusBlock.jsx"
+target = "customer-account.order-status.block.render"
+
+[[extensions.targeting]]
+module = "./src/ProfileBlock.jsx"
+target = "customer-account.profile.block.render"

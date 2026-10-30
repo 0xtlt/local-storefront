@@ -1,0 +1,929 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProductInput",
+  "description": "A product.\n\nThe smallest valid product is `{\"title\": \"Blue shirt\", \"price\": 1999}`: it gets a single\ndefault variant, like a product without options in the Shopify admin.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/product.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "Generated from the handle when omitted.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0,
+      "default": null
+    },
+    "title": {
+      "type": "string"
+    },
+    "handle": {
+      "description": "The URL slug (`/products/<handle>`). Derived from the title when omitted. In a\n`products/<name>.json` file it defaults to the file name.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "description": {
+      "description": "HTML description. Also exposed as `product.content`.",
+      "type": "string",
+      "default": ""
+    },
+    "vendor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "type": {
+      "description": "The product type, e.g. `\"Shirts\"`.",
+      "type": "string",
+      "default": ""
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "options": {
+      "description": "Option names, e.g. `[\"Size\", \"Color\"]`. At most three. Omit for a product with a\nsingle default variant.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/OptionInput"
+      },
+      "default": []
+    },
+    "variants": {
+      "description": "The variants. Each must give one value per option.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/VariantInput"
+      },
+      "default": []
+    },
+    "price": {
+      "description": "Price of the variants that do not set their own, and of the default variant.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Money"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "compare_at_price": {
+      "description": "Compare-at price of the variants that do not set their own.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Money"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "images": {
+      "description": "Shorthand for image-only media. Use `media` for videos and 3D models.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ImageInput"
+      },
+      "default": []
+    },
+    "media": {
+      "description": "Images, videos and models in display order. When set, `images` must be empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MediaInput"
+      },
+      "default": []
+    },
+    "available": {
+      "description": "Shorthand to set availability on every variant that does not say otherwise.",
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "default": null
+    },
+    "collections": {
+      "description": "Handles of the collections this product belongs to, in addition to the collections\nthat list it in their own `products`.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "template_suffix": {
+      "description": "Selects `templates/product.<suffix>.json` instead of `templates/product.json`.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "gift_card": {
+      "description": "Whether the product is a gift card (`product.gift_card?`).",
+      "type": "boolean",
+      "default": false
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "published_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "updated_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "metafields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/MetafieldInput"
+        }
+      },
+      "default": {}
+    },
+    "recommendations": {
+      "description": "Handles of the products returned by product recommendations for this product.\nDefaults to other products from the same collections.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "default": null
+    },
+    "selling_plan_groups": {
+      "description": "Names of the selling plan groups (from `selling_plan_groups`) this product is sold\nwith, in addition to the groups that list it in their own `products`.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "requires_selling_plan": {
+      "description": "Whether the product can only be bought with a selling plan, like a product sold by\nsubscription only. Defaults to `false`.",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "title"
+  ],
+  "$defs": {
+    "OptionInput": {
+      "description": "A product option. Write just the name (`\"Size\"`); the values are collected from the variants.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/OptionDetail"
+        }
+      ]
+    },
+    "OptionDetail": {
+      "description": "A product option with its values in a chosen order.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "description": "The values in display order. Defaults to the order they appear in the variants. A\nvalue is its name (`\"White\"`), or its name with a swatch\n(`{\"name\": \"White\", \"swatch\": \"#ffffff\"}`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OptionValueInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "OptionValueInput": {
+      "description": "A value of a product option: its name, or its name with a swatch.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/OptionValueDetail"
+        }
+      ]
+    },
+    "OptionValueDetail": {
+      "description": "A value of a product option with its swatch (`product_option_value.swatch`).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "swatch": {
+          "description": "The swatch of the value on this product. Defaults to the swatch the store's\n`swatches` give to this name.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SwatchInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "SwatchInput": {
+      "description": "How an option value is shown instead of its name: a CSS color (`\"#f4f1ea\"`), or an object\nwith a color, an image, or both.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SwatchDetail"
+        }
+      ]
+    },
+    "SwatchDetail": {
+      "description": "A swatch with a color, an image, or both (`swatch.color`, `swatch.image`).",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "A CSS color: `\"#f4f1ea\"`, `\"rgb(244, 241, 234)\"`, ...",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "image": {
+          "description": "An image, for a pattern that a single color cannot show.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImageInput": {
+      "description": "An image: either just its source, or an object with more detail.\n\nThe source is a path inside the `files/` directory of the data directory\n(`\"shirt.jpg\"` → `files/shirt.jpg`). When no such file exists a placeholder of the declared\nsize is generated, so fixtures work without shipping real images.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ImageDetail"
+        }
+      ]
+    },
+    "ImageDetail": {
+      "description": "An image with its metadata.",
+      "type": "object",
+      "properties": {
+        "src": {
+          "description": "Path of the image inside `files/`, e.g. `\"products/shirt-front.jpg\"`.",
+          "type": "string"
+        },
+        "alt": {
+          "description": "Alternative text. Defaults to an empty string.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "width": {
+          "description": "Width in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "height": {
+          "description": "Height in pixels. Read from the file when it exists, otherwise defaults to 1200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "focal_point": {
+          "description": "The focal point as percentages from the top-left corner, e.g. `{\"x\": 50, \"y\": 20}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocalPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "src"
+      ]
+    },
+    "FocalPoint": {
+      "description": "The point of an image that should stay visible when it is cropped.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Horizontal position, 0 (left) to 100 (right).",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Vertical position, 0 (top) to 100 (bottom).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "VariantInput": {
+      "description": "A product variant.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Generated from the product handle and the variant's position when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "title": {
+          "description": "Defaults to the option values joined with ` / ` (`\"Small / Blue\"`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "options": {
+          "description": "One value per product option, in the order of the product's `options`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "price": {
+          "description": "Defaults to the product's `price`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compare_at_price": {
+          "description": "The price before a sale. Must be higher than `price` to show as a discount.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sku": {
+          "description": "Also a convenient way to reference the variant from carts and orders.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "barcode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "available": {
+          "description": "Whether the variant can be bought. Derived from the inventory fields when omitted.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "inventory_quantity": {
+          "description": "Units in stock. Setting it turns inventory tracking on.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "default": null
+        },
+        "inventory_tracked": {
+          "description": "Set to `false` to disable inventory tracking (the variant is then always available).\nDefaults to `true` when `inventory_quantity` is set, `false` otherwise.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "inventory_policy": {
+          "$ref": "#/$defs/InventoryPolicy",
+          "default": "deny"
+        },
+        "weight": {
+          "description": "Weight in grams.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "weight_unit": {
+          "description": "The unit the weight is displayed in: `g`, `kg`, `oz` or `lb`. Defaults to `kg`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "requires_shipping": {
+          "description": "Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "taxable": {
+          "description": "Defaults to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "image": {
+          "description": "The `src` of the product image that shows this variant.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "unit_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit_price_measurement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnitPriceMeasurement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quantity_rule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantityRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quantity_price_breaks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuantityPriceBreak"
+          },
+          "default": []
+        },
+        "store_availabilities": {
+          "description": "The locations (from `locations`, by name) that stock this variant, and whether it is in\nstock there: `{\"Portland\": true, \"Seattle\": false}`. When omitted, every location stocks\nthe variant, and it is in stock there when the variant is available.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "default": null
+        },
+        "metafields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/MetafieldInput"
+            }
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "Money": {
+      "description": "An amount of money: an integer number of cents (`1999`, the unit Liquid uses) or a decimal string in the shop currency (`\"19.99\"`). Floats such as `19.99` are rejected because they are ambiguous.",
+      "anyOf": [
+        {
+          "description": "Cents, e.g. 1999 for 19.99.",
+          "type": "integer"
+        },
+        {
+          "description": "Decimal amount, e.g. \"19.99\" or \"20\".",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d{1,2})?$"
+        }
+      ]
+    },
+    "InventoryPolicy": {
+      "description": "What happens when a tracked variant is out of stock.",
+      "oneOf": [
+        {
+          "description": "Stop selling when the stock reaches zero.",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Keep selling when out of stock.",
+          "type": "string",
+          "const": "continue"
+        }
+      ]
+    },
+    "UnitPriceMeasurement": {
+      "description": "What a unit price refers to, e.g. 250 g priced per 100 g.",
+      "type": "object",
+      "properties": {
+        "measured_type": {
+          "description": "`weight`, `volume`, `length` or `area`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "quantity_value": {
+          "type": "number",
+          "format": "double"
+        },
+        "quantity_unit": {
+          "description": "E.g. `g`, `kg`, `ml`, `l`, `m`.",
+          "type": "string"
+        },
+        "reference_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "reference_unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "quantity_value",
+        "quantity_unit"
+      ]
+    },
+    "QuantityRule": {
+      "description": "The quantities a variant can be bought in (`variant.quantity_rule`).",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "Minimum quantity. Defaults to 1.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "max": {
+          "description": "Maximum quantity. No maximum when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "increment": {
+          "description": "Quantities must be a multiple of this. Defaults to 1.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "QuantityPriceBreak": {
+      "description": "A volume price: the unit price from a given quantity.",
+      "type": "object",
+      "properties": {
+        "minimum_quantity": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "price": {
+          "$ref": "#/$defs/Money"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "minimum_quantity",
+        "price"
+      ]
+    },
+    "MetafieldInput": {
+      "description": "A metafield value. Write the value directly and its type is inferred (string →\n`single_line_text_field`, integer → `number_integer`, decimal → `number_decimal`, boolean →\n`boolean`, anything else → `json`), or spell out `{\"type\": ..., \"value\": ...}`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TypedMetafield"
+        },
+        true
+      ]
+    },
+    "TypedMetafield": {
+      "description": "A metafield with an explicit type.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,\n`rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`,\n`date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the\nother measurements (`distance`, `temperature`, `duration`...), `product_reference`,\n`collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the\narticle's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant\nof those.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "value"
+      ]
+    },
+    "MediaInput": {
+      "description": "A piece of product media. Images can be written as a plain string.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ImageInput"
+        },
+        {
+          "$ref": "#/$defs/MediaDetail"
+        }
+      ]
+    },
+    "MediaDetail": {
+      "description": "A video, an external (YouTube/Vimeo) video or a 3D model.",
+      "type": "object",
+      "properties": {
+        "media_type": {
+          "$ref": "#/$defs/MediaType"
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "alt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "preview_image": {
+          "description": "The image shown before the media plays.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sources": {
+          "description": "`video` and `model`: the files, by decreasing preference.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaSource"
+          },
+          "default": []
+        },
+        "duration": {
+          "description": "`video`: length in milliseconds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "host": {
+          "description": "`external_video`: `youtube` or `vimeo`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoHost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "external_id": {
+          "description": "`external_video`: the id of the video on the host, e.g. `dQw4w9WgXcQ`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "aspect_ratio": {
+          "description": "Width divided by height. Defaults to the preview image's ratio, or 16:9.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "media_type"
+      ]
+    },
+    "MediaType": {
+      "description": "The kind of a piece of media that is not an image.",
+      "type": "string",
+      "enum": [
+        "video",
+        "external_video",
+        "model"
+      ]
+    },
+    "MediaSource": {
+      "description": "One file of a video or 3D model.",
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "Path inside `files/` or an absolute URL.",
+          "type": "string"
+        },
+        "mime_type": {
+          "description": "E.g. `video/mp4`, `model/gltf-binary`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "format": {
+          "description": "E.g. `mp4`, `m3u8`, `glb`, `usdz`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
+    "VideoHost": {
+      "description": "Where an external video is hosted.",
+      "type": "string",
+      "enum": [
+        "youtube",
+        "vimeo"
+      ]
+    }
+  }
+}

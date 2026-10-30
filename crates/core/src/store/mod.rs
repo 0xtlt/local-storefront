@@ -564,6 +564,15 @@ pub struct Order {
     pub tax_price: i64,
     pub cancelled: bool,
     pub note: String,
+    pub returns: Vec<OrderReturn>,
+}
+
+/// A return of an order: what was sent back, as lines of the order.
+#[derive(Clone, Debug)]
+pub struct OrderReturn {
+    pub status: String,
+    /// `(index of the line in the order, quantity)`.
+    pub lines: Vec<(usize, u32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -573,6 +582,12 @@ pub struct CompanyLocation {
     pub external_id: Option<String>,
     pub shipping_address: Option<Address>,
     pub tax_registration_id: Option<String>,
+    pub locale: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub orders_count: u32,
+    /// In minor units of the store currency.
+    pub total_spent: i64,
     pub metafields: Metafields,
 }
 
@@ -582,7 +597,18 @@ pub struct Company {
     pub name: String,
     pub external_id: Option<String>,
     pub locations: Vec<CompanyLocation>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub metafields: Metafields,
+}
+
+/// A customer as a contact of their company.
+#[derive(Clone, Debug)]
+pub struct CompanyContact {
+    pub title: Option<String>,
+    pub locale: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug)]
@@ -598,12 +624,13 @@ pub struct Customer {
     pub tax_exempt: bool,
     pub addresses: Vec<Address>,
     pub orders: Vec<Order>,
-    pub password: Option<String>,
     pub metafields: Metafields,
     /// The company the customer buys for, as an index into the store's companies.
     pub company: Option<usize>,
     /// The locations of that company the customer can buy for, as indexes into its locations.
     pub company_locations: Vec<usize>,
+    /// The customer as a contact of that company.
+    pub company_contact: Option<CompanyContact>,
 }
 
 impl Customer {
@@ -691,8 +718,6 @@ pub struct Shop {
     pub enabled_payment_types: Vec<String>,
     pub customer_accounts_enabled: bool,
     pub customer_accounts_optional: bool,
-    /// Which customer accounts the store uses; decided by the theme when not set.
-    pub customer_accounts: Option<model::CustomerAccounts>,
     pub taxes_included: bool,
     pub password_message: String,
     /// The password the `/password` page accepts.
@@ -708,6 +733,15 @@ pub struct Country {
     pub currency: String,
     pub unit_system: String,
     pub popular: bool,
+}
+
+/// A group of countries sold as one market.
+#[derive(Clone, Debug)]
+pub struct Market {
+    pub handle: String,
+    /// ISO 3166-1 alpha-2 codes, upper case.
+    pub countries: Vec<String>,
+    pub metafields: Metafields,
 }
 
 #[derive(Clone, Debug)]
@@ -758,6 +792,111 @@ pub struct SessionDefaults {
     pub company_location: Option<u64>,
 }
 
+/// A metafield of the checkout settings: its value is the string form (JSON for `json`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckoutMetafield {
+    pub namespace: String,
+    pub key: String,
+    pub kind: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CheckoutShippingRate {
+    pub handle: String,
+    pub title: String,
+    pub price: i64,
+    pub description: Option<String>,
+    pub kind: model::CheckoutDeliveryKind,
+}
+
+#[derive(Clone, Debug)]
+pub struct CheckoutPaymentMethod {
+    pub handle: String,
+    pub name: String,
+    /// Never empty.
+    pub placements: Vec<model::CheckoutPaymentPlacement>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CheckoutDiscount {
+    pub function: String,
+    pub title: String,
+    pub code: Option<String>,
+    pub classes: Vec<model::CheckoutDiscountClass>,
+    pub metafields: Vec<CheckoutMetafield>,
+}
+
+/// How the local checkout is set up, with the defaults applied.
+#[derive(Clone, Debug)]
+pub struct CheckoutSettings {
+    pub shipping_rates: Vec<CheckoutShippingRate>,
+    pub payment_methods: Vec<CheckoutPaymentMethod>,
+    pub discounts: Vec<CheckoutDiscount>,
+    /// Function handle → the metafields of its owner.
+    pub functions: IndexMap<String, Vec<CheckoutMetafield>>,
+    /// Basis points: 2000 is 20 %.
+    pub tax_rate_bps: i64,
+}
+
+impl Default for CheckoutSettings {
+    fn default() -> Self {
+        CheckoutSettings {
+            shipping_rates: vec![CheckoutShippingRate {
+                handle: "standard".to_string(),
+                title: "Standard".to_string(),
+                price: 500,
+                description: None,
+                kind: model::CheckoutDeliveryKind::Shipping,
+            }],
+            payment_methods: [
+                ("card", "Credit card"),
+                ("cod", "Cash on Delivery"),
+                ("bank", "Bank Deposit"),
+            ]
+            .into_iter()
+            .map(|(handle, name)| CheckoutPaymentMethod {
+                handle: handle.to_string(),
+                name: name.to_string(),
+                placements: vec![model::CheckoutPaymentPlacement::PaymentMethod],
+            })
+            .collect(),
+            discounts: Vec::new(),
+            functions: IndexMap::new(),
+            tax_rate_bps: 0,
+        }
+    }
+}
+
+/// A named setup of the local checkout, read from `checkouts/<name>.json`. A scenario with
+/// `problems` cannot be opened: the rest of its fields hold what could be read.
+#[derive(Clone, Debug)]
+pub struct CheckoutScenario {
+    /// The name of the file without its extension.
+    pub name: String,
+    /// The file, relative to the data directory.
+    pub file: String,
+    /// What the file says, or the name.
+    pub title: String,
+    pub description: Option<String>,
+    /// Who buys and what is in the cart, as written. Applied with
+    /// [`build::apply_session_input`] on the session a checkout starts from.
+    pub session: model::SessionInput,
+    pub entered: model::ScenarioEnteredInput,
+    /// The ISO code of a language of the store.
+    pub language: Option<String>,
+    pub look: Option<model::ScenarioLook>,
+    /// The handles of the extensions that run, when the scenario names some.
+    pub extensions: Option<Vec<String>>,
+    /// The settings of the store with this scenario's overrides on top.
+    pub checkout: CheckoutSettings,
+    /// What the scenario overrides of the `checkout` section: `shipping_rates`,
+    /// `payment_methods`, `discounts`, `functions`, `tax_rate`.
+    pub overrides: Vec<&'static str>,
+    /// What stops the scenario from opening, as the diagnostics `validate` prints them.
+    pub problems: Vec<String>,
+}
+
 pub struct Store {
     pub shop: Shop,
     pub products: Vec<Product>,
@@ -772,9 +911,15 @@ pub struct Store {
     pub selling_plan_groups: Vec<SellingPlanGroup>,
     pub metaobjects: Vec<Metaobject>,
     pub countries: Vec<Country>,
+    /// The markets the data declares; a country in none of them is a market of its own.
+    pub markets: Vec<Market>,
     pub languages: Vec<Language>,
     pub files: IndexMap<String, FileMeta>,
     pub session_defaults: SessionDefaults,
+    /// How the local checkout is set up.
+    pub checkout: CheckoutSettings,
+    /// The named setups of the checkout (`checkouts/*.json`), by name.
+    pub scenarios: Vec<CheckoutScenario>,
     /// The frozen clock, if the data sets one.
     pub now: Option<DateTime<Utc>>,
     pub theme_settings: IndexMap<String, Json>,
@@ -925,10 +1070,25 @@ impl Store {
             .find(|language| language.iso_code.eq_ignore_ascii_case(iso_code))
     }
 
+    /// The checkout scenario named so, by the name of its file.
+    pub fn scenario(&self, name: &str) -> Option<&CheckoutScenario> {
+        self.scenarios.iter().find(|scenario| scenario.name == name)
+    }
+
     pub fn country(&self, iso_code: &str) -> Option<&Country> {
         self.countries
             .iter()
             .find(|country| country.iso_code.eq_ignore_ascii_case(iso_code))
+    }
+
+    /// The market the data groups a country in, if it does.
+    pub fn market_of(&self, iso_code: &str) -> Option<&Market> {
+        self.markets.iter().find(|market| {
+            market
+                .countries
+                .iter()
+                .any(|country| country.eq_ignore_ascii_case(iso_code))
+        })
     }
 
     pub fn metaobject(&self, kind: &str, handle: &str) -> Option<&Metaobject> {

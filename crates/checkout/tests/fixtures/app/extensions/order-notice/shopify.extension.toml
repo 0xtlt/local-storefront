@@ -1,0 +1,37 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Order notice"
+handle = "order-notice"
+type = "ui_extension"
+description = "Tells the buyer how far they are from free shipping, with a button for the code and a way to dismiss it. A Preact bundle built for the 2027-01 release candidate."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.reductions.render-after"
+  module = "./src/Reductions.jsx"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.shipping-option-list.render-after"
+  module = "./src/Shipping.jsx"
+
+  # Required from 2027-01 on: the resource the metafield is read from.
+  [[extensions.metafields]]
+  namespace = "$app:notice"
+  key = "dismissed"
+  owner_type = "CART"
+
+  [extensions.capabilities]
+  api_access = true
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "threshold"
+    type = "number_integer"
+    name = "Free shipping from"
+    description = "The order total from which shipping is free."
+
+    [[extensions.settings.fields]]
+    key = "code"
+    type = "single_line_text_field"
+    name = "Discount code"
+    description = "The code the button applies."

@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-change-refusals.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: refused changes"
+handle = "ui-change-refusals"
+type = "ui_extension"
+description = "Buttons that ask for changes the checkout refuses, and the answer of each."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

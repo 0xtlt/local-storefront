@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Mix: a B2B order end to end",
+  "description": "alex.morgan@example.com for Northwind Seattle: a contract price (discount-b2b-location), no card or cash for a company (payment-hide-for-b2b), net-30 terms (payment-legacy), and ui-checkout-inspector shows the buyer, the company location and the discounts as the extensions see them.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "country": "US",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 6
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 4
+        }
+      ]
+    },
+    "company_location": "Northwind Seattle"
+  },
+  "extensions": [
+    "discount-b2b-location",
+    "payment-hide-for-b2b",
+    "validation-minimum-order",
+    "ui-checkout-inspector",
+    "ui-payment-notes"
+  ]
+}

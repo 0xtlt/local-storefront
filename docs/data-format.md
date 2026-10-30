@@ -5,6 +5,7 @@ document describes those files. It is printed by `npx local-storefront docs`, an
 `npx local-storefront init` writes it next to the data as `README.md`.
 
 The format is strict on purpose: unknown fields, wrong types and broken references are errors.
+An unknown field is left out, and the rest of its file is still read.
 Run `npx local-storefront validate` after every change. Each problem is reported with a code,
 the file, a JSON pointer to the value, and usually a hint:
 
@@ -54,6 +55,7 @@ shopify-local/
   blogs/                blogs (with their articles),
   customers/            customers,
   menus/                and menus (the file name is the menu handle)
+  checkouts/            checkout scenarios, one named setup of the local checkout per file
   files/                images, videos, fonts: served under /cdn/shop/files/
   schema/               JSON Schemas for editors, written by `init` (not read back)
   README.md             this document
@@ -62,9 +64,9 @@ shopify-local/
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
 `selling_plan_groups`, `locations`, `swatches`, `metaobjects`, `localization`, `files`,
-`session`, `now` and `theme_settings`. Root files are merged, so the data can be split however
-is convenient. Lists add up; `shop`, `localization`, `session` and `now` may be defined in one
-file only.
+`session`, `checkout`, `now` and `theme_settings`. Root files are merged, so the data can be
+split however is convenient. Lists add up; `shop`, `localization`, `session`, `checkout` and
+`now` may be defined in one file only.
 
 A file in `products/`, `collections/`, `pages/`, `blogs/` or `customers/` holds one entity, or
 an array of them. Files are read in alphabetical order, which is the order products matched by
@@ -81,7 +83,7 @@ Point `$schema` at the schema of the file's kind to get completion and inline er
 ```
 
 `npx local-storefront schema <kind>` prints a schema (`store`, `product`, `collection`, `page`,
-`blog`, `customer`, `menu`, `session`), `npx local-storefront schema --out <dir>` writes them
+`blog`, `customer`, `menu`, `session`, `checkout-scenario`), `npx local-storefront schema --out <dir>` writes them
 all, and a running server serves them at `/__lsf/schema/<kind>`.
 
 ## Conventions
@@ -219,7 +221,9 @@ Plans come in groups, which is what a subscription app creates.
   value per option. They default to one option, `Delivery frequency`, whose value is the
   plan's name.
 - `checkout_charge` is what is paid at checkout, for a deposit:
-  `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price.
+  `{ "value_type": "percentage", "value": 50 }`. It defaults to the whole price. The checkout
+  of an [app](checkout.md#deferred-payments) charges only that today, and shows the rest as due
+  later.
 - `recurring_deliveries` defaults to `true`. Ids are generated and stable; set `id` on a plan
   to reproduce a Shopify id.
 
@@ -383,7 +387,6 @@ Every field of `shop` is optional.
 - `timezone` is the zone dates are displayed in by the `date` filter.
 - `password` is the password the `/password` page accepts. It is `password` when you do not
   set it. The storefront is never locked: the page is always there, and nothing leads to it.
-- `customer_accounts` says which accounts the store uses: `new` or `legacy` (see below).
 - Each policy that is set gets a page under `/policies/`.
 
 ## Customers and sessions
@@ -399,7 +402,6 @@ what is in the cart, which country is selected.
       "first_name": "Jane",
       "last_name": "Doe",
       "tags": ["vip"],
-      "password": "password",
       "addresses": [{ "address1": "12 Maple Street", "city": "Portland", "country_code": "US" }],
       "orders": [{ "line_items": [{ "variant": "TEE-WHT-S", "quantity": 2 }] }]
     }
@@ -425,20 +427,27 @@ or `"none"`. When the data has no customer at all, there is still one to log in 
 
 ### Logging in
 
-How a visitor logs in depends on the accounts the store uses:
+Customer accounts are Shopify's new customer accounts: they are hosted by Shopify and are not
+part of a theme. Here, `/account` is a page of local-storefront that stands in for them. It
+lists the customers of the data: click one to be logged in as them, or "Nobody" to be logged
+out. Every account link of a theme (`routes.account_login_url`, `routes.storefront_login_url`,
+...) leads to that page, and so do its login and register forms.
 
-- **New customer accounts** are hosted by Shopify and are not part of a theme. Here, `/account`
-  is a page of local-storefront that stands in for them. It lists the customers of the data:
-  click one to be logged in as them, or "Nobody" to be logged out. Every account link of a theme
-  (`routes.account_login_url`, `routes.storefront_login_url`, ...) leads to that page.
-- **Legacy accounts** are rendered by the theme's `templates/customers`. The login form accepts
-  a customer's `password`, or any password when none is set.
-
-local-storefront picks legacy accounts when the theme has `templates/customers/login`, and new
-accounts otherwise. Set `shop.customer_accounts` to `"new"` or `"legacy"` to decide yourself.
+Classic customer accounts are not simulated: the theme's `templates/customers` are never
+rendered (`serve` and `check` say so), and customers have no password. Data that still has
+`shop.customer_accounts` or a customer's `password` is read as before: those fields are ignored,
+with a warning to remove them.
 
 `npx local-storefront serve --customer <email>` starts every visitor logged in as that customer.
 It also accepts `default` and `none`.
+
+At the [checkout of an app](checkout.md#log-in-as-a-customer), the customers are the login
+profiles: "Log in" in the Contact section lists them, and picking one logs the checkout (and the
+session) in as them, with their saved addresses (the first one is the default) and, for a B2B
+customer, the locations they buy for. Give the data a customer of each kind you test: a new one
+(no orders, no addresses), a returning one (`addresses`, `orders`, `tags`, `metafields`), a B2B
+buyer with several `company_locations`, a customer in another country. The demo store has one of
+each.
 
 ### B2B customers
 
@@ -480,6 +489,37 @@ name it in the customer:
 - In Liquid, `customer.b2b?` is true, and `customer.current_company`,
   `customer.current_location` and `customer.company_available_locations` are filled.
 - `location.url_to_set_as_current` changes the location, as on Shopify.
+- The [local checkout](checkout.md) shows what Shopify's Functions read of a B2B buyer
+  (`purchasingCompany`), and you can set it. A company has `created_at` and `updated_at`, a
+  location the same plus `locale` (`"fr"`), `orders_count` and `total_spent` (`"1250.00"`). The
+  customer is the contact of their company: `company_contact` holds their `title`, `locale`,
+  `created_at` and `updated_at`.
+
+```json
+{
+  "companies": [
+    {
+      "name": "Northwind Hotels",
+      "created_at": "2023-06-01",
+      "locations": [
+        { "name": "Northwind Portland", "locale": "en", "orders_count": 12, "total_spent": "8450.00" }
+      ]
+    }
+  ],
+  "customers": [
+    {
+      "email": "alex.morgan@example.com",
+      "company": "Northwind Hotels",
+      "company_contact": { "title": "Purchasing manager", "locale": "en" }
+    }
+  ]
+}
+```
+
+  What is not set has a value: the dates are 2024-01-01 12:00 UTC plus one day per company,
+  the dates of a location and of a contact are those of their company (`updated_at` those of
+  `created_at`), the language is empty, and a location has no order and has spent nothing. The
+  orders of the customers are not counted in `orders_count`: it is what you write.
 
 Catalogs are not simulated: a B2B customer sees the same products and prices as everyone.
 
@@ -513,6 +553,113 @@ Each gift card has a page rendered by `templates/gift_card.liquid`. Its URL is l
 }
 ```
 
+## Checkout
+
+The `checkout` section sets up the local checkout of a Shopify app (`npx local-storefront
+checkout --app <dir>`, see [checkout](checkout.md)). Every field has a default, and the section
+changes nothing for a theme.
+
+```json
+{
+  "checkout": {
+    "shipping_rates": [{ "handle": "standard", "title": "Standard", "price": "4.90" }],
+    "payment_methods": [{ "handle": "card", "name": "Credit card" }],
+    "discounts": [
+      {
+        "function": "volume-discount",
+        "title": "Volume",
+        "classes": ["PRODUCT"],
+        "metafields": { "$app:config.settings": { "type": "json", "value": { "percentage": 10 } } }
+      }
+    ],
+    "functions": { "delivery-rules": { "metafields": { "$app:config.settings": { "type": "json", "value": {} } } } },
+    "tax_rate": 20
+  }
+}
+```
+
+- `shipping_rates`: the delivery options offered to every address. Without it, one: "Standard"
+  at 5.00.
+- `payment_methods`: without it, "Credit card", "Cash on Delivery" and "Bank Deposit".
+  `placements` says where a method is offered, which payment customization Functions read:
+  `["PAYMENT_METHOD"]` (the list of the checkout, the default) and/or `["ACCELERATED_CHECKOUT"]`
+  (the express buttons). A method that is only an express button is not in the list the page
+  shows.
+- `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
+  code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
+  what it may reduce, all three by default. `metafields` are those of the discount, by
+  `"namespace.key"`, in the same shorthand as other metafields.
+- `functions`: the metafields of the other Functions (cart transform, delivery or payment
+  customization, validation), by the handle of the Function.
+- `tax_rate`: a percentage, added to the discounted subtotal.
+
+### Checkout scenarios
+
+A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
+scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
+them and opens a fresh checkout for each; `app function run --scenario <name>` runs the Functions
+for one ([checkout](checkout.md#scenarios)). A scenario is a set of overrides on top of the
+store data: what it does not set stays as the data says.
+
+```json
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "B2B buyer at the Seattle location",
+  "description": "Four tees, a company customer, and a shipping rate for pallets.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "company_location": "Northwind Seattle",
+    "country": "US",
+    "cart": {
+      "items": [{ "variant": "TEE-BLK-M", "quantity": 4 }],
+      "note": "Deliver to dock B",
+      "attributes": { "po_number": "PO-1042" }
+    }
+  },
+  "entered": {
+    "email": "alex.morgan@example.com",
+    "shipping_address": { "last_name": "Morgan", "address1": "2200 Alder Street", "city": "Seattle", "country_code": "US" },
+    "discount_codes": ["SAVE10"],
+    "delivery": "pallet",
+    "payment": "bank"
+  },
+  "language": "en",
+  "checkout": {
+    "shipping_rates": [{ "handle": "pallet", "title": "Pallet", "price": "45.00" }],
+    "discounts": [{ "function": "volume-discount", "code": "SAVE10", "classes": ["ORDER"] }]
+  },
+  "variant": "standard",
+  "extensions": ["volume-discount", "gift-message"]
+}
+```
+
+Every field is optional.
+
+- `title` and `description` are for the home page. The title defaults to the file name.
+- `session` is a [session](#customers-and-sessions), applied on top of the `session` of the
+  store data: `customer`, `cart` (`items` with `variant`, `quantity`, `properties` and
+  `selling_plan`, `note`, `attributes`), `country` and `company_location`.
+- `entered` is what the buyer already typed and chose: `email`, `phone`, `shipping_address`
+  (`first_name`, `last_name`, `company`, `address1`, `address2`, `city`, `country_code`,
+  `province_code`, `zip`, `phone`), `delivery` (the handle of a shipping rate), `payment` (the
+  handle of a payment method) and `discount_codes`. A code that no discount has is entered all
+  the same, and refused.
+- `language` is a language of the store (`localization.languages`). The checkout opens under
+  its locale root (`/fr/checkouts/cn/...`).
+- `checkout` overrides the [`checkout` section](#checkout) of the store data. Every field that is
+  present replaces the store's: `shipping_rates`, `payment_methods`, `discounts` (`[]` runs no
+  discount), `tax_rate`. `functions` replaces the settings of the Functions it names and keeps
+  those of the others.
+- `variant` is the look: `standard` or `shop`. `?variant=` in the URL still wins.
+- `extensions` lists the handles of the extensions (Functions and checkout UI extensions) that
+  run. The others of the app are left out. It narrows what `--extension` allows.
+
+A scenario that does not validate is still listed, with its errors, and cannot be opened.
+`validate` reports it with the file `checkouts/<name>.json` and a pointer into it
+(`/session/cart/items/0/variant`). Files that are not `.json`, and folders, are ignored.
+Scenarios are reloaded when the files change, like the rest of the data. The built-in demo
+store has none: `npx local-storefront app init` writes a set.
+
 ## Localization
 
 ```json
@@ -528,6 +675,23 @@ The first language is the primary one, served at `/`. The others are served unde
 `/<iso_code>/` (`/fr/products/blue-shirt`) and use the theme's `locales/<iso_code>.json`.
 Names and currencies of countries default to built-in values. The localization form
 (`{% form 'localization' %}`) switches the session's country and language.
+
+`markets` groups countries the way Shopify's markets do. The checkout Functions read the
+market of the buyer (`localization.market`) and of an address (`MailingAddress.market`):
+
+```json
+{
+  "localization": {
+    "countries": [{ "iso_code": "FR" }, { "iso_code": "DE" }, { "iso_code": "US" }],
+    "markets": [
+      { "handle": "europe", "countries": ["FR", "DE"], "metafields": { "custom": { "tier": "gold" } } }
+    ]
+  }
+}
+```
+
+A country in no market is a market of its own, named after the country (`france`, `united-states`).
+An address in a country the store does not sell to has no market.
 
 ## Images and files
 
@@ -623,6 +787,10 @@ page and `system.url` is blank. `"template_suffix": "alt"` on an entry renders i
 title is the entry's `title` or `name` field, or its handle. `shopify://metaobjects/<type>/<handle>`
 in a `url` setting leads to the page.
 
+The Functions of the [local checkout](checkout.md) read the same metaobjects as
+`shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
+
+
 ## Time and theme settings
 
 - `now` freezes the clock: `"now": "2025-01-15T10:00:00Z"`. `{{ 'now' | date: ... }}`, sale
@@ -639,15 +807,18 @@ in a `url` setting leads to the page.
 |---|---|
 | `invalid_json` | The file is not valid JSON. The hint gives the line and column. |
 | `unreadable_file` | The file could not be read. |
-| `unknown_field` | A field that does not exist. The hint suggests the closest one. |
+| `unknown_field` | A field that does not exist. The hint suggests the closest one. The field is left out, the rest of the file is read. |
+| `classic_customer_accounts` | A warning: `shop.customer_accounts` or a customer's `password`, which classic customer accounts had. The field is ignored. |
 | `missing_field` | A required field is absent. |
 | `wrong_type` | A value of the wrong JSON type. |
 | `invalid_value`, `invalid_format` | A value outside what the field accepts. |
 | `invalid_money`, `invalid_date`, `invalid_email`, `invalid_handle`, `invalid_timezone`, `invalid_gift_card_code` | A value that does not parse as what it should be. |
 | `duplicate_handle`, `duplicate_id`, `duplicate_email`, `duplicate_menu`, `duplicate_variant`, `duplicate_gift_card` | Two entities with the same identity. |
-| `duplicate_section` | `shop`, `localization`, `session` or `now` defined in two files. |
-| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data. The hint suggests the closest match. |
-| `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations without a company. |
+| `duplicate_section` | `shop`, `localization`, `session`, `checkout` or `now` defined in two files. |
+| `unknown_language` | A checkout scenario names a language that is not in `localization.languages`. |
+| `unknown_product`, `unknown_collection`, `unknown_variant`, `unknown_customer`, `unknown_company`, `unknown_location`, `unknown_country`, `unknown_image`, `unknown_reference` | A reference to something that is not in the data, in a file of `checkouts/` as anywhere else. The hint suggests the closest match. |
+| `duplicate_company`, `duplicate_location`, `missing_locations`, `missing_company` | A company without a location, two companies or two locations with the same name, or a customer that lists locations or a `company_contact` without a company. |
+| `duplicate_market_country` | A country in two `localization.markets`. |
 | `unknown_selling_plan`, `missing_selling_plan`, `duplicate_selling_plan` | A selling plan or a group that is not in the data, or that the product is not sold with; a group without a plan, or a product that requires a plan and has none; two groups or two plans with the same name. |
 | `invalid_color`, `empty_swatch` | A swatch whose color is not a CSS color, or that has neither a color nor an image. |
 | `missing_price` | A product without a price on itself or on its variants. |

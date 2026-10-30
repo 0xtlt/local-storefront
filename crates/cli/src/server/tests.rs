@@ -26,6 +26,7 @@ fn server() -> ServerState {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     assert!(diagnostics.is_empty(), "{diagnostics}");
@@ -435,28 +436,28 @@ fn a_submitted_form_shows_its_outcome_once() {
 }
 
 #[test]
-fn customers_log_in_and_out() {
+fn customers_log_in_at_the_account_and_out() {
     let state = server();
-    let wrong = post(
-        &state,
-        "/account/login",
-        json!({"customer": {"email": "jane.doe@example.com", "password": "nope"}}),
-        "login",
-    );
-    // The fixture theme has no login page: accounts are hosted, and `/account` is the way in.
-    assert_eq!(header(&wrong, "location"), Some("/account"));
-    assert_eq!(
-        body_json(&get(&state, "/__lsf/session", "login"))["customer"],
-        Json::Null
-    );
-
-    let right = post(
+    // The login form of a theme logs nobody in: customer accounts are Shopify's, and
+    // `/account` is the way in.
+    let form = post(
         &state,
         "/account/login",
         json!({"customer": {"email": "jane.doe@example.com", "password": "password"}}),
         "login",
     );
-    assert_eq!(header(&right, "location"), Some("/account"));
+    assert_eq!(header(&form, "location"), Some("/account"));
+    assert_eq!(
+        body_json(&get(&state, "/__lsf/session", "login"))["customer"],
+        Json::Null
+    );
+
+    let login = get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "login",
+    );
+    assert_eq!(header(&login, "location"), Some("/account"));
     assert_eq!(
         body_json(&get(&state, "/__lsf/session", "login"))["customer"],
         "jane.doe@example.com"
@@ -792,6 +793,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
             throttle: Throttle::parse([rules]).expect("valid rules"),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     state
@@ -957,23 +959,50 @@ fn hosted_accounts_have_a_page_to_choose_the_customer() {
 }
 
 #[test]
-fn legacy_accounts_use_the_theme() {
+fn classic_customer_accounts_are_not_simulated() {
     let state = server();
+    // Data written for them still loads: what they had is ignored, and a warning says why.
     let set = state.dispatch(&request(
         "PUT",
         "/__lsf/session",
-        json!({"data": {"shop": {"customer_accounts": "legacy"}}}),
-        "legacy",
+        json!({"data": {
+            "shop": {"customer_accounts": "legacy", "name": "Classic shop"},
+            "customers": [{"email": "old@example.com", "password": "secret"}]
+        }}),
+        "classic",
     ));
     assert_eq!(set.status, 200, "{}", text(&set));
-    let reply = get(&state, "/account", "legacy");
-    assert_eq!(header(&reply, "location"), Some("/account/login"));
-    let reply = get(&state, "/customer_authentication/login", "legacy");
-    assert_eq!(header(&reply, "location"), Some("/account/login"));
-    assert_eq!(
-        body_json(&get(&state, "/__lsf/status", "legacy"))["customer_accounts"],
-        "new"
+    let warnings = body_json(&set)["diagnostics"].clone();
+    assert_eq!(warnings.as_array().unwrap().len(), 2, "{warnings}");
+    assert!(
+        warnings[0]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("new customer accounts only"),
+        "{warnings}"
     );
+    assert_eq!(warnings[0]["severity"], "warning");
+    assert!(text(&get(&state, "/", "classic")).contains("Classic shop"));
+    // Every page of a classic account leads to `/account`, the theme's templates are never
+    // rendered.
+    for path in [
+        "/account/login",
+        "/account/register",
+        "/account/addresses",
+        "/account/orders/1001",
+        "/customer_authentication/login",
+    ] {
+        let reply = get(&state, path, "classic");
+        assert_eq!(header(&reply, "location"), Some("/account"), "{path}");
+    }
+    let posted = post(
+        &state,
+        "/account/addresses",
+        json!({"address": {"city": "Lyon"}}),
+        "classic",
+    );
+    assert_eq!(header(&posted, "location"), Some("/account"));
+    assert_eq!(get(&state, "/account", "classic").status, 200);
 }
 
 #[test]
@@ -1081,6 +1110,7 @@ fn the_server_can_start_logged_in() {
             throttle: Default::default(),
             timings: false,
             customer: Some("alex.morgan@example.com".to_string()),
+            checkout: None,
         },
     );
     assert_eq!(
@@ -1188,6 +1218,7 @@ fn robots_and_sitemaps_are_served() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let body = text(&get(&plain, "/robots.txt", "seo"));
@@ -1587,6 +1618,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let image = |path: &str, accept: &str| {
@@ -1670,6 +1702,7 @@ fn a_video_is_served_in_the_parts_the_browser_asks_for() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let path = "/cdn/shop/files/clip.mp4";
@@ -1736,6 +1769,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
                 throttle: Default::default(),
                 timings: false,
                 customer: None,
+                checkout: None,
             },
         )
         .0
@@ -1809,6 +1843,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let page = get(&state, "/", "preloads");
@@ -1981,6 +2016,7 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
                 throttle: Default::default(),
                 timings: false,
                 customer: None,
+                checkout: None,
             },
         );
         state
@@ -2141,6 +2177,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2247,6 +2284,7 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2275,6 +2313,7 @@ async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compre
             throttle: Default::default(),
             timings: false,
             customer: None,
+            checkout: None,
         },
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2543,6 +2582,7 @@ fn what_is_rendered_says_how_long_it_took() {
             throttle: Default::default(),
             timings: true,
             customer: None,
+            checkout: None,
         },
     );
     let of_template = |key: &str| lsf_core::render::template_section_id("index", key);
@@ -2951,4 +2991,5243 @@ fn a_profile_is_drawn_as_a_flame_graph() {
         get(&state, "/__lsf/speedscope/nope.js", "flame").status,
         404
     );
+}
+
+// --- The checkout of a Shopify app ---
+
+fn fixture_app() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app")
+}
+
+/// A server whose checkout runs the fixture app of `lsf-checkout`.
+fn checkout_server(extensions: &[&str], standalone: bool) -> ServerState {
+    checkout_server_of(fixture_app(), extensions, standalone)
+}
+
+/// A server whose checkout runs the app in `app_dir`.
+fn checkout_server_of(
+    app_dir: std::path::PathBuf,
+    extensions: &[&str],
+    standalone: bool,
+) -> ServerState {
+    checkout_server_with_data(app_dir, extensions, standalone, None)
+}
+
+/// A server whose checkout runs the app in `app_dir`, with the store data in `data` (the
+/// built-in demo store without).
+fn checkout_server_with_data(
+    app_dir: std::path::PathBuf,
+    extensions: &[&str],
+    standalone: bool,
+    data: Option<&Path>,
+) -> ServerState {
+    let options = |app: App| {
+        ServerState::new(
+            app,
+            ServeOptions {
+                live_reload: false,
+                watch: false,
+                quiet: true,
+                compress: true,
+                minify: true,
+                throttle: Default::default(),
+                timings: false,
+                customer: None,
+                checkout: Some(crate::checkout::CheckoutOptions {
+                    app_dir,
+                    extensions: extensions.iter().map(|handle| handle.to_string()).collect(),
+                    variant: crate::checkout::Variant::Standard,
+                    standalone,
+                }),
+            },
+        )
+        .0
+    };
+    if standalone {
+        options(App::open_without_theme(Path::new("."), data, &[]).expect("no theme"))
+    } else {
+        let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+        options(App::open(&theme, data, Revalidate::Never, &[]).expect("fixture theme"))
+    }
+}
+
+/// A data directory of the demo store with `checkouts/`: the scenarios as (file, content).
+struct ScenarioData(std::path::PathBuf);
+
+impl ScenarioData {
+    fn new(label: &str, scenarios: &[(&str, &str)]) -> ScenarioData {
+        let directory = std::env::temp_dir().join(format!(
+            "lsf-server-scenarios-{label}-{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&directory).ok();
+        crate::checkout::write_demo_scenarios(&directory, scenarios);
+        ScenarioData(directory)
+    }
+
+    fn server(&self, extensions: &[&str], standalone: bool) -> ServerState {
+        checkout_server_with_data(fixture_app(), extensions, standalone, Some(&self.0))
+    }
+}
+
+impl Drop for ScenarioData {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).ok();
+    }
+}
+
+/// The session a reply set the cookie of.
+fn session_cookie(reply: &Reply) -> String {
+    let cookie = cookies(reply)
+        .into_iter()
+        .find(|cookie| cookie.starts_with("_lsf_session="))
+        .unwrap_or_else(|| panic!("no session cookie in {:?}", reply.headers));
+    cookie["_lsf_session=".len()..]
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+/// Puts `session` in a cart of `items` (SKU, quantity) and the store data `data` on top of the
+/// files, then returns the path of its checkout.
+fn start_checkout(state: &ServerState, session: &str, items: Json, data: Json) -> String {
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": items}, "data": data}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = get(state, "/checkout", session);
+    assert_eq!(reply.status, 302);
+    header(&reply, "location").expect("a location").to_string()
+}
+
+fn operations(state: &ServerState, path: &str, session: &str, operations: Json) -> Reply {
+    post(
+        state,
+        &format!("{path}/update"),
+        json!({ "operations": operations }),
+        session,
+    )
+}
+
+/// The email and address that make a checkout complete.
+fn buyer_details() -> Json {
+    json!([
+        {"type": "email", "value": "buyer@example.com"},
+        {"type": "shippingAddress", "address": {
+            "firstName": "Ada", "lastName": "Lovelace", "address1": "1 Analytical Way",
+            "city": "London", "countryCode": "gb"
+        }},
+        {"type": "paymentMethod", "handle": "card"}
+    ])
+}
+
+#[test]
+fn the_checkout_page_is_a_shell_with_the_state_in_it() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-shell",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    assert!(path.starts_with("/checkouts/cn/c1-"), "{path}");
+
+    let page = get(&state, &path, "co-shell");
+    assert_eq!(page.status, 200);
+    let html = text(&page);
+    assert!(
+        html.contains("src=\"/__lsf/checkout/assets/checkout.js\""),
+        "{html}"
+    );
+    assert!(!html.contains("<!--LSF_"), "{html}");
+    let start = html.find("id=\"lsf-checkout-state\">").expect("the state") + 24;
+    let end = start + html[start..].find("</script>").expect("its end");
+    let state_json: Json = serde_json::from_str(&html[start..end]).expect("JSON");
+    assert_eq!(state_json["status"], "open");
+    assert_eq!(state_json["variant"], "standard");
+    assert_eq!(state_json["lines"][0]["quantity"], 2);
+
+    // The page asks for another look, and keeps it.
+    let shop = get(&state, &format!("{path}?variant=shop"), "co-shell");
+    assert!(text(&shop).contains("\"variant\":\"shop\""));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-shell"));
+    assert_eq!(json["variant"], "shop");
+
+    // Nobody else's cart is behind this token.
+    assert_eq!(get(&state, &path, "co-other").status, 404);
+    assert_eq!(get(&state, "/checkouts/cn/nope", "co-shell").status, 404);
+}
+
+#[test]
+fn the_state_lists_the_countries_of_the_store() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-countries",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"localization": {"countries": [
+            {"iso_code": "fr"},
+            {"iso_code": "BE", "name": "Belgique"}
+        ]}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-countries"));
+    assert_eq!(
+        json["shop"]["countries"],
+        json!([
+            {"code": "FR", "name": "France"},
+            {"code": "BE", "name": "Belgique"}
+        ])
+    );
+    // The page carries them too.
+    let html = text(&get(&state, &path, "co-countries"));
+    assert!(html.contains("\"countries\":[{\"code\":\"FR\""), "{html}");
+}
+
+#[test]
+fn the_checkout_prices_the_lines_as_the_cart_does() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-pricing",
+        json!([
+            {"variant": "TEA", "quantity": 5},
+            {"variant": "TEA", "quantity": 4, "selling_plan": "Monthly"},
+            {"variant": "TEE-BLK-M", "quantity": 2},
+            {"variant": "TEA", "quantity": 2},
+        ]),
+        json!({
+            "products": [{
+                "title": "Volume Tea",
+                "price": 3200,
+                "compare_at_price": 4000,
+                "variants": [{
+                    "sku": "TEA",
+                    "quantity_price_breaks": [{"minimum_quantity": 3, "price": 2500}]
+                }],
+                "selling_plan_groups": ["Tea club"]
+            }],
+            "selling_plan_groups": [{
+                "name": "Tea club",
+                "selling_plans": [{
+                    "name": "Monthly",
+                    "price_adjustments": [{"value_type": "fixed_amount", "value": 500}]
+                }]
+            }]
+        }),
+    );
+    let cart = body_json(&get(&state, "/cart.js", "co-pricing"));
+    let checkout = body_json(&get(&state, &format!("{path}.json"), "co-pricing"));
+
+    // The volume price, the price of the plan (which the break does not lower), the price of
+    // the variant, and the quantity below the break.
+    let prices: Vec<i64> = cart["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["price"].as_i64().unwrap())
+        .collect();
+    assert_eq!(prices[0..2], [2500, 2700]);
+    assert_eq!(prices[3], 3200);
+
+    let lines = checkout["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), cart["items"].as_array().unwrap().len());
+    for (line, item) in lines.iter().zip(cart["items"].as_array().unwrap()) {
+        let cents = |amount: &Json| (amount["amount"].as_f64().unwrap() * 100.0).round() as i64;
+        assert_eq!(line["sku"], item["sku"]);
+        assert_eq!(line["quantity"], item["quantity"]);
+        assert_eq!(cents(&line["unitPrice"]), item["price"], "{}", item["sku"]);
+        assert_eq!(cents(&line["subtotal"]), item["line_price"]);
+        assert_eq!(cents(&line["total"]), item["final_line_price"]);
+        assert_eq!(
+            line.get("sellingPlan").is_some_and(|plan| !plan.is_null()),
+            item.get("selling_plan_allocation").is_some()
+        );
+    }
+    assert_eq!(
+        (checkout["cost"]["subtotal"]["amount"].as_f64().unwrap() * 100.0).round() as i64,
+        cart["items_subtotal_price"].as_i64().unwrap()
+    );
+}
+
+#[test]
+fn the_checkout_charges_what_the_cart_says_is_due_at_checkout() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-deposit",
+        json!([
+            {"variant": "PRE", "quantity": 2, "selling_plan": "Pre-order"},
+            {"variant": "TEE-BLK-M", "quantity": 1},
+        ]),
+        json!({
+            "products": [{
+                "title": "Pre-order Tea",
+                "price": 4000,
+                "variants": [{"sku": "PRE"}],
+                "selling_plan_groups": ["Pre-order"]
+            }],
+            "selling_plan_groups": [{
+                "name": "Pre-order",
+                "selling_plans": [{
+                    "name": "Pre-order",
+                    "checkout_charge": {"value_type": "percentage", "value": 25}
+                }]
+            }],
+            "checkout": {"shipping_rates": [{"handle": "standard", "title": "Standard", "price": "5.00"}], "tax_rate": 10}
+        }),
+    );
+    let cents = |amount: &Json| (amount["amount"].as_f64().unwrap() * 100.0).round() as i64;
+    let cart = body_json(&get(&state, "/cart.js", "co-deposit"));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-deposit"));
+    let cost = &json["cost"];
+
+    // 2 × 40.00 with a 25% deposit: 20.00 now and 60.00 later; the tee is paid now.
+    // What the cart says is due at checkout (`cart.checkout_charge_amount` of Liquid, which
+    // /cart.js does not carry): 25% of 2 × 40.00 and the whole price of the tee.
+    let charged: i64 = 2000 + cart["items"][1]["line_price"].as_i64().unwrap();
+    assert_eq!(charged, 2000 + 3200);
+    assert_eq!(
+        cents(&cost["checkoutChargeAmount"]),
+        charged,
+        "the checkout charge of the cart"
+    );
+    assert_eq!(cents(&cost["subtotal"]), 8000 + 3200);
+    assert_eq!(cents(&json["lines"][0]["dueLater"]), 6000);
+    assert_eq!(json["lines"][1].get("dueLater"), None);
+    // The whole order costs its whole price; the tax follows what it is on.
+    assert_eq!(cents(&cost["tax"]), 1120);
+    assert_eq!(cents(&cost["total"]), 11200 + 500 + 1120);
+    assert_eq!(cents(&cost["dueLater"]), 6000 + 600);
+    assert_eq!(cents(&cost["dueNow"]), 2000 + 3200 + 500 + 520);
+    assert_eq!(json["lines"][0]["sellingPlan"]["name"], "Pre-order");
+
+    // The order records the balance, and the thank-you page shows it.
+    let reply = operations(&state, &path, "co-deposit", buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-deposit");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let thanks = page_state(&text(&get(
+        &state,
+        &format!("{path}/thank-you"),
+        "co-deposit",
+    )));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(cents(&thanks["order"]["totalOutstanding"]), 6600);
+    assert_eq!(cents(&thanks["order"]["totalReceived"]), 6220);
+    assert_eq!(cents(&thanks["cost"]["total"]), 12820);
+    let received = cents(&thanks["order"]["totalReceived"]);
+    let outstanding = cents(&thanks["order"]["totalOutstanding"]);
+    assert_eq!(received + outstanding, cents(&thanks["cost"]["total"]));
+}
+
+#[test]
+fn an_order_without_a_deferred_payment_has_no_balance() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-no-balance",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-no-balance"));
+    assert_eq!(json["cost"]["dueLater"]["amount"], 0.0);
+    assert_eq!(json["cost"]["dueNow"], json["cost"]["total"]);
+    operations(&state, &path, "co-no-balance", buyer_details());
+    post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-no-balance",
+    );
+    let thanks = page_state(&text(&get(
+        &state,
+        &format!("{path}/thank-you"),
+        "co-no-balance",
+    )));
+    assert_eq!(thanks["order"]["totalOutstanding"]["amount"], 0.0);
+    assert_eq!(thanks["order"]["totalReceived"], thanks["cost"]["total"]);
+}
+
+#[test]
+fn the_state_describes_the_checkout() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-state",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({"checkout": {
+            "shipping_rates": [
+                {"handle": "standard", "title": "Standard", "price": "4.90"},
+                {"handle": "express", "title": "Express", "price": "12.90"}
+            ],
+            "tax_rate": 20
+        }}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-state"));
+    assert_eq!(json["token"], path.rsplit('/').next().unwrap());
+    assert_eq!(json["shop"]["currencyCode"], "USD");
+    assert_eq!(json["shop"]["storefrontUrl"], "http://shop.test");
+    // The domain of the store data, for `shopify.shop.myshopifyDomain`.
+    let domain = json["shop"]["myshopifyDomain"].as_str().unwrap();
+    assert!(
+        domain.ends_with(".myshopify.com") && !domain.contains("-."),
+        "{domain}"
+    );
+    assert_eq!(json["buyer"]["email"], Json::Null);
+    assert_eq!(json["lines"][0]["id"], "gid://shopify/CartLine/1");
+    assert_eq!(json["lines"][0]["sku"], "TEE-BLK-M");
+    let group = &json["deliveryGroups"][0];
+    assert_eq!(group["handle"], "group-1");
+    assert_eq!(group["selected"], "standard");
+    assert_eq!(group["options"][1]["cost"]["amount"], 12.9);
+    let methods: Vec<&str> = json["paymentMethods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|method| method["handle"].as_str().unwrap())
+        .collect();
+    assert_eq!(methods, ["card", "cod", "bank"]);
+    let subtotal = json["cost"]["subtotal"]["amount"].as_f64().unwrap();
+    assert_eq!(json["cost"]["shipping"]["amount"], 4.9);
+    let total = json["cost"]["total"]["amount"].as_f64().unwrap();
+    assert!((total - (subtotal * 1.2 + 4.9)).abs() < 0.02, "{total}");
+
+    // The built extensions of the app, with where they render.
+    let extensions = json["extensions"].as_array().unwrap();
+    let handles: Vec<&str> = extensions
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    assert_eq!(handles, ["gift-message", "order-notice"]);
+    assert_eq!(
+        extensions[0]["script"],
+        "/__lsf/extensions/gift-message/gift-message.js"
+    );
+    assert!(
+        extensions[0]["targets"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("purchase.checkout.block.render"))
+    );
+    // The manifest declares the settings; nothing sets them.
+    assert_eq!(extensions[0]["settings"], json!({}));
+    assert_eq!(extensions[0]["capabilities"]["block_progress"], true);
+    // The metafields they declare: `owner_type` is `ownerType`, absent when not written.
+    assert_eq!(extensions[0]["apiVersion"], "2026-10");
+    assert_eq!(
+        extensions[0]["metafields"],
+        json!([{"namespace": "$app:gift", "key": "wrapped"}])
+    );
+    assert_eq!(extensions[1]["apiVersion"], "2027-01");
+    assert_eq!(
+        extensions[1]["metafields"],
+        json!([{"namespace": "$app:notice", "key": "dismissed", "ownerType": "CART"}])
+    );
+    // The fixture keeps one legacy target on purpose: it still runs, with a warning.
+    assert_eq!(
+        json["diagnostics"],
+        json!([
+            "quantity-limit: `purchase.validation.run` is a legacy target: use `cart.validations.generate.run`"
+        ])
+    );
+
+    // The control API says the same, for a test that is not the browser.
+    let control = body_json(&get(&state, "/__lsf/checkout?session=co-state", "other"));
+    assert_eq!(control["token"], json["token"]);
+}
+
+#[test]
+fn an_extension_on_an_unsupported_api_version_is_not_offered() {
+    let root =
+        std::env::temp_dir().join(format!("lsf-checkout-ui-versions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (handle, version) in [
+        ("supported", "api_version = \"2026-10\""),
+        ("candidate", "api_version = \"2027-01\""),
+        ("old", "api_version = \"2025-07\""),
+        ("unversioned", ""),
+    ] {
+        let dir = root.join("extensions").join(handle);
+        std::fs::create_dir_all(dir.join("dist")).unwrap();
+        std::fs::write(dir.join("dist").join(format!("{handle}.js")), "// built").unwrap();
+        std::fs::write(
+            dir.join("shopify.extension.toml"),
+            format!(
+                "type = \"ui_extension\"\n{version}\n[[targeting]]\ntarget = \"purchase.checkout.block.render\"\n"
+            ),
+        )
+        .unwrap();
+    }
+    let state = checkout_server_of(root.clone(), &[], false);
+    let path = start_checkout(
+        &state,
+        "co-ui-versions",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-ui-versions"));
+    let mut handles: Vec<&str> = json["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    handles.sort();
+    assert_eq!(handles, ["candidate", "supported"]);
+    let diagnostics: Vec<&str> = json["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap())
+        .collect();
+    for message in [
+        "old: api_version \"2025-07\" is not supported (supported: 2026-10, 2027-01): the extension is not offered to the checkout page",
+        "unversioned: no `api_version` (supported: 2026-10, 2027-01): the extension is not offered to the checkout page",
+    ] {
+        assert!(diagnostics.contains(&message), "{diagnostics:?}");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_metafield_without_owner_type_is_reported_from_2027_01() {
+    let root = std::env::temp_dir().join(format!("lsf-checkout-ui-owner-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (handle, version) in [("stable", "2026-10"), ("candidate", "2027-01")] {
+        let dir = root.join("extensions").join(handle);
+        std::fs::create_dir_all(dir.join("dist")).unwrap();
+        std::fs::write(dir.join("dist").join(format!("{handle}.js")), "// built").unwrap();
+        std::fs::write(
+            dir.join("shopify.extension.toml"),
+            format!(
+                "api_version = \"{version}\"\ntype = \"ui_extension\"\n[[targeting]]\ntarget = \"purchase.checkout.block.render\"\n[[metafields]]\nnamespace = \"$app:gift\"\nkey = \"wrapped\"\n"
+            ),
+        )
+        .unwrap();
+    }
+    let state = checkout_server_of(root.clone(), &[], false);
+    let path = start_checkout(
+        &state,
+        "co-ui-owner",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-ui-owner"));
+    // Both are offered: the page says why it refuses the second.
+    let extensions = json["extensions"].as_array().unwrap();
+    assert_eq!(extensions.len(), 2);
+    for extension in extensions {
+        assert_eq!(
+            extension["metafields"],
+            json!([{"namespace": "$app:gift", "key": "wrapped"}])
+        );
+    }
+    let diagnostics: Vec<&str> = json["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap())
+        .collect();
+    assert!(
+        diagnostics.contains(&"candidate: API version 2027-01 requires `owner_type` on every metafield declaration: `$app:gift.wrapped` has none"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !d.starts_with("stable:") || !d.contains("owner_type")),
+        "{diagnostics:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn only_the_extensions_asked_for_are_used() {
+    let state = checkout_server(&["order-notice"], false);
+    let path = start_checkout(
+        &state,
+        "co-some",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-some"));
+    let handles: Vec<&str> = json["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|extension| extension["handle"].as_str().unwrap())
+        .collect();
+    assert_eq!(handles, ["order-notice"]);
+    // A bundle that is not used is not served.
+    assert_eq!(
+        get(
+            &state,
+            "/__lsf/extensions/gift-message/gift-message.js",
+            "co-some"
+        )
+        .status,
+        404
+    );
+}
+
+/// The state JSON the page of a checkout carries.
+fn page_state(html: &str) -> Json {
+    let start = html.find("id=\"lsf-checkout-state\">").expect("the state") + 24;
+    let end = start + html[start..].find("</script>").expect("its end");
+    serde_json::from_str(&html[start..end]).expect("JSON")
+}
+
+#[test]
+fn the_language_of_the_buyer_stays_through_the_whole_checkout() {
+    let state = checkout_server(&[], false);
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}),
+        "co-fr",
+    ));
+
+    // The cart form of the theme leads to `/fr/checkout`: the checkout is in French.
+    let reply = get(&state, "/fr/checkout", "co-fr");
+    assert_eq!(reply.status, 302);
+    let path = header(&reply, "location").expect("a location").to_string();
+    let bare = path.strip_prefix("/fr").expect("under the French root");
+    assert!(bare.starts_with("/checkouts/cn/c1-"), "{path}");
+    // Asking for the other look keeps the language.
+    let shop = get(&state, "/fr/checkout?variant=shop", "co-fr");
+    assert_eq!(
+        header(&shop, "location"),
+        Some(format!("{path}?variant=shop").as_str())
+    );
+
+    // The page and its state.
+    let page = get(&state, &path, "co-fr");
+    assert_eq!(page.status, 200);
+    let html = text(&page);
+    // The words of the page are lsf's, in English; the buyer's language is in the state.
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
+    let json = page_state(&html);
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["rootUrl"], "/fr");
+    assert_eq!(
+        json["shop"]["locale"], "en",
+        "the primary language of the shop"
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-fr"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+
+    // An update, the way the page sends it (under the root of its language).
+    let reply = operations(&state, &path, "co-fr", buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["country"]["isoCode"], "GB");
+    assert_eq!(json["shop"]["locale"], "en");
+
+    // The order, and the way to its thank-you page.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fr");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    let thanks = get(&state, &format!("{path}/thank-you"), "co-fr");
+    assert_eq!(thanks.status, 200);
+    let html = text(&thanks);
+    // The words of the page are lsf's, in English; the buyer's language is in the state.
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
+    let json = page_state(&html);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+
+    // The language is the one of the URL: the same checkout without the root is in the primary
+    // language, and a checkout of the primary language leads to its own thank-you page.
+    let json = body_json(&get(&state, &format!("{}.json", bare), "co-fr"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "en");
+    assert_eq!(json["localization"]["rootUrl"], "");
+    // So is its thank-you page, though the order was placed in French.
+    let thanks = get(&state, &format!("{bare}/thank-you"), "co-fr");
+    assert_eq!(thanks.status, 200);
+    let html = text(&thanks);
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
+    let json = page_state(&html);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["localization"]["language"]["isoCode"], "en");
+    assert_eq!(json["localization"]["rootUrl"], "");
+    let again = start_checkout(
+        &state,
+        "co-fr",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert!(again.starts_with("/checkouts/cn/"), "{again}");
+    assert_eq!(
+        operations(&state, &again, "co-fr", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{again}/complete"), json!({}), "co-fr");
+    assert_eq!(body_json(&reply)["redirect"], format!("{again}/thank-you"));
+
+    // A thank-you page without an order leads back to the checkout in its language.
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        "co-fr-2",
+    ));
+    let path = header(&get(&state, "/fr/checkout", "co-fr-2"), "location")
+        .expect("a location")
+        .to_string();
+    let reply = get(&state, &format!("{path}/thank-you"), "co-fr-2");
+    assert_eq!(
+        (reply.status, header(&reply, "location")),
+        (302, Some(path.as_str()))
+    );
+
+    // The control API has no prefix to read: it takes the locale in the query.
+    let json = body_json(&get(&state, "/__lsf/checkout?locale=fr", "co-fr-2"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["rootUrl"], "/fr");
+    let json = body_json(&get(&state, "/__lsf/checkout?locale=xx", "co-fr-2"));
+    assert_eq!(json["localization"]["language"]["isoCode"], "en");
+}
+
+/// A language that only a session has, added to its store with the control API, is a locale of
+/// the checkout like the ones of the data files: `/de/checkout` is the German checkout of the
+/// session (and nothing is, for a visitor whose store has no German).
+fn an_overlay_locale_is_a_locale_of_the_checkout(standalone: bool) {
+    let state = checkout_server(&[], standalone);
+    let session = if standalone { "co-de-alone" } else { "co-de" };
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+            "data": {"localization": {"languages": [{"iso_code": "en"}, {"iso_code": "de"}]}}
+        }),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    let reply = get(&state, "/de/checkout", session);
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let path = header(&reply, "location").expect("a location").to_string();
+    let bare = path.strip_prefix("/de").expect("under the German root");
+    assert!(bare.starts_with("/checkouts/cn/"), "{path}");
+
+    let page = get(&state, &path, session);
+    assert_eq!(page.status, 200, "{}", text(&page));
+    let html = text(&page);
+    assert!(html.contains("<html lang=\"en\">"), "{html}");
+    assert_eq!(page_state(&html)["localization"]["rootUrl"], "/de");
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["localization"]["language"]["isoCode"], "de");
+
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        body_json(&reply)["localization"]["language"]["isoCode"],
+        "de"
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    let thanks = get(&state, &format!("{path}/thank-you"), session);
+    assert_eq!(thanks.status, 200);
+    assert!(text(&thanks).contains("<html lang=\"en\">"));
+
+    // Another visitor's store has no German.
+    let other = get(&state, "/de/checkout", "co-without-de");
+    assert_ne!(header(&other, "location"), Some(path.as_str()));
+    assert_ne!(
+        header(&other, "location").map(|location| location.starts_with("/de/")),
+        Some(true)
+    );
+}
+
+#[test]
+fn a_locale_added_to_a_session_is_a_locale_of_its_checkout() {
+    an_overlay_locale_is_a_locale_of_the_checkout(false);
+}
+
+#[test]
+fn a_locale_added_to_a_session_is_a_locale_of_its_standalone_checkout() {
+    an_overlay_locale_is_a_locale_of_the_checkout(true);
+}
+
+/// Copies a directory, without the `target` of a build.
+fn copy_directory(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() == "target" {
+            continue;
+        }
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_directory(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// The language the payment Function of `run` was given, as `LanguageCode`.
+fn function_language(json: &Json) -> Json {
+    let run = json["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["handle"] == "payment-rules")
+        .expect("the run of the payment Function");
+    assert_eq!(run["error"], Json::Null, "{run}");
+    run["input"]["localization"]["language"]["isoCode"].clone()
+}
+
+#[test]
+fn the_functions_read_the_language_of_the_buyer() {
+    // A copy of the fixture app whose payment Function also asks for the language.
+    let root =
+        std::env::temp_dir().join(format!("lsf-checkout-fn-language-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let query = root.join("extensions/payment-rules/src/run.graphql");
+    let source = std::fs::read_to_string(&query).unwrap();
+    std::fs::write(
+        &query,
+        source.replacen(
+            "query Input {",
+            "query Input {\n  localization {\n    language {\n      isoCode\n    }\n  }",
+            1,
+        ),
+    )
+    .unwrap();
+
+    let state = checkout_server_of(root.clone(), &["payment-rules"], false);
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        "co-fn-fr",
+    ));
+    let path = header(&get(&state, "/fr/checkout", "co-fn-fr"), "location")
+        .expect("a location")
+        .to_string();
+
+    // The page.
+    let page = page_state(&text(&get(&state, &path, "co-fn-fr")));
+    assert_eq!(function_language(&page), "FR");
+    // An update.
+    let reply = operations(&state, &path, "co-fn-fr", buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(function_language(&body_json(&reply)), "FR");
+    // The order and its thank-you page: the Functions ran in French when it was placed.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fn-fr");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let thanks = page_state(&text(&get(
+        &state,
+        &format!("{path}/thank-you"),
+        "co-fn-fr",
+    )));
+    assert_eq!(thanks["status"], "completed");
+    assert_eq!(function_language(&thanks), "FR");
+
+    // Without the root, the Functions are run in the primary language.
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        "co-fn-en",
+    ));
+    let path = header(&get(&state, "/checkout", "co-fn-en"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&operations(&state, &path, "co-fn-en", buyer_details()));
+    assert_eq!(function_language(&json), "EN");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A copy of the fixture app whose cart transform merges the first two lines into a bundle in
+/// French only: a Function written by hand (the text format of Wasm, which the runner reads as
+/// well) that looks for `"FR"` in its input, the `localization.language` it asks for.
+fn app_with_a_bundle_in_french(name: &str, parent_variant: u64) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-checkout-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let extension = root.join("extensions/bundle-transform");
+    std::fs::write(
+        extension.join("src/run.graphql"),
+        "query Input {\n  localization {\n    language {\n      isoCode\n    }\n  }\n  cart {\n    lines {\n      id\n      quantity\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    let merge = json!({"operations": [{"linesMerge": {
+        "cartLines": [
+            {"cartLineId": "gid://shopify/CartLine/1", "quantity": 1},
+            {"cartLineId": "gid://shopify/CartLine/2", "quantity": 1}
+        ],
+        "parentVariantId": format!("gid://shopify/ProductVariant/{parent_variant}"),
+        "title": "Set"
+    }}]})
+    .to_string();
+    let nothing = r#"{"operations":[]}"#;
+    let text = |json: &str| json.replace('"', "\\\"");
+    let module = format!(
+        r#"(module
+  (import "wasi_snapshot_preview1" "fd_read" (func $fd_read (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 100) "{merge_text}")
+  (data (i32.const 700) "{nothing_text}")
+  (func (export "run")
+    (local $at i32) (local $end i32) (local $out i32) (local $length i32)
+    (i32.store (i32.const 0) (i32.const 1024))
+    (i32.store (i32.const 4) (i32.const 32768))
+    (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))
+    (local.set $at (i32.const 1024))
+    (local.set $end (i32.add (i32.const 1024) (i32.load (i32.const 8))))
+    (local.set $out (i32.const 700))
+    (local.set $length (i32.const {nothing_length}))
+    (block $found
+      (loop $scan
+        (br_if $found (i32.gt_u (i32.add (local.get $at) (i32.const 4)) (local.get $end)))
+        ;; The bytes of "FR" with its quotes, read as one number.
+        (if (i32.eq (i32.load (local.get $at)) (i32.const 0x22524622))
+          (then
+            (local.set $out (i32.const 100))
+            (local.set $length (i32.const {merge_length}))
+            (br $found)))
+        (local.set $at (i32.add (local.get $at) (i32.const 1)))
+        (br $scan)))
+    (i32.store (i32.const 16) (local.get $out))
+    (i32.store (i32.const 20) (local.get $length))
+    (drop (call $fd_write (i32.const 1) (i32.const 16) (i32.const 1) (i32.const 24)))))
+"#,
+        merge_text = text(&merge),
+        nothing_text = text(nothing),
+        merge_length = merge.len(),
+        nothing_length = nothing.len(),
+    );
+    std::fs::write(extension.join("dist/function.wasm"), module).unwrap();
+    root
+}
+
+/// The checkout of a cart of a T-shirt and a tote, which the cart transform of `root` merges
+/// into a bundle in French only.
+fn bundle_in_french_checkout(state: &ServerState, session: &str) -> String {
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [
+            {"variant": "TEE-BLK-M", "quantity": 1},
+            {"variant": "TOTE-NAT", "quantity": 1}
+        ]}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let path = header(&get(state, "/fr/checkout", session), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(state, &format!("{path}.json"), session));
+    let lines = json["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 1, "{json}");
+    assert_eq!(lines[0]["transformedBy"], "merge");
+    assert_eq!(lines[0]["id"], "gid://shopify/CartLine/3");
+    path
+}
+
+#[test]
+fn a_line_the_cart_transform_merges_in_french_is_changed_in_french() {
+    let parent = variant_id(&checkout_server(&[], false), "MUG-OAT");
+    let root = app_with_a_bundle_in_french("bundle-in-french", parent);
+    let state = checkout_server_of(root.clone(), &["bundle-transform"], false);
+
+    // The bundle is a line of the French checkout only.
+    let path = bundle_in_french_checkout(&state, "co-fr-update");
+    let english = header(&get(&state, "/checkout", "co-fr-update"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{english}.json"), "co-fr-update"));
+    assert_eq!(json["lines"].as_array().unwrap().len(), 2, "{json}");
+
+    // The change names the line of the French checkout, so the Functions run in French again.
+    let reply = change_line(
+        &state,
+        &path,
+        "co-fr-update",
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/3", "quantity": 3}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-fr-update"),
+        [("TEE-BLK-M".to_string(), 3), ("TOTE-NAT".to_string(), 3)]
+    );
+
+    let path = bundle_in_french_checkout(&state, "co-fr-remove");
+    let reply = change_line(
+        &state,
+        &path,
+        "co-fr-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/3", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(cart_of(&state, "co-fr-remove"), []);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The part of the state JSON that the Buyer Identity and Localization APIs read, for a
+/// logged-in customer of the demo data buying in French. The sandbox of the extensions reads the
+/// same file (`crates/checkout/assets/tests/sandbox-api.test.mjs`): when the server writes
+/// something else, both fail, so the two sides cannot drift apart. Run with `UPDATE_SNAPSHOTS=1`
+/// to write the file again after a change meant to be.
+#[test]
+fn the_state_gives_extensions_the_buyer_and_the_localization_of_the_store() {
+    let state = checkout_server(&[], false);
+    let mut seen = serde_json::Map::new();
+    for (name, email, location) in [
+        ("customer", "jane.doe@example.com", None),
+        (
+            "company",
+            "alex.morgan@example.com",
+            Some("Northwind Seattle"),
+        ),
+    ] {
+        // The country the visitor selected on the storefront: the address the customer ships
+        // to (their default one, the location's) wins over it.
+        let country = if name == "customer" { "CA" } else { "FR" };
+        let session = format!("co-buyer-{name}");
+        let mut body = json!({
+            "customer": email,
+            "country": country,
+            "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]},
+        });
+        if let Some(location) = location {
+            body["company_location"] = json!(location);
+        }
+        let set = state.dispatch(&request("PUT", "/__lsf/session", body, &session));
+        assert_eq!(set.status, 200, "{}", text(&set));
+        let path = header(&get(&state, "/fr/checkout", &session), "location")
+            .expect("a location")
+            .to_string();
+        let json = body_json(&get(&state, &format!("{path}.json"), &session));
+        seen.insert(
+            name.into(),
+            json!({"buyer": json["buyer"], "localization": json["localization"]}),
+        );
+    }
+    let seen = Json::Object(seen);
+
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../checkout/tests/fixtures/server-buyer-state.json");
+    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
+        std::fs::write(&golden, serde_json::to_string_pretty(&seen).unwrap() + "\n").unwrap();
+    }
+    let expected: Json =
+        serde_json::from_str(&std::fs::read_to_string(&golden).expect("the golden file"))
+            .expect("JSON");
+    assert_eq!(seen, expected);
+
+    // What the sandbox must be able to read, whatever the file says.
+    assert_eq!(
+        seen["customer"]["buyer"]["customer"]["phone"],
+        "+1 555 010 9988"
+    );
+    assert_eq!(
+        seen["customer"]["localization"]["language"]["isoCode"],
+        "fr"
+    );
+    assert_eq!(
+        seen["company"]["buyer"]["purchasingCompany"]["company"]["name"],
+        "Northwind Hotels"
+    );
+}
+
+#[test]
+fn operations_change_what_the_buyer_chose() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-ops",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({"checkout": {"shipping_rates": [
+            {"handle": "standard", "price": "4.90"},
+            {"handle": "express", "price": "12.90"}
+        ]}}),
+    );
+    let reply = operations(
+        &state,
+        &path,
+        "co-ops",
+        json!([
+            {"type": "email", "value": "buyer@example.com"},
+            {"type": "phone", "value": "+33102030405"},
+            {"type": "shippingAddress", "address": {"firstName": " Jo ", "lastName": "Doe", "countryCode": " fr ", "city": ""}},
+            {"type": "deliveryOption", "group": "group-1", "handle": "express"},
+            {"type": "paymentMethod", "handle": "cod"},
+            {"type": "discountCode", "action": "add", "code": "SAVE10"},
+            {"type": "note", "change": {"type": "updateNote", "note": "Ring twice"}},
+            {"type": "attribute", "change": {"type": "updateAttribute", "key": "gift", "value": "yes"}},
+            {"type": "metafield", "change": {
+                "type": "updateCartMetafield", "namespace": "$app:gift", "key": "message",
+                "valueType": "single_line_text_field", "value": "Happy birthday"
+            }}
+        ]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["buyer"]["email"], "buyer@example.com");
+    assert_eq!(json["buyer"]["phone"], "+33102030405");
+    // A blank field is no field, the country is trimmed and capitalized, the rest is as typed.
+    assert_eq!(json["shippingAddress"]["countryCode"], "FR");
+    assert_eq!(json["shippingAddress"]["city"], Json::Null);
+    assert_eq!(json["shippingAddress"]["firstName"], " Jo ");
+    assert_eq!(json["deliveryGroups"][0]["selected"], "express");
+    assert_eq!(json["selectedPayment"], "cod");
+    assert_eq!(json["discountCodes"][0]["code"], "SAVE10");
+    assert_eq!(json["discountCodes"][0]["applicable"], false);
+    assert_eq!(json["note"], "Ring twice");
+    assert_eq!(json["attributes"], json!([{"key": "gift", "value": "yes"}]));
+    assert_eq!(json["metafields"][0]["namespace"], "$app:gift");
+    assert_eq!(json["metafields"][0]["value"], "Happy birthday");
+
+    // The note and the attribute are the ones of the cart the theme shows.
+    let cart = body_json(&get(&state, "/cart.js", "co-ops"));
+    assert_eq!(cart["note"], "Ring twice");
+    assert_eq!(cart["attributes"]["gift"], "yes");
+
+    // Codes, attributes and metafields can be taken back.
+    let reply = operations(
+        &state,
+        &path,
+        "co-ops",
+        json!([
+            {"type": "discountCode", "action": "remove", "code": "save10"},
+            {"type": "note", "change": {"type": "removeNote"}},
+            {"type": "attribute", "change": {"type": "removeAttribute", "key": "gift"}},
+            {"type": "metafield", "change": {"type": "removeCartMetafield", "namespace": "$app:gift", "key": "message"}},
+            {"type": "paymentMethod", "handle": null}
+        ]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["discountCodes"], json!([]));
+    assert_eq!(json["note"], Json::Null);
+    assert_eq!(json["attributes"], json!([]));
+    assert_eq!(json["metafields"], json!([]));
+    assert_eq!(json["selectedPayment"], Json::Null);
+}
+
+#[test]
+fn an_address_in_a_country_that_does_not_exist_is_refused() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-zz",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let before = body_json(&get(&state, &format!("{path}.json"), "co-zz"));
+    for code in ["ZZ", "xx", "FRA", "UK"] {
+        let reply = operations(
+            &state,
+            &path,
+            "co-zz",
+            json!([{"type": "shippingAddress", "address": {"lastName": "Doe", "countryCode": code}}]),
+        );
+        assert_eq!(reply.status, 400, "{code}: {}", text(&reply));
+        assert!(
+            text(&reply).contains(&format!(
+                "`{}` is not a country code (ISO 3166-1 alpha-2",
+                code.to_ascii_uppercase()
+            )),
+            "{}",
+            text(&reply)
+        );
+    }
+    // Nothing changed: not the address, not the country of the checkout.
+    let after = body_json(&get(&state, &format!("{path}.json"), "co-zz"));
+    assert_eq!(after["shippingAddress"], before["shippingAddress"]);
+    assert_eq!(after["localization"], before["localization"]);
+    // A real country is taken, even one the store does not list (it has no shipping zones).
+    let reply = operations(
+        &state,
+        &path,
+        "co-zz",
+        json!([{"type": "shippingAddress", "address": {"lastName": "Doe", "countryCode": "nz"}}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["shippingAddress"]["countryCode"], "NZ");
+}
+
+#[test]
+fn operations_change_the_cart_lines() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-lines",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    let tote = variant_id(&state, "TOTE-NAT");
+    let apply = |change: Json| {
+        let reply = operations(
+            &state,
+            &path,
+            "co-lines",
+            json!([{"type": "cartLines", "change": change}]),
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        body_json(&reply)
+    };
+    let quantities = |json: &Json| -> Vec<(String, u64)> {
+        json["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| {
+                (
+                    line["sku"].as_str().unwrap().to_string(),
+                    line["quantity"].as_u64().unwrap(),
+                )
+            })
+            .collect()
+    };
+
+    let json = apply(json!({
+        "type": "addCartLine",
+        "merchandiseId": format!("gid://shopify/ProductVariant/{tote}"),
+        "quantity": 1,
+        "attributes": [{"key": "engraving", "value": "AL"}]
+    }));
+    assert_eq!(
+        quantities(&json),
+        [("TEE-BLK-M".to_string(), 2), ("TOTE-NAT".to_string(), 1)]
+    );
+    assert_eq!(json["lines"][1]["attributes"][0]["key"], "engraving");
+
+    let json =
+        apply(json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 5}));
+    assert_eq!(json["lines"][0]["quantity"], 5);
+    let json =
+        apply(json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 2}));
+    assert_eq!(json["lines"][0]["quantity"], 3);
+    let json =
+        apply(json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/2", "quantity": 1}));
+    assert_eq!(quantities(&json), [("TEE-BLK-M".to_string(), 3)]);
+    let json =
+        apply(json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 0}));
+    assert_eq!(json["lines"], json!([]));
+
+    // The cart is the one of the theme.
+    let cart = body_json(&get(&state, "/cart.js", "co-lines"));
+    assert_eq!(cart["item_count"], 0);
+}
+
+/// A checkout where the cart transform of the fixture app does what `operations` says.
+fn transformed_checkout(
+    state: &ServerState,
+    session: &str,
+    items: Json,
+    operations: Json,
+) -> String {
+    start_checkout(
+        state,
+        session,
+        items,
+        json!({"checkout": {"functions": {"bundle-transform": {"metafields": {
+            "$app:config.settings": {"type": "json", "value": {"operations": operations}}
+        }}}}}),
+    )
+}
+
+/// The `(sku, quantity)` of the lines of the cart of the theme.
+fn cart_of(state: &ServerState, session: &str) -> Vec<(String, u64)> {
+    body_json(&get(state, "/cart.js", session))["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["sku"].as_str().unwrap().to_string(),
+                item["quantity"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn change_line(state: &ServerState, path: &str, session: &str, change: Json) -> Reply {
+    operations(
+        state,
+        path,
+        session,
+        json!([{"type": "cartLines", "change": change}]),
+    )
+}
+
+#[test]
+fn a_merged_line_is_removed_through_the_lines_it_is_made_of() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-merge-remove",
+        json!([
+            {"variant": "TEE-BLK-M", "quantity": 1},
+            {"variant": "TOTE-NAT", "quantity": 2},
+            {"variant": "MUG-OAT", "quantity": 1}
+        ]),
+        json!([{"type": "merge", "lines": [1, 2], "parentVariant": variant_id(&state, "MUG-OAT"), "title": "Set"}]),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-merge-remove"));
+    let lines = json["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 2, "{json}");
+    assert_eq!(lines[0]["id"], "gid://shopify/CartLine/4");
+    assert_eq!(lines[0]["transformedBy"], "merge");
+    assert_eq!(lines[1]["id"], "gid://shopify/CartLine/3");
+
+    // The line of the checkout is not a position in the cart.
+    let reply = change_line(
+        &state,
+        &path,
+        "co-merge-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/4", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-merge-remove"),
+        [("MUG-OAT".to_string(), 1)]
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["lines"].as_array().unwrap().len(), 1);
+    assert_eq!(json["lines"][0]["sku"], "MUG-OAT");
+}
+
+#[test]
+fn a_merged_line_is_scaled_through_the_lines_it_is_made_of() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-merge-update",
+        json!([
+            {"variant": "TEE-BLK-M", "quantity": 1},
+            {"variant": "TOTE-NAT", "quantity": 2},
+            {"variant": "MUG-OAT", "quantity": 1}
+        ]),
+        json!([{"type": "merge", "lines": [1, 2], "parentVariant": variant_id(&state, "MUG-OAT")}]),
+    );
+    let reply = change_line(
+        &state,
+        &path,
+        "co-merge-update",
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/4", "quantity": 3}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-merge-update"),
+        [
+            ("TEE-BLK-M".to_string(), 3),
+            ("TOTE-NAT".to_string(), 6),
+            ("MUG-OAT".to_string(), 1)
+        ]
+    );
+
+    // Its merchandise, and what belongs to one line only, cannot be changed.
+    for change in [
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/4", "merchandiseId": format!("gid://shopify/ProductVariant/{}", variant_id(&state, "MUG-OAT"))}),
+        json!({"type": "updateCartLine", "id": "gid://shopify/CartLine/4", "attributes": [{"key": "a", "value": "b"}]}),
+    ] {
+        let reply = change_line(&state, &path, "co-merge-update", change);
+        assert_eq!(reply.status, 400, "{}", text(&reply));
+        assert!(text(&reply).contains("cart transform"), "{}", text(&reply));
+    }
+    assert_eq!(cart_of(&state, "co-merge-update").len(), 3);
+}
+
+#[test]
+fn a_merged_line_of_several_bundles_is_scaled_by_bundles() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-merge-bundles",
+        json!([
+            {"variant": "TEE-BLK-M", "quantity": 2},
+            {"variant": "TOTE-NAT", "quantity": 4},
+            {"variant": "MUG-OAT", "quantity": 1}
+        ]),
+        json!([{"type": "merge", "lines": [1, 2], "parentVariant": variant_id(&state, "MUG-OAT")}]),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-merge-bundles"));
+    let bundle = &json["lines"][0];
+    assert_eq!(bundle["transformedBy"], "merge", "{json}");
+    assert_eq!(
+        bundle["quantity"], 2,
+        "two bundles of one tee and two totes"
+    );
+    assert_eq!(bundle["components"][0]["quantity"], 2);
+    assert_eq!(bundle["components"][1]["quantity"], 4);
+
+    // A third bundle takes one more tee and two more totes.
+    let reply = change_line(
+        &state,
+        &path,
+        "co-merge-bundles",
+        json!({"type": "updateCartLine", "id": bundle["id"], "quantity": 3}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-merge-bundles"),
+        [
+            ("TEE-BLK-M".to_string(), 3),
+            ("TOTE-NAT".to_string(), 6),
+            ("MUG-OAT".to_string(), 1)
+        ]
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["lines"][0]["quantity"], 3, "{json}");
+    assert_eq!(json["lines"][0]["components"][1]["quantity"], 6);
+}
+
+/// A cart of three T-shirts and a mug where one T-shirt and the mug were merged into a bundle
+/// (as a cart transform does with part of a line): the cart line of the T-shirts is shared by
+/// the bundle and by a line of two T-shirts. Returns the store, the cart, and the lines of the
+/// checkout, the T-shirts first.
+fn partly_merged() -> (
+    std::sync::Arc<lsf_core::Store>,
+    lsf_core::Session,
+    lsf_checkout::ResultLine,
+    lsf_checkout::ResultLine,
+) {
+    use lsf_checkout::{ResultLine, SourceLine};
+    use lsf_core::store::CartLine;
+
+    let state = checkout_server(&["bundle-transform"], false);
+    let store = state.loaded().store.clone();
+    let cart_line = |sku: &str, quantity: u32| CartLine {
+        variant_id: variant_id(&state, sku),
+        quantity,
+        properties: Default::default(),
+        selling_plan: None,
+    };
+    let session = lsf_core::Session {
+        cart_lines: vec![cart_line("TEE-BLK-M", 3), cart_line("MUG-OAT", 1)],
+        ..Default::default()
+    };
+    let tees = ResultLine {
+        id: "gid://shopify/CartLine/1".into(),
+        quantity: 2,
+        sources: vec![SourceLine {
+            index: 0,
+            quantity: 2,
+        }],
+        ..ResultLine::default()
+    };
+    let bundle = ResultLine {
+        id: "gid://shopify/CartLine/3".into(),
+        quantity: 1,
+        transformed_by: Some("merge".into()),
+        sources: vec![
+            SourceLine {
+                index: 0,
+                quantity: 1,
+            },
+            SourceLine {
+                index: 1,
+                quantity: 1,
+            },
+        ],
+        ..ResultLine::default()
+    };
+    (store, session, tees, bundle)
+}
+
+/// The SKU, quantity and properties of a cart line.
+type CartEntry = (String, u32, Vec<(String, String)>);
+
+fn cart_skus(store: &lsf_core::Store, session: &lsf_core::Session) -> Vec<CartEntry> {
+    session
+        .cart_lines
+        .iter()
+        .map(|line| {
+            let (_, variant) = store.variant(line.variant_id).expect("a variant");
+            (
+                variant.sku.clone(),
+                line.quantity,
+                line.properties
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+fn sku(name: &str, quantity: u32) -> CartEntry {
+    (name.to_string(), quantity, vec![])
+}
+
+#[test]
+fn a_change_of_merchandise_leaves_the_share_of_the_bundle_alone() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let tote = format!(
+        "gid://shopify/ProductVariant/{}",
+        variant_id(&state, "TOTE-NAT")
+    );
+    let (store, mut session, tees, _) = partly_merged();
+
+    // The two T-shirts become totes, the one in the bundle stays a T-shirt.
+    let change = json!({"type": "updateCartLine", "id": tees.id, "merchandiseId": tote});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 1), sku("MUG-OAT", 1), sku("TOTE-NAT", 2)]
+    );
+
+    // With a new quantity at the same time, the new line has it.
+    let (store, mut session, tees, _) = partly_merged();
+    let change =
+        json!({"type": "updateCartLine", "id": tees.id, "merchandiseId": tote, "quantity": 5});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 1), sku("MUG-OAT", 1), sku("TOTE-NAT", 5)]
+    );
+}
+
+#[test]
+fn a_change_of_attributes_leaves_the_share_of_the_bundle_alone() {
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id,
+        "attributes": [{"key": "engraving", "value": "Ada"}]});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [
+            sku("TEE-BLK-M", 1),
+            sku("MUG-OAT", 1),
+            (
+                "TEE-BLK-M".to_string(),
+                2,
+                vec![("engraving".to_string(), "Ada".to_string())]
+            )
+        ]
+    );
+
+    // An attribute that changes nothing does not split the line.
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id, "attributes": []});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 3), sku("MUG-OAT", 1)]
+    );
+}
+
+#[test]
+fn a_change_that_is_refused_changes_nothing_of_a_shared_line() {
+    let (store, mut session, tees, bundle) = partly_merged();
+    let before = cart_skus(&store, &session);
+    for (line, change, message) in [
+        (
+            &tees,
+            json!({"type": "updateCartLine", "id": tees.id, "merchandiseId": "gid://shopify/ProductVariant/1"}),
+            "there is no product variant",
+        ),
+        (
+            &tees,
+            json!({"type": "updateCartLine", "id": tees.id, "sellingPlanId": "gid://shopify/SellingPlan/1"}),
+            "is not offered for this product",
+        ),
+        (
+            &bundle,
+            json!({"type": "updateCartLine", "id": bundle.id, "attributes": [{"key": "a", "value": "b"}]}),
+            "only its quantity can be changed",
+        ),
+        (
+            &bundle,
+            json!({"type": "updateCartLine", "id": bundle.id, "merchandiseId": "gid://shopify/ProductVariant/1"}),
+            "cart transform (merge)",
+        ),
+    ] {
+        let problem = super::checkout::update_line(&mut session, line, &change, &store)
+            .expect_err("the change is refused");
+        assert!(problem.contains(message), "{problem}");
+    }
+    assert_eq!(cart_skus(&store, &session), before);
+}
+
+#[test]
+fn a_change_of_quantity_stays_within_the_share_of_the_line() {
+    // More of the two T-shirts: the one of the bundle is still there.
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id, "quantity": 5});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 6), sku("MUG-OAT", 1)]
+    );
+
+    // Fewer of them.
+    let (store, mut session, tees, _) = partly_merged();
+    super::checkout::requantify(&mut session, &tees, 1).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 2), sku("MUG-OAT", 1)]
+    );
+}
+
+#[test]
+fn a_removed_line_takes_its_share_of_a_shared_line_only() {
+    // The two T-shirts go: the bundle keeps its T-shirt.
+    let (store, mut session, tees, _) = partly_merged();
+    let change = json!({"type": "updateCartLine", "id": tees.id, "quantity": 0});
+    super::checkout::update_line(&mut session, &tees, &change, &store).unwrap();
+    assert_eq!(
+        cart_skus(&store, &session),
+        [sku("TEE-BLK-M", 1), sku("MUG-OAT", 1)]
+    );
+
+    // The bundle goes: the two T-shirts stay.
+    let (store, mut session, _, bundle) = partly_merged();
+    super::checkout::requantify(&mut session, &bundle, 0).unwrap();
+    assert_eq!(cart_skus(&store, &session), [sku("TEE-BLK-M", 2)]);
+}
+
+#[test]
+fn an_expanded_line_is_removed_through_its_line_of_the_cart() {
+    let state = checkout_server(&["bundle-transform"], false);
+    let path = transformed_checkout(
+        &state,
+        "co-expand-remove",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}, {"variant": "MUG-OAT", "quantity": 1}]),
+        json!([{"type": "expand", "line": 1, "items": [
+            {"variant": variant_id(&state, "MUG-OAT"), "quantity": 1},
+            {"variant": variant_id(&state, "TOTE-NAT"), "quantity": 1}
+        ]}]),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-expand-remove"));
+    assert_eq!(json["lines"][0]["transformedBy"], "expand");
+    assert_eq!(json["lines"][0]["components"].as_array().unwrap().len(), 2);
+
+    let reply = change_line(
+        &state,
+        &path,
+        "co-expand-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-expand-remove"),
+        [("TEE-BLK-M".to_string(), 1), ("MUG-OAT".to_string(), 1)]
+    );
+    assert_eq!(body_json(&reply)["lines"][0]["quantity"], 1);
+
+    // The id of a component is not a line to change.
+    let component = body_json(&reply)["lines"][0]["components"][0]["id"].clone();
+    let reply = change_line(
+        &state,
+        &path,
+        "co-expand-remove",
+        json!({"type": "removeCartLine", "id": component, "quantity": 1}),
+    );
+    assert_eq!(reply.status, 400, "{}", text(&reply));
+
+    let reply = change_line(
+        &state,
+        &path,
+        "co-expand-remove",
+        json!({"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 1}),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        cart_of(&state, "co-expand-remove"),
+        [("MUG-OAT".to_string(), 1)]
+    );
+}
+
+#[test]
+fn a_bad_operation_changes_nothing() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-bad",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    for (bad, message) in [
+        (json!({"type": "teleport"}), "unknown operation `teleport`"),
+        (json!({"value": "x"}), "an operation needs a `type`"),
+        (
+            json!({"type": "deliveryOption", "group": "group-1", "handle": "drone"}),
+            "there is no delivery option `drone`",
+        ),
+        (
+            json!({"type": "paymentMethod", "handle": "bitcoin"}),
+            "there is no payment method `bitcoin`",
+        ),
+        (
+            json!({"type": "cartLines", "change": {"type": "updateCartLine", "id": "gid://shopify/CartLine/9", "quantity": 1}}),
+            "there is no line `gid://shopify/CartLine/9`",
+        ),
+        (
+            json!({"type": "cartLines", "change": {"type": "addCartLine", "merchandiseId": "gid://shopify/ProductVariant/1", "quantity": 1}}),
+            "there is no product variant",
+        ),
+        (
+            json!({"type": "discountCode", "action": "toggle", "code": "X"}),
+            "`add` or `remove`",
+        ),
+    ] {
+        // The email is valid and comes first: it must not stick.
+        let reply = operations(
+            &state,
+            &path,
+            "co-bad",
+            json!([{"type": "email", "value": "kept@example.com"}, bad]),
+        );
+        assert_eq!(reply.status, 400, "{bad}");
+        let error = body_json(&reply)["error"].as_str().unwrap().to_string();
+        assert!(
+            error.starts_with("operation 1: ") && error.contains(message),
+            "{error}"
+        );
+    }
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-bad"));
+    assert_eq!(json["buyer"]["email"], Json::Null);
+
+    let reply = post(&state, &format!("{path}/update"), json!({}), "co-bad");
+    assert_eq!(reply.status, 400);
+}
+
+#[test]
+fn a_checkout_is_completed_when_nothing_is_missing() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-done",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+
+    // What the buyer has not filled in comes back as errors on the fields.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-done");
+    assert_eq!(reply.status, 422);
+    let json = body_json(&reply);
+    let targets: Vec<&str> = json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| error["target"].as_str().unwrap())
+        .collect();
+    assert!(
+        targets.contains(&"$.cart.buyerIdentity.email"),
+        "{targets:?}"
+    );
+    assert!(targets.contains(&"$.cart.selectedPayment"), "{targets:?}");
+    assert!(
+        json["lines"].is_array(),
+        "the page reads the state of the reply"
+    );
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["orderGeneration"], 0);
+
+    assert_eq!(
+        operations(&state, &path, "co-done", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-done");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+
+    // The thank-you page shows the order, and the cart is empty.
+    let thanks = get(&state, &format!("{path}/thank-you"), "co-done");
+    assert_eq!(thanks.status, 200);
+    let html = text(&thanks);
+    assert!(html.contains("\"status\":\"completed\""), "{html}");
+    assert!(html.contains("\"number\":\"#1004\""), "{html}");
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-done"));
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["lines"][0]["quantity"], 2);
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", "co-done"))["item_count"],
+        0
+    );
+
+    // A new cart is a new checkout, with an order number of its own.
+    let again = start_checkout(
+        &state,
+        "co-done",
+        json!([{"variant": "TOTE-NAT", "quantity": 1}]),
+        json!({}),
+    );
+    let json = body_json(&get(&state, &format!("{again}.json"), "co-done"));
+    assert_eq!(json["status"], "open");
+    // The token is the one of the cart, so the checkout after an order is told by its generation:
+    // what the extensions stored for the first one is not for this one.
+    assert_eq!(again, path);
+    assert_eq!(json["orderGeneration"], 1);
+    assert_eq!(json["buyer"]["email"], Json::Null);
+    assert_eq!(
+        operations(&state, &again, "co-done", buyer_details()).status,
+        200
+    );
+    post(&state, &format!("{again}/complete"), json!({}), "co-done");
+    let json = body_json(&get(&state, &format!("{again}.json"), "co-done"));
+    // The orders of a session follow the last one of the store data (#1003), one after the other.
+    assert_eq!(json["order"]["number"], "#1005");
+
+    // Without a completed order, the thank-you page leads back to the checkout.
+    let reply = get(&state, &format!("{path}/thank-you"), "co-fresh");
+    assert_eq!(reply.status, 404);
+    let path = start_checkout(
+        &state,
+        "co-fresh",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    let reply = get(&state, &format!("{path}/thank-you"), "co-fresh");
+    assert_eq!(
+        (reply.status, header(&reply, "location")),
+        (302, Some(path.as_str()))
+    );
+
+    // An empty cart is not an order.
+    let empty = start_checkout(&state, "co-empty", json!([]), json!({}));
+    let reply = post(&state, &format!("{empty}/complete"), json!({}), "co-empty");
+    assert_eq!(reply.status, 422);
+}
+
+/// A checkout of `session` that can be completed.
+fn ready_checkout(state: &ServerState, session: &str) -> String {
+    let path = start_checkout(
+        state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(state, &path, session, buyer_details()).status,
+        200
+    );
+    path
+}
+
+fn cart_count(state: &ServerState, session: &str) -> u64 {
+    body_json(&get(state, "/cart.js", session))["item_count"]
+        .as_u64()
+        .expect("a count")
+}
+
+#[test]
+fn a_cart_change_while_completing_is_kept_and_buys_nothing() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-race");
+    let token = path.rsplit('/').next().unwrap();
+
+    // Another tab adds an item after the Functions ran on the cart, before the order takes it.
+    let reply = super::checkout::place_order(
+        &state,
+        &request("POST", &format!("{path}/complete"), json!({}), "co-race"),
+        "co-race",
+        token,
+        || {
+            let reply = post(
+                &state,
+                "/cart/add.js",
+                json!({"id": variant_id(&state, "TOTE-NAT"), "quantity": 1}),
+                "co-race",
+            );
+            assert!(reply.status < 300, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["lines"].as_array().unwrap().len(), 2, "{json}");
+    // Nothing was bought, nothing was wiped, no number was spent.
+    assert_eq!(cart_count(&state, "co-race"), 3);
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), "co-race").status,
+        302
+    );
+    assert_eq!(state.placed_orders(), 0);
+
+    // The buyer completes what they now see.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-race");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(cart_count(&state, "co-race"), 0);
+    assert_eq!(state.placed_orders(), 1);
+}
+
+/// Completes the checkout of `session` while `change` happens after the Functions ran, and
+/// checks that nothing was bought.
+///
+/// A session starts with the store of the server, or with one of its own when `own_store`.
+fn completion_buys_nothing_when(session: &str, own_store: bool, change: impl FnOnce(&ServerState)) {
+    let state = checkout_server(&[], false);
+    let path = if own_store {
+        ready_checkout(&state, session)
+    } else {
+        let reply = post(
+            &state,
+            "/cart/add.js",
+            json!({"id": variant_id(&state, "TEE-BLK-M"), "quantity": 2}),
+            session,
+        );
+        assert!(reply.status < 300, "{}", text(&reply));
+        let path = header(&get(&state, "/checkout", session), "location")
+            .expect("a location")
+            .to_string();
+        assert_eq!(
+            operations(&state, &path, session, buyer_details()).status,
+            200
+        );
+        path
+    };
+    let token = path.rsplit('/').next().unwrap();
+    let reply = super::checkout::place_order(
+        &state,
+        &request("POST", &format!("{path}/complete"), json!({}), session),
+        session,
+        token,
+        || change(&state),
+    );
+    assert_eq!(reply.status, 409, "{session}: {}", text(&reply));
+    assert_eq!(body_json(&reply)["status"], "open", "{session}");
+    assert_eq!(cart_count(&state, session), 2, "{session}");
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), session).status,
+        302
+    );
+    assert_eq!(state.placed_orders(), 0);
+}
+
+#[test]
+fn what_the_functions_read_of_the_session_cannot_change_while_completing() {
+    completion_buys_nothing_when("co-login", false, |state| {
+        let reply = get(state, "/__lsf/login?customer=default", "co-login");
+        assert_eq!(reply.status, 302);
+    });
+    completion_buys_nothing_when("co-country", false, |state| {
+        let reply = post(
+            state,
+            "/localization",
+            json!({"country_code": "CA", "return_to": "/"}),
+            "co-country",
+        );
+        assert!(reply.status < 400, "{}", text(&reply));
+    });
+    // The data is reloaded, or the store of the session replaced by the same cart on new data.
+    completion_buys_nothing_when("co-reload", false, |state| {
+        state.reload();
+    });
+    completion_buys_nothing_when("co-store", true, |state| {
+        let reply = state.dispatch(&request(
+            "PUT",
+            "/__lsf/session",
+            json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}, "data": {}}),
+            "co-store",
+        ));
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+    });
+}
+
+#[test]
+fn an_update_after_the_completion_is_refused() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-late");
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-late");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    let reply = operations(
+        &state,
+        &path,
+        "co-late",
+        json!([{"type": "email", "value": "other@example.com"}]),
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["order"]["number"], "#1004");
+
+    // The order is still the order: the thank-you page, the state, another completion.
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), "co-late").status,
+        200
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-late"));
+    assert_eq!(json["status"], "completed");
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-late");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(cart_count(&state, "co-late"), 0);
+    assert_eq!(state.placed_orders(), 1);
+}
+
+#[test]
+fn an_update_that_read_the_cart_before_the_completion_writes_nothing() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-stale");
+    let token = path.rsplit('/').next().unwrap();
+    let update = [json!({"type": "email", "value": "other@example.com"})];
+
+    // The update read the cart, then the order took it, then the update wants to write.
+    let reply = super::checkout::apply_update(
+        &state,
+        &request("POST", &format!("{path}/update"), json!({}), "co-stale"),
+        "co-stale",
+        &update,
+        || {
+            let reply = post(&state, &format!("{path}/complete"), json!({}), "co-stale");
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["order"]["number"], "#1004");
+
+    // The lines the order consumed did not come back, and the order stays one.
+    assert_eq!(cart_count(&state, "co-stale"), 0);
+    assert_eq!(
+        get(&state, &format!("{path}/thank-you"), "co-stale").status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-stale");
+    assert_eq!(
+        body_json(&reply)["redirect"],
+        format!("/checkouts/cn/{token}/thank-you")
+    );
+    assert_eq!(state.placed_orders(), 1);
+}
+
+#[test]
+fn an_update_does_not_overwrite_a_cart_change_made_meanwhile() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-lost");
+    let reply = super::checkout::apply_update(
+        &state,
+        &request("POST", &format!("{path}/update"), json!({}), "co-lost"),
+        "co-lost",
+        &[json!({"type": "email", "value": "other@example.com"})],
+        || {
+            let reply = post(
+                &state,
+                "/cart/add.js",
+                json!({"id": variant_id(&state, "TOTE-NAT"), "quantity": 1}),
+                "co-lost",
+            );
+            assert!(reply.status < 300, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 409, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["buyer"]["email"], "buyer@example.com");
+    assert_eq!(cart_count(&state, "co-lost"), 3);
+}
+
+#[test]
+fn completing_again_places_no_second_order() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-twice");
+    let token = path.rsplit('/').next().unwrap();
+
+    // A second completion that started before the first one finished.
+    let reply = super::checkout::place_order(
+        &state,
+        &request("POST", &format!("{path}/complete"), json!({}), "co-twice"),
+        "co-twice",
+        token,
+        || {
+            let reply = post(&state, &format!("{path}/complete"), json!({}), "co-twice");
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+        },
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    assert_eq!(state.placed_orders(), 1);
+
+    // And one that comes after: the same thank-you page, not a new order.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-twice");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(state.placed_orders(), 1);
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-twice"));
+    assert_eq!(json["order"]["number"], "#1004");
+}
+
+#[test]
+fn concurrent_completions_place_one_order() {
+    let state = std::sync::Arc::new(checkout_server(&[], false));
+    let path = ready_checkout(&state, "co-threads");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let replies: Vec<u16> = (0..4)
+        .map(|_| {
+            let (state, path, barrier) = (state.clone(), path.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                post(&state, &format!("{path}/complete"), json!({}), "co-threads").status
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|thread| thread.join().expect("a reply"))
+        .collect();
+    assert!(replies.iter().all(|status| *status == 200), "{replies:?}");
+    assert_eq!(state.placed_orders(), 1);
+    assert_eq!(cart_count(&state, "co-threads"), 0);
+}
+
+#[test]
+fn the_functions_of_the_app_apply() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-fn",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {
+            "discounts": [{
+                "function": "volume-discount",
+                "title": "Volume",
+                "classes": ["PRODUCT"],
+                "metafields": {"$app:config.settings": {
+                    "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
+                }}
+            }],
+            "functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+                "type": "json", "value": {"maxQuantity": 2}
+            }}}}
+        }}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-fn"));
+
+    // The discount took 10 % off the lines.
+    let line = &json["lines"][0];
+    let subtotal = line["subtotal"]["amount"].as_f64().unwrap();
+    let total = line["total"]["amount"].as_f64().unwrap();
+    assert!((total - subtotal * 0.9).abs() < 0.01, "{subtotal} {total}");
+    assert_eq!(json["discounts"][0]["function"], "volume-discount");
+    assert_eq!(
+        json["cost"]["discounts"]["amount"],
+        json!(((subtotal - total) * 100.0).round() / 100.0)
+    );
+
+    // Every run is there, with its input and its output, for the panel of the page.
+    let run = json["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["handle"] == "volume-discount")
+        .expect("the run");
+    assert_eq!(run["target"], "cart.lines.discounts.generate.run");
+    assert_eq!(run["input"]["cart"]["lines"][0]["quantity"], 3);
+    assert!(run["output"]["operations"].is_array());
+    assert_eq!(run["error"], Json::Null);
+
+    // The validation Function blocks the order.
+    assert_eq!(json["errors"][0]["function"], "quantity-limit");
+    assert_eq!(
+        operations(&state, &path, "co-fn", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fn");
+    assert_eq!(reply.status, 422);
+    let blocked = body_json(&reply);
+    assert_eq!(
+        blocked["errors"][0]["message"],
+        "Not possible to order more than 2 of each"
+    );
+
+    // Taking one off lets it through.
+    let reply = operations(
+        &state,
+        &path,
+        "co-fn",
+        json!([{"type": "cartLines", "change": {"type": "removeCartLine", "id": "gid://shopify/CartLine/1", "quantity": 1}}]),
+    );
+    assert_eq!(body_json(&reply)["errors"], json!([]));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-fn");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+}
+
+#[test]
+fn a_validation_function_sees_the_step_of_the_buyer_journey() {
+    let state = checkout_server(&[], false);
+    // 3 in the cart, 2 allowed, but only when the order is placed.
+    let path = start_checkout(
+        &state,
+        "co-step",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+            "type": "json", "value": {"maxQuantity": 2, "onlyAtCompletion": true}
+        }}}}}}),
+    );
+    let step_of = |json: &Json| {
+        let run = json["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["handle"] == "quantity-limit")
+            .expect("the run");
+        run["input"]["buyerJourney"]["step"].clone()
+    };
+
+    // The page, the state and an update are interactions: the Function does not check yet.
+    let html = text(&get(&state, &path, "co-step"));
+    let page = page_state(&html);
+    assert_eq!(step_of(&page), "CHECKOUT_INTERACTION");
+    assert_eq!(page["errors"], json!([]));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-step"));
+    assert_eq!(step_of(&json), "CHECKOUT_INTERACTION");
+    assert_eq!(json["errors"], json!([]));
+    let reply = operations(&state, &path, "co-step", buyer_details());
+    assert_eq!(reply.status, 200);
+    let json = body_json(&reply);
+    assert_eq!(step_of(&json), "CHECKOUT_INTERACTION");
+    assert_eq!(json["errors"], json!([]));
+    // So is a change of a line.
+    let reply = operations(
+        &state,
+        &path,
+        "co-step",
+        json!([{"type": "cartLines", "change": {
+            "type": "updateCartLine", "id": "gid://shopify/CartLine/1", "quantity": 3
+        }}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(step_of(&body_json(&reply)), "CHECKOUT_INTERACTION");
+
+    // Placing the order is the completion: the Function checks, and the order is refused.
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-step");
+    assert_eq!(reply.status, 422, "{}", text(&reply));
+    let blocked = body_json(&reply);
+    assert_eq!(step_of(&blocked), "CHECKOUT_COMPLETION");
+    assert_eq!(
+        blocked["errors"][0]["message"],
+        "Not possible to order more than 2 of each"
+    );
+    // Nothing was bought, and the checkout is still an interaction.
+    assert_eq!(state.placed_orders(), 0);
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-step"));
+    assert_eq!(step_of(&json), "CHECKOUT_INTERACTION");
+    assert_eq!(json["errors"], json!([]));
+
+    // A Function that checks at every step shows its errors on the page, as it blocks at the end.
+    let path = start_checkout(
+        &state,
+        "co-step-all",
+        json!([{"variant": "TEE-BLK-M", "quantity": 3}]),
+        json!({"checkout": {"functions": {"quantity-limit": {"metafields": {"$app:config.settings": {
+            "type": "json", "value": {"maxQuantity": 2}
+        }}}}}}),
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-step-all"));
+    assert_eq!(json["errors"][0]["function"], "quantity-limit");
+    operations(&state, &path, "co-step-all", buyer_details());
+    let reply = post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-step-all",
+    );
+    assert_eq!(reply.status, 422);
+}
+
+#[test]
+fn a_discount_code_triggers_its_discount() {
+    let state = checkout_server(&["volume-discount"], false);
+    let path = start_checkout(
+        &state,
+        "co-code",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"discounts": [{
+            "function": "volume-discount",
+            "title": "Welcome",
+            "code": "WELCOME",
+            "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"minimumQuantity": 1, "percentage": 20}
+            }}
+        }]}}),
+    );
+    let before = body_json(&get(&state, &format!("{path}.json"), "co-code"));
+    assert_eq!(before["discounts"], json!([]));
+    let reply = operations(
+        &state,
+        &path,
+        "co-code",
+        json!([{"type": "discountCode", "action": "add", "code": "welcome"}]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["discountCodes"][0]["applicable"], true);
+    assert_eq!(json["discounts"][0]["code"], "WELCOME");
+}
+
+#[test]
+fn the_files_of_the_page_and_of_the_extensions_are_served() {
+    let state = checkout_server(&[], false);
+    let script = get(&state, "/__lsf/checkout/assets/checkout.js", "co-files");
+    assert_eq!(script.status, 200);
+    assert_eq!(
+        header(&script, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert!(text(&script).contains("startCheckout"));
+    let css = get(&state, "/__lsf/checkout/assets/checkout.css", "co-files");
+    assert_eq!(
+        header(&css, "content-type"),
+        Some("text/css; charset=utf-8")
+    );
+    let sandbox = get(&state, "/__lsf/checkout/assets/sandbox.html", "co-files");
+    assert_eq!(
+        header(&sandbox, "content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    // The tests of the scripts are not part of the binary.
+    for missing in ["tests/fake-dom.mjs", "preview/serve.mjs", "nope.js"] {
+        assert_eq!(
+            get(
+                &state,
+                &format!("/__lsf/checkout/assets/{missing}"),
+                "co-files"
+            )
+            .status,
+            404,
+            "{missing}"
+        );
+    }
+
+    // The bundle `shopify app build` wrote.
+    let bundle = get(
+        &state,
+        "/__lsf/extensions/gift-message/gift-message.js",
+        "co-files",
+    );
+    assert_eq!(bundle.status, 200);
+    assert_eq!(
+        header(&bundle, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    let on_disk =
+        std::fs::read(fixture_app().join("extensions/gift-message/dist/gift-message.js")).unwrap();
+    assert_eq!(bundle.body, on_disk);
+    // Nothing of an extension runs with the origin of the checkout, even in a frame of its own.
+    assert_eq!(
+        header(&bundle, "content-security-policy"),
+        Some("sandbox allow-scripts")
+    );
+    assert_eq!(header(&bundle, "x-content-type-options"), Some("nosniff"));
+    // No CORS: the page fetches it and hands its text to the sandbox, so no other site reads it.
+    assert_eq!(header(&bundle, "access-control-allow-origin"), None);
+    for missing in [
+        "/__lsf/extensions/gift-message/nope.js",
+        "/__lsf/extensions/gift-message/../shopify.extension.toml",
+        "/__lsf/extensions/volume-discount/function.wasm",
+        "/__lsf/extensions/nope/nope.js",
+        "/__lsf/extensions/gift-message",
+    ] {
+        assert_eq!(get(&state, missing, "co-files").status, 404, "{missing}");
+    }
+}
+
+/// An app of one checkout UI extension, `ext`, whose `dist/` has a script and what `files` adds.
+fn ui_extension_app(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("extensions/ext");
+    std::fs::create_dir_all(dir.join("dist")).unwrap();
+    std::fs::write(dir.join("dist/ext.js"), "// built").unwrap();
+    for (file, content) in files {
+        std::fs::write(dir.join("dist").join(file), content).unwrap();
+    }
+    std::fs::write(
+        dir.join("shopify.extension.toml"),
+        "type = \"ui_extension\"\napi_version = \"2026-10\"\n[[targeting]]\ntarget = \"purchase.checkout.block.render\"\n",
+    )
+    .unwrap();
+    root
+}
+
+#[cfg(unix)]
+#[test]
+fn an_extension_cannot_serve_files_outside_its_dist() {
+    let root = ui_extension_app("checkout-ui-links", &[]);
+    let dist = root.join("extensions/ext/dist");
+    let outside = root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.js"), "// secret").unwrap();
+    std::os::unix::fs::symlink(outside.join("secret.js"), dist.join("file-link.js")).unwrap();
+    std::os::unix::fs::symlink(&outside, dist.join("directory-link")).unwrap();
+    std::os::unix::fs::symlink("../shopify.extension.toml", dist.join("toml-link.json")).unwrap();
+    // A link that stays inside `dist/` is fine.
+    std::fs::create_dir_all(dist.join("assets")).unwrap();
+    std::fs::write(dist.join("assets/inner.js"), "// inner").unwrap();
+    std::os::unix::fs::symlink("assets/inner.js", dist.join("inner-link.js")).unwrap();
+
+    let state = checkout_server_of(root.clone(), &[], false);
+    for escape in [
+        "/__lsf/extensions/ext/file-link.js",
+        "/__lsf/extensions/ext/directory-link/secret.js",
+        "/__lsf/extensions/ext/toml-link.json",
+    ] {
+        assert_eq!(get(&state, escape, "co-links").status, 404, "{escape}");
+    }
+    for served in ["ext.js", "assets/inner.js", "inner-link.js"] {
+        let reply = get(
+            &state,
+            &format!("/__lsf/extensions/ext/{served}"),
+            "co-links",
+        );
+        assert_eq!(reply.status, 200, "{served}");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_extension_cannot_serve_a_page_on_the_checkout_origin() {
+    let root = ui_extension_app(
+        "checkout-ui-pages",
+        &[
+            ("evil.html", "<script>parent.document</script>"),
+            ("evil.xhtml", "<html/>"),
+            ("evil.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"),
+            ("style.css", "a {}"),
+            ("data.json", "{}"),
+        ],
+    );
+    let state = checkout_server_of(root.clone(), &[], false);
+    // A page the extension could send its frame to is not served at all.
+    for page in ["evil.html", "evil.xhtml"] {
+        let reply = get(&state, &format!("/__lsf/extensions/ext/{page}"), "co-pages");
+        assert_eq!(reply.status, 404, "{page}");
+    }
+    // The rest comes with a policy that gives it an opaque origin, if it is ever navigated to.
+    for (file, kind) in [
+        ("ext.js", "text/javascript; charset=utf-8"),
+        ("style.css", "text/css; charset=utf-8"),
+        ("data.json", "application/json; charset=utf-8"),
+        ("evil.svg", "image/svg+xml"),
+    ] {
+        let reply = get(&state, &format!("/__lsf/extensions/ext/{file}"), "co-pages");
+        assert_eq!(reply.status, 200, "{file}");
+        assert_eq!(header(&reply, "content-type"), Some(kind), "{file}");
+        assert_eq!(
+            header(&reply, "content-security-policy"),
+            Some("sandbox allow-scripts"),
+            "{file}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_logged_in_customer_completes_with_the_email_the_store_knows() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-login",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert_eq!(
+        get(&state, "/__lsf/login?customer=default", "co-login").status,
+        302
+    );
+    // The page shows the email of the customer, so it does not ask for one.
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-login"));
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+    let reply = operations(
+        &state,
+        &path,
+        "co-login",
+        json!([
+            {"type": "shippingAddress", "address": {
+                "lastName": "Doe", "address1": "1 Main St", "city": "London", "countryCode": "gb"
+            }},
+            {"type": "paymentMethod", "handle": "card"}
+        ]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-login");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["redirect"], format!("{path}/thank-you"));
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-login"));
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+}
+
+/// The targets of the errors `complete` answers with.
+fn complete_errors(state: &ServerState, path: &str, session: &str) -> Vec<(String, String)> {
+    let reply = post(state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 422, "{}", text(&reply));
+    body_json(&reply)["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| {
+            (
+                error["message"].as_str().unwrap().to_string(),
+                error["target"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_shippable_cart_needs_a_delivery_option_to_complete() {
+    let state = checkout_server(&[], false);
+    let path = start_checkout(
+        &state,
+        "co-no-delivery",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"shipping_rates": []}}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-no-delivery", buyer_details()).status,
+        200
+    );
+    let errors = complete_errors(&state, &path, "co-no-delivery");
+    assert!(
+        errors
+            .iter()
+            .any(|(message, _)| message == "No delivery option is available"),
+        "{errors:?}"
+    );
+
+    // With a rate, the same checkout goes through.
+    let path = start_checkout(
+        &state,
+        "co-no-delivery",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"shipping_rates": [{"handle": "standard", "price": "4.90"}]}}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-no-delivery", buyer_details()).status,
+        200
+    );
+    let reply = post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-no-delivery",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+}
+
+#[test]
+fn a_checkout_needs_a_payment_method_to_complete() {
+    let state = checkout_server(&["payment-rules"], false);
+    // Nothing is configured.
+    let path = start_checkout(
+        &state,
+        "co-no-pay",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {"payment_methods": []}}),
+    );
+    let details = json!([
+        {"type": "email", "value": "buyer@example.com"},
+        {"type": "shippingAddress", "address": {
+            "lastName": "Lovelace", "address1": "1 Analytical Way",
+            "city": "London", "countryCode": "gb"
+        }}
+    ]);
+    assert_eq!(
+        operations(&state, &path, "co-no-pay", details.clone()).status,
+        200
+    );
+    let errors = complete_errors(&state, &path, "co-no-pay");
+    assert!(
+        errors
+            .iter()
+            .any(|(message, _)| message == "No payment method is available"),
+        "{errors:?}"
+    );
+
+    // A Function hides the only one.
+    let path = start_checkout(
+        &state,
+        "co-hidden-pay",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({"checkout": {
+            "payment_methods": [{"handle": "card", "name": "Card"}],
+            "functions": {"payment-rules": {"metafields": {"$app:config.settings": {
+                "type": "json", "value": {"hideName": "Card", "hideAbove": 0}
+            }}}}
+        }}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-hidden-pay", details).status,
+        200
+    );
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-hidden-pay"));
+    assert_eq!(json["paymentMethods"], json!([]));
+    let errors = complete_errors(&state, &path, "co-hidden-pay");
+    assert!(
+        errors
+            .iter()
+            .any(|(message, _)| message == "No payment method is available"),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn without_an_app_the_checkout_is_the_cart_listing() {
+    let state = server();
+    let page = get(&state, "/checkout", "co-none");
+    assert_eq!(page.status, 200);
+    assert!(text(&page).contains("data-lsf-checkout"));
+    assert_eq!(get(&state, "/__lsf/checkout", "co-none").status, 404);
+    assert_eq!(
+        get(&state, "/__lsf/checkout/assets/checkout.js", "co-none").status,
+        404
+    );
+}
+
+#[test]
+fn a_standalone_checkout_serves_nothing_else() {
+    let state = checkout_server(&[], true);
+    // `/` is the home page, and `/checkout` starts a checkout.
+    let home = get(&state, "/", "co-alone");
+    assert_eq!(home.status, 200);
+    assert!(text(&home).contains("data-section=\"scenarios\""));
+    let start = get(&state, "/checkout", "co-alone");
+    let location = format!("/checkouts/cn/{}", super::cart_token_of("co-alone"));
+    assert_eq!(start.status, 302);
+    assert_eq!(header(&start, "location"), Some(location.as_str()));
+    assert_eq!(get(&state, &location, "co-alone").status, 200);
+    assert_eq!(get(&state, "/products/anything", "co-alone").status, 404);
+    // A session that is named needs no cookie.
+    let named = get(&state, "/checkout", "co-alone");
+    assert!(cookies(&named).is_empty());
+    // A visitor without one gets it.
+    let mut incoming = request("GET", "/checkout", json!({}), "ignored");
+    incoming.headers.remove(SESSION_HEADER);
+    assert_eq!(cookies(&state.dispatch(&incoming)).len(), 1);
+}
+
+// --- Checkout scenarios ---
+
+const TEES: &str = r#"{
+    "title": "Three tees in French",
+    "session": {
+        "customer": "jane.doe@example.com",
+        "country": "FR",
+        "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 3}], "note": "A gift"}
+    },
+    "entered": {
+        "email": "gift@example.com",
+        "shipping_address": {"last_name": "Dupont", "address1": "1 rue de Rivoli", "city": "Paris", "country_code": "fr"},
+        "delivery": "express",
+        "payment": "cod",
+        "discount_codes": ["WELCOME"]
+    },
+    "language": "fr",
+    "variant": "shop",
+    "checkout": {
+        "shipping_rates": [
+            {"handle": "standard", "title": "Standard", "price": "4.90"},
+            {"handle": "express", "title": "Express", "price": "12.90"}
+        ],
+        "tax_rate": 20
+    }
+}"#;
+
+#[test]
+fn a_scenario_opens_a_new_checkout_set_up_as_it_says() {
+    let data = ScenarioData::new("opens", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+
+    let reply = get(&state, "/checkout?scenario=tees", "viewer");
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    assert_ne!(id, "viewer");
+    // Under the locale root of the scenario's language.
+    let location = header(&reply, "location").unwrap().to_string();
+    assert_eq!(
+        location,
+        format!("/fr/checkouts/cn/{}", super::cart_token_of(&id))
+    );
+
+    let json = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(json["lines"][0]["quantity"], 3);
+    assert_eq!(
+        json["scenario"],
+        json!({"name": "tees", "title": "Three tees in French"})
+    );
+    assert_eq!(json["variant"], "shop");
+    assert_eq!(json["localization"]["language"]["isoCode"], "fr");
+    assert_eq!(json["localization"]["country"]["isoCode"], "FR");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["email"], "gift@example.com");
+    assert_eq!(json["note"], "A gift");
+    assert_eq!(json["shippingAddress"]["countryCode"], "FR");
+    assert_eq!(json["selectedPayment"], "cod");
+    assert_eq!(json["deliveryGroups"][0]["selected"], "express");
+    assert_eq!(json["cost"]["shipping"]["amount"], 12.9);
+    let subtotal = json["cost"]["subtotal"]["amount"].as_f64().unwrap();
+    assert!((json["cost"]["tax"]["amount"].as_f64().unwrap() - subtotal * 0.2).abs() < 0.02);
+    // The discount code was entered, and no discount has it.
+    assert_eq!(json["discountCodes"][0]["code"], "WELCOME");
+    assert_eq!(json["discountCodes"][0]["applicable"], false);
+    // The page asks for nothing the scenario did not fill.
+    let page = get(&state, &location, &id);
+    assert_eq!(page.status, 200);
+    assert!(text(&page).contains("<html lang=\"en\">"));
+}
+
+#[test]
+fn a_scenario_opened_with_a_look_and_every_target_keeps_both_and_the_url_wins() {
+    let data = ScenarioData::new("query", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+
+    // The scenario asks for the Shop look; the address asks for the standard one.
+    let reply = get(
+        &state,
+        "/checkout?scenario=tees&variant=standard&targets=all",
+        "viewer",
+    );
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    assert_eq!(
+        location,
+        format!(
+            "/fr/checkouts/cn/{}?variant=standard&targets=all",
+            super::cart_token_of(&id)
+        )
+    );
+
+    let (path, query) = location.split_once('?').unwrap();
+    let json = body_json(&get(&state, &format!("{path}.json?{query}"), &id));
+    assert_eq!(json["variant"], "standard");
+    // The session keeps it, as for any checkout opened with `?variant=`.
+    let again = body_json(&get(&state, &format!("{path}.json"), &id));
+    assert_eq!(again["variant"], "standard");
+
+    // Without it, the look is the scenario's.
+    let plain = get(&state, "/checkout?scenario=tees", "viewer");
+    let plain_id = session_cookie(&plain);
+    let plain_path = header(&plain, "location").unwrap().to_string();
+    assert!(!plain_path.contains('?'));
+    let json = body_json(&get(&state, &format!("{plain_path}.json"), &plain_id));
+    assert_eq!(json["variant"], "shop");
+}
+
+#[test]
+fn every_opening_of_a_scenario_is_a_new_session() {
+    let data = ScenarioData::new("fresh", &[("tees.json", TEES)]);
+    let state = data.server(&[], false);
+    let first = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    let second = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    assert_ne!(first, second);
+
+    // Changing one checkout leaves the other, and the session that opened them, alone.
+    let path = format!("/fr/checkouts/cn/{}", super::cart_token_of(&first));
+    let reply = operations(
+        &state,
+        &path,
+        &first,
+        json!([{"type": "email", "value": "other@example.com"}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let other = format!("/fr/checkouts/cn/{}.json", super::cart_token_of(&second));
+    assert_eq!(
+        body_json(&get(&state, &other, &second))["buyer"]["email"],
+        "gift@example.com"
+    );
+    let viewer = body_json(&get(&state, "/__lsf/session", "viewer"));
+    assert_eq!(viewer["cart"]["items"], json!([]));
+    assert_eq!(viewer["customer"], Json::Null);
+}
+
+#[test]
+fn a_scenario_that_cannot_open_says_why() {
+    let data = ScenarioData::new(
+        "refused",
+        &[
+            ("tees.json", TEES),
+            ("typo.json", r#"{"titel": "x"}"#),
+            ("ghost.json", r#"{"extensions": ["gift-message", "ghost"]}"#),
+        ],
+    );
+    let state = data.server(&[], true);
+
+    let missing = get(&state, "/checkout?scenario=nope", "viewer");
+    assert_eq!(missing.status, 404);
+    let page = text(&missing);
+    assert!(page.contains("No scenario named nope"), "{page}");
+    assert!(page.contains("ghost, tees, typo"), "{page}");
+    assert!(cookies(&missing).is_empty());
+
+    let typo = get(&state, "/checkout?scenario=typo", "viewer");
+    assert_eq!(typo.status, 422);
+    let page = text(&typo);
+    assert!(page.contains("unknown_field"), "{page}");
+    assert!(page.contains("did you mean &quot;title&quot;?"), "{page}");
+    assert!(page.contains("checkouts/typo.json"), "{page}");
+    assert!(cookies(&typo).is_empty());
+
+    let ghost = get(&state, "/checkout?scenario=ghost", "viewer");
+    assert_eq!(ghost.status, 422);
+    assert!(
+        text(&ghost).contains("no extension named `ghost`"),
+        "{}",
+        text(&ghost)
+    );
+}
+
+#[test]
+fn a_scenario_picks_the_extensions_that_run() {
+    let scenario = r#"{
+        "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}},
+        "extensions": ["quantity-limit", "gift-message"]
+    }"#;
+    let data = ScenarioData::new("extensions", &[("few.json", scenario)]);
+    let state = data.server(&[], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=few", "viewer"));
+    let path = format!("/checkouts/cn/{}.json", super::cart_token_of(&id));
+    let json = body_json(&get(&state, &path, &id));
+    let handles = |key: &str, field: &str| -> Vec<String> {
+        json[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry[field].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(handles("extensions", "handle"), ["gift-message"]);
+    let mut ran = handles("runs", "handle");
+    ran.dedup();
+    assert_eq!(ran, ["quantity-limit"]);
+
+    // `--extension` is the limit: a scenario cannot widen it.
+    let state = data.server(&["gift-message"], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=few", "viewer"));
+    let path = format!("/checkouts/cn/{}.json", super::cart_token_of(&id));
+    let json = body_json(&get(&state, &path, &id));
+    assert_eq!(json["runs"], json!([]));
+    assert_eq!(json["extensions"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn the_scenario_stays_with_the_session_after_an_order() {
+    let data = ScenarioData::new("order", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    let path = format!("/fr/checkouts/cn/{}", super::cart_token_of(&id));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), &id);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(
+        body_json(&get(&state, &format!("{path}.json"), &id))["status"],
+        "completed"
+    );
+
+    // A cart again: a new checkout, still set up as the scenario says.
+    let put = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        &id,
+    ));
+    assert_eq!(put.status, 200, "{}", text(&put));
+    let json = body_json(&get(&state, &format!("{path}.json"), &id));
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["scenario"]["name"], "tees");
+    assert_eq!(
+        json["deliveryGroups"][0]["options"][1]["cost"]["amount"],
+        12.9
+    );
+}
+
+#[test]
+fn a_scenario_is_reloaded_when_its_file_changes() {
+    let data = ScenarioData::new("reload", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let id = session_cookie(&get(&state, "/checkout?scenario=tees", "viewer"));
+    let path = format!("/fr/checkouts/cn/{}", super::cart_token_of(&id));
+    assert_eq!(
+        body_json(&get(&state, &format!("{path}.json"), &id))["cost"]["shipping"]["amount"],
+        12.9
+    );
+    std::fs::write(
+        data.0.join("checkouts/tees.json"),
+        TEES.replace("\"12.90\"", "\"9.90\""),
+    )
+    .unwrap();
+    std::fs::write(data.0.join("checkouts/new.json"), "{}").unwrap();
+    state.reload();
+    // The open checkout follows the scenario; a new file is a new scenario.
+    assert_eq!(
+        body_json(&get(&state, &format!("{path}.json"), &id))["cost"]["shipping"]["amount"],
+        9.9
+    );
+    assert_eq!(get(&state, "/checkout?scenario=new", "viewer").status, 302);
+}
+
+// --- Logging in at the checkout ---
+
+/// A checkout of one tee for a guest, in `session`.
+fn guest_checkout(state: &ServerState, session: &str) -> String {
+    let reply = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}),
+        session,
+    ));
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    header(&get(state, "/checkout", session), "location")
+        .expect("a location")
+        .to_string()
+}
+
+fn log_in_as(state: &ServerState, path: &str, session: &str, who: Json) -> Json {
+    let reply = operations(
+        state,
+        path,
+        session,
+        json!([{"type": "customer", "customer": who}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    body_json(&reply)
+}
+
+#[test]
+fn the_checkout_lists_the_customers_of_the_data_to_log_in_as() {
+    let state = checkout_server(&[], false);
+    let path = guest_checkout(&state, "co-login-list");
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-login-list"));
+    let profiles = json["account"]["profiles"].as_array().expect("profiles");
+    let emails: Vec<&str> = profiles
+        .iter()
+        .map(|profile| profile["email"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        emails,
+        [
+            "jane.doe@example.com",
+            "new.customer@example.com",
+            "alex.morgan@example.com",
+            "camille.martin@example.com"
+        ]
+    );
+    let jane = &profiles[0];
+    assert_eq!(jane["name"], "Jane Doe");
+    assert_eq!(jane["tags"], json!(["vip"]));
+    assert_eq!(jane["ordersCount"], 2);
+    assert_eq!(jane["addressesCount"], 2);
+    assert_eq!(jane["current"], false);
+    assert_eq!(profiles[2]["company"], "Northwind Hotels");
+    assert_eq!(profiles[2]["locationsCount"], 2);
+    assert_eq!(profiles[3]["countryCode"], "FR");
+    assert_eq!(json["account"]["addresses"], json!([]));
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+}
+
+#[test]
+fn logging_in_gives_the_checkout_the_contact_and_the_default_address_of_the_customer() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-jane";
+    let path = guest_checkout(&state, session);
+    let json = log_in_as(&state, &path, session, json!("jane.doe@example.com"));
+    assert_eq!(
+        json["token"],
+        path.rsplit('/').next().unwrap(),
+        "the same checkout"
+    );
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["phone"], "+1 555 010 9988");
+    assert_eq!(json["shippingAddress"]["address1"], "12 Maple Street");
+    assert_eq!(json["localization"]["country"]["isoCode"], "US");
+    // With an address, the shipping rates are there.
+    assert!(
+        !json["deliveryGroups"][0]["options"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let addresses = json["account"]["addresses"].as_array().unwrap();
+    assert_eq!(addresses.len(), 2);
+    assert_eq!(addresses[1]["address"]["address1"], "400 Pine Avenue");
+    assert_eq!(json["account"]["profiles"][0]["current"], true);
+    // The theme sees the same customer: the session is the browser's.
+    let session_json = body_json(&get(&state, "/__lsf/session", session));
+    assert_eq!(session_json["customer"], "jane.doe@example.com");
+
+    // Another saved address is a shipping address like any other.
+    let second = addresses[1]["address"].clone();
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "shippingAddress", "address": second}]),
+    );
+    assert_eq!(body_json(&reply)["shippingAddress"]["city"], "Seattle");
+
+    // Logging out is a guest checkout: nothing of Jane is left, the cart is.
+    let json = log_in_as(&state, &path, session, Json::Null);
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+    assert_eq!(json["buyer"]["email"], Json::Null);
+    assert_eq!(json["buyer"]["phone"], Json::Null);
+    assert_eq!(json["shippingAddress"], Json::Null);
+    assert_eq!(json["lines"].as_array().unwrap().len(), 1);
+    assert_eq!(json["account"]["addresses"], json!([]));
+    let session_json = body_json(&get(&state, "/__lsf/session", session));
+    assert_eq!(session_json["customer"], Json::Null);
+}
+
+#[test]
+fn an_address_the_guest_typed_stays_for_a_customer_without_one() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-typed";
+    let path = guest_checkout(&state, session);
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = log_in_as(&state, &path, session, json!("new.customer@example.com"));
+    assert_eq!(
+        json["buyer"]["email"], "new.customer@example.com",
+        "the account's, not the typed one"
+    );
+    assert_eq!(json["shippingAddress"]["address1"], "1 Analytical Way");
+    assert_eq!(json["selectedPayment"], "card", "the choices stay");
+    // A customer with an address of their own ships there instead.
+    let json = log_in_as(&state, &path, session, json!("camille.martin@example.com"));
+    assert_eq!(json["shippingAddress"]["city"], "Lyon");
+    assert_eq!(json["localization"]["country"]["isoCode"], "FR");
+}
+
+#[test]
+fn a_b2b_customer_buys_for_one_of_their_locations_and_ships_there() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-b2b";
+    let path = guest_checkout(&state, session);
+    let json = log_in_as(&state, &path, session, json!("alex.morgan@example.com"));
+    let purchasing = &json["buyer"]["purchasingCompany"];
+    assert_eq!(purchasing["company"]["name"], "Northwind Hotels");
+    assert_eq!(purchasing["location"]["name"], "Northwind Portland");
+    assert_eq!(json["shippingAddress"]["address1"], "815 Harbor Way");
+    let locations = json["account"]["locations"].as_array().unwrap();
+    assert_eq!(locations.len(), 2);
+    assert_eq!(locations[0]["current"], true);
+    assert_eq!(
+        json["account"]["addresses"][0]["location"],
+        "Northwind Portland"
+    );
+
+    // Another location, by its id: the order ships there.
+    let seattle = locations[1]["id"].clone();
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "companyLocation", "location": seattle}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&reply);
+    assert_eq!(
+        json["buyer"]["purchasingCompany"]["location"]["name"],
+        "Northwind Seattle"
+    );
+    assert_eq!(json["shippingAddress"]["address1"], "2200 Alder Street");
+    assert_eq!(json["account"]["locations"][1]["current"], true);
+    let session_json = body_json(&get(&state, "/__lsf/session", session));
+    assert_eq!(session_json["company_location"], "Northwind Seattle");
+
+    // Logging in with a location, by its name.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "customer", "customer": Json::Null},
+               {"type": "customer", "customer": "alex.morgan@example.com", "location": "Northwind Seattle"}]),
+    );
+    assert_eq!(
+        body_json(&reply)["buyer"]["purchasingCompany"]["location"]["name"],
+        "Northwind Seattle"
+    );
+}
+
+#[test]
+fn a_login_the_data_does_not_allow_is_refused_and_changes_nothing() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-refused";
+    let path = guest_checkout(&state, session);
+    for (operations_json, message) in [
+        (
+            json!([{"type": "email", "value": "x@example.com"},
+                   {"type": "customer", "customer": "nobody@example.com"}]),
+            "there is no customer with the email",
+        ),
+        (
+            json!([{"type": "customer", "customer": 42}]),
+            "an email, or null",
+        ),
+        (
+            json!([{"type": "companyLocation", "location": "Northwind Seattle"}]),
+            "needs a logged-in customer",
+        ),
+        (
+            json!([{"type": "customer", "customer": "jane.doe@example.com", "location": "Northwind Seattle"}]),
+            "does not buy for a company",
+        ),
+        (
+            json!([{"type": "customer", "customer": "alex.morgan@example.com", "location": "Northwind Boston"}]),
+            "cannot buy for a location",
+        ),
+    ] {
+        let reply = operations(&state, &path, session, operations_json);
+        assert_eq!(reply.status, 400, "{}", text(&reply));
+        assert!(text(&reply).contains(message), "{}", text(&reply));
+    }
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+    assert_eq!(json["buyer"]["email"], Json::Null);
+}
+
+#[test]
+fn the_checkout_follows_a_login_made_elsewhere() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-elsewhere";
+    let path = guest_checkout(&state, session);
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    // The login link of the control API, as the storefront's account page uses it.
+    let reply = get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/cart",
+        session,
+    );
+    assert_eq!(reply.status, 302);
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["buyer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["shippingAddress"]["address1"], "12 Maple Street");
+    // And reading it again changes nothing more.
+    let reply = operations(
+        &state,
+        &path,
+        session,
+        json!([{"type": "shippingAddress", "address": {"lastName": "Doe", "address1": "1 Elsewhere", "city": "Ottawa", "countryCode": "CA"}}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["shippingAddress"]["address1"], "1 Elsewhere");
+}
+
+#[test]
+fn checkout_with_a_customer_in_the_query_opens_it_logged_in_as_them() {
+    let state = checkout_server(&[], false);
+    let session = "co-login-query";
+    guest_checkout(&state, session);
+    let reply = get(
+        &state,
+        "/checkout?customer=camille.martin@example.com",
+        session,
+    );
+    assert_eq!(reply.status, 302);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(
+        json["buyer"]["customer"]["email"],
+        "camille.martin@example.com"
+    );
+    assert_eq!(json["shippingAddress"]["city"], "Lyon");
+    // `none` is a guest again.
+    let reply = get(&state, "/checkout?customer=none", session);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(json["buyer"]["customer"], Json::Null);
+    // Someone the data does not have.
+    let reply = get(&state, "/checkout?customer=nobody@example.com", session);
+    assert_eq!(reply.status, 404);
+    assert!(
+        text(&reply).contains("jane.doe@example.com"),
+        "{}",
+        text(&reply)
+    );
+}
+
+#[test]
+fn a_scenario_opens_logged_in_as_the_customer_of_the_query() {
+    let data = ScenarioData::new(
+        "login",
+        &[(
+            "tees.json",
+            r#"{"session": {"customer": "none", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+        )],
+    );
+    let state = data.server(&[], false);
+    let reply = get(
+        &state,
+        "/checkout?scenario=tees&customer=default",
+        "co-login-scenario",
+    );
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), &session));
+    assert_eq!(json["scenario"]["name"], "tees");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["lines"][0]["quantity"], 2);
+    // Switching customer changes the session, not the scenario it started from.
+    let json = log_in_as(&state, &path, &session, json!("new.customer@example.com"));
+    assert_eq!(json["scenario"]["name"], "tees");
+    assert_eq!(
+        json["buyer"]["customer"]["email"],
+        "new.customer@example.com"
+    );
+}
+
+/// A guest scenario that enters a whole contact: email, phone and an address.
+const ENTERED_CONTACT: &str = r#"{
+    "session": {"customer": "none", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+    "entered": {
+        "email": "typed@example.com",
+        "phone": "+1 555 000 1111",
+        "shipping_address": {"last_name": "Typed", "address1": "1 Analytical Way", "city": "Ottawa", "country_code": "CA", "zip": "K1A 0B1"}
+    }
+}"#;
+
+/// What a login changes of the checkout, to compare one opened from a URL with one logged in
+/// from the menu.
+fn login_view(json: &Json) -> Json {
+    json!({
+        "buyer": json["buyer"],
+        "shippingAddress": json["shippingAddress"],
+        "country": json["localization"]["country"]["isoCode"],
+        "addresses": json["account"]["addresses"],
+        "scenario": json["scenario"],
+        "lines": json["lines"].as_array().map(Vec::len),
+    })
+}
+
+/// The checkout of `/checkout?scenario=<scenario>&customer=<who>`, and the one of
+/// `/checkout?scenario=<scenario>` logged in as `who` from the menu.
+fn url_and_menu_logins(state: &ServerState, scenario: &str, who: &str) -> (Json, Json) {
+    let reply = get(
+        state,
+        &format!("/checkout?scenario={scenario}&customer={who}"),
+        "co-login-url",
+    );
+    assert_eq!(reply.status, 302, "{}", text(&reply));
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    let by_url = body_json(&get(state, &format!("{path}.json"), &session));
+
+    let reply = get(
+        state,
+        &format!("/checkout?scenario={scenario}"),
+        "co-login-menu",
+    );
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    body_json(&get(state, &format!("{path}.json"), &session));
+    let by_menu = log_in_as(state, &path, &session, json!(who));
+    (by_url, by_menu)
+}
+
+#[test]
+fn a_customer_in_the_query_of_a_scenario_logs_in_as_the_menu_does() {
+    let data = ScenarioData::new(
+        "login-entered",
+        &[
+            ("entered.json", ENTERED_CONTACT),
+            (
+                "jane-entered.json",
+                r#"{
+                    "session": {"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+                    "entered": {"email": "orders@example.com"}
+                }"#,
+            ),
+        ],
+    );
+    let state = data.server(&[], false);
+
+    // Jane has addresses: the login brings her contact and her default address, whatever the
+    // scenario entered for the guest before.
+    let (by_url, by_menu) = url_and_menu_logins(&state, "entered", "jane.doe@example.com");
+    assert_eq!(login_view(&by_url), login_view(&by_menu));
+    assert_eq!(by_url["buyer"]["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(by_url["buyer"]["email"], "jane.doe@example.com");
+    assert_eq!(by_url["buyer"]["phone"], "+1 555 010 9988");
+    assert_eq!(by_url["shippingAddress"]["address1"], "12 Maple Street");
+    assert_eq!(by_url["localization"]["country"]["isoCode"], "US");
+
+    // A customer without an address keeps the one the scenario entered; the contact is theirs.
+    let (by_url, by_menu) = url_and_menu_logins(&state, "entered", "new.customer@example.com");
+    assert_eq!(login_view(&by_url), login_view(&by_menu));
+    assert_eq!(by_url["buyer"]["email"], "new.customer@example.com");
+    assert_eq!(by_url["buyer"]["phone"], Json::Null);
+    assert_eq!(by_url["shippingAddress"]["address1"], "1 Analytical Way");
+    assert_eq!(by_url["localization"]["country"]["isoCode"], "CA");
+
+    // The customer the scenario is already logged in as: nothing changes, its entries stay.
+    let (by_url, by_menu) = url_and_menu_logins(&state, "jane-entered", "jane.doe@example.com");
+    assert_eq!(login_view(&by_url), login_view(&by_menu));
+    assert_eq!(by_url["buyer"]["email"], "orders@example.com");
+    assert_eq!(by_url["shippingAddress"]["address1"], "12 Maple Street");
+}
+
+#[test]
+fn a_logged_in_checkout_keeps_the_contact_email_a_scenario_entered() {
+    let data = ScenarioData::new(
+        "login-contact",
+        &[(
+            "jane-entered.json",
+            r#"{
+                "session": {"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}},
+                "entered": {"email": "orders@example.com"}
+            }"#,
+        )],
+    );
+    let state = data.server(&[], false);
+    let reply = get(
+        &state,
+        "/checkout?scenario=jane-entered",
+        "co-login-contact",
+    );
+    let session = session_cookie(&reply);
+    let path = header(&reply, "location").unwrap().to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), &session));
+    // The contact is the scenario's; the account is Jane's: the page shows both.
+    assert_eq!(json["buyer"]["email"], "orders@example.com");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+    // Emptying the contact email gives the account's back.
+    let reply = operations(
+        &state,
+        &path,
+        &session,
+        json!([{"type": "email", "value": Json::Null}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    assert_eq!(body_json(&reply)["buyer"]["email"], "jane.doe@example.com");
+    // And another one can be typed while logged in.
+    let reply = operations(
+        &state,
+        &path,
+        &session,
+        json!([{"type": "email", "value": "billing@example.com"}]),
+    );
+    let json = body_json(&reply);
+    assert_eq!(json["buyer"]["email"], "billing@example.com");
+    assert_eq!(json["buyer"]["customer"]["email"], "jane.doe@example.com");
+}
+
+#[test]
+fn the_functions_read_the_customer_the_checkout_switched_to() {
+    // A copy of the fixture app whose payment Function also asks for the buyer.
+    let root = std::env::temp_dir().join(format!("lsf-checkout-fn-buyer-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let query = root.join("extensions/payment-rules/src/run.graphql");
+    let source = std::fs::read_to_string(&query).unwrap();
+    std::fs::write(
+        &query,
+        source.replacen(
+            "  cart {",
+            r#"  cart {
+    buyerIdentity {
+      email
+      isAuthenticated
+      customer {
+        id email displayName numberOfOrders
+        amountSpent { amount currencyCode }
+        vip: hasAnyTag(tags: ["vip"])
+        tags: hasTags(tags: ["vip", "wholesale"]) { tag hasTag }
+        tier: metafield(namespace: "custom", key: "loyalty_tier") { value }
+      }
+      purchasingCompany { company { name } location { name } }
+    }"#,
+            1,
+        ),
+    )
+    .unwrap();
+    let state = checkout_server_of(root.clone(), &["payment-rules"], false);
+    let session = "co-fn-buyer";
+    let path = guest_checkout(&state, session);
+    let buyer = |json: &Json| {
+        let run = json["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["handle"] == "payment-rules")
+            .expect("the run of the payment Function")
+            .clone();
+        assert_eq!(run["error"], Json::Null, "{run}");
+        run["input"]["cart"]["buyerIdentity"].clone()
+    };
+
+    let json = body_json(&get(&state, &format!("{path}.json"), session));
+    assert_eq!(buyer(&json)["customer"], Json::Null);
+    assert_eq!(buyer(&json)["isAuthenticated"], false);
+
+    let identity = buyer(&log_in_as(
+        &state,
+        &path,
+        session,
+        json!("jane.doe@example.com"),
+    ));
+    assert_eq!(identity["isAuthenticated"], true);
+    assert_eq!(identity["email"], "jane.doe@example.com");
+    let customer = &identity["customer"];
+    assert_eq!(customer["email"], "jane.doe@example.com");
+    assert_eq!(customer["displayName"], "Jane Doe");
+    assert_eq!(customer["numberOfOrders"], 2);
+    assert_eq!(customer["vip"], true);
+    assert_eq!(
+        customer["tags"],
+        json!([{"tag": "vip", "hasTag": true}, {"tag": "wholesale", "hasTag": false}])
+    );
+    assert_eq!(customer["tier"]["value"], "gold");
+    assert!(
+        customer["amountSpent"]["amount"]
+            .as_str()
+            .is_some_and(|amount| amount != "0.0")
+    );
+    assert_eq!(identity["purchasingCompany"], Json::Null);
+
+    let identity = buyer(&log_in_as(
+        &state,
+        &path,
+        session,
+        json!("alex.morgan@example.com"),
+    ));
+    assert_eq!(identity["customer"]["vip"], false);
+    assert_eq!(identity["customer"]["numberOfOrders"], 0);
+    assert_eq!(
+        identity["purchasingCompany"]["company"]["name"],
+        "Northwind Hotels"
+    );
+    assert_eq!(
+        identity["purchasingCompany"]["location"]["name"],
+        "Northwind Portland"
+    );
+
+    let identity = buyer(&log_in_as(&state, &path, session, Json::Null));
+    assert_eq!(identity["customer"], Json::Null);
+    assert_eq!(identity["isAuthenticated"], false);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// --- The home page ---
+
+/// The same fixture app with an extra Function that has a `.fetch` target and an extra checkout
+/// UI extension that is not built, declares a target the page has no place for, and an API
+/// version that is not supported.
+fn app_with_oddities(label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-home-app-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let write = |handle: &str, toml: &str| {
+        let directory = root.join("extensions").join(handle);
+        std::fs::create_dir_all(directory.join("src")).unwrap();
+        std::fs::write(directory.join("shopify.extension.toml"), toml).unwrap();
+        directory
+    };
+    let remote = write(
+        "remote-rules",
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Remote rules"
+handle = "remote-rules"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.fetch"
+  input_query = "src/fetch.graphql"
+  export = "fetch"
+"#,
+    );
+    std::fs::write(
+        remote.join("src/run.graphql"),
+        "query Input { cart { lines { quantity } } }",
+    )
+    .unwrap();
+    std::fs::write(
+        remote.join("src/fetch.graphql"),
+        "query Input { cart { lines { quantity } } }",
+    )
+    .unwrap();
+    write(
+        "chat-widget",
+        r#"api_version = "2025-07"
+
+[[extensions]]
+name = "Chat widget"
+handle = "chat-widget"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+  module = "./src/Block.jsx"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.nowhere.render"
+  module = "./src/Chat.jsx"
+"#,
+    );
+    write(
+        "theme-widget",
+        "api_version = \"2026-10\"\n\n[[extensions]]\nname = \"Widget\"\nhandle = \"theme-widget\"\ntype = \"theme\"\n",
+    );
+    root
+}
+
+#[test]
+fn the_home_page_lists_every_extension_of_the_app() {
+    let data = ScenarioData::new("home-extensions", &[]);
+    let state = data.server(&[], true);
+    let page = get(&state, "/", "home");
+    assert_eq!(page.status, 200);
+    assert!(
+        header(&page, "content-type").is_some_and(|kind| kind.starts_with("text/html")),
+        "{:?}",
+        page.headers
+    );
+    let html = text(&page);
+    // It wears the checkout's stylesheet, needs no other host, and its one script (the filter
+    // and the check of the Functions) is the checkout's own.
+    assert!(html.contains("/__lsf/checkout/assets/checkout.css"));
+    assert_eq!(html.matches("<script").count(), 1, "{html}");
+    assert!(
+        html.contains("<script type=\"module\" src=\"/__lsf/checkout/assets/home.js\"></script>")
+    );
+    assert!(!html.contains("http://") && !html.contains("https://"));
+    for handle in [
+        "volume-discount",
+        "delivery-rules",
+        "payment-rules",
+        "quantity-limit",
+        "bundle-transform",
+    ] {
+        assert!(
+            html.contains(&format!("data-function=\"{handle}\"")),
+            "{handle}"
+        );
+    }
+    for handle in ["gift-message", "order-notice"] {
+        assert!(
+            html.contains(&format!("data-ui-extension=\"{handle}\"")),
+            "{handle}"
+        );
+    }
+    // What each one is: its API version, targets and the places of the targets.
+    assert!(html.contains("API 2027-01") && html.contains("API 2026-10"));
+    assert!(html.contains("cart.lines.discounts.generate.run"));
+    assert!(html.contains("discount API"));
+    assert!(html.contains("purchase.checkout.reductions.render-after"));
+    assert!(html.contains("Checkout summary: under the discount code field"));
+    // And how to see them all.
+    assert!(html.contains("href=\"/checkout?targets=all\""));
+    assert!(html.contains("href=\"/checkout?variant=shop\""));
+
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let function = |handle: &str| {
+        json["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|function| function["handle"] == handle)
+            .unwrap_or_else(|| panic!("no {handle}"))
+            .clone()
+    };
+    let discount = function("volume-discount");
+    assert_eq!(discount["apiVersion"], "2026-10");
+    assert_eq!(discount["built"], true);
+    assert_eq!(discount["network"], false);
+    assert_eq!(discount["apis"], json!(["discount"]));
+    assert_eq!(discount["selected"], true);
+    // The legacy target of the validation Function is said to be one.
+    let validation = function("quantity-limit");
+    assert_eq!(validation["targets"][0]["legacy"], true);
+    assert_eq!(validation["problems"][0]["severity"], "warning");
+}
+
+#[test]
+fn the_home_page_says_what_is_wrong_with_the_extensions() {
+    let app = app_with_oddities("wrong");
+    let state = checkout_server_with_data(app.clone(), &["volume-discount"], true, None);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+
+    let find = |list: &str, handle: &str| {
+        json[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["handle"] == handle)
+            .unwrap_or_else(|| panic!("no {handle} in {list}"))
+            .clone()
+    };
+    // A Function with a `.fetch` target can reach the network, and is not built.
+    let remote = find("functions", "remote-rules");
+    assert_eq!(remote["network"], true);
+    assert_eq!(remote["built"], false);
+    assert_eq!(remote["selected"], false);
+    assert!(
+        remote["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|problem| problem["message"]
+                .as_str()
+                .unwrap()
+                .contains("no Wasm module")),
+        "{remote}"
+    );
+    assert_eq!(find("functions", "volume-discount")["selected"], true);
+
+    // An extension on an API version the checkout does not run, and a target without a place.
+    let chat = find("uiExtensions", "chat-widget");
+    assert_eq!(chat["supported"], false);
+    assert_eq!(chat["built"], false);
+    assert_eq!(
+        chat["targets"][0]["place"],
+        "Checkout: a block between the shipping method and the payment"
+    );
+    assert_eq!(chat["targets"][1]["place"], Json::Null);
+    assert!(
+        chat["problems"].as_array().unwrap().iter().any(|problem| {
+            problem["severity"] == "error"
+                && problem["message"].as_str().unwrap().contains("2025-07")
+        }),
+        "{chat}"
+    );
+    assert_eq!(
+        json["otherExtensions"],
+        json!([{"handle": "theme-widget", "type": "theme"}])
+    );
+
+    let app = app_with_oddities("wrong-html");
+    let state = checkout_server_with_data(app.clone(), &[], true, None);
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert!(html.contains("no place on the page"), "{html}");
+    assert!(
+        html.contains("<code>purchase.checkout.nowhere.render</code> is not a target of checkout or customer account UI extensions"),
+        "{html}"
+    );
+    assert!(html.contains("network access"));
+    assert!(html.contains("not built"));
+    assert!(html.contains("API 2025-07 is not supported"));
+    assert!(html.contains("Other extensions"));
+}
+
+#[test]
+fn the_home_page_lists_the_scenarios_and_the_ones_with_errors() {
+    let broken = r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#;
+    let data = ScenarioData::new(
+        "home-scenarios",
+        &[
+            ("tees.json", TEES),
+            ("broken.json", broken),
+            ("unreadable.json", "{ nope"),
+        ],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let scenarios = json["scenarios"].as_array().unwrap();
+    let names: Vec<&str> = scenarios
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["broken", "tees", "unreadable"]);
+
+    let tees = &scenarios[1];
+    assert_eq!(tees["title"], "Three tees in French");
+    assert_eq!(tees["open"], "/checkout?scenario=tees");
+    assert_eq!(
+        tees["openAllTargets"],
+        "/checkout?scenario=tees&targets=all"
+    );
+    assert_eq!(tees["problems"], json!([]));
+    let summary: HashMap<&str, &str> = tees["summary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["label"].as_str().unwrap(),
+                row["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary["Cart"],
+        "3 × Organic Cotton T-Shirt (Black / M) · note “A gift”"
+    );
+    assert_eq!(summary["Buyer"], "customer jane.doe@example.com");
+    assert_eq!(summary["Country, language"], "FR, French");
+    assert!(
+        summary["Entered"].contains("email gift@example.com"),
+        "{summary:?}"
+    );
+    assert!(
+        summary["Entered"].contains("address 1 rue de Rivoli, Paris, FR"),
+        "{summary:?}"
+    );
+    // The discounts are the store's: not listed again for each scenario.
+    assert!(
+        summary["Discounts"].starts_with("the store's ")
+            && summary["Discounts"].ends_with(" discounts · codes entered: WELCOME"),
+        "{summary:?}"
+    );
+    assert_eq!(
+        tees["facts"],
+        json!(["1 line", "Jane", "FR", "fr", "1 code", "Shop look"])
+    );
+    assert_eq!(
+        summary["Overrides"],
+        "shipping Standard 4.90 USD, Express 12.90 USD · tax 20%"
+    );
+    assert_eq!(summary["Look"], "shop");
+
+    // A scenario with errors is listed with them, and has nowhere to go.
+    for name in [0, 2] {
+        assert_eq!(scenarios[name]["open"], Json::Null);
+        assert_eq!(scenarios[name]["summary"], json!([]));
+    }
+    assert!(
+        scenarios[0]["problems"][0]
+            .as_str()
+            .unwrap()
+            .contains("unknown_variant")
+    );
+    assert!(
+        scenarios[2]["problems"][0]
+            .as_str()
+            .unwrap()
+            .contains("invalid_json")
+    );
+
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("data-scenario=\"tees\""));
+    assert!(html.contains("href=\"/checkout?scenario=tees\""));
+    assert!(html.contains("href=\"/checkout?scenario=tees&amp;targets=all\""));
+    assert!(html.contains("Three tees in French"));
+    assert!(html.contains("data-scenario=\"broken\""));
+    assert!(html.contains("has errors"));
+    assert!(
+        html.contains("checkouts/broken.json at /session/cart/items/0/variant"),
+        "{html}"
+    );
+    assert!(!html.contains("href=\"/checkout?scenario=broken\""));
+    // The link of a scenario opens it.
+    assert_eq!(get(&state, "/checkout?scenario=tees", "home").status, 302);
+}
+
+#[test]
+fn the_home_page_says_how_to_get_scenarios() {
+    let state = checkout_server(&[], true);
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("None yet"), "{html}");
+    assert!(html.contains("lsf app init --app"), "{html}");
+}
+
+/// The position of `needle` in `html`, which must have it.
+fn position(html: &str, needle: &str) -> usize {
+    html.find(needle)
+        .unwrap_or_else(|| panic!("no {needle} in the page"))
+}
+
+#[test]
+fn the_problems_of_the_home_page_come_first_errors_first() {
+    let app = app_with_oddities("problems");
+    let data = ScenarioData::new(
+        "home-problems",
+        &[(
+            "broken.json",
+            r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#,
+        )],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
+
+    let problems = json["problems"].as_array().unwrap();
+    let severities: Vec<&str> = problems
+        .iter()
+        .map(|problem| problem["severity"].as_str().unwrap())
+        .collect();
+    let errors = severities.iter().filter(|s| **s == "error").count();
+    assert!(errors > 0 && errors < severities.len(), "{severities:?}");
+    assert!(
+        severities[..errors].iter().all(|s| *s == "error"),
+        "{severities:?}"
+    );
+    assert_eq!(
+        json["counts"],
+        json!({"errors": errors, "warnings": severities.len() - errors})
+    );
+    // An extension that is not built cannot run: an error, with where to see it.
+    let remote = problems
+        .iter()
+        .find(|problem| problem["subject"] == "remote-rules")
+        .expect("remote-rules");
+    assert_eq!(remote["severity"], "error");
+    assert_eq!(remote["kind"], "function");
+    assert_eq!(remote["href"], "#function-remote-rules");
+    // A legacy target is a warning.
+    let legacy = problems
+        .iter()
+        .find(|problem| problem["subject"] == "quantity-limit")
+        .expect("quantity-limit");
+    assert_eq!(legacy["severity"], "warning");
+    // A scenario that does not validate leads to its row.
+    let broken = problems
+        .iter()
+        .find(|problem| problem["kind"] == "scenario")
+        .expect("the broken scenario");
+    assert_eq!(broken["href"], "#scenario-broken");
+    assert_eq!(broken["where"], "checkouts/broken.json");
+
+    // On the page, the bar comes first, with how many problems there are and the ways in; then
+    // the tabs, the problems last, errors before warnings, each on a line.
+    let problems_at = position(&html, "data-section=\"problems\"");
+    assert!(position(&html, "data-problem-pill") < position(&html, "data-section=\"scenarios\""));
+    assert!(position(&html, "data-section=\"scenarios\"") < problems_at);
+    assert!(html.contains("data-problem-tab-count>"), "{html}");
+    assert!(position(&html, "lsf-hp-group is-error") < position(&html, "lsf-hp-group is-warning"));
+    assert!(html.contains(&format!("{errors} errors")), "{html}");
+    assert!(html.contains("href=\"#scenario-broken\""));
+    assert!(html.contains("id=\"scenario-broken\""));
+    assert!(html.contains("id=\"function-remote-rules\""));
+}
+
+/// The fixture app with a Function whose Wasm module does not compile: every run of it fails.
+fn app_with_a_failing_function(label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-home-crash-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let directory = root.join("extensions/broken-wasm");
+    std::fs::create_dir_all(directory.join("src")).unwrap();
+    std::fs::create_dir_all(directory.join("dist")).unwrap();
+    std::fs::write(
+        directory.join("shopify.extension.toml"),
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Broken Wasm"
+handle = "broken-wasm"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  path = "dist/function.wasm"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("src/run.graphql"),
+        "query Input { cart { lines { quantity } } }",
+    )
+    .unwrap();
+    std::fs::write(directory.join("dist/function.wasm"), b"not a wasm module").unwrap();
+    root
+}
+
+#[test]
+fn a_function_that_fails_when_a_scenario_runs_is_a_problem_of_that_scenario() {
+    let app = app_with_a_failing_function("check");
+    let data = ScenarioData::new(
+        "home-crash",
+        &[
+            (
+                "crash.json",
+                r#"{"title": "It crashes", "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#,
+            ),
+            (
+                "fine.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["volume-discount"]}"#,
+            ),
+        ],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+
+    // The page does not wait for the check: it says where to ask for it.
+    let before = body_json(&get(&state, "/?format=json", "home"));
+    assert_eq!(before["check"]["state"], "pending");
+    assert_eq!(before["check"]["url"], "/__lsf/checkouts/check");
+    assert_eq!(before["check"]["total"], 2);
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("data-check=\"pending\""), "{html}");
+    assert!(html.contains("data-check-url=\"/__lsf/checkouts/check\""));
+    assert!(html.contains("Running the Functions of 2 scenarios"));
+
+    // The check runs the Functions of each scenario as its checkout would.
+    let check = body_json(&get(&state, "/__lsf/checkouts/check", "home"));
+    assert_eq!(check["state"], "done");
+    assert_eq!(check["checked"], 2);
+    let failures = check["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{check}");
+    assert_eq!(failures[0]["handle"], "broken-wasm");
+    assert_eq!(failures[0]["target"], "cart.validations.generate.run");
+    assert_eq!(failures[0]["scenarios"], json!(["crash"]));
+    // What the page puts in place: the problems, the rows that fail, the scenarios in order.
+    assert!(
+        check["problems"]
+            .as_str()
+            .unwrap()
+            .contains("data-check=\"done\"")
+    );
+    assert!(
+        check["problems"]
+            .as_str()
+            .unwrap()
+            .contains("href=\"#scenario-crash\"")
+    );
+    let rows = check["rows"].as_object().unwrap();
+    assert!(
+        rows["scenario-crash"]
+            .as_str()
+            .unwrap()
+            .contains("data-status=\"error\"")
+    );
+    assert!(rows.contains_key("function-broken-wasm"));
+    assert!(!rows.contains_key("scenario-fine"));
+    assert_eq!(check["order"], json!(["scenario-crash", "scenario-fine"]));
+
+    // Once it ran, the page has it: a problem linked to the scenario it fails in.
+    let after = body_json(&get(&state, "/?format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert_eq!(after["check"]["state"], "done");
+    let crash = &after["problems"][0];
+    assert_eq!(crash["kind"], "crash");
+    assert_eq!(crash["severity"], "error");
+    assert_eq!(crash["subject"], "broken-wasm");
+    assert_eq!(crash["target"], "cart.validations.generate.run");
+    assert_eq!(crash["href"], "#scenario-crash");
+    assert_eq!(crash["scenarios"], json!(["crash"]));
+    let scenario = |name: &str| {
+        after["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|scenario| scenario["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(scenario("crash")["status"], "error");
+    assert_eq!(scenario("crash")["failing"], json!(["broken-wasm"]));
+    assert_eq!(scenario("fine")["status"], "ok");
+    let function = after["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "broken-wasm")
+        .unwrap()
+        .clone();
+    assert_eq!(function["status"], "error");
+    assert_eq!(function["scenarios"], 1);
+    assert_eq!(function["failures"][0]["scenarios"], json!(["crash"]));
+}
+
+#[test]
+fn a_check_whose_app_changed_while_it_ran_is_not_kept() {
+    let app_dir = app_with_a_failing_function("race");
+    let data = ScenarioData::new(
+        "home-race",
+        &[(
+            "crash.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#,
+        )],
+    );
+    let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data.0));
+    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let store = state.loaded().store.clone();
+    let wasm = app_dir.join("extensions/broken-wasm/dist/function.wasm");
+    let cache = super::home_check::Cache::default();
+    let found = |checked| super::home_check::Report {
+        checked,
+        total: 1,
+        ..Default::default()
+    };
+
+    // The module is rebuilt after the check ran it, before the check ends: what it found is
+    // about the old module, and is not kept.
+    let report = cache.get_or_run_with(&app, &store, || {
+        std::fs::write(&wasm, b"another module, of another size").unwrap();
+        found(1)
+    });
+    assert_eq!(report.checked, 1, "the answer is still given");
+    assert!(cache.get(&app, &store).is_none(), "kept for the new module");
+
+    // A check that nothing changed under is kept, and the next request takes it.
+    let report = cache.get_or_run_with(&app, &store, || found(1));
+    let again = cache.get_or_run_with(&app, &store, || panic!("ran again"));
+    assert!(std::sync::Arc::ptr_eq(&report, &again));
+
+    // A check that ran out of time is not kept.
+    std::fs::write(&wasm, b"a third module").unwrap();
+    cache.get_or_run_with(&app, &store, || found(0));
+    std::fs::remove_dir_all(&app_dir).ok();
+    assert!(cache.get(&app, &store).is_none());
+}
+
+/// The checkout playground, with the store data in a copy of its own that keeps the scenarios
+/// `keep`, and whose network Functions call `base`.
+fn playground_with(
+    label: &str,
+    keep: &[&str],
+    base: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/checkout-playground");
+    let data = std::env::temp_dir().join(format!("lsf-home-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data);
+    copy_directory(&app.join("shopify-local"), &data);
+    for entry in std::fs::read_dir(data.join("checkouts")).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !keep.iter().any(|kept| name == format!("{kept}.json")) {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+    let store = data.join("store.json");
+    let text = std::fs::read_to_string(&store).unwrap();
+    assert!(
+        text.contains("http://localhost:8787"),
+        "the store data calls the mock server"
+    );
+    std::fs::write(&store, text.replace("http://localhost:8787", base)).unwrap();
+    (app, data)
+}
+
+#[test]
+fn the_check_of_the_home_page_sends_no_http_request() {
+    // A server of the test, in place of the mock server: nothing may reach it. Other tests send
+    // requests to ports they found free, which may be this one: the URLs of this test have a
+    // path of their own.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let prefix = format!("/home-check-{}", std::process::id());
+    let base = format!("http://{}{prefix}", listener.local_addr().unwrap());
+    let (app, data) = playground_with(
+        "no-network",
+        &[
+            "fn-validation-network",
+            "fn-discount-network",
+            "fn-broken-fetch-timeout",
+        ],
+        &base,
+    );
+    let state = checkout_server_with_data(app, &[], true, Some(&data));
+    let html = text(&get(&state, "/", "home"));
+    let check = body_json(&get(&state, "/__lsf/checkouts/check", "home"));
+    std::fs::remove_dir_all(&data).ok();
+    assert!(html.contains("data-check=\"pending\""), "{html}");
+    assert_eq!(check["state"], "done", "{check}");
+    assert_eq!(check["checked"], 3, "{check}");
+    // The network Functions ran, their requests were not sent: they read a 502, and do not fail.
+    // A request out of Shopify's limits still fails its `.fetch` target.
+    let failures = check["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{check}");
+    assert_eq!(failures[0]["handle"], "broken-fetch-timeout");
+    assert_eq!(failures[0]["target"], "cart.validations.generate.fetch");
+    assert!(
+        failures[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("readTimeoutMs"),
+        "{check}"
+    );
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                use std::io::BufRead;
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut line = String::new();
+                let _ = std::io::BufReader::new(stream).read_line(&mut line);
+                assert!(!line.contains(&prefix), "the check sent a request: {line}");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) => panic!("{error}"),
+        }
+    }
+}
+
+#[test]
+fn a_check_past_its_budget_says_how_many_scenarios_it_checked() {
+    let (app_dir, data) = playground_with(
+        "budget",
+        &[
+            "fn-validation-network",
+            "fn-broken-panic",
+            "fn-broken-bad-output",
+        ],
+        "http://127.0.0.1:9",
+    );
+    let state = checkout_server_with_data(app_dir.clone(), &[], true, Some(&data));
+    let app = lsf_checkout::app::load(&app_dir).unwrap();
+    let store = state.loaded().store.clone();
+    let report = super::home_check::run(&state, &app, &store, Duration::ZERO);
+    assert_eq!((report.checked, report.total), (0, 3));
+    assert!(report.failures.is_empty());
+    assert_eq!(report.to_json()["state"], "partial");
+
+    // The page says it, and asks again: a partial check is not kept.
+    let check = body_json(&get(&state, "/__lsf/checkouts/check", "home"));
+    std::fs::remove_dir_all(&data).ok();
+    assert_eq!(check["state"], "done", "{check}");
+    assert_eq!(check["checked"], 3);
+    let mut home = body_json(&get(&state, "/?format=json", "home"));
+    home["check"] = report.to_json();
+    let html = super::home::render(&home, "");
+    assert!(
+        html.contains("Checked 0 of 3 scenarios"),
+        "{}",
+        &html[..html.len().min(3000)]
+    );
+}
+
+#[test]
+fn scenarios_whose_names_differ_only_by_what_an_id_cannot_hold_have_ids_of_their_own() {
+    let cart = r#"{"session": {"cart": {"items": [{"variant": "NOPE"}]}}}"#;
+    let data = ScenarioData::new(
+        "home-ids",
+        &[("a b.json", cart), ("a-b.json", cart), ("a_b.json", cart)],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    let mut anchors: Vec<&str> = json["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|scenario| scenario["anchor"].as_str().unwrap())
+        .collect();
+    anchors.sort();
+    assert_eq!(
+        anchors,
+        ["scenario-a-b", "scenario-a_20b", "scenario-a_5fb"]
+    );
+    for anchor in &anchors {
+        assert_eq!(
+            html.matches(&format!("id=\"{anchor}\"")).count(),
+            1,
+            "{anchor}"
+        );
+    }
+    // Each problem leads to the row of its own scenario.
+    let mut links: Vec<&str> = json["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|problem| problem["kind"] == "scenario")
+        .map(|problem| problem["href"].as_str().unwrap())
+        .collect();
+    links.sort();
+    assert_eq!(
+        links,
+        ["#scenario-a-b", "#scenario-a_20b", "#scenario-a_5fb"]
+    );
+}
+
+#[test]
+fn without_the_script_the_page_runs_the_check_when_asked() {
+    let app = app_with_a_failing_function("now");
+    let data = ScenarioData::new(
+        "home-check-now",
+        &[(
+            "crash.json",
+            r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#,
+        )],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains("href=\"/?check=1\""), "{html}");
+    let html = text(&get(&state, "/?check=1", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert!(html.contains("data-check=\"done\""), "{html}");
+    assert!(html.contains("data-problem=\"crash\""), "{html}");
+}
+
+#[test]
+fn the_status_of_a_scenario_comes_from_its_problems_and_its_extensions() {
+    let app = app_with_oddities("statuses");
+    let data = ScenarioData::new(
+        "home-statuses",
+        &[
+            // It runs a Function that is not built: an error, as the problem of the Function.
+            (
+                "unbuilt.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["remote-rules"]}"#,
+            ),
+            // A warning and an error: the worst wins.
+            (
+                "mixed.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["quantity-limit", "remote-rules"]}"#,
+            ),
+            (
+                "plain.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["volume-discount"]}"#,
+            ),
+            (
+                "legacy.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["quantity-limit", "gift-message"]}"#,
+            ),
+            (
+                "ghost.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}, "extensions": ["ghost"]}"#,
+            ),
+            ("unreadable.json", "{ nope"),
+        ],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let statuses: HashMap<&str, &str> = json["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap(), s["status"].as_str().unwrap()))
+        .collect();
+    assert_eq!(statuses["plain"], "ok");
+    // It uses a Function with a legacy target: a warning, as the problem is.
+    assert_eq!(statuses["legacy"], "warning");
+    assert_eq!(statuses["unbuilt"], "error");
+    assert_eq!(statuses["mixed"], "error");
+    assert_eq!(statuses["ghost"], "error");
+    assert_eq!(statuses["unreadable"], "error");
+    let legacy = json["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "legacy")
+        .unwrap();
+    assert_eq!(legacy["functions"], json!(["quantity-limit"]));
+    assert_eq!(legacy["uiExtensions"], json!(["gift-message"]));
+    assert_eq!(legacy["allExtensions"], false);
+
+    // The page lists them problems first, then by name, each with what the filter reads.
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    let at = |name: &str| position(&html, &format!("data-scenario=\"{name}\""));
+    assert!(at("ghost") < at("mixed"));
+    assert!(at("mixed") < at("unbuilt"));
+    assert!(at("unbuilt") < at("unreadable"));
+    assert!(at("unreadable") < at("legacy"));
+    assert!(at("legacy") < at("plain"));
+    assert!(
+        html.contains("data-status=\"warning\" data-uses=\"functions ui\""),
+        "{html}"
+    );
+    assert!(html.contains("Runs 1 Function and 1 UI extension"));
+    // The filter is there from the start, waiting for the script, and its count takes the room
+    // of its longest text: nothing moves when the script wakes it.
+    assert!(html.contains("data-filter-query disabled"), "{html}");
+    assert!(html.contains("6 of 6 scenarios shown</span>"), "{html}");
+}
+
+#[test]
+fn a_scenario_lists_the_discounts_only_when_it_has_its_own() {
+    let data = ScenarioData::new(
+        "home-discounts",
+        &[
+            (
+                "own.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}},
+                    "checkout": {"discounts": [{"function": "volume-discount", "title": "Bulk deal", "code": "BULK", "classes": ["PRODUCT"]}]}}"#,
+            ),
+            (
+                "store.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M"}]}}}"#,
+            ),
+        ],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let scenario = |name: &str| {
+        json["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    let discounts = |scenario: &Json| {
+        scenario["summary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["label"] == "Discounts")
+            .map(|row| row["text"].as_str().unwrap().to_string())
+            .unwrap()
+    };
+    let own = scenario("own");
+    assert_eq!(own["problems"], json!([]), "{own}");
+    assert_eq!(discounts(&own), "Bulk deal (code BULK)");
+    assert!(
+        own["facts"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("1 own discount"))
+    );
+    let store = scenario("store");
+    assert!(discounts(&store).starts_with("the store's "), "{store}");
+    assert!(!discounts(&store).contains("Bulk deal"));
+}
+
+#[test]
+fn the_home_page_of_an_app_with_nothing_says_so() {
+    let root = std::env::temp_dir().join(format!("lsf-home-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("extensions")).unwrap();
+    std::fs::write(root.join("shopify.app.toml"), "name = \"Empty app\"\n").unwrap();
+    let state = checkout_server_of(root.clone(), &[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&root).ok();
+
+    assert_eq!(json["problems"], json!([]));
+    assert_eq!(json["counts"], json!({"errors": 0, "warnings": 0}));
+    assert_eq!(json["check"]["state"], "none");
+    assert_eq!(json["functions"], json!([]));
+    assert_eq!(json["uiExtensions"], json!([]));
+    assert!(html.contains("No problems."), "{html}");
+    assert!(html.contains("lsf-hp is-clear"));
+    assert!(html.contains("The app has no Function."));
+    assert!(html.contains("The app has no checkout UI extension."));
+    assert!(html.contains("The app has no customer account UI extension."));
+    assert!(html.contains("None yet"));
+    // Nothing to filter.
+    assert!(!html.contains("data-filter"));
+}
+
+#[test]
+fn the_customers_of_the_home_page_open_the_first_scenario_with_its_cart() {
+    // The session of the data may have an empty cart: the link gives the checkout one.
+    let data = ScenarioData::new(
+        "customer-links",
+        &[
+            (
+                "00-broken.json",
+                r#"{ "session": { "cart": { "items": [{ "variant": "TEE-BLK-M", "quantity": 1 }] } }, "extensions": ["ghost"] }"#,
+            ),
+            ("a-abroad.json", TEES),
+            (
+                "b-home.json",
+                r#"{ "session": { "cart": { "items": [{ "variant": "TEE-BLK-M", "quantity": 3 }] } } }"#,
+            ),
+        ],
+    );
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let jane = &json["customers"][0];
+    // Not the one that names an extension the app does not have, nor the French one, though
+    // they come first: the first that opens in the store's own language.
+    assert_eq!(
+        jane["open"],
+        "/checkout?scenario=b-home&customer=jane.doe%40example.com"
+    );
+    let reply = get(&state, text_of_json(&jane["open"]), "customer-link");
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    let location = header(&reply, "location").unwrap().to_string();
+    let checkout = body_json(&get(&state, &format!("{location}.json"), &id));
+    assert_eq!(checkout["lines"][0]["quantity"], 3);
+    assert_eq!(
+        checkout["buyer"]["customer"]["email"],
+        "jane.doe@example.com"
+    );
+}
+
+#[test]
+fn the_home_page_lists_the_customers_to_log_in_as() {
+    let state = checkout_server(&[], true);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let customers = json["customers"].as_array().expect("customers");
+    assert_eq!(customers.len(), 4);
+    assert_eq!(customers[0]["email"], "jane.doe@example.com");
+    assert_eq!(
+        customers[0]["open"],
+        "/checkout?customer=jane.doe%40example.com"
+    );
+    assert_eq!(customers[2]["company"], "Northwind Hotels");
+    let html = text(&get(&state, "/", "home"));
+    assert!(html.contains(">Customers</h2>"), "{html}");
+    // Their customer account, logged in as them.
+    assert!(
+        html.contains(
+            "href=\"/__lsf/login?customer=jane.doe%40example.com&amp;return_to=%2Faccount\""
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains("data-customer=\"alex.morgan@example.com\""),
+        "{html}"
+    );
+    assert!(html.contains("B2B · Northwind Hotels"), "{html}");
+    // The link opens the checkout logged in as them.
+    let reply = get(&state, text_of_json(&customers[3]["open"]), "home-login");
+    let path = header(&reply, "location").expect("a location").to_string();
+    let checkout = body_json(&get(&state, &format!("{path}.json"), "home-login"));
+    assert_eq!(
+        checkout["buyer"]["customer"]["email"],
+        "camille.martin@example.com"
+    );
+}
+
+fn text_of_json(value: &Json) -> &str {
+    value.as_str().expect("a string")
+}
+
+#[test]
+fn the_home_page_follows_the_language_of_the_url() {
+    let data = ScenarioData::new("home-fr", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let json = body_json(&get(&state, "/fr/?format=json", "home"));
+    assert_eq!(json["scenarios"][0]["open"], "/fr/checkout?scenario=tees");
+    assert_eq!(json["links"]["checkout"], "/fr/checkout");
+    assert_eq!(json["links"]["allTargets"], "/fr/checkout?targets=all");
+    // A checkout started there is in French, with the page's own parameters kept.
+    let reply = get(&state, "/fr/checkout?targets=all", "home");
+    assert_eq!(
+        header(&reply, "location"),
+        Some(
+            format!(
+                "/fr/checkouts/cn/{}?targets=all",
+                super::cart_token_of("home")
+            )
+            .as_str()
+        )
+    );
+}
+
+#[test]
+fn with_a_theme_the_home_page_is_under_the_control_api() {
+    let data = ScenarioData::new("home-theme", &[("tees.json", TEES)]);
+    let state = data.server(&[], false);
+    // The theme owns `/`.
+    let storefront = text(&get(&state, "/", "home"));
+    assert!(!storefront.contains("data-section=\"scenarios\""));
+    let html = text(&get(&state, "/__lsf/checkouts", "home"));
+    assert!(html.contains("data-scenario=\"tees\""));
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "home"));
+    assert_eq!(json["scenarios"][0]["open"], "/checkout?scenario=tees");
+    let french = body_json(&get(
+        &state,
+        "/__lsf/checkouts?format=json&locale=fr",
+        "home",
+    ));
+    assert_eq!(french["scenarios"][0]["open"], "/fr/checkout?scenario=tees");
+    // A notice leads back to it.
+    let missing = text(&get(&state, "/checkout?scenario=nope", "home"));
+    assert!(missing.contains("href=\"/__lsf/checkouts\""), "{missing}");
+    // Without an app there is nothing to list.
+    assert_eq!(get(&server(), "/__lsf/checkouts", "home").status, 404);
+}
+
+#[test]
+fn every_scenario_that_init_writes_opens_and_runs_the_app() {
+    let root = std::env::temp_dir().join(format!("lsf-server-init-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let data = root.join("data");
+    crate::commands::app_init::run(
+        &root,
+        Some(&data),
+        crate::commands::app_init::InitArgs::for_app(fixture_app()),
+    )
+    .unwrap();
+    let state = checkout_server_with_data(fixture_app(), &[], true, Some(&data));
+    let home = body_json(&get(&state, "/?format=json", "init"));
+    let scenarios = home["scenarios"].as_array().unwrap();
+    assert!(scenarios.len() >= 12, "{}", scenarios.len());
+    for scenario in scenarios {
+        let name = scenario["name"].as_str().unwrap();
+        assert_eq!(scenario["problems"], json!([]), "{name}");
+        let opened = get(&state, scenario["open"].as_str().unwrap(), "init");
+        assert_eq!(opened.status, 302, "{name}: {}", text(&opened));
+        let id = session_cookie(&opened);
+        let location = header(&opened, "location").unwrap().to_string();
+        let json = body_json(&get(&state, &format!("{location}.json"), &id));
+        assert!(
+            !json["lines"].as_array().unwrap().is_empty(),
+            "{name} has a cart"
+        );
+        for run in json["runs"].as_array().unwrap() {
+            assert_eq!(run["error"], Json::Null, "{name}: {}", run["handle"]);
+        }
+        assert_eq!(json["scenario"]["name"], *name);
+        // The page itself, and with every target.
+        assert_eq!(get(&state, &location, &id).status, 200, "{name}");
+    }
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// The problem of the home page about `subject`, of the kind `kind`.
+fn problem_about<'a>(home: &'a Json, kind: &str, subject: &str) -> &'a Json {
+    home["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| problem["kind"] == kind && problem["subject"] == subject)
+        .unwrap_or_else(|| panic!("no {kind} problem about {subject}: {}", home["problems"]))
+}
+
+#[test]
+fn a_problem_of_the_home_page_opens_the_checkout_where_it_shows() {
+    let app = app_with_oddities("open");
+    let data = ScenarioData::new(
+        "home-open",
+        &[
+            // Names it among others, and comes first: the one that names fewer wins.
+            (
+                "a a.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["quantity-limit", "volume-discount"]}"#,
+            ),
+            // Runs every extension: one that names it wins over it.
+            (
+                "aaa-all.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}}"#,
+            ),
+            (
+                "a b&c.json",
+                r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["quantity-limit"]}"#,
+            ),
+        ],
+    );
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+
+    // A legacy target runs: the first scenario that names the Function, with the dialog on it.
+    // The name of the scenario is escaped in the URL, and the URL in the HTML.
+    let legacy = problem_about(&json, "function", "quantity-limit");
+    assert_eq!(
+        legacy["open"],
+        json!({
+            "href": "/checkout?scenario=a+b%26c&functions=quantity-limit",
+            "scenario": "a b&c",
+            "functions": "quantity-limit",
+            "run": true,
+        })
+    );
+    // The row of the Function on the page is still there, under the details.
+    assert_eq!(legacy["href"], "#function-quantity-limit");
+    assert!(
+        html.contains("href=\"/checkout?scenario=a+b%26c&amp;functions=quantity-limit\""),
+        "{html}"
+    );
+    assert!(html.contains("Open the run <span class=\"lsf-hp-in\">a b&amp;c</span>"));
+    assert!(html.contains("On this page: <a href=\"#function-quantity-limit\">quantity-limit</a>"));
+
+    // A Function that is not built: the scenario that runs every extension (no other does),
+    // where its run fails. The message names no target: the Function as a whole.
+    let remote = problem_about(&json, "function", "remote-rules");
+    assert_eq!(
+        remote["open"]["href"],
+        "/checkout?scenario=aaa-all&functions=remote-rules"
+    );
+    assert_eq!(remote["open"]["run"], true);
+
+    // A UI extension on an API version the checkout does not run is not on the page: the
+    // overview of the dialog, which says so.
+    let chat = json["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| problem["subject"] == "chat-widget" && problem["severity"] == "error")
+        .unwrap();
+    assert_eq!(
+        chat["open"]["href"],
+        "/checkout?scenario=aaa-all&functions=chat-widget"
+    );
+    assert_eq!(chat["open"]["run"], false);
+    assert!(html.contains("Open in checkout <span class=\"lsf-hp-in\">aaa-all</span>"));
+    std::fs::remove_dir_all(&app).ok();
+
+    // No scenario runs the extensions: the store's cart.
+    let app = app_with_oddities("open-none");
+    let state = checkout_server_with_data(app.clone(), &[], true, None);
+    let json = body_json(&get(&state, "/?format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    let legacy = problem_about(&json, "function", "quantity-limit");
+    assert_eq!(legacy["open"]["href"], "/checkout?functions=quantity-limit");
+    assert_eq!(legacy["open"]["scenario"], Json::Null);
+}
+
+#[test]
+fn a_run_that_fails_opens_its_scenario_on_that_run_and_its_target() {
+    let app = app_with_a_failing_function("open");
+    // A second target: the link names the target of the run.
+    let toml = app.join("extensions/broken-wasm/shopify.extension.toml");
+    let declared = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(
+        &toml,
+        declared.replace(
+            "  [extensions.build]",
+            "  [[extensions.targeting]]\n  target = \"cart.payment-methods.transform.run\"\n  input_query = \"src/run.graphql\"\n  export = \"run\"\n\n  [extensions.build]",
+        ),
+    )
+    .unwrap();
+    let cart = r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 1}]}}, "extensions": ["broken-wasm"]}"#;
+    let data = ScenarioData::new("home-open-run", &[("one.json", cart), ("two.json", cart)]);
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?check=1&format=json", "home"));
+    let html = text(&get(&state, "/", "home"));
+    std::fs::remove_dir_all(&app).ok();
+
+    let crash = json["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| {
+            problem["kind"] == "crash" && problem["target"] == "cart.validations.generate.run"
+        })
+        .unwrap_or_else(|| panic!("{}", json["problems"]));
+    let href = "/checkout?scenario=one&functions=broken-wasm%3Acart.validations.generate.run";
+    assert_eq!(crash["open"]["href"], href);
+    assert_eq!(crash["open"]["run"], true);
+    // It fails in both: each with the checkout of that scenario on the run.
+    assert_eq!(
+        crash["runs"],
+        json!([
+            {"scenario": "one", "href": href},
+            {
+                "scenario": "two",
+                "href": "/checkout?scenario=two&functions=broken-wasm%3Acart.validations.generate.run"
+            },
+        ])
+    );
+    assert!(html.contains(&format!("href=\"{}\"", href.replace('&', "&amp;"))));
+    assert!(html.contains("Fails in 2 scenarios, open the run in each:"));
+    // The rows on this page, under the details.
+    assert!(html.contains("<a href=\"#function-broken-wasm\">broken-wasm</a> in the Functions"));
+    assert!(html.contains("<a href=\"#scenario-two\">two</a> in the scenarios"));
+
+    // With one target, the handle is enough.
+    let app = app_with_a_failing_function("open-one");
+    let data = ScenarioData::new("home-open-one", &[("one.json", cart)]);
+    let state = checkout_server_with_data(app.clone(), &[], true, Some(&data.0));
+    let json = body_json(&get(&state, "/?check=1&format=json", "home"));
+    std::fs::remove_dir_all(&app).ok();
+    assert_eq!(
+        problem_about(&json, "crash", "broken-wasm")["open"]["href"],
+        "/checkout?scenario=one&functions=broken-wasm"
+    );
+}
+
+#[test]
+fn the_run_to_show_survives_the_redirect_of_a_scenario() {
+    let data = ScenarioData::new("query-functions", &[("tees.json", TEES)]);
+    let state = data.server(&[], true);
+    let reply = get(
+        &state,
+        "/checkout?scenario=tees&functions=volume-discount%3Acart.lines.discounts.generate.run&targets=all",
+        "viewer",
+    );
+    assert_eq!(reply.status, 302);
+    let id = session_cookie(&reply);
+    assert_eq!(
+        header(&reply, "location").unwrap(),
+        format!(
+            "/fr/checkouts/cn/{}?targets=all&functions=volume-discount%3Acart.lines.discounts.generate.run",
+            super::cart_token_of(&id)
+        )
+    );
+    // Empty (the overview), and escaped: it cannot add a parameter of its own.
+    let reply = get(&state, "/checkout?scenario=tees&functions=", "viewer");
+    assert!(header(&reply, "location").unwrap().ends_with("?functions="));
+    let reply = get(
+        &state,
+        "/checkout?functions=a%26variant%3Dshop%20%3Cb%3E",
+        "viewer",
+    );
+    let location = header(&reply, "location").unwrap();
+    assert!(
+        location.ends_with("?functions=a%26variant%3Dshop+%3Cb%3E"),
+        "{location}"
+    );
+}
+
+#[test]
+fn the_live_reload_token_changes_when_a_build_of_watch_is_over() {
+    let state = server();
+    let before = state.observe_changes();
+    assert_eq!(state.observe_changes(), before);
+    state.builds.bump();
+    assert_ne!(state.observe_changes(), before);
+}
+
+#[test]
+fn with_watch_the_pages_reload_and_say_which_builds_failed() {
+    let mut state = checkout_server(&[], true);
+    state.options.live_reload = true;
+    state.builds.set(
+        "volume-discount",
+        Some(crate::watch::Failure {
+            reason: "build failed (exit status: 101)".to_string(),
+            output: "error[E0425]: cannot find value `x` in this scope".to_string(),
+        }),
+    );
+    let path = start_checkout(
+        &state,
+        "co-watch",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    let html = text(&get(&state, &path, "co-watch"));
+    assert!(html.contains("data-lsf-live-reload"), "{html}");
+    let builds = &page_state(&html)["builds"];
+    assert_eq!(builds[0]["handle"], "volume-discount");
+    assert_eq!(builds[0]["reason"], "build failed (exit status: 101)");
+    assert!(builds[0]["output"].as_str().unwrap().contains("E0425"));
+    // The state the page updates itself with says so too.
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-watch"));
+    assert_eq!(json["builds"], *builds);
+
+    // The home page: the script, the Function in error, and the build first among its problems.
+    let home = get(&state, "/", "co-watch");
+    assert!(text(&home).contains("data-lsf-live-reload"));
+    assert!(text(&home).contains("E0425"), "the end of the output");
+    let home = body_json(&get(&state, "/?format=json", "co-watch"));
+    let function = home["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "volume-discount")
+        .unwrap();
+    assert_eq!(function["status"], "error");
+    let problem = home["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|problem| problem["kind"] == "build")
+        .expect("the build is a problem");
+    assert_eq!(problem["subject"], "volume-discount");
+    assert_eq!(problem["severity"], "error");
+    assert!(
+        problem["message"]
+            .as_str()
+            .unwrap()
+            .contains("the checkout runs the last module that built")
+    );
+    assert!(problem["detail"].as_str().unwrap().contains("E0425"));
+    assert!(
+        problem["open"]["href"]
+            .as_str()
+            .unwrap()
+            .contains("functions=volume-discount")
+    );
+
+    // Fixed: the problem is gone.
+    state.builds.set("volume-discount", None);
+    let home = body_json(&get(&state, "/?format=json", "co-watch"));
+    assert!(
+        !home["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|problem| problem["kind"] == "build")
+    );
+}
+
+#[test]
+fn without_live_reload_the_checkout_pages_have_no_script() {
+    let state = checkout_server(&[], true);
+    let path = start_checkout(
+        &state,
+        "co-nowatch",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert!(!text(&get(&state, &path, "co-nowatch")).contains("data-lsf-live-reload"));
+    assert!(!text(&get(&state, "/", "co-nowatch")).contains("data-lsf-live-reload"));
+    assert_eq!(
+        page_state(&text(&get(&state, &path, "co-nowatch")))["builds"],
+        json!([])
+    );
+}
+
+#[test]
+fn with_watch_the_checkout_runs_the_module_the_watch_published() {
+    let discount = || {
+        json!({"checkout": {"discounts": [{
+            "function": "volume-discount",
+            "title": "Volume",
+            "classes": ["PRODUCT"],
+            "metafields": {"$app:config.settings": {
+                "type": "json", "value": {"minimumQuantity": 3, "percentage": 10}
+            }}
+        }]}})
+    };
+    let lines = || json!([{"variant": "TEE-BLK-M", "quantity": 3}]);
+    let discounted = |json: &Json| {
+        let line = &json["lines"][0];
+        line["total"]["amount"].as_f64().unwrap() < line["subtotal"]["amount"].as_f64().unwrap()
+    };
+
+    // Nothing published yet: the Function is not built, whatever its build output is.
+    let mut state = checkout_server(&[], true);
+    state.builds = std::sync::Arc::new(crate::watch::Builds::publishing(
+        crate::watch::Modules::create().unwrap(),
+    ));
+    state.builds.own_for_tests(&["volume-discount"], &[]);
+    let path = start_checkout(&state, "co-published", lines(), discount());
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-published"));
+    assert!(!discounted(&json), "{json}");
+    assert!(
+        json["diagnostics"].as_array().unwrap().iter().any(|d| d
+            .as_str()
+            .unwrap()
+            .starts_with("volume-discount: no Wasm module yet")),
+        "{}",
+        json["diagnostics"]
+    );
+
+    // Published: it runs.
+    let module =
+        std::fs::read(fixture_app().join("extensions/volume-discount/dist/function.wasm")).unwrap();
+    state
+        .builds
+        .own_for_tests(&["volume-discount"], &[("volume-discount", &module)]);
+    let path = start_checkout(&state, "co-published-2", lines(), discount());
+    let json = body_json(&get(&state, &format!("{path}.json"), "co-published-2"));
+    assert!(discounted(&json), "{json}");
+    let home = body_json(&get(&state, "/?format=json", "co-published-2"));
+    let function = home["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|function| function["handle"] == "volume-discount")
+        .unwrap();
+    assert_eq!(function["built"], true);
+}
+
+#[test]
+fn a_saved_address_is_trimmed_and_its_blank_fields_dropped() {
+    let saved = lsf_core::store::Address {
+        first_name: " Ada ".into(),
+        last_name: "  ".into(),
+        city: "Paris".into(),
+        country_code: " fr ".into(),
+        ..Default::default()
+    };
+    let address = super::checkout_account::checkout_address(&saved);
+    assert_eq!(address.first_name.as_deref(), Some("Ada"));
+    assert_eq!(address.last_name, None);
+    assert_eq!(address.city.as_deref(), Some("Paris"));
+    assert_eq!(address.country_code.as_deref(), Some("FR"));
+    assert_eq!(address.zip, None);
+}
+
+// --- The customer account ---
+
+/// The fixture app with a customer account UI extension (`ca-test`): a full page, an order
+/// status block and an order action.
+fn app_with_account(label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lsf-account-app-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_directory(&fixture_app(), &root);
+    let directory = root.join("extensions").join("ca-test");
+    std::fs::create_dir_all(directory.join("dist")).unwrap();
+    std::fs::write(
+        directory.join("shopify.extension.toml"),
+        r#"api_version = "2026-10"
+
+[[extensions]]
+name = "Account test"
+handle = "ca-test"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  target = "customer-account.page.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.block.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order.action.menu-item.render"
+"#,
+    )
+    .unwrap();
+    std::fs::write(directory.join("dist").join("ca-test.js"), "// built").unwrap();
+    root
+}
+
+/// The state of a page of the customer account.
+fn account_state(reply: &Reply) -> Json {
+    assert_eq!(reply.status, 200, "{}", text(reply));
+    let html = text(reply);
+    let start = html.find("id=\"lsf-account-state\">").expect("the state") + 23;
+    let end = start + html[start..].find("</script>").expect("its end");
+    serde_json::from_str(&html[start..end]).expect("JSON")
+}
+
+#[test]
+fn the_customer_account_shows_the_orders_of_the_customer_logged_in() {
+    let app = app_with_account("orders");
+    let state = checkout_server_of(app.clone(), &[], true);
+
+    // Logged out: the customers to log in as, and no order.
+    let out = account_state(&get(&state, "/account", "ca"));
+    assert_eq!(out["surface"], "customer-account");
+    assert_eq!(out["page"], "orders");
+    assert_eq!(out["customer"], Json::Null);
+    assert!(out["profiles"].as_array().unwrap().len() >= 2);
+    assert_eq!(out["orders"], json!([]));
+    // Only the extensions with a customer account target.
+    let handles: Vec<&Json> = out["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|ext| &ext["handle"])
+        .collect();
+    assert_eq!(handles, [&json!("ca-test")]);
+
+    let login = get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "ca",
+    );
+    assert_eq!(header(&login, "location"), Some("/account"));
+    let json = account_state(&get(&state, "/account", "ca"));
+    assert_eq!(json["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(json["buyer"]["customer"]["id"], json["customer"]["id"]);
+    let orders = json["orders"].as_array().unwrap();
+    assert_eq!(orders.len(), 2);
+    // The most recent first: #1002 (May), then #1001 (March).
+    assert_eq!(orders[0]["name"], "#1002");
+    let first = &orders[1];
+    assert_eq!(first["name"], "#1001");
+    assert_eq!(first["fulfillmentStatus"], "fulfilled");
+    assert_eq!(
+        first["lines"][0]["merchandise"],
+        Json::Null,
+        "written as the checkout writes a line"
+    );
+    assert!(first["lines"][0]["variantId"].is_u64());
+    assert_eq!(first["confirmationNumber"].as_str().unwrap().len(), 9);
+    // A fulfilled order went out in one shipment of every line.
+    assert_eq!(
+        first["fulfillments"][0]["lineIds"]
+            .as_array()
+            .unwrap()
+            .len(),
+        first["lines"].as_array().unwrap().len()
+    );
+    assert_eq!(first["unfulfilledLineIds"], json!([]));
+
+    // The page of an order, and of an order the customer does not have.
+    let id = first["legacyId"].to_string();
+    let order = account_state(&get(&state, &format!("/account/orders/{id}"), "ca"));
+    assert_eq!(order["page"], "order");
+    assert_eq!(order["order"]["name"], "#1001");
+    assert_eq!(get(&state, "/account/orders/12", "ca").status, 404);
+    let profile = account_state(&get(&state, "/account/profile", "ca"));
+    assert_eq!(profile["page"], "profile");
+    assert!(
+        !profile["customer"]["addresses"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(profile["customer"]["addresses"][0]["default"], true);
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn a_full_page_of_the_customer_account_is_the_page_of_an_extension() {
+    let app = app_with_account("pages");
+    let state = checkout_server_of(app.clone(), &[], true);
+    get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        "ca-pages",
+    );
+    let page = account_state(&get(&state, "/account/pages/ca-test/rewards/3", "ca-pages"));
+    assert_eq!(page["page"], "page");
+    assert_eq!(
+        page["extensionPage"],
+        json!({"handle": "ca-test", "path": "/rewards/3"})
+    );
+    // An extension without a full page, and one that does not exist.
+    assert_eq!(
+        get(&state, "/account/pages/discount-tags", "ca-pages").status,
+        404
+    );
+    assert_eq!(get(&state, "/account/pages/nobody", "ca-pages").status, 404);
+    let orders = account_state(&get(&state, "/account", "ca-pages"));
+    let id = orders["orders"][0]["legacyId"].to_string();
+    // The full page for an order needs `customer-account.order.page.render`, which it lacks.
+    assert_eq!(
+        get(
+            &state,
+            &format!("/account/orders/{id}/pages/ca-test"),
+            "ca-pages"
+        )
+        .status,
+        404
+    );
+    // Paths of lsf's stand-in are left to the storefront.
+    assert_ne!(get(&state, "/account/login", "ca-pages").status, 200);
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn the_order_placed_in_the_checkout_is_in_the_customer_account() {
+    let app = app_with_account("placed");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "ca-placed";
+    let path = start_checkout(
+        &state,
+        session,
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    // The checkout follows a login made elsewhere.
+    get(
+        &state,
+        "/__lsf/login?customer=jane.doe@example.com&return_to=/account",
+        session,
+    );
+    let reply = operations(&state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(&state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    let json = account_state(&get(&state, "/account", session));
+    let orders = json["orders"].as_array().unwrap();
+    assert_eq!(orders.len(), 3);
+    let placed = &orders[0];
+    assert_eq!(placed["placedHere"], true);
+    // After the last order of the store data.
+    assert_eq!(placed["name"], "#1004");
+    assert_eq!(placed["lines"][0]["quantity"], 2);
+    assert_eq!(placed["unfulfilledLineIds"].as_array().unwrap().len(), 1);
+    assert!(placed["processedAt"].is_string());
+    assert_eq!(
+        placed.get("runs"),
+        None,
+        "the runs of the Functions are the checkout's"
+    );
+    let order = account_state(&get(
+        &state,
+        &format!("/account/orders/{}", placed["legacyId"]),
+        session,
+    ));
+    assert_eq!(order["order"]["shippingAddress"]["city"], "London");
+
+    // Someone else does not see it.
+    get(
+        &state,
+        "/__lsf/login?customer=new.customer@example.com&return_to=/account",
+        session,
+    );
+    assert_eq!(
+        account_state(&get(&state, "/account", session))["orders"],
+        json!([])
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn an_order_of_the_store_data_has_its_returns_and_its_shipments() {
+    let app = app_with_account("returns");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let session = "ca-returns";
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "jane.doe@example.com", "data": {"customers": [{
+            "email": "jane.doe@example.com",
+            "orders": [{
+                "fulfillment_status": "partial",
+                "line_items": [{"variant": "TEE-BLK-M", "quantity": 2}, {"variant": "TOTE-NAT"}],
+                "returns": [{"status": "requested", "line_items": [{"variant": "TEE-BLK-M", "quantity": 1}]}]
+            }]
+        }]}}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let json = account_state(&get(&state, "/account", session));
+    let order = &json["orders"][0];
+    let lines = order["lines"].as_array().unwrap();
+    assert_eq!(
+        order["fulfillments"][0]["lineIds"],
+        json!([lines[0]["id"]]),
+        "a partial order sent its first line"
+    );
+    assert_eq!(order["unfulfilledLineIds"], json!([lines[1]["id"]]));
+    assert_eq!(order["returns"][0]["status"], "REQUESTED");
+    assert_eq!(
+        order["returns"][0]["lines"],
+        json!([{"lineId": lines[0]["id"], "quantity": 1}])
+    );
+    std::fs::remove_dir_all(&app).ok();
+}
+
+#[test]
+fn the_home_page_lists_the_customer_account_ui_extensions_apart() {
+    let app = app_with_account("home");
+    let state = checkout_server_of(app.clone(), &[], true);
+    let json = body_json(&get(&state, "/?format=json", "ca-home"));
+    let ca = json["uiExtensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|extension| extension["handle"] == "ca-test")
+        .expect("ca-test");
+    assert_eq!(ca["surfaces"], json!(["customer-account"]));
+    assert_eq!(ca["open"], "/account");
+    let html = text(&get(&state, "/", "ca-home"));
+    std::fs::remove_dir_all(&app).ok();
+    // A list of the Extensions tab, up to the next one.
+    let section = |name: &str| {
+        let start = position(&html, &format!("data-section=\"{name}\""));
+        let rest = &html[start + 1..];
+        let end = rest
+            .find("class=\"lsf-h-extlist\"")
+            .or_else(|| rest.find("</section>"))
+            .map_or(html.len(), |end| start + 1 + end);
+        html[start..end].to_string()
+    };
+    let checkout = section("ui-extensions");
+    let account = section("account-extensions");
+    assert!(
+        account.contains("<h2>Customer account UI extensions</h2>"),
+        "{account}"
+    );
+    // Each kind of extension has a tab of its own, named in full.
+    assert!(
+        html.contains(">Checkout UI extensions<span class=\"lsf-h-n\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains(">Customer account UI extensions<span class=\"lsf-h-n\">"),
+        "{html}"
+    );
+    assert!(
+        account.contains("data-ui-extension=\"ca-test\""),
+        "{account}"
+    );
+    assert!(account.contains("in the customer account"), "{account}");
+    assert!(
+        account.contains("Orders and order status: in the actions of each order"),
+        "{account}"
+    );
+    assert!(
+        !checkout.contains("data-ui-extension=\"ca-test\""),
+        "{checkout}"
+    );
+    assert!(
+        checkout.contains("data-ui-extension=\"gift-message\""),
+        "{checkout}"
+    );
+    assert!(
+        !account.contains("data-ui-extension=\"gift-message\""),
+        "{account}"
+    );
+}
+
+// --- What a test of a checkout reads the same every time ---
+
+/// Places an order of two tees in `session`, logged in as Jane, and answers its state.
+fn place_an_order(state: &ServerState, session: &str, data: Json) -> Json {
+    let set = state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"customer": "jane.doe@example.com", "cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}, "data": data}),
+        session,
+    ));
+    assert_eq!(set.status, 200, "{}", text(&set));
+    let path = header(&get(state, "/checkout", session), "location")
+        .expect("a location")
+        .to_string();
+    let reply = operations(state, &path, session, buyer_details());
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let reply = post(state, &format!("{path}/complete"), json!({}), session);
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    body_json(&get(state, &format!("{path}.json"), session))
+}
+
+#[test]
+fn the_orders_of_a_session_have_the_same_number_and_date_every_time() {
+    let state = checkout_server(&[], true);
+    let frozen = json!({"now": "2025-01-15T10:00:00Z"});
+    // Two sessions at once: each numbers its orders after the last of the store data (#1003).
+    let a = place_an_order(&state, "orders-a", frozen.clone());
+    let b = place_an_order(&state, "orders-b", frozen.clone());
+    assert_eq!(a["order"]["number"], "#1004");
+    assert_eq!(b["order"]["number"], "#1004");
+    // At the frozen clock of the data.
+    assert_eq!(a["order"]["processedAt"], "2025-01-15T10:00:00+00:00");
+    // The next order of the session is the next number.
+    let again = place_an_order(&state, "orders-a", frozen);
+    assert_eq!(again["order"]["number"], "#1005");
+
+    // Every session forgotten at once.
+    let reset = state.dispatch(&request("DELETE", "/__lsf/sessions", json!({}), "orders-a"));
+    assert_eq!(body_json(&reset)["ok"], true);
+    assert_eq!(state.placed_orders(), 0);
+}
+
+#[test]
+fn a_checkout_from_the_storefront_ships_to_the_country_of_the_visitor_or_of_the_store() {
+    let state = checkout_server(&[], false);
+    // A guest: the store's country (the demo store is in Ottawa).
+    let path = header(&get(&state, "/checkout", "country-guest"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), "country-guest"));
+    assert_eq!(json["shippingAddress"]["countryCode"], "CA");
+    // The country the visitor picked on the storefront.
+    state.dispatch(&request(
+        "PUT",
+        "/__lsf/session",
+        json!({"country": "FR"}),
+        "country-fr",
+    ));
+    let path = header(&get(&state, "/checkout", "country-fr"), "location")
+        .expect("a location")
+        .to_string();
+    let json = body_json(&get(&state, &format!("{path}.json"), "country-fr"));
+    assert_eq!(json["shippingAddress"]["countryCode"], "FR");
+}
+
+#[test]
+fn the_home_page_says_what_never_runs() {
+    // A discount Function no discount names.
+    let app = app_with_account("never");
+    let state = checkout_server_of(app.clone(), &[], false);
+    let json = body_json(&get(&state, "/__lsf/checkouts?format=json", "never"));
+    std::fs::remove_dir_all(&app).ok();
+    let messages = |list: &str, handle: &str| -> Vec<String> {
+        json[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|extension| extension["handle"] == handle)
+            .unwrap_or_else(|| panic!("{handle}"))["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|problem| problem["message"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(
+        messages("functions", "volume-discount")
+            .iter()
+            .any(|message| message.starts_with("no discount of the store data runs it")),
+        "{json}"
+    );
+    // A customer account UI extension renders in the customer account, whatever the theme.
+    let ca = json["uiExtensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|extension| extension["handle"] == "ca-test")
+        .unwrap();
+    assert_eq!(ca["open"], "/account", "{json}");
+    // The note of the discount is the store's: the scenarios that run the Function are not
+    // warned of it.
+    for scenario in json["scenarios"].as_array().unwrap() {
+        assert_ne!(scenario["status"], "warning", "{scenario}");
+    }
 }

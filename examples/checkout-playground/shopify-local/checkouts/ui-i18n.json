@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: translations, in English",
+  "description": "ui-i18n-greeting in the primary language: strings from locales/en.default.json, a plural, money, a number and a date. ui-i18n-fr is the same in French.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-i18n-greeting",
+    "ui-header-notice"
+  ]
+}

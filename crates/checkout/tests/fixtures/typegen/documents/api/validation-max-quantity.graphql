@@ -1,0 +1,23 @@
+# $tags comes from the settings of the validation ([extensions.input.variables]).
+query Input($tags: [String!]!) {
+  cart {
+    lines {
+      quantity
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            id
+            title
+            hasAnyTag(tags: $tags)
+          }
+        }
+      }
+    }
+  }
+  validation {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Legacy cart transform"
+handle = "cart-transform-legacy"
+type = "function"
+description = "Makes the gift box free with three other items, with the legacy cart transform target"
+
+  [[extensions.targeting]]
+  target = "purchase.cart-transform.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. cart-transform-legacy"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

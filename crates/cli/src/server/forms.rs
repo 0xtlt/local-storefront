@@ -185,91 +185,9 @@ pub fn password(visit: &Visit<'_>) -> Reply {
     Reply::redirect(&visit.localized("/password"))
 }
 
-pub fn login(visit: &Visit<'_>) -> Reply {
-    let params = visit.incoming.all_params();
-    let values = fields(&params, "customer");
-    let email = values.get("email").cloned().unwrap_or_default();
-    let password = values.get("password").cloned().unwrap_or_default();
-    let customer = visit.store.customer_by_email(&email).filter(|customer| {
-        customer
-            .password
-            .as_ref()
-            .is_none_or(|expected| *expected == password)
-    });
-    match customer {
-        Some(customer) => {
-            let id = customer.id;
-            visit.update_session(|session| session.customer_id = Some(id));
-            let target = super::params::text(&params, "return_to")
-                .or_else(|| super::params::text(&params, "checkout_url"))
-                .unwrap_or_else(|| visit.localized("/account"));
-            Reply::redirect(&target)
-        }
-        None => {
-            let mut kept = IndexMap::new();
-            kept.insert("email".to_string(), email);
-            flash(
-                visit,
-                FormResult {
-                    form_type: "customer_login".to_string(),
-                    posted_successfully: false,
-                    errors: vec![(
-                        "form".to_string(),
-                        "Incorrect email or password.".to_string(),
-                    )],
-                    values: kept,
-                },
-            );
-            super::account::entry(visit)
-        }
-    }
-}
-
 pub fn logout(visit: &Visit<'_>) -> Reply {
     visit.update_session(|session| session.customer_id = None);
     Reply::redirect(&visit.localized("/"))
-}
-
-pub fn register(visit: &Visit<'_>) -> Reply {
-    let params = visit.incoming.all_params();
-    let values = fields(&params, "customer");
-    let email = values.get("email").cloned().unwrap_or_default();
-    let message = if visit.store.customer_by_email(&email).is_some() {
-        "This email address is already associated with an account. If this account is yours, you can reset your password"
-    } else {
-        "Accounts cannot be created on the local server. Add the customer to the store data (customers) and log in."
-    };
-    flash(
-        visit,
-        FormResult {
-            form_type: "create_customer".to_string(),
-            posted_successfully: false,
-            errors: vec![("form".to_string(), message.to_string())],
-            values,
-        },
-    );
-    Reply::redirect(&visit.localized("/account/register"))
-}
-
-/// Forms whose effect is not simulated: the form shows an error saying so.
-pub fn unsupported(visit: &Visit<'_>, form_type: &str) -> Reply {
-    flash(
-        visit,
-        FormResult {
-            form_type: form_type.to_string(),
-            posted_successfully: false,
-            errors: vec![(
-                "form".to_string(),
-                "This action is not simulated by the local server.".to_string(),
-            )],
-            values: IndexMap::new(),
-        },
-    );
-    let back = visit
-        .incoming
-        .referer_path()
-        .unwrap_or_else(|| visit.localized("/account"));
-    Reply::redirect(&back)
 }
 
 /// Checkout is hosted by Shopify and is not part of a theme: show what would be bought.

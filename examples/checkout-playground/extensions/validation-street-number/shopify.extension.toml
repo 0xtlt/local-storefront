@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Street number, when the order is placed"
+handle = "validation-street-number"
+type = "function"
+description = "Refuses a shipping address without a street number, only when the order is placed"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. validation-street-number"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

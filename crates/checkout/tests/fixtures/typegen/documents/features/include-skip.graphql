@@ -1,0 +1,6 @@
+query Cond($a: Boolean!, $b: Boolean!) {
+    me { id @include(if: $a) name @skip(if: $b) friends @include(if: $a) { id } addr: address @skip(if: $b) { city } role @include(if: $a) @skip(if: $b) }
+    node(id: "1") { id ... on User @include(if: $a) { name friends { id } } ... @skip(if: $b) { id } }
+    viewer @include(if: $a) { id }
+    search(q: "") { ... on User @include(if: $a) { address { city } } ... on Product { price @skip(if: $a) } }
+  }

@@ -1,0 +1,13 @@
+query Input {
+  cart {
+    lines {
+      id
+      quantity
+    }
+  }
+  cartTransform {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

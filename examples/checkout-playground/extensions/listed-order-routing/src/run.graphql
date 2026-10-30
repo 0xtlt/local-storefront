@@ -1,0 +1,8 @@
+query Input {
+  fulfillmentGroups {
+    handle
+  }
+  locations {
+    id
+  }
+}

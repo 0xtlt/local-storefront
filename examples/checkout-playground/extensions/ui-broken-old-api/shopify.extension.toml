@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-old-api.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2025-07"
+
+[[extensions]]
+name = "UI broken: old-api"
+handle = "ui-broken-old-api"
+type = "ui_extension"
+description = "A React and remote-ui bundle on API 2025-07: the local checkout runs 2026-10 and 2027-01 only, so it is not loaded."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

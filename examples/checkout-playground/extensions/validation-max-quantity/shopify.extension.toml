@@ -1,0 +1,21 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Maximum quantity per product"
+handle = "validation-max-quantity"
+type = "function"
+description = "Refuses more than a number of units of the products with one of the tags of its settings"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. validation-max-quantity"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

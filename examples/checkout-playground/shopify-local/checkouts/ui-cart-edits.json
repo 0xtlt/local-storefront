@@ -1,0 +1,28 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: extensions that change the cart",
+  "description": "Tick gift wrap (adds a line and an attribute), add the Sample Pack (and see the sold-out pin and an unknown variant refused), change quantities or remove lines under each line. The Functions run again after each change.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "entered": {
+    "payment": "card"
+  },
+  "extensions": [
+    "ui-gift-wrap",
+    "ui-upsell",
+    "ui-line-quantity"
+  ]
+}

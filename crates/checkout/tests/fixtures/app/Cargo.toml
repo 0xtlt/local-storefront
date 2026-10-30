@@ -1,0 +1,18 @@
+# The Functions of the fixture app. Not part of the lsf workspace: they build for Wasm.
+[workspace]
+resolver = "2"
+# The Functions only: the checkout UI extensions of the app are JavaScript.
+members = [
+  "extensions/volume-discount",
+  "extensions/delivery-rules",
+  "extensions/payment-rules",
+  "extensions/quantity-limit",
+  "extensions/bundle-transform",
+]
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
+codegen-units = 1
+panic = "abort"

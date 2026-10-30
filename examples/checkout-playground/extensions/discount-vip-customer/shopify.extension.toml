@@ -1,0 +1,21 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "VIP customer discount"
+handle = "discount-vip-customer"
+type = "function"
+description = "A percentage off the order for a logged-in customer with one of the tags of its settings"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-vip-customer"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]
+
+  [extensions.input.variables]
+  namespace = "$app:config"
+  key = "settings"

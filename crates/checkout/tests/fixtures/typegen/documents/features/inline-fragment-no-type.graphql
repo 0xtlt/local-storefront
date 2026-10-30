@@ -1,0 +1,1 @@
+query NTC($a: Boolean!) { me { ... { id name } ... @include(if: $a) { email } } }

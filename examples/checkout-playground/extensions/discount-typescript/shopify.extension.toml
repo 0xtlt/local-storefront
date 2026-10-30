@@ -1,0 +1,18 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Quantity discount (TypeScript)"
+handle = "discount-typescript"
+type = "function"
+description = "A percentage off the lines of a few units or more, written in TypeScript the way `shopify app generate extension --flavor typescript` makes it"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  # No build command, as `shopify app generate extension` makes it: Shopify's CLI builds it, and
+  # so does lsf (`lsf app function build`), without Node.
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"

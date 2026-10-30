@@ -1,0 +1,22 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Listed, not run: fulfillment, routing, pickup",
+  "description": "The Functions of the APIs the local checkout lists and does not run: fulfillment constraints, order routing, pickup points (with a .fetch target) and local pickup. No Function runs; the home page lists them with their targets.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "listed-fulfillment-constraints",
+    "listed-local-pickup",
+    "listed-order-routing",
+    "listed-pickup-points"
+  ]
+}

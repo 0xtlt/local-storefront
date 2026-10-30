@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI broken: layout",
+  "description": "A very tall extension (150 rows) and long unbroken text in a banner, a badge, a button, a field, a link and under each line.",
+  "session": {
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-broken-tall",
+    "ui-broken-long-text"
+  ]
+}

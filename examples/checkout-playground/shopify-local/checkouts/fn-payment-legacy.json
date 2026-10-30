@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Payment: legacy payment customization target",
+  "description": "payment-legacy (purchase.payment-customization.run) sets net 30 payment terms for a B2B buyer, the one operation the legacy target still takes. The local checkout has no payment terms: the run is there, nothing changes on the page.",
+  "session": {
+    "customer": "alex.morgan@example.com",
+    "country": "US",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 6
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "payment-legacy"
+  ]
+}

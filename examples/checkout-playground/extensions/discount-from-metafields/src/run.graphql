@@ -1,0 +1,26 @@
+query Input {
+  shop {
+    metafield(namespace: "custom", key: "weekend_sale_settings") {
+      jsonValue
+    }
+  }
+  cart {
+    lines {
+      id
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            title
+            metafield(namespace: "custom", key: "weekend_sale") {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+  }
+}

@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Reorder delivery options"
+handle = "delivery-reorder"
+type = "function"
+description = "Moves store pickup to the top for addresses in the countries of its settings"
+
+  [[extensions.targeting]]
+  target = "cart.delivery-options.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_delivery_options_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. delivery-reorder"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

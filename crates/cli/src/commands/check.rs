@@ -386,13 +386,19 @@ impl Diagnostic {
 
     /// Prints the diagnostic for a person.
     fn print(&self) {
+        // A warning says so: it is not one of the problems the summary counts.
+        let warning = if self.severity == "warning" {
+            "warning: "
+        } else {
+            ""
+        };
         let Some(markup) = &self.markup else {
-            println!("{}: {}", self.location, self.message);
+            println!("{}: {warning}{}", self.location, self.message);
             return;
         };
         let written = self.fix.as_ref().is_some_and(|fix| fix.written);
         let fixed = if written { "fixed: " } else { "" };
-        println!("{}: {fixed}{}", self.location, self.message);
+        println!("{}: {warning}{fixed}{}", self.location, self.message);
         let Some(fix) = &self.fix else {
             println!("  was: {}", one_line(markup));
             if let Some(reason) = &self.no_fix {
@@ -738,6 +744,15 @@ fn check_theme(
         json: args.format == Format::Json,
         ..Tally::default()
     };
+    // A warning, which is not a problem: the theme is fine on Shopify.
+    if let Some(note) = crate::app::classic_accounts_note(&theme) {
+        tally.report(Diagnostic::new(
+            "warning",
+            "classic_customer_accounts",
+            Location::file("templates/customers", None),
+            note,
+        ));
+    }
     for directory in [
         "layout",
         "templates",

@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Validation: no shipping to Germany",
+  "description": "validation-blocked-country: the address is in Germany, an error on its country. Change the country and the error goes.",
+  "session": {
+    "customer": "none",
+    "country": "DE",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "Torstraße 1",
+      "city": "Berlin",
+      "zip": "10119",
+      "country_code": "DE"
+    }
+  },
+  "extensions": [
+    "validation-blocked-country"
+  ]
+}

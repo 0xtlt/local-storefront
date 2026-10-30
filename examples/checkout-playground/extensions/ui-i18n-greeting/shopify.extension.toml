@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-i18n-greeting.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: i18n greeting"
+handle = "ui-i18n-greeting"
+type = "ui_extension"
+description = "Translated strings (English by default, French), plurals and the formatting of numbers, money and dates."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

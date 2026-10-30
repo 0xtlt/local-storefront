@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PageInput",
+  "description": "A page (`/pages/<handle>`).",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/page.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0,
+      "default": null
+    },
+    "title": {
+      "type": "string"
+    },
+    "handle": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "content": {
+      "description": "HTML content.",
+      "type": "string",
+      "default": ""
+    },
+    "author": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "template_suffix": {
+      "description": "Selects `templates/page.<suffix>.json`, e.g. `\"contact\"`.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "published_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "updated_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "metafields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/MetafieldInput"
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "title"
+  ],
+  "$defs": {
+    "MetafieldInput": {
+      "description": "A metafield value. Write the value directly and its type is inferred (string →\n`single_line_text_field`, integer → `number_integer`, decimal → `number_decimal`, boolean →\n`boolean`, anything else → `json`), or spell out `{\"type\": ..., \"value\": ...}`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TypedMetafield"
+        },
+        true
+      ]
+    },
+    "TypedMetafield": {
+      "description": "A metafield with an explicit type.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,\n`rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`,\n`date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the\nother measurements (`distance`, `temperature`, `duration`...), `product_reference`,\n`collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the\narticle's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant\nof those.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "value"
+      ]
+    }
+  }
+}

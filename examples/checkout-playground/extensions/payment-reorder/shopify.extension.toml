@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Reorder payment methods"
+handle = "payment-reorder"
+type = "function"
+description = "Moves payment methods to the top, in the order of its settings"
+
+  [[extensions.targeting]]
+  target = "cart.payment-methods.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_payment_methods_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. payment-reorder"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

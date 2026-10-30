@@ -1,0 +1,45 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Edge case: a big input",
+  "description": "broken-big-input asks for most of what a validation can read: the buyer and their tags, the company, localization, shop metafields, cost, delivery and every line with its product. Open its run in the Functions dialog.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1,
+          "properties": {
+            "_engraving": "Ada"
+          }
+        },
+        {
+          "variant": "SOCK-S",
+          "quantity": 2
+        },
+        {
+          "variant": "OVS-M",
+          "quantity": 1
+        }
+      ],
+      "note": "Leave it with the neighbour",
+      "attributes": {
+        "gift": "no"
+      }
+    }
+  },
+  "entered": {
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    }
+  },
+  "extensions": [
+    "broken-big-input"
+  ]
+}

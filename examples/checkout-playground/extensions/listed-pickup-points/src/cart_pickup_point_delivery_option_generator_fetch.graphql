@@ -1,0 +1,6 @@
+query Input {
+  deliveryAddress {
+    countryCode
+    zip
+  }
+}

@@ -164,16 +164,6 @@ pub struct MediaDetail {
     pub aspect_ratio: Option<f64>,
 }
 
-/// The customer accounts of a store.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CustomerAccounts {
-    /// Accounts hosted by Shopify, outside the theme.
-    New,
-    /// Accounts rendered by the theme's `templates/customers`.
-    Legacy,
-}
-
 /// The kind of a piece of media that is not an image.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1011,9 +1001,27 @@ pub struct OrderInput {
     pub cancelled: bool,
     #[serde(default)]
     pub note: Option<String>,
+    /// What the customer sent back, as the customer account shows it.
+    #[serde(default)]
+    pub returns: Vec<OrderReturnInput>,
 }
 
-/// A customer. Sessions log in as a customer by email (see `session.customer`).
+/// A return of an order.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OrderReturnInput {
+    /// `requested`, `open` or `closed`. Defaults to `open`.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// The lines sent back, by their variant, and how many of each. Defaults to every line of
+    /// the order.
+    #[serde(default)]
+    pub line_items: Vec<OrderLineInput>,
+}
+
+/// A customer. Sessions log in as a customer by email (see `session.customer`), and the checkout
+/// of an app lists the customers as login profiles: "Log in" logs the checkout in as one of them,
+/// with their addresses (the first is the default) and, for a B2B customer, their locations.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CustomerInput {
@@ -1043,9 +1051,6 @@ pub struct CustomerInput {
     pub addresses: Vec<AddressInput>,
     #[serde(default)]
     pub orders: Vec<OrderInput>,
-    /// The password accepted by the local login form. Any password works when omitted.
-    #[serde(default)]
-    pub password: Option<String>,
     /// The name of a company in `companies`: the customer buys for it (B2B).
     #[serde(default)]
     pub company: Option<String>,
@@ -1053,8 +1058,31 @@ pub struct CustomerInput {
     /// of them.
     #[serde(default)]
     pub company_locations: Vec<String>,
+    /// What the company knows of the customer as a buyer: their job title, language, dates.
+    /// Checkout Functions read it as `purchasingCompany.contact`.
+    #[serde(default)]
+    pub company_contact: Option<CompanyContactInput>,
     #[serde(default)]
     pub metafields: Metafields,
+}
+
+/// A customer as a contact of their company (B2B): `purchasingCompany.contact` of a checkout
+/// Function.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyContactInput {
+    /// The job title of the contact, e.g. `"Purchasing manager"`.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The language of the contact, e.g. `"fr"`. None when absent.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// Defaults to the creation date of the company.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Defaults to `created_at`.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 /// A place a company buys for (`customer.current_location`): a branch, a shop, a warehouse.
@@ -1073,6 +1101,22 @@ pub struct CompanyLocationInput {
     /// The tax number of the location, e.g. a VAT number.
     #[serde(default)]
     pub tax_registration_id: Option<String>,
+    /// The preferred language of the location, e.g. `"fr"`. None when absent.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// Defaults to the creation date of the company.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Defaults to `created_at`.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    /// The number of orders placed at the location, which checkout Functions read as
+    /// `ordersCount`. The orders of the customers are not counted: defaults to 0.
+    #[serde(default)]
+    pub orders_count: Option<u32>,
+    /// The amount spent at the location (`totalSpent`), e.g. `"1250.00"`. Defaults to 0.
+    #[serde(default)]
+    pub total_spent: Option<Money>,
     #[serde(default)]
     pub metafields: Metafields,
 }
@@ -1092,6 +1136,12 @@ pub struct CompanyInput {
     /// The places the company buys for. The first one is selected when a customer logs in.
     #[serde(default)]
     pub locations: Vec<CompanyLocationInput>,
+    /// Defaults to a fixed date, 2024-01-01 plus one day per company.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Defaults to `created_at`.
+    #[serde(default)]
+    pub updated_at: Option<String>,
     #[serde(default)]
     pub metafields: Metafields,
 }
@@ -1191,12 +1241,6 @@ pub struct ShopInput {
     /// Whether checking out as a guest is possible. Defaults to `true`.
     #[serde(default)]
     pub customer_accounts_optional: Option<bool>,
-    /// Which customer accounts the store uses. `new`: accounts are hosted by Shopify, and
-    /// `/account` is a page of local-storefront where you choose who is logged in. `legacy`:
-    /// the theme's `templates/customers` are rendered. Defaults to `legacy` when the theme has
-    /// those templates, and to `new` otherwise.
-    #[serde(default)]
-    pub customer_accounts: Option<CustomerAccounts>,
     /// Whether prices include taxes. Defaults to `false`.
     #[serde(default)]
     pub taxes_included: bool,
@@ -1258,6 +1302,23 @@ pub struct LocalizationInput {
     pub countries: Vec<CountryInput>,
     #[serde(default)]
     pub languages: Vec<LanguageInput>,
+    /// Groups of countries sold as one market. A country in none of them is a market of its
+    /// own, named after the country.
+    #[serde(default)]
+    pub markets: Vec<MarketInput>,
+}
+
+/// A market: the countries the store sells to as one, as checkout Functions see it in
+/// `localization.market` and `MailingAddress.market`.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MarketInput {
+    /// What Functions call the market: `"europe"`.
+    pub handle: String,
+    /// The ISO 3166-1 alpha-2 codes of its countries, which are in `localization.countries`.
+    pub countries: Vec<String>,
+    #[serde(default)]
+    pub metafields: Metafields,
 }
 
 /// A file in `files/` that needs metadata. Files without an entry work too.
@@ -1417,6 +1478,227 @@ pub struct GiftCardInput {
     pub template_suffix: Option<String>,
 }
 
+/// What kind of delivery a shipping rate is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckoutDeliveryKind {
+    /// Delivered to the address.
+    #[default]
+    Shipping,
+    /// Picked up in a store.
+    PickUp,
+    /// Delivered locally.
+    Local,
+}
+
+/// A delivery option the local checkout offers to every address.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutShippingRateInput {
+    /// What Functions and the page call the option: `"standard"`.
+    pub handle: String,
+    /// What the buyer sees. Defaults to the handle.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The cost, e.g. `"4.90"`.
+    pub price: Money,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Defaults to `"shipping"`.
+    #[serde(default)]
+    pub kind: Option<CheckoutDeliveryKind>,
+}
+
+/// A payment method the local checkout offers.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutPaymentMethodInput {
+    /// What payment customization Functions and the page call the method: `"card"`.
+    pub handle: String,
+    /// What the buyer sees. Defaults to the handle.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Where the method is offered, which payment customization Functions read as
+    /// `placements`. Defaults to `["PAYMENT_METHOD"]`: the list of the checkout.
+    #[serde(default)]
+    pub placements: Vec<CheckoutPaymentPlacement>,
+}
+
+/// Where a payment method is offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CheckoutPaymentPlacement {
+    /// The list of payment methods of the checkout.
+    PaymentMethod,
+    /// The express buttons (Shop Pay, Apple Pay, ...).
+    AcceleratedCheckout,
+}
+
+/// What a discount may reduce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CheckoutDiscountClass {
+    Product,
+    Order,
+    Shipping,
+}
+
+/// A discount backed by a discount Function of the app.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutDiscountInput {
+    /// The handle of the discount Function in the app.
+    pub function: String,
+    /// What the buyer sees. Defaults to the handle of the Function.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The code that triggers the discount. Without one the discount is automatic.
+    #[serde(default)]
+    pub code: Option<String>,
+    /// What the discount may reduce. All three when omitted.
+    #[serde(default)]
+    pub classes: Vec<CheckoutDiscountClass>,
+    /// The metafields of the discount, which its Function's input query reads, by
+    /// `"namespace.key"`: `{"$app:config.settings": {"type": "json", "value": {"percent": 10}}}`.
+    #[serde(default)]
+    pub metafields: IndexMap<String, MetafieldInput>,
+}
+
+/// The settings of a Function that is not a discount: cart transform, delivery or payment
+/// customization, validation.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutFunctionInput {
+    /// The metafields of the object the Function belongs to, by `"namespace.key"`.
+    #[serde(default)]
+    pub metafields: IndexMap<String, MetafieldInput>,
+}
+
+/// How the local checkout (`lsf app dev --app`) is set up. Every field has a default.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutInput {
+    /// The delivery options offered to every address. Defaults to one, "Standard" at 5.00.
+    #[serde(default)]
+    pub shipping_rates: Option<Vec<CheckoutShippingRateInput>>,
+    /// The payment methods. Defaults to "Credit card", "Cash on Delivery" and "Bank Deposit".
+    #[serde(default)]
+    pub payment_methods: Option<Vec<CheckoutPaymentMethodInput>>,
+    /// Discounts backed by discount Functions of the app.
+    #[serde(default)]
+    pub discounts: Option<Vec<CheckoutDiscountInput>>,
+    /// The settings of the other Functions, by the handle of the Function.
+    #[serde(default)]
+    pub functions: IndexMap<String, CheckoutFunctionInput>,
+    /// Tax in percent, added on top of the discounted subtotal: `20` for 20 %. No tax when
+    /// omitted.
+    #[serde(default)]
+    pub tax_rate: Option<f64>,
+}
+
+/// A postal address the buyer already entered.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioAddressInput {
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub company: Option<String>,
+    #[serde(default)]
+    pub address1: Option<String>,
+    #[serde(default)]
+    pub address2: Option<String>,
+    #[serde(default)]
+    pub city: Option<String>,
+    /// ISO 3166-1 alpha-2 code of one of the store's countries: `"US"`.
+    #[serde(default)]
+    pub country_code: Option<String>,
+    #[serde(default)]
+    pub province_code: Option<String>,
+    #[serde(default)]
+    pub zip: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+}
+
+/// What the buyer already typed and chose when a scenario opens.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioEnteredInput {
+    /// The contact email. A logged-in customer has theirs already.
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    /// The delivery address. Its country is the country of the checkout.
+    #[serde(default)]
+    pub shipping_address: Option<ScenarioAddressInput>,
+    /// The handle of the shipping rate chosen (`checkout.shipping_rates`). The first one
+    /// available is chosen when omitted.
+    #[serde(default)]
+    pub delivery: Option<String>,
+    /// The handle of the payment method chosen (`checkout.payment_methods`).
+    #[serde(default)]
+    pub payment: Option<String>,
+    /// The discount codes entered, in order. A code that no discount of `checkout.discounts`
+    /// has is entered all the same, and refused as on Shopify.
+    #[serde(default)]
+    pub discount_codes: Vec<String>,
+}
+
+/// The look of the checkout page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ScenarioLook {
+    /// Shopify's one-page checkout.
+    Standard,
+    /// The look of the Shop app and Shop Pay.
+    Shop,
+}
+
+/// A named setup of the local checkout: a file of `checkouts/`. It sets what a checkout
+/// depends on on top of the store data, and what it does not set stays as the store data says.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutScenarioInput {
+    /// Lets editors validate and autocomplete the file, e.g.
+    /// `"../schema/checkout-scenario.schema.json"`.
+    #[serde(default, rename = "$schema", skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// The name shown on the home page. Defaults to the name of the file.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What the scenario is for and what to look at, shown on the home page.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Who buys and what is in the cart, written as the `session` of the store data and applied
+    /// on top of it: `customer`, `cart` (lines, quantities, selling plans, note, attributes),
+    /// `country`, `company_location`.
+    #[serde(default)]
+    pub session: Option<SessionInput>,
+    /// What the buyer already entered: email, address, discount codes, delivery and payment.
+    #[serde(default)]
+    pub entered: Option<ScenarioEnteredInput>,
+    /// The language of the buyer, by ISO code (`"fr"`): one of `localization.languages`. The
+    /// checkout opens under its locale root. Defaults to the primary language.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// Overrides of the `checkout` section of the store data: every field that is present
+    /// replaces the one of the store (`shipping_rates`, `payment_methods`, `discounts`,
+    /// `tax_rate`), except `functions`, which replaces the settings of the Functions it names.
+    #[serde(default)]
+    pub checkout: Option<CheckoutInput>,
+    /// The look of the page. Defaults to the one of the server (`--variant`).
+    #[serde(default)]
+    pub variant: Option<ScenarioLook>,
+    /// The handles of the extensions (Functions and checkout UI extensions) that run, among
+    /// those of the app that `--extension` allows. Every one when omitted.
+    #[serde(default)]
+    pub extensions: Option<Vec<String>>,
+}
+
 /// A data file: any combination of the sections below. Every `*.json` file at the root of the
 /// data directory is one of these, and they are merged, so you can split the data as you like
 /// (`shop.json`, `catalog.json`, ...).
@@ -1476,6 +1758,10 @@ pub struct StoreInput {
     /// What every new browser session starts with: a logged-in customer, a filled cart...
     #[serde(default)]
     pub session: Option<SessionInput>,
+    /// The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts
+    /// and Function settings. At most one data file may define it.
+    #[serde(default)]
+    pub checkout: Option<CheckoutInput>,
     /// Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`.
     /// Set it to make renders reproducible; each `'now'` of a render is then one nanosecond
     /// after the previous one, so `%N` still differs between calls. Defaults to the real time,

@@ -1,0 +1,2 @@
+fragment FC on User { id name @include(if: true) }
+query FCQ { me { ...FC } node(id: "1") { ... on User { ...FC } } }

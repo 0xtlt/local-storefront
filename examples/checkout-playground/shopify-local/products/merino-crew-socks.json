@@ -1,0 +1,22 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Merino Crew Socks",
+  "description": "<p>Cushioned merino socks that stay up and stay fresh. Sold by the pair, cheaper by the dozen.</p>",
+  "type": "Accessories",
+  "tags": ["wool", "socks"],
+  "options": ["Size"],
+  "variants": [
+    {
+      "options": ["36-40"],
+      "price": 1600,
+      "sku": "SOCK-S",
+      "inventory_quantity": 60,
+      "quantity_rule": { "min": 1, "max": 24, "increment": 1 },
+      "quantity_price_breaks": [
+        { "minimum_quantity": 3, "price": 1400 },
+        { "minimum_quantity": 6, "price": 1200 }
+      ]
+    },
+    { "options": ["41-45"], "price": 1600, "sku": "SOCK-L", "inventory_quantity": 48 }
+  ]
+}

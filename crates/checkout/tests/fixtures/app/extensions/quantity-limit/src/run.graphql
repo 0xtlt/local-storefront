@@ -1,0 +1,18 @@
+query Input {
+  cart {
+    lines {
+      quantity
+    }
+    buyerIdentity {
+      email
+    }
+  }
+  buyerJourney {
+    step
+  }
+  validation {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

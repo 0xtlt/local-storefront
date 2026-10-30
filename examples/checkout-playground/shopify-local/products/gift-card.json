@@ -1,0 +1,16 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Gift Card",
+  "description": "<p>Not sure what to get? Let them choose. Delivered by email, never expires.</p>",
+  "type": "Gift Cards",
+  "gift_card": true,
+  "options": ["Denomination"],
+  "images": [
+    { "src": "products/gift-card.jpg", "alt": "Local Supply Co. gift card", "width": 1600, "height": 1000 }
+  ],
+  "variants": [
+    { "options": ["$25"], "price": 2500 },
+    { "options": ["$50"], "price": 5000 },
+    { "options": ["$100"], "price": 10000 }
+  ]
+}

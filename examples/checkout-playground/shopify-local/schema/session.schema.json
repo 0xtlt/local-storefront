@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionInput",
+  "description": "The state a browser session starts with. Tests can replace it per session through the\ncontrol API (`PUT /__lsf/session`).",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/session.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "customer": {
+      "description": "Who is logged in: the email of a customer, `\"default\"` for the first customer of the\ndata, or `\"none\"`. Nobody is logged in when omitted.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "cart": {
+      "description": "The content of the cart. Empty when omitted.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CartInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "country": {
+      "description": "ISO code of the selected country. Defaults to the first country.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "company_location": {
+      "description": "For a B2B customer: the name of the company location they buy for. Defaults to the\nfirst one they have access to.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "CartInput": {
+      "description": "The cart a session starts with.",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CartLineInput"
+          },
+          "default": []
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "attributes": {
+          "description": "Cart attributes.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "CartLineInput": {
+      "description": "A line of the cart a session starts with.",
+      "type": "object",
+      "properties": {
+        "variant": {
+          "description": "A variant, by id or SKU, or a product handle (its first variant is used).",
+          "$ref": "#/$defs/VariantRef"
+        },
+        "quantity": {
+          "description": "Defaults to 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        },
+        "properties": {
+          "description": "Line item properties, e.g. `{\"Engraving\": \"Hello\"}`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "selling_plan": {
+          "description": "The selling plan the line is bought with: its name or its id. The product of the\nvariant must be sold with it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SellingPlanRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variant"
+      ]
+    },
+    "VariantRef": {
+      "description": "A reference to a variant: its numeric id, its SKU, or a product handle (meaning that\nproduct's first variant).",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "SellingPlanRef": {
+      "description": "A reference to a selling plan: its numeric id, or its name.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

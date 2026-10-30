@@ -52,7 +52,9 @@
       "phone": "+1 555 010 9988",
       "tags": ["vip"],
       "accepts_marketing": true,
-      "password": "password",
+      "metafields": {
+        "custom": { "loyalty_tier": "gold" }
+      },
       "addresses": [
         {
           "first_name": "Jane",
@@ -110,6 +112,31 @@
       "metafields": {
         "custom": { "job_title": "Purchasing manager" }
       }
+    },
+    {
+      "email": "camille.martin@example.com",
+      "first_name": "Camille",
+      "last_name": "Martin",
+      "phone": "+33 1 23 45 67 89",
+      "tags": ["newsletter"],
+      "addresses": [
+        {
+          "first_name": "Camille",
+          "last_name": "Martin",
+          "address1": "8 rue des Lilas",
+          "city": "Lyon",
+          "country": "France",
+          "country_code": "FR",
+          "zip": "69003",
+          "phone": "+33 1 23 45 67 89"
+        }
+      ],
+      "orders": [
+        {
+          "created_at": "2024-09-12T10:30:00+02:00",
+          "line_items": [{ "variant": "canvas-tote-bag", "quantity": 1 }]
+        }
+      ]
     }
   ]
 }

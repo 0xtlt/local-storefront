@@ -3,14 +3,13 @@
 
 use std::sync::Arc;
 
-use lsf_core::Session;
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::render::cost::Costs;
 use lsf_core::render::{ProfileOptions, Target};
-use lsf_core::store::build::{resolve_cart, resolve_company_location};
 use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, schema, validate};
+use lsf_core::{Session, Store};
 use lsf_liquid::filters::escape_html;
 use serde_json::{Value as Json, json};
 
@@ -27,6 +26,9 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
     } else {
         path.split('/').collect()
     };
+    if let Some(reply) = super::checkout::control(state, incoming, &segments) {
+        return reply;
+    }
     match (incoming.method.as_str(), segments.as_slice()) {
         ("GET", []) => dashboard(state, incoming),
         ("GET", ["status"]) => Reply::json(200, &status(state)),
@@ -60,6 +62,12 @@ pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
             state.reset_session(&id);
             Reply::json(200, &json!({ "ok": true }))
         }
+        // Every session at once, with its checkout and its orders: a clean server between two
+        // test runs.
+        ("DELETE", ["sessions"]) => {
+            let count = state.reset_sessions();
+            Reply::json(200, &json!({ "ok": true, "sessions": count }))
+        }
         _ => Reply::not_found(),
     }
 }
@@ -83,7 +91,6 @@ fn status(state: &ServerState) -> Json {
         "throttle": state.options.throttle.to_json(),
         "templates": state.app.theme.template_names(),
         "locales": store.languages.iter().map(|language| language.iso_code.clone()).collect::<Vec<_>>(),
-        "customer_accounts": if lsf_core::site::hosted_accounts(&state.app.theme, store) { "new" } else { "legacy" },
         "customers": store.customers.iter().map(|customer| json!({
             "email": customer.email,
             "company": customer.company.map(|index| store.companies[index].name.clone()),
@@ -311,6 +318,19 @@ fn session_json(state: &ServerState, id: &str) -> Json {
     })
 }
 
+/// Applies a session written in the data format (`customer`, `cart`, `country`,
+/// `company_location`) on top of `session`, reporting what does not exist in `store` against
+/// `file`.
+pub fn apply_session_input(
+    store: &Store,
+    input: &SessionInput,
+    session: &mut Session,
+    diagnostics: &mut Diagnostics,
+    file: &str,
+) {
+    lsf_core::store::build::apply_session_input(store, input, session, diagnostics, file, "");
+}
+
 /// `PUT /__lsf/session`: replaces the session's state.
 ///
 /// The body is a session (`customer`, `cart`, `country`) and may carry a `data` object in the
@@ -353,11 +373,16 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
         Err(error) => return Reply::json(422, &json!({"ok": false, "error": error.to_string()})),
     };
 
-    // Session-specific data: the files plus the overlay.
+    // Session-specific data: the files plus the overlay. What it says of the data without
+    // refusing it (a field it ignores) comes back with the session.
+    let mut warnings = Vec::new();
     let custom_store = match &overlay {
         Some(overlay) => {
-            let (store, overlay_diagnostics) =
-                load_with_overlay(&state.app.source, &state.app.load_options(), Some(overlay));
+            let (store, overlay_diagnostics) = load_with_overlay(
+                &state.app.source(),
+                &state.app.load_options(),
+                Some(overlay),
+            );
             let mut relevant = Diagnostics::new();
             relevant.items = overlay_diagnostics
                 .items
@@ -367,6 +392,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
             if relevant.has_errors() {
                 return Reply::json(422, &diagnostics_json(&relevant));
             }
+            warnings = relevant.items;
             Some(Arc::new(store))
         }
         None => None,
@@ -376,54 +402,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
         .unwrap_or_else(|| state.loaded().store.clone());
 
     let mut session = state.initial_session(&store);
-    if let Some(who) = &input.customer {
-        match store.customer_named(who) {
-            Ok(customer) => {
-                let customer = customer.map(|customer| customer.id);
-                if session.customer_id != customer {
-                    session.customer_id = customer;
-                    session.company_location = None;
-                }
-            }
-            Err(problem) => {
-                diagnostics
-                    .error("unknown_customer", OVERLAY_FILE, "/customer", problem)
-                    .hint("add the customer to the store data, or to \"data\".\"customers\" in this request. \"default\" and \"none\" also work");
-            }
-        }
-    }
-    if let Some(name) = &input.company_location {
-        let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
-        match resolve_company_location(&store, customer, name) {
-            Ok(location) => session.company_location = Some(location),
-            Err(problem) => {
-                diagnostics.error(
-                    "unknown_location",
-                    OVERLAY_FILE,
-                    "/company_location",
-                    problem,
-                );
-            }
-        }
-    }
-    if let Some(country) = &input.country {
-        match store.country(country) {
-            Some(country) => session.country = Some(country.iso_code.clone()),
-            None => {
-                diagnostics.error(
-                    "unknown_country",
-                    OVERLAY_FILE,
-                    "/country",
-                    format!("\"{country}\" is not one of the store's countries"),
-                );
-            }
-        }
-    }
-    if let Some(cart) = &input.cart {
-        session.cart_lines = resolve_cart(&store, cart, &mut diagnostics, OVERLAY_FILE);
-        session.cart_note = cart.note.clone().unwrap_or_default();
-        session.cart_attributes = cart.attributes.clone();
-    }
+    apply_session_input(&store, &input, &mut session, &mut diagnostics, OVERLAY_FILE);
     if diagnostics.has_errors() {
         return Reply::json(422, &diagnostics_json(&diagnostics));
     }
@@ -438,7 +417,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
     });
     let reply = Reply::json(
         200,
-        &json!({ "ok": true, "session": session_json(state, &id) }),
+        &json!({ "ok": true, "session": session_json(state, &id), "diagnostics": warnings }),
     );
     if is_new {
         reply.header(

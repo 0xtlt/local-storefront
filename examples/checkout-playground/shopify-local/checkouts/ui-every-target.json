@@ -1,0 +1,31 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: every target, marked",
+  "description": "ui-every-target declares the 36 targets of the checkout and the thank-you page that render, and badges each with its name. The Weekend Bundle (cart-transform-expand) is a bundle line, and the pickup rate shows the pickup targets. Open it with &targets=all to see the thank-you targets too.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 2,
+          "properties": {
+            "Monogram": "A.L."
+          }
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1
+        },
+        {
+          "variant": "BNDL-WKND",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "ui-every-target",
+    "cart-transform-expand"
+  ]
+}

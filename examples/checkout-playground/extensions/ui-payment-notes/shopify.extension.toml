@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-payment-notes.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: payment notes"
+handle = "ui-payment-notes"
+type = "ui_extension"
+description = "Before and after the payment methods: what the extension reads of them."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.payment-method-list.render-before"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.payment-method-list.render-after"

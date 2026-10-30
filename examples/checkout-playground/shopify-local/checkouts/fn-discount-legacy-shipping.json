@@ -1,0 +1,32 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: legacy shipping discount API",
+  "description": "discount-legacy-shipping (purchase.shipping-discount.run): 2.00 off Express, which is selected. Select Standard and the discount no longer counts.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    },
+    "delivery": "express"
+  },
+  "extensions": [
+    "discount-legacy-shipping"
+  ]
+}

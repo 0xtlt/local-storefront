@@ -1,0 +1,15 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-cart-limit-gate.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: cart limit gate"
+handle = "ui-cart-limit-gate"
+type = "ui_extension"
+description = "Blocks the order while the cart has more than five units, and says so."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  [extensions.capabilities]
+  block_progress = true

@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Discount: shipping discounts not applied",
+  "description": "discount-shipping-amount, used by two code discounts: SHIP3 (3.00 off shipping) applies, SHIP1 (1.00 off) is listed under \"Discounts not applied\" in the Functions dialog: one shipping discount per order, the best one.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "entered": {
+    "email": "ada@example.com",
+    "shipping_address": {
+      "first_name": "Ada",
+      "last_name": "Lovelace",
+      "address1": "12 Harbor Way",
+      "city": "Portland",
+      "zip": "97201",
+      "country_code": "US",
+      "province_code": "OR"
+    },
+    "discount_codes": [
+      "SHIP1",
+      "SHIP3"
+    ]
+  },
+  "extensions": [
+    "discount-shipping-amount"
+  ]
+}

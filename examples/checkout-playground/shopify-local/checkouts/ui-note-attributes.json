@@ -1,0 +1,24 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "UI: cart note and attributes",
+  "description": "Edit the note and two cart attributes from an extension, and remove any attribute. The cart starts with a note and two attributes.",
+  "session": {
+    "customer": "new.customer@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "SOCK-S",
+          "quantity": 2
+        }
+      ],
+      "note": "Ring twice, please",
+      "attributes": {
+        "delivery_window": "morning",
+        "source": "newsletter"
+      }
+    }
+  },
+  "extensions": [
+    "ui-note-attributes"
+  ]
+}

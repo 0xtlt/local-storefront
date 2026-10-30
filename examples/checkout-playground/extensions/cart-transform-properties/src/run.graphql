@@ -1,0 +1,38 @@
+query Input {
+  cart {
+    lines {
+      id
+      quantity
+      engraving: attribute(key: "_engraving") {
+        value
+      }
+      giftWrap: attribute(key: "_gift_wrap") {
+        value
+      }
+      set: attribute(key: "_set") {
+        value
+      }
+      bundleOf: attribute(key: "_bundle_of") {
+        value
+      }
+      cost {
+        amountPerQuantity {
+          amount
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            title
+          }
+        }
+      }
+    }
+  }
+  cartTransform {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

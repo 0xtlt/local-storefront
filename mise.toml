@@ -35,12 +35,46 @@ depends = ["test:js"]
 run = "cargo test --workspace"
 
 [tasks."test:js"]
-description = "Test the scripts lsf injects into pages (Shopify.actions, Shopify.loadFeatures, live reload)"
-run = "node --test crates/core/assets/platform/tests/*.test.mjs crates/cli/assets/tests/*.test.mjs"
+description = "Test the scripts lsf injects into pages (Shopify.actions, Shopify.loadFeatures, live reload) and the checkout page and its extension host"
+run = "node --test crates/core/assets/platform/tests/*.test.mjs crates/cli/assets/tests/*.test.mjs crates/checkout/assets/tests/*.test.mjs"
 
 [tasks.lint]
 description = "Clippy on the whole workspace, warnings are errors"
 run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks."checkout:schemas"]
+description = "Regenerate the Function API schemas of lsf-checkout (crates/checkout/schemas) from the pinned @shopify/dev-mcp package"
+run = "node tools/checkout/function_schemas.mjs"
+
+[tasks."checkout:packages"]
+description = "Copy the npm packages lsf builds extensions with when an app has no node_modules (crates/checkout/javascript-packages), at the versions of tools/checkout/javascript_packages.mjs"
+run = "node tools/checkout/javascript_packages.mjs"
+
+[tasks."checkout:providers"]
+description = "Rebuild the providers lsf links Functions with (crates/checkout/providers) from those of Shopify's function-runner, at the tag of tools/checkout/providers.sh"
+run = "tools/checkout/providers.sh"
+
+[tasks."fixtures:functions"]
+description = "Rebuild the Wasm Functions of the lsf-checkout test app (crates/checkout/tests/fixtures/app); the built modules are committed"
+run = "tools/checkout/build_function_fixtures.sh"
+
+[tasks."playground:functions"]
+description = "Rebuild the Wasm Functions of the checkout playground (examples/checkout-playground); the built modules are committed"
+run = "tools/checkout/build_functions.sh examples/checkout-playground"
+
+[tasks."playground:api"]
+description = "Start the mock server the network Functions of the checkout playground call (http://localhost:8787)"
+run = "node examples/checkout-playground/tools/fake-api.mjs"
+
+[tasks."playground:checkout"]
+description = "Serve the checkout of the playground app with its scenarios (http://127.0.0.1:9292/)"
+dir = "examples/checkout-playground"
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app ."
+
+[tasks."playground:dev"]
+description = "Serve the checkout of the playground in watch mode: a Function builds again when its files change, and the open pages reload (http://127.0.0.1:9292/)"
+dir = "examples/checkout-playground"
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app . --watch"
 
 [tasks.fmt]
 description = "Format the code"

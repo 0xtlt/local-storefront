@@ -1,0 +1,17 @@
+api_version = "2027-01"
+
+[[extensions]]
+name = "Legacy delivery customization"
+handle = "delivery-legacy"
+type = "function"
+description = "The legacy delivery customization target, which takes no operation any more"
+
+  [[extensions.targeting]]
+  target = "purchase.delivery-customization.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. delivery-legacy"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

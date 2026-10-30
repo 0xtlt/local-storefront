@@ -1,0 +1,11 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Limited Edition Print",
+  "description": "<p>A risograph print of the Ottawa river, signed and numbered. Two per order: the validation Function `validation-max-quantity` of the checkout playground refuses more.</p>",
+  "type": "Home",
+  "tags": ["limited", "art"],
+  "price": "45.00",
+  "variants": [
+    { "sku": "PRINT-LTD", "inventory_quantity": 50, "weight": 200 }
+  ]
+}

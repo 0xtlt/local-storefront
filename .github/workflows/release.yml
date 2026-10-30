@@ -119,16 +119,16 @@ jobs:
       - name: Build
         run: |
           if [ -n "$ZIG_TARGET" ]; then
-            cargo zigbuild --release --locked -p lsf --target "$ZIG_TARGET"
+            cargo zigbuild --profile dist --locked -p lsf --target "$ZIG_TARGET"
           else
-            cargo build --release --locked -p lsf --target "$TARGET"
+            cargo build --profile dist --locked -p lsf --target "$TARGET"
           fi
 
       # Only where the runner can execute what it built.
       - name: Smoke test
         if: matrix.smoke
         run: |
-          lsf="target/$TARGET/release/lsf"
+          lsf="target/$TARGET/dist/lsf"
           "$lsf" --version
           "$lsf" --theme crates/core/tests/fixtures/theme validate
           # The home page: a path argument starting with `/` would be rewritten by Git Bash
@@ -138,7 +138,7 @@ jobs:
       - name: Package
         run: |
           mkdir dist
-          cd "target/$TARGET/release"
+          cd "target/$TARGET/dist"
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a -tzip "../../../dist/lsf-$TARGET.zip" lsf.exe
           else

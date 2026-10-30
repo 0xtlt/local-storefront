@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-header-notice.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: header notice"
+handle = "ui-header-notice"
+type = "ui_extension"
+description = "A banner under the header: the shop's name and how far the buyer is from free shipping."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.header.render-after"

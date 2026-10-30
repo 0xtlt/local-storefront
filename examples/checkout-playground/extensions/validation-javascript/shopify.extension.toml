@@ -1,0 +1,18 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Maximum items (JavaScript)"
+handle = "validation-javascript"
+type = "function"
+description = "Refuses an order of more items than its settings allow, written in JavaScript the way `shopify app generate extension --flavor vanilla-js` makes it"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart-validations-generate-run"
+
+  # No build command, as `shopify app generate extension` makes it: Shopify's CLI builds it, and
+  # so does lsf (`lsf app function build`), without Node.
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"

@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Network: a stock check from a server",
+  "description": "validation-network asks http://localhost:8787/stock which products are out of stock (.fetch, then .run). With the mock server (node tools/fake-api.mjs) the slate mug is refused; without it the response is a 502, logged, and nothing is refused.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-SLT",
+          "quantity": 1
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "validation-network"
+  ]
+}

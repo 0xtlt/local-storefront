@@ -1,0 +1,15 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Scented Candle",
+  "description": "<p>Soy wax, cotton wick, and a cedar and fig scent that fills a room without overpowering it. Burns for 45 hours.</p>",
+  "type": "Home",
+  "tags": ["candles", "sale"],
+  "price": "28.00",
+  "compare_at_price": "34.00",
+  "images": [
+    { "src": "products/candle.jpg", "alt": "Scented candle in an amber glass jar", "width": 1600, "height": 1600 }
+  ],
+  "variants": [
+    { "sku": "CNDL-FIG", "inventory_quantity": 0 }
+  ]
+}

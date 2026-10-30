@@ -1,0 +1,18 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-unknown-target.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI broken: unknown-target"
+handle = "ui-broken-unknown-target"
+type = "ui_extension"
+description = "Declares two targets that do not exist, a checkout one and a customer account one, next to the block target."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.nowhere.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.orders.block.render"
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

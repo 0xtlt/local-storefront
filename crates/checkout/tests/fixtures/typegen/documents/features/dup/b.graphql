@@ -1,0 +1,4 @@
+fragment   F   on User {
+ id
+}
+query Q2 { viewer { ...F } }

@@ -1,0 +1,16 @@
+query Input {
+  localization {
+    country {
+      isoCode
+    }
+    market {
+      handle
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

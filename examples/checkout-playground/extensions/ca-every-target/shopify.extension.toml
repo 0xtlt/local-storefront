@@ -1,0 +1,81 @@
+# A customer account UI extension of the playground. Its bundle, dist/ca-every-target.js, is
+# written by hand (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "Customer account: every target"
+handle = "ca-every-target"
+type = "ui_extension"
+description = "One extension that declares the 24 targets of customer accounts and marks each with its name: a full page, an order action with its dialog, and what each target is for."
+
+  [[extensions.targeting]]
+  target = "customer-account.order-index.announcement.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-index.block.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order.action.menu-item.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order.action.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.announcement.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.block.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.fulfillment-details.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.unfulfilled-items.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.return-details.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.customer-information.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.payment-details.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.cart-line-item.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.order-status.cart-line-list.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.order.page.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.announcement.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.block.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.addresses.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.payment.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.company-details.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.company-location-addresses.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.company-location-payment.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.profile.company-location-staff.render-after"
+
+  [[extensions.targeting]]
+  target = "customer-account.page.render"
+
+  [[extensions.targeting]]
+  target = "customer-account.footer.render-after"

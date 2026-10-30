@@ -1,0 +1,9 @@
+query Input {
+  fetchResult {
+    status
+    jsonBody
+  }
+  discount {
+    discountClasses
+  }
+}

@@ -1,0 +1,181 @@
+/* The design tokens of the local checkout, the one place that sets how it looks. The page
+ * (`checkout.css`) and the frame of the checkout UI extensions (`sandbox.html`) both read them.
+ *
+ * The defaults are the ones of a store with no branding: system fonts, a 14px base text, black on
+ * white, a blue accent, a grey order summary, corner radii of 8, 12 and 16px. To brand the checkout,
+ * set the primary tokens in the first block (on `:root`); everything under "Derived" follows from
+ * the accent. The Shop skin (`[data-variant='shop']`) sets its own at the end.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* --- Typography ---------------------------------------------------------------------------
+   * The size ramp is the base size plus or minus a step: 10, 12, 14, 16, 18, 20 and 22px. */
+  --lsf-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --lsf-font-heading: var(--lsf-font);
+  --lsf-font-size-base: 14px;
+  --lsf-font-step: 2px;
+  --lsf-font-weight: 400;
+  --lsf-font-weight-bold: 600;
+  --lsf-line-height: 1.35;
+  --lsf-line-height-small: 1.2;
+
+  /* --- Colors: the main column ---------------------------------------------------------------- */
+  --lsf-color-bg: #fff;
+  --lsf-color-page: var(--lsf-color-bg);
+  --lsf-color-bg-subdued: #f5f5f5;
+  --lsf-color-text: #000;
+  --lsf-color-text-subdued: #707070;
+  --lsf-color-border: #dedede;
+  --lsf-color-border-emphasis: #8f8f8f;
+  --lsf-color-overlay: rgb(0 0 0 / 4.3%);
+  --lsf-color-backdrop: rgb(0 0 0 / 45%);
+  --lsf-color-accent: #005bd1;
+  --lsf-color-on-accent: #fff;
+
+  /* The order summary is a color scheme of its own. */
+  --lsf-summary-bg: #f5f5f5;
+  --lsf-summary-bg-subdued: #ededed;
+  --lsf-summary-text: #000;
+  --lsf-summary-text-subdued: #666;
+  --lsf-summary-border: #d6d6d6;
+
+  /* Status colors: a base, a hover and three washes, with the text that goes on a wash. */
+  --lsf-color-critical: #d91c1c;
+  --lsf-color-critical-hover: #c81919;
+  --lsf-color-critical-wash-1: #fef6f6;
+  --lsf-color-critical-wash-2: #feecec;
+  --lsf-color-critical-wash-3: #fdd8d8;
+  --lsf-color-critical-text: #3f0303;
+  --lsf-color-success: #4d7a50;
+  --lsf-color-success-wash-1: #eafbea;
+  --lsf-color-success-wash-2: #ddf8de;
+  --lsf-color-success-wash-3: #b1f2b4;
+  --lsf-color-success-text: #101e11;
+  --lsf-color-warning: #8f6900;
+  --lsf-color-warning-wash-1: #fff5eb;
+  --lsf-color-warning-wash-2: #ffeedb;
+  --lsf-color-warning-wash-3: #ffdeb3;
+  --lsf-color-warning-text: #241700;
+  --lsf-color-info: var(--lsf-color-text);
+  --lsf-color-info-wash-1: var(--lsf-color-bg-subdued);
+  --lsf-color-info-wash-2: #ededed;
+
+  /* --- Corner radii --------------------------------------------------------------------------
+   * A component takes its own radius if it is set, else the global one if it is set, else the
+   * size of its kind: small, base or large. */
+  --lsf-radius-small: 8px;
+  --lsf-radius-base: 12px;
+  --lsf-radius-large: 16px;
+  --lsf-radius-control: var(--lsf-radius-global, var(--lsf-radius-base));
+  --lsf-radius-button: var(--lsf-radius-global, var(--lsf-radius-base));
+  --lsf-radius-checkbox: var(--lsf-radius-global, var(--lsf-radius-small));
+  --lsf-radius-thumbnail: var(--lsf-radius-global, var(--lsf-radius-large));
+  --lsf-radius-badge: var(--lsf-radius-global, var(--lsf-radius-small));
+  --lsf-radius-panel: var(--lsf-radius-global, var(--lsf-radius-base));
+  --lsf-radius-sheet: var(--lsf-radius-global, var(--lsf-radius-large));
+
+  /* --- Spacing and sizes --------------------------------------------------------------------- */
+  --lsf-space-2xs: 2px;
+  --lsf-space-xs: 4px;
+  --lsf-space-s: 6px;
+  --lsf-space-m: 8px;
+  --lsf-space-l: 10px;
+  --lsf-space-base: 14px;
+  --lsf-space-xl: 16px;
+  --lsf-space-2xl: 20px;
+  --lsf-space-3xl: 24px;
+  --lsf-space-4xl: 32px;
+  --lsf-space-5xl: 40px;
+  --lsf-space-6xl: 48px;
+  --lsf-control-height: 49px;
+  --lsf-button-height: 49.6px;
+  --lsf-thumbnail-size: 64px;
+  --lsf-shell-main: 580px;
+  --lsf-shell-summary: 480px;
+  --lsf-border-width: 1px;
+  --lsf-opacity-disabled: 0.5;
+
+  /* --- Shadows and motion --------------------------------------------------------------------- */
+  --lsf-shadow-xs: 0 0 0 0.5px rgb(0 0 0 / 5%), 0 1px 3px 0 rgb(0 0 0 / 4%), 0 2px 8px 0 rgb(0 0 0 / 6%);
+  --lsf-shadow-base: 0 0 0 0.5px rgb(0 0 0 / 6%), 0 2px 5px rgb(0 0 0 / 4%), 0 4px 18px rgb(0 0 0 / 10%);
+  --lsf-shadow-xl: 0 0 0 0.5px rgb(0 0 0 / 7%), 0 4px 7px rgb(0 0 0 / 4%), 0 8px 32px rgb(0 0 0 / 16%);
+  --lsf-ring-width: 3px;
+  --lsf-duration-fast: 133ms;
+  --lsf-duration-base: 200ms;
+  --lsf-ease: ease-in-out;
+  --lsf-ease-out: cubic-bezier(0.3, 0.5, 0.5, 1);
+  --lsf-duration-spin: 0.7s;
+
+  /* --- Code: the inputs and outputs of the Functions dialog, on a dark block ------------------ */
+  --lsf-code-bg: #1e1e1e;
+  --lsf-code-text: #e6e6e6;
+  --lsf-code-key: #9cdcfe;
+  --lsf-code-string: #ce9178;
+  --lsf-code-number: #b5cea8;
+  --lsf-code-literal: #569cd6;
+}
+
+/* Buyers who ask for less motion get the end state at once; spinners keep turning, slower, since
+ * they are the only sign that something is loading. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --lsf-duration-fast: 1ms;
+    --lsf-duration-base: 1ms;
+    --lsf-duration-spin: 2s;
+  }
+}
+
+/* --- Derived: everything that follows from the accent and the base size ----------------------
+ * Declared on `:root` and on the skins, so that a skin that sets its own accent gets its own
+ * hover, tints and ring. */
+:root,
+[data-variant] {
+  --lsf-size-xs: calc(var(--lsf-font-size-base) - 2 * var(--lsf-font-step));
+  --lsf-size-s: calc(var(--lsf-font-size-base) - var(--lsf-font-step));
+  --lsf-size-m: var(--lsf-font-size-base);
+  --lsf-size-l: calc(var(--lsf-font-size-base) + var(--lsf-font-step));
+  --lsf-size-xl: calc(var(--lsf-font-size-base) + 2 * var(--lsf-font-step));
+  --lsf-size-2xl: calc(var(--lsf-font-size-base) + 3 * var(--lsf-font-step));
+  --lsf-size-3xl: calc(var(--lsf-font-size-base) + 4 * var(--lsf-font-step));
+
+  /* The hover color is the accent a little darker and less saturated. */
+  --lsf-color-accent-hover: oklch(from var(--lsf-color-accent) calc(l - 0.088) calc(c * 0.85) h);
+  /* Two very light washes of the accent, and the subdued text that reads on them. */
+  --lsf-color-accent-tint-2: oklch(from var(--lsf-color-accent) 0.975 calc(c * 0.06) h);
+  --lsf-color-accent-tint-3: oklch(from var(--lsf-color-accent) 0.95 calc(c * 0.12) h);
+  --lsf-color-text-subdued-on-tint: oklch(from var(--lsf-color-accent) 0.52 calc(c * 0.1) h);
+  /* The ring of a focused control. */
+  --lsf-color-focus-ring: oklch(from var(--lsf-color-accent) l c h / 30%);
+  --lsf-color-critical-ring: oklch(from var(--lsf-color-critical) l c h / 30%);
+}
+
+/* A browser without relative colors gets the same colors from `color-mix()`. */
+@supports not (color: oklch(from red l c h)) {
+  :root,
+  [data-variant] {
+    --lsf-color-accent-hover: color-mix(in oklab, var(--lsf-color-accent), black 25%);
+    --lsf-color-accent-tint-2: color-mix(in oklab, var(--lsf-color-accent) 6%, white);
+    --lsf-color-accent-tint-3: color-mix(in oklab, var(--lsf-color-accent) 12%, white);
+    --lsf-color-text-subdued-on-tint: color-mix(in oklab, var(--lsf-color-accent) 15%, #666);
+    --lsf-color-focus-ring: color-mix(in srgb, var(--lsf-color-accent) 30%, transparent);
+    --lsf-color-critical-ring: color-mix(in srgb, var(--lsf-color-critical) 30%, transparent);
+  }
+}
+
+/* --- The Shop skin: Shop app / Shop Pay. A violet accent, a soft violet page, rounder corners. */
+[data-variant='shop'] {
+  --lsf-color-accent: #5433eb;
+  --lsf-color-page: #f4f1ff;
+  --lsf-color-bg: #fff;
+  --lsf-color-bg-subdued: #f7f5ff;
+  --lsf-color-border: #e4defa;
+  --lsf-color-border-emphasis: #b9aef0;
+  --lsf-color-text: #303030;
+  --lsf-color-text-subdued: #616161;
+  --lsf-summary-bg: #fff;
+  --lsf-radius-control: 14px;
+  --lsf-radius-panel: 22px;
+  --lsf-radius-button: 999px;
+}

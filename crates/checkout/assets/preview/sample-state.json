@@ -1,0 +1,115 @@
+{
+  "token": "preview",
+  "variant": "standard",
+  "status": "open",
+  "shop": {
+    "name": "Local Store",
+    "currencyCode": "EUR",
+    "moneyFormat": "€{{amount}}",
+    "locale": "en",
+    "storefrontUrl": "http://127.0.0.1:9293"
+  },
+  "buyer": { "email": null, "phone": null, "customer": null },
+  "shippingAddress": null,
+  "note": null,
+  "attributes": [],
+  "metafields": [],
+  "lines": [
+    {
+      "id": "gid://shopify/CartLine/1",
+      "variantId": 101,
+      "productId": 11,
+      "title": "Linen shirt",
+      "variantTitle": "M / Sand",
+      "sku": "LIN-SH-M-SAND",
+      "vendor": "Northline",
+      "productType": "Shirts",
+      "selectedOptions": [{ "name": "Size", "value": "M" }, { "name": "Color", "value": "Sand" }],
+      "sellingPlan": null,
+      "image": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' fill='%23e8dcc4'/><path d='M20 14l12 6 12-6 12 10-8 8-4-3v25H20V29l-4 3-8-8z' fill='%23c9b48a'/></svg>",
+      "quantity": 1,
+      "unitPrice": { "amount": 49.0 },
+      "subtotal": { "amount": 49.0 },
+      "total": { "amount": 49.0 },
+      "discountAllocations": [],
+      "attributes": [],
+      "components": [],
+      "transformedBy": null,
+      "requiresShipping": true
+    },
+    {
+      "id": "gid://shopify/CartLine/2",
+      "variantId": 202,
+      "productId": 22,
+      "title": "Canvas tote",
+      "variantTitle": null,
+      "sku": "TOTE-01",
+      "vendor": "Northline",
+      "productType": "Bags",
+      "selectedOptions": [{ "name": "Title", "value": "Default Title" }],
+      "sellingPlan": null,
+      "image": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' fill='%23d9e4ec'/><path d='M18 24h28l3 26H15zM24 24a8 8 0 0116 0' fill='%237fa0b8' stroke='%235b7d96' stroke-width='3'/></svg>",
+      "quantity": 2,
+      "unitPrice": { "amount": 12.0 },
+      "subtotal": { "amount": 24.0 },
+      "total": { "amount": 24.0 },
+      "discountAllocations": [],
+      "attributes": [],
+      "components": [],
+      "transformedBy": null,
+      "requiresShipping": true
+    }
+  ],
+  "discounts": [],
+  "discountCodes": [],
+  "deliveryGroups": [],
+  "paymentMethods": [
+    { "handle": "card", "name": "Credit card" },
+    { "handle": "cod", "name": "Cash on Delivery" },
+    { "handle": "bank-deposit", "name": "Bank Deposit" }
+  ],
+  "selectedPayment": null,
+  "errors": [],
+  "cost": {
+    "subtotal": { "amount": 73.0 },
+    "discounts": { "amount": 0 },
+    "shipping": { "amount": 0 },
+    "tax": { "amount": 0 },
+    "total": { "amount": 73.0 },
+    "dueNow": { "amount": 73.0 },
+    "dueLater": { "amount": 0 },
+    "checkoutChargeAmount": { "amount": 73.0 },
+    "currencyCode": "EUR"
+  },
+  "runs": [],
+  "extensions": [
+    {
+      "handle": "gift-message",
+      "apiVersion": "2026-10",
+      "metafields": [{ "namespace": "$app:gift", "key": "wrapped" }],
+      "script": "/__lsf/extensions/gift-message/gift-message.js",
+      "targets": [
+        "purchase.checkout.block.render",
+        "purchase.checkout.cart-line-item.render-after",
+        "purchase.thank-you.block.render"
+      ],
+      "capabilities": { "api_access": true, "block_progress": true },
+      "settings": { "max_length": 80 },
+      "translations": { "en": { "total": "Order total: {{amount}}" } },
+      "defaultLocale": "en"
+    },
+    {
+      "handle": "order-notice",
+      "apiVersion": "2027-01",
+      "metafields": [{ "namespace": "$app:notice", "key": "dismissed", "ownerType": "CART" }],
+      "script": "/__lsf/extensions/order-notice/order-notice.js",
+      "targets": [
+        "purchase.checkout.reductions.render-after",
+        "purchase.checkout.shipping-option-list.render-after"
+      ],
+      "capabilities": { "api_access": true },
+      "settings": { "threshold": 100, "code": "FREESHIP" }
+    }
+  ],
+  "diagnostics": []
+}

@@ -1,0 +1,34 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-settings-empty.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2026-10"
+
+[[extensions]]
+name = "UI: settings"
+handle = "ui-settings-empty"
+type = "ui_extension"
+description = "Declares three settings; the local checkout leaves their values empty, so the extension shows its defaults."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "title"
+    type = "single_line_text_field"
+    name = "Title"
+    description = "The heading of the banner."
+
+    [[extensions.settings.fields]]
+    key = "tone"
+    type = "single_line_text_field"
+    name = "Tone"
+    description = "info, success, warning or critical."
+      [[extensions.settings.fields.validations]]
+      name = "choices"
+      value = '["info", "success", "warning", "critical"]'
+
+    [[extensions.settings.fields]]
+    key = "threshold"
+    type = "number_integer"
+    name = "Threshold"
+    description = "A number the merchant sets."

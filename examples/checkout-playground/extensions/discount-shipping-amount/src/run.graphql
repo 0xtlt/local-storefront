@@ -1,0 +1,14 @@
+query Input {
+  cart {
+    deliveryGroups {
+      id
+    }
+  }
+  triggeringDiscountCode
+  discount {
+    discountClasses
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Network: a discount from a server",
+  "description": "discount-network asks http://localhost:8787/discount for a percentage (.fetch, then .run). With the mock server (node tools/fake-api.mjs) it answers 12% off; without it the response is a 502 and no discount applies. The Functions dialog shows the request and the response.",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "TEE-BLK-M",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "discount-network"
+  ]
+}

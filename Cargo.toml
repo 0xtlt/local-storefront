@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/liquid", "crates/core", "crates/fmt", "crates/cli"]
+members = ["crates/liquid", "crates/core", "crates/fmt", "crates/checkout", "crates/cli"]
+# Third-party code, as its authors wrote it: built, not linted.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.18"
@@ -13,6 +15,7 @@ repository = "https://github.com/0xtlt/local-storefront"
 lsf-liquid = { path = "crates/liquid" }
 lsf-core = { path = "crates/core" }
 lsf-fmt = { path = "crates/fmt" }
+lsf-checkout = { path = "crates/checkout" }
 
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -36,3 +39,12 @@ opt-level = 1
 [profile.release]
 lto = "thin"
 codegen-units = 4
+# Without the symbol table: 11 MB less, and a panic still says where it happened.
+strip = true
+
+# The binaries of a release (`.github/workflows/release.yml`): 7 MB smaller than `release`, for
+# a build about six times as long, which `cargo run --release` is spared when working on lsf.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

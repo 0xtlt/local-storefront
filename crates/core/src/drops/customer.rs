@@ -201,16 +201,6 @@ fn orders(site: &SiteRef, customer: &Customer) -> Vec<Value> {
         .collect()
 }
 
-/// A single order of the logged-in customer, for the order page.
-pub fn find_order(site: &SiteRef, order_id: u64) -> Option<Value> {
-    let customer = site.customer()?;
-    customer
-        .orders
-        .iter()
-        .find(|order| order.id == order_id)
-        .map(|order| order_value(site, customer, order))
-}
-
 impl Object for CustomerDrop {
     fn type_name(&self) -> &str {
         "customer"

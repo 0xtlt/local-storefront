@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Discount by market and country"
+handle = "discount-by-market"
+type = "function"
+description = "A percentage off the order by the market, or the country, of the buyer"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "cart_lines_discounts_generate_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. discount-by-market"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

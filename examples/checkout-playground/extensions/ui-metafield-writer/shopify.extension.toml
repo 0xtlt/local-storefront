@@ -1,0 +1,18 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-metafield-writer.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI: metafield writer"
+handle = "ui-metafield-writer"
+type = "ui_extension"
+description = "Writes and removes a cart metafield, declared with the owner_type that 2027-01 requires, and lists the app metafields."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"
+
+  # Required from 2027-01 on: the resource the metafield is read from.
+  [[extensions.metafields]]
+  namespace = "$app:playground"
+  key = "packaging"
+  owner_type = "CART"

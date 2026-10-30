@@ -1,0 +1,14 @@
+{
+  "$schema": "../schema/product.schema.json",
+  "title": "Canvas Tote Bag",
+  "description": "<p>18 oz cotton canvas with reinforced handles and an inside pocket. Holds a laptop, a baguette and everything in between.</p>",
+  "type": "Accessories",
+  "tags": ["bags", "cotton"],
+  "price": 2400,
+  "images": [
+    { "src": "products/tote.jpg", "alt": "Natural canvas tote bag", "width": 1600, "height": 1600 }
+  ],
+  "variants": [
+    { "sku": "TOTE-NAT", "inventory_quantity": 40, "weight": 320 }
+  ]
+}

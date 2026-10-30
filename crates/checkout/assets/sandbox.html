@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light" />
+    <!-- The same design tokens as the page: an extension looks like the checkout around it. -->
+    <link rel="stylesheet" href="tokens.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--lsf-color-text);
+        font: var(--lsf-font-weight) var(--lsf-size-m) / var(--lsf-line-height) var(--lsf-font);
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        display: flow-root;
+        overflow: hidden;
+      }
+      html.lsf-overlay body {
+        visibility: hidden;
+      }
+    </style>
+    <!-- Classic scripts: this frame has an opaque origin, which cannot load modules without CORS. -->
+    <script src="sandbox-api.js"></script>
+    <script src="sandbox-account-api.js"></script>
+    <script src="sandbox-components.js"></script>
+    <script src="sandbox.js"></script>
+  </head>
+  <body></body>
+</html>

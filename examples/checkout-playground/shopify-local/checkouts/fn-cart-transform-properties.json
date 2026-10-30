@@ -1,0 +1,50 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Cart transform: operations from line properties",
+  "description": "cart-transform-properties: the mug is engraved (_engraving, +6.00), the tote gift wrapped (_gift_wrap, +3.00), the tee and the beanie merge into a set (_set: cold), and the bundle expands (_bundle_of).",
+  "session": {
+    "customer": "none",
+    "cart": {
+      "items": [
+        {
+          "variant": "MUG-OAT",
+          "quantity": 1,
+          "properties": {
+            "_engraving": "Ada"
+          }
+        },
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 1,
+          "properties": {
+            "_gift_wrap": "yes"
+          }
+        },
+        {
+          "variant": "TEE-BLK-M",
+          "quantity": 1,
+          "properties": {
+            "_set": "cold"
+          }
+        },
+        {
+          "variant": "BNE-NVY",
+          "quantity": 1,
+          "properties": {
+            "_set": "cold"
+          }
+        },
+        {
+          "variant": "BNDL-WKND",
+          "quantity": 1,
+          "properties": {
+            "_bundle_of": "8182177638701:1,4381608573867:1"
+          }
+        }
+      ]
+    }
+  },
+  "extensions": [
+    "cart-transform-properties"
+  ]
+}

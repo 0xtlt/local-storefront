@@ -1,0 +1,11 @@
+# A Shopify app for the tests of lsf-checkout: five Functions (discount, delivery customization,
+# payment customization, validation, cart transform). Their built modules are committed; rebuild
+# them with `mise run fixtures:functions`.
+name = "Checkout fixtures"
+client_id = "00000000000000000000000000000000"
+handle = "checkout-fixtures"
+application_url = "https://example.com"
+embedded = true
+
+[access_scopes]
+scopes = ""

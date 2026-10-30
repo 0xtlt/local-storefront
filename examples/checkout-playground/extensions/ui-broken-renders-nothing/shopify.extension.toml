@@ -1,0 +1,12 @@
+# A checkout UI extension of the playground. Its bundle, dist/ui-broken-renders-nothing.js, is written by hand
+# (no build step): read it for what the extension shows.
+api_version = "2027-01"
+
+[[extensions]]
+name = "UI broken: renders-nothing"
+handle = "ui-broken-renders-nothing"
+type = "ui_extension"
+description = "Registers its target and draws nothing: the frame is zero pixels tall."
+
+  [[extensions.targeting]]
+  target = "purchase.checkout.block.render"

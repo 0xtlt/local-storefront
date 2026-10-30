@@ -1,0 +1,17 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Expand a bundle"
+handle = "cart-transform-expand"
+type = "function"
+description = "Expands a bundle product into the components its product metafield lists"
+
+  [[extensions.targeting]]
+  target = "cart.transform.run"
+  input_query = "src/run.graphql"
+  export = "cart_transform_run"
+
+  [extensions.build]
+  command = "../../../../tools/checkout/build_functions.sh ../.. cart-transform-expand"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.rs"]

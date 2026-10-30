@@ -13,6 +13,7 @@ use super::model::{
 };
 use super::reference;
 use super::*;
+use crate::Session;
 use crate::diagnostics::Diagnostics;
 use crate::util::{closest_match, handleize, humanize, short_hash, stable_id};
 
@@ -65,6 +66,9 @@ pub struct MergedInput {
     pub localization: Option<Sourced<model::LocalizationInput>>,
     pub files: IndexMap<String, model::FileInput>,
     pub session: Option<Sourced<model::SessionInput>>,
+    pub checkout: Option<Sourced<model::CheckoutInput>>,
+    /// The files of `checkouts/`, by name.
+    pub scenarios: Vec<MergedScenario>,
     pub now: Option<Sourced<String>>,
     pub theme_settings: IndexMap<String, Json>,
 }
@@ -399,9 +403,12 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         selling_plan_groups: Vec::new(),
         metaobjects: Vec::new(),
         countries: Vec::new(),
+        markets: Vec::new(),
         languages: Vec::new(),
         files: IndexMap::new(),
         session_defaults: SessionDefaults::default(),
+        checkout: CheckoutSettings::default(),
+        scenarios: Vec::new(),
         now: None,
         theme_settings: input.theme_settings,
         product_handles: HashMap::new(),
@@ -452,6 +459,10 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
     if let Some(session) = &input.session {
         build_session(&mut builder, &mut store, session);
     }
+    if let Some(checkout) = &input.checkout {
+        store.checkout = build_checkout(&mut builder, checkout);
+    }
+    build_scenarios(&mut builder, &mut store, &input.scenarios);
     if let Some(now) = &input.now {
         let parsed = builder.date(&Some(now.value.clone()), &now.origin, epoch());
         store.now = Some(parsed);
@@ -556,7 +567,6 @@ fn build_shop(builder: &mut Builder<'_>, input: &model::ShopInput) -> Shop {
         }),
         customer_accounts_enabled: input.customer_accounts_enabled.unwrap_or(true),
         customer_accounts_optional: input.customer_accounts_optional.unwrap_or(true),
-        customer_accounts: input.customer_accounts,
         taxes_included: input.taxes_included,
         password_message: input.password_message.clone().unwrap_or_default(),
         password: input
@@ -2256,6 +2266,12 @@ fn build_companies(
         let id = input
             .id
             .unwrap_or_else(|| stable_id("company", &input.name.to_lowercase()));
+        let created_at = builder.date(
+            &input.created_at,
+            &origin.child("created_at"),
+            epoch() + Duration::days(store.companies.len() as i64),
+        );
+        let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), created_at);
         let mut names = HashSet::new();
         let locations = input
             .locations
@@ -2278,8 +2294,25 @@ fn build_companies(
                         &format!("{id}/{}", location.name.to_lowercase()),
                     )
                 });
+                let location_origin = origin.child("locations").child(position);
+                let location_created = builder.date(
+                    &location.created_at,
+                    &location_origin.child("created_at"),
+                    created_at,
+                );
                 CompanyLocation {
                     id: location_id,
+                    locale: location.locale.clone(),
+                    updated_at: builder.date(
+                        &location.updated_at,
+                        &location_origin.child("updated_at"),
+                        location_created,
+                    ),
+                    created_at: location_created,
+                    orders_count: location.orders_count.unwrap_or(0),
+                    total_spent: location.total_spent.as_ref().map_or(0, |money| {
+                        builder.money(money, &location_origin.child("total_spent"))
+                    }),
                     name: location.name.clone(),
                     external_id: location.external_id.clone(),
                     shipping_address: location
@@ -2296,6 +2329,8 @@ fn build_companies(
             name: input.name.clone(),
             external_id: input.external_id.clone(),
             locations,
+            created_at,
+            updated_at,
             metafields: builder.metafields(&input.metafields),
         });
     }
@@ -2413,6 +2448,34 @@ fn build_customers(
             .id
             .unwrap_or_else(|| stable_id("customer", &input.email.to_lowercase()));
         let (company, company_locations) = customer_company(builder, store, input, origin);
+        let company_contact = input.company_contact.as_ref().map(|contact| {
+            let contact_origin = origin.child("company_contact");
+            let base = company.map_or_else(epoch, |index| store.companies[index].created_at);
+            let created_at = builder.date(
+                &contact.created_at,
+                &contact_origin.child("created_at"),
+                base,
+            );
+            CompanyContact {
+                title: contact.title.clone(),
+                locale: contact.locale.clone(),
+                updated_at: builder.date(
+                    &contact.updated_at,
+                    &contact_origin.child("updated_at"),
+                    created_at,
+                ),
+                created_at,
+            }
+        });
+        if input.company_contact.is_some() && company.is_none() {
+            builder
+                .error(
+                    "missing_company",
+                    &origin.child("company_contact"),
+                    "the customer has a company contact but names no company",
+                )
+                .hint("add \"company\" with the name of a company in \"companies\"");
+        }
         let orders = input
             .orders
             .iter()
@@ -2441,6 +2504,49 @@ fn build_customers(
                             variant,
                             quantity: line.quantity,
                         })
+                    })
+                    .collect::<Vec<OrderLine>>();
+                let returns = order
+                    .returns
+                    .iter()
+                    .enumerate()
+                    .map(|(return_position, sent)| {
+                        let return_origin = order_origin.child("returns").child(return_position);
+                        let lines = if sent.line_items.is_empty() {
+                            line_items
+                                .iter()
+                                .enumerate()
+                                .map(|(index, line)| (index, line.quantity))
+                                .collect()
+                        } else {
+                            sent.line_items
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(line_position, line)| {
+                                    let variant = resolve_variant(store, &line.variant);
+                                    let index = variant.and_then(|variant| {
+                                        line_items.iter().position(|item| item.variant == variant)
+                                    });
+                                    if index.is_none() {
+                                        builder
+                                            .error(
+                                                "unknown_return_line",
+                                                &return_origin
+                                                    .child("line_items")
+                                                    .child(line_position)
+                                                    .child("variant"),
+                                                "the return names a variant that is not a line of the order",
+                                            )
+                                            .hint("name the variant of one of the order's line_items");
+                                    }
+                                    index.map(|index| (index, line.quantity))
+                                })
+                                .collect()
+                        };
+                        OrderReturn {
+                            status: sent.status.clone().unwrap_or_else(|| "open".to_string()),
+                            lines,
+                        }
                     })
                     .collect();
                 Order {
@@ -2482,6 +2588,7 @@ fn build_customers(
                     }),
                     cancelled: order.cancelled,
                     note: order.note.clone().unwrap_or_default(),
+                    returns,
                 }
             })
             .collect();
@@ -2502,10 +2609,10 @@ fn build_customers(
                 .map(|(position, a)| address(a, &format!("{id}/address/{position}")))
                 .collect(),
             orders,
-            password: input.password.clone(),
             metafields: builder.metafields(&input.metafields),
             company,
             company_locations,
+            company_contact,
         });
     }
 }
@@ -2669,6 +2776,52 @@ fn build_localization(
             unit_system: reference::unit_system(&iso_code).to_string(),
             popular: false,
             iso_code,
+        });
+    }
+
+    let mut handles = HashSet::new();
+    let mut grouped: HashMap<String, String> = HashMap::new();
+    for (position, market) in input.markets.iter().enumerate() {
+        let market_origin = origin.child("markets").child(position);
+        if !handles.insert(market.handle.clone()) {
+            builder.error(
+                "duplicate_handle",
+                &market_origin.child("handle"),
+                format!("there are two markets called \"{}\"", market.handle),
+            );
+        }
+        let mut countries = Vec::new();
+        for (index, code) in market.countries.iter().enumerate() {
+            let code = code.to_uppercase();
+            let country_origin = market_origin.child("countries").child(index);
+            if store.country(&code).is_none() {
+                let known: Vec<&str> = store
+                    .countries
+                    .iter()
+                    .map(|country| country.iso_code.as_str())
+                    .collect();
+                builder
+                    .error(
+                        "unknown_country",
+                        &country_origin,
+                        format!(
+                            "\"{code}\" is not one of the countries in \"localization.countries\""
+                        ),
+                    )
+                    .hint(format!("countries: {}", known.join(", ")));
+            } else if let Some(other) = grouped.insert(code.clone(), market.handle.clone()) {
+                builder.error(
+                    "duplicate_market_country",
+                    &country_origin,
+                    format!("{code} is already in the market \"{other}\""),
+                );
+            }
+            countries.push(code);
+        }
+        store.markets.push(Market {
+            handle: market.handle.clone(),
+            countries,
+            metafields: builder.metafields(&market.metafields),
         });
     }
 
@@ -2853,6 +3006,360 @@ fn build_session(
     store.session_defaults = defaults;
 }
 
+/// The checkout settings the data says: the defaults, with what `checkout` sets on top.
+fn build_checkout(
+    builder: &mut Builder<'_>,
+    checkout: &Sourced<model::CheckoutInput>,
+) -> CheckoutSettings {
+    override_checkout(builder, checkout, CheckoutSettings::default())
+}
+
+/// `base` with what `checkout` sets on top: every field that is present replaces the one of
+/// `base`, except the settings of the Functions, which replace those of the Functions they
+/// name. A scenario overrides the settings of the store this way.
+fn override_checkout(
+    builder: &mut Builder<'_>,
+    checkout: &Sourced<model::CheckoutInput>,
+    base: CheckoutSettings,
+) -> CheckoutSettings {
+    let Sourced {
+        value: input,
+        origin,
+    } = checkout;
+    let mut settings = base;
+
+    if let Some(rates) = &input.shipping_rates {
+        let mut seen = HashSet::new();
+        settings.shipping_rates = Vec::new();
+        for (position, rate) in rates.iter().enumerate() {
+            let rate_origin = origin.child("shipping_rates").child(position);
+            if !seen.insert(rate.handle.clone()) {
+                builder.error(
+                    "duplicate_handle",
+                    &rate_origin.child("handle"),
+                    format!("there are two shipping rates called \"{}\"", rate.handle),
+                );
+            }
+            let price = builder.money(&rate.price, &rate_origin.child("price"));
+            if price < 0 {
+                builder.error(
+                    "invalid_money",
+                    &rate_origin.child("price"),
+                    "a shipping rate cannot cost less than nothing",
+                );
+            }
+            settings.shipping_rates.push(CheckoutShippingRate {
+                handle: rate.handle.clone(),
+                title: rate.title.clone().unwrap_or_else(|| rate.handle.clone()),
+                price,
+                description: rate.description.clone(),
+                kind: rate.kind.unwrap_or_default(),
+            });
+        }
+    }
+    if let Some(methods) = &input.payment_methods {
+        let mut seen = HashSet::new();
+        settings.payment_methods = Vec::new();
+        for (position, method) in methods.iter().enumerate() {
+            if !seen.insert(method.handle.clone()) {
+                builder.error(
+                    "duplicate_handle",
+                    &origin
+                        .child("payment_methods")
+                        .child(position)
+                        .child("handle"),
+                    format!("there are two payment methods called \"{}\"", method.handle),
+                );
+            }
+            settings.payment_methods.push(CheckoutPaymentMethod {
+                handle: method.handle.clone(),
+                name: method.name.clone().unwrap_or_else(|| method.handle.clone()),
+                placements: if method.placements.is_empty() {
+                    vec![model::CheckoutPaymentPlacement::PaymentMethod]
+                } else {
+                    method.placements.clone()
+                },
+            });
+        }
+    }
+    if input.discounts.is_some() {
+        settings.discounts = Vec::new();
+    }
+    for (position, discount) in input.discounts.iter().flatten().enumerate() {
+        let discount_origin = origin.child("discounts").child(position);
+        settings.discounts.push(CheckoutDiscount {
+            function: discount.function.clone(),
+            title: discount
+                .title
+                .clone()
+                .unwrap_or_else(|| discount.function.clone()),
+            code: discount.code.clone().filter(|code| !code.trim().is_empty()),
+            classes: discount.classes.clone(),
+            metafields: checkout_metafields(
+                builder,
+                &discount.metafields,
+                &discount_origin.child("metafields"),
+            ),
+        });
+    }
+    for (handle, function) in &input.functions {
+        let metafields = checkout_metafields(
+            builder,
+            &function.metafields,
+            &origin.child("functions").child(handle).child("metafields"),
+        );
+        settings.functions.insert(handle.clone(), metafields);
+    }
+    if let Some(rate) = input.tax_rate {
+        if rate.is_finite() && (0.0..=100.0).contains(&rate) {
+            settings.tax_rate_bps = (rate * 100.0).round() as i64;
+        } else {
+            builder
+                .error(
+                    "invalid_value",
+                    &origin.child("tax_rate"),
+                    format!("{rate} is not a tax rate"),
+                )
+                .hint("use a percentage between 0 and 100, e.g. 20 for 20 %");
+        }
+    }
+    settings
+}
+
+/// A file of `checkouts/`, read.
+pub struct MergedScenario {
+    /// The name of the file without its extension.
+    pub name: String,
+    /// The file, relative to the data directory.
+    pub file: String,
+    /// What the file holds; `None` when it could not be read or does not match the schema.
+    pub input: Option<model::CheckoutScenarioInput>,
+    /// What was wrong with the file before it was resolved, as the diagnostics print it.
+    pub problems: Vec<String>,
+}
+
+/// Resolves the scenarios against the store: what they name must exist, and the settings of the
+/// checkout they override are built on top of the store's own. A problem is a diagnostic, and
+/// the scenario is kept with it.
+fn build_scenarios(builder: &mut Builder<'_>, store: &mut Store, merged: &[MergedScenario]) {
+    let mut scenarios = Vec::new();
+    for entry in merged {
+        let mut scenario = CheckoutScenario {
+            name: entry.name.clone(),
+            file: entry.file.clone(),
+            title: entry.name.clone(),
+            description: None,
+            session: model::SessionInput::default(),
+            entered: model::ScenarioEnteredInput::default(),
+            language: None,
+            look: None,
+            extensions: None,
+            checkout: store.checkout.clone(),
+            overrides: Vec::new(),
+            problems: entry.problems.clone(),
+        };
+        if let Some(input) = &entry.input {
+            let first_new = builder.diagnostics.items.len();
+            resolve_scenario(builder, store, entry, input, &mut scenario);
+            scenario.problems.extend(
+                builder.diagnostics.items[first_new..]
+                    .iter()
+                    .filter(|item| item.file == entry.file)
+                    .map(ToString::to_string),
+            );
+        }
+        scenarios.push(scenario);
+    }
+    scenarios.sort_by(|a, b| a.name.cmp(&b.name));
+    store.scenarios = scenarios;
+}
+
+fn resolve_scenario(
+    builder: &mut Builder<'_>,
+    store: &Store,
+    entry: &MergedScenario,
+    input: &model::CheckoutScenarioInput,
+    scenario: &mut CheckoutScenario,
+) {
+    let origin = Origin::new(entry.file.clone(), "");
+    scenario.title = input
+        .title
+        .clone()
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| entry.name.clone());
+    scenario.description = input.description.clone();
+    scenario.look = input.variant;
+    scenario.extensions = input.extensions.clone();
+    if let Some(entered) = &input.entered {
+        scenario.entered = entered.clone();
+        if let Some(code) = entered
+            .shipping_address
+            .as_ref()
+            .and_then(|address| address.country_code.as_deref())
+            .filter(|code| store.country(code).is_none())
+        {
+            let known: Vec<&str> = store
+                .countries
+                .iter()
+                .map(|country| country.iso_code.as_str())
+                .collect();
+            let diagnostic = builder.error(
+                "unknown_country",
+                &origin
+                    .child("entered")
+                    .child("shipping_address")
+                    .child("country_code"),
+                format!("\"{code}\" is not one of the countries in \"localization.countries\""),
+            );
+            if let Some(suggestion) = closest_match(code, known.iter().copied()) {
+                diagnostic.hint(format!("did you mean \"{suggestion}\"?"));
+            }
+        }
+    }
+    if let Some(language) = &input.language {
+        match store
+            .languages
+            .iter()
+            .find(|candidate| candidate.iso_code.eq_ignore_ascii_case(language))
+        {
+            Some(found) => scenario.language = Some(found.iso_code.clone()),
+            None => {
+                let known: Vec<&str> = store
+                    .languages
+                    .iter()
+                    .map(|language| language.iso_code.as_str())
+                    .collect();
+                builder
+                    .error(
+                        "unknown_language",
+                        &origin.child("language"),
+                        format!("\"{language}\" is not one of the languages of the store"),
+                    )
+                    .hint(format!(
+                        "the store has: {}. Add it to \"localization.languages\"",
+                        known.join(", ")
+                    ));
+            }
+        }
+    }
+    if let Some(session) = &input.session {
+        scenario.session = session.clone();
+        // The same resolution a session gets when a checkout opens, so that what fails then
+        // fails here.
+        let mut problems = Diagnostics::new();
+        let mut probe = Session::initial(store);
+        apply_session_input(
+            store,
+            session,
+            &mut probe,
+            &mut problems,
+            &entry.file,
+            "/session",
+        );
+        builder.diagnostics.extend(problems);
+    }
+    if let Some(checkout) = &input.checkout {
+        let sourced = Sourced {
+            value: checkout.clone(),
+            origin: origin.child("checkout"),
+        };
+        scenario.checkout = override_checkout(builder, &sourced, store.checkout.clone());
+        if checkout.shipping_rates.is_some() {
+            scenario.overrides.push("shipping_rates");
+        }
+        if checkout.payment_methods.is_some() {
+            scenario.overrides.push("payment_methods");
+        }
+        if checkout.discounts.is_some() {
+            scenario.overrides.push("discounts");
+        }
+        if !checkout.functions.is_empty() {
+            scenario.overrides.push("functions");
+        }
+        if checkout.tax_rate.is_some() {
+            scenario.overrides.push("tax_rate");
+        }
+    }
+    // What the buyer chose must be offered by the checkout the scenario sets up.
+    let rates: Vec<&str> = scenario
+        .checkout
+        .shipping_rates
+        .iter()
+        .map(|rate| rate.handle.as_str())
+        .collect();
+    let methods: Vec<&str> = scenario
+        .checkout
+        .payment_methods
+        .iter()
+        .map(|method| method.handle.as_str())
+        .collect();
+    for (field, chosen, offered, what) in [
+        (
+            "delivery",
+            scenario.entered.delivery.clone(),
+            rates,
+            "shipping rate",
+        ),
+        (
+            "payment",
+            scenario.entered.payment.clone(),
+            methods,
+            "payment method",
+        ),
+    ] {
+        if let Some(handle) = chosen.filter(|handle| !offered.contains(&handle.as_str())) {
+            let diagnostic = builder.error(
+                "unknown_reference",
+                &origin.child("entered").child(field),
+                format!("there is no {what} \"{handle}\""),
+            );
+            match closest_match(&handle, offered.iter().copied()) {
+                Some(suggestion) => diagnostic.hint(format!(
+                    "did you mean \"{suggestion}\"? The checkout offers: {}",
+                    offered.join(", ")
+                )),
+                None => diagnostic.hint(format!("the checkout offers: {}", offered.join(", "))),
+            };
+        }
+    }
+}
+
+/// The metafields of a checkout setting, written `"namespace.key"`.
+fn checkout_metafields(
+    builder: &mut Builder<'_>,
+    input: &IndexMap<String, MetafieldInput>,
+    origin: &Origin,
+) -> Vec<CheckoutMetafield> {
+    let mut metafields = Vec::new();
+    for (name, field) in input {
+        let Some((namespace, key)) = name
+            .split_once('.')
+            .filter(|(namespace, key)| !namespace.is_empty() && !key.is_empty())
+        else {
+            builder
+                .error(
+                    "invalid_value",
+                    &origin.child(name),
+                    format!("\"{name}\" is not a metafield name"),
+                )
+                .hint("write the namespace, a dot and the key: \"$app:config.settings\"");
+            continue;
+        };
+        let Metafield { kind, value } = metafield(field);
+        metafields.push(CheckoutMetafield {
+            namespace: namespace.to_string(),
+            key: key.to_string(),
+            kind,
+            // Shopify keeps every value as text: JSON for `json` and for lists.
+            value: match value {
+                Json::String(text) => text,
+                other => other.to_string(),
+            },
+        });
+    }
+    metafields
+}
+
 /// Resolves a cart written in the data format against a built store. Used for the per-session
 /// state tests push through the control API.
 pub fn resolve_cart(
@@ -2860,6 +3367,17 @@ pub fn resolve_cart(
     cart: &model::CartInput,
     diagnostics: &mut Diagnostics,
     file: &str,
+) -> Vec<CartLine> {
+    resolve_cart_at(store, cart, diagnostics, file, "")
+}
+
+/// [`resolve_cart`] for a cart that sits at `pointer` in its file (`/session`).
+pub fn resolve_cart_at(
+    store: &Store,
+    cart: &model::CartInput,
+    diagnostics: &mut Diagnostics,
+    file: &str,
+    pointer: &str,
 ) -> Vec<CartLine> {
     cart.items
         .iter()
@@ -2875,7 +3393,7 @@ pub fn resolve_cart(
                                     .error(
                                         code,
                                         file,
-                                        &format!("/cart/items/{position}/selling_plan"),
+                                        &format!("{pointer}/cart/items/{position}/selling_plan"),
                                         message,
                                     )
                                     .hint(hint);
@@ -2895,7 +3413,7 @@ pub fn resolve_cart(
                         .error(
                             "unknown_variant",
                             file,
-                            &format!("/cart/items/{position}/variant"),
+                            &format!("{pointer}/cart/items/{position}/variant"),
                             message,
                         )
                         .hint(hint);
@@ -2904,4 +3422,65 @@ pub fn resolve_cart(
             },
         )
         .collect()
+}
+
+/// Applies a session written in the data format (`customer`, `cart`, `country`,
+/// `company_location`) on top of `session`, reporting what does not exist in `store` against
+/// `file`, at `pointer` (empty for a file that is a session).
+pub fn apply_session_input(
+    store: &Store,
+    input: &model::SessionInput,
+    session: &mut Session,
+    diagnostics: &mut Diagnostics,
+    file: &str,
+    pointer: &str,
+) {
+    if let Some(who) = &input.customer {
+        match store.customer_named(who) {
+            Ok(customer) => {
+                let customer = customer.map(|customer| customer.id);
+                if session.customer_id != customer {
+                    session.customer_id = customer;
+                    session.company_location = None;
+                }
+            }
+            Err(problem) => {
+                diagnostics
+                    .error("unknown_customer", file, &format!("{pointer}/customer"), problem)
+                    .hint("add the customer to the store data, or to \"data\".\"customers\" in this request. \"default\" and \"none\" also work");
+            }
+        }
+    }
+    if let Some(name) = &input.company_location {
+        let customer = session.customer_id.and_then(|id| store.customer_by_id(id));
+        match resolve_company_location(store, customer, name) {
+            Ok(location) => session.company_location = Some(location),
+            Err(problem) => {
+                diagnostics.error(
+                    "unknown_location",
+                    file,
+                    &format!("{pointer}/company_location"),
+                    problem,
+                );
+            }
+        }
+    }
+    if let Some(country) = &input.country {
+        match store.country(country) {
+            Some(country) => session.country = Some(country.iso_code.clone()),
+            None => {
+                diagnostics.error(
+                    "unknown_country",
+                    file,
+                    &format!("{pointer}/country"),
+                    format!("\"{country}\" is not one of the store's countries"),
+                );
+            }
+        }
+    }
+    if let Some(cart) = &input.cart {
+        session.cart_lines = resolve_cart_at(store, cart, diagnostics, file, pointer);
+        session.cart_note = cart.note.clone().unwrap_or_default();
+        session.cart_attributes = cart.attributes.clone();
+    }
 }

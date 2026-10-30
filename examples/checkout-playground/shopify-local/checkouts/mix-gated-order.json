@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/checkout-scenario.schema.json",
+  "title": "Mix: codes, a minimum and the buyer journey",
+  "description": "Codes from the extension (ui-reductions-codes, discount-codes), a minimum order (validation-minimum-order), a quantity cap (validation-max-quantity), and two extensions that hold Pay: the terms (ui-terms-gate) and five units at most (ui-cart-limit-gate). Use the extension and the quantity buttons to get through.",
+  "session": {
+    "customer": "jane.doe@example.com",
+    "cart": {
+      "items": [
+        {
+          "variant": "TOTE-NAT",
+          "quantity": 4
+        },
+        {
+          "variant": "MUG-OAT",
+          "quantity": 2
+        }
+      ]
+    }
+  },
+  "entered": {
+    "payment": "card",
+    "discount_codes": [
+      "SAVE10"
+    ]
+  },
+  "extensions": [
+    "discount-codes",
+    "validation-minimum-order",
+    "validation-max-quantity",
+    "ui-reductions-codes",
+    "ui-terms-gate",
+    "ui-cart-limit-gate",
+    "ui-line-quantity"
+  ]
+}

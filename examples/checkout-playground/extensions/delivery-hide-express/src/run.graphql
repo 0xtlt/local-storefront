@@ -1,0 +1,18 @@
+query Input {
+  cart {
+    deliveryGroups {
+      deliveryAddress {
+        address1
+        countryCode
+      }
+      deliveryOptions {
+        handle
+      }
+    }
+  }
+  deliveryCustomization {
+    metafield(namespace: "$app:config", key: "settings") {
+      value
+    }
+  }
+}

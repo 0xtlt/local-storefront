@@ -3,10 +3,16 @@
 mod account;
 mod cart;
 mod cdn;
+mod checkout;
+mod checkout_account;
 mod compress;
 mod control;
-pub use control::routes;
+mod customer_account;
+pub use control::{apply_session_input, routes};
 mod forms;
+mod home;
+mod home_check;
+pub use home_check::run as check_scenarios;
 mod live_reload;
 mod minify;
 pub mod params;
@@ -71,6 +77,9 @@ pub struct ServeOptions {
     /// Who new sessions are logged in as, instead of what the store data says: an email,
     /// `default` or `none`.
     pub customer: Option<String>,
+    /// The Shopify app whose checkout the server shows. Without it, `/checkout` is a page that
+    /// lists the cart.
+    pub checkout: Option<crate::checkout::CheckoutOptions>,
 }
 
 /// The store as last loaded from disk.
@@ -86,6 +95,8 @@ pub struct SessionEntry {
     pub store: Option<Arc<Store>>,
     /// A throttle of its own, which replaces the server's for this session.
     pub throttle: Option<throttle::Throttle>,
+    /// What the buyer entered at the checkout of the app.
+    pub checkout: checkout::CheckoutSession,
 }
 
 pub struct ServerState {
@@ -107,6 +118,10 @@ pub struct ServerState {
     changes: live_reload::Changes,
     /// How long the templates, the sections and the blocks took so far, for `/__lsf/timings`.
     pub(crate) timings: timing::Totals,
+    /// The Functions that fail when the scenarios run, as the home page last found them.
+    pub(crate) home_check: home_check::Cache,
+    /// The builds of `--watch`: the ones that failed, and when the pages should reload.
+    pub(crate) builds: Arc<crate::watch::Builds>,
 }
 
 /// One HTTP request, decoded.
@@ -192,7 +207,9 @@ fn fingerprint(root: &Path) -> u64 {
 impl ServerState {
     pub fn new(app: App, options: ServeOptions) -> (ServerState, Diagnostics) {
         let (store, diagnostics) = app.load_store();
-        let fingerprint = app.data_dir().map_or(0, |directory| fingerprint(directory));
+        let fingerprint = app
+            .data_dir()
+            .map_or(0, |directory| fingerprint(&directory));
         let state = ServerState {
             loaded: RwLock::new(Arc::new(Loaded {
                 store: Arc::new(store),
@@ -210,8 +227,18 @@ impl ServerState {
             last_token: AtomicU64::new(0),
             changes: live_reload::Changes::new(),
             timings: timing::Totals::default(),
+            home_check: home_check::Cache::default(),
+            builds: Default::default(),
         };
         (state, diagnostics)
+    }
+
+    /// Reads the app of the checkout. With `--watch`, the Functions it builds run the copy of
+    /// their last module that built, never what a build is writing.
+    pub(crate) fn load_app(&self, dir: &Path) -> Result<lsf_checkout::app::App, String> {
+        let mut app = lsf_checkout::app::load(dir)?;
+        self.builds.apply(&mut app);
+        Ok(app)
     }
 
     pub fn loaded(&self) -> Arc<Loaded> {
@@ -227,7 +254,7 @@ impl ServerState {
             fingerprint: self
                 .app
                 .data_dir()
-                .map_or(0, |directory| fingerprint(directory)),
+                .map_or(0, |directory| fingerprint(&directory)),
         });
         *self.loaded.write().expect("store lock poisoned") = loaded.clone();
         loaded
@@ -249,7 +276,7 @@ impl ServerState {
             }
             *last_check = Instant::now();
         }
-        if fingerprint(directory) != self.loaded().fingerprint {
+        if fingerprint(&directory) != self.loaded().fingerprint {
             let loaded = self.reload();
             if !self.options.quiet {
                 eprintln!("store data reloaded");
@@ -260,15 +287,17 @@ impl ServerState {
 
     /// A token that changes whenever the theme or the data change, for live reload. Only the
     /// directories a theme is made of are looked at: what else lives next to them (sources,
-    /// `node_modules`) is not served, and can be large.
+    /// `node_modules`) is not served, and can be large. With `--watch`, also when a build is over
+    /// or a file of the app changed.
     fn change_token(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write_u64(self.builds.generation());
         let root = self.app.theme.files().root();
         for directory in THEME_DIRECTORIES {
             hasher.write_u64(fingerprint(&root.join(directory)));
         }
         if let Some(directory) = self.app.data_dir() {
-            hasher.write_u64(fingerprint(directory));
+            hasher.write_u64(fingerprint(&directory));
         }
         hasher.finish()
     }
@@ -285,7 +314,7 @@ impl ServerState {
         token
     }
 
-    fn new_session_id(&self) -> String {
+    pub(crate) fn new_session_id(&self) -> String {
         let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
         hasher.write_u64(self.session_counter.fetch_add(1, Ordering::Relaxed));
         hasher.write_u128(self.started.elapsed().as_nanos());
@@ -327,10 +356,21 @@ impl ServerState {
         })
     }
 
+    /// The store a request sees: the one of its session when the session has its own, the loaded
+    /// one otherwise. Unlike [`ServerState::snapshot`], this never starts a session, so that
+    /// routing can ask it of any request.
+    pub fn store_of(&self, incoming: &Incoming) -> Arc<Store> {
+        let of_session = self.named_session(incoming).and_then(|id| {
+            let sessions = self.sessions.lock().expect("sessions poisoned");
+            sessions.get(&id).and_then(|entry| entry.store.clone())
+        });
+        of_session.unwrap_or_else(|| self.loaded().store.clone())
+    }
+
     /// How long to hold a request before answering it: the throttle of its session when it
     /// has one, the server's otherwise.
     pub fn delay_for(&self, incoming: &Incoming) -> Duration {
-        let (_, _, path) = self.localize(&self.loaded().store, &incoming.path);
+        let (_, _, path) = self.localize(&self.store_of(incoming), &incoming.path);
         let wants_sections = incoming.query_param("section_id").is_some()
             || incoming.query_param("sections").is_some();
         let Some(kind) = throttle::classify(&incoming.method, &path, wants_sections) else {
@@ -374,12 +414,33 @@ impl ServerState {
                 },
                 store: None,
                 throttle: None,
+                checkout: Default::default(),
             });
         action(entry)
     }
 
     pub fn reset_session(&self, id: &str) {
         self.sessions.lock().expect("sessions poisoned").remove(id);
+    }
+
+    /// How many orders the sessions placed, all together.
+    #[cfg(test)]
+    pub fn placed_orders(&self) -> u64 {
+        self.sessions
+            .lock()
+            .expect("sessions poisoned")
+            .values()
+            .map(|entry| entry.checkout.placed)
+            .sum()
+    }
+
+    /// Forgets every session, with its cart, its checkout and the order it placed. Returns how
+    /// many there were.
+    pub fn reset_sessions(&self) -> usize {
+        let mut sessions = self.sessions.lock().expect("sessions poisoned");
+        let count = sessions.len();
+        sessions.clear();
+        count
     }
 
     pub fn session_count(&self) -> usize {
@@ -443,6 +504,9 @@ impl ServerState {
             return cdn::handle(self, incoming);
         }
         self.refresh_if_changed(false);
+        if let Some(reply) = checkout::route(self, incoming) {
+            return reply;
+        }
         storefront::handle(self, incoming)
     }
 }
@@ -572,8 +636,33 @@ pub async fn run(
         .fallback(handle)
         .with_state(state);
     axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(interrupted())
         .await
+}
+
+/// Waits for the process to be asked to stop: Ctrl-C, and on Unix `SIGTERM` (a process manager,
+/// `kill`) and `SIGHUP` (the terminal closed). The server then stops as it does on Ctrl-C: with
+/// `--watch`, the builds that run are stopped and the published modules removed. On Windows,
+/// only Ctrl-C is waited for.
+async fn interrupted() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (Ok(mut term), Ok(mut hangup)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        ) else {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+            _ = hangup.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

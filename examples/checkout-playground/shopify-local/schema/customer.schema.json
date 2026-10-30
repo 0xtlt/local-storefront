@@ -1,0 +1,488 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CustomerInput",
+  "description": "A customer. Sessions log in as a customer by email (see `session.customer`), and the checkout\nof an app lists the customers as login profiles: \"Log in\" logs the checkout in as one of them,\nwith their addresses (the first is the default) and, for a B2B customer, their locations.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Lets editors validate and autocomplete the file, e.g. `\"../schema/customer.schema.json\"`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0,
+      "default": null
+    },
+    "email": {
+      "type": "string"
+    },
+    "first_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "last_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "phone": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "accepts_marketing": {
+      "type": "boolean",
+      "default": false
+    },
+    "has_account": {
+      "description": "Defaults to `true`.",
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "default": null
+    },
+    "tax_exempt": {
+      "type": "boolean",
+      "default": false
+    },
+    "addresses": {
+      "description": "The first address is the default one (`customer.default_address`).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AddressInput"
+      },
+      "default": []
+    },
+    "orders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/OrderInput"
+      },
+      "default": []
+    },
+    "company": {
+      "description": "The name of a company in `companies`: the customer buys for it (B2B).",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "company_locations": {
+      "description": "The names of the locations of the company the customer can buy for. Defaults to all\nof them.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "company_contact": {
+      "description": "What the company knows of the customer as a buyer: their job title, language, dates.\nCheckout Functions read it as `purchasingCompany.contact`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CompanyContactInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metafields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/MetafieldInput"
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "email"
+  ],
+  "$defs": {
+    "AddressInput": {
+      "description": "A postal address. Every field is optional.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "first_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "last_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "company": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "address1": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "address2": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "city": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "province": {
+          "description": "Province or state name, e.g. `\"Ontario\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "province_code": {
+          "description": "E.g. `\"ON\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "country": {
+          "description": "Country name, e.g. `\"Canada\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "country_code": {
+          "description": "ISO 3166-1 alpha-2 code, e.g. `\"CA\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "zip": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "OrderInput": {
+      "description": "An order of a customer, shown on account pages.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "name": {
+          "description": "The order name, e.g. `\"#1001\"`. Generated when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "financial_status": {
+          "description": "`paid`, `pending`, `refunded`, ... Defaults to `paid`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "fulfillment_status": {
+          "description": "`fulfilled`, `unfulfilled`, `partial`. Defaults to `unfulfilled`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "line_items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrderLineInput"
+          },
+          "default": []
+        },
+        "shipping_address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "billing_address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AddressInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "shipping_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tax_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cancelled": {
+          "type": "boolean",
+          "default": false
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "returns": {
+          "description": "What the customer sent back, as the customer account shows it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrderReturnInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "OrderLineInput": {
+      "description": "A line of an order.",
+      "type": "object",
+      "properties": {
+        "variant": {
+          "description": "A variant, by id or SKU, or a product handle (its first variant is used).",
+          "$ref": "#/$defs/VariantRef"
+        },
+        "quantity": {
+          "description": "Defaults to 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variant"
+      ]
+    },
+    "VariantRef": {
+      "description": "A reference to a variant: its numeric id, its SKU, or a product handle (meaning that\nproduct's first variant).",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "Money": {
+      "description": "An amount of money: an integer number of cents (`1999`, the unit Liquid uses) or a decimal string in the shop currency (`\"19.99\"`). Floats such as `19.99` are rejected because they are ambiguous.",
+      "anyOf": [
+        {
+          "description": "Cents, e.g. 1999 for 19.99.",
+          "type": "integer"
+        },
+        {
+          "description": "Decimal amount, e.g. \"19.99\" or \"20\".",
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d{1,2})?$"
+        }
+      ]
+    },
+    "OrderReturnInput": {
+      "description": "A return of an order.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "description": "`requested`, `open` or `closed`. Defaults to `open`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "line_items": {
+          "description": "The lines sent back, by their variant, and how many of each. Defaults to every line of\nthe order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrderLineInput"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "CompanyContactInput": {
+      "description": "A customer as a contact of their company (B2B): `purchasingCompany.contact` of a checkout\nFunction.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "The job title of the contact, e.g. `\"Purchasing manager\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "locale": {
+          "description": "The language of the contact, e.g. `\"fr\"`. None when absent.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "created_at": {
+          "description": "Defaults to the creation date of the company.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "updated_at": {
+          "description": "Defaults to `created_at`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "MetafieldInput": {
+      "description": "A metafield value. Write the value directly and its type is inferred (string →\n`single_line_text_field`, integer → `number_integer`, decimal → `number_decimal`, boolean →\n`boolean`, anything else → `json`), or spell out `{\"type\": ..., \"value\": ...}`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TypedMetafield"
+        },
+        true
+      ]
+    },
+    "TypedMetafield": {
+      "description": "A metafield with an explicit type.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "A Shopify metafield type, e.g. `single_line_text_field`, `multi_line_text_field`,\n`rich_text_field`, `number_integer`, `number_decimal`, `boolean`, `color`, `date`,\n`date_time`, `url`, `json`, `money`, `rating`, `weight`, `volume`, `dimension` and the\nother measurements (`distance`, `temperature`, `duration`...), `product_reference`,\n`collection_reference`, `page_reference`, `article_reference` (`blog/article`, or the\narticle's handle alone), `file_reference`, `metaobject_reference`, or a `list.` variant\nof those.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value. References are written as handles (`\"blue-shirt\"`), files as paths inside\n`files/`, lists as JSON arrays."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "value"
+      ]
+    }
+  }
+}

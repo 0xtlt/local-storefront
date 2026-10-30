@@ -54,7 +54,8 @@ The server keeps one **session** per browser: the cart, the logged-in customer, 
 country, and optionally data of its own. A session is identified by the `_lsf_session` cookie,
 which the server sets on the first response. A Playwright test gets a fresh browser context,
 hence a fresh cookie jar, hence its own session: tests can run in parallel against one server
-without seeing each other's carts.
+without seeing each other's carts. Their checkouts share the compiled Functions: a Function is
+compiled once, and as many run at once as the machine has CPUs.
 
 Clients without a cookie jar (curl, an API test) can name their session with a header instead:
 
@@ -151,7 +152,10 @@ await page.goto('/products/sold-out-thing');
 - A product, collection, page or blog with the handle of an existing one **replaces** it; the
   others are **added**. Customers are matched by email, menus by handle, gift cards by code,
   companies, locations and selling plan groups by name.
-- `shop` is merged field by field. `localization`, `session`, `now` replace what the files say.
+- `shop` is merged field by field. `localization`, `session` and `now` replace what the files
+  say. `checkout` is merged as a scenario's is: each field it gives (`shipping_rates`,
+  `payment_methods`, `discounts`, `tax_rate`) replaces the files', and `functions` is merged
+  Function by Function.
 - `theme_settings`, `files` and `swatches` are merged key by key.
 
 Other sessions keep seeing the data on disk. This is the way to test edge cases (an empty
@@ -183,6 +187,95 @@ await page.goto('/cart');
 
 `GET /__lsf/session` returns the current state, and `DELETE /__lsf/session` resets the
 session to what the data files define.
+
+## A checkout in a test
+
+With an app, the same server runs its checkout, its thank-you page and its customer account
+(see [checkout](checkout.md)). Start it with the theme and the app, or without a theme:
+
+```bash
+npx local-storefront serve --theme . --app ../my-app --port 0 --static --quiet --strict
+npx local-storefront app dev --app ../my-app --port 0 --quiet --strict    # no theme
+```
+
+```ts
+// playwright.config.ts
+export default defineConfig({
+  webServer: {
+    command: 'npx local-storefront serve --app ../my-app --port 9292 --static --quiet --strict',
+    url: 'http://127.0.0.1:9292/__lsf/status',
+    reuseExistingServer: !process.env.CI,
+  },
+  use: { baseURL: 'http://127.0.0.1:9292' },
+});
+```
+
+**Put the session in a state, then open the checkout.** The cart, the customer and data for this
+test only go through `PUT /__lsf/session`, as above; `/checkout` opens the checkout of that cart
+(`/checkout?scenario=<name>` the one of a [scenario](checkout.md#scenarios), with its cart and
+buyer). A discount Function runs only for a discount that names it: give one in
+`data.checkout`. As in a scenario, each field it gives (`shipping_rates`, `payment_methods`,
+`discounts`, `tax_rate`) replaces the store data's for the session, and the settings of the
+Functions (`functions`) are merged Function by Function: what it does not give stays. A
+discount has the settings of its Function in `metafields`, the metafield its
+`[extensions.input.variables]` (or its input query) reads: without them, the Function has nothing
+to apply.
+
+```ts
+await setSession(page, {
+  customer: 'jane.doe@example.com',
+  cart: { items: [{ variant: 'TEE-BLK-M', quantity: 2 }] },
+  data: {
+    now: '2025-01-15T10:00:00Z',
+    checkout: {
+      shipping_rates: [{ handle: 'standard', title: 'Standard', price: '4.90' }],
+      discounts: [
+        {
+          function: 'discount-codes',
+          title: '10% off',
+          code: 'SAVE10',
+          metafields: { '$app:config.settings': { type: 'json', value: { percentage: 10 } } },
+        },
+      ],
+    },
+  },
+});
+await page.goto('/checkout');
+await expect(page.locator('html')).toHaveAttribute('data-lsf-ready', 'true');
+```
+
+**Wait for the page, not for a time.** The checkout and the customer account set
+`data-lsf-ready="true"` on `<html>` once no change is on its way to the server and every UI
+extension on the page rendered (or threw, or said nothing for 5 s); it goes back to `false` while
+a change is on its way, and the page has `aria-busy="true"` then. Wait for it after each action
+that changes the checkout:
+
+```ts
+await page.getByRole('textbox', { name: 'Discount code' }).fill('SAVE10');
+await page.getByRole('button', { name: 'Apply' }).click();
+await expect(page.locator('html')).toHaveAttribute('data-lsf-ready', 'true');
+```
+
+**Select by role and name.** The fields have labels ("Email", "Address", "Discount code"), the
+choices are radios named by their title, and the buttons say what they do ("Pay now",
+"Complete order", "Apply"): `getByRole` finds them. What the Functions did is in the state too:
+`GET /__lsf/checkout` answers the state of the session's checkout (its `runs`, `cost`,
+`discounts`, `errors`), with the same session header or cookie.
+
+**Orders are reproducible.** The orders a session places are numbered after the last one of the
+store data, one after the other, whatever the other sessions do, and placed at `now` when the
+data sets it: the thank-you page and the customer account (`/account`) read the same number and
+date on every run. An order lives as long as its session; only the last one a session placed is
+kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every one.
+
+**In CI, without a browser:**
+
+| Command | Exits with 1 when |
+|---|---|
+| `lsf validate` (in the app, or `--app`) | the store data or the app has errors |
+| `lsf app check` | a scenario does not validate, a Function fails in one, or there is no scenario |
+| `lsf app function run <handle> --scenario <name>` | the Function fails, or did not run (with why) |
+| `lsf render <path> --strict` | the page has Liquid errors, or nothing is at the path |
 
 ## Simulating a slow network
 
@@ -314,8 +407,8 @@ writes (cart changes, forms) are estimates. `slow` is not measured.
   });
   ```
 
-  A test of the theme's own 404 page can leave this out. There is no option that turns 404s
-  into errors, since a 404 is also what a test of the 404 page expects.
+  A test of the theme's own 404 page can leave this out: a 404 is what it expects. Outside a
+  browser, `lsf render <path> --strict` fails on a 404.
 - **The cart.** `GET /cart.js` returns the cart in Shopify's Ajax API format.
 - **Render time.** Every response carries `Server-Timing`, as on Shopify: `processing` for the
   whole request, `render` for the Liquid, and with `--timings` one entry per section and per
@@ -347,12 +440,12 @@ Everything a theme talks to on a storefront:
 | Section Rendering API | `?section_id=<id>` and `?sections=<id>,<id>` on any page. |
 | Cart Ajax API | `GET /cart.js`, `POST /cart/add.js`, `/cart/change.js`, `/cart/update.js`, `/cart/clear.js` (with `sections` and `sections_url`), and the form posts `/cart/add`, `/cart`. Stock limits answer `422` like Shopify. |
 | Product and search JSON | `/products/<handle>.js`, `/products.json`, `/collections/<handle>/products.json`, `/search/suggest.json`, `/search/suggest?section_id=`, `/recommendations/products.json`, `/recommendations/products?section_id=&product_id=`. |
-| Forms | Contact, newsletter (`customer`), blog comment, customer login and logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
+| Forms | Contact, newsletter (`customer`), blog comment, customer logout, localization (country and language), storefront password. The outcome shows in `form.posted_successfully?` and `form.errors` on the next page, once. A wrong storefront password comes back to `/password` with the error; the right one (`password`, or `shop.password`) goes to the home page. |
 | CDN | `/cdn/shop/t/1/assets/<file>` (including `.liquid` assets), `/cdn/shop/files/<path>` with image transformations, the compiled `{% stylesheet %}` and `{% javascript %}` bundles, fonts. |
 | Control | `/__lsf` (a status page), `/__lsf/status`, `/__lsf/session`, `/__lsf/login?customer=<email>`, `/__lsf/schema/<kind>`, `POST /__lsf/reload`, `GET` and `DELETE /__lsf/timings`, `/__lsf/profile?path=<path>`. |
 
-Not simulated: checkout (`/checkout` shows a summary of the cart and nothing else), customer
-registration, password reset and address editing (the forms answer with an error saying so),
+Not simulated: Shopify's checkout (`/checkout` shows a summary of the cart, or, with `--app`,
+the local [checkout](checkout.md) of a Shopify app), classic customer accounts (the theme's `templates/customers`; its account forms lead to `/account`),
 and anything served by apps. See [compatibility.md](compatibility.md).
 
 ## Reproducibility

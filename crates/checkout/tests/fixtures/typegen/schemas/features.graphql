@@ -1,0 +1,217 @@
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+"""The root of the queries."""
+type Query {
+  """Any object by id."""
+  node(id: ID!): Node
+  nodes(ids: [ID!]!): [Node]!
+  search(q: String!, first: Int = 10, filter: Filter, kinds: [Kind!], ratio: Float = 0.5, on: Boolean! = false): [SearchResult!]!
+  viewer: User
+  me: User!
+  feed: [[Item!]]!
+  grid: [[Item!]!]!
+  named: [Named!]
+  everything: [Everything!]!
+  products(sort: SortKey = TITLE): ProductConnection
+  price: Money
+  when: DateTime!
+  blob: JSON
+  address: Address
+  empty: Empty
+  oneOf(input: Pick): String
+  a_b: Collection
+  node2: Node2
+}
+
+type Mutation {
+  createUser(input: UserInput!): User
+  tag(ids: [ID!]!, tag: String!): [Node!]
+}
+
+type Subscription {
+  userAdded: User
+}
+
+interface Node {
+  id: ID!
+}
+
+"""Things with a name."""
+interface Named implements Node {
+  id: ID!
+  name: String!
+}
+
+interface Node2 {
+  id: ID!
+  parent: Node2
+}
+
+type User implements Node & Named {
+  id: ID!
+  name: String!
+  email: String
+  friends: [User!]!
+  tags: [String]
+  role: Role!
+  createdAt: DateTime!
+  meta: JSON
+  address: Address
+  avatar(size: Int = 64, format: ImageFormat): Image
+  best: Named
+  pets: [Pet!]
+  balance: Money
+}
+
+"""A product."""
+type Product implements Node & Named {
+  id: ID!
+  name: String!
+  price: Money!
+  image: Image
+  collections: [Collection!]!
+  kind: Kind
+  variants(first: Int, after: String, filter: [Filter!]): [Variant!]!
+}
+
+type Variant implements Node {
+  id: ID!
+  sku: String
+  title: String!
+  product: Product!
+}
+
+type Collection implements Node & Named {
+  id: ID!
+  name: String!
+  products: [Product!]!
+}
+
+type ProductConnection {
+  edges: [ProductEdge!]!
+  pageInfo: PageInfo!
+}
+
+type ProductEdge {
+  cursor: String!
+  node: Product!
+}
+
+type PageInfo {
+  hasNext: Boolean!
+  end: String
+}
+
+type Image {
+  url: URL!
+  w: Int
+  h: Int
+  alt: String @deprecated(reason: "Use `url`.")
+}
+
+type Address {
+  line1: String!
+  line2: String
+  city: String
+  country: CountryCode!
+}
+
+type Empty {
+  _: Boolean
+}
+
+type Cat implements Pet {
+  id: ID!
+  lives: Int!
+}
+
+type Dog implements Pet {
+  id: ID!
+  barks: Boolean!
+}
+
+interface Pet {
+  id: ID!
+}
+
+type N2a implements Node2 {
+  id: ID!
+  parent: Node2
+  extra: String
+}
+
+type N2b implements Node2 {
+  id: ID!
+  parent: Node2
+  other: Int
+}
+
+union SearchResult = User | Product | Collection
+union Item = Product | Variant
+union Everything = User | Product | Cat | Dog | Image
+
+enum Role {
+  ADMIN
+  USER
+  GUEST_USER
+  super_user
+}
+
+enum Kind {
+  PHYSICAL
+  DIGITAL
+  A1
+}
+
+enum SortKey {
+  TITLE
+  PRICE
+}
+
+enum ImageFormat {
+  PNG
+  JPG
+}
+
+enum CountryCode {
+  FR
+  US
+}
+
+input Filter {
+  ids: [ID!]
+  kind: Kind
+  nested: Filter
+  range: Range! = {min: 0, max: 10}
+  names: [String!]!
+  maybe: [String]
+  money: Money
+}
+
+input Range {
+  min: Int!
+  max: Int!
+}
+
+input UserInput {
+  name: String!
+  email: String
+  role: Role = USER
+  tags: [String!] = []
+}
+
+input Pick @oneOf {
+  id: ID
+  name: String
+  nested: Filter
+}
+
+scalar DateTime
+scalar JSON
+"""Money in a currency."""
+scalar Money
+scalar URL

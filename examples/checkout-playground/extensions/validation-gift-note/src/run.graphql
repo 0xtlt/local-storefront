@@ -1,0 +1,19 @@
+# $tags and $attribute come from the settings of the validation ([extensions.input.variables]).
+query Input($tags: [String!]!, $attribute: String) {
+  cart {
+    note: attribute(key: $attribute) {
+      value
+    }
+    lines {
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            title
+            hasAnyTag(tags: $tags)
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,10 +1,12 @@
 //! `lsf`: serve a Shopify theme locally, rendered from JSON fixtures instead of the Shopify API.
 
 mod app;
+mod checkout;
 mod commands;
 mod output;
 mod profile;
 mod server;
+mod watch;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -55,13 +57,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Serve the theme over HTTP.
+    /// Serve the theme over HTTP. With `--app`, its `/checkout` runs the Functions and shows the
+    /// checkout UI extensions of a Shopify app, and its `/account` shows its customer account UI
+    /// extensions.
     Serve(commands::serve::Args),
+    /// The commands of a Shopify app: `dev` serves it alone (its checkout and its customer
+    /// account), `init` writes checkout scenarios to try it with, `build` builds its extensions,
+    /// `check` runs the scenarios for CI, `function run` and `function build` its Functions.
+    App(commands::app::Args),
     /// Render one URL and print the HTML.
     Render(commands::render::Args),
     /// Render one URL and print what the render spent its time in: sections, blocks, snippets.
     Profile(commands::profile::Args),
-    /// Check the store data and explain every problem found.
+    /// Check the store data and explain every problem found, checkout scenarios included. Runs in
+    /// a theme, or in an app folder with a shopify-local/ directory and no theme.
     Validate(commands::validate::Args),
     /// Create the data directory: a demo store, JSON Schemas for editors, and a guide.
     Init(commands::init::Args),
@@ -93,8 +102,9 @@ fn main() -> ExitCode {
     let previews = cli.previews.as_slice();
     let result = match cli.command {
         Command::Serve(args) => {
-            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args)
+            commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, false)
         }
+        Command::App(args) => commands::app::run(&cli.theme, cli.data.as_deref(), previews, args),
         Command::Render(args) => {
             commands::render::run(&cli.theme, cli.data.as_deref(), previews, args)
         }
@@ -117,5 +127,42 @@ fn main() -> ExitCode {
             eprintln!("error: {message}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn the_command_line_is_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn the_commands_of_an_app_are_under_app() {
+        let parse = |words: &[&str]| {
+            Cli::try_parse_from(std::iter::once("lsf").chain(words.iter().copied()))
+        };
+        assert!(matches!(
+            parse(&["app", "dev", "--app", "../my-app", "--port", "0"])
+                .unwrap()
+                .command,
+            Command::App(_)
+        ));
+        assert!(parse(&["app", "init", "--app", "../my-app", "--force"]).is_ok());
+        assert!(parse(&["--data", "d", "app", "init"]).is_ok());
+        assert!(parse(&["app", "build", "banner", "--app", "../my-app"]).is_ok());
+        assert!(parse(&["app", "check", "--format", "json"]).is_ok());
+        assert!(parse(&["app", "function", "run", "discount", "--scenario", "vip"]).is_ok());
+        assert!(parse(&["app", "function", "build", "discount"]).is_ok());
+        // `app` alone does nothing, and the options of `dev` are its own.
+        assert!(parse(&["app"]).is_err());
+        assert!(parse(&["app", "--port", "0"]).is_err());
+        assert!(parse(&["app", "init", "--port", "0"]).is_err());
+        // The old names are gone.
+        assert!(parse(&["checkout", "--app", "../my-app"]).is_err());
+        assert!(parse(&["function", "run"]).is_err());
     }
 }

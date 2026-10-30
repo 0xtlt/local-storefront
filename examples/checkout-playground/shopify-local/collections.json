@@ -1,0 +1,39 @@
+{
+  "$schema": "./schema/store.schema.json",
+  "collections": [
+    {
+      "title": "Home page",
+      "handle": "frontpage",
+      "description": "<p>A few favourites to get you started.</p>",
+      "products": ["organic-cotton-t-shirt", "linen-overshirt", "ceramic-mug", "canvas-tote-bag"]
+    },
+    {
+      "title": "Apparel",
+      "description": "<p>Natural fibres, relaxed fits.</p>",
+      "image": { "src": "collections/apparel.jpg", "alt": "Folded shirts on a shelf", "width": 2000, "height": 1500 },
+      "rules": [{ "column": "type", "relation": "equals", "condition": "Apparel" }]
+    },
+    {
+      "title": "Home goods",
+      "description": "<p>Small things that make a house feel like home.</p>",
+      "image": { "src": "collections/home-goods.jpg", "alt": "A mug and a candle on a table", "width": 2000, "height": 1500 },
+      "rules": [{ "column": "type", "relation": "equals", "condition": "Home" }]
+    },
+    {
+      "title": "Accessories",
+      "image": { "src": "collections/accessories.jpg", "alt": "A tote bag hanging on a hook", "width": 2000, "height": 1500 },
+      "rules": [{ "column": "type", "relation": "equals", "condition": "Accessories" }]
+    },
+    {
+      "title": "Sale",
+      "description": "<p>Last chance. Once they're gone, they're gone.</p>",
+      "rules": [{ "column": "tag", "relation": "equals", "condition": "sale" }],
+      "sort_order": "price-ascending"
+    },
+    {
+      "title": "Empty collection",
+      "handle": "empty",
+      "description": "<p>Nothing here on purpose: use it to test empty states.</p>"
+    }
+  ]
+}

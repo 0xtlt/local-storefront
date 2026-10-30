@@ -1,0 +1,1 @@
+query MergeDeep { me { friends { friends { id } } friends { friends { name } friends { id } } } }
