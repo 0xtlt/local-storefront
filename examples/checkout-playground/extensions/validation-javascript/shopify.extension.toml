@@ -12,7 +12,7 @@ description = "Refuses an order of more items than its settings allow, written i
   export = "cart-validations-generate-run"
 
   # No build command, as `shopify app generate extension` makes it: Shopify's CLI builds it, and
-  # so does lsf (`lsf function build`), without Node.
+  # so does lsf (`lsf app function build`), without Node.
   [extensions.build]
   command = ""
   path = "dist/function.wasm"

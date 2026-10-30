@@ -69,12 +69,12 @@ run = "node examples/checkout-playground/tools/fake-api.mjs"
 [tasks."playground:checkout"]
 description = "Serve the checkout of the playground app with its scenarios (http://127.0.0.1:9292/)"
 dir = "examples/checkout-playground"
-run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- checkout --app ."
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app ."
 
 [tasks."playground:dev"]
 description = "Serve the checkout of the playground in watch mode: a Function builds again when its files change, and the open pages reload (http://127.0.0.1:9292/)"
 dir = "examples/checkout-playground"
-run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- checkout --app . --watch"
+run = "cargo run --release --manifest-path ../../Cargo.toml -p lsf -- app dev --app . --watch"
 
 [tasks.fmt]
 description = "Format the code"

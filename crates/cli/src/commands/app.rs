@@ -1,36 +1,41 @@
-//! `lsf checkout`: serves the checkout of an app, with `init` writes the scenarios to try it
-//! with, and with `build` builds its extensions.
+//! `lsf app`: the commands of a Shopify app. `dev` serves it alone (its checkout and its customer
+//! account), `init` writes the checkout scenarios to try it with, `build` builds its extensions,
+//! `check` runs the scenarios for CI, and `function` runs or builds its Functions.
 
 use std::path::Path;
 use std::process::ExitCode;
 
-use crate::commands::{checkout_init, serve};
+use crate::commands::{app_init, function, serve};
 
 #[derive(clap::Args)]
-#[command(args_conflicts_with_subcommands = true)]
-pub struct CheckoutArgs {
-    #[command(flatten)]
-    serve: serve::Args,
-
+pub struct Args {
     #[command(subcommand)]
-    command: Option<Subcommand>,
+    command: Subcommand,
 }
 
 #[derive(clap::Subcommand)]
 enum Subcommand {
+    /// Serve the app alone, without a theme: its home page, its checkout (`/checkout`), where
+    /// its Functions run and its checkout UI extensions show, and its customer account
+    /// (`/account`), where its customer account UI extensions show. `serve --app` serves them
+    /// with a theme. It takes the options of `serve`.
+    Dev(serve::Args),
     /// Write checkout scenarios to the `checkouts` folder of the store data, made for the
     /// Functions and checkout UI extensions of `--app` (a generic set without it), and create the
     /// data folder with the demo store when it does not exist. Nothing that exists is
     /// overwritten without `--force`.
-    Init(checkout_init::InitArgs),
-    /// Build the extensions of an app, as `shopify app build` does: its Functions (as
-    /// `lsf function build`), and its checkout UI extensions that name their sources (`module`),
-    /// bundled by lsf without Node (`dist/<handle>.js`).
+    Init(app_init::InitArgs),
+    /// Build the extensions of the app, as `shopify app build` does: its Functions (as
+    /// `lsf app function build`), and its UI extensions, of the checkout and of the customer
+    /// account, that name their sources (`module`), bundled by lsf without Node
+    /// (`dist/<handle>.js`).
     Build(BuildArgs),
     /// Run the Functions of every checkout scenario, as the home page checks them, for CI:
     /// exits with 1 when a scenario does not validate, a Function fails in one, or the time
     /// ran out. No HTTP request of a `.fetch` target is sent.
     Check(CheckArgs),
+    /// Run or build the Shopify Functions of the app.
+    Function(function::Args),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -48,7 +53,7 @@ pub struct CheckArgs {
     #[arg(long, env = "LSF_APP", value_name = "DIR")]
     app: Option<std::path::PathBuf>,
 
-    /// Only these extensions, by handle (repeat it), as `lsf checkout --extension`.
+    /// Only these extensions, by handle (repeat it), as `lsf app dev --extension`.
     #[arg(long = "extension", value_name = "HANDLE")]
     extensions: Vec<String>,
 
@@ -78,25 +83,27 @@ pub fn run(
     theme: &Path,
     data: Option<&Path>,
     previews: &[lsf_core::Preview],
-    args: CheckoutArgs,
+    args: Args,
 ) -> Result<ExitCode, String> {
     match args.command {
-        Some(Subcommand::Init(init)) => checkout_init::run(theme, data, init),
-        Some(Subcommand::Build(args)) => crate::checkout::run_build(
+        Subcommand::Dev(serve) => serve::run(theme, data, previews, serve, true),
+        Subcommand::Init(init) => app_init::run(theme, data, init),
+        Subcommand::Build(args) => crate::checkout::run_build(
             args.app.as_deref(),
             &args.handles,
-            "lsf checkout build",
+            "lsf app build",
             crate::checkout::build,
         ),
-        Some(Subcommand::Check(args)) => check(theme, data, previews, args),
-        None => serve::run(theme, data, previews, args.serve, true),
+        Subcommand::Check(args) => check(theme, data, previews, args),
+        Subcommand::Function(args) => function::run(theme, data, previews, args),
     }
 }
 
-/// What `checkout check` says of store data without a scenario.
-const NO_SCENARIO: &str = "no scenario to check: `lsf checkout init` writes a set for the app in `shopify-local/checkouts/`";
+/// What `app check` says of store data without a scenario.
+const NO_SCENARIO: &str =
+    "no scenario to check: `lsf app init` writes a set for the app in `shopify-local/checkouts/`";
 
-/// `lsf checkout check`: the check of the home page, from the command line.
+/// `lsf app check`: the check of the home page, from the command line.
 fn check(
     theme: &Path,
     data: Option<&Path>,
@@ -106,7 +113,7 @@ fn check(
     use crate::app::App;
     use crate::server::{ServeOptions, ServerState};
 
-    let app_dir = crate::checkout::app_of(args.app.as_deref(), "lsf checkout check")?;
+    let app_dir = crate::checkout::app_of(args.app.as_deref(), "lsf app check")?;
     let (shopify_app, _) = crate::checkout::open(
         &crate::checkout::AppArgs {
             app: Some(app_dir.clone()),

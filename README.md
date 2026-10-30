@@ -72,18 +72,19 @@ await page.goto('/cart');
 
 Guide: [testing](docs/testing.md).
 
-### Try the checkout of a Shopify app
+### Try a Shopify app: its checkout and its customer account
 
 ```bash
-npx local-storefront checkout --app ../my-app
+npx local-storefront app dev --app ../my-app
 ```
 
 Runs the Shopify Functions of the app and shows its checkout UI extensions on a local checkout,
-without a store. Its home page lists what is wrong first (including the Functions that fail when
+and its customer account UI extensions on a local customer account (`/account`), without a
+store. Its home page lists what is wrong first (including the Functions that fail when
 the scenarios run), then the checkout scenarios (carts, buyers, countries, settings) and every
 Function and extension of the app, and opens a checkout for each:
-`npx local-storefront checkout init --app ../my-app` writes a set made for the app.
-`npx local-storefront function run --app ../my-app` runs the Functions once and prints their
+`npx local-storefront app init --app ../my-app` writes a set made for the app.
+`npx local-storefront app function run --app ../my-app` runs the Functions once and prints their
 input and output. Guide: [checkout](docs/checkout.md).
 
 ### Get ready for Shopify's strict Liquid parser
@@ -133,11 +134,12 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 | `npx local-storefront validate` | Checks the store data and the checkout scenarios, in a theme or in an app without one. `--format json` for tools. |
 | `npx local-storefront check` | Checks every Liquid file, and what Shopify's strict parser rejects. `--fix` rewrites it. `--format json` for tools. |
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
-| `npx local-storefront checkout --app <dir>` | Serves the checkout of a Shopify app: its Functions run, its checkout UI extensions show. `serve --app` does it with the theme. |
-| `npx local-storefront checkout init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
-| `npx local-storefront checkout build [handle]... --app <dir>` | Builds the extensions of an app as `shopify app build` does, without Node: Functions, and checkout UI extensions from their sources. |
-| `npx local-storefront function build [handle]... --app <dir>` | Builds the Functions of an app. A JavaScript or TypeScript Function is built by lsf, without Node, as `shopify app function build` builds it. |
-| `npx local-storefront function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--scenario <name>` runs a checkout scenario. `--format json` for tools. |
+| `npx local-storefront app dev --app <dir>` | Serves a Shopify app: its checkout, where its Functions run and its checkout UI extensions show, and its customer account, where its customer account UI extensions show. `serve --app` does it with the theme. |
+| `npx local-storefront app init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
+| `npx local-storefront app build [handle]... --app <dir>` | Builds the extensions of an app as `shopify app build` does, without Node: Functions, and UI extensions from their sources. |
+| `npx local-storefront app check [--app <dir>]` | Runs the Functions of every checkout scenario, for CI: exits with 1 when one fails. |
+| `npx local-storefront app function build [handle]... --app <dir>` | Builds the Functions of an app. A JavaScript or TypeScript Function is built by lsf, without Node, as `shopify app function build` builds it. |
+| `npx local-storefront app function run [handle]... --app <dir>` | Runs the Functions of an app once and prints each input, output and log. `--scenario <name>` runs a checkout scenario. `--format json` for tools. |
 | `npx local-storefront render <path>` | Prints the HTML of one page, without a server. |
 | `npx local-storefront profile <path>` | Shows what a page spends its time on, or what it would cost Shopify. |
 | `npx local-storefront routes` | Lists the pages the store data creates. |

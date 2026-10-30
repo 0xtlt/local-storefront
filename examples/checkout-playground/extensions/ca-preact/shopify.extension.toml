@@ -1,5 +1,5 @@
 # A customer account UI extension of the playground built from its sources, in Preact with the
-# hooks of `@shopify/ui-extensions/customer-account/preact`. lsf bundles it (`lsf checkout build
+# hooks of `@shopify/ui-extensions/customer-account/preact`. lsf bundles it (`lsf app build
 # ca-preact`, `--build`, `--watch`), without Node, into dist/ca-preact.js.
 api_version = "2026-10"
 

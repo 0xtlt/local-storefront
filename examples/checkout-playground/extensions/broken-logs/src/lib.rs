@@ -2,7 +2,7 @@
 //! per cart line, and a summary.
 //!
 //! What it shows: the logs of a run that worked. They are in the Functions dialog and in
-//! `lsf function run`, as `shopify app function run` prints them; nothing is wrong.
+//! `lsf app function run`, as `shopify app function run` prints them; nothing is wrong.
 
 use shopify_function::prelude::*;
 use shopify_function::Result;

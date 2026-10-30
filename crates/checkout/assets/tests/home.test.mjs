@@ -1,4 +1,4 @@
-// The script of the home page of `lsf checkout`: the filter of the scenarios, the check of the
+// The script of the home page of `lsf app dev`: the filter of the scenarios, the check of the
 // Functions it asks for, and the load of each checkout UI extension in a frame of the sandbox.
 
 import assert from 'node:assert/strict';

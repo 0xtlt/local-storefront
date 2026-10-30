@@ -7,7 +7,11 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
 
 ### Added
 
-- **Testing an app's checkout in CI.** `lsf checkout check` runs the Functions of every scenario
+- **The commands of a Shopify app are under `lsf app`**, named as Shopify's CLI names them:
+  `app dev` serves the app alone (its checkout and its customer account), `app init` writes
+  checkout scenarios, `app build` builds its extensions, `app check` runs the scenarios for CI,
+  `app function run` and `app function build` its Functions. [CLI reference](docs/cli.md#app).
+- **Testing an app's checkout in CI.** `lsf app check` runs the Functions of every scenario
   and exits with 1 when one fails or does not validate, or when there is no scenario. `lsf validate`
   checks the app of the folder too (with the demo store when the app has no store data), and its
   JSON counts the app's errors with the data's. The checkout and the customer account set `data-lsf-ready` on the document once nothing is
@@ -15,13 +19,13 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   every session. The orders of a session are numbered after the last one of the store data, one
   after the other whatever the other sessions do, and placed at its `now`: a test reads the same
   number and date every time. [Testing guide](docs/testing.md#a-checkout-in-a-test).
-- **Commands of an app need no `--app` in its folder** (`lsf checkout`, `lsf checkout init`,
-  `lsf function run`, `lsf checkout check`), and read its `shopify-local/` from anywhere.
-  `lsf checkout init` gives every Function the settings its input query reads
+- **Commands of an app need no `--app` in its folder** (`lsf app dev`, `lsf app init`,
+  `lsf app function run`, `lsf app check`), and read its `shopify-local/` from anywhere.
+  `lsf app init` gives every Function the settings its input query reads
   (`[extensions.input.variables]`): those of the app's own store data, or empty values of the
-  right type in `app-settings.json`, so that the scenarios it writes pass `checkout check`; a
+  right type in `app-settings.json`, so that the scenarios it writes pass `app check`; a
   variable without a value says where to give it. The frame of an extension is in the language
-  it renders in (`lang`). `lsf function run` says why a
+  it renders in (`lang`). `lsf app function run` says why a
   Function asked for did not run (no discount names it, an empty cart, an error of the app) and
   exits with 1; a handle or a scenario close to an existing one is suggested. Its `--session`
   takes `data` as `PUT /__lsf/session` does: a discount or settings for one run.
@@ -39,7 +43,7 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   suggests addresses as the buyer types. An order of the store data can list its `returns`. See
   [customer account](docs/checkout.md#customer-account).
 
-- **Watch mode for the checkout of an app.** `lsf checkout --app <dir> --watch` (and `serve
+- **Watch mode for the checkout of an app.** `lsf app dev --app <dir> --watch` (and `serve
   --app <dir> --watch`) builds a Function again when its files (or the files the Functions
   share, such as a Cargo workspace's `Cargo.toml`) change, and reloads the open checkout,
   thank-you and home pages once the builds are over, as `shopify app dev` does. At start it
@@ -60,7 +64,7 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   labels, grouped payment and shipping choices, the order summary with its quantity badges, and
   a mobile layout with a folded summary. The checkout UI extensions use the same design tokens
   (`tokens.css`), so they look native in it. See [the look of the page](docs/checkout.md#the-look-of-the-page).
-- **A local checkout for Shopify apps.** `lsf checkout --app <dir>` serves the checkout of an
+- **A local checkout for Shopify apps.** `lsf app dev --app <dir>` serves the checkout of an
   app without a theme, and `lsf serve --app <dir>` leads the `/checkout` of a theme to it. It
   runs the Shopify Functions of the app (cart transform, discounts, delivery and payment
   customization, validation) from their built Wasm modules, and shows its checkout UI
@@ -69,7 +73,7 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   command of each Function first. A badge in the corner of the page opens a dialog with the
   input and output of each Function run side by side. API versions 2026-10 and 2027-01 are
   supported. Guide: [checkout](docs/checkout.md).
-- **`lsf function run [handle]... --app <dir>`** runs the Functions once, without a server, and
+- **`lsf app function run [handle]... --app <dir>`** runs the Functions once, without a server, and
   prints each input, output and log with the checkout that results. `--session` and
   `--checkout` set the cart and what the buyer entered, `--format json` is for tools. It exits
   with `1` when a Function fails to run.
@@ -94,18 +98,18 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   and gives the response to the `.run` target as `fetchResult`, with Shopify's limits (GET and
   POST, HTTPS, a timeout of 100 to 2000 ms, 100 KB, no redirect; `http` is accepted for
   `localhost`). The request and the response show in the Functions dialog and in
-  `lsf function run`.
+  `lsf app function run`.
 - **A deferred payment in the checkout.** A line sold with a selling plan that takes a deposit
   (a pre-order, try before you buy: `checkout_charge` in the store data) is no longer charged in
   full. The order summary shows the total, what is **due today** and what is **due later**; the
   state (`.json`) has `cost.dueNow`, `cost.dueLater` and `cost.checkoutChargeAmount` (the
   `cart.checkout_charge_amount` of the storefront cart) and `dueLater` on the lines; the order
   records `totalReceived` and `totalOutstanding`, and the thank-you page shows the remaining
-  balance. `lsf function run` prints it. Shipping is due today and tax follows the amount it is
+  balance. `lsf app function run` prints it. Shipping is due today and tax follows the amount it is
   on. The `shopify` global and the Function input do not change: Shopify exposes no deferred
   amount there.
 
-- **A home page for the checkout.** `GET /` of `lsf checkout` (and `/__lsf/checkouts`, which
+- **A home page for the checkout.** `GET /` of `lsf app dev` (and `/__lsf/checkouts`, which
   `lsf serve --app` prints when it starts, as the theme owns `/`) lists every Function of the
   app (API, targets, build status, network access with a `.fetch` target, what is wrong with
   it) and every checkout UI extension (API version, capabilities, targets, and the place each
@@ -120,7 +124,7 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   validated (`validate`, with the codes of the data guide), reloaded when they change, have a
   JSON Schema (`schema checkout-scenario`, and `schema/` written by `init`), and one with errors
   is listed with them, not hidden.
-- **`lsf checkout init [--app <dir>]`** writes the scenarios: for the Functions and checkout UI
+- **`lsf app init [--app <dir>]`** writes the scenarios: for the Functions and checkout UI
   extensions of the app (a cart a cart transform can merge or expand, a cart and a code for a
   discount, several shipping rates or payment methods, a cart a validation refuses, one with
   everything for the extensions), and always a guest, a customer, a B2B buyer, another country
@@ -131,18 +135,18 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   declares: the steps of a cart that ships are always there, the thank-you page is shown under the
   checkout, and a panel lists each target as shown, without a place on the page, or waiting for
   something the cart lacks.
-- **`lsf function run --scenario <name>`** runs the Functions for a scenario.
-- **`lsf function build`** builds the Functions of an app. A JavaScript or TypeScript Function
+- **`lsf app function run --scenario <name>`** runs the Functions for a scenario.
+- **`lsf app function build`** builds the Functions of an app. A JavaScript or TypeScript Function
   without a build command, as Shopify's CLI generates it, is built by lsf as
   `shopify app function build` builds it, without Node: its types (`generated/api.ts`, as
   graphql-codegen writes them), `dist/function.js` (bundled as esbuild does, enums inlined and
   unused code left out), then its module, the bytes Javy writes. `--build` and `--watch` build
   it too.
 - **Rust Functions run as `cargo build` writes them**: after a Function's build command
-  (`--build`, `--watch`, `lsf function build`), a module that calls the Function Wasm API by name
+  (`--build`, `--watch`, `lsf app function build`), a module that calls the Function Wasm API by name
   is linked to it with Shopify's `shopify-function-trampoline` (2.0.1, as a library), as
   `shopify app build` does, to the byte.
-- **`lsf checkout build`** builds the extensions of an app as `shopify app build` does, without
+- **`lsf app build`** builds the extensions of an app as `shopify app build` does, without
   Node: its Functions, and its checkout UI extensions whose targets name their sources, bundled
   (JSX with the `jsxImportSource` of their `tsconfig.json`, minified) into `dist/<handle>.js`.
   `--build` and `--watch` build those too. Without a `node_modules`, `preact`,

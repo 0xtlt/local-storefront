@@ -597,7 +597,7 @@ changes nothing for a theme.
 
 A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
 scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
-them and opens a fresh checkout for each; `function run --scenario <name>` runs the Functions
+them and opens a fresh checkout for each; `app function run --scenario <name>` runs the Functions
 for one ([checkout](checkout.md#scenarios)). A scenario is a set of overrides on top of the
 store data: what it does not set stays as the data says.
 
@@ -658,7 +658,7 @@ A scenario that does not validate is still listed, with its errors, and cannot b
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
 (`/session/cart/items/0/variant`). Files that are not `.json`, and folders, are ignored.
 Scenarios are reloaded when the files change, like the rest of the data. The built-in demo
-store has none: `npx local-storefront checkout init` writes a set.
+store has none: `npx local-storefront app init` writes a set.
 
 ## Localization
 
@@ -859,7 +859,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `selling_plan_groups` | array of [SellingPlanGroup](#sellingplangroup) | Groups of selling plans: subscriptions, pre-orders and other purchase options. |
 | `files` | map of [File](#file) | Metadata for files in `files/`, by path. |
 | `session` | [Session](#session) | What every new browser session starts with: a logged-in customer, a filled cart... |
-| `checkout` | [Checkout](#checkout) | The fake checkout of `lsf checkout --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
+| `checkout` | [Checkout](#checkout) | The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
 
@@ -1710,7 +1710,7 @@ One of:
 
 ### Checkout
 
-How the local checkout (`lsf checkout --app`) is set up. Every field has a default.
+How the local checkout (`lsf app dev --app`) is set up. Every field has a default.
 
 | Field | Type | Description |
 |---|---|---|

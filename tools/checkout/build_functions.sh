@@ -17,7 +17,7 @@
 # builds an app, and function-runner (which lsf runs Functions as) only runs trampolined
 # modules, so the modules in dist/ are trampolined the same way.
 #
-# A JavaScript Function is built by lsf (`lsf function build`), as Shopify's CLI builds it, without
+# A JavaScript Function is built by lsf (`lsf app function build`), as Shopify's CLI builds it, without
 # Node.
 set -euo pipefail
 
@@ -136,7 +136,7 @@ fi
 
 if [ ${#javascript[@]} -gt 0 ]; then
   cargo run --quiet --release --manifest-path "$root/Cargo.toml" -p lsf -- \
-    function build --app "$app" "${javascript[@]}"
+    app function build --app "$app" "${javascript[@]}"
 fi
 
 for handle in "${handles[@]}"; do

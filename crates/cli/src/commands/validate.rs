@@ -44,7 +44,7 @@ pub fn run(
             .ok()
             .and_then(|dir| crate::checkout::app_around(&dir))
     });
-    // The store data, as `lsf checkout` reads it: the theme's, else the app's.
+    // The store data, as `lsf app dev` reads it: the theme's, else the app's.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
     let app = if looks_like_a_theme(theme) {
         App::open(theme, data.as_deref(), Revalidate::Never, previews)?

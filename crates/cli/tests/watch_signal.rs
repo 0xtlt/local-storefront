@@ -1,4 +1,4 @@
-//! `lsf checkout --watch` asked to stop by `SIGTERM`, as a process manager or `kill` does: it
+//! `lsf app dev --watch` asked to stop by `SIGTERM`, as a process manager or `kill` does: it
 //! stops as on Ctrl-C, with the builds that run and the folder of the published modules.
 //!
 //! The server runs as a process of its own, with a temporary folder (`TMPDIR`) and a home of the
@@ -159,7 +159,7 @@ type = "function"
     );
 
     let mut server = Command::new(env!("CARGO_BIN_EXE_lsf"))
-        .args(["checkout", "--app"])
+        .args(["app", "dev", "--app"])
         .arg(&app)
         .args(["--watch", "--build", "--host", "127.0.0.1", "--port", "0"])
         .current_dir(&base)
@@ -312,13 +312,13 @@ struct Server {
 }
 
 impl Server {
-    /// Starts `lsf checkout --app <base>/app --watch` (with `--build`), with the test's
+    /// Starts `lsf app dev --app <base>/app --watch` (with `--build`), with the test's
     /// temporary folder and home. `run` stops it if the test fails.
     fn start(run: &mut Run, build: bool) -> Server {
         let base = &run.base;
         let mut command = Command::new(env!("CARGO_BIN_EXE_lsf"));
         command
-            .args(["checkout", "--app"])
+            .args(["app", "dev", "--app"])
             .arg(base.join("app"))
             .args(["--watch", "--host", "127.0.0.1", "--port", "0"])
             .current_dir(base)

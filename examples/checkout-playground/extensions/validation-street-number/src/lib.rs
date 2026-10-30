@@ -2,7 +2,7 @@
 //! the buyer types (`CHECKOUT_INTERACTION`) it says nothing.
 //!
 //! What it shows: `buyerJourney.step`. The page shows no error until "Pay now"; then the order
-//! is refused (`lsf function run --step interaction` and `--step completion` show both sides).
+//! is refused (`lsf app function run --step interaction` and `--step completion` show both sides).
 
 use shopify_function::prelude::*;
 use shopify_function::Result;

@@ -133,7 +133,7 @@ before and after a change. Times are not. `--json` prints a speedscope profile. 
 ### Run the Functions of a Shopify app
 
 ```bash
-npx local-storefront function run --app ../my-app --format json
+npx local-storefront app function run --app ../my-app --format json
 ```
 
 Prints the checkout the Functions produce for the cart of the store data (`--session` sets

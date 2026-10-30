@@ -6720,7 +6720,7 @@ fn the_home_page_says_how_to_get_scenarios() {
     let state = checkout_server(&[], true);
     let html = text(&get(&state, "/", "home"));
     assert!(html.contains("None yet"), "{html}");
-    assert!(html.contains("lsf checkout init --app"), "{html}");
+    assert!(html.contains("lsf app init --app"), "{html}");
 }
 
 /// The position of `needle` in `html`, which must have it.
@@ -7428,10 +7428,10 @@ fn every_scenario_that_init_writes_opens_and_runs_the_app() {
     let root = std::env::temp_dir().join(format!("lsf-server-init-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let data = root.join("data");
-    crate::commands::checkout_init::run(
+    crate::commands::app_init::run(
         &root,
         Some(&data),
-        crate::commands::checkout_init::InitArgs::for_app(fixture_app()),
+        crate::commands::app_init::InitArgs::for_app(fixture_app()),
     )
     .unwrap();
     let state = checkout_server_with_data(fixture_app(), &[], true, Some(&data));

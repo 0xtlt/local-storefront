@@ -1,5 +1,5 @@
 //! The checkout playground (`examples/checkout-playground`): its store data and every scenario
-//! are valid, the scenarios of `lsf checkout init` run no broken Function, and the Functions of
+//! are valid, the scenarios of `lsf app init` run no broken Function, and the Functions of
 //! each `fn-*` scenario do what its description says.
 //!
 //! No network is needed. `discount-network` and `validation-network` call the mock server of

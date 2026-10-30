@@ -113,12 +113,12 @@ struct RunArgs {
     format: Format,
 }
 
-/// `lsf function build`: builds the Functions, and says what it wrote.
+/// `lsf app function build`: builds the Functions, and says what it wrote.
 fn build(args: &BuildArgs) -> Result<ExitCode, String> {
     checkout::run_build(
         args.app.as_deref(),
         &args.handles,
-        "lsf function build",
+        "lsf app function build",
         checkout::build_functions,
     )
 }
@@ -269,7 +269,7 @@ fn compute(
     args: &RunArgs,
 ) -> Result<Ran, String> {
     // The app the current folder is in when `--app` is not given.
-    let app_dir = &checkout::app_of(args.app.as_deref(), "lsf function run")?;
+    let app_dir = &checkout::app_of(args.app.as_deref(), "lsf app function run")?;
     let app_args = checkout::AppArgs {
         app: Some(app_dir.clone()),
         extensions: args.handles.clone(),
@@ -282,7 +282,7 @@ fn compute(
         .find(|handle| shopify_app.ui_extension(handle).is_some())
     {
         return Err(format!(
-            "`{handle}` is a checkout UI extension, not a Function: `lsf function run` runs Functions"
+            "`{handle}` is a UI extension, not a Function: `lsf app function run` runs Functions"
         ));
     }
     checkout::print_app_diagnostics(&shopify_app, &selection);
@@ -429,7 +429,7 @@ fn scenario_to_run<'a>(
         let known: Vec<&str> = store.scenarios.iter().map(|s| s.name.as_str()).collect();
         if known.is_empty() {
             format!(
-                "--scenario {name}: the store data has no scenario (`lsf checkout init` writes a set in `checkouts/`)"
+                "--scenario {name}: the store data has no scenario (`lsf app init` writes a set in `checkouts/`)"
             )
         } else {
             match lsf_core::util::closest_match(name, known.iter().copied()) {
@@ -753,7 +753,7 @@ mod tests {
         assert!(matches!(step(&["--step", "completion"]), Step::Completion));
     }
 
-    /// Runs `lsf function run` on the fixture app of lsf-checkout, for a store with one product
+    /// Runs `lsf app function run` on the fixture app of lsf-checkout, for a store with one product
     /// (4 at 32.00 in the cart) and the given discount, and says whether it exits with 1.
     fn run_fails(discount: Json, handle: &str, function_settings: Option<Json>) -> bool {
         let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../checkout/tests/fixtures/app");

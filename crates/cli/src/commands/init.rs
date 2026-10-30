@@ -13,7 +13,7 @@ pub struct Args {
     force: bool,
 }
 
-/// The data directory `init` and `checkout init` write to: `--data`, otherwise
+/// The data directory `init` and `app init` write to: `--data`, otherwise
 /// `<theme>/shopify-local`.
 pub fn data_directory(theme: &Path, data: Option<&Path>) -> std::path::PathBuf {
     match data {
@@ -75,7 +75,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
         "next: the `serve` command shows the theme, and `validate` checks the data after you edit it"
     );
     eprintln!(
-        "      for a Shopify app: `checkout init --app <dir>` writes checkout scenarios to try its Functions and extensions with"
+        "      for a Shopify app: `app init --app <dir>` writes checkout scenarios to try its Functions and extensions with"
     );
     Ok(ExitCode::SUCCESS)
 }

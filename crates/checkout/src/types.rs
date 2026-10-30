@@ -220,7 +220,7 @@ pub struct CheckoutResult {
     /// Errors that block completing the checkout (validation Functions, Function failures).
     pub errors: Vec<CheckoutError>,
     pub cost: Cost,
-    /// Every Function run, in order, for the debug panel and `lsf function run`.
+    /// Every Function run, in order, for the debug panel and `lsf app function run`.
     pub runs: Vec<FunctionRun>,
     /// Whether the Functions stopped running at the deadline of their
     /// [`RunOptions`](crate::pipeline::RunOptions): the result is then not the checkout, only

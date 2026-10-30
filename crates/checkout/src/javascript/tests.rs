@@ -102,7 +102,7 @@ fn a_javascript_function_is_built_by_lsf_and_runs() {
             .iter()
             .any(|diagnostic| diagnostic
                 .message
-                .contains("build it with `lsf function build bulk` (or `shopify app build`)")),
+                .contains("build it with `lsf app function build bulk` (or `shopify app build`)")),
     );
 
     let built = app.build().unwrap();
@@ -423,7 +423,7 @@ fn a_preact_checkout_ui_extension_is_built_without_node_modules() {
     assert!(shopify_app.diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("build it with `lsf checkout build banner` (or `shopify app build`)")
+            .contains("build it with `lsf app build banner` (or `shopify app build`)")
     }));
     let bundle = build_extension(extension, &app.0).unwrap();
     assert_eq!(bundle, extension.dir.join("dist/banner.js"));
@@ -479,7 +479,7 @@ fn the_playground_s_preact_extensions_are_the_bundles_lsf_builds() {
         assert_eq!(
             std::fs::read_to_string(bundle).unwrap(),
             std::fs::read_to_string(source.join("dist").join(format!("{handle}.js"))).unwrap(),
-            "{handle}: the committed bundle is not the one lsf builds: `lsf checkout build {handle} --app examples/checkout-playground`"
+            "{handle}: the committed bundle is not the one lsf builds: `lsf app build {handle} --app examples/checkout-playground`"
         );
     }
 }

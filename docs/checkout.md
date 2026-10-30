@@ -10,7 +10,7 @@ Shopify's checkout.
 ## Run it
 
 ```bash
-npx local-storefront checkout --app ../my-app
+npx local-storefront app dev --app ../my-app
 ```
 
 Open <http://127.0.0.1:9292/>: the [home page](#the-home-page) lists what is wrong first, then
@@ -29,10 +29,10 @@ prints its address when it starts:
 npx local-storefront serve --app ../my-app
 ```
 
-No scenarios yet? `npx local-storefront checkout init --app ../my-app` writes a set made for
+No scenarios yet? `npx local-storefront app init --app ../my-app` writes a set made for
 the extensions of the app, see [scenarios](#scenarios).
 
-In the app's folder, `--app` can be left out: `lsf checkout`, `lsf function run` and the other
+In the app's folder, `--app` can be left out: `lsf app dev`, `lsf app function run` and the other
 commands of an app take the app the current folder is in. The store data is `--data`, else the
 `shopify-local/` of the current folder (or of the theme), else the app's
 (`<app>/shopify-local`), else the built-in demo store. One that `lsf init` creates while the
@@ -42,12 +42,12 @@ The app is a directory with `shopify.app.toml` and `extensions/*/shopify.extensi
 versions 2026-10 and 2027-01 are supported. Functions run from their built Wasm module and
 extensions from their built bundle (`dist/function.wasm`, `dist/<handle>.js`). lsf builds them
 as `shopify app build` does, without Node and without Shopify's CLI
-([what it builds](#what-lsf-builds-without-node)): `lsf checkout build`, or `--build` before it
+([what it builds](#what-lsf-builds-without-node)): `lsf app build`, or `--build` before it
 serves:
 
 ```bash
-npx local-storefront checkout build --app ../my-app      # every extension
-npx local-storefront checkout --app ../my-app --build
+npx local-storefront app build --app ../my-app      # every extension
+npx local-storefront app dev --app ../my-app --build
 ```
 
 ### What lsf builds without Node
@@ -71,8 +71,8 @@ command, as `shopify app generate extension` makes it, is built by lsf the way
 `shopify app function build` builds it, without Node and without Shopify's CLI:
 
 ```bash
-npx local-storefront function build --app ../my-app        # every Function
-npx local-storefront function build discount --app ../my-app
+npx local-storefront app function build --app ../my-app        # every Function
+npx local-storefront app function build discount --app ../my-app
 ```
 
 `--build` and `--watch` build it the same way. The steps are the CLI's:
@@ -99,7 +99,7 @@ build: `import()`, a `require` of an ES module, and Functions written with
 (`shopify_function_v2::shopify_function_input_get`); `shopify app build` links it to the host's
 provider with Shopify's `shopify-function-trampoline` after the build command. lsf runs that same
 trampoline, as a library, at the version Shopify's CLI 5.0.0 runs (2.0.1): after the build command
-of `--build`, `--watch` and `lsf function build`, the module is the one the CLI would write, to the
+of `--build`, `--watch` and `lsf app function build`, the module is the one the CLI would write, to the
 byte. A module already linked is left as it is. Modules of the first version of the API
 (`shopify_function_v1`) are refused, as by the trampoline: update the `shopify_function` crate.
 
@@ -115,7 +115,7 @@ templates or another runtime, is bundled by lsf the way `shopify app build` bund
 Node:
 
 ```bash
-npx local-storefront checkout build banner --app ../my-app
+npx local-storefront app build banner --app ../my-app
 ```
 
 `--build` builds it too, and `--watch` builds it again when its files change, in a moment, then
@@ -142,7 +142,7 @@ page.
 
 | Option | What it does |
 |---|---|
-| `--app <dir>` (`LSF_APP`) | The app. Required by `checkout` and `function run`. |
+| `--app <dir>` (`LSF_APP`) | The app. The commands of `lsf app` default to the app the current folder is in. |
 | `--extension <handle>` | Uses only this extension, a Function or a checkout UI extension. Repeat it for several. Without it, every extension of the app is used. |
 | `--build` | Builds each Function first: its build command, or lsf's build of a JavaScript Function. |
 | `--watch` | Develops the app as `shopify app dev` does: builds a Function again when its files change, and reloads the open pages. With `--build`, builds every Function at start. See [watch mode](#watch-mode). |
@@ -154,12 +154,12 @@ page.
 ### Watch mode
 
 ```bash
-npx local-storefront checkout --app ../my-app --watch
+npx local-storefront app dev --app ../my-app --watch
 ```
 
 Save a file of a Function and its build runs; when it is over, the open pages reload with the new
 module. It works with `serve --app` too. A JavaScript Function without a build command counts as
-one with a build command: lsf builds it (`lsf function build`, in a process of its own).
+one with a build command: lsf builds it (`lsf app function build`, in a process of its own).
 
 - **At the start**, the modules that are there are used, as without `--watch`, when nothing
   changed since the last watch of the app. For each Function that has a build command
@@ -234,7 +234,7 @@ The files are watched through the system's events (FSEvents on macOS, inotify on
 by folder, without the tools' folders): at rest, watching an app of 90 extensions costs about
 0.2 % of a core. Where a file system has no events, they are polled.
 
-`lsf function run` has no watch mode: it runs the modules in `dist/`, as they are.
+`lsf app function run` has no watch mode: it runs the modules in `dist/`, as they are.
 
 ## The look of the page
 
@@ -261,7 +261,7 @@ radii in the same file.
 
 ## The home page
 
-`GET /` of `lsf checkout` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
+`GET /` of `lsf app dev` (`/__lsf/checkouts` with a theme; `?format=json` answers what the
 page says, for tools) has a bar at the top and six tabs. It has the look of the checkout and
 needs no network: it sends no request of the Functions, only the checkout UI extensions loaded to
 check them can call a server (see below).
@@ -334,7 +334,7 @@ prefix of its URL (`/fr/` links to `/fr/checkout`; `/__lsf/checkouts?locale=fr` 
 ### The Functions that fail
 
 The home page runs the Functions of every scenario that opens, as its checkout would when it
-opens (what `lsf function run --scenario` does), and lists each Function target that fails, with
+opens (what `lsf app function run --scenario` does), and lists each Function target that fails, with
 the error and the scenarios it fails in: a trap or a panic, more than 11 million instructions,
 an output that does not fit the schema of its API version, a `.fetch` request out of Shopify's
 limits. The scenario and the Function get an error status.
@@ -403,10 +403,10 @@ it in the app folder, no theme needed (`npx local-storefront validate`).
 - The checkout keeps the settings and the extensions of its scenario for the whole session, an
   order included, and follows the file when it changes. The state has `scenario`
   (`{name, title}`) and the page names it in its header.
-- `lsf function run --scenario <name>` runs the Functions for a scenario.
+- `lsf app function run --scenario <name>` runs the Functions for a scenario.
 - Only one scenario is open per browser: the session is the cookie's.
 
-`npx local-storefront checkout init --app ../my-app` writes the scenarios, made for the app:
+`npx local-storefront app init --app ../my-app` writes the scenarios, made for the app:
 
 | The app has | Scenarios |
 |---|---|
@@ -425,14 +425,14 @@ list. The settings of your Functions are the store data's: the scenarios leave
 the settings (and the code) `checkout.discounts` gives them. The scenarios are a place to start:
 edit them.
 
-`checkout init` creates the data folder with the demo store when it does not exist (and a
+`app init` creates the data folder with the demo store when it does not exist (and a
 selling plan with a deposit for `pre-order`). When it exists, it uses the products, customers,
 countries, languages and selling plans it has, and says which scenarios it skipped and why. It
 never overwrites a file without `--force`, and refreshes `schema/` so that editors complete the
 scenarios (`"$schema": "../schema/checkout-scenario.schema.json"`).
 
 A Function that reads its settings as the variables of its input query
-(`[extensions.input.variables]`) cannot run without them. `checkout init` gives each one the
+(`[extensions.input.variables]`) cannot run without them. `app init` gives each one the
 settings the store data lacks: those of the app's own `shopify-local/` when it has them, or empty
 values of the type of each variable (`[]`, `""`, `0`, `false`) to fill in. Those of a discount
 Function go in the `metafields` of its discounts in the scenarios; the others in
@@ -493,7 +493,7 @@ API): the next time it is read, it is the new customer's.
 
 The Shop skin has the same menu, account and select.
 
-The demo store (`lsf init`, `lsf checkout init`, and the built-in data) has a profile of each
+The demo store (`lsf init`, `lsf app init`, and the built-in data) has a profile of each
 kind:
 
 | Customer | What for |
@@ -639,7 +639,7 @@ settings of your other Functions, and a tax rate.
   `PRODUCT`, `ORDER`, `SHIPPING`. All three when omitted.
 - **A discount Function runs only for a discount that names it**, as on Shopify, where the
   merchant creates the discount: one that no discount of the store data (nor of a scenario)
-  names never runs, and the home page and `lsf function run` say so. The demo store of
+  names never runs, and the home page and `lsf app function run` say so. The demo store of
   `lsf init` has none: add yours here, in a scenario, or for one test in the `data.checkout` of
   `PUT /__lsf/session` (see [testing](testing.md#a-checkout-in-a-test)).
 - A Function that is not a discount (cart transform, delivery or payment customization,
@@ -782,7 +782,7 @@ discounts on the subtotal they left, then shipping. Within a class:
 - **Shipping discounts.** One applies per order, the best one: the one that takes the most off
   the delivery option the buyer selected (then off all the options). The others are not applied
   and are not dropped silently: the Functions dialog lists them under "Discounts not applied"
-  (`skippedDiscounts` in the state, and a `discount not applied` line in `lsf function run`)
+  (`skippedDiscounts` in the state, and a `discount not applied` line in `lsf app function run`)
   with their amount and why. 50% off a 4.90 Standard rate and 3.00 off it: the 3.00 applies,
   the 50% (2.45) is listed. Free Express does not beat 1.00 off Standard while the buyer has
   Standard selected, and wins when they select Express. The candidates of one discount are
@@ -830,7 +830,7 @@ A Function with network access has a `.fetch` target next to its `.run` target:
 2026-10 and 2027-01). The checkout runs the `.fetch` target right before its `.run` target, sends
 the HTTP request it answers from your machine, and gives the response to the `.run` target as
 `fetchResult` (`status`, `body`, `jsonBody`, `header(name:)`). The request and the response
-show in the Functions dialog and in `lsf function run`.
+show in the Functions dialog and in `lsf app function run`.
 
 Shopify's limits apply: `GET` and `POST`; an HTTPS URL (an `http` URL is accepted for
 `localhost` and loopback addresses, so a server of the app under development can answer); a
@@ -905,7 +905,7 @@ or the loader reports an error and the page says why it does not load the extens
 ## Run a Function without a server
 
 ```bash
-npx local-storefront function run volume-discount --app ../my-app
+npx local-storefront app function run volume-discount --app ../my-app
 ```
 
 Builds the input of each Function from the store data, runs them in checkout order, and prints
@@ -965,7 +965,7 @@ await request.post(`${path}/update`, {
 | `GET /checkout` | Leads to the checkout of the session's cart. `?variant=shop` for the other look, `?targets=all` for [every extension target](#every-extension-target). | A redirect to `/checkouts/cn/<token>` (`/fr/checkouts/cn/<token>` from `/fr/checkout`) |
 | `GET /checkout?scenario=<name>` | Opens a checkout for a [scenario](#scenarios), in a new session. | A redirect to its checkout with a new session cookie, or `404`/`422` and a page that says why |
 | `GET /checkout?customer=<email>` | Logs the session in as a [customer of the data](#log-in-as-a-customer) (`default`, `none` too), then leads to its checkout. With `scenario=`, opens the scenario as them. | A redirect, or `404` and a page that lists the customers |
-| `GET /` (`lsf checkout`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says, `?check=1` to [run the Functions of the scenarios](#the-functions-that-fail) first. | HTML, or JSON |
+| `GET /` (`lsf app dev`) or `GET /__lsf/checkouts` | The [home page](#the-home-page). `?format=json` for what it says, `?check=1` to [run the Functions of the scenarios](#the-functions-that-fail) first. | HTML, or JSON |
 | `GET /__lsf/checkouts/check` | Runs the Functions of every scenario (or takes the last run on the same app and data): [the ones that fail](#the-functions-that-fail). | JSON: `failures` (`handle`, `target`, `error`, `scenarios`), and what the page shows of it |
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |

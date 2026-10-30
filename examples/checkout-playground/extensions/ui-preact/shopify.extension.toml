@@ -1,6 +1,6 @@
 # A checkout UI extension of the playground built from its sources: Shopify's template in Preact
 # (`shopify app generate extension --template checkout_ui --flavor preact`), as it comes. lsf
-# bundles it (`lsf checkout build ui-preact`, `--build`, `--watch`), without Node, into
+# bundles it (`lsf app build ui-preact`, `--build`, `--watch`), without Node, into
 # dist/ui-preact.js.
 api_version = "2026-10"
 

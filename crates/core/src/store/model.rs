@@ -1574,7 +1574,7 @@ pub struct CheckoutFunctionInput {
     pub metafields: IndexMap<String, MetafieldInput>,
 }
 
-/// How the local checkout (`lsf checkout --app`) is set up. Every field has a default.
+/// How the local checkout (`lsf app dev --app`) is set up. Every field has a default.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckoutInput {
@@ -1758,7 +1758,7 @@ pub struct StoreInput {
     /// What every new browser session starts with: a logged-in customer, a filled cart...
     #[serde(default)]
     pub session: Option<SessionInput>,
-    /// The fake checkout of `lsf checkout --app`: shipping rates, payment methods, discounts
+    /// The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts
     /// and Function settings. At most one data file may define it.
     #[serde(default)]
     pub checkout: Option<CheckoutInput>,

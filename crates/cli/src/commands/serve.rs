@@ -121,7 +121,8 @@ async fn listen(
     Err(failure)
 }
 
-/// Serves the theme. With `standalone`, serves the checkout of `--app` alone: `lsf checkout`.
+/// Serves the theme. With `standalone`, serves the app of `--app` alone, its checkout and its
+/// customer account: `lsf app dev`.
 pub fn run(
     theme: &Path,
     data: Option<&Path>,
@@ -131,9 +132,9 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     // The app is read before the store data and the theme, so that a wrong `--app` is the first
     // thing said. `--build` runs here too.
-    // `lsf checkout` serves the app the current folder is in when `--app` is not given.
+    // `lsf app dev` serves the app the current folder is in when `--app` is not given.
     let found = match (&args.app.app, standalone) {
-        (None, true) => Some(checkout::app_of(None, "lsf checkout")?),
+        (None, true) => Some(checkout::app_of(None, "lsf app dev")?),
         _ => None,
     };
     if args.watch && args.app.app.is_none() && found.is_none() {
@@ -163,7 +164,7 @@ pub fn run(
             ))
         }
         None if standalone => {
-            return Err("`lsf checkout` needs the app: `--app DIR` (or LSF_APP)".to_string());
+            return Err("`lsf app dev` needs the app: `--app DIR` (or LSF_APP)".to_string());
         }
         None => None,
     };
@@ -280,7 +281,7 @@ pub fn run(
             let broken = scenarios.iter().filter(|s| !s.problems.is_empty()).count();
             if scenarios.is_empty() {
                 eprintln!(
-                    "scenarios: none (`lsf checkout init --app {}` writes a set in `checkouts/` of the data)",
+                    "scenarios: none (`lsf app init --app {}` writes a set in `checkouts/` of the data)",
                     dir.display()
                 );
             } else if broken > 0 {

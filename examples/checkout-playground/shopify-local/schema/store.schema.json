@@ -156,7 +156,7 @@
       "default": null
     },
     "checkout": {
-      "description": "The fake checkout of `lsf checkout --app`: shipping rates, payment methods, discounts\nand Function settings. At most one data file may define it.",
+      "description": "The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts\nand Function settings. At most one data file may define it.",
       "anyOf": [
         {
           "$ref": "#/$defs/CheckoutInput"
@@ -3403,7 +3403,7 @@
       ]
     },
     "CheckoutInput": {
-      "description": "How the local checkout (`lsf checkout --app`) is set up. Every field has a default.",
+      "description": "How the local checkout (`lsf app dev --app`) is set up. Every field has a default.",
       "type": "object",
       "properties": {
         "shipping_rates": {

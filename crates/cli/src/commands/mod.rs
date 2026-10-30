@@ -1,6 +1,6 @@
+pub mod app;
+pub mod app_init;
 pub mod check;
-pub mod checkout;
-pub mod checkout_init;
 pub mod docs;
 pub mod fmt;
 pub mod function;

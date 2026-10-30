@@ -2,7 +2,7 @@
 //! Wasm trap: the run fails, its output is lost, and the checkout cannot be completed.
 //!
 //! What it shows: a failed run. The Functions badge turns red, the Functions dialog opens on the
-//! run with the error and the panic message in the logs, and `lsf function run` exits with 1.
+//! run with the error and the panic message in the logs, and `lsf app function run` exits with 1.
 
 use shopify_function::prelude::*;
 use shopify_function::Result;

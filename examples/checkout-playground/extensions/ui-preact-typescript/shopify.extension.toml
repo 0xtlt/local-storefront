@@ -1,6 +1,6 @@
 # A checkout UI extension of the playground built from its sources, in TypeScript with Preact,
 # the hooks of `@shopify/ui-extensions/checkout/preact` and a signal. lsf bundles it
-# (`lsf checkout build ui-preact-typescript`, `--build`, `--watch`), without Node, into
+# (`lsf app build ui-preact-typescript`, `--build`, `--watch`), without Node, into
 # dist/ui-preact-typescript.js.
 api_version = "2026-10"
 

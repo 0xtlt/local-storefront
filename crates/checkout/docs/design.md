@@ -10,11 +10,11 @@ extensions at the same time. No Shopify store, no network.
 ## User-facing surface (CLI, owned by the integration step)
 
 ```bash
-lsf checkout --app ../my-app [--extension HANDLE]... [--variant standard|shop] [--port 9292]
+lsf app dev --app ../my-app [--extension HANDLE]... [--variant standard|shop] [--port 9292]
 #   serves the checkout alone (no theme needed), with the session's cart from the store data
 lsf serve --app ../my-app [--extension HANDLE]...
 #   the theme's /checkout leads to the same checkout
-lsf function run [HANDLE]... --app ../my-app [--session FILE|JSON] [--checkout FILE|JSON] [--format text|json]
+lsf app function run [HANDLE]... --app ../my-app [--session FILE|JSON] [--checkout FILE|JSON] [--format text|json]
 #   one-shot, no server: builds the input of each selected Function from the store data,
 #   runs them in checkout order, prints each input/output/logs and the resulting checkout
 ```
@@ -153,7 +153,7 @@ goes through `distribute_capped`: proportional to the prices, a line that has le
 share gives the rest to the others. Shopify applies one shipping discount per order, the best for
 the cart: `apply_best_shipping` compares what each discount takes off the selected option (then off
 all the options) on the same groups, applies the best one, and puts the others in
-`CheckoutResult::skipped_discounts` with the reason (the Functions dialog and `lsf function run`
+`CheckoutResult::skipped_discounts` with the reason (the Functions dialog and `lsf app function run`
 show them).
 `PaymentMethod::placements` is what `PaymentCustomizationPaymentMethod.placements` reads; a hide
 operation takes the placements it names off the method, and `CheckoutResult::payment_methods` lists
@@ -190,7 +190,7 @@ too.
   takes the settings (`CheckoutScenario::checkout`, the store's with the overrides on top) and
   the extensions (`Selection::narrowed_to`) from it, so a reload of the files reaches the open
   checkout.
-- `GET /` of `lsf checkout` and `GET /__lsf/checkouts` → the home page (`server/home.rs`), HTML
+- `GET /` of `lsf app dev` and `GET /__lsf/checkouts` → the home page (`server/home.rs`), HTML
   drawn from the JSON that `?format=json` answers: the Functions and UI extensions of the app
   (`placement.rs` says where the page renders each UI target, from the `placements` of
   `assets/api.json`, which `RENDERED_TARGETS` of `extension-host.js` reads too) and the scenarios with a summary.

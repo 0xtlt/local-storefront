@@ -1,5 +1,5 @@
 //! The Functions that fail when the scenarios run: the home page runs the Functions of every
-//! scenario that opens, as its checkout would when it opens (`lsf function run --scenario`),
+//! scenario that opens, as its checkout would when it opens (`lsf app function run --scenario`),
 //! and lists each run that fails (a trap, too many instructions, an output that does not fit
 //! the schema, a `.fetch` that cannot be sent) with the scenarios it fails in.
 //!

@@ -58,14 +58,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Serve the theme over HTTP. With `--app`, its `/checkout` runs the Functions and shows the
-    /// checkout UI extensions of a Shopify app.
+    /// checkout UI extensions of a Shopify app, and its `/account` shows its customer account UI
+    /// extensions.
     Serve(commands::serve::Args),
-    /// Serve the checkout of a Shopify app alone, without a theme: `serve --app` without the
-    /// storefront. It takes the options of `serve`. `checkout init` writes the checkout
-    /// scenarios to try the app with.
-    Checkout(commands::checkout::CheckoutArgs),
-    /// Run the Shopify Functions of an app against the store data.
-    Function(commands::function::Args),
+    /// The commands of a Shopify app: `dev` serves it alone (its checkout and its customer
+    /// account), `init` writes checkout scenarios to try it with, `build` builds its extensions,
+    /// `check` runs the scenarios for CI, `function run` and `function build` its Functions.
+    App(commands::app::Args),
     /// Render one URL and print the HTML.
     Render(commands::render::Args),
     /// Render one URL and print what the render spent its time in: sections, blocks, snippets.
@@ -105,12 +104,7 @@ fn main() -> ExitCode {
         Command::Serve(args) => {
             commands::serve::run(&cli.theme, cli.data.as_deref(), previews, args, false)
         }
-        Command::Checkout(args) => {
-            commands::checkout::run(&cli.theme, cli.data.as_deref(), previews, args)
-        }
-        Command::Function(args) => {
-            commands::function::run(&cli.theme, cli.data.as_deref(), previews, args)
-        }
+        Command::App(args) => commands::app::run(&cli.theme, cli.data.as_deref(), previews, args),
         Command::Render(args) => {
             commands::render::run(&cli.theme, cli.data.as_deref(), previews, args)
         }
@@ -147,20 +141,28 @@ mod tests {
     }
 
     #[test]
-    fn checkout_serves_and_checkout_init_writes_scenarios() {
+    fn the_commands_of_an_app_are_under_app() {
         let parse = |words: &[&str]| {
             Cli::try_parse_from(std::iter::once("lsf").chain(words.iter().copied()))
         };
         assert!(matches!(
-            parse(&["checkout", "--app", "../my-app", "--port", "0"])
+            parse(&["app", "dev", "--app", "../my-app", "--port", "0"])
                 .unwrap()
                 .command,
-            Command::Checkout(_)
+            Command::App(_)
         ));
-        assert!(parse(&["checkout", "init", "--app", "../my-app", "--force"]).is_ok());
-        assert!(parse(&["--data", "d", "checkout", "init"]).is_ok());
-        // Serving and initialising are not combined.
-        assert!(parse(&["checkout", "--port", "0", "init"]).is_err());
-        assert!(parse(&["checkout", "init", "--port", "0"]).is_err());
+        assert!(parse(&["app", "init", "--app", "../my-app", "--force"]).is_ok());
+        assert!(parse(&["--data", "d", "app", "init"]).is_ok());
+        assert!(parse(&["app", "build", "banner", "--app", "../my-app"]).is_ok());
+        assert!(parse(&["app", "check", "--format", "json"]).is_ok());
+        assert!(parse(&["app", "function", "run", "discount", "--scenario", "vip"]).is_ok());
+        assert!(parse(&["app", "function", "build", "discount"]).is_ok());
+        // `app` alone does nothing, and the options of `dev` are its own.
+        assert!(parse(&["app"]).is_err());
+        assert!(parse(&["app", "--port", "0"]).is_err());
+        assert!(parse(&["app", "init", "--port", "0"]).is_err());
+        // The old names are gone.
+        assert!(parse(&["checkout", "--app", "../my-app"]).is_err());
+        assert!(parse(&["function", "run"]).is_err());
     }
 }

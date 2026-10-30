@@ -43,7 +43,7 @@ impl Variant {
     }
 }
 
-/// The options that select the app, shared by `serve`, `checkout` and `function run`.
+/// The options that select the app, shared by `serve`, `app dev` and `app function run`.
 #[derive(clap::Args, Clone, Debug)]
 pub struct AppArgs {
     /// The directory of a Shopify app (the one with shopify.app.toml). Its Functions run and its
@@ -224,7 +224,7 @@ pub fn app_of(app: Option<&Path>, command: &str) -> Result<PathBuf, String> {
     }
 }
 
-/// `lsf function build` and `lsf checkout build`: builds the extensions of an app (`handles`, or
+/// `lsf app function build` and `lsf app build`: builds the extensions of an app (`handles`, or
 /// all), with `build`, and says what it wrote.
 pub fn run_build(
     app: Option<&Path>,
@@ -268,11 +268,11 @@ pub fn run_build(
 }
 
 /// The command `--watch` runs to build a JavaScript Function: lsf itself
-/// (`lsf function build`), in a process of its own as any build.
+/// (`lsf app function build`), in a process of its own as any build.
 pub fn javascript_build_command(app_root: &Path, handle: &str) -> String {
     let lsf = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("lsf"));
     format!(
-        "{} function build --app {} {}",
+        "{} app function build --app {} {}",
         shell_quote(&lsf.to_string_lossy()),
         shell_quote(&app_root.to_string_lossy()),
         shell_quote(handle)

@@ -323,7 +323,7 @@ pub fn check_module(bytes: &[u8]) -> Result<(), String> {
 }
 
 /// A Rust Function calls the Function Wasm API of the host by name; lsf (`--build`,
-/// `lsf function build`) and Shopify's CLI link it to the host's provider with
+/// `lsf app function build`) and Shopify's CLI link it to the host's provider with
 /// `shopify-function-trampoline` after its build command ([`crate::trampoline`]). function-runner
 /// and the host only run linked modules, and say so with an unhelpful "unknown import".
 fn untrampolined(module: &Module) -> Option<String> {
@@ -337,7 +337,7 @@ fn untrampolined(module: &Module) -> Option<String> {
         .map(|import| {
             format!(
                 "the module calls `{}::{}` directly: it was not processed by \
-                 shopify-function-trampoline, which lsf (`lsf function build`, `--build`) and \
+                 shopify-function-trampoline, which lsf (`lsf app function build`, `--build`) and \
                  `shopify app build` run after compiling a Rust Function",
                 import.module(),
                 import.name()

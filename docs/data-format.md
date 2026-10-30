@@ -597,7 +597,7 @@ changes nothing for a theme.
 
 A scenario is a named setup of the local checkout: one file in `checkouts/`, named after the
 scenario (`checkouts/b2b-seattle.json` is `b2b-seattle`). The home page of the checkout lists
-them and opens a fresh checkout for each; `function run --scenario <name>` runs the Functions
+them and opens a fresh checkout for each; `app function run --scenario <name>` runs the Functions
 for one ([checkout](checkout.md#scenarios)). A scenario is a set of overrides on top of the
 store data: what it does not set stays as the data says.
 
@@ -658,7 +658,7 @@ A scenario that does not validate is still listed, with its errors, and cannot b
 `validate` reports it with the file `checkouts/<name>.json` and a pointer into it
 (`/session/cart/items/0/variant`). Files that are not `.json`, and folders, are ignored.
 Scenarios are reloaded when the files change, like the rest of the data. The built-in demo
-store has none: `npx local-storefront checkout init` writes a set.
+store has none: `npx local-storefront app init` writes a set.
 
 ## Localization
 

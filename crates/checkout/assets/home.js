@@ -1,4 +1,4 @@
-// The home page of `lsf checkout`. The page is complete without this script; it adds:
+// The home page of `lsf app dev`. The page is complete without this script; it adds:
 // - the tabs (the scenarios, the Functions, the checkout UI extensions, the customer account UI
 //   extensions, the customers, the problems) and the menu of the groups of scenarios: without
 //   the script, the first tab shows;

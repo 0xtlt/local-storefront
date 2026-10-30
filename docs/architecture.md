@@ -68,8 +68,8 @@ lacks), `tests/docs.rs` (the generated reference is current).
 ## `lsf-checkout`: the checkout of an app
 
 Reads a Shopify app, runs its Functions against a cart and describes the checkout the buyer
-sees. It does not serve anything: `lsf` does, with `lsf checkout`, `lsf serve --app` and
-`lsf function run`.
+sees. It does not serve anything: `lsf` does, with `lsf app dev`, `lsf serve --app` and
+`lsf app function run`.
 Its design, and what each supported Shopify API release changes, are in
 `crates/checkout/docs/` (`design.md`, `api-versions.md`, `ui-api-versions.md`).
 
@@ -118,7 +118,7 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 
 ## `lsf`: commands and server
 
-`commands/` holds one file per subcommand (`checkout` is `serve` without a theme: `App::open_without_theme`, and `checkout init` (`checkout_init.rs`) writes the checkout scenarios for an app; `function run` runs the pipeline once). `server/` is the HTTP side:
+`commands/` holds one file per subcommand (`app.rs` is `lsf app`: `app dev` is `serve` without a theme, `App::open_without_theme`, and `app init` (`app_init.rs`) writes the checkout scenarios for an app; `app function run` runs the pipeline once). `server/` is the HTTP side:
 
 | Module | Role |
 |---|---|
@@ -130,7 +130,7 @@ Tests: unit tests next to the code; `tests/golden.rs` formats the cases of
 | `minify` | The stylesheets and the scripts of the theme, minified with a source map. |
 | `compress` | Brotli or gzip for the responses that gain from it, by what the client accepts. |
 | `control` | The `/__lsf` API. |
-| `home` | `--app`: the home page (`/` of `lsf checkout`, `/__lsf/checkouts`) and the notices that say why a scenario did not open: HTML in the look of the checkout, drawn from the JSON of `?format=json`. |
+| `home` | `--app`: the home page (`/` of `lsf app dev`, `/__lsf/checkouts`) and the notices that say why a scenario did not open: HTML in the look of the checkout, drawn from the JSON of `?format=json`. |
 | `checkout` | `--app`: the pages at `/checkouts/cn/<token>`, `/checkout?scenario=<name>`, the operations the page sends, the files of the page and of the extensions. What the buyer chose is in the session (`SessionEntry::checkout`), next to the cart they share with the theme. The options, the mapping from the store data to `lsf_checkout::CheckoutConfig` and the build of the Functions are in `src/checkout.rs`. |
 | `../profile` | Shared by `lsf profile` and `/__lsf/profile`: renders a page several times with the profiler, keeps the render in the middle, and writes it as a tree of text or in the format of speedscope, in time or in points. `lsf-core` adds the frames Liquid does not know (`render`, a JSON template, `section <id>`, `block <key>`) and the costs (`render/cost`): the objects charge for what they load where they are created. |
 | `speedscope` | The viewer of flame graphs, served from the binary for `/__lsf/profile?...&html=1`. Its files are in `assets/speedscope/`, with their licenses. |

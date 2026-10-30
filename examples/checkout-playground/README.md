@@ -1,11 +1,11 @@
 # Checkout playground
 
-A Shopify app made to try `lsf checkout` on: many Functions, checkout UI extensions and customer
+A Shopify app made to try `lsf app dev` on: many Functions, checkout UI extensions and customer
 account UI extensions, and a scenario for each case. Nothing here is deployed.
 
 ```bash
 cd examples/checkout-playground
-lsf checkout --app .
+lsf app dev --app .
 ```
 
 Or, from the root of the repository, `mise run playground:checkout`. Open
@@ -14,7 +14,7 @@ Functions that fail when their scenario runs), then every scenario and every ext
 a checkout for each. The data folder is found from the current
 directory, so run lsf from this folder.
 
-The store data (`shopify-local/`) is the demo store that `lsf checkout init` writes, with what
+The store data (`shopify-local/`) is the demo store that `lsf app init` writes, with what
 the Functions need on top:
 
 - products: a Limited Edition Print (tag `limited`), a Gift Box (tag `gift-box`), a Weekend
@@ -108,14 +108,14 @@ them.
 
 Each case has a scenario, `shopify-local/checkouts/fn-<case>.json`, whose `extensions` runs only
 the Functions of that case. `fn-everything` runs every Function that is not `broken-*` or
-`listed-*`. The scenarios of `lsf checkout init` (`guest`, `customer`, `b2b`, `abroad`,
+`listed-*`. The scenarios of `lsf app init` (`guest`, `customer`, `b2b`, `abroad`,
 `subscription`, `pre-order`, `shop-look`, `large-cart`) run the same Functions without the network
 ones, so that none of them breaks, and the everyday checkout UI extensions (no `ui-broken-*`, and
 none that holds Pay).
 
 ```bash
-lsf function run --app . --scenario fn-discount-codes
-lsf function run --app . --scenario fn-validation-street-number --step interaction
+lsf app function run --app . --scenario fn-discount-codes
+lsf app function run --app . --scenario fn-validation-street-number --step interaction
 ```
 
 ### Network access
@@ -146,13 +146,13 @@ It copies the schema of each Function (its `api_version` and Function API, from
 `crates/checkout/schemas`, not committed here), builds the Cargo workspace of this folder for
 `wasm32-unknown-unknown` and links each module with `shopify-function-trampoline`, as `shopify
 app build` does. `discount-typescript` and `validation-javascript`, which have no build command
-as Shopify's templates, are built by lsf (`lsf function build`), without Node: their types
+as Shopify's templates, are built by lsf (`lsf app function build`), without Node: their types
 (`generated/api.ts`, not committed), `dist/function.js`, then their module. Their modules do what
 those Shopify's CLI builds do, in as many instructions: `crates/checkout/src/javascript/tests.rs`
-compares them with the CLI's (`crates/checkout/tests/fixtures/shopify-cli`). `lsf checkout --app . --build` runs the same command for each Function.
+compares them with the CLI's (`crates/checkout/tests/fixtures/shopify-cli`). `lsf app dev --app . --build` runs the same command for each Function.
 `broken-missing-build` has no build command and stays unbuilt.
 
-To change a Function and see it at once, `mise run playground:dev` (`lsf checkout --app .
+To change a Function and see it at once, `mise run playground:dev` (`lsf app dev --app .
 --watch`) serves the committed modules, then builds a Function again when you save it and
 reloads the open pages ([watch mode](../../docs/checkout.md#watch-mode)). Nothing is built at
 start, so `git status` stays clean until you edit something. A Function you rebuild gets new
@@ -163,7 +163,7 @@ rebuilds every Function at start.
 ### Tests
 
 `crates/cli/src/commands/function/playground.rs` checks that the store data and every scenario
-are valid, that the `lsf checkout init` scenarios run no broken Function, and what each `fn-*`
+are valid, that the `lsf app init` scenarios run no broken Function, and what each `fn-*`
 scenario comes to (the Functions that ran, a discount, a hidden option, an error message). It
 needs neither the network nor the mock server, and does not care what listens on port 8787: it
 runs on a copy of the store data whose network Functions call a closed port (502), or a small
@@ -192,7 +192,7 @@ The `mix-*` scenarios run Functions and checkout UI extensions on the same check
 `ui-preact` (Shopify's template in Preact, as it comes: JSX) and `ui-preact-typescript` (TSX,
 the hooks of `@shopify/ui-extensions/checkout/preact` and a signal) name their sources
 (`module`): lsf bundles them, without Node and without `node_modules`, into their
-`dist/<handle>.js` (`lsf checkout build ui-preact --app .`, `--build`, or `--watch` when they
+`dist/<handle>.js` (`lsf app build ui-preact --app .`, `--build`, or `--watch` when they
 change). The scenario `ui-preact` shows both. `crates/checkout/assets/tests/built-extensions.test.mjs`
 draws each bundle next to the one Shopify's CLI 5.0.0 builds from the same sources
 (`crates/checkout/tests/fixtures/shopify-cli`), acts on them, and compares.

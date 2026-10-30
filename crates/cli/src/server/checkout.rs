@@ -431,7 +431,7 @@ fn open_scenario(state: &ServerState, incoming: &Incoming, name: &str) -> Reply 
             .map(|scenario| scenario.name.as_str())
             .collect();
         let hint = if known.is_empty() {
-            "There are no scenarios: `lsf checkout init` writes a set in the `checkouts` folder of the store data.".to_string()
+            "There are no scenarios: `lsf app init` writes a set in the `checkouts` folder of the store data.".to_string()
         } else {
             format!("The scenarios are: {}.", known.join(", "))
         };

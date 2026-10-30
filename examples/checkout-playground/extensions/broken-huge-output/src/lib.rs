@@ -1,7 +1,7 @@
 //! Answers 2,000 operations: it renames the first delivery option again and again, so the last
 //! title wins ("Standard, renamed 2000 times"). The output is a few hundred kilobytes.
 //!
-//! What it shows: how the checkout, the Functions dialog and `lsf function run` cope with a big
+//! What it shows: how the checkout, the Functions dialog and `lsf app function run` cope with a big
 //! output. Shopify caps the output of a Function; the local checkout does not.
 
 use shopify_function::prelude::*;

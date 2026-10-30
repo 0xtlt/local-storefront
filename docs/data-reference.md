@@ -29,7 +29,7 @@ data directory is one of these, and they are merged, so you can split the data a
 | `selling_plan_groups` | array of [SellingPlanGroup](#sellingplangroup) | Groups of selling plans: subscriptions, pre-orders and other purchase options. |
 | `files` | map of [File](#file) | Metadata for files in `files/`, by path. |
 | `session` | [Session](#session) | What every new browser session starts with: a logged-in customer, a filled cart... |
-| `checkout` | [Checkout](#checkout) | The fake checkout of `lsf checkout --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
+| `checkout` | [Checkout](#checkout) | The fake checkout of `lsf app dev --app`: shipping rates, payment methods, discounts and Function settings. At most one data file may define it. |
 | `now` | string | Freezes the clock: the instant `'now'` resolves to, e.g. `"2025-01-15T10:00:00Z"`. Set it to make renders reproducible; each `'now'` of a render is then one nanosecond after the previous one, so `%N` still differs between calls. Defaults to the real time, read at each `'now'`. |
 | `theme_settings` | map of any JSON value | Overrides for theme settings (`config/settings_data.json`), by setting id. |
 
@@ -880,7 +880,7 @@ One of:
 
 ## Checkout
 
-How the local checkout (`lsf checkout --app`) is set up. Every field has a default.
+How the local checkout (`lsf app dev --app`) is set up. Every field has a default.
 
 | Field | Type | Description |
 |---|---|---|

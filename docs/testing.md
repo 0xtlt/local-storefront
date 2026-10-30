@@ -195,7 +195,7 @@ With an app, the same server runs its checkout, its thank-you page and its custo
 
 ```bash
 npx local-storefront serve --theme . --app ../my-app --port 0 --static --quiet --strict
-npx local-storefront checkout --app ../my-app --port 0 --quiet --strict    # no theme
+npx local-storefront app dev --app ../my-app --port 0 --quiet --strict    # no theme
 ```
 
 ```ts
@@ -273,8 +273,8 @@ kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every
 | Command | Exits with 1 when |
 |---|---|
 | `lsf validate` (in the app, or `--app`) | the store data or the app has errors |
-| `lsf checkout check` | a scenario does not validate, a Function fails in one, or there is no scenario |
-| `lsf function run <handle> --scenario <name>` | the Function fails, or did not run (with why) |
+| `lsf app check` | a scenario does not validate, a Function fails in one, or there is no scenario |
+| `lsf app function run <handle> --scenario <name>` | the Function fails, or did not run (with why) |
 | `lsf render <path> --strict` | the page has Liquid errors, or nothing is at the path |
 
 ## Simulating a slow network

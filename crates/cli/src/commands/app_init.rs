@@ -1,4 +1,4 @@
-//! `lsf checkout init`: writes the `checkouts/` folder of the store data, a set of checkout
+//! `lsf app init`: writes the `checkouts/` folder of the store data, a set of checkout
 //! scenarios to try an app with. The scenarios are made for the extensions of the app (a cart
 //! that a cart transform can merge, a discount code for a discount Function, several shipping
 //! rates for a delivery customization...) and for the store data they are written for: every
@@ -761,7 +761,7 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         &LoadOptions::default(),
     );
     // The demo store `lsf init` wrote has no plan with a deposit: it gets the one the pre-order
-    // scenario needs, as a store `checkout init` creates does.
+    // scenario needs, as a store `app init` creates does.
     let deposit = |store: &lsf_core::Store| {
         store
             .selling_plan_groups
@@ -842,11 +842,11 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
     );
     match &app_dir {
         Some(app) => eprintln!(
-            "next: `lsf checkout --app {}` lists them on its home page",
+            "next: `lsf app dev --app {}` lists them on its home page",
             app.display()
         ),
         None => eprintln!(
-            "next: `lsf checkout --app <dir>` lists them on its home page. Run `lsf checkout init --app <dir>` to make them for an app"
+            "next: `lsf app dev --app <dir>` lists them on its home page. Run `lsf app init --app <dir>` to make them for an app"
         ),
     }
     Ok(ExitCode::SUCCESS)
@@ -860,7 +860,7 @@ fn same_directory(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// The data file `checkout init` writes the settings of the Functions in.
+/// The data file `app init` writes the settings of the Functions in.
 const SETTINGS_FILE: &str = "app-settings.json";
 
 /// The data file of `directory` (other than [`SETTINGS_FILE`]) that has a `checkout` section:

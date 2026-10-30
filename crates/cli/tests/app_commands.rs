@@ -1,5 +1,5 @@
 //! The commands a Shopify app is checked with in CI, run in the app's folder: `lsf validate`,
-//! `lsf checkout check`, `lsf function run`, and `lsf render --strict` for a theme.
+//! `lsf app check`, `lsf app function run`, and `lsf render --strict` for a theme.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -75,7 +75,7 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
     // The demo store, as `lsf init` writes it.
     assert!(lsf(&app.0, &["init"]).status.success());
     // No scenario: nothing is checked, and that is not a pass.
-    let output = lsf(&app.0, &["checkout", "check"]);
+    let output = lsf(&app.0, &["app", "check"]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     assert!(
         text(&output).contains("no scenario to check"),
@@ -87,7 +87,7 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
         r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
     );
     // In the app's folder: no `--app`, and its own store data.
-    let output = lsf(&app.0, &["checkout", "check", "--format", "json"]);
+    let output = lsf(&app.0, &["app", "check", "--format", "json"]);
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
     assert_eq!(json["total"], 1, "{json}");
@@ -99,7 +99,7 @@ fn checkout_check_runs_every_scenario_and_fails_on_one_that_fails() {
         "shopify-local/checkouts/typo.json",
         r#"{"session": {"cart": {"items": [{"variant": "NOPE", "quantity": 1}]}}}"#,
     );
-    let output = lsf(&app.0, &["checkout", "check"]);
+    let output = lsf(&app.0, &["app", "check"]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     assert!(text(&output).contains("invalid  typo"), "{}", text(&output));
 }
@@ -132,7 +132,7 @@ fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
         r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
     );
     // Without its settings, it cannot run, and the check says where they go.
-    let output = lsf(&app.0, &["checkout", "check"]);
+    let output = lsf(&app.0, &["app", "check"]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
     assert!(
         text(&output).contains("`checkout.functions.quantity-limit.metafields`"),
@@ -140,8 +140,8 @@ fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
         text(&output)
     );
 
-    // `checkout init` writes them, with empty values: every Function runs.
-    let output = lsf(&app.0, &["checkout", "init"]);
+    // `app init` writes them, with empty values: every Function runs.
+    let output = lsf(&app.0, &["app", "init"]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(
         text(&output).contains("app-settings.json"),
@@ -156,7 +156,7 @@ fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
         settings["checkout"]["functions"]["quantity-limit"]["metafields"]["$app:config.settings"],
         serde_json::json!({"type": "json", "value": {"tags": []}})
     );
-    let output = lsf(&app.0, &["checkout", "check"]);
+    let output = lsf(&app.0, &["app", "check"]);
     assert!(
         !text(&output).contains("quantity-limit ·"),
         "{}",
@@ -168,7 +168,7 @@ fn checkout_init_gives_the_functions_the_settings_their_input_query_reads() {
         "shopify-local/app-settings.json",
         r#"{"checkout": {"functions": {"other": {"metafields": {"$app:config.mode": "kept"}}}}}"#,
     );
-    let output = lsf(&app.0, &["checkout", "init"]);
+    let output = lsf(&app.0, &["app", "init"]);
     assert!(
         text(&output).contains("added   to app-settings.json"),
         "{}",
@@ -238,6 +238,7 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
     let output = lsf(
         &app.0,
         &[
+            "app",
             "function",
             "run",
             "volume-discount",
@@ -256,6 +257,7 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
     let output = lsf(
         &app.0,
         &[
+            "app",
             "function",
             "run",
             "volume-discount",
@@ -267,7 +269,7 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
     assert!(output.status.success(), "{}", text(&output));
     assert!(!text(&output).contains("not run"), "{}", text(&output));
     // A typo is suggested.
-    let output = lsf(&app.0, &["function", "run", "volume-discont"]);
+    let output = lsf(&app.0, &["app", "function", "run", "volume-discont"]);
     assert!(
         text(&output).contains("did you mean `volume-discount`?"),
         "{}",

@@ -464,7 +464,7 @@ type = "function"
     let rules = &rules["bulk"];
     let job = rules.build.as_ref().expect("a build");
     assert!(
-        job.command.contains(" function build --app "),
+        job.command.contains(" app function build --app "),
         "{}",
         job.command
     );

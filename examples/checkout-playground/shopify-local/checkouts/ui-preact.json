@@ -1,7 +1,7 @@
 {
   "$schema": "../schema/checkout-scenario.schema.json",
   "title": "UI: Preact extensions built by lsf",
-  "description": "ui-preact (Shopify's template, in JSX) and ui-preact-typescript (TSX, hooks and a signal), built from their sources by lsf, without Node: lsf checkout build, --build or --watch.",
+  "description": "ui-preact (Shopify's template, in JSX) and ui-preact-typescript (TSX, hooks and a signal), built from their sources by lsf, without Node: lsf app build, --build or --watch.",
   "session": {
     "customer": "none",
     "cart": {

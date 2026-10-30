@@ -86,7 +86,7 @@ impl FunctionExtension {
     pub fn build_hint(&self) -> Option<String> {
         self.build().map(|build| match build {
             Build::Command(command) => command.to_string(),
-            Build::JavaScript => format!("lsf function build {}", self.handle),
+            Build::JavaScript => format!("lsf app function build {}", self.handle),
         })
     }
 
@@ -242,7 +242,7 @@ impl UiExtension {
     /// The command that builds the extension, as the pages and messages say it.
     pub fn build_hint(&self) -> Option<String> {
         self.buildable()
-            .then(|| format!("lsf checkout build {}", self.handle))
+            .then(|| format!("lsf app build {}", self.handle))
     }
 }
 
@@ -867,7 +867,7 @@ fn load_ui_extension(
                 .is_some_and(|module| dir.join(module).is_file())
         });
         let build = if has_source {
-            format!("build it with `lsf checkout build {handle}` (or `shopify app build`)")
+            format!("build it with `lsf app build {handle}` (or `shopify app build`)")
         } else {
             "run `shopify app build`".to_string()
         };

@@ -4,7 +4,7 @@
 //! and logs how big it is, and never refuses anything.
 //!
 //! What it shows: a big input in the Functions dialog, with what the store data and the scenario
-//! put in it. Not broken: an edge case for the dialog and for `lsf function run`.
+//! put in it. Not broken: an edge case for the dialog and for `lsf app function run`.
 
 use shopify_function::prelude::*;
 use shopify_function::scalars::JsonValue;

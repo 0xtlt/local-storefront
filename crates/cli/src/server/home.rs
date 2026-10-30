@@ -2592,7 +2592,7 @@ pub fn render(home: &Json, check_now: &str) -> String {
     if scenarios.is_empty() {
         body.push_str(&format!(
             "<div class=\"lsf-h-card\"><p class=\"lsf-muted lsf-h-empty\">None yet. A scenario is a file in {}: a cart, a buyer, what they entered. \
-             <code>lsf checkout init --app {}</code> writes a set to start from.</p></div>",
+             <code>lsf app init --app {}</code> writes a set to start from.</p></div>",
             code(folder),
             esc(text_of(&app["directory"])),
         ));

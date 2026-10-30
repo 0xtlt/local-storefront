@@ -1,6 +1,6 @@
 # A Shopify app to try lsf-checkout on: many Functions and checkout UI extensions, and a scenario
 # for each case. Nothing here is deployed. Run it with:
-#   lsf checkout --app examples/checkout-playground
+#   lsf app dev --app examples/checkout-playground
 name = "Checkout playground"
 client_id = "00000000000000000000000000000000"
 handle = "checkout-playground"
