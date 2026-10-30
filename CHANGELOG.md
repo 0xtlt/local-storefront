@@ -3,10 +3,34 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
-## Unreleased
+## 0.2.0 - 2026-10-30
+
+lsf now runs the checkout and the customer account of a Shopify app: its Functions and its UI
+extensions, on your machine. Classic customer accounts are no longer simulated: see Changed.
 
 ### Added
 
+- **A local checkout for Shopify apps.** `lsf app dev --app <dir>` serves the checkout of an
+  app without a theme, and `lsf serve --app <dir>` leads the `/checkout` of a theme to it. It
+  runs the Shopify Functions of the app (cart transform, discounts, delivery and payment
+  customization, validation) from their built Wasm modules, and shows its checkout UI
+  extensions in the page, in the standard one-page look or in the Shop app's (`--variant shop`).
+  `--extension <handle>` (repeatable) picks the extensions to use, `--build` runs the build
+  command of each Function first. A badge in the corner of the page opens a dialog with the
+  input and output of each Function run side by side. API versions 2026-10 and 2027-01 are
+  supported. Guide: [checkout](docs/checkout.md).
+- **Customer account UI extensions, and every checkout target.** With an app, `/account` is the
+  customer account of Shopify's new customer accounts: the orders of the customer logged in (from
+  the store data, and the last order placed in the local checkout), the status of an order (its
+  shipments, what is not shipped, its returns), the profile (addresses, and the company and
+  locations of a B2B customer), and the full pages of extensions. The 24 targets of customer
+  account UI extensions render there, with the `shopify` global they read (the account logged in,
+  the order, navigation, toasts) and the components only customer accounts have (`s-page`,
+  `s-customer-account-action`, `s-menu`, …); an order action opens its dialog. The checkout gains
+  the 14 targets it lacked: pickup locations and points, the targets of payment apps (with the
+  form dialog), the gift card form, bundle lines, the chat, and the address autocomplete, which
+  suggests addresses as the buyer types. An order of the store data can list its `returns`. See
+  [customer account](docs/checkout.md#customer-account).
 - **The commands of a Shopify app are under `lsf app`**, named as Shopify's CLI names them:
   `app dev` serves the app alone (its checkout and its customer account), `app init` writes
   checkout scenarios, `app build` builds its extensions, `app check` runs the scenarios for CI,
@@ -29,20 +53,6 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   Function asked for did not run (no discount names it, an empty cart, an error of the app) and
   exits with 1; a handle or a scenario close to an existing one is suggested. Its `--session`
   takes `data` as `PUT /__lsf/session` does: a discount or settings for one run.
-
-- **Customer account UI extensions, and every checkout target.** With an app, `/account` is the
-  customer account of Shopify's new customer accounts: the orders of the customer logged in (from
-  the store data, and the last order placed in the local checkout), the status of an order (its
-  shipments, what is not shipped, its returns), the profile (addresses, and the company and
-  locations of a B2B customer), and the full pages of extensions. The 24 targets of customer
-  account UI extensions render there, with the `shopify` global they read (the account logged in,
-  the order, navigation, toasts) and the components only customer accounts have (`s-page`,
-  `s-customer-account-action`, `s-menu`, …); an order action opens its dialog. The checkout gains
-  the 14 targets it lacked: pickup locations and points, the targets of payment apps (with the
-  form dialog), the gift card form, bundle lines, the chat, and the address autocomplete, which
-  suggests addresses as the buyer types. An order of the store data can list its `returns`. See
-  [customer account](docs/checkout.md#customer-account).
-
 - **Watch mode for the checkout of an app.** `lsf app dev --app <dir> --watch` (and `serve
   --app <dir> --watch`) builds a Function again when its files (or the files the Functions
   share, such as a Cargo workspace's `Cargo.toml`) change, and reloads the open checkout,
@@ -64,15 +74,6 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   labels, grouped payment and shipping choices, the order summary with its quantity badges, and
   a mobile layout with a folded summary. The checkout UI extensions use the same design tokens
   (`tokens.css`), so they look native in it. See [the look of the page](docs/checkout.md#the-look-of-the-page).
-- **A local checkout for Shopify apps.** `lsf app dev --app <dir>` serves the checkout of an
-  app without a theme, and `lsf serve --app <dir>` leads the `/checkout` of a theme to it. It
-  runs the Shopify Functions of the app (cart transform, discounts, delivery and payment
-  customization, validation) from their built Wasm modules, and shows its checkout UI
-  extensions in the page, in the standard one-page look or in the Shop app's (`--variant shop`).
-  `--extension <handle>` (repeatable) picks the extensions to use, `--build` runs the build
-  command of each Function first. A badge in the corner of the page opens a dialog with the
-  input and output of each Function run side by side. API versions 2026-10 and 2027-01 are
-  supported. Guide: [checkout](docs/checkout.md).
 - **`lsf app function run [handle]... --app <dir>`** runs the Functions once, without a server, and
   prints each input, output and log with the checkout that results. `--session` and
   `--checkout` set the cart and what the buyer entered, `--format json` is for tools. It exits
@@ -108,7 +109,6 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   balance. `lsf app function run` prints it. Shipping is due today and tax follows the amount it is
   on. The `shopify` global and the Function input do not change: Shopify exposes no deferred
   amount there.
-
 - **A home page for the checkout.** `GET /` of `lsf app dev` (and `/__lsf/checkouts`, which
   `lsf serve --app` prints when it starts, as the theme owns `/`) lists every Function of the
   app (API, targets, build status, network access with a `.fetch` target, what is wrong with
@@ -166,11 +166,12 @@ what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) sa
   left out: the rest of the file is read, and one typo gives one error. `data.checkout` of
   `PUT /__lsf/session` replaces the store data's field by field, as a scenario's does, and keeps
   the settings of the Functions it does not name.
-- **Smaller binaries.** lsf runs Functions with only what it uses of wasmtime (the compiler for
-  the machine it runs on) and Shopify's providers compressed (1.6 MB instead of 9.7 MB), and has
-  one copy of each Wasm library; the release binaries leave out their symbol table and are
-  optimized as a whole. `lsf` for macOS on Apple silicon is 40 MB (18 MB to download) instead of
-  82 MB. Functions run as before, to the instruction.
+- **The binaries are larger: they run the checkout.** lsf runs Functions with only what it uses
+  of wasmtime (the compiler for the machine it runs on) and Shopify's providers compressed
+  (1.6 MB instead of 9.7 MB), and has one copy of each Wasm library; the release binaries leave
+  out their symbol table and are optimized as a whole. `lsf` for macOS on Apple silicon is 40 MB
+  (18 MB to download), up from 33 MB (12 MB) in 0.1.18. The storefront renders as fast as
+  before.
 
 ## 0.1.18 - 2026-10-21
 
