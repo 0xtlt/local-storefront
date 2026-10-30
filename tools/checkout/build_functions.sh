@@ -120,10 +120,13 @@ if [ ${#rust[@]} -gt 0 ]; then
   trampoline="$app/target/shopify-function-trampoline-$trampoline_version"
   if [ ! -x "$trampoline" ]; then
     mkdir -p "$app/target"
+    # A download of its own: `--watch` builds several Functions at once, and each may download
+    # it. The rename is atomic, and the last one to land is the same file.
+    part="$trampoline.$$.part"
     curl -fsSL "https://github.com/Shopify/shopify-function-wasm-api/releases/download/shopify_function_trampoline/v$trampoline_version/shopify-function-trampoline-$arch-$os-v$trampoline_version.gz" \
-      | gunzip >"$trampoline.part"
-    chmod +x "$trampoline.part"
-    mv "$trampoline.part" "$trampoline"
+      | gunzip >"$part"
+    chmod +x "$part"
+    mv -f "$part" "$trampoline"
   fi
 
   for handle in "${rust[@]}"; do
