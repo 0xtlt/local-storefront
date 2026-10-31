@@ -950,3 +950,82 @@ fn the_deprecated_removal_takes_lines_off_an_open_return_only() {
     assert_eq!(shop.get(return_line.as_str().unwrap()).cloned(), before);
     assert!(topics(&mut shop).is_empty());
 }
+
+#[test]
+fn what_the_area_makes_is_never_a_default() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let (line, _) = fulfilled_lines(&mut shop, &order)[0].clone();
+    let variant = shop.keys("ProductVariant").last().unwrap().to_string();
+    let created = run(
+        &mut shop,
+        RETURN_CREATE,
+        json!({"input": {"orderId": order,
+            "returnLineItems": [{"fulfillmentLineItemId": line, "quantity": 1, "restockingFee": {"percentage": 10}}],
+            "exchangeLineItems": [{"variantId": variant, "quantity": 1}],
+            "returnShippingFee": {"amount": {"amount": "5.00", "currencyCode": "USD"}}}}),
+    );
+    let ret = created["data"]["returnCreate"]["return"].clone();
+    let reverse = ret["reverseFulfillmentOrders"]["nodes"][0].clone();
+    run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!) { reverseDeliveryCreateWithShipping(reverseFulfillmentOrderId: $id,
+            reverseDeliveryLineItems: [{reverseFulfillmentOrderLineItemId: $line, quantity: 1}], trackingInput: {number: \"1\"}, labelInput: {fileUrl: \"https://example.com/l.pdf\"}) { userErrors { message } } }",
+        json!({"id": reverse["id"], "line": reverse["lineItems"]["nodes"][0]["id"]}),
+    );
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    run(
+        &mut shop,
+        "mutation($id: ID!) { storeCreditAccountCredit(id: $id, creditInput: {creditAmount: {amount: \"10.00\", currencyCode: USD}, expiresAt: \"2099-01-01T00:00:00Z\"}) { userErrors { message } } }",
+        json!({"id": customer}),
+    );
+    let account = shop.keys("StoreCreditAccount").next().unwrap().to_string();
+    run(
+        &mut shop,
+        "mutation($id: ID!) { storeCreditAccountDebit(id: $id, debitInput: {debitAmount: {amount: \"1.00\", currencyCode: USD}}) { userErrors { message } } }",
+        json!({"id": account}),
+    );
+    let dispute = super::shopify_payments::open_dispute(
+        &mut shop,
+        &super::shopify_payments::NewDispute {
+            order: &order,
+            amount: None,
+            kind: "CHARGEBACK",
+            reason: "FRAUDULENT",
+        },
+    )
+    .unwrap();
+    super::tick(&mut shop);
+    let answer = run(
+        &mut shop,
+        "query($return: ID!, $account: ID!, $dispute: ID!) {
+          return(id: $return) { id name status totalQuantity closedAt createdAt requestApprovedAt decline { note }
+            returnLineItems(first: 5) { nodes { id quantity processedQuantity unprocessedQuantity processableQuantity refundableQuantity refundedQuantity returnReasonNote customerNote
+              ... on ReturnLineItem { restockingFee { id percentage amountSet { shopMoney { amount } } } fulfillmentLineItem { id } } } }
+            exchangeLineItems(first: 5) { nodes { id quantity processedQuantity unprocessedQuantity processableQuantity productId variantId variantSku variantTitle title lineItems { id } } }
+            returnShippingFees { id amountSet { shopMoney { amount } } finalizedTaxAmountSet { shopMoney { amount } } }
+            reverseFulfillmentOrders(first: 5) { nodes { id status order { id } thirdPartyConfirmation { status }
+              lineItems(first: 5) { nodes { id totalQuantity fulfillmentLineItem { id } dispositions { id } } }
+              reverseDeliveries(first: 2) { nodes { id deliverable { ... on ReverseDeliveryShippingDeliverable { label { publicFileUrl createdAt updatedAt } tracking { carrierName number url } } }
+                reverseDeliveryLineItems(first: 2) { nodes { id quantity dispositions { id } reverseFulfillmentOrderLineItem { id } } } } } } } }
+          storeCreditAccount(id: $account) { id balance { amount } owner { ... on Customer { id } }
+            transactions(first: 5) { nodes { amount { amount } balanceAfterTransaction { amount } createdAt event origin { __typename }
+              ... on StoreCreditAccountCreditTransaction { id expiresAt remainingAmount { amount } } ... on StoreCreditAccountDebitTransaction { id } } } }
+          dispute(id: $dispute) { id amount { amount } evidenceDueBy evidenceSentOn finalizedOn initiatedAt status type reasonDetails { reason networkReasonCode } order { id }
+            disputeEvidence { id submitted accessActivityLog billingAddress { city } cancellationPolicyDisclosure cancellationPolicyFile { id } cancellationRebuttal customerCommunicationFile { id }
+              customerEmailAddress customerFirstName customerLastName customerPurchaseIp disputeFileUploads { id } fulfillments { id shippingCarrier shippingDate shippingTrackingNumber }
+              productDescription refundPolicyDisclosure refundPolicyFile { id } refundRefusalExplanation serviceDocumentationFile { id } shippingAddress { city } shippingDocumentationFile { id }
+              uncategorizedFile { id } uncategorizedText } }
+          shopifyPaymentsAccount { balanceTransactions(first: 10) { nodes { id adjustmentReason adjustmentsOrders { name } amount { amount } associatedOrder { id name } associatedPayout { id status }
+              fee { amount } net { amount } sourceId sourceOrderTransactionId sourceType test transactionDate type } }
+            payouts(first: 2) { nodes { id issuedAt status transactionType externalTraceId net { amount } gross { amount } bankAccount { id }
+              businessEntity { id displayName address { countryCode } } summary { chargesGross { amount } refundsFee { amount } usdcRebateCreditAmount { amount } } } } } }",
+        json!({"return": ret["id"], "account": account, "dispute": dispute}),
+    );
+    assert!(answer.get("errors").is_none(), "{answer}");
+    assert!(
+        answer.get("extensions").is_none(),
+        "{}",
+        answer["extensions"]
+    );
+}

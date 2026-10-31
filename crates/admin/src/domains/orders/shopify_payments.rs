@@ -296,7 +296,7 @@ fn account_field(r: &ShopResolver<'_>, field: &str) -> Value {
 
 /// Whether Shopify Payments processed a transaction: one that moved money through a gateway that
 /// is not manual.
-fn processed_by_payments(transaction: &Record) -> bool {
+pub fn processed(transaction: &Record) -> bool {
     transaction
         .get("manualPaymentGateway")
         .and_then(Value::as_bool)
@@ -316,7 +316,7 @@ pub fn record_balance(state: &mut ShopState, transaction: &str) {
     let Some(record) = state.get(transaction).cloned() else {
         return;
     };
-    if !processed_by_payments(&record) {
+    if !processed(&record) {
         return;
     }
     let (kind, sign) = match text(&record, "kind") {

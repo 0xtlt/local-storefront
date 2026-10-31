@@ -1617,3 +1617,39 @@ fn tax_summaries_are_asked_for_an_order_or_a_period() {
         "GENERAL_ERROR"
     );
 }
+
+/// The fields of the area answer real values on the demo store: none is a default.
+#[test]
+fn nothing_of_the_area_is_defaulted_on_the_demo_store() {
+    let mut shop = demo();
+    for order in ["#1001", "#1002"] {
+        let id = order_named(&shop, order);
+        let answer = run(
+            &mut shop,
+            "query($id: ID!) { order(id: $id) {
+                paymentTerms { id } paymentCollectionDetails { additionalPaymentCollectionUrl vaultedPaymentMethods { id } }
+                risk { recommendation assessments { riskLevel } } riskLevel risks { level } shopifyProtect { status }
+                disputes { id } displayRequestedEditStatus requestedOrderEdits(first: 5) { nodes { id } } attribution { handle }
+                currentTotalDutiesSet { shopMoney { amount } } originalTotalDutiesSet { shopMoney { amount } }
+                refundDiscrepancySet { shopMoney { amount } } totalCashRoundingAdjustment { paymentSet { shopMoney { amount } } refundSet { shopMoney { amount } } }
+                suggestedRefund { amountSet { shopMoney { amount } } }
+                lineItems(first: 5) { nodes { duties { id } } }
+                transactions { id paymentId shopifyPaymentsSet { refundSet { acquirerReferenceNumber } } maximumRefundableV2 { amount } totalUnsettledSet { shopMoney { amount } } }
+                returns(first: 5) { nodes { id exchangeLineItems(first: 5) { nodes { id } } reverseFulfillmentOrders(first: 5) { nodes { id status } } returnShippingFees { id } } }
+              }
+              returnableFulfillments(orderId: $id, first: 5) { nodes { id } }
+              tenderTransactions(first: 5) { nodes { id amount { amount } paymentMethod processedAt remoteReference test transactionDetails { __typename } user { id } order { id } } }
+              paymentTermsTemplates { id }
+              orderAttributionDefinitions(first: 5) { nodes { id } }
+              disputes(first: 5) { nodes { id } }
+              shopifyPaymentsAccount { id balance { amount } chargeStatementDescriptors { default prefix } payoutSchedule { interval monthlyAnchor weeklyAnchor } } }",
+            json!({"id": id}),
+        );
+        assert!(answer.get("errors").is_none(), "{answer}");
+        assert!(
+            answer.get("extensions").is_none(),
+            "{order}: {}",
+            answer["extensions"]
+        );
+    }
+}

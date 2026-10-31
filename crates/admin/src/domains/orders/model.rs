@@ -337,6 +337,12 @@ fn refunded(state: &ShopState, order: &Record) -> Refunded {
     refunded
 }
 
+/// What the refunds of an order gave back beyond the value of what they took back: Shopify's
+/// `REFUND_DISCREPANCY` adjustment, `Order.refundDiscrepancySet`.
+pub fn refund_discrepancy(state: &ShopState, order: &Record) -> i64 {
+    refunded(state, order).discrepancy
+}
+
 /// What the transactions of an order moved: `(received, refunded, capturable, voided)`.
 /// Received is what sales and captures took; capturable what authorizations hold that was
 /// neither captured nor voided.

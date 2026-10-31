@@ -17,7 +17,11 @@ use lsf_admin::webhooks::DeliveryOptions;
 use serde_json::{Value, json};
 
 const SECRET: &str = "test-secret";
-const GRAPHQL: &str = "/admin/api/2026-10/graphql.json";
+
+/// The GraphQL path of a version lsf serves.
+fn graphql_path() -> String {
+    format!("/admin/api/{}/graphql.json", lsf_admin::version::SERVED[0])
+}
 
 fn api() -> AdminApi {
     AdminApi::new(
@@ -63,7 +67,7 @@ fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
     let (status, answer) = request(
         api,
         "POST",
-        GRAPHQL,
+        &graphql_path(),
         json!({"query": query, "variables": variables}),
     );
     assert_eq!(status, 200);
@@ -540,4 +544,60 @@ fn a_chargeback_is_opened_answered_and_won() {
         Value::Null,
     );
     assert_eq!(status, 409);
+}
+
+/// Every mutation of the area is simulated: `GET /__lsf/admin` lists it.
+#[test]
+fn the_status_lists_every_mutation_of_payments_returns_and_drafts() {
+    let api = api();
+    let (status, answer) = request(&api, "GET", "/__lsf/admin", Value::Null);
+    assert_eq!(status, 200);
+    let listed: Vec<&str> = answer["mutations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for mutation in [
+        "orderCreateMandatePayment",
+        "orderCreateManualPayment",
+        "orderRiskAssessmentCreate",
+        "orderAttributionDefinitionDelete",
+        "orderAttributionDefinitionUpsert",
+        "paymentReminderSend",
+        "paymentScheduleCapture",
+        "paymentTermsCreate",
+        "paymentTermsDelete",
+        "paymentTermsUpdate",
+        "orderEditAddShippingLine",
+        "orderEditRemoveShippingLine",
+        "orderEditUpdateDiscount",
+        "orderEditUpdateShippingLine",
+        "orderEditRemoveLineItemDiscount",
+        "requestedOrderEditCreate",
+        "requestedOrderEditDecline",
+        "requestedOrderEditResolve",
+        "removeFromReturn",
+        "returnLineItemRemoveFromReturn",
+        "returnRefund",
+        "reverseDeliveryCreateWithShipping",
+        "reverseDeliveryShippingUpdate",
+        "reverseFulfillmentOrderDispose",
+        "draftOrderBulkAddTags",
+        "draftOrderBulkDelete",
+        "draftOrderBulkRemoveTags",
+        "draftOrderCreateFromOrder",
+        "draftOrderInvoicePreview",
+        "disputeEvidenceUpdate",
+        "storeCreditAccountCredit",
+        "storeCreditAccountDebit",
+        "giftCardProductSet",
+        "giftCardSendNotificationToCustomer",
+        "giftCardSendNotificationToRecipient",
+        "taxAppConfigure",
+        "taxSummaryCreate",
+        "shopifyPaymentsPayoutAlternateCurrencyCreate",
+    ] {
+        assert!(listed.contains(&mutation), "{mutation} is not simulated");
+    }
 }

@@ -89,7 +89,113 @@ pub fn register(registry: &mut Registry) {
                     .is_some_and(|schedule| is_due(schedule, now)),
             ))
         })
-        .field("Order", "paymentCollectionDetails", collection_details);
+        .field("Order", "paymentCollectionDetails", collection_details)
+        // lsf's orders have no duties (no cross-border import): `null`, as for an order that
+        // has none.
+        .field("Order", "currentTotalDutiesSet", |_r, _ctx, _object| {
+            Ok(Output::Null)
+        })
+        .field("Order", "originalTotalDutiesSet", |_r, _ctx, _object| {
+            Ok(Output::Null)
+        })
+        .field("Order", "refundDiscrepancySet", |r, ctx, object| {
+            let state = r.state();
+            let cents = r
+                .map_of(object)
+                .map_or(0, |order| model::refund_discrepancy(state, order));
+            r.convert(
+                ctx,
+                &value::money_bag(cents, &model::currency(state)),
+                false,
+            )
+        })
+        // Cash rounding is for cash paid at a point of sale: none on a local shop.
+        .field("Order", "totalCashRoundingAdjustment", |r, ctx, _object| {
+            let zero = value::money_bag(0, &model::currency(r.state()));
+            r.convert(ctx, &json!({"paymentSet": zero, "refundSet": zero}), false)
+        })
+        .field("OrderTransaction", "paymentId", |r, _ctx, object| {
+            Ok(r.map_of(object)
+                .and_then(|transaction| payment_id(r.state(), transaction))
+                .map_or(Output::Null, Output::value))
+        })
+        .field(
+            "OrderTransaction",
+            "maximumRefundableV2",
+            |r, ctx, object| {
+                let state = r.state();
+                let Some(transaction) = r.map_of(object) else {
+                    return Ok(Output::Null);
+                };
+                if !matches!(text(transaction, "kind"), Some("SALE" | "CAPTURE")) {
+                    return Ok(Output::Null);
+                }
+                let id = text(transaction, "id").unwrap_or_default();
+                let left = text(transaction, "order")
+                    .and_then(|order| state.get(order))
+                    .map(|order| model::refundable_payments(state, order))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|(payment, _)| payment == id)
+                    .map_or(0, |(_, left)| left);
+                r.convert(ctx, &value::money_v2(left, &model::currency(state)), false)
+            },
+        )
+        .field("OrderTransaction", "totalUnsettledSet", |r, ctx, object| {
+            let state = r.state();
+            let Some(transaction) = r.map_of(object) else {
+                return Ok(Output::Null);
+            };
+            let id = text(transaction, "id").unwrap_or_default();
+            let held = if text(transaction, "kind") == Some("AUTHORIZATION") {
+                text(transaction, "order")
+                    .and_then(|order| state.get(order))
+                    .map_or(0, |order| model::capturable_amount(state, order, id))
+            } else {
+                0
+            };
+            r.convert(ctx, &value::money_bag(held, &model::currency(state)), false)
+        })
+        .field(
+            "OrderTransaction",
+            "shopifyPaymentsSet",
+            |r, ctx, object| {
+                let Some(transaction) = r.map_of(object) else {
+                    return Ok(Output::Null);
+                };
+                if !super::shopify_payments::processed(transaction) {
+                    return Ok(Output::Null);
+                }
+                let refund = (text(transaction, "kind") == Some("REFUND")).then(|| {
+                    let id = text(transaction, "id").unwrap_or_default();
+                    // 23 digits, as acquirer reference numbers have, made of the transaction.
+                    json!({"acquirerReferenceNumber": format!(
+                        "{:020}{:03}",
+                        stable_id("acquirer_reference", id),
+                        stable_id("acquirer_reference/check", id) % 1000
+                    )})
+                });
+                r.convert(
+                    ctx,
+                    &json!({"extendedAuthorizationSet": null, "refundSet": refund}),
+                    false,
+                )
+            },
+        );
+}
+
+/// A transaction's payment id: its order's name and its place among the order's transactions
+/// (`#1001.2`), as the examples write it (`#9999.1`).
+fn payment_id(state: &ShopState, transaction: &Record) -> Option<String> {
+    if let Some(id) = text(transaction, "paymentId") {
+        return Some(id.to_string());
+    }
+    let order = state.get(text(transaction, "order")?)?;
+    let id = text(transaction, "id")?;
+    let position = gids(order.get("transactions"))
+        .iter()
+        .position(|known| known == id)?;
+    Some(format!("{}.{}", text(order, "name")?, position + 1))
 }
 
 /// The templates of `paymentTermsTemplates`' example, in its order: `(id, name, type,
