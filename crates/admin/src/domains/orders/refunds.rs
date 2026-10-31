@@ -130,14 +130,10 @@ pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> S
         if line.restock_type != "RETURN" {
             model::take_unfulfilled(state, order, &line.line, line.quantity);
         }
-        if restocked
-            && let Some(item) = state
-                .get(&line.line)
-                .and_then(|record| model::inventory_item_of(state, record))
-        {
-            model::restock_inventory(
+        if restocked {
+            model::restock_line(
                 state,
-                &item,
+                &line.line,
                 location.as_deref(),
                 line.quantity,
                 line.restock_type == "RETURN",

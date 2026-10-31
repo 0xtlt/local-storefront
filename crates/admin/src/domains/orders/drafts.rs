@@ -1073,15 +1073,13 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         let Some(item_record) = state.get(&line).cloned() else {
             continue;
         };
-        if let Some(item) = model::inventory_item_of(state, &item_record) {
-            let location = model::line_location(state, &order, &line);
-            model::commit_inventory(
-                state,
-                &item,
-                location.as_deref(),
-                int(&item_record, "quantity"),
-            );
-        }
+        let location = model::line_location(state, &order, &line);
+        model::commit_line(
+            state,
+            &line,
+            location.as_deref(),
+            int(&item_record, "quantity"),
+        );
     }
     if state
         .get(&order)

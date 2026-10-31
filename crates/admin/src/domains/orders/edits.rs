@@ -910,12 +910,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     }
                     let location = model::line_location(state, &order, item_id);
                     add_to_fulfillment(state, &order, item_id, delta, location.as_deref());
-                    if let Some(inventory) = state
-                        .get(item_id)
-                        .and_then(|item| model::inventory_item_of(state, item))
-                    {
-                        model::commit_inventory(state, &inventory, location.as_deref(), delta);
-                    }
+                    model::commit_line(state, item_id, location.as_deref(), delta);
                 } else if units < current {
                     removed.push(json!({"id": item_id, "delta": current - units}));
                     let restock = line.get("restocking").and_then(Value::as_bool) == Some(true);
@@ -1013,9 +1008,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     .map(str::to_string)
                     .or_else(|| default_location.clone());
                 add_to_fulfillment(state, &order, &id, units, location.as_deref());
-                if let Some(inventory) = inventory_item {
-                    model::commit_inventory(state, &inventory, location.as_deref(), units);
-                }
+                model::commit_line(state, &id, location.as_deref(), units);
             }
             None => {}
         }

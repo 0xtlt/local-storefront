@@ -749,7 +749,7 @@ fn inventory_level(state: &ShopState, item: &str, location: Option<&str>) -> Opt
 /// `variants/in_stock` or `variants/out_of_stock` when the stock crossed zero
 /// (`catalog::after_inventory_change`), then `inventory_levels/update`. Returns whether a level
 /// changed.
-pub fn move_inventory(
+fn move_inventory(
     state: &mut ShopState,
     item: &str,
     location: Option<&str>,
@@ -823,59 +823,215 @@ pub fn inventory_quantity(
         .unwrap_or(0)
 }
 
-/// Commits units of an item to an order (`available` to `committed`), as Shopify does when an
-/// order that claims inventory is created or edited.
-pub fn commit_inventory(state: &mut ShopState, item: &str, location: Option<&str>, units: i64) {
-    move_inventory(
-        state,
-        item,
-        location,
-        &[("available", -units), ("committed", units)],
-    );
+/// What a line item took from the stock, kept on it under this key, which GraphQL never reads:
+/// `{"committed": {"<location GID>": units}, "shipped": units}`, the units it committed at each
+/// location and those that shipped from them. Shipping and restocking a line move what it took,
+/// never what other orders committed: an order of the store data or of the local checkout took
+/// nothing (they keep the stock of the data), so shipping or restocking it leaves the stock as
+/// it is.
+pub const LINE_STOCK: &str = "lsfStock";
+
+/// The location of an item's level at a location (its first level when it has none there): the
+/// key a line's commitments are kept under.
+fn level_location(state: &ShopState, item: &str, location: Option<&str>) -> Option<String> {
+    let level = inventory_level(state, item, location)?;
+    text(state.get(&level)?, "location").map(str::to_string)
 }
 
-/// Ships units of an item: they leave `committed` and `on_hand`. Units the order never committed
-/// (an order of the store data or of the local checkout, which keep the stock of the data) leave
-/// the stock as it is.
-pub fn ship_inventory(state: &mut ShopState, item: &str, location: Option<&str>, units: i64) {
-    let committed = inventory_quantity(state, item, location, "committed");
-    let units = units.min(committed);
-    if units > 0 {
-        move_inventory(
+/// The units a line item committed, by location, in the order it committed them.
+fn line_commitments(state: &ShopState, line: &str) -> Vec<(String, i64)> {
+    state
+        .get(line)
+        .and_then(|record| record.get(LINE_STOCK))
+        .and_then(|stock| stock.get("committed"))
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(location, units)| Some((location.clone(), units.as_i64()?)))
+        .filter(|(_, units)| *units > 0)
+        .collect()
+}
+
+/// The units of a line item that shipped from what it committed.
+fn line_shipped(state: &ShopState, line: &str) -> i64 {
+    state
+        .get(line)
+        .and_then(|record| record.get(LINE_STOCK))
+        .and_then(|stock| stock.get("shipped"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+}
+
+/// Adds to what a line item committed at a location, and to what shipped of it.
+fn record_line_stock(
+    state: &mut ShopState,
+    line: &str,
+    location: &str,
+    committed: i64,
+    shipped: i64,
+) {
+    let Some(record) = state.get_mut(line) else {
+        return;
+    };
+    let stock = record.entry(LINE_STOCK).or_insert_with(|| json!({}));
+    if !stock.is_object() {
+        *stock = json!({});
+    }
+    let committed = stock
+        .get("committed")
+        .and_then(|by_location| by_location.get(location))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        + committed;
+    let shipped = stock.get("shipped").and_then(Value::as_i64).unwrap_or(0) + shipped;
+    if !stock.get("committed").is_some_and(Value::is_object) {
+        stock["committed"] = json!({});
+    }
+    stock["committed"][location] = json!(committed.max(0));
+    stock["shipped"] = json!(shipped.max(0));
+}
+
+/// Commits units of a line item (`available` to `committed`), as Shopify does when an order that
+/// claims inventory is created or edited, and records them on the line ([`LINE_STOCK`]).
+pub fn commit_line(state: &mut ShopState, line: &str, location: Option<&str>, units: i64) {
+    let Some(item) = state
+        .get(line)
+        .and_then(|record| inventory_item_of(state, record))
+    else {
+        return;
+    };
+    let Some(at) = level_location(state, &item, location) else {
+        return;
+    };
+    if units > 0
+        && move_inventory(
             state,
-            item,
-            location,
-            &[("committed", -units), ("on_hand", -units)],
-        );
+            &item,
+            Some(&at),
+            &[("available", -units), ("committed", units)],
+        )
+    {
+        record_line_stock(state, line, &at, units, 0);
     }
 }
 
-/// Puts units of an item back in stock: units that had not shipped leave `committed` for
-/// `available` as far as they were committed; the others (returned units, or units the order
-/// never committed) come back to `available` and `on_hand`.
-pub fn restock_inventory(
+/// Ships units of a line item from a location: as many as the line committed there leave
+/// `committed` and `on_hand`. Units it never committed leave the stock as it is.
+pub fn ship_line(state: &mut ShopState, line: &str, location: Option<&str>, units: i64) {
+    let Some(item) = state
+        .get(line)
+        .and_then(|record| inventory_item_of(state, record))
+    else {
+        return;
+    };
+    let Some(at) = level_location(state, &item, location) else {
+        return;
+    };
+    let committed = line_commitments(state, line)
+        .into_iter()
+        .find(|(known, _)| *known == at)
+        .map_or(0, |(_, units)| units);
+    let units = units.min(committed);
+    if units > 0
+        && move_inventory(
+            state,
+            &item,
+            Some(&at),
+            &[("committed", -units), ("on_hand", -units)],
+        )
+    {
+        record_line_stock(state, line, &at, -units, units);
+    }
+}
+
+/// Moves what a line item committed at one location to another, as far as it committed units
+/// there: a fulfillment order moved takes its stock along.
+pub fn move_line_commitment(
     state: &mut ShopState,
-    item: &str,
+    line: &str,
+    from: Option<&str>,
+    to: &str,
+    units: i64,
+) {
+    let Some(item) = state
+        .get(line)
+        .and_then(|record| inventory_item_of(state, record))
+    else {
+        return;
+    };
+    let Some(at) = level_location(state, &item, from) else {
+        return;
+    };
+    let committed = line_commitments(state, line)
+        .into_iter()
+        .find(|(known, _)| *known == at)
+        .map_or(0, |(_, units)| units);
+    let units = units.min(committed);
+    if units > 0
+        && move_inventory(
+            state,
+            &item,
+            Some(&at),
+            &[("committed", -units), ("available", units)],
+        )
+    {
+        record_line_stock(state, line, &at, -units, 0);
+        commit_line(state, line, Some(to), units);
+    }
+}
+
+/// Puts units of a line item back in stock, as far as the line took them: units that had not
+/// shipped leave what it committed for `available` (at the location given first, then where
+/// else it committed them); shipped units that had left the stock come back to `available` and
+/// `on_hand` at the location given. Units the line never took leave the stock as it is.
+pub fn restock_line(
+    state: &mut ShopState,
+    line: &str,
     location: Option<&str>,
     units: i64,
     shipped: bool,
 ) {
-    let from_committed = if shipped {
-        0
-    } else {
-        units.min(inventory_quantity(state, item, location, "committed"))
+    let Some(item) = state
+        .get(line)
+        .and_then(|record| inventory_item_of(state, record))
+    else {
+        return;
     };
-    let returned = units - from_committed;
-    move_inventory(
-        state,
-        item,
-        location,
-        &[
-            ("committed", -from_committed),
-            ("available", units),
-            ("on_hand", returned),
-        ],
-    );
+    let Some(at) = level_location(state, &item, location) else {
+        return;
+    };
+    if shipped {
+        let units = units.min(line_shipped(state, line));
+        if units > 0
+            && move_inventory(
+                state,
+                &item,
+                Some(&at),
+                &[("available", units), ("on_hand", units)],
+            )
+        {
+            record_line_stock(state, line, &at, 0, -units);
+        }
+        return;
+    }
+    let mut commitments = line_commitments(state, line);
+    commitments.sort_by_key(|(known, _)| *known != at);
+    let mut left = units;
+    for (known, committed) in commitments {
+        let units = left.min(committed);
+        if units <= 0 {
+            break;
+        }
+        if move_inventory(
+            state,
+            &item,
+            Some(&known),
+            &[("committed", -units), ("available", units)],
+        ) {
+            record_line_stock(state, line, &known, -units, 0);
+            left -= units;
+        }
+    }
 }
 
 /// The inventory item of a line item, through its variant.

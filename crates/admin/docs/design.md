@@ -847,9 +847,14 @@ orders" in `docs/admin.md`) make and keep:
   `FulfillmentService` and its `Location`. Their ids come from `new_gid`.
 - **Stock** (the levels of the catalog, changed in place): an order that claims stock commits it
   (`available` to `committed`: `orderCreate` with a `DECREMENT_…` behaviour, a completed draft
-  order, units an edit adds); shipping takes units out of `committed` and `on_hand` as far as
-  they were committed; a restock puts them back (`CANCEL` from `committed`, `RETURN` to
-  `on_hand`). Each change of a tracked item is followed as an inventory mutation of the catalog
+  order, units an edit adds), and each line item records what it committed, by location, and
+  what of it shipped (`lsfStock`: `{"committed": {"<location GID>": 2}, "shipped": 0}`).
+  Shipping takes units out of `committed` and `on_hand` as far as the line committed them at
+  that location; a restock puts back what the line took (`CANCEL` from what it committed,
+  `RETURN` to `on_hand` as far as its units had shipped from stock); a fulfillment order moved
+  takes the line's commitment along. An order of the store data or of the checkout took nothing,
+  so shipping or restocking it leaves the stock as it is, never moving what another order
+  committed. Each change of a tracked item is followed as an inventory mutation of the catalog
   follows one (`catalog::after_inventory_change`, then `catalog::product_changed`): the
   variants' `availableForSale`, `variants/in_stock` or `variants/out_of_stock` when the stock
   crossed zero, the smart collections of `VARIANT_INVENTORY`, then `inventory_levels/update`.

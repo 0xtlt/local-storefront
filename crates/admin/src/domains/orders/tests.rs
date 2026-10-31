@@ -547,27 +547,18 @@ fn order_cancel_voids_refunds_and_restocks() {
         refund["parentTransaction"]["id"],
         before["transactions"][0]["id"]
     );
-    let tracked = line_is_tracked(&shop, &item);
-    let restocked = if tracked {
-        line["quantity"].as_i64().unwrap()
-    } else {
-        0
-    };
-    assert_eq!(available(&shop, &item), available_before + restocked);
-    // The units go back in stock, then the money goes back.
-    let mut expected = if tracked {
-        vec!["inventory_levels/update"]
-    } else {
-        Vec::new()
-    };
-    expected.extend([
-        "order_transactions/create",
-        "refunds/create",
-        "fulfillment_orders/cancelled",
-        "orders/cancelled",
-        "orders/updated",
-    ]);
-    assert_eq!(topics(&mut shop), expected);
+    // An order of the store data committed no stock: restocking it puts nothing back.
+    assert_eq!(available(&shop, &item), available_before);
+    assert_eq!(
+        topics(&mut shop),
+        [
+            "order_transactions/create",
+            "refunds/create",
+            "fulfillment_orders/cancelled",
+            "orders/cancelled",
+            "orders/updated",
+        ]
+    );
     let again = run(
         &mut shop,
         ORDER_CANCEL,
@@ -1852,4 +1843,152 @@ fn an_order_that_takes_the_last_units_sells_the_variant_out() {
     let after = &synced.product_by_handle("linen-dress").unwrap().variants[0];
     assert_eq!(after.inventory_quantity, 0);
     assert!(!after.available);
+}
+
+/// The quantities of an inventory item at each of its levels, under a name.
+fn quantities(shop: &ShopState, item: &str, name: &str) -> Vec<i64> {
+    crate::domains::catalog::gids(shop.get(item).unwrap().get("inventoryLevels"))
+        .iter()
+        .map(|level| {
+            shop.get(level).unwrap()["quantities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|quantity| quantity["name"] == json!(name))
+                .and_then(|quantity| quantity["quantity"].as_i64())
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
+/// Ships every unit of an order's first fulfillment order.
+fn ship_all(shop: &mut ShopState, order_id: &str) -> Value {
+    let fo = order(shop, order_id)["fulfillmentOrders"]["nodes"][0].clone();
+    let lines: Vec<Value> = fo["lineItems"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| json!({"id": line["id"], "quantity": line["remainingQuantity"]}))
+        .collect();
+    run(
+        shop,
+        FULFILLMENT_CREATE,
+        json!({"input": {"lineItemsByFulfillmentOrder": [{"fulfillmentOrderId": fo["id"], "fulfillmentOrderLineItems": lines}]}}),
+    )
+}
+
+/// Shipping or restocking an order moves the units it committed, never those another order
+/// committed: an order of the store data committed none, so its fulfillment and its restock
+/// leave the stock as it is.
+#[test]
+fn an_order_ships_and_restocks_only_what_it_committed() {
+    let mut shop = demo();
+    let seeded = order_named(&shop, "#1002");
+    let line = gids_of(shop.get(&seeded).unwrap(), "lineItems")[0].clone();
+    let variant = shop.get(&line).unwrap()["variant"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let location = shop
+        .get(&item)
+        .map(|record| gids_of(record, "inventoryLevels"))
+        .unwrap()[0]
+        .clone();
+    let location = shop.get(&location).unwrap()["location"].clone();
+    assert_eq!(quantities(&shop, &item, "available"), [15, 15]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+
+    // An order of the admin commits 2 units.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 2}]},
+            "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"},
+        }),
+    );
+    let created = answer["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(quantities(&shop, &item, "committed"), [2, 0]);
+
+    // #1002 of the store data never committed its 4 units: shipping them does not take the
+    // other order's, and restocking them on a return puts nothing back.
+    let shipped = ship_all(&mut shop, &seeded);
+    assert_eq!(
+        shipped["data"]["fulfillmentCreate"]["userErrors"],
+        json!([]),
+        "{shipped}"
+    );
+    assert_eq!(quantities(&shop, &item, "committed"), [2, 0]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+    let quantity = shop.get(&line).unwrap()["quantity"].clone();
+    let refund = run(
+        &mut shop,
+        REFUND_CREATE,
+        json!({"input": {"orderId": seeded, "refundLineItems": [{"lineItemId": line, "quantity": quantity, "restockType": "RETURN", "locationId": location}]}}),
+    );
+    assert_eq!(
+        refund["data"]["refundCreate"]["userErrors"],
+        json!([]),
+        "{refund}"
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [13, 15]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+
+    // The order that committed ships its own units, then gets them back on a return.
+    ship_all(&mut shop, &created);
+    assert_eq!(quantities(&shop, &item, "committed"), [0, 0]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [13, 15]);
+    let line = gids_of(shop.get(&created).unwrap(), "lineItems")[0].clone();
+    let refund = run(
+        &mut shop,
+        REFUND_CREATE,
+        json!({"input": {"orderId": created, "refundLineItems": [{"lineItemId": line, "quantity": 2, "restockType": "RETURN", "locationId": location}]}}),
+    );
+    assert_eq!(
+        refund["data"]["refundCreate"]["userErrors"],
+        json!([]),
+        "{refund}"
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [15, 15]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+
+    // Cancelled before it ships, an order that committed gives its units back to `available`;
+    // a second restock of the same order finds nothing left to give.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 3}]},
+            "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"},
+        }),
+    );
+    let third = answer["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(quantities(&shop, &item, "available"), [12, 15]);
+    let cancelled = run(
+        &mut shop,
+        ORDER_CANCEL,
+        json!({"id": third, "restock": true, "refund": false}),
+    );
+    assert_eq!(
+        cancelled["data"]["orderCancel"]["orderCancelUserErrors"],
+        json!([]),
+        "{cancelled}"
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [15, 15]);
+    assert_eq!(quantities(&shop, &item, "committed"), [0, 0]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+}
+
+fn gids_of(record: &crate::state::Record, field: &str) -> Vec<String> {
+    crate::domains::catalog::gids(record.get(field))
 }

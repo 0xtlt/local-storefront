@@ -1345,13 +1345,10 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             let Some(item_record) = state.get(&line).cloned() else {
                 continue;
             };
-            let Some(item) = model::inventory_item_of(state, &item_record) else {
-                continue;
-            };
             let quantity = int(&item_record, "quantity");
             let shipped = quantity - int(&item_record, "unfulfilledQuantity");
-            model::commit_inventory(state, &item, location.as_deref(), quantity);
-            model::ship_inventory(state, &item, location.as_deref(), shipped);
+            model::commit_line(state, &line, location.as_deref(), quantity);
+            model::ship_line(state, &line, location.as_deref(), shipped);
         }
     }
     model::refresh_order(state, &order);

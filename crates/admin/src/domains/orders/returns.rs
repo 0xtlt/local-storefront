@@ -565,12 +565,8 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         };
         if moves.is_empty() {
             // Without a refund, a restocked unit goes back in stock alone.
-            if let Some(location) = restock
-                && let Some(item) = state
-                    .get(&line_item)
-                    .and_then(|record| model::inventory_item_of(state, record))
-            {
-                model::restock_inventory(state, &item, location.as_deref(), *quantity, true);
+            if let Some(location) = restock {
+                model::restock_line(state, &line_item, location.as_deref(), *quantity, true);
             }
         } else {
             refund_lines.push(RefundLine {

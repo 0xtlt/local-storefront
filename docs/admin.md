@@ -492,7 +492,8 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
 - The local checkout keeps the stock of the store data: its orders commit nothing, so test
   purchases never sell a product out. Orders the backend makes do: `orderCreate` with a
   `DECREMENT_…` `inventoryBehaviour`, a completed draft order, units an edit adds. Shipping
-  takes units from what was committed; a restock puts them back in stock. A variant an order
+  takes the units the order committed; a restock puts back what the order took. An order that
+  took nothing (of the store data or the checkout) ships and restocks without moving the stock. A variant an order
   sells out is out of stock as after an inventory mutation: `availableForSale` is `false`,
   `variants/out_of_stock` is sent, and the storefront shows it sold out.
 - `orderCancel` is synchronous (Shopify's runs as a job). `orderCreate` with a
