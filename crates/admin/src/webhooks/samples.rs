@@ -84,7 +84,13 @@ pub fn fixed(topic: &str) -> Option<Sample> {
             role_assignment(),
             vec![company_contact(), company_location(), company(), contact_role()],
         ),
+        "orders" if topic == "orders/edited" => (order_edit(), Vec::new()),
         "orders" => (order(), order_parts(false)),
+        "order_transactions" => (order_transaction(), vec![order()]),
+        "fulfillment_events" => (fulfillment_event(), vec![fulfillment()]),
+        "fulfillment_holds" => (fulfillment_hold(topic), Vec::new()),
+        "fulfillment_orders" => fulfillment_order_sample(topic),
+        "returns" => (return_sample(topic), Vec::new()),
         "fulfillments" => (fulfillment(), [vec![order()], order_parts(true)].concat()),
         "refunds" => (refund(), [vec![order()], order_parts(true)].concat()),
         "draft_orders" => (draft_order(), Vec::new()),
@@ -895,6 +901,230 @@ fn draft_order() -> Value {
             },
         },
     }))
+}
+
+/// The transaction of `order_transactions/create`'s example.
+fn order_transaction() -> Value {
+    json!({
+        "__typename": "OrderTransaction",
+        "id": "gid://shopify/OrderTransaction/120560818172775265",
+        "order": "gid://shopify/Order/820982911946154508",
+        "kind": "AUTHORIZATION",
+        "gateway": "visa",
+        "status": "SUCCESS",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "test": false,
+        "authorizationCode": "1001",
+        "processedAt": null,
+        "paymentDetails": {
+            "__typename": "CardPaymentDetails",
+            "number": "•••• •••• •••• 1234",
+            "company": "Visa",
+            "paymentMethodName": "visa",
+        },
+        "amountSet": bag("419.95"),
+        "paymentId": "#9999.1",
+        "totalUnsettledSet": {
+            "presentmentMoney": {"amount": "419.95", "currencyCode": "USD"},
+            "shopMoney": {"amount": "419.95", "currencyCode": "USD"},
+        },
+        "manualPaymentGateway": true,
+    })
+}
+
+/// The committed edit of `orders/edited`'s example.
+fn order_edit() -> Value {
+    json!({
+        "__typename": "CalculatedOrder",
+        "id": "gid://shopify/CalculatedOrder/78912328793123782",
+        "originalOrder": "gid://shopify/Order/820982911946154508",
+        "committed": true,
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        payload::EDIT_COMMITTED_AT: "2021-12-31T19:00:00-05:00",
+        payload::EDIT_NOTIFY_CUSTOMER: false,
+        payload::EDIT_STAFF_NOTE: "",
+        payload::EDIT_ADDITIONS: [{"id": "gid://shopify/LineItem/78643924236718232", "delta": 1}],
+        payload::EDIT_REMOVALS: [{"id": "gid://shopify/LineItem/487817672276298554", "delta": 1}],
+    })
+}
+
+/// The event of `fulfillment_events/create`'s example, of the example fulfillment.
+fn fulfillment_event() -> Value {
+    json!({
+        "__typename": "FulfillmentEvent",
+        "id": "gid://shopify/FulfillmentEvent/1234567",
+        "fulfillment": "gid://shopify/Fulfillment/123456",
+        "status": "IN_TRANSIT",
+        "message": "Item is now in transit",
+        "happenedAt": "2021-12-31T19:00:00-05:00",
+        "country": "CA",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+        "estimatedDeliveryAt": null,
+    })
+}
+
+/// The hold of the `fulfillment_holds/*` examples.
+fn fulfillment_hold(topic: &str) -> Value {
+    json!({
+        "__typename": "FulfillmentHold",
+        "id": "gid://shopify/FulfillmentHold/1",
+        "fulfillmentOrder": "gid://shopify/FulfillmentOrder/1",
+        "reason": "OTHER",
+        "reasonNotes": "Waiting for some more details from the customer before this can be fulfilled.",
+        "heldByRequestingApp": false,
+        "handle": if topic == "fulfillment_holds/added" { "test_handle" } else { "fulfillment_hold_1" },
+        "heldByApp": "gid://shopify/App/12345",
+    })
+}
+
+/// A fulfillment order of the `fulfillment_orders/*` examples, with the records its topic names.
+fn fulfillment_order_sample(topic: &str) -> (Value, Vec<Value>) {
+    let fulfillment_order = |id: u64, status: &str, location: u64| {
+        json!({
+            "__typename": "FulfillmentOrder",
+            "id": format!("gid://shopify/FulfillmentOrder/{id}"),
+            "status": status,
+            "assignedLocation": {"location": format!("gid://shopify/Location/{location}")},
+            "fulfillAt": "2021-12-31T19:00:00-05:00",
+        })
+    };
+    let hold = |id: u64, reason: &str, notes: &str, handle: &str| {
+        json!({
+            "__typename": "FulfillmentHold",
+            "id": format!("gid://shopify/FulfillmentHold/{id}"),
+            "reason": reason,
+            "reasonNotes": notes,
+            "heldByRequestingApp": false,
+            "handle": handle,
+            "heldByApp": "gid://shopify/App/12345",
+        })
+    };
+    let request = |message: &str| {
+        json!({
+            "__typename": "FulfillmentOrderMerchantRequest",
+            "id": "gid://shopify/FulfillmentOrderMerchantRequest/1",
+            "message": message,
+        })
+    };
+    let event = payload::FULFILLMENT_ORDER_EVENT;
+    match topic {
+        "fulfillment_orders/placed_on_hold" => (
+            fulfillment_order(1, "ON_HOLD", 0)
+                .with("fulfillmentHolds", json!(["gid://shopify/FulfillmentHold/1", "gid://shopify/FulfillmentHold/2"]))
+                .with(event, json!({
+                    "hold": "gid://shopify/FulfillmentHold/1",
+                    "remaining": "gid://shopify/FulfillmentOrder/2",
+                    "lineItems": [{"id": "gid://shopify/FulfillmentOrderLineItem/3", "quantity": 4}],
+                })),
+            vec![
+                fulfillment_order(2, "OPEN", 0),
+                hold(1, "OTHER", "example", "example-hold-1"),
+                hold(2, "INVENTORY_OUT_OF_STOCK", "Stacked hold", "example-hold-2"),
+            ],
+        ),
+        "fulfillment_orders/cancelled" => (
+            fulfillment_order(1, "CANCELLED", 0)
+                .with(event, json!({"replacement": "gid://shopify/FulfillmentOrder/2"})),
+            vec![fulfillment_order(2, "OPEN", 0)],
+        ),
+        "fulfillment_orders/moved" => (
+            fulfillment_order(2, "OPEN", 1).with(event, json!({
+                "original": "gid://shopify/FulfillmentOrder/1",
+                "source": "gid://shopify/Location/0",
+                "lineItems": [{"id": "gid://shopify/FulfillmentOrderLineItem/1", "quantity": 1}],
+            })),
+            vec![fulfillment_order(1, "CLOSED", 0)],
+        ),
+        "fulfillment_orders/rescheduled" => (fulfillment_order(1, "SCHEDULED", 0), Vec::new()),
+        "fulfillment_orders/fulfillment_request_submitted" => (
+            fulfillment_order(1, "OPEN", 0)
+                .with("requestStatus", json!("UNSUBMITTED"))
+                .with(event, json!({
+                    "original": "gid://shopify/FulfillmentOrder/1",
+                    "submitted": "gid://shopify/FulfillmentOrder/1",
+                    "request": "gid://shopify/FulfillmentOrderMerchantRequest/1",
+                })),
+            vec![request("Fragile")],
+        ),
+        "fulfillment_orders/cancellation_request_submitted" => (
+            fulfillment_order(1, "IN_PROGRESS", 0)
+                .with("requestStatus", json!("CANCELLATION_REQUESTED"))
+                .with(event, json!({"request": "gid://shopify/FulfillmentOrderMerchantRequest/1"})),
+            vec![request("Customer cancelled their order")],
+        ),
+        "fulfillment_orders/fulfillment_request_accepted" => (
+            fulfillment_order(1, "IN_PROGRESS", 0)
+                .with("requestStatus", json!("ACCEPTED"))
+                .with(event, json!({"message": "We will ship the item tomorrow."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/fulfillment_request_rejected" => (
+            fulfillment_order(1, "OPEN", 0)
+                .with("requestStatus", json!("REJECTED"))
+                .with(event, json!({"message": "Can't fulfill due to no inventory on product."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/cancellation_request_accepted" => (
+            fulfillment_order(1, "CLOSED", 0)
+                .with(event, json!({"message": "Order has not been shipped yet."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/cancellation_request_rejected" => (
+            fulfillment_order(1, "IN_PROGRESS", 0)
+                .with("requestStatus", json!("CANCELLATION_REJECTED"))
+                .with(event, json!({"message": "Order has already been shipped."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/fulfillment_service_failed_to_complete" => (
+            fulfillment_order(1, "CLOSED", 0)
+                .with(event, json!({"message": "We broke the last item."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/split" => (
+            fulfillment_order(2, "OPEN", 0).with(event, json!({
+                "original": "gid://shopify/FulfillmentOrder/1",
+                "replacement": "gid://shopify/FulfillmentOrder/3",
+                "lineItems": [{"id": "gid://shopify/FulfillmentOrderLineItem/1", "quantity": 1}],
+            })),
+            vec![fulfillment_order(1, "OPEN", 0), fulfillment_order(3, "OPEN", 0)],
+        ),
+        _ => (fulfillment_order(1, "OPEN", 0), Vec::new()),
+    }
+}
+
+/// The return of the `returns/*` examples, in the status of the topic.
+fn return_sample(topic: &str) -> Value {
+    let status = match topic {
+        "returns/request" => "REQUESTED",
+        "returns/decline" => "DECLINED",
+        "returns/close" => "CLOSED",
+        "returns/cancel" => "CANCELED",
+        _ => "OPEN",
+    };
+    let lines = if topic == "returns/approve" || topic == "returns/request" {
+        json!([
+            "gid://shopify/ReturnLineItem/1",
+            "gid://shopify/ReturnLineItem/2"
+        ])
+    } else {
+        json!([])
+    };
+    json!({
+        "__typename": "Return",
+        "id": "gid://shopify/Return/123134564567890",
+        "order": "gid://shopify/Order/4783296544821",
+        "status": status,
+        "name": null,
+        "returnLineItems": lines,
+        "exchangeLineItems": if topic == "returns/approve" { json!(["gid://shopify/ExchangeLineItem/987654321283476"]) } else { json!([]) },
+        "requestedAt": "2026-01-15T07:00:00-05:00",
+        "createdAt": "2026-01-15T07:00:00-05:00",
+        "decline": {
+            "reason": "RETURN_PERIOD_ENDED",
+            "note": "As discussed on the phone, the 30-day return window has ended.",
+        },
+    })
 }
 
 fn inventory_item() -> Value {

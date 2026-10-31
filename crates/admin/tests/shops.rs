@@ -222,7 +222,10 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
         .into_iter()
         .map(|event| event.topic)
         .collect();
-    assert_eq!(topics, ["orders/create", "orders/paid"]);
+    assert_eq!(
+        topics,
+        ["orders/create", "order_transactions/create", "orders/paid"]
+    );
 
     // The checkout numbers the orders of each session on its own: an id that is taken gets a
     // new one.

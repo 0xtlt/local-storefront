@@ -1061,6 +1061,300 @@ fn transaction(record: &Map<String, Value>, order_id: &Value) -> Value {
     })
 }
 
+/// `order_transactions/create`: an `OrderTransaction`, with its payment details.
+pub(super) fn order_transaction(record: &Map<String, Value>) -> Value {
+    let mut payload = match transaction(record, &Value::Null) {
+        Value::Object(payload) => payload,
+        _ => Map::new(),
+    };
+    let details = match field(record, "paymentDetails") {
+        Value::Object(details) => json!({
+            "credit_card_bin": text(details, "bin"),
+            "avs_result_code": text(details, "avsResultCode"),
+            "cvv_result_code": text(details, "cvvResultCode"),
+            "credit_card_number": text(details, "number"),
+            "credit_card_company": text(details, "company"),
+            "buyer_action_info": Value::Null,
+            "credit_card_name": text(details, "name"),
+            "credit_card_wallet": text(details, "wallet"),
+            "credit_card_expiration_month": field(details, "expirationMonth").clone(),
+            "credit_card_expiration_year": field(details, "expirationYear").clone(),
+            "payment_method_name": text(details, "paymentMethodName"),
+        }),
+        _ => Value::Null,
+    };
+    // In the key order of the example: `payment_details` after `source_name`.
+    let mut ordered = Map::new();
+    for (key, value) in payload.iter_mut() {
+        ordered.insert(key.clone(), value.take());
+        if key == "source_name" {
+            ordered.insert("payment_details".into(), details.clone());
+        }
+    }
+    Value::Object(ordered)
+}
+
+/// The fields of an order edit lsf keeps on the committed `CalculatedOrder` for
+/// `orders/edited`: when it was committed, whether the customer was to be notified, the staff
+/// note, and the line items added and removed (`[{id, delta}]`).
+pub const EDIT_COMMITTED_AT: &str = "lsfCommittedAt";
+pub const EDIT_NOTIFY_CUSTOMER: &str = "lsfNotifyCustomer";
+pub const EDIT_STAFF_NOTE: &str = "lsfStaffNote";
+pub const EDIT_ADDITIONS: &str = "lsfAdditions";
+pub const EDIT_REMOVALS: &str = "lsfRemovals";
+
+/// `[{id, delta}]` with REST's numeric ids.
+fn deltas(value: &Value) -> Value {
+    Value::Array(
+        items(value)
+            .iter()
+            .map(|item| json!({"id": ref_id(item.get("id").unwrap_or(&Value::Null)), "delta": item.get("delta")}))
+            .collect(),
+    )
+}
+
+/// `orders/edited`: the edit, from its committed `CalculatedOrder`.
+pub(super) fn order_edit(record: &Map<String, Value>) -> Value {
+    json!({
+        "order_edit": {
+            "id": id(record),
+            "app_id": ref_id(field(record, "app")),
+            "created_at": time(field(record, "createdAt")),
+            "committed_at": time(field(record, EDIT_COMMITTED_AT)),
+            "notify_customer": boolean(record, EDIT_NOTIFY_CUSTOMER, false),
+            "order_id": ref_id(field(record, "originalOrder")),
+            "staff_note": text_or(record, EDIT_STAFF_NOTE, ""),
+            "user_id": Value::Null,
+            "line_items": {
+                "additions": deltas(field(record, EDIT_ADDITIONS)),
+                "removals": deltas(field(record, EDIT_REMOVALS)),
+            },
+            "discounts": {"line_item": {"additions": [], "removals": []}},
+            "shipping_lines": {"additions": [], "removals": []},
+            "shipping_address": {"changed": false},
+        }
+    })
+}
+
+/// `fulfillment_events/create`: a `FulfillmentEvent`; its fulfillment (which lsf keeps on it)
+/// gives the order.
+pub(super) fn fulfillment_event(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let fulfillment = resolve(field(record, "fulfillment"), lookup);
+    let shop = lookup.shop();
+    json!({
+        "id": id(record),
+        "fulfillment_id": ref_id(field(record, "fulfillment")),
+        "status": lower(field(record, "status")),
+        "message": text(record, "message"),
+        "happened_at": time(field(record, "happenedAt")),
+        "city": text(record, "city"),
+        "province": text(record, "province"),
+        "country": text(record, "country"),
+        "zip": text(record, "zip"),
+        "address1": text(record, "address1"),
+        "latitude": field(record, "latitude").clone(),
+        "longitude": field(record, "longitude").clone(),
+        "shop_id": shop.as_ref().map_or(Value::Null, id),
+        "created_at": time(field(record, "createdAt")),
+        "updated_at": time(first(record, &["updatedAt", "createdAt"])),
+        "estimated_delivery_at": time(field(record, "estimatedDeliveryAt")),
+        "order_id": fulfillment.as_ref().map_or(Value::Null, |fulfillment| ref_id(field(fulfillment, "order"))),
+        "admin_graphql_api_id": text(record, "id"),
+    })
+}
+
+/// A `FulfillmentHold` as the fulfillment order topics write it.
+fn hold(record: &Map<String, Value>) -> Value {
+    json!({
+        "id": text(record, "id"),
+        "reason": lower(field(record, "reason")),
+        "reason_notes": text(record, "reasonNotes"),
+        "held_by_requesting_app": boolean(record, "heldByRequestingApp", false),
+        "handle": text(record, "handle"),
+        "held_by_app": match ref_gid(field(record, "heldByApp")) {
+            Value::Null => Value::Null,
+            app => json!({"id": app}),
+        },
+    })
+}
+
+/// `fulfillment_holds/added`, `fulfillment_holds/released`: a `FulfillmentHold`, with the
+/// fulfillment order lsf keeps on it.
+pub(super) fn fulfillment_hold(record: &Map<String, Value>) -> Value {
+    json!({
+        "fulfillment_order": {"id": ref_gid(field(record, "fulfillmentOrder"))},
+        "fulfillment_hold": hold(record),
+    })
+}
+
+/// What a fulfillment order topic writes of a fulfillment order: its GID and status.
+fn fulfillment_order_ref(reference: &Value, lookup: &dyn Lookup) -> Value {
+    match resolve(reference, lookup) {
+        Some(record) => {
+            json!({"id": text(&record, "id"), "status": lower(field(&record, "status"))})
+        }
+        None => Value::Null,
+    }
+}
+
+/// The context of a fulfillment order topic lsf keeps on the fulfillment order it is about: the
+/// other fulfillment orders and line items of the change (`lsfEvent`).
+pub const FULFILLMENT_ORDER_EVENT: &str = "lsfEvent";
+
+/// `[{id, quantity}]` of fulfillment order line items.
+fn line_quantities(value: &Value) -> Value {
+    Value::Array(
+        items(value)
+            .iter()
+            .map(|item| json!({"id": item.get("id"), "quantity": item.get("quantity")}))
+            .collect(),
+    )
+}
+
+/// `fulfillment_orders/…`: a `FulfillmentOrder`, with what lsf kept of the change.
+pub(super) fn fulfillment_order_event(
+    topic: &str,
+    record: &Map<String, Value>,
+    lookup: &dyn Lookup,
+) -> Value {
+    let context = object(field(record, FULFILLMENT_ORDER_EVENT));
+    let this = json!({"id": text(record, "id"), "status": lower(field(record, "status"))});
+    match topic {
+        "fulfillment_orders/placed_on_hold" => {
+            let holds: Vec<Value> = records(field(record, "fulfillmentHolds"), lookup)
+                .iter()
+                .map(hold)
+                .collect();
+            json!({
+                "fulfillment_order": {"id": text(record, "id"), "status": lower(field(record, "status")), "fulfillment_holds": holds},
+                "remaining_fulfillment_order": fulfillment_order_ref(field(&context, "remaining"), lookup),
+                "held_fulfillment_order_line_items": line_quantities(field(&context, "lineItems")),
+                "created_fulfillment_hold": resolve(field(&context, "hold"), lookup).as_ref().map_or(Value::Null, hold),
+            })
+        }
+        "fulfillment_orders/cancelled" => json!({
+            "fulfillment_order": this,
+            "replacement_fulfillment_order": fulfillment_order_ref(field(&context, "replacement"), lookup),
+        }),
+        "fulfillment_orders/moved" => {
+            let original = resolve(field(&context, "original"), lookup);
+            let assigned = |record: &Map<String, Value>| {
+                field(record, "assignedLocation")
+                    .get("location")
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            };
+            json!({
+                "original_fulfillment_order": original.as_ref().map_or(Value::Null, |original| json!({
+                    "id": text(original, "id"),
+                    "status": lower(field(original, "status")),
+                    "assigned_location_id": ref_gid(&assigned(original)),
+                })),
+                "moved_fulfillment_order": {
+                    "id": text(record, "id"),
+                    "status": lower(field(record, "status")),
+                    "assigned_location_id": ref_gid(&assigned(record)),
+                },
+                "destination_location_id": ref_gid(&assigned(record)),
+                "fulfillment_order_line_items_requested": line_quantities(field(&context, "lineItems")),
+                "source_location": {"id": ref_gid(field(&context, "source"))},
+            })
+        }
+        "fulfillment_orders/rescheduled" => json!({
+            "fulfillment_order": {"id": text(record, "id"), "status": lower(field(record, "status")), "fulfill_at": time(field(record, "fulfillAt"))},
+        }),
+        "fulfillment_orders/split" => json!({
+            "split_line_items": line_quantities(field(&context, "lineItems")),
+            "fulfillment_order": fulfillment_order_ref(field(&context, "original"), lookup),
+            "remaining_fulfillment_order": this,
+            "replacement_fulfillment_order": fulfillment_order_ref(field(&context, "replacement"), lookup),
+        }),
+        "fulfillment_orders/fulfillment_request_submitted" => json!({
+            "original_fulfillment_order": requested(field(&context, "original"), lookup),
+            "submitted_fulfillment_order": requested(field(&context, "submitted"), lookup),
+            "fulfillment_order_merchant_request": merchant_request(field(&context, "request"), lookup),
+        }),
+        "fulfillment_orders/cancellation_request_submitted" => json!({
+            "fulfillment_order": requested(field(record, "id"), lookup),
+            "fulfillment_order_merchant_request": merchant_request(field(&context, "request"), lookup),
+        }),
+        "fulfillment_orders/fulfillment_request_accepted"
+        | "fulfillment_orders/fulfillment_request_rejected"
+        | "fulfillment_orders/cancellation_request_rejected" => json!({
+            "fulfillment_order": requested(field(record, "id"), lookup),
+            "message": text(&context, "message"),
+        }),
+        "fulfillment_orders/cancellation_request_accepted"
+        | "fulfillment_orders/fulfillment_service_failed_to_complete" => json!({
+            "fulfillment_order": this,
+            "message": text(&context, "message"),
+        }),
+        // `hold_released`, `scheduled_fulfillment_order_ready`.
+        _ => json!({"fulfillment_order": this}),
+    }
+}
+
+/// A fulfillment order with its request status, as the request topics write it: REST's
+/// `cancellation_request` for `CANCELLATION_REQUESTED` (the example of
+/// `cancellation_request_submitted`), the others in lowercase.
+fn requested(reference: &Value, lookup: &dyn Lookup) -> Value {
+    let Some(record) = resolve(reference, lookup) else {
+        return Value::Null;
+    };
+    let request = match field(&record, "requestStatus").as_str() {
+        Some("CANCELLATION_REQUESTED") => json!("cancellation_request"),
+        _ => lower(field(&record, "requestStatus")),
+    };
+    json!({"id": text(&record, "id"), "status": lower(field(&record, "status")), "request_status": request})
+}
+
+/// A `FulfillmentOrderMerchantRequest`: its GID and message.
+fn merchant_request(reference: &Value, lookup: &dyn Lookup) -> Value {
+    match resolve(reference, lookup) {
+        Some(record) => json!({"id": text(&record, "id"), "message": text(&record, "message")}),
+        None => Value::Null,
+    }
+}
+
+/// `returns/…`: a `Return`, in the shape of the example of its topic.
+pub(super) fn return_event(topic: &str, record: &Map<String, Value>) -> Value {
+    let head = json!({"id": id(record), "admin_graphql_api_id": text(record, "id")});
+    let order = json!({"id": ref_id(field(record, "order")), "admin_graphql_api_id": ref_gid(field(record, "order"))});
+    match topic {
+        "returns/request" | "returns/approve" => merge([
+            head,
+            json!({
+                "status": lower(field(record, "status")),
+                "order": order,
+                "total_return_line_items": items(field(record, "returnLineItems")).len(),
+                "name": text(record, "name"),
+                // The example's lists are empty; lsf does not know the shape of their items.
+                "return_line_items": [],
+                "return_shipping_fees": [],
+                "exchange_line_items": [],
+                "total_exchange_line_items": items(field(record, "exchangeLineItems")).len(),
+                "requested_at": time(first(record, &["requestedAt", "createdAt"])),
+            }),
+        ]),
+        "returns/decline" => merge([
+            head,
+            json!({
+                "status": lower(field(record, "status")),
+                "order": order,
+                "decline": match field(record, "decline") {
+                    Value::Object(decline) => json!({"reason": lower(field(decline, "reason")), "note": text(decline, "note")}),
+                    _ => Value::Null,
+                },
+            }),
+        ]),
+        // `close`, `cancel`, `reopen`.
+        _ => merge([
+            head,
+            json!({"order_id": ref_id(field(record, "order")), "status": lower(field(record, "status"))}),
+        ]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

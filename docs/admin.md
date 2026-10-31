@@ -248,7 +248,8 @@ scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app a
 - **Events**: what the Admin API changes (`productCreate` → `products/create`,
   `inventory_items/create`, `inventory_levels/connect`; `productUpdate` and `tagsAdd` →
   `products/update`; `productDelete` → `products/delete`), an order placed at the checkout
-  (`orders/create`, then `orders/paid` when it is paid in full), an uninstall, a change of scopes.
+  (`orders/create`, `order_transactions/create`, then `orders/paid` when it is paid in full), an
+  uninstall, a change of scopes.
 - **Payloads** are Shopify's JSON for the topic (the REST representation of the resource), built
   from the record as the change left it, cut to `include_fields`, and checked against `filter`.
   A topic whose payload lsf does not build is logged as not sent, never sent with a made-up body.
@@ -430,6 +431,95 @@ for the Admin API (lsf-core resolves their rules into products). `productTags`,
 1000 to 5000).
 
 ### Orders, fulfillments and draft orders
+
+An order placed in the local checkout is an order of the Admin API at once (`orders/create`,
+`order_transactions/create` for its payment, `orders/paid`), and the backend processes it as on
+Shopify: it fulfills, refunds, edits, cancels and returns it; the order's totals, statuses,
+fulfillment orders, transactions and stock follow, and each change fires its webhooks (the
+specific topic first, then `orders/updated`, which Shopify sends "in addition to the more
+specific webhooks").
+
+- **Queries**: `orders` and `ordersCount` with the filters of the reference (`financial_status`,
+  `fulfillment_status` with `shipped`, `partial`, `unshipped`, `unfulfilled`, `on_hold`, `status`
+  with `open`, `closed`, `cancelled`, `not_closed`, `name` with or without `#`, `email`,
+  `customer_id`, `sku`, `tag`, `created_at`, `processed_at`, `updated_at`, `gateway`,
+  `current_total_price`, `return_status`, `delivery_method`, `location_id`, `test`,
+  `source_name`, …) and every `OrderSortKeys`; `fulfillmentOrders` (open ones unless
+  `includeClosed`), `assignedFulfillmentOrders`, `manualHoldsFulfillmentOrders`,
+  `FulfillmentOrder.supportedActions` and `locationsForMove`, `returnableFulfillments`,
+  `Order.suggestedRefund`, `draftOrders`.
+- **Orders**: `orderCreate` (imported orders: lines by variant or custom, customer, addresses,
+  shipping lines, tax lines, a discount code, transactions, `financialStatus`,
+  `fulfillmentStatus`, `inventoryBehaviour`), `orderUpdate`, `orderCancel` (cancelled at once,
+  its `job` done and its `jobResult` readable with `node`; authorizations voided, payments
+  refunded with `refundMethod`, units restocked with `restock`), `orderClose`, `orderOpen`,
+  `orderMarkAsPaid`, `orderCapture`, `transactionVoid`, `orderCustomerSet`,
+  `orderCustomerRemove`, `orderInvoiceSend` (nothing sent), `orderDelete` (a cancelled or closed
+  order).
+- **Fulfillment**: `fulfillmentCreate` (with `lineItemsByFulfillmentOrder`, partial or whole;
+  fulfillment orders close or stay in progress, the order is fulfilled or partially fulfilled),
+  `fulfillmentTrackingInfoUpdate`, `fulfillmentCancel`, `fulfillmentEventCreate`;
+  `fulfillmentOrderHold` and `ReleaseHold` (several holds, a hold of some items splits the
+  fulfillment order), `Move`, `Cancel`, `Open`, `Reschedule`.
+- **Fulfillment services**: `fulfillmentServiceCreate`, `Update`, `Delete` (with their
+  location), and the requests between merchant and service:
+  `fulfillmentOrderSubmitFulfillmentRequest`, `AcceptFulfillmentRequest`,
+  `RejectFulfillmentRequest`, `SubmitCancellationRequest`, `AcceptCancellationRequest`,
+  `RejectCancellationRequest`, `fulfillmentOrderClose`. lsf does not call the service's
+  `callbackUrl`: the service reads `assignedFulfillmentOrders`.
+- **Refunds**: `refundCreate` (line items with `CANCEL`, `RETURN` or `NO_RESTOCK`, shipping,
+  transactions against the order's payments; a refund without transactions moves no money, as
+  on Shopify).
+- **Returns**: `returnRequest`, `returnApproveRequest`, `returnDeclineRequest`, `returnCreate`,
+  `returnProcess` (with its refund), `returnClose`, `returnReopen`, `returnCancel`.
+- **Order edits**: `orderEditBegin`, `orderEditAddVariant`, `orderEditAddCustomItem`,
+  `orderEditSetQuantity`, `orderEditAddLineItemDiscount`, `orderEditRemoveDiscount`,
+  `orderEditCommit` (`orders/edited`, with the lines added and removed).
+- **Draft orders**: `draftOrderCreate`, `draftOrderUpdate`, `draftOrderDelete`,
+  `draftOrderCalculate`, `draftOrderComplete` (an order, paid unless `paymentPending`),
+  `draftOrderDuplicate`, `draftOrderInvoiceSend` (recorded as sent, nothing sent). Taxes are at
+  the store data's `checkout.tax_rate`.
+- **Webhooks**: `orders/create`, `/updated`, `/paid`, `/cancelled`, `/fulfilled`,
+  `/partially_fulfilled`, `/edited`, `/delete`; `order_transactions/create`;
+  `fulfillments/create`, `/update`; `fulfillment_events/create`; `fulfillment_holds/added`,
+  `/released`; `fulfillment_orders/*` (holds, moves, splits, cancellations, requests to a
+  service); `refunds/create`; `returns/request`, `/approve`, `/decline`, `/close`, `/reopen`,
+  `/cancel` (`returns/process` fires, but has no example payload to build it from: it is logged
+  as not sent); `draft_orders/create`, `/update`, `/delete`.
+
+What lsf chose where Shopify does not say, or where a local tool must differ:
+
+- The local checkout keeps the stock of the store data: its orders commit nothing, so test
+  purchases never sell a product out. Orders the backend makes do: `orderCreate` with a
+  `DECREMENT_…` `inventoryBehaviour`, a completed draft order, units an edit adds. Shipping
+  takes units from what was committed; a restock puts them back in stock.
+- `orderCancel` is synchronous (Shopify's runs as a job). `orderCreate` with a
+  `financialStatus` and no `transactions` records the transaction the status implies (a sale of
+  the total for `PAID`). `fulfillmentCancel` does not put the shipped units back in stock.
+- Messages Shopify does not publish are lsf's, in Shopify's form; those it does publish (in the
+  reference's examples, or quoted from real answers) are word for word. The sources are in the
+  doc comments of `crates/admin/src/domains/orders/`.
+- The `returns/*` payloads list no return line items (Shopify's examples have none, and lsf does
+  not know their shape): read them through the API.
+
+Not simulated yet (they answer `LSF_NOT_SIMULATED`): `orderCreateManualPayment`,
+`orderCreateMandatePayment`, `orderRiskAssessmentCreate`, `orderAttributionDefinitionUpsert`,
+`orderAttributionDefinitionDelete`, `orderEditAddShippingLine`, `orderEditUpdateShippingLine`,
+`orderEditRemoveShippingLine`, `orderEditRemoveLineItemDiscount`, `orderEditUpdateDiscount`,
+`requestedOrderEditCreate`, `requestedOrderEditDecline`, `requestedOrderEditResolve`,
+`fulfillmentOrderSplit`, `fulfillmentOrderMerge`, `fulfillmentOrderReportProgress`,
+`fulfillmentOrderLineItemsPreparedForPickup`, `fulfillmentOrdersReroute`,
+`fulfillmentOrdersSetFulfillmentDeadline`, `fulfillmentConstraintRuleCreate`,
+`fulfillmentConstraintRuleUpdate`, `fulfillmentConstraintRuleDelete`, `shippingLabelPurchase`,
+`shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete`, `returnRefund`, `returnLineItemRemoveFromReturn`, `removeFromReturn`,
+`reverseDeliveryCreateWithShipping`, `reverseDeliveryShippingUpdate`,
+`reverseFulfillmentOrderDispose`, `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`,
+`draftOrderBulkDelete`, `draftOrderCreateFromOrder`, `draftOrderInvoicePreview`,
+`paymentTermsCreate`, `paymentTermsUpdate`, `paymentTermsDelete`, `paymentReminderSend`,
+`paymentScheduleCapture`, `disputeEvidenceUpdate`. Not computed yet: `returnCalculate`,
+`Return.suggestedFinancialOutcome`, `requestedOrderEditCalculate`,
+`draftOrderAvailableDeliveryOptions`, exchanges and reverse fulfillment orders of returns,
+duties, store credit refunds, B2B draft orders, payment terms.
 
 ### Customers and companies
 

@@ -4,6 +4,23 @@
 //! The orders of the store data and the orders placed in the local checkout become records the
 //! same way: each is first an [`OrderDraft`], which [`insert_order`] turns into records. The
 //! records and their ids: the "Records" section of `crates/admin/docs/design.md`.
+//!
+//! What the Admin API does with them is in the submodules: [`model`] (what an order's records
+//! derive from one another, the money and the inventory they move), [`queries`] (the search
+//! filters, sort keys and resolvers of the family), and one module per group of mutations.
+
+mod drafts;
+mod edits;
+mod fulfillments;
+mod lifecycle;
+pub mod model;
+mod queries;
+mod refunds;
+mod returns;
+mod services;
+
+#[cfg(test)]
+mod tests;
 
 use chrono::{DateTime, Utc};
 use lsf_core::store::{Order, Product, Variant};
@@ -195,8 +212,14 @@ fn derived(type_name: &str, kind: &str, order: &str, key: &str) -> String {
     gid(type_name, stable_id(kind, &format!("{order}/{key}")))
 }
 
+/// The setting of the shop that holds the checkout's tax rate, in basis points (2000 is 20 %):
+/// draft orders compute their taxes with it.
+pub const TAX_RATE_SETTING: &str = "taxRateBps";
+
 pub fn seed(seed: &mut Seed) {
     let store = seed.store;
+    seed.state
+        .set_setting(TAX_RATE_SETTING, json!(store.checkout.tax_rate_bps));
     let location = catalog::locations(store).first().map(catalog::location_gid);
     for customer in &store.customers {
         for order in &customer.orders {
@@ -353,65 +376,20 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     let order_number = crate::state::parse_gid(&order).map_or(0, |(_, id)| id);
     for (position, line) in draft.lines.iter().enumerate() {
         let id = line_item_gid(order_number, position);
-        let original = line.unit_price * i64::from(line.quantity);
-        let discounted = original - line.discount;
-        let unit_after = if line.quantity == 0 {
-            line.unit_price
-        } else {
-            discounted / i64::from(line.quantity)
-        };
+        let discounted = line.unit_price * i64::from(line.quantity) - line.discount;
         let unfulfilled = line.quantity - fulfilled[position];
-        let unfulfilled_share = |total: i64| {
-            if line.quantity == 0 {
-                0
-            } else {
-                total * i64::from(unfulfilled) / i64::from(line.quantity)
-            }
-        };
         subtotal += discounted;
         line_discounts += line.discount;
         quantity += line.quantity;
         grams += line.grams * u64::from(line.quantity);
-        let name = match &line.variant_title {
-            Some(variant) => format!("{} - {variant}", line.title),
-            None => line.title.clone(),
-        };
-        state.insert(value::object(json!({
-            "__typename": "LineItem",
-            "id": id,
-            "name": name,
-            "title": line.title,
-            "variantTitle": line.variant_title,
-            "sku": line.sku,
-            "vendor": line.vendor,
-            "quantity": line.quantity,
-            "currentQuantity": line.quantity,
-            "unfulfilledQuantity": unfulfilled,
-            "nonFulfillableQuantity": 0,
-            "refundableQuantity": if draft.financial.captured() { line.quantity } else { 0 },
-            "originalUnitPriceSet": bag(line.unit_price),
-            "discountedUnitPriceSet": bag(unit_after),
-            "discountedUnitPriceAfterAllDiscountsSet": bag(unit_after),
-            "originalTotalSet": bag(original),
-            "discountedTotalSet": bag(discounted),
-            "totalDiscountSet": bag(line.discount),
-            "unfulfilledOriginalTotalSet": bag(unfulfilled_share(original)),
-            "unfulfilledDiscountedTotalSet": bag(unfulfilled_share(discounted)),
-            "requiresShipping": line.requires_shipping,
-            "taxable": line.taxable,
-            "isGiftCard": line.gift_card,
-            "restockable": true,
-            "product": line.product,
-            "variant": line.variant,
-            "image": line.image,
-            "weight": line.weight,
-            "customAttributes": attributes(&line.attributes),
-            "discountAllocations": [],
-            "taxLines": [],
-            "duties": [],
-            "sellingPlan": null,
-            "createdAt": created,
-        })));
+        state.insert(line_item_record(
+            &id,
+            line,
+            &currency,
+            unfulfilled,
+            draft.financial.captured(),
+            &created,
+        ));
         line_items.push(id);
     }
     let shipping_original = draft
@@ -840,6 +818,78 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     order
 }
 
+/// The `LineItem` record of a line: `unfulfilled` of its units left to ship, refundable when
+/// the order's money was taken.
+pub fn line_item_record(
+    id: &str,
+    line: &LineDraft,
+    currency: &str,
+    unfulfilled: u32,
+    captured: bool,
+    created: &str,
+) -> crate::state::Record {
+    let bag = |cents: i64| value::money_bag(cents, currency);
+    let original = line.unit_price * i64::from(line.quantity);
+    let discounted = original - line.discount;
+    let unit_after = if line.quantity == 0 {
+        line.unit_price
+    } else {
+        discounted / i64::from(line.quantity)
+    };
+    let unfulfilled_share = |total: i64| {
+        if line.quantity == 0 {
+            0
+        } else {
+            total * i64::from(unfulfilled) / i64::from(line.quantity)
+        }
+    };
+    let name = match &line.variant_title {
+        Some(variant) => format!("{} - {variant}", line.title),
+        None => line.title.clone(),
+    };
+    let attributes: Vec<Value> = line
+        .attributes
+        .iter()
+        .map(|(key, value)| json!({"key": key, "value": value}))
+        .collect();
+    value::object(json!({
+        "__typename": "LineItem",
+        "id": id,
+        "name": name,
+        "title": line.title,
+        "variantTitle": line.variant_title,
+        "sku": line.sku,
+        "vendor": line.vendor,
+        "quantity": line.quantity,
+        "currentQuantity": line.quantity,
+        "unfulfilledQuantity": unfulfilled,
+        "nonFulfillableQuantity": 0,
+        "refundableQuantity": if captured { line.quantity } else { 0 },
+        "originalUnitPriceSet": bag(line.unit_price),
+        "discountedUnitPriceSet": bag(unit_after),
+        "discountedUnitPriceAfterAllDiscountsSet": bag(unit_after),
+        "originalTotalSet": bag(original),
+        "discountedTotalSet": bag(discounted),
+        "totalDiscountSet": bag(line.discount),
+        "unfulfilledOriginalTotalSet": bag(unfulfilled_share(original)),
+        "unfulfilledDiscountedTotalSet": bag(unfulfilled_share(discounted)),
+        "requiresShipping": line.requires_shipping,
+        "taxable": line.taxable,
+        "isGiftCard": line.gift_card,
+        "restockable": true,
+        "product": line.product,
+        "variant": line.variant,
+        "image": line.image,
+        "weight": line.weight,
+        "customAttributes": attributes,
+        "discountAllocations": [],
+        "taxLines": [],
+        "duties": [],
+        "sellingPlan": null,
+        "createdAt": created,
+    }))
+}
+
 /// Whether two `MailingAddress`es are the same place for the same person (their ids aside).
 fn same_address(a: &Value, b: &Value) -> bool {
     [
@@ -881,7 +931,9 @@ pub struct PlacedOrder<'a> {
 
 /// Records an order placed in the local checkout: the order, its lines, its fulfillment order,
 /// the transaction of what was paid now; the customer's counters follow. Emits `orders/create`,
-/// then `orders/paid`, as Shopify does for a paid order. Returns the GID of the order.
+/// `order_transactions/create` for the payment, then `orders/paid` when paid in full, as Shopify
+/// does for a paid order. The stock is left as it is: the local checkout keeps the stock of the
+/// data, so that test purchases never sell a product out. Returns the GID of the order.
 pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> String {
     let result = placed.result;
     let id = placed
@@ -1041,6 +1093,15 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
     };
     let order = insert_order(state, &draft);
     state.emit("orders/create", &order);
+    // What Shopify fires for a paid online order: the order, the transaction of the payment,
+    // then `orders/paid`.
+    for transaction in state
+        .get(&order)
+        .map(|record| gids(record.get("transactions")))
+        .unwrap_or_default()
+    {
+        state.emit("order_transactions/create", &transaction);
+    }
     if draft.financial == FinancialStatus::Paid {
         state.emit("orders/paid", &order);
     }
@@ -1054,6 +1115,16 @@ pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
         .map(|record| gids(record.get("lineItems")))
         .unwrap_or_default()
 }
-/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
-/// a mutation" in `crates/admin/docs/design.md`.
-pub fn register(_registry: &mut crate::resolve::Registry) {}
+
+/// The custom resolvers and the mutations of this family: see "Writing a resolver or a
+/// mutation" in `crates/admin/docs/design.md`.
+pub fn register(registry: &mut crate::resolve::Registry) {
+    queries::register(registry);
+    lifecycle::register(registry);
+    fulfillments::register(registry);
+    refunds::register(registry);
+    returns::register(registry);
+    edits::register(registry);
+    drafts::register(registry);
+    services::register(registry);
+}
