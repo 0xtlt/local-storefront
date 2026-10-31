@@ -524,6 +524,35 @@ fn parse_and_validation_errors_answer_only_errors() {
     );
 }
 
+/// Fragments in fragments nest deeper than the parser sees: a chain of them past its limit is
+/// refused as a query nested too deeply, not answered with its deepest selections left out. A
+/// fragment spread many times at a shallow depth is fine.
+#[test]
+fn refuses_fragments_nested_too_deeply() {
+    let mut chained = String::from("{ shop { ...F0 } }\n");
+    for n in 0..5000 {
+        chained.push_str(&format!("fragment F{n} on Shop {{ name ...F{} }}\n", n + 1));
+    }
+    chained.push_str("fragment F5000 on Shop { name }\n");
+    let answer = query(&chained);
+    assert_eq!(
+        answer["errors"][0]["message"],
+        json!("This query is too large to execute."),
+        "{answer}"
+    );
+    assert!(answer.get("data").is_none(), "{answer}");
+
+    let mut wide = String::from("{ shop { ");
+    for _ in 0..2000 {
+        wide.push_str("...N ");
+    }
+    wide.push_str("} }\nfragment N on Shop { name }");
+    assert_eq!(
+        query(&wide)["data"]["shop"]["name"],
+        query("{ shop { name } }")["data"]["shop"]["name"]
+    );
+}
+
 #[test]
 fn refuses_a_query_over_the_single_query_limit() {
     let answer = query(

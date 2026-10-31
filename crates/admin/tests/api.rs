@@ -711,7 +711,10 @@ fn reports_its_status_and_triggers_webhooks_from_the_shop() {
         );
         let (headers, body) = receiver.next();
         assert_eq!(headers["x-shopify-shop-domain"], domain);
-        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!({"a": 1}));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({"a": 1})
+        );
     }
 }
 

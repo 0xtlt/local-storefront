@@ -466,6 +466,9 @@ pub fn prepare<'s, 'q>(
     let ast::Definition::Operation(definition) = &document.definitions[operation] else {
         return Err(vec![Error::new("An operation name is required")]);
     };
+    if nests_too_deep(&document, definition) {
+        return Err(vec![Error::new("This query is too large to execute.")]);
+    }
     let variables = coerce_variables(schema, definition, variables)?;
     Ok(Prepared {
         schema,
@@ -549,6 +552,56 @@ fn coerce_variables(
     } else {
         Err(errors)
     }
+}
+
+/// Whether the operation nests deeper than [`parse::MAX_DEPTH`] once its fragments are spread:
+/// a fragment's selections sit as deep as its spread, which the parser does not see. Refused as
+/// the parser refuses a query nested too deeply, rather than run with the deepest selections left
+/// out. Called after validation, which refuses fragment cycles.
+fn nests_too_deep(document: &ast::Document<'_>, operation: &ast::Operation<'_>) -> bool {
+    let fragments: HashMap<&str, &ast::Fragment<'_>> = document
+        .fragments()
+        .map(|fragment| (fragment.name, fragment))
+        .collect();
+    too_deep(&operation.selection_set, 0, &fragments, &mut HashMap::new())
+}
+
+/// Whether `set`, at `depth`, nests too deeply. `fine_from` keeps the deepest depth each fragment
+/// was found fine at, which a spread as deep or shallower need not check again: each fragment is
+/// walked at most [`parse::MAX_DEPTH`] times, however often it is spread.
+fn too_deep<'q>(
+    set: &ast::SelectionSet<'q>,
+    depth: usize,
+    fragments: &HashMap<&'q str, &ast::Fragment<'q>>,
+    fine_from: &mut HashMap<&'q str, usize>,
+) -> bool {
+    if depth > parse::MAX_DEPTH {
+        return true;
+    }
+    set.items.iter().any(|selection| match selection {
+        ast::Selection::Field(field) => {
+            too_deep(&field.selection_set, depth + 1, fragments, fine_from)
+        }
+        ast::Selection::InlineFragment(inline) => {
+            too_deep(&inline.selection_set, depth + 1, fragments, fine_from)
+        }
+        ast::Selection::FragmentSpread(spread) => {
+            if fine_from
+                .get(spread.name)
+                .is_some_and(|&fine| fine >= depth)
+            {
+                return false;
+            }
+            let Some(fragment) = fragments.get(spread.name) else {
+                return false;
+            };
+            if too_deep(&fragment.selection_set, depth + 1, fragments, fine_from) {
+                return true;
+            }
+            fine_from.insert(spread.name, depth);
+            false
+        }
+    })
 }
 
 /// What running an operation gave.

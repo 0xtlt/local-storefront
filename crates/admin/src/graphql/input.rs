@@ -665,7 +665,10 @@ mod tests {
             scalar("DateTime", &json!("2026-01-01T10:00+1é:0")),
             Err(ScalarError::Invalid)
         );
-        assert_eq!(scalar("UtcOffset", &json!("+é:00")), Err(ScalarError::Invalid));
+        assert_eq!(
+            scalar("UtcOffset", &json!("+é:00")),
+            Err(ScalarError::Invalid)
+        );
         assert!(scalar("DateTime", &json!("2026-13-01T10:00:00Z")).is_err());
         assert!(scalar("DateTime", &json!("yesterday")).is_err());
         assert!(scalar("Date", &json!("2026-02-29")).is_err());

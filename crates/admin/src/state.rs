@@ -814,8 +814,14 @@ mod tests {
     fn event_ids_differ_between_runs_of_the_same_data() {
         let mut first = ShopState::new("a.myshopify.com", Clock::System);
         let mut second = ShopState::new("a.myshopify.com", Clock::System);
-        let a = first.emit("products/update", "gid://shopify/Product/1").id.clone();
-        let b = second.emit("products/update", "gid://shopify/Product/1").id.clone();
+        let a = first
+            .emit("products/update", "gid://shopify/Product/1")
+            .id
+            .clone();
+        let b = second
+            .emit("products/update", "gid://shopify/Product/1")
+            .id
+            .clone();
         assert_ne!(a, b);
         assert_eq!(a.len(), 36);
     }

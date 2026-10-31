@@ -53,8 +53,8 @@ fn collect<'a>(
     visited: &mut Vec<&'a str>,
     depth: usize,
 ) {
-    // Fragments in fragments nest deeper than the parser sees: past its limit, the rest is
-    // left out (and the executor refuses the query).
+    // Fragments in fragments nest deeper than the parser sees: `prepare` refuses a query that
+    // does (`nests_too_deep`), so this only guards the stack.
     if depth > MAX_DEPTH {
         return;
     }
