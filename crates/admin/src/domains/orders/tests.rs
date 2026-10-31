@@ -814,3 +814,291 @@ fn refund_create_takes_back_lines_and_money() {
     assert!(shop.take_events().is_empty());
     assert_eq!(order(&mut shop, &id), after);
 }
+
+#[test]
+fn returns_are_requested_approved_processed_and_closed() {
+    let mut shop = demo();
+    let id = order_named(&shop, "#1001");
+    let returnable = run(
+        &mut shop,
+        "query($id: ID!) { returnableFulfillments(orderId: $id, first: 5) { nodes { id fulfillment { id }
+            returnableFulfillmentLineItems(first: 5) { nodes { quantity fulfillmentLineItem { id lineItem { id } } } } } } }",
+        json!({"id": id}),
+    );
+    let fulfillment = &returnable["data"]["returnableFulfillments"]["nodes"][0];
+    let line = fulfillment["returnableFulfillmentLineItems"]["nodes"][0].clone();
+    let fulfillment_line = line["fulfillmentLineItem"]["id"].clone();
+    let shipped = line["quantity"].as_i64().unwrap();
+    let node = run(
+        &mut shop,
+        "query($id: ID!) { returnableFulfillment(id: $id) { id } }",
+        json!({"id": fulfillment["id"]}),
+    );
+    assert_eq!(node["data"]["returnableFulfillment"]["id"], fulfillment["id"]);
+
+    let request = "mutation($input: ReturnRequestInput!) { returnRequest(input: $input) {
+        return { id name status totalQuantity returnLineItems(first: 5) { nodes { ... on ReturnLineItem { quantity processableQuantity customerNote } } } }
+        userErrors { field message code } } }";
+    let too_many = run(
+        &mut shop,
+        request,
+        json!({"input": {"orderId": id, "returnLineItems": [{"fulfillmentLineItemId": fulfillment_line, "quantity": shipped + 1, "returnReason": "DEFECTIVE"}]}}),
+    );
+    assert_eq!(
+        too_many["data"]["returnRequest"]["userErrors"],
+        json!([{"field": ["input", "returnLineItems", "0", "quantity"], "message": "Return line item has an invalid quantity.", "code": "INVALID"}])
+    );
+    let unknown = run(
+        &mut shop,
+        request,
+        json!({"input": {"orderId": id, "returnLineItems": [{"fulfillmentLineItemId": "gid://shopify/FulfillmentLineItem/1", "quantity": 1}]}}),
+    );
+    assert_eq!(
+        unknown["data"]["returnRequest"]["userErrors"][0]["message"],
+        json!("Fulfillment Line Item was not found.")
+    );
+    let requested = run(
+        &mut shop,
+        request,
+        json!({"input": {"orderId": id, "returnLineItems": [{"fulfillmentLineItemId": fulfillment_line, "quantity": 1, "customerNote": "Too small"}]}}),
+    );
+    let created = &requested["data"]["returnRequest"]["return"];
+    assert_eq!(created["status"], json!("REQUESTED"), "{requested}");
+    assert_eq!(created["name"], json!("#1001-R1"));
+    assert_eq!(created["returnLineItems"]["nodes"][0]["processableQuantity"], json!(0));
+    let return_id = created["id"].clone();
+    assert_eq!(topics(&mut shop), ["returns/request"]);
+    assert_eq!(
+        run(&mut shop, "query($id: ID!) { order(id: $id) { returnStatus } }", json!({"id": id}))["data"]["order"]["returnStatus"],
+        json!("RETURN_REQUESTED")
+    );
+
+    let approve = "mutation($id: ID!) { returnApproveRequest(input: {id: $id}) { return { status } userErrors { field message code } } }";
+    let approved = run(&mut shop, approve, json!({"id": return_id}));
+    assert_eq!(
+        approved["data"]["returnApproveRequest"],
+        json!({"return": {"status": "OPEN"}, "userErrors": []})
+    );
+    assert_eq!(topics(&mut shop), ["returns/approve"]);
+    let twice = run(&mut shop, approve, json!({"id": return_id}));
+    assert_eq!(
+        twice["data"]["returnApproveRequest"]["userErrors"],
+        json!([{"field": ["input", "id"], "message": "Return is not approvable. Only returns with status REQUESTED can be approved.", "code": "INVALID_STATE"}])
+    );
+
+    let return_line = run(
+        &mut shop,
+        "query($id: ID!) { return(id: $id) { returnLineItems(first: 1) { nodes { id } } } }",
+        json!({"id": return_id}),
+    )["data"]["return"]["returnLineItems"]["nodes"][0]["id"]
+        .clone();
+    let sale = order(&mut shop, &id)["transactions"][0]["id"].clone();
+    let processed = run(
+        &mut shop,
+        "mutation($input: ReturnProcessInput!) { returnProcess(input: $input) {
+            return { status closedAt refunds(first: 1) { nodes { totalRefundedSet { shopMoney { amount } } } } } userErrors { field message code } } }",
+        json!({"input": {
+            "returnId": return_id,
+            "returnLineItems": [{"id": return_line, "quantity": 1}],
+            "financialTransfer": {"issueRefund": {"orderTransactions": [{"parentId": sale, "transactionAmount": {"amount": "5.00", "currencyCode": "EUR"}}]}},
+        }}),
+    );
+    let done = &processed["data"]["returnProcess"];
+    assert_eq!(done["userErrors"], json!([]), "{processed}");
+    assert_eq!(done["return"]["status"], json!("CLOSED"));
+    assert_eq!(
+        done["return"]["refunds"]["nodes"][0]["totalRefundedSet"]["shopMoney"]["amount"],
+        json!("5.0")
+    );
+    let fired = topics(&mut shop);
+    assert!(fired.contains(&"refunds/create".to_string()), "{fired:?}");
+    assert!(fired.contains(&"returns/process".to_string()), "{fired:?}");
+    let after = order(&mut shop, &id);
+    assert_eq!(after["displayFinancialStatus"], json!("PARTIALLY_REFUNDED"));
+
+    let reopen = run(
+        &mut shop,
+        "mutation($id: ID!) { returnReopen(id: $id) { return { status closedAt } userErrors { message } } }",
+        json!({"id": return_id}),
+    );
+    assert_eq!(
+        reopen["data"]["returnReopen"],
+        json!({"return": {"status": "OPEN", "closedAt": null}, "userErrors": []})
+    );
+    let cancel = run(
+        &mut shop,
+        "mutation($id: ID!) { returnCancel(id: $id) { return { status } userErrors { message code } } }",
+        json!({"id": return_id}),
+    );
+    assert_eq!(cancel["data"]["returnCancel"]["userErrors"][0]["code"], json!("INVALID_STATE"));
+    let close = run(
+        &mut shop,
+        "mutation($id: ID!) { returnClose(id: $id) { return { status } userErrors { message } } }",
+        json!({"id": return_id}),
+    );
+    assert_eq!(close["data"]["returnClose"]["return"]["status"], json!("CLOSED"));
+    assert_eq!(topics(&mut shop), ["returns/reopen", "returns/close"]);
+}
+
+#[test]
+fn a_requested_return_is_declined_and_an_open_one_cancelled() {
+    let mut shop = demo();
+    let id = order_named(&shop, "#1001");
+    let fulfillment_line = shop
+        .get(shop.get(&id).unwrap()["fulfillments"][0].as_str().unwrap())
+        .unwrap()["fulfillmentLineItems"][0]
+        .clone();
+    let requested = run(
+        &mut shop,
+        "mutation($input: ReturnRequestInput!) { returnRequest(input: $input) { return { id } userErrors { message } } }",
+        json!({"input": {"orderId": id, "returnLineItems": [{"fulfillmentLineItemId": fulfillment_line, "quantity": 1}]}}),
+    );
+    let return_id = requested["data"]["returnRequest"]["return"]["id"].clone();
+    let declined = run(
+        &mut shop,
+        "mutation($id: ID!) { returnDeclineRequest(input: {id: $id, declineReason: FINAL_SALE, declineNote: \"Sale item\"}) { return { status decline { reason note } } userErrors { message } } }",
+        json!({"id": return_id}),
+    );
+    assert_eq!(
+        declined["data"]["returnDeclineRequest"]["return"],
+        json!({"status": "DECLINED", "decline": {"reason": "FINAL_SALE", "note": "Sale item"}})
+    );
+    let created = run(
+        &mut shop,
+        "mutation($input: ReturnInput!) { returnCreate(returnInput: $input) { return { id status name } userErrors { message } } }",
+        json!({"input": {"orderId": id, "returnLineItems": [{"fulfillmentLineItemId": fulfillment_line, "quantity": 1, "returnReasonNote": "Changed my mind"}]}}),
+    );
+    let open = &created["data"]["returnCreate"]["return"];
+    assert_eq!(open["status"], json!("OPEN"), "{created}");
+    assert_eq!(open["name"], json!("#1001-R2"));
+    let cancelled = run(
+        &mut shop,
+        "mutation($id: ID!) { returnCancel(id: $id) { return { status } userErrors { message } } }",
+        json!({"id": open["id"]}),
+    );
+    assert_eq!(cancelled["data"]["returnCancel"]["return"]["status"], json!("CANCELED"));
+    assert_eq!(
+        topics(&mut shop),
+        ["returns/request", "returns/decline", "returns/approve", "returns/cancel"]
+    );
+}
+
+#[test]
+fn an_order_edit_adds_removes_and_discounts_line_items() {
+    let mut shop = demo();
+    let id = order_named(&shop, "#1002");
+    let before = order(&mut shop, &id);
+    let existing = before["lineItems"]["nodes"][0].clone();
+    let existing_quantity = existing["quantity"].as_i64().unwrap();
+    let begin = run(
+        &mut shop,
+        "mutation($id: ID!) { orderEditBegin(id: $id) { calculatedOrder { id originalOrder { id }
+            lineItems(first: 5) { nodes { id quantity editableQuantity } } } orderEditSession { id } userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    let calculated = begin["data"]["orderEditBegin"]["calculatedOrder"].clone();
+    assert_eq!(calculated["originalOrder"]["id"], json!(id));
+    let session = begin["data"]["orderEditBegin"]["orderEditSession"]["id"].clone();
+    let calculated_line = calculated["lineItems"]["nodes"][0].clone();
+    assert_eq!(calculated_line["editableQuantity"], json!(existing_quantity));
+
+    // Another variant than the line's, by the session's id.
+    let line_variant = shop.get(existing["id"].as_str().unwrap()).unwrap()["variant"].clone();
+    let variant = shop
+        .keys("ProductVariant")
+        .find(|variant| json!(variant) != line_variant)
+        .unwrap()
+        .to_string();
+    let price = crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let added = run(
+        &mut shop,
+        "mutation($id: ID!, $variant: ID!) { orderEditAddVariant(id: $id, variantId: $variant, quantity: 2) {
+            calculatedLineItem { id quantity stagedChanges { __typename ... on OrderStagedChangeAddVariant { quantity } } }
+            calculatedOrder { subtotalLineItemsQuantity } userErrors { field message } } }",
+        json!({"id": session, "variant": variant}),
+    );
+    let payload = &added["data"]["orderEditAddVariant"];
+    assert_eq!(payload["userErrors"], json!([]), "{added}");
+    assert_eq!(
+        payload["calculatedLineItem"]["stagedChanges"],
+        json!([{"__typename": "OrderStagedChangeAddVariant", "quantity": 2}])
+    );
+    let added_line = payload["calculatedLineItem"]["id"].clone();
+    let duplicate = run(
+        &mut shop,
+        "mutation($id: ID!, $variant: ID!) { orderEditAddVariant(id: $id, variantId: $variant, quantity: 1) { userErrors { field message } } }",
+        json!({"id": calculated["id"], "variant": variant}),
+    );
+    assert_eq!(duplicate["data"]["orderEditAddVariant"]["userErrors"][0]["field"], json!(["variantId"]));
+    let discounted = run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!) { orderEditAddLineItemDiscount(id: $id, lineItemId: $line, discount: {percentValue: 50, description: \"Goodwill\"}) {
+            addedDiscountStagedChange { description value { ... on PricingPercentageValue { percentage } } }
+            calculatedLineItem { hasStagedLineItemDiscount } userErrors { field message } } }",
+        json!({"id": calculated["id"], "line": added_line}),
+    );
+    assert_eq!(
+        discounted["data"]["orderEditAddLineItemDiscount"]["addedDiscountStagedChange"],
+        json!({"description": "Goodwill", "value": {"percentage": 50.0}})
+    );
+    let removed = run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!) { orderEditSetQuantity(id: $id, lineItemId: $line, quantity: 0, restock: true) {
+            calculatedLineItem { quantity stagedChanges { __typename ... on OrderStagedChangeDecrementItem { delta restock } } } userErrors { field message } } }",
+        json!({"id": calculated["id"], "line": calculated_line["id"]}),
+    );
+    assert_eq!(
+        removed["data"]["orderEditSetQuantity"]["calculatedLineItem"],
+        json!({"quantity": 0, "stagedChanges": [{"__typename": "OrderStagedChangeDecrementItem", "delta": existing_quantity, "restock": true}]})
+    );
+    // Staging changes nothing of the order, and fires nothing.
+    assert_eq!(order(&mut shop, &id), before);
+    assert!(shop.take_events().is_empty());
+
+    let committed = run(
+        &mut shop,
+        "mutation($id: ID!) { orderEditCommit(id: $id, staffNote: \"Swapped\") { order { id edited } userErrors { field message } } }",
+        json!({"id": calculated["id"]}),
+    );
+    assert_eq!(
+        committed["data"]["orderEditCommit"],
+        json!({"order": {"id": id, "edited": true}, "userErrors": []})
+    );
+    let after = order(&mut shop, &id);
+    let lines = after["lineItems"]["nodes"].as_array().unwrap();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["currentQuantity"], json!(0));
+    assert_eq!(lines[1]["quantity"], json!(2));
+    assert_eq!(lines[1]["unfulfilledQuantity"], json!(2));
+    assert_eq!(amount(&after["currentSubtotalPriceSet"]), crate::state::value::decimal(price));
+    let fired = topics(&mut shop);
+    assert!(fired.contains(&"refunds/create".to_string()), "{fired:?}");
+    assert_eq!(&fired[fired.len() - 2..], ["orders/edited", "orders/updated"]);
+    let again = run(
+        &mut shop,
+        "mutation($id: ID!) { orderEditCommit(id: $id) { order { id } userErrors { field message } } }",
+        json!({"id": calculated["id"]}),
+    );
+    assert_eq!(
+        again["data"]["orderEditCommit"]["userErrors"],
+        json!([{"field": ["id"], "message": "The order edit was already committed."}])
+    );
+    // A unit that shipped cannot be removed.
+    let fulfilled = order_named(&shop, "#1001");
+    let begun = run(
+        &mut shop,
+        "mutation($id: ID!) { orderEditBegin(id: $id) { calculatedOrder { id lineItems(first: 1) { nodes { id editableQuantity } } } } }",
+        json!({"id": fulfilled}),
+    );
+    let calculated = &begun["data"]["orderEditBegin"]["calculatedOrder"];
+    assert_eq!(calculated["lineItems"]["nodes"][0]["editableQuantity"], json!(0));
+    let refused = run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!) { orderEditSetQuantity(id: $id, lineItemId: $line, quantity: 0) { userErrors { field message } } }",
+        json!({"id": calculated["id"], "line": calculated["lineItems"]["nodes"][0]["id"]}),
+    );
+    assert_eq!(
+        refused["data"]["orderEditSetQuantity"]["userErrors"],
+        json!([{"field": ["quantity"], "message": "Quantity cannot be less than the quantity that was fulfilled"}])
+    );
+}

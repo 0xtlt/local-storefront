@@ -375,65 +375,20 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     let order_number = crate::state::parse_gid(&order).map_or(0, |(_, id)| id);
     for (position, line) in draft.lines.iter().enumerate() {
         let id = line_item_gid(order_number, position);
-        let original = line.unit_price * i64::from(line.quantity);
-        let discounted = original - line.discount;
-        let unit_after = if line.quantity == 0 {
-            line.unit_price
-        } else {
-            discounted / i64::from(line.quantity)
-        };
+        let discounted = line.unit_price * i64::from(line.quantity) - line.discount;
         let unfulfilled = line.quantity - fulfilled[position];
-        let unfulfilled_share = |total: i64| {
-            if line.quantity == 0 {
-                0
-            } else {
-                total * i64::from(unfulfilled) / i64::from(line.quantity)
-            }
-        };
         subtotal += discounted;
         line_discounts += line.discount;
         quantity += line.quantity;
         grams += line.grams * u64::from(line.quantity);
-        let name = match &line.variant_title {
-            Some(variant) => format!("{} - {variant}", line.title),
-            None => line.title.clone(),
-        };
-        state.insert(value::object(json!({
-            "__typename": "LineItem",
-            "id": id,
-            "name": name,
-            "title": line.title,
-            "variantTitle": line.variant_title,
-            "sku": line.sku,
-            "vendor": line.vendor,
-            "quantity": line.quantity,
-            "currentQuantity": line.quantity,
-            "unfulfilledQuantity": unfulfilled,
-            "nonFulfillableQuantity": 0,
-            "refundableQuantity": if draft.financial.captured() { line.quantity } else { 0 },
-            "originalUnitPriceSet": bag(line.unit_price),
-            "discountedUnitPriceSet": bag(unit_after),
-            "discountedUnitPriceAfterAllDiscountsSet": bag(unit_after),
-            "originalTotalSet": bag(original),
-            "discountedTotalSet": bag(discounted),
-            "totalDiscountSet": bag(line.discount),
-            "unfulfilledOriginalTotalSet": bag(unfulfilled_share(original)),
-            "unfulfilledDiscountedTotalSet": bag(unfulfilled_share(discounted)),
-            "requiresShipping": line.requires_shipping,
-            "taxable": line.taxable,
-            "isGiftCard": line.gift_card,
-            "restockable": true,
-            "product": line.product,
-            "variant": line.variant,
-            "image": line.image,
-            "weight": line.weight,
-            "customAttributes": attributes(&line.attributes),
-            "discountAllocations": [],
-            "taxLines": [],
-            "duties": [],
-            "sellingPlan": null,
-            "createdAt": created,
-        })));
+        state.insert(line_item_record(
+            &id,
+            line,
+            &currency,
+            unfulfilled,
+            draft.financial.captured(),
+            &created,
+        ));
         line_items.push(id);
     }
     let shipping_original = draft
@@ -860,6 +815,78 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         customers::refresh_customer(state, customer);
     }
     order
+}
+
+/// The `LineItem` record of a line: `unfulfilled` of its units left to ship, refundable when
+/// the order's money was taken.
+pub fn line_item_record(
+    id: &str,
+    line: &LineDraft,
+    currency: &str,
+    unfulfilled: u32,
+    captured: bool,
+    created: &str,
+) -> crate::state::Record {
+    let bag = |cents: i64| value::money_bag(cents, currency);
+    let original = line.unit_price * i64::from(line.quantity);
+    let discounted = original - line.discount;
+    let unit_after = if line.quantity == 0 {
+        line.unit_price
+    } else {
+        discounted / i64::from(line.quantity)
+    };
+    let unfulfilled_share = |total: i64| {
+        if line.quantity == 0 {
+            0
+        } else {
+            total * i64::from(unfulfilled) / i64::from(line.quantity)
+        }
+    };
+    let name = match &line.variant_title {
+        Some(variant) => format!("{} - {variant}", line.title),
+        None => line.title.clone(),
+    };
+    let attributes: Vec<Value> = line
+        .attributes
+        .iter()
+        .map(|(key, value)| json!({"key": key, "value": value}))
+        .collect();
+    value::object(json!({
+        "__typename": "LineItem",
+        "id": id,
+        "name": name,
+        "title": line.title,
+        "variantTitle": line.variant_title,
+        "sku": line.sku,
+        "vendor": line.vendor,
+        "quantity": line.quantity,
+        "currentQuantity": line.quantity,
+        "unfulfilledQuantity": unfulfilled,
+        "nonFulfillableQuantity": 0,
+        "refundableQuantity": if captured { line.quantity } else { 0 },
+        "originalUnitPriceSet": bag(line.unit_price),
+        "discountedUnitPriceSet": bag(unit_after),
+        "discountedUnitPriceAfterAllDiscountsSet": bag(unit_after),
+        "originalTotalSet": bag(original),
+        "discountedTotalSet": bag(discounted),
+        "totalDiscountSet": bag(line.discount),
+        "unfulfilledOriginalTotalSet": bag(unfulfilled_share(original)),
+        "unfulfilledDiscountedTotalSet": bag(unfulfilled_share(discounted)),
+        "requiresShipping": line.requires_shipping,
+        "taxable": line.taxable,
+        "isGiftCard": line.gift_card,
+        "restockable": true,
+        "product": line.product,
+        "variant": line.variant,
+        "image": line.image,
+        "weight": line.weight,
+        "customAttributes": attributes,
+        "discountAllocations": [],
+        "taxLines": [],
+        "duties": [],
+        "sellingPlan": null,
+        "createdAt": created,
+    }))
 }
 
 /// Whether two `MailingAddress`es are the same place for the same person (their ids aside).
