@@ -18,6 +18,7 @@ pub mod model;
 pub mod payments;
 mod queries;
 mod refunds;
+mod requested_edits;
 mod returns;
 pub mod risk;
 mod services;
@@ -1340,6 +1341,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     drafts::register(registry);
     services::register(registry);
     payments::register(registry);
+    requested_edits::register(registry);
     risk::register(registry);
     store_credit::register(registry);
 }

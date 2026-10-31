@@ -252,3 +252,139 @@ fn an_edits_discount_is_updated_and_removed_from_its_line() {
         json!({"calculatedLineItem": {"id": line["id"], "hasStagedLineItemDiscount": false}, "userErrors": []})
     );
 }
+
+const REQUEST: &str =
+    "mutation($input: RequestedOrderEditCreateInput!) { requestedOrderEditCreate(input: $input) {
+    requestedOrderEdit { id status requestedAt order { id displayRequestedEditStatus }
+      lineItems { removals(first: 5) { nodes { id quantity resolvedQuantity lineItem { id } } } } }
+    userErrors { field message code } } }";
+
+#[test]
+fn a_requested_edit_is_resolved_with_what_the_merchant_took_off() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1002");
+    let line = super::line_items(&shop, &order)[0].clone();
+    let created = run(
+        &mut shop,
+        REQUEST,
+        json!({"input": {"orderId": order, "lineItems": {"removals": [{"lineItemId": line, "quantity": 1}]}}}),
+    );
+    let edit = &created["data"]["requestedOrderEditCreate"]["requestedOrderEdit"];
+    assert_eq!(
+        created["data"]["requestedOrderEditCreate"]["userErrors"],
+        json!([]),
+        "{created}"
+    );
+    assert_eq!(edit["status"], "REQUESTED");
+    assert_eq!(edit["order"]["displayRequestedEditStatus"], "REQUESTED");
+    assert_eq!(edit["lineItems"]["removals"]["nodes"][0]["quantity"], 1);
+    assert_eq!(topics(&mut shop), ["requested_order_edit/created"]);
+    let id = edit["id"].clone();
+    // The merchant removes the unit with an order edit, then resolves the request.
+    let calculated = begin(&mut shop, &order);
+    let calculated_line = shop.get(&calculated).unwrap()["lineItems"][0]["id"].clone();
+    let current = shop.get(&line).unwrap()["currentQuantity"]
+        .as_i64()
+        .unwrap();
+    run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!, $quantity: Int!) { orderEditSetQuantity(id: $id, lineItemId: $line, quantity: $quantity) { userErrors { message } } }",
+        json!({"id": calculated, "line": calculated_line, "quantity": current - 1}),
+    );
+    run(
+        &mut shop,
+        "mutation($id: ID!) { orderEditCommit(id: $id) { userErrors { message } } }",
+        json!({"id": calculated}),
+    );
+    topics(&mut shop);
+    let resolve = "mutation($id: ID!) { requestedOrderEditResolve(input: {id: $id}) {
+        requestedOrderEdit { status requestResolvedAt order { displayRequestedEditStatus } lineItems { removals(first: 5) { nodes { resolvedQuantity } } } }
+        userErrors { field message code } } }";
+    let resolved = run(&mut shop, resolve, json!({"id": id}));
+    let edit = &resolved["data"]["requestedOrderEditResolve"]["requestedOrderEdit"];
+    assert_eq!(edit["status"], "RESOLVED");
+    assert!(edit["requestResolvedAt"].is_string());
+    assert_eq!(edit["order"]["displayRequestedEditStatus"], "RESOLVED");
+    assert_eq!(
+        edit["lineItems"]["removals"]["nodes"][0]["resolvedQuantity"],
+        1
+    );
+    assert_eq!(topics(&mut shop), ["requested_order_edit/resolved"]);
+    // Closed, it cannot be declined.
+    let again = run(
+        &mut shop,
+        "mutation($id: ID!) { requestedOrderEditDecline(input: {id: $id}) { requestedOrderEdit { id } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        again["data"]["requestedOrderEditDecline"]["userErrors"][0]["code"],
+        "INVALID"
+    );
+}
+
+#[test]
+fn a_requested_edit_is_declined_with_a_note_to_the_buyer() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1002");
+    let line = super::line_items(&shop, &order)[0].clone();
+    let created = run(
+        &mut shop,
+        REQUEST,
+        json!({"input": {"orderId": order, "lineItems": {"removals": [{"lineItemId": line, "quantity": 1}]}}}),
+    );
+    let id = created["data"]["requestedOrderEditCreate"]["requestedOrderEdit"]["id"].clone();
+    topics(&mut shop);
+    let declined = run(
+        &mut shop,
+        "mutation($id: ID!) { requestedOrderEditDecline(input: {id: $id, declineNote: \"Already packed\"}) {
+            requestedOrderEdit { status requestDeclinedAt order { displayRequestedEditStatus } } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    let edit = &declined["data"]["requestedOrderEditDecline"]["requestedOrderEdit"];
+    assert_eq!(edit["status"], "DECLINED");
+    assert_eq!(edit["order"]["displayRequestedEditStatus"], "DECLINED");
+    assert_eq!(topics(&mut shop), ["requested_order_edit/declined"]);
+    let emails = crate::outbox::emails(&shop);
+    assert_eq!(emails[0]["template"], "requested_order_edit_declined");
+    assert!(
+        emails[0]["body"]
+            .as_str()
+            .unwrap()
+            .contains("Already packed")
+    );
+}
+
+#[test]
+fn a_requested_edit_is_refused_beyond_what_is_left_to_fulfill() {
+    let mut shop = demo();
+    let fulfilled = order_named(&shop, "#1001");
+    let shipped = super::line_items(&shop, &fulfilled)[0].clone();
+    let open = order_named(&shop, "#1002");
+    let before = shop.get(&fulfilled).cloned();
+    for (input, code) in [
+        (
+            json!({"orderId": fulfilled, "lineItems": {"removals": [{"lineItemId": shipped, "quantity": 1}]}}),
+            "INVALID",
+        ),
+        (
+            json!({"orderId": open, "lineItems": {"removals": [{"lineItemId": shipped, "quantity": 1}]}}),
+            "NOT_FOUND",
+        ),
+        (
+            json!({"orderId": open, "lineItems": {"removals": []}}),
+            "BLANK",
+        ),
+        (
+            json!({"orderId": "gid://shopify/Order/1", "lineItems": {"removals": []}}),
+            "NOT_FOUND",
+        ),
+    ] {
+        let answer = run(&mut shop, REQUEST, json!({"input": input}));
+        let payload = &answer["data"]["requestedOrderEditCreate"];
+        assert_eq!(payload["requestedOrderEdit"], Value::Null);
+        assert_eq!(payload["userErrors"][0]["code"], code, "{answer}");
+    }
+    assert_eq!(shop.get(&fulfilled).cloned(), before);
+    assert_eq!(shop.count("RequestedOrderEdit"), 0);
+    assert!(topics(&mut shop).is_empty());
+}

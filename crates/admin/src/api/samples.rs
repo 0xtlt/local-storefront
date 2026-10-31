@@ -50,6 +50,7 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("fulfillment_orders", _) => &["FulfillmentOrder"],
         ("fulfillment_holds", _) => &["FulfillmentHold"],
         ("fulfillment_events", _) => &["FulfillmentEvent"],
+        ("requested_order_edit", _) => &["RequestedOrderEdit"],
         ("returns", _) => &["Return"],
         ("fulfillments", _) => &["Fulfillment"],
         ("refunds", _) => &["Refund"],

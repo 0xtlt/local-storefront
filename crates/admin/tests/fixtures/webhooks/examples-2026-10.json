@@ -7446,6 +7446,60 @@
         }
       ]
     },
+    "requested_order_edit/created": {
+      "id": 963881762,
+      "admin_graphql_api_id": "gid://shopify/RequestedOrderEdit/963881762",
+      "status": "requested",
+      "order_id": 820982911946154508,
+      "requested_at": "2026-01-15T07:00:00-05:00",
+      "line_items": {
+        "removals": [
+          {
+            "id": 1071823172,
+            "admin_graphql_api_id": "gid://shopify/RequestedOrderEditLineItem/1071823172",
+            "line_item_id": 866550311766439020,
+            "quantity": 2,
+            "resolved_quantity": 0
+          }
+        ]
+      }
+    },
+    "requested_order_edit/declined": {
+      "id": 963881762,
+      "admin_graphql_api_id": "gid://shopify/RequestedOrderEdit/963881762",
+      "status": "declined",
+      "order_id": 820982911946154508,
+      "requested_at": "2026-01-15T07:00:00-05:00",
+      "line_items": {
+        "removals": [
+          {
+            "id": 1071823172,
+            "admin_graphql_api_id": "gid://shopify/RequestedOrderEditLineItem/1071823172",
+            "line_item_id": 866550311766439020,
+            "quantity": 2,
+            "resolved_quantity": 0
+          }
+        ]
+      }
+    },
+    "requested_order_edit/resolved": {
+      "id": 963881762,
+      "admin_graphql_api_id": "gid://shopify/RequestedOrderEdit/963881762",
+      "status": "resolved",
+      "order_id": 820982911946154508,
+      "requested_at": "2026-01-15T07:00:00-05:00",
+      "line_items": {
+        "removals": [
+          {
+            "id": 1071823172,
+            "admin_graphql_api_id": "gid://shopify/RequestedOrderEditLineItem/1071823172",
+            "line_item_id": 866550311766439020,
+            "quantity": 2,
+            "resolved_quantity": 2
+          }
+        ]
+      }
+    },
     "returns/approve": {
       "id": 123134564567890,
       "admin_graphql_api_id": "gid://shopify/Return/123134564567890",

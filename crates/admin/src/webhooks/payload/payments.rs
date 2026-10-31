@@ -134,3 +134,33 @@ pub(super) fn protect_eligibility(order: &Map<String, Value>) -> Value {
         },
     })
 }
+
+/// `requested_order_edit/created`, `…/declined`, `…/resolved`: a `RequestedOrderEdit` with its
+/// removals.
+pub(super) fn requested_order_edit(edit: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let removals: Vec<Value> = records(
+        field(edit, "lineItems")
+            .get("removals")
+            .unwrap_or(&Value::Null),
+        lookup,
+    )
+    .iter()
+    .map(|item| {
+        json!({
+            "id": id(item),
+            "admin_graphql_api_id": text(item, "id"),
+            "line_item_id": ref_id(field(item, "lineItem")),
+            "quantity": field(item, "quantity"),
+            "resolved_quantity": field(item, "resolvedQuantity"),
+        })
+    })
+    .collect();
+    json!({
+        "id": id(edit),
+        "admin_graphql_api_id": text(edit, "id"),
+        "status": lower(field(edit, "status")),
+        "order_id": ref_id(field(edit, "order")),
+        "requested_at": time(field(edit, "requestedAt")),
+        "line_items": {"removals": removals},
+    })
+}

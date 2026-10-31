@@ -99,6 +99,7 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "payment_schedules" => (payment_schedule(), Vec::new()),
         "payment_terms" => (payment_terms(), vec![payment_schedule()]),
         "tender_transactions" => (tender_transaction(), Vec::new()),
+        "requested_order_edit" => requested_order_edit(topic),
         "fulfillment_events" => (fulfillment_event(), vec![fulfillment()]),
         "fulfillment_holds" => (fulfillment_hold(topic), Vec::new()),
         "fulfillment_orders" => fulfillment_order_sample(topic),
@@ -973,6 +974,33 @@ fn payment_terms() -> Value {
         "createdAt": "2021-01-01T00:00:00-05:00",
         "updatedAt": "2021-01-01T00:00:01-05:00",
     })
+}
+
+/// The request of the `requested_order_edit/…` examples, in the status of the topic, and its
+/// removal.
+fn requested_order_edit(topic: &str) -> (Value, Vec<Value>) {
+    let (status, resolved) = match topic {
+        "requested_order_edit/declined" => ("DECLINED", 0),
+        "requested_order_edit/resolved" => ("RESOLVED", 2),
+        _ => ("REQUESTED", 0),
+    };
+    (
+        json!({
+            "__typename": "RequestedOrderEdit",
+            "id": "gid://shopify/RequestedOrderEdit/963881762",
+            "status": status,
+            "order": "gid://shopify/Order/820982911946154508",
+            "requestedAt": "2026-01-15T07:00:00-05:00",
+            "lineItems": {"removals": ["gid://shopify/RequestedOrderEditLineItem/1071823172"]},
+        }),
+        vec![json!({
+            "__typename": "RequestedOrderEditLineItem",
+            "id": "gid://shopify/RequestedOrderEditLineItem/1071823172",
+            "lineItem": "gid://shopify/LineItem/866550311766439020",
+            "quantity": 2,
+            "resolvedQuantity": resolved,
+        })],
+    )
 }
 
 /// The tender transaction of `tender_transactions/create`'s example.
