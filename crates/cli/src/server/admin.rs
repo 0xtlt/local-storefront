@@ -1,9 +1,11 @@
 //! The Admin API of the server: `lsf-admin`'s [`AdminApi`], built from the store data and the
 //! app of `--app`, and routed before the storefront and the checkout. Its requests (the GraphQL
 //! Admin API, OAuth, `/__lsf/admin`, `/__lsf/webhooks`) are answered here; what the checkout
-//! places is recorded in its default shop.
+//! places is recorded in its default shop. What the backend changes in the default shop shows
+//! in the storefront and the checkout: see `store_sync`.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
 use lsf_admin::auth::SecretSource;
@@ -32,8 +34,10 @@ pub struct Admin {
 }
 
 impl Admin {
-    /// The Admin API of the store data, for the app in `app_dir` when there is one.
-    pub fn new(store: &Store, settings: &AdminSettings, app_dir: Option<&Path>) -> Admin {
+    /// The Admin API of the store data, for the app in `app_dir` when there is one, with store
+    /// sync on: what the backend changes in the default shop is projected onto `store`, the
+    /// store of the files.
+    pub fn new(store: &Arc<Store>, settings: &AdminSettings, app_dir: Option<&Path>) -> Admin {
         let app = app_dir.and_then(|dir| lsf_checkout::app::load(dir).ok());
         let (secret, secret_source) =
             lsf_admin::auth::client_secret(settings.client_secret.as_deref(), app_dir);
@@ -48,6 +52,7 @@ impl Admin {
                 token_seed: None,
             },
         );
+        api.sync_store(store.clone());
         Admin {
             api,
             secret,

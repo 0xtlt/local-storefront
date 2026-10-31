@@ -19,6 +19,7 @@ mod minify;
 pub mod params;
 pub mod reply;
 mod speedscope;
+mod store_sync;
 mod storefront;
 #[cfg(test)]
 mod tests;
@@ -86,17 +87,28 @@ pub struct ServeOptions {
     pub admin: Option<admin::AdminSettings>,
 }
 
-/// The store as last loaded from disk.
+/// The store as last loaded from disk, with what the Admin API changed on top.
 pub struct Loaded {
+    /// What the storefront and the checkout see: the files, and what the Admin API changed in
+    /// its default shop (`store_sync`).
     pub store: Arc<Store>,
+    /// The problems of the files.
     pub diagnostics: Diagnostics,
     fingerprint: u64,
+    /// The store of the files alone: what the shops of the Admin API were seeded from, which
+    /// store sync projects their changes onto. `store` itself while the Admin API changed
+    /// nothing the store data shows.
+    pub base: Arc<Store>,
+    /// What the Admin API changed, as `store` has it.
+    pub synced: store_sync::Applied,
 }
 
 pub struct SessionEntry {
     pub session: Session,
     /// Store data specific to this session, set through the control API.
     pub store: Option<Arc<Store>>,
+    /// The data `store` was built from, to build it again when what the Admin API changed does.
+    pub data: Option<store_sync::SessionData>,
     /// A throttle of its own, which replaces the server's for this session.
     pub throttle: Option<throttle::Throttle>,
     /// What the buyer entered at the checkout of the app.
@@ -107,6 +119,12 @@ pub struct ServerState {
     pub app: App,
     pub options: ServeOptions,
     loaded: RwLock<Arc<Loaded>>,
+    /// Held while the store is built: from the files (`reload`), or with what the Admin API
+    /// changed (`store_sync`). One build at a time, each swapped into `loaded` whole.
+    rebuilding: Mutex<()>,
+    /// The count of the Admin API's changes ([`lsf_admin::api::AdminApi::store_changes`]) the
+    /// store was last brought up to date with.
+    admin_changes: AtomicU64,
     last_check: Mutex<Instant>,
     sessions: Mutex<HashMap<String, SessionEntry>>,
     /// The variants of the images that were encoded, by what they were made from: encoding
@@ -215,6 +233,7 @@ fn fingerprint(root: &Path) -> u64 {
 impl ServerState {
     pub fn new(app: App, options: ServeOptions) -> (ServerState, Diagnostics) {
         let (store, diagnostics) = app.load_store();
+        let base = Arc::new(store);
         let fingerprint = app
             .data_dir()
             .map_or(0, |directory| fingerprint(&directory));
@@ -223,14 +242,19 @@ impl ServerState {
                 .checkout
                 .as_ref()
                 .map(|checkout| checkout.app_dir.as_path());
-            admin::Admin::new(&store, settings, app_dir)
+            admin::Admin::new(&base, settings, app_dir)
         });
+        let admin_changes = admin.as_ref().map_or(0, |admin| admin.api.store_changes());
         let state = ServerState {
             loaded: RwLock::new(Arc::new(Loaded {
-                store: Arc::new(store),
+                store: base.clone(),
                 diagnostics: diagnostics.clone(),
                 fingerprint,
+                base,
+                synced: Default::default(),
             })),
+            rebuilding: Mutex::new(()),
+            admin_changes: AtomicU64::new(admin_changes),
             app,
             options,
             last_check: Mutex::new(Instant::now()),
@@ -262,26 +286,50 @@ impl ServerState {
     }
 
     /// Reloads the store from disk. Sessions keep their cart and customer; the shops of the
-    /// Admin API are seeded again, and what it changed in them is dropped (the terminal says so).
+    /// Admin API are seeded again, and what it changed in them is dropped (the terminal says so):
+    /// the store is the files'.
     pub fn reload(&self) -> Arc<Loaded> {
+        // A build that panicked leaves nothing half done behind this lock: it guards no data.
+        let _rebuilding = self
+            .rebuilding
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (store, diagnostics) = self.app.load_store();
-        if let Some(admin) = &self.admin {
-            let reseeded = admin.api.reseed(&store);
-            if !reseeded.dropped.is_empty() && !self.options.quiet {
-                eprintln!(
-                    "admin:  the store data changed: the shops were seeded again, and what the Admin API changed in {} was dropped",
-                    reseeded.dropped.join(", ")
-                );
-            }
-        }
-        let loaded = Arc::new(Loaded {
-            store: Arc::new(store),
+        let base = Arc::new(store);
+        let files = Loaded {
+            store: base.clone(),
             diagnostics,
             fingerprint: self
                 .app
                 .data_dir()
                 .map_or(0, |directory| fingerprint(&directory)),
-        });
+            base,
+            synced: Default::default(),
+        };
+        let loaded = match &self.admin {
+            Some(admin) => {
+                let reseeded = admin.api.reseed(&files.base);
+                if !reseeded.dropped.is_empty() && !self.options.quiet {
+                    eprintln!(
+                        "admin:  the store data changed: the shops were seeded again, and what the Admin API changed in {} was dropped",
+                        reseeded.dropped.join(", ")
+                    );
+                }
+                admin.api.sync_store(files.base.clone());
+                // Nothing changed since the reseed, unless a request of the backend came in
+                // meanwhile: then the store has it already.
+                match admin.api.synced() {
+                    Some(synced) => {
+                        let loaded = self.with_admin_changes(&files, &synced);
+                        self.admin_changes.store(synced.changes, Ordering::Release);
+                        loaded
+                    }
+                    None => files,
+                }
+            }
+            None => files,
+        };
+        let loaded = Arc::new(loaded);
         *self.loaded.write().expect("store lock poisoned") = loaded.clone();
         loaded
     }
@@ -318,6 +366,8 @@ impl ServerState {
     fn change_token(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         hasher.write_u64(self.builds.generation());
+        // What the Admin API changed, once the store has it.
+        hasher.write_u64(self.loaded().synced.generation);
         let root = self.app.theme.files().root();
         for directory in THEME_DIRECTORIES {
             hasher.write_u64(fingerprint(&root.join(directory)));
@@ -332,6 +382,9 @@ impl ServerState {
     /// last, what is cached about the files is dropped: the pages reload at once, and must be
     /// rendered from the files as they are, not as they were a moment ago.
     pub fn observe_changes(&self) -> u64 {
+        // What the Admin API changed is built first: the token then says so, and the pages that
+        // reload find it built.
+        self.sync_admin_changes(None);
         let token = self.change_token();
         if self.last_token.swap(token, Ordering::Relaxed) != token {
             self.app.theme.files().expire();
@@ -439,6 +492,7 @@ impl ServerState {
                     ..self.initial_session(&self.loaded().store)
                 },
                 store: None,
+                data: None,
                 throttle: None,
                 checkout: Default::default(),
             });
@@ -528,6 +582,8 @@ impl ServerState {
         if let Some(reply) = admin::route(self, incoming) {
             return reply;
         }
+        // What follows sees what the Admin API changed.
+        self.sync_admin_changes(Some(incoming));
         if incoming.path.starts_with("/__lsf") {
             return control::handle(self, incoming);
         }

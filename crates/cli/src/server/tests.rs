@@ -12,6 +12,8 @@ use super::throttle::Throttle;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
+mod store_sync;
+
 fn server() -> ServerState {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
     let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");

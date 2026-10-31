@@ -6,7 +6,7 @@ use std::sync::Arc;
 use lsf_core::diagnostics::Diagnostics;
 use lsf_core::render::cost::Costs;
 use lsf_core::render::{ProfileOptions, Target};
-use lsf_core::store::load::{OVERLAY_FILE, load_with_overlay};
+use lsf_core::store::load::OVERLAY_FILE;
 use lsf_core::store::model::SessionInput;
 use lsf_core::store::validate::{FileKind, schema, validate};
 use lsf_core::{Session, Store};
@@ -14,6 +14,7 @@ use lsf_liquid::filters::escape_html;
 use serde_json::{Value as Json, json};
 
 use super::reply::Reply;
+use super::store_sync::SessionData;
 use super::storefront::Visit;
 use super::throttle::Throttle;
 use super::{Incoming, SESSION_COOKIE, ServerState, speedscope};
@@ -373,16 +374,13 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
         Err(error) => return Reply::json(422, &json!({"ok": false, "error": error.to_string()})),
     };
 
-    // Session-specific data: the files plus the overlay. What it says of the data without
-    // refusing it (a field it ignores) comes back with the session.
+    // Session-specific data: the files, what the Admin API changed, then the overlay. What it
+    // says of the data without refusing it (a field it ignores) comes back with the session.
     let mut warnings = Vec::new();
-    let custom_store = match &overlay {
+    let loaded = state.loaded();
+    let custom_store = match overlay {
         Some(overlay) => {
-            let (store, overlay_diagnostics) = load_with_overlay(
-                &state.app.source(),
-                &state.app.load_options(),
-                Some(overlay),
-            );
+            let (store, overlay_diagnostics) = state.session_store(&loaded, &overlay);
             let mut relevant = Diagnostics::new();
             relevant.items = overlay_diagnostics
                 .items
@@ -393,13 +391,17 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
                 return Reply::json(422, &diagnostics_json(&relevant));
             }
             warnings = relevant.items;
-            Some(Arc::new(store))
+            let data = SessionData {
+                data: Arc::new(overlay),
+                generation: loaded.synced.generation,
+            };
+            Some((Arc::new(store), data))
         }
         None => None,
     };
     let store = custom_store
-        .clone()
-        .unwrap_or_else(|| state.loaded().store.clone());
+        .as_ref()
+        .map_or_else(|| loaded.store.clone(), |(store, _)| store.clone());
 
     let mut session = state.initial_session(&store);
     apply_session_input(&store, &input, &mut session, &mut diagnostics, OVERLAY_FILE);
@@ -412,7 +414,7 @@ fn set_session(state: &ServerState, incoming: &Incoming) -> Reply {
             cart_token: std::mem::take(&mut entry.session.cart_token),
             ..session
         };
-        entry.store = custom_store;
+        (entry.store, entry.data) = custom_store.unzip();
         entry.throttle = throttle;
     });
     let reply = Reply::json(
