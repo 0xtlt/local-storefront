@@ -64,15 +64,19 @@ fn dotenv_value(file: &Path, key: &str) -> Option<String> {
             return None;
         }
         let value = value.trim();
-        let unquoted = value
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-            .or_else(|| {
-                value
-                    .strip_prefix('\'')
-                    .and_then(|value| value.strip_suffix('\''))
-            })
-            .unwrap_or_else(|| value.split(" #").next().unwrap_or(value).trim());
+        // A quoted value ends at its closing quote, whatever follows it (`"s3cr3t"  # a note`);
+        // an unquoted one at a `#` that starts it or follows white space.
+        let quoted = ['"', '\''].into_iter().find_map(|quote| {
+            let inner = value.strip_prefix(quote)?;
+            inner.find(quote).map(|end| &inner[..end])
+        });
+        let unquoted = quoted.unwrap_or_else(|| {
+            let comment = value
+                .char_indices()
+                .find(|&(at, c)| c == '#' && (at == 0 || value[..at].ends_with([' ', '\t'])))
+                .map_or(value.len(), |(at, _)| at);
+            value[..comment].trim_end()
+        });
         (!unquoted.is_empty()).then(|| unquoted.to_string())
     })
 }
@@ -88,13 +92,19 @@ mod tests {
         let file = dir.join(".env");
         std::fs::write(
             &file,
-            "# the app\nSHOPIFY_API_KEY=abc\nexport SHOPIFY_API_SECRET=\"s3cr3t\"\n",
+            "# the app\nSHOPIFY_API_KEY=abc\nexport SHOPIFY_API_SECRET=\"s3cr3t\"\n\
+             QUOTED='a#b'  # a note\nNOTED=\"s3cr3t\"  # from the Dev Dashboard\n\
+             PLAIN=x#y # a note\nEMPTY= # nothing\n",
         )
         .unwrap();
         assert_eq!(
             dotenv_value(&file, "SHOPIFY_API_SECRET").as_deref(),
             Some("s3cr3t")
         );
+        assert_eq!(dotenv_value(&file, "NOTED").as_deref(), Some("s3cr3t"));
+        assert_eq!(dotenv_value(&file, "QUOTED").as_deref(), Some("a#b"));
+        assert_eq!(dotenv_value(&file, "PLAIN").as_deref(), Some("x#y"));
+        assert_eq!(dotenv_value(&file, "EMPTY"), None);
         assert_eq!(
             dotenv_value(&file, "SHOPIFY_API_KEY").as_deref(),
             Some("abc")
