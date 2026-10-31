@@ -97,7 +97,7 @@ pub struct Args {
     /// shopify.app.toml are delivered there (a relative `uri` is joined to it, and an absolute
     /// one on the origin of `application_url` is moved to it), and the OAuth redirects and the
     /// embedded app's launch go there. Without it, `application_url`.
-    #[arg(long, env = "LSF_APP_URL", value_name = "URL")]
+    #[arg(long, env = "LSF_APP_URL", value_name = "URL", value_parser = super::app_url)]
     app_url: Option<String>,
 
     /// The client secret webhooks, OAuth and session tokens are signed with: the backend checks

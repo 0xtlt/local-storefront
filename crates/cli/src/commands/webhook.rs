@@ -80,7 +80,7 @@ pub struct TriggerArgs {
 
     /// Where the backend of the app listens: relative `uri`s are joined to it, and absolute ones
     /// on the origin of `application_url` are moved to it. Without it, `application_url`.
-    #[arg(long, env = "LSF_APP_URL", value_name = "URL")]
+    #[arg(long, env = "LSF_APP_URL", value_name = "URL", value_parser = super::app_url)]
     app_url: Option<String>,
 
     /// Print the deliveries as JSON: their request, their attempts, their state.
