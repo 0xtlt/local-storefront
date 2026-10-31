@@ -624,6 +624,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
 | `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |
+| `/__lsf/admin/card-sessions`, `/__lsf/admin/subscriptions`, `/__lsf/admin/billing-attempts/<n>/challenge[/complete\|/fail]`, `/__lsf/admin/payment-methods/<token>/update` | `api::subscriptions`: lsf's card vault, the log of the emails and charges, the customer's 3D Secure and card update pages; no token. |
 | `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
 
 `lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
@@ -1066,6 +1067,67 @@ reads the seed's:
   usage record, a charge waiting for the merchant) emits `domains::app::CHANGED`
   (`lsf/changed`): no subscription can receive it, but it says the shop changed.
 
+### Subscriptions (`domains/subscriptions/`)
+
+The Subscriptions API and the customers' saved payment methods. Nothing is seeded (the store data
+has no subscriptions) but the checkout's shipping rates, kept in the setting
+`subscriptionDeliveryRates` for the delivery options. One module per area: `model` (the shapes
+and amounts every contract-like record shares, the errors), `payment_methods`, `drafts`,
+`contracts`, `cycles`, `billing`, `calculation`, `checkout`; each module's header says what
+shopify.dev documents of its mutations and its sources; `tests` tests every mutation as it
+succeeds and as it refuses (the shop left as it was).
+
+- **`CustomerPaymentMethod`**: its key is Shopify's form, `gid://shopify/CustomerPaymentMethod/
+  <32 hex digits>` (a UUID of the shop and a counter, without its dashes: the token of the
+  webhooks). `customer`, `instrument` (inline: a `CustomerCreditCard`, a
+  `CustomerPaypalBillingAgreement` or a `CustomerShopPayAgreement`, which names its method in
+  `lsfMethod` for `isRevocable`), `revokedAt`, `revokedReason`, `mandates: []`. What a charge
+  does with it is `lsfOutcome` (`success`, `challenge`, or an error code), read from the test card
+  when it is made; a vault session (`POST /__lsf/admin/card-sessions`) is the card itself,
+  base64url-encoded without its number, so the vault keeps no state.
+- **`SubscriptionContract`** (`new_gid`): `status`, `customer`, `customerPaymentMethod`,
+  `currencyCode`, `billingPolicy` (with `cadence`), `deliveryPolicy`, `deliveryMethod` (inline,
+  its `__typename` one of the union's), `deliveryPrice`, `lines` (inline `SubscriptionLine`s,
+  `gid://shopify/SubscriptionLine/<uuid>`), `discounts` (inline `SubscriptionManualDiscount`s,
+  each with its `entitledLines` and the ids it lists under `lsfLineIds`), `customAttributes`,
+  `note`, `nextBillingDate`, `revisionId` (a string, from `"1"`: every committed change adds one),
+  `originOrder`, `orders`, `billingAttempts`, `app`, `lastPaymentStatus`,
+  `lastBillingAttemptErrorType`, `latestCommittedProjectedOrderTotals`, dates. `model::refresh`
+  derives each line's `discountAllocations` and `lineDiscountedPrice` and the projected totals,
+  for contracts, drafts, calculated and edited contracts alike.
+- **Billing cycles** are not records: `cycles` computes them from the contract's `lsfSchedule`
+  (segments `{fromIndex, start, firstEnd, interval, count, day, anchored}`: a new billing policy
+  starts a segment at the current cycle) in the shop's time zone, and keeps their edits in
+  `lsfCycleEdits` (`{"<index>": {skipped, billingAttemptExpectedDate, reason, contract,
+  concatenated, concatenatedInto}}`). The events of a cycle are keyed
+  `gid://shopify/SubscriptionBillingCycle/<contract n>?index=<i>`, which names no record: their
+  payload is built from the snapshot, the cycle as `to_value` answers it.
+- **`SubscriptionDraft`** (`new_gid`): a contract-like record, with `originalContract`,
+  `lsfRevision` (the revision it was made from), `lsfOriginal` (its lines and discounts then,
+  for `linesAdded` and the others), `lsfCycle` and `lsfConcatenated` for a cycle draft,
+  `lsfCommitted`. Its `discounts` may be `SubscriptionAppliedCodeDiscount`s, which keep the manual
+  discount they become on commit (`lsfManual`).
+- **`SubscriptionContractCalculationSuccess`** (or `…Failure`), under
+  `gid://shopify/SubscriptionContractCalculation/<n>`: the `calculatedContract` (a
+  `SubscriptionCalculatedContract`), `projectedOrderTotals`, `warnings`, `deliveryOptions`, and
+  what its commit needs: `lsfTarget` (create, update, or a cycle), `lsfRevision`, `lsfDiscovery`,
+  `lsfCommitted`. The mutation answers an inline `…Pending` of the same id.
+- **`SubscriptionBillingAttempt`** (`new_gid`): `subscriptionContract`, `idempotencyKey`,
+  `originTime`, `state` (inline, the union's), `order`, `ready`, `completedAt`, the deprecated
+  `errorCode`, `errorMessage`, `processingError`, `nextActionUrl`, `transactions`, and
+  `lsfCycleIndex`, `lsfAnchor` and `lsfMembers` (the contracts a concatenated cycle bills). The
+  mutation answers the record pending, inline; the record has the outcome. Its order is made by
+  `orders::insert_order` from an `OrderDraft` of the cycle's contract, its stock committed with
+  `orders::model::commit_line`, `orders/create`, `order_transactions/create` and `orders/paid`
+  emitted as `orderCreate` emits them.
+- **`Job`** of a bulk charge or search: done, the cycles it found under `lsfBillingCycles`.
+- **The emails** lsf does not send are the memo `subscriptions/emails`, which
+  `GET /__lsf/admin/subscriptions` reads with the charges (the billing attempts).
+- **From the checkout**: `AdminApi::record_order` runs `checkout::contracts_from_order` after
+  `orders::record_placed_order`, in the same change of the shop.
+- Events without a webhook topic (a draft changed, a calculation made, a challenge opened, a bulk
+  job) emit `domains::app::CHANGED`.
+
 ## Events and webhooks (`webhooks`)
 
 A change emits events: `{topic, shop, gid, at, id, snapshot}` (`products/update`, `orders/create`,
@@ -1105,7 +1167,9 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   builders are there, by family, rather than in `domains/`. A test compares the payload of every
   topic lsf builds with Shopify's example (`tests/fixtures/webhooks/examples-2026-10.json`,
   written by `tools/admin/webhook_examples.mjs`), key for key and value for value, with the
-  differences listed and explained. `include_fields` keeps only those fields (`variants.price`
+  differences listed and explained (the reference has no example of `subscription_billing_attempts
+  /*`: the generator adds those of Shopify's subscriptions reference app, the same resource for
+  the three topics). `include_fields` keeps only those fields (`variants.price`
   for a nested one). Topics whose payload lsf does not build are logged as not sent, never sent
   with a made-up body.
 - **When the payload is built**: when the event is emitted, from the record as the change left it
@@ -1259,6 +1323,9 @@ Kept here so that nobody invents a field for it; each would need the store data 
   becomes a location of the data once it changes.
 - **The shop**: anything else (domains, currency, time zone, plan: the Admin API does not
   change them).
+- **Subscriptions**: contracts, drafts, calculations, billing attempts and saved payment methods
+  (the store data has none of them, and the local checkout charges no saved method). The stock a
+  billing attempt's order commits syncs, as any order's.
 - Metafield and metaobject definitions, files (`files/` is on disk), translations, webhooks,
   publications other than the Online Store, inventory transfers and shipments, fulfillment
   orders.
@@ -1403,7 +1470,7 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `subscriptions`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |

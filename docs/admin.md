@@ -648,16 +648,122 @@ mutation is lsf's: Shopify does not document it.
 
 **Not simulated yet** (they answer `LSF_NOT_SIMULATED`): `customerMerge` (and the
 `customerMergePreview`, `customerMergeJobStatus` queries), `customerRequestDataErasure`,
-`customerCancelDataErasure`, `customerWhatsAppMarketingConsentUpdate`, the payment methods
-(`customerPaymentMethodCreditCardCreate`, `…CreditCardUpdate`, `…GetUpdateUrl`,
-`…PaypalBillingAgreementCreate`, `…PaypalBillingAgreementUpdate`, `…RemoteCreate`, `…Revoke`,
-`…SendUpdateEmail`), store credit (`storeCreditAccountCredit`, `storeCreditAccountDebit`),
+`customerCancelDataErasure`, `customerWhatsAppMarketingConsentUpdate`, store credit (`storeCreditAccountCredit`, `storeCreditAccountDebit`),
 segments (`segmentCreate`, `segmentUpdate`, `segmentDelete`, `customerSegmentMembersQueryCreate`;
 the `segments` and `customerSegmentMembers` queries answer empty), and the staff and tax
 registrations of a company location (`companyLocationAssignStaffMembers`,
 `companyLocationRemoveStaffMembers`, `companyLocationCreateTaxRegistration`,
 `companyLocationRevokeTaxRegistration`). The WhatsApp consent of `customerCreate` is ignored, with
 a note.
+
+### Subscriptions and customer payment methods
+
+A subscription app runs against lsf from the purchase to the last renewal: a customer buys with a
+selling plan at the local checkout (or the backend creates the contract), the backend bills each
+cycle, the order is created, and the card declines or asks for 3D Secure when the test card says
+so. Every change is delivered as its webhook.
+
+| Area | Mutations lsf simulates | Webhooks |
+|---|---|---|
+| Payment methods | `customerPaymentMethodCreditCardCreate`, `…CreditCardUpdate` (a session of lsf's [card vault](control-api.md)), `…PaypalBillingAgreementCreate`, `…PaypalBillingAgreementUpdate`, `…RemoteCreate` (Stripe, Braintree, Authorize.Net: imported at once), `…Revoke` (refused while an active contract uses it), `…GetUpdateUrl` (Shop Pay only, as on Shopify), `…SendUpdateEmail`, `paymentInstrumentSendAddEmail` | `customer_payment_methods/create`, `/update`, `/revoke` |
+| Contracts (draft API) | `subscriptionContractCreate`, `subscriptionContractUpdate`, `subscriptionDraftUpdate`, `subscriptionDraftLineAdd`, `…LineUpdate`, `…LineRemove`, `subscriptionDraftDiscountAdd`, `…DiscountUpdate`, `…DiscountRemove`, `…DiscountCodeApply` (the shop's code discounts), `subscriptionDraftFreeShippingDiscountAdd`, `…Update`, `subscriptionDraftCommit`, `subscriptionContractAtomicCreate` | `subscription_contracts/create`, `/update` |
+| Contracts (calculation API of 2026-10) | `subscriptionContractCreateCalculate`, `subscriptionContractUpdateCalculate`, `subscriptionBillingCycleContractEditCalculate`, `subscriptionContractCalculationCommit`; the `subscriptionContractCalculation` query | the contract's or the cycle's |
+| Status and changes | `subscriptionContractActivate`, `…Pause`, `…Cancel`, `…Expire`, `…Fail`, `subscriptionContractProductChange`, `subscriptionContractSetNextBillingDate` | `subscription_contracts/activate`, `/pause`, `/cancel`, `/expire`, `/fail`, `/update` |
+| Billing cycles | `subscriptionBillingCycleSkip`, `…Unskip`, `…ScheduleEdit`, `…EditDelete`, `…EditsDelete`, `subscriptionBillingCycleContractEdit`, `…ContractDraftCommit`, `…ContractDraftConcatenate` | `subscription_billing_cycles/skip`, `/unskip`, `subscription_billing_cycle_edits/create`, `/update`, `/delete` |
+| Billing | `subscriptionBillingAttemptCreate`, `subscriptionBillingCycleCharge`, `subscriptionBillingCycleBulkCharge`, `subscriptionBillingCycleBulkSearch` | `subscription_billing_attempts/success`, `/failure`, `/challenged`; the order's |
+
+**Queries**: `subscriptionContract`, `subscriptionContracts` (filters `status`, `customer_id`,
+`product_id`, `product_variant_id`, `selling_plan_id`, `last_billing_attempt_error_type`, the
+dates; sort keys `CREATED_AT`, `ID`, `STATUS`, `UPDATED_AT`), `subscriptionBillingAttempt`,
+`subscriptionBillingAttempts` (`error_code`, `error_message`, `created_at`), `subscriptionDraft`
+(with `linesAdded`, `discountsUpdated`, … and `deliveryOptions`, the store data's shipping rates),
+`subscriptionBillingCycle`, `subscriptionBillingCycles` (by index or by dates),
+`subscriptionBillingCycleBulkResults`, `customerPaymentMethod(showRevoked:)`,
+`Customer.paymentMethods`, `Customer.subscriptionContracts`.
+
+How they behave, as shopify.dev documents it:
+
+- **Bought at the checkout**: an order placed in the local checkout with a recurring selling plan
+  makes one contract per plan (`subscription_contracts/create`): the plan's policies, the lines at
+  their checkout price with the plan's pricing policies, the order's address and delivery,
+  `originOrder`, and the card vaulted from the payment (`customer_payment_methods/create`). The
+  order's line items name their selling plan. A guest order makes none: Shopify requires a
+  customer account for a subscription.
+- **Billing cycles** are computed from the billing policy and the shop's clock: cycle 1 starts
+  when the contract is created, each is billed at its end (`billingAttemptExpectedDate`, unless a
+  schedule edit moves it within the cycle), anchors (`MONTHDAY`, `WEEKDAY`, `YEARDAY`) end the
+  cycles at midnight in the shop's time zone, `maxCycles` ends them; a new billing interval keeps
+  the current cycle's start and never ends it in the past. Edits are per cycle: a skip, a billing
+  date, a contract edit (one cycle bills other lines without changing the contract), a
+  concatenation (one order bills the cycles of several contracts of the customer).
+- **A billing attempt** answers pending (`ready: false`), as Shopify's does, and is processed
+  before the answer: the next query reads its outcome. A success creates the order as the orders
+  family does (the cycle's lines, discounts, delivery, tax at the store data's rate, a sale of the
+  total, `sourceName: subscription_contract`) and commits its stock; the contract lists it and is
+  `lastPaymentStatus: SUCCEEDED`. A failure has Shopify's codes (`CARD_DECLINED`,
+  `INSUFFICIENT_FUNDS`, `INSUFFICIENT_INVENTORY` with the variants short of stock unless
+  `ALLOW_OVERSELLING`, `PAYMENT_METHOD_NOT_SPECIFIED`, `EXPIRED_CARD`, …) in its `state` and the
+  deprecated `errorCode`; the contract's status is the app's to change (dunning). The same
+  `idempotencyKey` answers the first attempt again.
+- **Statuses**: a cancelled or expired contract is terminated ("Subscription contract status
+  cannot be changed once terminated."). Each committed change is a new `revisionId`; a draft or a
+  calculation of an older revision is `STALE_CONTRACT`.
+- **The calculation API** answers a `SubscriptionContractCalculationPending`, and the first poll
+  reads the `…Success` (calculated contract, projected order totals, warnings) or `…Failure`.
+  Lines are restated whole: without `priceOverride` a line is priced from its variant.
+- **Emails** are not sent: `GET /__lsf/admin/subscriptions` lists them, with the charges.
+
+#### Test cards
+
+What charging a payment method does is decided when it is made, from Shopify Payments' test
+cards (and the Bogus gateway's numbers) for a card, deterministic for the same input:
+
+| Card number (a vault session's) | A billing attempt |
+|---|---|
+| `4242 4242 4242 4242`, `5555 5555 5555 4444`, `1`, any other | succeeds |
+| `4000 0000 0000 0002`, `2` | fails: `CARD_DECLINED` |
+| `4000 0000 0000 9995` | fails: `INSUFFICIENT_FUNDS` |
+| `4000 0000 0000 0069` | fails: `EXPIRED_CARD` (and so does any card past its expiry, by the shop's clock) |
+| `4000 0000 0000 0127` | fails: `INCORRECT_CVC` |
+| `4000 0000 0000 0119`, `3` | fails: `PROCESSING_ERROR` |
+| `4242 4242 4242 4241` | fails: `INCORRECT_NUMBER` |
+| `4000 0000 0000 3220`, `4000 0025 0000 3155`, `4000 0000 0000 3063` | is challenged (3D Secure): `subscription_billing_attempts/challenged`, its `nextActionUrl` lsf's page, where **Complete** bills it and **Fail** fails it (`AUTHENTICATION_FAILED`) |
+
+A remote method (`customerPaymentMethodRemoteCreate`) reads Stripe's test payment method ids and
+the words they are made of, in any gateway's id: `insufficient` (`INSUFFICIENT_FUNDS`), `expired`,
+`incorrectCvc`, `processingError`, `declined` (`CARD_DECLINED`), `authentication`,
+`threeDSecure` or `3ds` (challenged); `pm_card_visa` and any other id succeed. An `inactive`
+PayPal agreement fails with `INVALID_CUSTOMER_BILLING_AGREEMENT`. To make a contract's next
+attempt fail, give its method a new card: `customerPaymentMethodCreditCardUpdate` with a session
+of a declining card, or the update page.
+
+```bash
+curl -s -X POST http://127.0.0.1:9292/__lsf/admin/card-sessions \
+  -H 'content-type: application/json' \
+  -d '{"credit_card": {"number": "4000000000000002", "first_name": "Jane", "last_name": "Doe", "month": 8, "year": 2030}}'
+# {"id":"lsf-card-…"}: the sessionId of customerPaymentMethodCreditCardCreate
+```
+
+What lsf chose where Shopify does not say, or where a local tool must differ:
+
+- Billing is synchronous: Shopify processes attempts in the background, lsf before it answers
+  (the answer still says pending). A charge moves no money; the order records a sale through the
+  method's gateway (`shopify_payments`, `paypal`, `stripe`, …).
+- A billing attempt without a selector bills the earliest cycle that is due and not billed, else
+  the one the shop's clock is in (Shopify says "the current billing cycle"). Unanchored cycles
+  keep the time of day of the contract's creation in the shop's time zone, across changes of
+  summer time; anchored ones end at midnight there.
+- The webhooks `subscription_contract_calculations/succeed` and `/fail` the guides name are not
+  topics of 2026-10's `WebhookSubscriptionTopic`: none is sent. The payloads of
+  `subscription_billing_attempts/*` are those of Shopify's subscriptions reference app (the
+  reference has no example of them); `contract_edit` of the cycle payloads is `null`, as in every
+  example. A PayPal agreement's `payment_instrument` has its fields in snake_case (the examples
+  show only a card's).
+- Bundles (`productVariantParentLine`) are kept as a line of their parent variant: lsf runs no cart
+  transform on a contract. Delivery options are the store data's shipping rates, for any address.
+- Contracts of an app that is uninstalled are not cancelled 48 hours later.
+- Store sync: contracts, drafts, billing attempts and payment methods do not reach the storefront
+  nor the checkout (the store data has none); the stock a billing order commits does.
 
 ### Metafields, metaobjects and content
 
