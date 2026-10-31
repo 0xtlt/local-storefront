@@ -85,6 +85,15 @@ pub fn fixed(topic: &str) -> Option<Sample> {
             vec![company_contact(), company_location(), company(), contact_role()],
         ),
         "orders" if topic == "orders/edited" => (order_edit(), Vec::new()),
+        "orders" if topic == "orders/risk_assessment_changed" => (
+            json!({"__typename": "Order", "lsfRiskAssessments": [{"riskLevel": "MEDIUM", "facts": [], "provider": null, "createdAt": null}]}),
+            Vec::new(),
+        ),
+        "orders" if topic == "orders/shopify_protect_eligibility_changed" => (
+            json!({"__typename": "Order", "id": "gid://shopify/Order/1",
+                   "shopifyProtect": {"status": "ACTIVE", "eligibility": {"status": "ELIGIBLE"}}}),
+            Vec::new(),
+        ),
         "orders" => (order(), order_parts(false)),
         "order_transactions" => (order_transaction(), vec![order()]),
         "payment_schedules" => (payment_schedule(), Vec::new()),

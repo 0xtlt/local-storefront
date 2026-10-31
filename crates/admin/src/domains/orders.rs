@@ -18,6 +18,7 @@ pub mod payments;
 mod queries;
 mod refunds;
 mod returns;
+pub mod risk;
 mod services;
 mod store_credit;
 
@@ -827,6 +828,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         "discountApplications": [],
         "metafields": [],
         "paymentTerms": null,
+        "shopifyProtect": null,
     })));
     state.insert(record);
     if let Some(customer) = &draft.customer {
@@ -1334,5 +1336,6 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     drafts::register(registry);
     services::register(registry);
     payments::register(registry);
+    risk::register(registry);
     store_credit::register(registry);
 }

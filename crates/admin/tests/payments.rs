@@ -398,3 +398,76 @@ fn an_order_is_paid_with_the_customers_store_credit() {
     assert_eq!(debit["event"], "ORDER_PAYMENT");
     assert_eq!(debit["origin"]["order"]["id"], order["id"]);
 }
+
+#[test]
+fn what_buyers_and_shopify_do_to_an_order_is_delivered() {
+    let api = api();
+    let receiver = Receiver::start();
+    subscribe(
+        &api,
+        &receiver,
+        &[
+            "ORDERS_RISK_ASSESSMENT_CHANGED",
+            "ORDERS_SHOPIFY_PROTECT_ELIGIBILITY_CHANGED",
+            "ORDERS_LINK_REQUESTED",
+        ],
+    );
+    let orders = graphql(
+        &api,
+        "{ orders(first: 5, sortKey: ORDER_NUMBER) { nodes { id name displayFulfillmentStatus } } }",
+        json!({}),
+    );
+    let order = orders["data"]["orders"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|order| order["displayFulfillmentStatus"] != "FULFILLED")
+        .unwrap()["id"]
+        .clone();
+    let assessed = graphql(
+        &api,
+        "mutation($id: ID!) { orderRiskAssessmentCreate(orderRiskAssessmentInput: {orderId: $id, riskLevel: HIGH, facts: [{description: \"Card declined twice\", sentiment: NEGATIVE}]}) { userErrors { message } } }",
+        json!({"id": order}),
+    );
+    assert_eq!(
+        assessed["data"]["orderRiskAssessmentCreate"]["userErrors"],
+        json!([])
+    );
+    let (topic, risk) = receiver.next();
+    assert_eq!(topic, "orders/risk_assessment_changed");
+    assert_eq!(risk["risk_level"], "high");
+    assert_eq!(risk["admin_graphql_api_order_id"], order);
+    assert_eq!(risk["provider_title"], "lsf");
+
+    let (status, _) = request(
+        &api,
+        "POST",
+        "/__lsf/admin/orders/protect",
+        json!({"order": order, "status": "PROTECTED", "eligibility": "ELIGIBLE"}),
+    );
+    assert_eq!(status, 200);
+    let (topic, protect) = receiver.next();
+    assert_eq!(topic, "orders/shopify_protect_eligibility_changed");
+    assert_eq!(protect["status"], "protected");
+    assert_eq!(protect["eligibility"]["status"], "eligible");
+
+    let (status, _) = request(
+        &api,
+        "POST",
+        "/__lsf/admin/orders/link-request",
+        json!({"order": order}),
+    );
+    assert_eq!(status, 200);
+    let (topic, link) = receiver.next();
+    assert_eq!(topic, "orders/link_requested");
+    assert_eq!(link["admin_graphql_api_id"], order);
+    let (_, emails) = request(&api, "GET", "/__lsf/admin/emails", Value::Null);
+    assert_eq!(emails["emails"][0]["template"], "order_link_requested");
+    let (status, refused) = request(
+        &api,
+        "POST",
+        "/__lsf/admin/orders/protect",
+        json!({"order": "gid://shopify/Order/1"}),
+    );
+    assert_eq!(status, 422, "{refused}");
+}

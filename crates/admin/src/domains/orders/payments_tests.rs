@@ -1025,3 +1025,214 @@ fn a_cancelled_order_is_refunded_to_store_credit() {
     assert_eq!(credit["event"], "ORDER_CANCELLATION");
     assert_eq!(credit["expiresAt"], "2099-01-01T00:00:00Z");
 }
+
+const ASSESS: &str = "mutation($input: OrderRiskAssessmentCreateInput!) {
+    orderRiskAssessmentCreate(orderRiskAssessmentInput: $input) {
+      orderRiskAssessment { riskLevel facts { description sentiment } provider { title } }
+      userErrors { field message code } } }";
+
+#[test]
+fn a_risk_assessment_sets_the_orders_risk_and_recommendation() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1002");
+    let before = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { risk { recommendation assessments { riskLevel } } riskLevel } }",
+        json!({"id": order}),
+    );
+    assert_eq!(
+        before["data"]["order"],
+        json!({"risk": {"recommendation": "NONE", "assessments": []}, "riskLevel": "LOW"})
+    );
+    let answer = run(
+        &mut shop,
+        ASSESS,
+        json!({"input": {"orderId": order, "riskLevel": "MEDIUM", "facts": [
+            {"description": "Payment verification successful.", "sentiment": "POSITIVE"},
+            {"description": "Buyer verification inconclusive.", "sentiment": "NEUTRAL"},
+        ]}}),
+    );
+    let created = &answer["data"]["orderRiskAssessmentCreate"];
+    assert_eq!(created["userErrors"], json!([]), "{answer}");
+    assert_eq!(created["orderRiskAssessment"]["riskLevel"], "MEDIUM");
+    assert!(created["orderRiskAssessment"]["provider"]["title"].is_string());
+    assert_eq!(topics(&mut shop), ["orders/risk_assessment_changed"]);
+    let after = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { risk { recommendation assessments { riskLevel facts { description } } } riskLevel risks { level message display } } }",
+        json!({"id": order}),
+    );
+    let after = &after["data"]["order"];
+    assert_eq!(after["risk"]["recommendation"], "INVESTIGATE");
+    assert_eq!(after["riskLevel"], "MEDIUM");
+    assert_eq!(
+        after["risks"][1]["message"],
+        "Buyer verification inconclusive."
+    );
+    run(
+        &mut shop,
+        ASSESS,
+        json!({"input": {"orderId": order, "riskLevel": "HIGH", "facts": []}}),
+    );
+    let high = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { risk { recommendation } } }",
+        json!({"id": order}),
+    );
+    assert_eq!(high["data"]["order"]["risk"]["recommendation"], "CANCEL");
+}
+
+#[test]
+fn a_risk_assessment_is_refused_for_a_fulfilled_order_or_too_many_facts() {
+    let mut shop = demo();
+    let fulfilled = order_named(&shop, "#1001");
+    let open = order_named(&shop, "#1002");
+    let before = (shop.get(&fulfilled).cloned(), shop.get(&open).cloned());
+    let refused = run(
+        &mut shop,
+        ASSESS,
+        json!({"input": {"orderId": fulfilled, "riskLevel": "LOW", "facts": []}}),
+    );
+    assert_eq!(
+        refused["data"]["orderRiskAssessmentCreate"]["userErrors"][0]["code"],
+        "ORDER_ALREADY_FULFILLED"
+    );
+    let facts: Vec<Value> = (0..21)
+        .map(|n| json!({"description": format!("Fact {n}"), "sentiment": "NEUTRAL"}))
+        .collect();
+    let too_many = run(
+        &mut shop,
+        ASSESS,
+        json!({"input": {"orderId": open, "riskLevel": "LOW", "facts": facts}}),
+    );
+    assert_eq!(
+        too_many["data"]["orderRiskAssessmentCreate"]["userErrors"][0]["code"],
+        "TOO_MANY_FACTS"
+    );
+    assert_eq!(
+        too_many["data"]["orderRiskAssessmentCreate"]["orderRiskAssessment"],
+        Value::Null
+    );
+    assert_eq!(
+        (shop.get(&fulfilled).cloned(), shop.get(&open).cloned()),
+        before
+    );
+    assert!(topics(&mut shop).is_empty());
+}
+
+const UPSERT: &str = "mutation($input: OrderAttributionDefinitionUpsertInput!) {
+    orderAttributionDefinitionUpsert(input: $input) { orderAttributionDefinition { id handle displayName icon } userErrors { field message code } } }";
+
+#[test]
+fn attribution_definitions_are_upserted_by_handle_and_attribute_orders() {
+    let mut shop = demo();
+    let icon = "<svg viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M10 2 2 18h16L10 2Z\" /></svg>";
+    let created = run(
+        &mut shop,
+        UPSERT,
+        json!({"input": {"handle": "amazon-us-a1b2c3", "displayName": "Amazon US", "icon": icon}}),
+    )["data"]["orderAttributionDefinitionUpsert"]
+        .clone();
+    assert_eq!(created["userErrors"], json!([]), "{created}");
+    let id = created["orderAttributionDefinition"]["id"].clone();
+    // The same handle, in another case: the definition is updated, its icon kept.
+    let updated = run(
+        &mut shop,
+        UPSERT,
+        json!({"input": {"handle": "AMAZON-US-A1B2C3", "displayName": "Amazon (US)"}}),
+    )["data"]["orderAttributionDefinitionUpsert"]
+        .clone();
+    assert_eq!(updated["orderAttributionDefinition"]["id"], id);
+    assert_eq!(updated["orderAttributionDefinition"]["icon"], icon);
+    assert_eq!(
+        updated["orderAttributionDefinition"]["displayName"],
+        "Amazon (US)"
+    );
+    let cleared = run(
+        &mut shop,
+        UPSERT,
+        json!({"input": {"handle": "amazon-us-a1b2c3", "displayName": "Amazon (US)", "icon": null}}),
+    );
+    assert_eq!(
+        cleared["data"]["orderAttributionDefinitionUpsert"]["orderAttributionDefinition"]["icon"],
+        Value::Null
+    );
+    let listed = run(
+        &mut shop,
+        "{ orderAttributionDefinitions(first: 5) { nodes { id handle } } }",
+        json!({}),
+    );
+    assert_eq!(
+        listed["data"]["orderAttributionDefinitions"]["nodes"][0]["id"],
+        id
+    );
+    // An order created with the handle as its source is attributed to it.
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let order = run(
+        &mut shop,
+        "mutation($order: OrderCreateOrderInput!) { orderCreate(order: $order) { order { attribution { handle displayName } } } }",
+        json!({"order": {"sourceName": "amazon-us-a1b2c3", "lineItems": [{"variantId": variant, "quantity": 1}]}}),
+    );
+    assert_eq!(
+        order["data"]["orderCreate"]["order"]["attribution"],
+        json!({"handle": "amazon-us-a1b2c3", "displayName": "Amazon (US)"})
+    );
+    let delete = "mutation($id: ID!) { orderAttributionDefinitionDelete(id: $id) { deletedId userErrors { field message code } } }";
+    let deleted = run(&mut shop, delete, json!({"id": id}));
+    assert_eq!(
+        deleted["data"]["orderAttributionDefinitionDelete"]["deletedId"],
+        id
+    );
+    let again = run(&mut shop, delete, json!({"id": id}));
+    assert_eq!(
+        again["data"]["orderAttributionDefinitionDelete"]["userErrors"][0]["code"],
+        "NOT_FOUND"
+    );
+}
+
+#[test]
+fn an_attribution_definition_is_refused_without_a_name_or_with_another_icon() {
+    let mut shop = demo();
+    for input in [
+        json!({"handle": "x", "displayName": " "}),
+        json!({"handle": "", "displayName": "X"}),
+        json!({"handle": "x", "displayName": "X", "icon": "<svg viewBox=\"0 0 24 24\"></svg>"}),
+    ] {
+        let answer = run(&mut shop, UPSERT, json!({"input": input}));
+        let payload = &answer["data"]["orderAttributionDefinitionUpsert"];
+        assert_eq!(payload["orderAttributionDefinition"], Value::Null);
+        assert_eq!(payload["userErrors"][0]["code"], "INVALID");
+    }
+    assert_eq!(shop.count("OrderAttributionDefinition"), 0);
+    assert!(topics(&mut shop).is_empty());
+}
+
+#[test]
+fn shopify_protect_and_a_link_request_are_what_a_test_makes_happen() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1002");
+    let read = |shop: &mut ShopState| {
+        run(
+            shop,
+            "query($id: ID!) { order(id: $id) { shopifyProtect { status eligibility { status } } } }",
+            json!({"id": order}),
+        )["data"]["order"]["shopifyProtect"]
+            .clone()
+    };
+    assert_eq!(read(&mut shop), Value::Null);
+    super::risk::set_protect(&mut shop, &order, "protected", "eligible").unwrap();
+    assert_eq!(
+        read(&mut shop),
+        json!({"status": "PROTECTED", "eligibility": {"status": "ELIGIBLE"}})
+    );
+    assert!(super::risk::set_protect(&mut shop, &order, "SAFE", "ELIGIBLE").is_err());
+    super::risk::request_link(&mut shop, &order).unwrap();
+    assert_eq!(
+        topics(&mut shop),
+        [
+            "orders/shopify_protect_eligibility_changed",
+            "orders/link_requested"
+        ]
+    );
+    assert_eq!(outbox::emails(&shop)[0]["template"], "order_link_requested");
+}

@@ -3,7 +3,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{Lookup, field, first, id, lower, money_amount, records, ref_id, text, time};
+use super::{
+    Lookup, field, first, id, lower, money_amount, numeric, records, ref_gid, ref_id, resolve,
+    text, time,
+};
 
 /// The dates of payment terms and schedules, which their GraphQL types do not have: lsf keeps
 /// them under these keys (`domains::orders::payments`), a sample under the GraphQL-like ones.
@@ -96,6 +99,38 @@ pub(super) fn tender_transaction(tender: &Map<String, Value>) -> Value {
         "payment_method": match text(tender, "paymentMethod") {
             Value::Null => json!("unknown"),
             method => method,
+        },
+    })
+}
+
+/// `orders/risk_assessment_changed`: the newest risk assessment of an order (`provider_id` and
+/// `provider_title` `null` when Shopify made it, as the topic's description says).
+pub(super) fn risk_assessment(order: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let assessment = field(order, "lsfRiskAssessments")
+        .as_array()
+        .and_then(|all| all.last())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let provider = assessment.get("provider").cloned().unwrap_or(Value::Null);
+    let title = resolve(&provider, lookup).map_or(Value::Null, |app| text(&app, "title"));
+    json!({
+        "provider_id": numeric(&provider),
+        "provider_title": title,
+        "risk_level": lower(assessment.get("riskLevel").unwrap_or(&Value::Null)),
+        "created_at": time(assessment.get("createdAt").unwrap_or(&Value::Null)),
+        "order_id": id(order),
+        "admin_graphql_api_order_id": ref_gid(field(order, "id")),
+    })
+}
+
+/// `orders/shopify_protect_eligibility_changed`: an order's Shopify Protect summary.
+pub(super) fn protect_eligibility(order: &Map<String, Value>) -> Value {
+    let protect = field(order, "shopifyProtect");
+    json!({
+        "order_id": id(order),
+        "status": lower(protect.get("status").unwrap_or(&Value::Null)),
+        "eligibility": {
+            "status": lower(protect.pointer("/eligibility/status").unwrap_or(&Value::Null)),
         },
     })
 }

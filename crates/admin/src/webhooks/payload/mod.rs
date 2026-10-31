@@ -186,8 +186,11 @@ pub const BUILT_TOPICS: &[&str] = &[
     "orders/delete",
     "orders/edited",
     "orders/fulfilled",
+    "orders/link_requested",
     "orders/paid",
     "orders/partially_fulfilled",
+    "orders/risk_assessment_changed",
+    "orders/shopify_protect_eligibility_changed",
     "orders/updated",
     "payment_schedules/due",
     "payment_terms/create",
@@ -276,7 +279,10 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         | "orders/paid"
         | "orders/cancelled"
         | "orders/fulfilled"
-        | "orders/partially_fulfilled" => orders::order(record, lookup),
+        | "orders/partially_fulfilled"
+        | "orders/link_requested" => orders::order(record, lookup),
+        "orders/risk_assessment_changed" => payments::risk_assessment(record, lookup),
+        "orders/shopify_protect_eligibility_changed" => payments::protect_eligibility(record),
         "draft_orders/create" | "draft_orders/update" => orders::draft_order(record, lookup),
         "fulfillments/create" | "fulfillments/update" => orders::fulfillment(record, None, lookup),
         "refunds/create" => orders::refund(record, lookup),

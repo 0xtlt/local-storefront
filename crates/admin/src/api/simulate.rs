@@ -1,5 +1,6 @@
 //! The control endpoints of the world outside the shop, which a test drives: the shop's clock
-//! (so that payment schedules come due), and the emails lsf records instead of sending them.
+//! (so that payment schedules come due), the emails lsf records instead of sending them, and
+//! what buyers and Shopify's services do to an order.
 //!
 //! | Request | What it does |
 //! |---|---|
@@ -7,6 +8,8 @@
 //! | `POST /__lsf/admin/clock` (`{"shop"?, "now"?, "advance"?}`) | Freezes the shop's clock at `now` (RFC 3339), or moves it on by `advance` (seconds, or `"30d"`, `"12h"`, `"15m"`, `"45s"`), then does what the time passing does: the payment schedules that came due fire `payment_schedules/due`. A reset puts the clock of the store data back. |
 //! | `GET /__lsf/admin/emails?shop=` | The emails lsf recorded as sent (payment reminders, invoices, gift cards, store credit): `{count, emails}`, oldest first. |
 //! | `DELETE /__lsf/admin/emails?shop=` | Forgets them. |
+//! | `POST /__lsf/admin/orders/protect` (`{"shop"?, "order", "status"?, "eligibility"?}`) | Shopify Protect changes its mind about an order: `Order.shopifyProtect` takes the status (`ACTIVE` by default) and the eligibility (`ELIGIBLE`), and `orders/shopify_protect_eligibility_changed` fires. |
+//! | `POST /__lsf/admin/orders/link-request` (`{"shop"?, "order"}`) | The buyer asks for a new link to the order's status page: the email is recorded in the outbox, `orders/link_requested` fires. |
 //!
 //! The shop is `?shop=` or the body's `shop`, else the default one. No token is needed: these
 //! are lsf's, for the tests on this machine, as the other control endpoints are.
@@ -62,7 +65,43 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 |state| json!({"ok": true, "shop": state.domain(), "emails": outbox::clear(state)}),
             )
             .map_or_else(no_shop, |answer| HttpResponse::json(200, &answer)),
-        ("clock" | "emails", _) => HttpResponse::json(
+        ("orders/protect" | "orders/link-request", "POST") => {
+            let Some(order) = body
+                .get("order")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                return Some(HttpResponse::json(
+                    422,
+                    &json!({"error": "the body names the order: {\"order\": \"gid://shopify/Order/1\"}"}),
+                ));
+            };
+            let protect = |name: &str, fallback: &str| {
+                body.get(name)
+                    .and_then(Value::as_str)
+                    .unwrap_or(fallback)
+                    .to_string()
+            };
+            let (status, eligibility) = (
+                protect("status", "ACTIVE"),
+                protect("eligibility", "ELIGIBLE"),
+            );
+            let done = api.change_shop(&shop, |state| {
+                if area == "orders/protect" {
+                    orders::risk::set_protect(state, &order, &status, &eligibility)
+                } else {
+                    orders::risk::request_link(state, &order)
+                }
+            });
+            match done {
+                None => no_shop(),
+                Some(Ok(())) => {
+                    HttpResponse::json(200, &json!({"ok": true, "shop": shop, "order": order}))
+                }
+                Some(Err(error)) => HttpResponse::json(422, &json!({ "error": error })),
+            }
+        }
+        ("clock" | "emails" | "orders/protect" | "orders/link-request", _) => HttpResponse::json(
             405,
             &json!({"error": format!("{method} is not allowed here")}),
         ),
