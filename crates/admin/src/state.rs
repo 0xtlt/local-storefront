@@ -980,6 +980,10 @@ fn record_type(record: &Record) -> String {
 fn counter_group(type_name: &str) -> String {
     match type_name {
         "DiscountAutomaticNode" | "DiscountCodeNode" | "DiscountNode" => "DiscountNode".to_string(),
+        // `Catalog/<n>` names any catalog: they share their ids.
+        "MarketCatalog" | "CompanyLocationCatalog" | "AppCatalog" | "Catalog" => {
+            "Catalog".to_string()
+        }
         other => other.to_string(),
     }
 }

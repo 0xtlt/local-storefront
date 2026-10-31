@@ -299,7 +299,8 @@ impl<'a> ShopResolver<'a> {
     }
 
     /// The key of the record a GID names, following Shopify's aliases: `DiscountNode/<n>` is
-    /// the `DiscountAutomaticNode/<n>` or `DiscountCodeNode/<n>` of the same discount.
+    /// the `DiscountAutomaticNode/<n>` or `DiscountCodeNode/<n>` of the same discount,
+    /// `Catalog/<n>` the catalog of that number, whatever its type.
     pub fn lookup(&self, gid: &str) -> Option<String> {
         if self.state.contains(gid) {
             return Some(gid.to_string());
@@ -310,6 +311,9 @@ impl<'a> ShopResolver<'a> {
                 .into_iter()
                 .map(|alias| crate::state::gid(alias, id))
                 .find(|alias| self.state.contains(alias));
+        }
+        if type_name == "Catalog" {
+            return crate::domains::markets::catalog_key(self.state, gid);
         }
         None
     }
@@ -947,6 +951,8 @@ impl graphql::Resolver for ShopResolver<'_> {
             // One webhook per topic and record of this mutation (`ShopState::merge_events_from`).
             let start = self.state.event_count();
             let output = mutation::run(self, ctx);
+            // What follows a change on its own: listings, auto-publishing (`domains::markets`).
+            crate::domains::markets::after_mutation(self.state, start);
             self.state.merge_events_from(start);
             return output;
         }

@@ -701,6 +701,8 @@ pub fn delete_collection(state: &mut ShopState, collection: &str) {
             collections.retain(|known| known.as_str() != Some(collection));
         }
     }
+    // The listings of the sales channels that have it.
+    crate::domains::markets::removing(state, collection);
     let publications: Vec<String> = state.keys("Publication").map(str::to_string).collect();
     for publication in publications {
         let lists = state.get(&publication).is_some_and(|record| {

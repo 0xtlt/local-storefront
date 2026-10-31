@@ -917,6 +917,8 @@ pub fn delete_product(state: &mut ShopState, product: &str) {
                 .collect::<Vec<_>>()
         })
         .collect();
+    // The listings of the sales channels that have it.
+    crate::domains::markets::removing(state, product);
     for referrer in referrers {
         if let Some(record) = state.get_mut(&referrer) {
             if let Some(Value::Array(products)) = record.get_mut("products") {
