@@ -19,7 +19,7 @@ Installed with mise, from a release or from source, the command is `lsf`: `lsf s
 | Code | Meaning |
 |---|---|
 | `0` | Done, nothing to report. |
-| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails (`app check`). |
+| `1` | Done, and something to fix: data or app errors (`validate`), problems in the theme (`check`), Liquid errors in the page or nothing at its path (`render --strict`), files not formatted (`fmt --check`), a Function that failed to run or did not run (`app function run`), a scenario that fails (`app check`), a webhook that was not delivered (`app webhook trigger`). |
 | `2` | The command could not run: a wrong option, a theme or a file that cannot be read, a file `fmt` cannot write. The message is on stderr, after `error:`. |
 
 ## serve
@@ -72,6 +72,7 @@ and the store data defaults to the app's `shopify-local/`. Guide: [checkout](che
 | [`app build`](#app-build) | Builds its extensions, without Node. |
 | [`app check`](#app-check) | Runs the Functions of every scenario, for CI. |
 | [`app function run`](#app-function-run), [`app function build`](#app-function-build) | Runs or builds its Functions, without a server. |
+| [`app webhook trigger`](#app-webhook-trigger) | Sends one of its webhooks to its backend, signed as Shopify signs it. |
 
 ### app dev
 
@@ -186,6 +187,49 @@ TypeScript without a build command is built by lsf, without Node: its types
 |---|---|---|
 | `[handle]...` | | The Functions to build. Every Function of the app when none is given. |
 | `--app <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in. |
+
+### app webhook trigger
+
+`npx local-storefront app webhook trigger --topic <topic> [--address <url>] [--app <dir>]`
+
+Sends one webhook, as `shopify app webhook trigger` does, without Shopify: lsf builds the
+payload of the topic (the REST representation Shopify sends, from a record of each family
+modelled on Shopify's example payload: the order `#9999`, the T-shirt of `products/create`…),
+signs it with the client secret (`X-Shopify-Hmac-Sha256`), and posts it with Shopify's headers.
+It prints the request it sent and the answer of the backend.
+
+```bash
+npx local-storefront app webhook trigger --topic orders/create --address http://localhost:3000/webhooks
+npx local-storefront app webhook trigger --topic products/update --app ../my-app --app-url http://localhost:3000
+```
+
+Without `--address`, it goes to every subscription of `shopify.app.toml` to the topic, as an
+event of the shop would: each subscription's `uri` joined to the app URL, its `include_fields`
+applied. Relative `uri`s join `--app-url` (else `application_url`), and an absolute one on the
+origin of `application_url` moves to `--app-url`, since `application_url` is often the tunnel of
+a `shopify app dev` that is not running. As Shopify's, a triggered webhook is not retried.
+
+| Option | Environment variable | What it does |
+|---|---|---|
+| `--topic <topic>` | | The topic, as Shopify writes it (`orders/create`) or as the GraphQL enum does (`ORDERS_CREATE`). Every topic of API 2026-10 and the compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`). A topic close to an existing one is suggested. |
+| `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine). |
+| `--api-version <version>` | | `2026-10`, the default and the only version lsf builds. |
+| `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
+| `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |
+| `--app <dir>`, `--path <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; may be left out with `--address`. |
+| `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens. Without it, `application_url`. |
+| `--json`, `-j` | | Prints the deliveries as JSON: `{ok, deliveries: [{topic, url, request: {headers, body}, attempts: [{status, durationMs, response, error}], state, reason, notes}]}`. |
+
+lsf builds the payloads of the topics of products, collections, customers, orders, draft
+orders, fulfillments, refunds, inventory items and levels, locations, metaobjects, discounts,
+the shop, the app (`app/uninstalled`, `app/scopes_update`, `app_subscriptions/update`), bulk
+operations, and the compliance topics. Another topic is refused, rather than sent with a body
+made up for it.
+
+Exits with `1` when a delivery failed: an answer out of `2xx` (a redirect included, as on
+Shopify), no answer within 5 seconds, a backend that is not listening. Exits with `2` when
+nothing could be sent: an unknown topic, a topic lsf does not build, no address and no
+subscription to the topic, a Pub/Sub or EventBridge address.
 
 ## render
 

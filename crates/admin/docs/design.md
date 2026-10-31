@@ -517,29 +517,65 @@ records, so both are the same shape.
 
 ## Events and webhooks (`webhooks`)
 
-A change emits events: `{topic, shop, gid, at}` (`products/update`, `orders/create`, …), after
-the mutation succeeded. Events become deliveries for each subscription of the shop whose topic
-matches and whose `filter` matches the payload:
+A change emits events: `{topic, shop, gid, at, id, snapshot}` (`products/update`, `orders/create`,
+…), after the mutation succeeded. `Webhooks::emit(event, lookup)` turns an event into a delivery
+for each subscription of the shop whose topic matches and whose `filter` matches the payload:
 
-- **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, app-wide,
-  `api_version` of `[webhooks]`), and those the backend creates through the Admin API
-  (`webhookSubscriptionCreate`, per shop). Compliance topics (`customers/data_request`,
+- **Topics**: the 227 values of the 2026-10 `WebhookSubscriptionTopic` enum with their written
+  form, read from the description of each value in the pinned introspection
+  (`tools/admin/webhook_topics.mjs` writes `webhooks/topics_2026_10.rs`): the split between
+  resource and action is not mechanical (`CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE` is
+  `customers_email_marketing_consent/update`, `CUSTOMER_TAGS_ADDED` is `customer.tags_added`).
+- **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, app-wide, one per
+  topic, `api_version` of `[webhooks]`), and those the backend creates through the Admin API
+  (`webhookSubscriptionCreate`, per shop, in `webhooks::Registry`, which gives the
+  `WebhookSubscription` record of each). Compliance topics (`customers/data_request`,
   `customers/redact`, `shop/redact`) are only triggered on demand.
+- **Where**: a `uri` starting with `/` joins the app URL (`--app-url`, else `application_url`),
+  trailing slashes removed, as Shopify's CLI prepends `application_url`; an absolute one under
+  `application_url` (or on its origin) moves to `--app-url` when it is given; another HTTP(S) URL
+  is kept. `pubsub://`, `arn:aws:events:` and `kafka://` are logged as not sent, with why.
 - **Payload**: the JSON of Shopify's webhooks, which is the REST representation of the resource
-  (`id` as a number, `admin_graphql_api_id`, snake_case, prices as strings), built from the
-  record when the event is delivered; `include_fields` keeps only those fields. Topics whose
-  payload lsf does not build are listed, not sent.
-- **Headers**: `X-Shopify-Topic`, `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the body with
-  the client secret), `X-Shopify-Shop-Domain`, `X-Shopify-API-Version`, `X-Shopify-Webhook-Id`,
-  `X-Shopify-Event-Id`, `X-Shopify-Triggered-At`, `X-Shopify-Name` for a named subscription,
-  `Content-Type: application/json`, `User-Agent: Shopify-Captain-Hook`.
+  (`id` as a number, `admin_graphql_api_id`, snake_case, prices as strings with two decimals,
+  enums in lowercase, tags as one string), in the key order of Shopify's example payload of the
+  topic. `webhooks::payload` builds it from the record through a `Lookup` (the records a record
+  names by GID, and the `Shop`), so that it needs nothing of the state but its records: the
+  builders are there, by family, rather than in `domains/`. A test compares the payload of every
+  topic lsf builds with Shopify's example (`tests/fixtures/webhooks/examples-2026-10.json`,
+  written by `tools/admin/webhook_examples.mjs`), key for key and value for value, with the
+  differences listed and explained. `include_fields` keeps only those fields (`variants.price`
+  for a nested one). Topics whose payload lsf does not build are logged as not sent, never sent
+  with a made-up body.
+- **When the payload is built**: when the event is emitted, from the record as the change left it
+  (Shopify builds it when it delivers, usually within a second; the two differ only when another
+  change comes first). The worker then needs nothing of the state, and holds no lock on it. A
+  `…/delete` topic (and `inventory_levels/disconnect`) is built from the event's `snapshot`;
+  `app/scopes_update` reads the scopes before the change from the snapshot of the installation.
+- **Filter**: evaluated on the payload after `include_fields` (Shopify requires the fields of the
+  filter to be included), through `webhooks::PayloadFilter`, where `search` plugs in. Filters
+  differ from searches: `:` is equality, case counts, a field the payload does not have sends
+  nothing. Until an evaluator is plugged in, a filter matches, and the delivery notes that it was
+  not evaluated.
+- **Headers**: `Content-Type: application/json`, `X-Shopify-Topic`, `X-Shopify-Hmac-Sha256`
+  (base64 HMAC-SHA256 of the body with the client secret), `X-Shopify-Shop-Domain`,
+  `X-Shopify-API-Version` (`2026-10`, whatever the subscription asks, with a note when it asks
+  for another), `X-Shopify-Webhook-Id` (one per delivery, the same across its retries),
+  `X-Shopify-Triggered-At` (the event's time, `2025-07-10T16:15:47.000000Z`),
+  `X-Shopify-Event-Id` (shared by the deliveries of one event), `X-Shopify-Name` for a named
+  subscription, `User-Agent: Shopify-Captain-Hook`. Ids are random UUIDs: a backend that
+  remembers the deliveries it processed does not take those of a new run for duplicates.
 - **Delivery**: from a background worker, never from the thread of a request (the backend's
-  handler may call the Admin API back). A `2xx` within 5 seconds is a success; anything else is
-  retried a few times with a short back-off (Shopify retries 8 times over 4 hours), then marked
-  failed. Each attempt is logged: the request, the status, the time, the start of the answer.
-- **Control**: `GET /__lsf/webhooks` lists the deliveries (`?topic=`, `?wait=<n>` waits until there
-  are n, for tests), `DELETE /__lsf/webhooks` forgets them, `POST /__lsf/webhooks/trigger`
-  sends one (`{"topic", "id"?}`), as `lsf app webhook trigger` does from the command line.
+  handler may call the Admin API back). One worker by default, so that deliveries go out in the
+  order they were made; a delivery waiting for a retry does not hold the others. A `2xx` within
+  5 seconds (1 to connect) is a success; anything else, a redirect included, is retried after 1,
+  5 and 15 seconds (Shopify retries 8 times over 4 hours), then marked failed. Each attempt is
+  logged: the start, the duration, the status, the start of the answer, the error.
+- **Control**: `GET /__lsf/webhooks` lists the deliveries (`?topic=`, `?shop=`, `?state=`;
+  `?wait=<n>` waits until n of them are done, `?timeout=<ms>` at most, 10 s by default, and
+  answers `408` when they were not), `DELETE /__lsf/webhooks` forgets them,
+  `POST /__lsf/webhooks/trigger` sends one (`{"topic", "id"?, "shop"?, "address"?, "payload"?,
+  "wait"?}`: the api layer builds the payload from the state, `payload` gives it as is), as
+  `lsf app webhook trigger` does from the command line.
 
 ## Store sync
 
@@ -564,9 +600,9 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `graphql` | Parsing, validation, execution, introspection, cost: a GraphQL server over a `Resolver`. Knows nothing of Shopify's data. |
 | `state` | Shops, records, ids, the clock, events; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations, its webhook payloads (`catalog`, `orders`, `customers`, `content`, `app`). |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
-| `webhooks` | Topics, subscriptions, payloads, signing, the delivery worker and its log. |
+| `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |
 | `throttle` | The cost bucket of each shop and app. |
 | `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. |

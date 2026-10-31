@@ -1,11 +1,12 @@
 //! `lsf app`: the commands of a Shopify app. `dev` serves it alone (its checkout and its customer
 //! account), `init` writes the checkout scenarios to try it with, `build` builds its extensions,
-//! `check` runs the scenarios for CI, and `function` runs or builds its Functions.
+//! `check` runs the scenarios for CI, `function` runs or builds its Functions, and `webhook
+//! trigger` sends one of its webhooks.
 
 use std::path::Path;
 use std::process::ExitCode;
 
-use crate::commands::{app_init, function, serve};
+use crate::commands::{app_init, function, serve, webhook};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -36,6 +37,8 @@ enum Subcommand {
     Check(CheckArgs),
     /// Run or build the Shopify Functions of the app.
     Function(function::Args),
+    /// Send the webhooks of the app to its backend.
+    Webhook(webhook::Args),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -96,6 +99,7 @@ pub fn run(
         ),
         Subcommand::Check(args) => check(theme, data, previews, args),
         Subcommand::Function(args) => function::run(theme, data, previews, args),
+        Subcommand::Webhook(args) => webhook::run(args),
     }
 }
 
