@@ -466,6 +466,16 @@ fn supported_actions(
         Some("INCOMPLETE") => actions.push("MARK_AS_OPEN"),
         _ => {}
     }
+    // Merging, reporting progress and opening again after it: the logistics family's.
+    if !is_service_location(r, location)
+        && let Some(id) = object.key()
+    {
+        for action in crate::domains::logistics::fulfillment_orders::extra_actions(r.state(), id) {
+            if !actions.contains(&action) {
+                actions.push(action);
+            }
+        }
+    }
     let value: Vec<Value> = actions
         .into_iter()
         .map(|action| json!({"action": action, "externalUrl": null}))
