@@ -364,13 +364,6 @@ impl ShopState {
         let snapshot = (topic.ends_with("/delete") || topic == "inventory_levels/disconnect")
             .then(|| self.get(gid).cloned())
             .flatten();
-        self.emit_with(topic, gid, snapshot)
-    }
-
-    /// Records that `topic` happened, with the record its payload is built from when `gid` is
-    /// not the key of one: `product_publications/create` is about a product on a publication,
-    /// which is no record (`gid` names the product and the publication, `snapshot` holds both).
-    pub fn emit_with(&mut self, topic: &str, gid: &str, snapshot: Option<Record>) -> &Event {
         self.emitted += 1;
         let event = Event {
             topic: topic.to_string(),
@@ -382,6 +375,17 @@ impl ShopState {
         };
         self.events.push(event);
         &self.events[self.events.len() - 1]
+    }
+
+    /// Records that `topic` happened to a record, with the record the event keeps given rather
+    /// than copied: something that is not a record of its own (a product on a publication, for
+    /// `product_publications/create`, whose `gid` names the product and the publication and whose
+    /// snapshot holds both). See `Event::snapshot`.
+    pub fn emit_with(&mut self, topic: &str, gid: &str, snapshot: Record) -> &Event {
+        self.emit(topic, gid);
+        let last = self.events.len() - 1;
+        self.events[last].snapshot = Some(snapshot);
+        &self.events[last]
     }
 
     /// The events not taken yet, in the order they happened.

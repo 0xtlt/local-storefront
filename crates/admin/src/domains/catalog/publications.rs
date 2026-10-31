@@ -436,7 +436,7 @@ fn change(
             state.emit_with(
                 &format!("{kind}/{action}"),
                 &event_gid(&publishable, publication),
-                Some(snapshot),
+                snapshot,
             );
         }
         state.touch(&publishable);
