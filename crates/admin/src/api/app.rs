@@ -109,14 +109,11 @@ fn charges(api: &AdminApi, request: &HttpRequest, rest: &str) -> HttpResponse {
                 .header("content-type")
                 .is_some_and(|kind| kind.starts_with("application/x-www-form-urlencoded"));
             match result {
-                Ok((redirect, charge)) if from_page => {
-                    let _ = charge;
-                    HttpResponse {
-                        status: 303,
-                        headers: vec![("location".into(), redirect)],
-                        body: Vec::new(),
-                    }
-                }
+                Ok((redirect, _)) if from_page => HttpResponse {
+                    status: 303,
+                    headers: vec![("location".into(), redirect)],
+                    body: Vec::new(),
+                },
                 Ok((redirect, charge)) => HttpResponse::json(
                     200,
                     &json!({

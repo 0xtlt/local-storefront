@@ -716,7 +716,7 @@ fn combines_with(input: &Value) -> Value {
 /// A `DiscountContext` from a `DiscountContextInput` (`@oneOf`): all buyers, customers,
 /// customer segments or markets.
 fn context(input: &Value, previous: Option<&Value>) -> Value {
-    let ids = |value: Option<&Value>, field: &str, previous_field: &str| -> Vec<Value> {
+    let ids = |value: Option<&Value>, previous_field: &str| -> Vec<Value> {
         let mut ids: Vec<Value> = previous
             .and_then(|previous| previous.get(previous_field))
             .and_then(Value::as_array)
@@ -734,17 +734,16 @@ fn context(input: &Value, previous: Option<&Value>) -> Value {
             }
         }
         ids.retain(|id| !remove.into_iter().flatten().any(|gone| gone == id));
-        let _ = field;
         ids
     };
     if let Some(customers) = input.get("customers") {
-        return json!({"__typename": "DiscountCustomers", "customers": ids(Some(customers), "customers", "customers")});
+        return json!({"__typename": "DiscountCustomers", "customers": ids(Some(customers), "customers")});
     }
     if let Some(segments) = input.get("customerSegments") {
-        return json!({"__typename": "DiscountCustomerSegments", "segments": ids(Some(segments), "segments", "segments")});
+        return json!({"__typename": "DiscountCustomerSegments", "segments": ids(Some(segments), "segments")});
     }
     if let Some(markets) = input.get("markets") {
-        return json!({"__typename": "DiscountMarkets", "markets": ids(Some(markets), "markets", "markets")});
+        return json!({"__typename": "DiscountMarkets", "markets": ids(Some(markets), "markets")});
     }
     json!({"__typename": "DiscountBuyerSelectionAll", "all": "ALL"})
 }
