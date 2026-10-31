@@ -252,6 +252,10 @@ pub enum MigrationError {
     Unknown,
     /// An online token, or one that already expires.
     NotMigratable,
+    /// A delegate token: it can make no token ("A delegate access token can't create more
+    /// delegate access tokens", shopify.dev, "Delegate API access"), and an expiring offline
+    /// token made from it would carry every scope of the installation, and could.
+    Delegate,
 }
 
 #[derive(Clone, Debug)]
@@ -705,7 +709,8 @@ impl Tokens {
     }
 
     /// Exchanges a non-expiring offline token of `client_id` on `shop` for an expiring one and
-    /// its refresh token; the old token stops working. Sending the same request again within
+    /// its refresh token; the old token stops working. A delegate token is refused: it is not
+    /// the app's offline token, and what it would be exchanged for is. Sending the same request again within
     /// [`MIGRATION_RECOVERY`] answers the same pair, as long as it was not refreshed or retired.
     pub fn migrate(
         &mut self,
@@ -738,6 +743,9 @@ impl Tokens {
         let grant = self.access.get(token).ok_or(MigrationError::Unknown)?;
         if grant.client_id != client_id || grant.shop != shop {
             return Err(MigrationError::Unknown);
+        }
+        if grant.source == GrantSource::Delegate {
+            return Err(MigrationError::Delegate);
         }
         if grant.mode != AccessMode::Offline || grant.expires_at.is_some() {
             return Err(MigrationError::NotMigratable);
@@ -1021,6 +1029,22 @@ mod tests {
             tokens.migrate(&expiring.access_token, "client", SHOP, at(1)),
             Err(MigrationError::NotMigratable)
         );
+    }
+
+    #[test]
+    fn a_delegate_token_cannot_be_migrated_to_a_token_of_the_installation() {
+        let mut tokens = Tokens::with_seed(1);
+        tokens.install(SHOP, "client", &scopes(), at(0));
+        let read_only = vec!["read_products".to_string()];
+        tokens.delegate("shppa_1", SHOP, "client", &read_only, None, at(0));
+        assert_eq!(
+            tokens.migrate("shppa_1", "client", SHOP, at(1)),
+            Err(MigrationError::Delegate)
+        );
+        // It still works, with its own scopes, and an install with more scopes leaves them.
+        assert_eq!(tokens.lookup("shppa_1", at(2)).unwrap().scopes, read_only);
+        tokens.install(SHOP, "client", &scopes(), at(3));
+        assert_eq!(tokens.lookup("shppa_1", at(4)).unwrap().scopes, read_only);
     }
 
     #[test]

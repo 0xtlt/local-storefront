@@ -468,7 +468,10 @@ fall forward), and `OLDEST_ACCESSIBLE` moves; its files can go once nothing serv
   of the shop stop (see "Events and webhooks").
 - **Delegate tokens** (`delegateAccessTokenCreate`): `shppa_` and 32 hex digits (the guide's
   `shppa_…`), a subset of the parent's scopes, expiring with the parent or sooner; their grant's
-  source is `GrantSource::Delegate`, which may not make delegates. When the installation's scopes
+  source is `GrantSource::Delegate`, which may not make delegates, nor be migrated to an
+  expiring offline token (`Tokens::migrate`, `MigrationError::Delegate`): the token it would
+  become is the installation's, with all its scopes. The other grants start from a code, a
+  session token, a refresh token or the client secret, never from an access token. When the installation's scopes
   change (`Tokens::set_scopes`: an install with other scopes, `appRevokeAccessScopes`), every
   token of it carries the new ones, but a delegate keeps those of its own still granted.
 - **What a mutation changes of the tokens.** A mutation runs under the shop's lock, and the tokens

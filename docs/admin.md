@@ -1499,8 +1499,9 @@ scopes into `read_x`. To grant optional scopes first: `POST /__lsf/admin/install
 **Delegate access tokens.** `delegateAccessTokenCreate` makes a `shppa_…` token with a subset of
 the parent's scopes (`UNKNOWN_SCOPES` for one the app was not granted), expiring with its parent
 or sooner (`expiresIn`, `EXPIRES_AFTER_PARENT`); it authenticates the Admin API with those
-scopes only, and cannot make delegates of its own (`DELEGATE_ACCESS_TOKEN`).
-`delegateAccessTokenDestroy` revokes one. A scope the installation loses goes from its delegates
+scopes only, and cannot make delegates of its own (`DELEGATE_ACCESS_TOKEN`), nor be exchanged
+at `/admin/oauth/access_token` as an offline token (`400` `invalid_subject_token`: what it would
+become carries every scope of the installation). `delegateAccessTokenDestroy` revokes one. A scope the installation loses goes from its delegates
 too.
 
 **Flow triggers.** `flowTriggerReceive(handle:, payload:)` is checked against the app's

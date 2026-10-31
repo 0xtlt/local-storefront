@@ -185,6 +185,66 @@ fn a_delegate_token_authenticates_with_its_scopes_only_until_destroyed() {
     assert_eq!(status, 401);
 }
 
+/// The scenario of a delegate token that became a full one: exchanged as an offline token for an
+/// expiring one, it came back `shpat_` with a refresh token, made delegates, and carried every
+/// scope of the installation after an install.
+#[test]
+fn a_delegate_token_cannot_be_exchanged_for_a_token_of_the_installation() {
+    let api = api();
+    let token = api.token(&api.default_shop());
+    let (_, created) = graphql(
+        &api,
+        &token,
+        "mutation { delegateAccessTokenCreate(input: {delegateAccessScope: [\"read_products\"]}) { delegateAccessToken { accessToken } userErrors { message } } }",
+    );
+    let delegate =
+        created["data"]["delegateAccessTokenCreate"]["delegateAccessToken"]["accessToken"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{created}"))
+            .to_string();
+    let exchange = send(
+        &api,
+        "POST",
+        "/admin/oauth/access_token",
+        None,
+        json!({
+            "client_id": "22222222222222222222222222222222",
+            "client_secret": "test-secret",
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": delegate,
+            "subject_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+            "expiring": "1",
+        }),
+    );
+    let body: Value = serde_json::from_slice(&exchange.body).unwrap();
+    assert_eq!(exchange.status, 400, "{body}");
+    assert_eq!(body["error"], "invalid_subject_token");
+    assert!(body.get("access_token").is_none());
+    // The delegate is still a delegate: it makes no delegate, and an install leaves its scopes.
+    let installed = send(&api, "POST", "/__lsf/admin/install", None, json!({}));
+    assert_eq!(installed.status, 200);
+    let (_, nested) = graphql(
+        &api,
+        &delegate,
+        "mutation { delegateAccessTokenCreate(input: {delegateAccessScope: [\"read_products\"]}) { delegateAccessToken { accessToken } userErrors { code } } }",
+    );
+    assert_eq!(
+        nested["data"]["delegateAccessTokenCreate"]["userErrors"][0]["code"],
+        "DELEGATE_ACCESS_TOKEN",
+        "{nested}"
+    );
+    let (_, denied) = graphql(
+        &api,
+        &delegate,
+        "mutation { productCreate(product: {title: \"No\"}) { product { id } } }",
+    );
+    assert_eq!(
+        denied["errors"][0]["extensions"]["code"], "ACCESS_DENIED",
+        "{denied}"
+    );
+}
+
 #[test]
 fn the_outbox_lists_what_flow_would_have_received() {
     let api = api();
