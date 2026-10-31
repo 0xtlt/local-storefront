@@ -349,6 +349,9 @@ storefront, the checkout and the Function inputs already use.
 - URLs are on the shop's primary domain (`https://<shop.domain or permanent_domain>`):
   `onlineStoreUrl` is `https://my-shop.myshopify.com/products/<handle>`, files are
   `https://<domain>/cdn/shop/files/<path>?v=<version>`, the path the storefront serves them at.
+- Settings: what the store data says of the shop that no record holds, by name
+  (`ShopState::setting`, set by the seed and kept by a reset): the checkout's tax rate
+  (`taxRateBps`), which draft orders and order edits compute their tax with.
 - Events: `ShopState::emit(topic, gid)` records `{topic, shop, gid, at, id}` (a `…/delete` event
   keeps a copy of the record: emit before removing, or use `ShopState::delete`);
   `take_events` hands them over. Event ids are UUIDs made of the shop and a sequence that a reset
@@ -747,8 +750,52 @@ records, so both are the same shape.
   server's `place_order` has (the `CheckoutResult`, the order number and id it gave, the time,
   the customer, the contact, the address, the note, the attributes, the payment method's name as
   the gateway), keeps the checkout's id when it is free (sessions number their orders on their
-  own: a taken id gets a new one), refreshes the customer, and emits `orders/create` and, when
-  paid, `orders/paid`. `lsf`'s `place_order` calls it through `AdminApi::record_order`.
+  own: a taken id gets a new one), refreshes the customer, and emits `orders/create`,
+  `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits
+  no stock: the local checkout keeps the stock of the data *(chosen: test purchases never sell a
+  product out)*. `lsf`'s `place_order` calls it through `AdminApi::record_order`.
+
+What the mutations of the family (`domains/orders/`, see "Orders, fulfillments and draft
+orders" in `docs/admin.md`) make and keep:
+
+- **Derived values**: `orders::model::refresh_order` recomputes what an order derives from its
+  records the way `insert_order` computes it (a test runs it on every seeded order and finds
+  nothing to change, but the outstanding amount of a `refunded` order of the data, which has a
+  refund transaction and no refund): a line item's `currentQuantity` (its `quantity` less what
+  refunds took; an edit's removals are refunds of restock type `CANCEL` or `NO_RESTOCK`, as
+  Shopify records them), `unfulfilledQuantity` (what its fulfillment order line items still
+  have to fulfill), `refundableQuantity`; the order's `current…` amounts (less what refunds took
+  back, and less what a refund gave back beyond the value of its lines, Shopify's
+  `REFUND_DISCREPANCY` adjustment), its total (subtotal + shipping + tax), the money received,
+  refunded, net and capturable (from its successful transactions), `totalOutstandingSet`
+  (current total less net payment, negative when the customer is owed money),
+  `displayFulfillmentStatus`, `returnStatus`, the flags (`fullyPaid`, `capturable`,
+  `canMarkAsPaid`, `refundable`, `fulfillable`, …), and the customer's counters.
+  `displayFinancialStatus` follows a change of money only (`settle_financial_status`): the data
+  gives statuses the money alone cannot tell.
+- **Records**: `OrderTransaction`, `Fulfillment` (`#1001-F2`), `FulfillmentLineItem`,
+  `FulfillmentOrder` (a split, a partial move or a reopened cancellation makes another),
+  `FulfillmentHold`, `FulfillmentEvent`, `FulfillmentOrderMerchantRequest`, `Refund` (its
+  `RefundLineItem`s and `RefundShippingLine`s inline), `Return` (`#1001-R2`) and
+  `ReturnLineItem`, `CalculatedOrder` (its `CalculatedLineItem`s inline) and `OrderEditSession`
+  of the same number, `OrderCancelJobResult`, `DraftOrder` (`#D1`) and `DraftOrderLineItem`,
+  `FulfillmentService` and its `Location`. Their ids come from `new_gid`.
+- **Stock** (the levels of the catalog, changed in place): an order that claims stock commits it
+  (`available` to `committed`: `orderCreate` with a `DECREMENT_…` behaviour, a completed draft
+  order, units an edit adds); shipping takes units out of `committed` and `on_hand` as far as
+  they were committed; a restock puts them back (`CANCEL` from `committed`, `RETURN` to
+  `on_hand`). `inventory_levels/update` follows each change of a tracked item.
+- **What a webhook needs beyond the record**, kept on it under `lsf…` keys, which GraphQL never
+  reads: the fulfillment order of a `FulfillmentHold` (`fulfillmentOrder`) and the fulfillment
+  of a `FulfillmentEvent` (`fulfillment`); the context of a `fulfillment_orders/…` topic on its
+  fulfillment order (`lsfEvent`: the hold made and the fulfillment order split off, the
+  original of a move, the replacement of a cancellation, the merchant request, the message);
+  what `orders/edited` reports on the committed `CalculatedOrder` (`lsfCommittedAt`,
+  `lsfAdditions`, `lsfRemovals`, …), and what its commit needs on each calculated line item
+  (`lsfLineItem`, `lsfShipped`, `lsfDiscount`, …).
+- **The tax rate** of draft orders and edits is the store data's `checkout.tax_rate`, which the
+  seed keeps in the shop's settings (`ShopState::setting("taxRateBps")`), records having no
+  field for it.
 
 ### Content (`domains/content.rs`)
 
