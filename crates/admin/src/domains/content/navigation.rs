@@ -367,12 +367,25 @@ fn redirect_of(state: &ShopState, path: &str, except: Option<&str>) -> Option<St
 /// Redirects `path` to `target`, replacing a redirect of the same path: what a `redirectNewHandle`
 /// does. Emits `url_redirects/create` or `url_redirects/update`.
 pub fn add_redirect(state: &mut ShopState, path: &str, target: &str) -> String {
-    if let Some(id) = redirect_of(state, path, None) {
-        if let Some(redirect) = state.get_mut(&id) {
+    let existing = redirect_of(state, path, None);
+    set_redirect(state, existing.as_deref(), path, target)
+}
+
+/// [`add_redirect`] when the caller knows the redirect of `path` already (`existing`), as an
+/// import of many rows does from a map of the paths: the redirect `existing` takes the target,
+/// or a new one is made.
+pub fn set_redirect(
+    state: &mut ShopState,
+    existing: Option<&str>,
+    path: &str,
+    target: &str,
+) -> String {
+    if let Some(id) = existing.filter(|id| state.contains(id)) {
+        if let Some(redirect) = state.get_mut(id) {
             redirect.insert("target".into(), json!(target));
         }
-        state.emit("url_redirects/update", &id);
-        return id;
+        state.emit("url_redirects/update", id);
+        return id.to_string();
     }
     let id = state.new_gid("UrlRedirect");
     let now = state.timestamp();

@@ -599,19 +599,24 @@ impl ShopState {
     /// metafields at once), as Shopify does. Its payload is built from the record as the
     /// mutation left it; the snapshot kept is the first's (the record before the changes), or,
     /// when the key names no record, the last's (the snapshot is then the state reported).
+    /// The first of each topic and record is found through a map, so that a mutation that emits
+    /// many events (an import of 100,000 redirects) merges them in one pass.
     pub fn merge_events_from(&mut self, start: usize) {
         let mut merged: Vec<Event> = Vec::new();
+        let mut firsts: HashMap<(String, String), usize> = HashMap::new();
         for event in self.events.drain(start.min(self.events.len())..) {
-            match merged
-                .iter_mut()
-                .find(|known| known.topic == event.topic && known.gid == event.gid)
-            {
-                Some(first) => {
+            let key = (event.topic.clone(), event.gid.clone());
+            match firsts.get(&key) {
+                Some(&index) => {
+                    let first = &mut merged[index];
                     if !self.records.contains_key(&event.gid) || first.snapshot.is_none() {
                         first.snapshot = event.snapshot.or(first.snapshot.take());
                     }
                 }
-                None => merged.push(event),
+                None => {
+                    firsts.insert(key, merged.len());
+                    merged.push(event);
+                }
             }
         }
         self.events.extend(merged);

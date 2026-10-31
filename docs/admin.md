@@ -1492,7 +1492,8 @@ one per app, `CONNECTED` once it has an endpoint; nothing is sent to it.
 `urlRedirectBulkDeleteBySearch` (the `query` of `urlRedirects`; a field it does not have is
 refused rather than deleting every redirect), `urlRedirectBulkDeleteBySavedSearch`, each done at
 once (its `job` done). `urlRedirectImportCreate` reads a redirect CSV (`Redirect from,Redirect
-to`) from a staged upload or a URL (`count`, `previewRedirects`); `urlRedirectImportSubmit`
+to`, RFC 4180: quoted cells may hold commas and line breaks) from a staged upload or a URL
+(`count`, `previewRedirects`); `urlRedirectImportSubmit`
 creates and updates the redirects (`createdCount`, `updatedCount`, `failedCount`, `finished`;
 twice is `ALREADY_IMPORTED`); `urlRedirectImport`.
 

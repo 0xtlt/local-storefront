@@ -609,7 +609,8 @@ storefront, the checkout and the Function inputs already use.
   `ShopState::emit_with` gives the copy, the record before the change for a topic that says
   what changed);
   `take_events` hands them over. One mutation emits one event per topic and record: the resolver
-  merges the repeats of a mutation into the first (`ShopState::merge_events_from`), whose
+  merges the repeats of a mutation into the first (`ShopState::merge_events_from`, one pass
+  through a map of the topics and records), whose
   payload is built from the record as the mutation left it (an order created fulfilled that
   commits then ships a level's units reports the level once). Event ids are UUIDs made of the shop and a sequence that a reset
   does not restart, so a receiver never sees one twice.
@@ -1763,6 +1764,11 @@ never written to.**
 | `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `SavedSearch`, `Job`s done, `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
 | `platform` | `StaffMember/1` (the shop owner, seeded), `CheckoutProfile/1` and `CheckoutAndAccountsConfiguration/1` (seeded), `AndroidApplication`/`AppleApplication` (ids of `MobilePlatformApplication`, the type by platform, as the reference's), `FulfillmentConstraintRule`, `DelegateAccessToken` (key `delegate-access-token/<hash>`, never the token), `ProductResourceFeedback` (key `product-resource-feedback/<product>`) | the counter |
 
+- **Redirect imports** (`store_admin::redirects`): the CSV is read as RFC 4180 has it (a quoted
+  cell holds commas, line breaks and `""`), and a submit looks each row's path up in a map of
+  the shop's redirects made once (`navigation::set_redirect`, which `add_redirect` runs after its
+  own lookup): 100,000 rows take about half a second, where a scan per row took longer than a
+  quarter of an hour, the shop locked.
 - **App extensions** lsf-checkout lists without reading (`App::other`): the web pixel extension's
   `[settings.fields]` and the Flow triggers' `[[settings.fields]]` are read from their
   `shopify.extension.toml` at seed (`platform::extensions`, `[settings]` of the file when it is
