@@ -1372,3 +1372,107 @@ fn setting_a_metafield_needs_the_access_of_its_owner() {
         "{allowed}"
     );
 }
+
+#[test]
+fn registers_and_removes_translations() {
+    let mut shop = rich();
+    shop.take_events();
+    let product = find(&shop, "Product", "handle", "linen-dress");
+    let resource = run(
+        &mut shop,
+        "query($id: ID!) { translatableResource(resourceId: $id) { resourceId translatableContent { key value digest locale type } } }",
+        json!({"id": product}),
+    );
+    let content = resource["data"]["translatableResource"]["translatableContent"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{resource}"))
+        .clone();
+    let keys: Vec<&str> = content
+        .iter()
+        .map(|entry| entry["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["title", "body_html", "handle", "product_type"]);
+    let title = &content[0];
+    assert_eq!(
+        title["digest"],
+        json!(super::translations::digest(
+            title["value"].as_str().unwrap()
+        ))
+    );
+    assert_eq!(title["type"], "SINGLE_LINE_TEXT_FIELD");
+    // The fixture's primary language is French: English is the other one.
+    let primary = title["locale"].as_str().unwrap().to_string();
+    let other = if primary == "fr" { "en" } else { "fr" };
+
+    let registered = run(
+        &mut shop,
+        "mutation($id: ID!, $translations: [TranslationInput!]!) { translationsRegister(resourceId: $id, translations: $translations) {
+            translations { key value locale outdated } userErrors { field message code } } }",
+        json!({"id": product, "translations": [
+            {"locale": other, "key": "title", "value": "Linen dress!", "translatableContentDigest": title["digest"]},
+        ]}),
+    );
+    assert_eq!(
+        registered["data"]["translationsRegister"],
+        json!({"translations": [{"key": "title", "value": "Linen dress!", "locale": other, "outdated": false}], "userErrors": []}),
+        "{registered}"
+    );
+    assert_eq!(topics(&mut shop), ["translations/update"]);
+
+    let wrong = run(
+        &mut shop,
+        "mutation($id: ID!, $translations: [TranslationInput!]!) { translationsRegister(resourceId: $id, translations: $translations) {
+            userErrors { field message code } } }",
+        json!({"id": product, "translations": [
+            {"locale": primary, "key": "title", "value": "x", "translatableContentDigest": title["digest"]},
+            {"locale": other, "key": "nope", "value": "x", "translatableContentDigest": "x"},
+            {"locale": other, "key": "title", "value": "x", "translatableContentDigest": "abc"},
+        ]}),
+    );
+    let codes: Vec<&Value> = wrong["data"]["translationsRegister"]["userErrors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| &error["code"])
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            &json!("INVALID_LOCALE_FOR_SHOP"),
+            &json!("INVALID_KEY_FOR_MODEL"),
+            &json!("INVALID_TRANSLATABLE_CONTENT")
+        ]
+    );
+    assert_eq!(
+        wrong["data"]["translationsRegister"]["userErrors"][2]["message"],
+        "Translatable content hash is invalid"
+    );
+
+    let read = run(
+        &mut shop,
+        &format!(
+            "query($id: ID!) {{ product(id: $id) {{ translations(locale: \"{other}\") {{ key value }} }}
+               translatableResources(resourceType: PRODUCT, first: 1) {{ nodes {{ resourceId }} }} }}"
+        ),
+        json!({"id": product}),
+    );
+    assert_eq!(
+        read["data"]["product"]["translations"],
+        json!([{"key": "title", "value": "Linen dress!"}])
+    );
+    assert!(read["data"]["translatableResources"]["nodes"][0]["resourceId"].is_string());
+
+    let removed = run(
+        &mut shop,
+        &format!(
+            "mutation($id: ID!) {{ translationsRemove(resourceId: $id, translationKeys: [\"title\"], locales: [\"{other}\"]) {{
+                translations {{ key }} userErrors {{ code }} }} }}"
+        ),
+        json!({"id": product}),
+    );
+    assert_eq!(
+        removed["data"]["translationsRemove"]["translations"],
+        json!([{"key": "title"}])
+    );
+    assert!(shop.get(&format!("translations/{product}")).is_none());
+}

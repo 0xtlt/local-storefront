@@ -353,14 +353,21 @@ content, the products a file is a medium of), `fileDelete`; `files` searched by 
 sorted by `FILENAME`. A file is `READY` as soon as it is created: lsf has nothing to process, so
 a backend that polls `fileStatus` sees it at once. Its URL is the source's.
 
+**Translations.** `translationsRegister` and `translationsRemove`; `translatableResource`,
+`translatableResources(resourceType:)`, `translatableResourcesByIds`, and `translations(locale:)`
+of the resources. lsf translates products, collections, pages, blogs, articles, metafields and
+metaobject fields of translatable types, policies, product options and their values, and menus.
+The digest is the SHA-256 of the content, as Shopify's; the locale must be one of the shop's
+other than its primary one. A translation is `outdated` once its resource changed. Translations
+are not shown on the storefront.
+
 **Webhooks.** `metafield_definitions/create`, `/update` (also pin and unpin), `/delete`;
 `metaobjects/create`, `/update`, `/delete`; `products/update` when a product's or a variant's
 metafields change. Shopify has no topic for pages, blogs, articles, comments, menus, redirects,
 files, or the metafields of other owners.
 
 **Not simulated yet** (`LSF_NOT_SIMULATED`): `standardMetafieldDefinitionEnable`,
-`standardMetaobjectDefinitionEnable`, `translationsRegister`, `translationsRemove`,
-`shopLocaleEnable`, `shopLocaleUpdate`, `shopLocaleDisable`, `urlRedirectBulkDeleteAll`,
+`standardMetaobjectDefinitionEnable`, `shopLocaleEnable`, `shopLocaleUpdate`, `shopLocaleDisable`, `urlRedirectBulkDeleteAll`,
 `urlRedirectBulkDeleteByIds`, `urlRedirectBulkDeleteBySavedSearch`,
 `urlRedirectBulkDeleteBySearch`, `urlRedirectImportCreate`, `urlRedirectImportSubmit`,
 `fileAcknowledgeUpdateFailed`, the `theme*` mutations, and the `market*` mutations. Nor are

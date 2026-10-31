@@ -12,6 +12,7 @@ pub mod navigation;
 mod online_store;
 #[cfg(test)]
 mod tests;
+mod translations;
 pub mod types;
 
 pub use metafields::{owner_type, owner_types_of};
@@ -1186,6 +1187,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     online_store::register(registry);
     navigation::register(registry);
     files::register(registry);
+    translations::register(registry);
 }
 
 /// A code of a user error as the error type's code enum has it: itself when the enum has it,

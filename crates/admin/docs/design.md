@@ -811,17 +811,18 @@ rules and the sources):
 | Module | What |
 |---|---|
 | `types` | The metafield types of 2026-10: categories, supported validations (`metafieldDefinitionTypes`, Shopify's example order), and `check`: a value checked against its type and a definition's validations, kept as the seed keeps it (`value`, `jsonValue`, `reference(s)`), which store sync projects back. |
-| `metafields` | `metafieldsSet` (25 at most, atomic, `compareDigest`, the app's namespaces, the owner's write access), `metafieldsDelete`, `Metafield.compareDigest` (SHA-256 of the type and the value: Shopify does not say how its digest is made) and `translatable`. A metafield created gets the seed's GID (`metafield_gid`). |
+| `metafields` | `metafieldsSet` (25 at most, atomic, `compareDigest`, the app's namespaces, the owner's write access), `metafieldsDelete`, `Metafield.compareDigest` (SHA-256 of the value, as Shopify's digests of translatable content: Shopify does not say how this one is made) and `translatable`. A metafield created gets the seed's GID (`metafield_gid`). |
 | `metafield_definitions` | `metafieldDefinitionCreate`, `Update`, `Delete`, `Pin`, `Unpin`; `metafieldDefinitions`, `metafieldDefinition`, `metafieldDefinitionTypes`. |
 | `metaobjects` | `metaobjectDefinitionCreate`, `Update`, `Delete`; `metaobjectCreate`, `Update`, `Upsert`, `Delete`, `BulkDelete`; `metaobjects(type:)`, `metaobjectByHandle`, `metaobjectDefinitionByType`, `Metaobject.field`, `Metaobject.values`. An entry created gets `metaobject_gid(type, handle)` (lsf-core's id), else a new one when a renamed entry holds it. |
 | `online_store` | `page*`, `blog*`, `article*` (create, update, delete), `commentApprove`, `commentSpam`, `commentNotSpam`, `commentDelete`. |
 | `navigation` | `menuCreate`, `Update`, `Delete` (a menu created gets `menu_gid(handle)`), `urlRedirectCreate`, `Update`, `Delete` (and `add_redirect`, for `redirectNewHandle`). |
+| `translations` | `translationsRegister`, `translationsRemove`; `translatableResource(s)`, `translatableResourcesByIds`, the resources' `translations(locale:)`. A resource's translations are a `TranslatableResource` record (`resourceId`, `translations`) kept under `translations/<resource GID>`: not store data. |
 | `files` | `fileCreate`, `fileUpdate`, `fileDelete`; `files`' sort keys and search text. The staged uploads are the app family's: its upload endpoint records an upload with `files::record_staged_upload(resource_url, StagedUpload {filename, mime_type, size})`, which `fileCreate` reads (`files::staged_upload`). |
 
 Error codes the checks of metafield inputs share (`TOO_SHORT`, `APP_NOT_AUTHORIZED`, …) are fitted
 to the code enum of each payload (`content::fit_code`: the code, else `INVALID`), since the
 executor refuses an enum value the type does not have. Events without a webhook topic in 2026-10
-(pages, blogs, articles, comments, menus, redirects, files, metaobject definitions, the
+(pages, blogs, articles, comments, menus, redirects, files, translations, metaobject definitions, the
 metafields of owners other than products and variants) are emitted under a topic no
 subscription can name (`pages/create`, `metafields/update`, …): the server still knows the shop
 changed.

@@ -305,13 +305,10 @@ pub fn find_definition(
 }
 
 /// The digest of a metafield's value: what `compareDigest` answers and `metafieldsSet` compares.
-/// Shopify does not say how it is made; lsf's is the SHA-256 of the type and the value, in hex.
+/// Shopify does not say how it is made; lsf's is the SHA-256 of the value, in hex, as Shopify's
+/// digests of translatable content are.
 pub fn compare_digest(record: &Record) -> String {
-    let digest = Sha256::digest(format!(
-        "{}\n{}",
-        text(record, "type"),
-        text(record, "value")
-    ));
+    let digest = Sha256::digest(text(record, "value").as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
