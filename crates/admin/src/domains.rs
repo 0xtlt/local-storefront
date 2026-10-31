@@ -14,12 +14,16 @@ pub mod marketing;
 pub mod markets;
 pub mod orders;
 pub mod outbox;
+pub mod platform;
 pub mod pos;
 pub mod privacy;
 pub mod segments;
 pub mod staff;
+pub mod store_admin;
+pub mod storefront;
 pub mod subscriptions;
 pub mod tags;
+pub mod themes;
 pub mod webhook_subscriptions;
 
 use crate::resolve::Registry;
@@ -38,11 +42,15 @@ pub fn register(registry: &mut Registry) {
     marketing::register(registry);
     markets::register(registry);
     orders::register(registry);
+    platform::register(registry);
     pos::register(registry);
     privacy::register(registry);
     segments::register(registry);
     staff::register(registry);
+    store_admin::register(registry);
+    storefront::register(registry);
     subscriptions::register(registry);
     tags::register(registry);
+    themes::register(registry);
     webhook_subscriptions::register(registry);
 }

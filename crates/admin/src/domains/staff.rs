@@ -23,13 +23,12 @@
 //! location and fire `company_locations/update`. The tax registration syncs with the company,
 //! as `companyLocationTaxSettingsUpdate`'s does.
 
-use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::state::ShopState;
 use crate::state::seed::Seed;
-use crate::state::{ShopState, gid};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -45,17 +44,17 @@ pub fn register(registry: &mut Registry) {
         );
 }
 
-/// The GID of the shop's owner, the one staff member the seed makes.
+/// The GID of the shop's owner: the staff member of user 1, whom an online token or a session
+/// token of the shop names (`AssociatedUser::local`), seeded by the platform family.
 pub fn owner_gid() -> String {
-    gid("StaffMember", stable_id("staff_member", "account-owner"))
+    crate::domains::platform::staff_gid(1)
 }
 
-/// The shop's owner, when no staff member is seeded yet: the shop's `accountOwner`, and the staff
-/// member point of sale opens sessions with.
+/// The shop's owner, the shop's `accountOwner` and the staff member point of sale opens sessions
+/// with. The platform family seeds its record (the tokens' user, run before this one); this
+/// completes it with what the Admin reads of an owner (`initials`, `privateData`), or makes it
+/// when it is missing.
 pub fn seed(seed: &mut Seed) {
-    if seed.state.count("StaffMember") > 0 {
-        return;
-    }
     let shop = &seed.store.shop;
     let id = owner_gid();
     let handle = seed
@@ -65,32 +64,43 @@ pub fn seed(seed: &mut Seed) {
         .and_then(|domain| domain.split('.').next())
         .unwrap_or_default()
         .to_string();
-    let name = if shop.name.is_empty() {
-        "Shop owner".to_string()
+    let private = json!({
+        "accountSettingsUrl": format!("https://admin.shopify.com/store/{handle}/settings/account"),
+        "createdAt": Seed::epoch_string(),
+        "permissions": [],
+    });
+    if let Some(record) = seed.state.get_mut(&id) {
+        let initials: Vec<Value> = ["firstName", "lastName"]
+            .iter()
+            .filter_map(|field| record.get(*field)?.as_str()?.chars().next())
+            .map(|initial| json!(initial.to_string()))
+            .collect();
+        record.entry("initials").or_insert(Value::Array(initials));
+        record.entry("privateData").or_insert(private);
     } else {
-        format!("{} owner", shop.name)
-    };
-    let locale = seed.store.primary_language().iso_code.clone();
-    seed.insert(json!({
-        "__typename": "StaffMember",
-        "id": id,
-        "name": name,
-        "firstName": null,
-        "lastName": null,
-        "email": shop.email,
-        "phone": null,
-        "isShopOwner": true,
-        "active": true,
-        "exists": true,
-        "accountType": "REGULAR",
-        "locale": locale,
-        "initials": [name.chars().next().map(|c| c.to_string()).unwrap_or_default()],
-        "privateData": {
-            "accountSettingsUrl": format!("https://admin.shopify.com/store/{handle}/settings/account"),
-            "createdAt": Seed::epoch_string(),
-            "permissions": [],
-        },
-    }));
+        let name = if shop.name.is_empty() {
+            "Shop owner".to_string()
+        } else {
+            format!("{} owner", shop.name)
+        };
+        let locale = seed.store.primary_language().iso_code.clone();
+        seed.insert(json!({
+            "__typename": "StaffMember",
+            "id": id,
+            "name": name,
+            "firstName": null,
+            "lastName": null,
+            "email": shop.email,
+            "phone": null,
+            "isShopOwner": true,
+            "active": true,
+            "exists": true,
+            "accountType": "REGULAR",
+            "locale": locale,
+            "initials": [name.chars().next().map(|c| c.to_string()).unwrap_or_default()],
+            "privateData": private,
+        }));
+    }
     if let Some(shop_gid) = seed.state.shop_gid().map(str::to_string)
         && let Some(record) = seed.state.get_mut(&shop_gid)
     {
@@ -341,7 +351,7 @@ mod tests {
         let again = run(
             &mut shop,
             assign,
-            json!({"location": location, "staff": [owner["id"], "gid://shopify/StaffMember/1"]}),
+            json!({"location": location, "staff": [owner["id"], "gid://shopify/StaffMember/999999"]}),
         );
         let codes: Vec<&str> = data(&again, "companyLocationAssignStaffMembers")["userErrors"]
             .as_array()

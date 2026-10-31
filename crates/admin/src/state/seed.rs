@@ -12,7 +12,8 @@ use serde_json::Value;
 
 use super::{Clock, Record, ShopState, value};
 use crate::domains::{
-    app, catalog, content, customers, logistics, markets, orders, pos, staff, subscriptions,
+    app, catalog, content, customers, logistics, markets, orders, platform, pos, staff,
+    subscriptions,
 };
 
 /// The records of the store data and of the app. The same data gives the same records, ids and
@@ -28,6 +29,7 @@ pub fn seed(store: &Store, app: Option<&App>) -> ShopState {
     content::seed(&mut seed);
     app::seed(&mut seed);
     markets::seed(&mut seed);
+    platform::seed(&mut seed);
     staff::seed(&mut seed);
     pos::seed(&mut seed);
     content::seed_files(&mut seed);

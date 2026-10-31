@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use lsf_liquid::{Environment, Template};
 use serde_json::Value as Json;
 
-pub use files::{Revalidate, ThemeFiles};
+pub use files::{FileOverlay, OverlayFile, Revalidate, ThemeFiles};
 pub use locales::Translations;
 pub use schema::{Schema, SettingDef, Wrapper};
 pub use template_json::{BlockInstance, Layout, SectionInstance, TemplateJson};
@@ -87,6 +87,9 @@ pub struct Theme {
     /// The same for derived text.
     texts: Mutex<HashMap<&'static str, (std::time::Instant, Arc<str>)>>,
     revalidate: Revalidate,
+    /// The script tags of the shop's apps that `content_for_header` loads
+    /// ([`Theme::set_script_tags`]): the Admin API's, the theme's files say nothing of them.
+    script_tags: RwLock<Arc<[String]>>,
 }
 
 /// The directories a theme is made of.
@@ -123,7 +126,25 @@ impl Theme {
             versions: Mutex::new(HashMap::new()),
             texts: Mutex::new(HashMap::new()),
             revalidate,
+            script_tags: RwLock::new(Arc::default()),
         })
+    }
+
+    /// The `src` of the script tags the storefront loads, in order: what the apps of the shop
+    /// created through the Admin API (`scriptTagCreate`), which `content_for_header` loads as
+    /// Shopify loads them.
+    pub fn set_script_tags(&self, srcs: Vec<String>) {
+        if let Ok(mut tags) = self.script_tags.write() {
+            *tags = srcs.into();
+        }
+    }
+
+    /// The script tags `content_for_header` loads.
+    pub fn script_tags(&self) -> Arc<[String]> {
+        self.script_tags
+            .read()
+            .map(|tags| tags.clone())
+            .unwrap_or_default()
     }
 
     /// Memoizes a value derived from the theme's files for as long as the files are not
@@ -146,7 +167,7 @@ impl Theme {
     /// Whether a derived value computed at `computed` can still be used.
     fn is_fresh(&self, computed: std::time::Instant) -> bool {
         match self.revalidate {
-            Revalidate::Never => true,
+            Revalidate::Never => !self.files.overlay_changed_since(computed),
             Revalidate::Every(interval) => {
                 computed.elapsed() < interval.max(std::time::Duration::from_secs(1))
                     && !self.files.expired_since(computed)

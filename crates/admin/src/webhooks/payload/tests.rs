@@ -74,6 +74,10 @@ const EXTRA: &[(&str, &str)] = &[
     ("customers/*", ".tags"),
     ("customers/*", ".email_marketing_consent"),
     ("customers/*", ".sms_marketing_consent"),
+    // Shopify documents these with an empty payload (`{}`, the REST reference): lsf sends the
+    // staff member and the KYC information they are about.
+    ("finance_app_staff_member/*", "."),
+    ("finance_kyc_information/*", "."),
 ];
 
 /// The values lsf builds differently from Shopify's example, and why.
@@ -156,6 +160,8 @@ const VALUES: &[(&str, &str)] = &[
     ("checkouts/*", ".line_items[1].destination_location_id"),
     ("checkouts/*", ".line_items[1].origin_location_id"),
     ("checkouts/*", ".line_items[1].tax_lines[0].zone"),
+    // The deletion date of every sample is the samples' own.
+    ("rollouts/delete", ".deleted_at"),
     ("customers/data_request", "."),
     ("customers/redact", "."),
     ("shop/redact", "."),

@@ -290,6 +290,15 @@ impl ShopState {
         seed::seed(store, app)
     }
 
+    /// Changes what the seed holds from outside of it (what the server knows and the store data
+    /// does not: the directory of the local theme). What `amend` writes is not a change of the
+    /// Admin API: store sync does not see it.
+    pub fn amend_seed(&mut self, amend: impl FnOnce(&mut ShopState)) {
+        let originals = self.originals.take();
+        amend(self);
+        self.originals = originals;
+    }
+
     /// A setting of the shop the seed made: see the `settings` field.
     pub fn setting(&self, name: &str) -> Option<&Value> {
         self.settings.get(name)
@@ -1102,6 +1111,16 @@ impl Shops {
         let seed = &self.seed;
         for shop in self.shops.values_mut() {
             shop.reset_from(seed);
+        }
+    }
+
+    /// Changes the seed, and every shop kept here, with what the server knows and the store data
+    /// does not (the directory of the local theme): not a change of the Admin API
+    /// ([`ShopState::amend_seed`]). A reseed starts from the store data again: amend it again.
+    pub fn amend(&mut self, amend: impl Fn(&mut ShopState)) {
+        self.seed.amend_seed(&amend);
+        for shop in self.shops.values_mut() {
+            shop.amend_seed(&amend);
         }
     }
 

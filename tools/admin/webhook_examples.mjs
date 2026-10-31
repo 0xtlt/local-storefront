@@ -43,6 +43,14 @@ const SUPPLEMENTS = {
   }),
   "subscription_billing_attempts/success": attempt({}),
 };
+/** The topics whose only documented payload is `{}`. */
+const DOCUMENTED_EMPTY = [
+  "finance_app_staff_member/delete",
+  "finance_app_staff_member/grant",
+  "finance_app_staff_member/revoke",
+  "finance_app_staff_member/update",
+  "finance_kyc_information/update",
+];
 
 /** Writes examples-<version>.json from shopify.dev's webhook reference of `version`. */
 export async function generate(version) {
@@ -73,6 +81,12 @@ export async function generate(version) {
   }
   for (const [topic, text] of Object.entries(SUPPLEMENTS)) {
     if (!(topic in examples)) examples[topic] = text;
+  }
+  // Topics the reference lists without a sample payload, whose REST reference shows `{}`
+  // (https://shopify.dev/docs/api/admin-rest/latest/resources/webhook): lsf builds them from
+  // the record, and the test compares them with that empty example.
+  for (const topic of DOCUMENTED_EMPTY) {
+    if (built.includes(topic) && !(topic in examples)) examples[topic] = "{}";
   }
   const entries = built.map((topic) => {
     if (!(topic in examples)) throw new Error(`${topic}: no example payload in ${source}`);

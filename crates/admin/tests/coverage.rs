@@ -16,53 +16,7 @@ use lsf_admin::{schema, webhooks};
 
 /// The mutations being written, which answer `LSF_NOT_SIMULATED` until they are. Empty when
 /// everything is simulated: take a mutation out once it is.
-const NOT_SIMULATED_YET: &[&str] = &[
-    "appDowngradeAccessScopes",
-    "appRevokeAccessScopes",
-    "appUninstall",
-    "checkoutAndAccountsConfigurationUpdate",
-    "checkoutBrandingUpsert",
-    "delegateAccessTokenCreate",
-    "delegateAccessTokenDestroy",
-    "eventBridgeServerPixelUpdate",
-    "eventBridgeWebhookSubscriptionCreate",
-    "eventBridgeWebhookSubscriptionUpdate",
-    "fileAcknowledgeUpdateFailed",
-    "flowTriggerReceive",
-    "mobilePlatformApplicationCreate",
-    "mobilePlatformApplicationDelete",
-    "mobilePlatformApplicationUpdate",
-    "pubSubServerPixelUpdate",
-    "pubSubWebhookSubscriptionCreate",
-    "pubSubWebhookSubscriptionUpdate",
-    "scriptTagCreate",
-    "scriptTagDelete",
-    "scriptTagUpdate",
-    "serverPixelCreate",
-    "serverPixelDelete",
-    "shopPolicyUpdate",
-    "standardMetafieldDefinitionEnable",
-    "standardMetaobjectDefinitionEnable",
-    "storefrontAccessTokenCreate",
-    "storefrontAccessTokenDelete",
-    "themeCreate",
-    "themeDelete",
-    "themeDuplicate",
-    "themeFilesCopy",
-    "themeFilesDelete",
-    "themeFilesUpsert",
-    "themePublish",
-    "themeUpdate",
-    "urlRedirectBulkDeleteAll",
-    "urlRedirectBulkDeleteByIds",
-    "urlRedirectBulkDeleteBySavedSearch",
-    "urlRedirectBulkDeleteBySearch",
-    "urlRedirectImportCreate",
-    "urlRedirectImportSubmit",
-    "webPixelCreate",
-    "webPixelDelete",
-    "webPixelUpdate",
-];
+const NOT_SIMULATED_YET: &[&str] = &[];
 
 /// The topics lsf builds no payload for, and why. It logs them as not sent rather than send a
 /// made-up body.
@@ -82,23 +36,7 @@ const NOT_BUILT: &[(&str, &str)] = &[
 ];
 
 /// The topics whose payload is being written: empty when every topic with an example is built.
-const NOT_BUILT_YET: &[&str] = &[
-    "finance_app_staff_member/delete",
-    "finance_app_staff_member/grant",
-    "finance_app_staff_member/revoke",
-    "finance_app_staff_member/update",
-    "finance_kyc_information/update",
-    "rollouts/create",
-    "rollouts/delete",
-    "rollouts/resource_change_added",
-    "rollouts/resource_change_removed",
-    "rollouts/resource_change_updated",
-    "rollouts/update",
-    "themes/create",
-    "themes/delete",
-    "themes/publish",
-    "themes/update",
-];
+const NOT_BUILT_YET: &[&str] = &[];
 
 fn api() -> AdminApi {
     AdminApi::new(

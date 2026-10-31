@@ -91,6 +91,10 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("disputes", _) => &["ShopifyPaymentsDispute"],
         ("tax_services", _) => &["TaxAppConfiguration"],
         ("product_feeds", _) => &["ProductFeed"],
+        ("finance_app_staff_member", _) => &["StaffMember"],
+        ("finance_kyc_information", _) => &["FinanceKycInformation"],
+        ("rollouts", _) => &["Rollout"],
+        ("themes", _) => &["OnlineStoreTheme"],
         _ => &[],
     }
 }

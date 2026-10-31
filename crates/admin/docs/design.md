@@ -359,7 +359,8 @@ The rest of what 2027-01 changes needs no code: `QueryRoot.automaticDiscounts`,
 .visibleToStorefrontApi` and the collection sources' `metafieldInteger` are removed (refused by
 the schema); `InventoryItemMeasurement.packedDimensions: BoxDimensions!` and
 `Mutation.appDowngradeAccessScopes` are added (the first answered with a default, reported in
-`extensions.lsf.defaulted`; the second `LSF_NOT_SIMULATED`); new `MarketUserErrorCode` values. Its
+`extensions.lsf.defaulted`; the second simulated, registered like any mutation: only 2027-01
+reaches it); new `MarketUserErrorCode` values. Its
 webhook topics and the keys of its example payloads are 2026-10's. `mise run admin:version`
 prints this list for a new version.
 
@@ -465,6 +466,23 @@ fall forward), and `OLDEST_ACCESSIBLE` moves; its files can go once nothing serv
   successor, a new grant is acquired, 30 days pass after its first use, or it expires.
   Uninstalling (`Tokens::uninstall`) revokes every token of the app on the shop; the webhooks
   of the shop stop (see "Events and webhooks").
+- **Delegate tokens** (`delegateAccessTokenCreate`): `shppa_` and 32 hex digits (the guide's
+  `shppa_…`), a subset of the parent's scopes, expiring with the parent or sooner; their grant's
+  source is `GrantSource::Delegate`, which may not make delegates. When the installation's scopes
+  change (`Tokens::set_scopes`: an install with other scopes, `appRevokeAccessScopes`), every
+  token of it carries the new ones, but a delegate keeps those of its own still granted.
+- **What a mutation changes of the tokens.** A mutation runs under the shop's lock, and the tokens
+  come before the shops in the order of the locks: a mutation cannot take them. So `appUninstall`,
+  `appRevokeAccessScopes`, `appDowngradeAccessScopes` and the delegate tokens change the records
+  (the installation's `accessScopes`, a `DelegateAccessToken` record kept under a key made of the
+  token) and emit an event of `domains::platform::access::AUTH` (`lsf/auth`, which no
+  subscription can name) whose snapshot says what the tokens must do
+  (`AuthEffect::{Uninstall, Scopes, Delegate, Destroy}`). The api layer reads them from the
+  request's events and applies them once the shop is unlocked, before it answers
+  (`AdminApi::apply_auth_effects`): the backend's next request finds the token made, revoked or
+  narrowed. A failed mutation emits nothing, so changes nothing of the tokens either. The
+  uninstall is the control endpoint's path (`AdminApi::finish_uninstall`), its `app/uninstalled`
+  delivered with the mutation's events.
 - **OAuth**, as Shopify (`auth::oauth`): `GET /admin/oauth/authorize` approves at once and
   redirects to the `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`;
   `POST /admin/oauth/access_token` (JSON, form, or query parameters) exchanges the code (once,
@@ -1640,6 +1658,88 @@ The seed runs last (`pos::seed`): it reads the locations and the staff another f
   their `__typename`). `cashTrackingSession(s)` read the same sessions as `CashTrackingSession`s
   of their number. Events have topics no subscription can name (`cash_drawers/create`, …).
 
+### Themes (`domains/themes.rs`)
+
+The theme lsf serves is the shop's main theme, and the design question is what a write to it
+does. **Decision: the directory is the main theme's files, read from disk; what the Admin API
+writes to it is an in-memory overlay that the storefront serves on top of the directory, which is
+never written to.**
+
+- *Why not refuse writes to the main theme* (Shopify's error for a locked theme): an app that edits
+  the live theme (a theme app's setup, a page builder writing `templates/*.json`, a backend that
+  adds an `assets/` file) is a common case, and lsf exists to test it: it must see its write on the
+  storefront. *Why not write to disk*: the directory is the developer's work, under version
+  control, often open in an editor; a test run must not change it, and a reset must undo it.
+- *Feasible at no cost*: every read of the theme goes through `lsf_core::theme::ThemeFiles`
+  (`read`, `exists`, `list`, `version`, and `bytes` for the CDN's assets). `ThemeFiles` holds an
+  optional `FileOverlay` (`set_overlay`): by path, a file's bytes (and its text, an `Arc<str>`
+  stable for the life of the overlay, so that the theme's caches of parsed Liquid and JSON, keyed
+  by the source's `Arc`, rebuild only what changed) or `None` for a file deleted; `exclusive` for a
+  theme that replaces the directory. A read looks at an `AtomicBool` first: without an overlay,
+  the common case, a read costs one atomic load more. Setting one expires what is derived from the
+  files (`Theme::cached_version`, `cached_text` check `overlay_changed_since`, also for files read
+  once, `--static`).
+- *Records*: the local theme is `OnlineStoreTheme/1` (`lsf_core::urls::THEME_ID`, the
+  `Shopify.theme.id` of `content_for_header`), `MAIN`, named by `theme_info.theme_name` of its
+  `config/settings_schema.json`; the server gives its directory (`AdminApi::with_theme`, which
+  amends the seed: `ShopState::amend_seed`, not a change store sync sees; again after a reseed).
+  Its record keeps the overlay (`lsfFiles`: by filename, the blob of its bytes, digest, size,
+  dates, or `{deleted: true}`); another theme's record keeps all its files there. The bytes are
+  blobs of the shop, keyed by their MD5: a duplicate shares them, a reset forgets them.
+- *What the storefront serves* (`themes::storefront_overlay`, `AdminApi::storefront_overlay`):
+  the main theme of the default shop. The local theme without writes: nothing (the directory
+  alone). With writes: the overlay. Another theme published: all its files, exclusively. Its
+  `generation` is a hash of what it holds. The server applies it where store sync builds the store
+  (`ServerState::sync_theme`, when the count of changes moved, under the build lock), only when
+  the generation differs; live reload's token includes it. The CDN serves an asset of the overlay
+  as it is (`/cdn/shop/t/1/assets/…`; an image without the CDN's transforms).
+- *What it costs* (release builds of the commit before themes and of this one, the fixture theme
+  of lsf-core, the demo store, the two servers' renders interleaved by batches of 25, 1000 each,
+  medians of `Server-Timing: render`, on 2026-10-31 on a machine loaded with other builds):
+  without an overlay, `/` 168 → 166 µs, `/collections/all` 326 → 331 µs, a product 199 → 198 µs,
+  a search 128 → 128 µs revalidating; 77 → 77, 366 → 361, 94 → 95, 60 → 60 µs with `--static`:
+  within ±5 µs (±1.5 %) either way, which is the noise. With an overlay of two files and a script
+  tag, `/` renders in 163 to 172 µs against 161 to 165 µs before (alternated runs): a few µs,
+  most of it the 640 bytes of the script tag's loader.
+- *What does not follow*: `Shopify.theme` of `content_for_header` keeps id 1 and the name of the
+  directory's `settings_schema.json` while another theme is published (its files are served); a
+  `URL` body of `themeFilesUpsert` and a `themeCreate` from a URL are downloaded within the
+  request (10 s), where Shopify processes them in the background (`processing: true` until done):
+  lsf's are done when the mutation answers.
+
+### The online store and the app platform (`domains/storefront.rs`, `store_admin.rs`, `platform.rs`)
+
+| Module | Records | Ids, keys |
+|---|---|---|
+| `storefront` | `ScriptTag`, `WebPixel`, `ServerPixel`, `StorefrontAccessToken` | the counter of each type; a storefront token's secret is a UUID of the shop and its id, without dashes |
+| `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `SavedSearch`, `Job`s done, `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
+| `platform` | `StaffMember/1` (the shop owner, seeded), `CheckoutProfile/1` and `CheckoutAndAccountsConfiguration/1` (seeded), `AndroidApplication`/`AppleApplication` (ids of `MobilePlatformApplication`, the type by platform, as the reference's), `FulfillmentConstraintRule`, `DelegateAccessToken` (key `delegate-access-token/<hash>`, never the token), `ProductResourceFeedback` (key `product-resource-feedback/<product>`) | the counter |
+
+- **App extensions** lsf-checkout lists without reading (`App::other`): the web pixel extension's
+  `[settings.fields]` and the Flow triggers' `[[settings.fields]]` are read from their
+  `shopify.extension.toml` at seed (`platform::extensions`, `[settings]` of the file when it is
+  below `[[extensions]]`, as Shopify CLI reads it) into settings of the shop
+  (`webPixelExtension`, `flowTriggers`).
+- **The outside world** (`platform::outbox`): what Shopify would hand to a service lsf does not
+  run is never sent. The state Shopify would show is kept (a server pixel `CONNECTED`, a mobile
+  app), and what would have been sent (a Flow trigger) is appended to the shop's outbox, a memo
+  (`lsf/outbox`, the last 1000), which a failed mutation puts back and a reset empties:
+  `GET /__lsf/admin/outbox`. EventBridge and Pub/Sub subscriptions' deliveries are in the
+  webhooks' log, `not_sent`. The association files of mobile apps are served by the storefront
+  (`/.well-known/…`, `AdminApi::association_file`).
+- **Script tags** reach `content_for_header` through `lsf_core::theme::Theme::set_script_tags`,
+  set by the server from the default shop (`AdminApi::storefront_scripts`) as the overlay is.
+  They are not store data: a script tag is the app's, not the theme's or the data's, and the
+  store data has no section for it.
+- **Mutations run through others**: `standardMetafieldDefinitionEnable` and
+  `standardMetaobjectDefinitionEnable` run `metafieldDefinitionCreate` and
+  `metaobjectDefinitionCreate` within the same mutation (`Mutation::resolver`, as a bulk mutation
+  runs its lines); the deprecated EventBridge and Pub/Sub subscription mutations run
+  `webhookSubscriptionCreate`/`Update` with their arguments rewritten (`FieldContext::
+  with_arguments`); `stagedUploadTargetGenerate(s)` run `stagedUploadsCreate`; bulk deletes and
+  bulk tags by search run the `urlRedirects` and `discountNodes` connections. One set of checks,
+  of records and of events, the deprecated shapes kept in the payloads.
+
 ## Events and webhooks (`webhooks`)
 
 A change emits events: `{topic, shop, gid, at, id, snapshot}` (`products/update`, `orders/create`,
@@ -1862,6 +1962,8 @@ Kept here so that nobody invents a field for it; each would need the store data 
 - **Delivery profiles** beyond the general profile's flat rates to the rest of the world: other
   zones and profiles, conditional rates, carrier services' rates (the store data has one list of
   rates, offered to every address).
+- Themes, theme files and script tags are not store data: the storefront gets them through the
+  theme it serves (see "Themes"), not the overlay of the store data.
 - The `session` of the data and the scenarios of `checkouts/` are not written: a product,
   variant or customer they name by a key the Admin API changed or removed is reported as unknown
   there.
@@ -2003,7 +2105,7 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`, `segments`, `customer_merge`, `privacy`, `marketing`, `analytics`, `staff`, `checkouts`, `outbox`, `pos`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`, `segments`, `customer_merge`, `privacy`, `marketing`, `analytics`, `staff`, `checkouts`, `outbox`, `pos`, `platform`, `store_admin`, `storefront`, `themes`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |

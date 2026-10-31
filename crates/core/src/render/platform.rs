@@ -432,6 +432,29 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
         "(function () { var queue = function () { var calls = []; var push = function () { calls.push(Array.prototype.slice.call(arguments)); }; push.q = calls; return push; }; var shopify = window.Shopify = window.Shopify || {}; shopify.loadFeatures = queue(); shopify.autoloadFeatures = queue(); })();",
     ));
 
+    // The script tags of the shop's apps, loaded once the page is, as Shopify's `asyncLoad`
+    // does, each with the shop's domain in `shop=`.
+    let script_tags = site.theme.script_tags();
+    if !script_tags.is_empty() {
+        let urls: Vec<String> = script_tags
+            .iter()
+            .map(|src| {
+                let separator = if src.contains('?') { '&' } else { '?' };
+                format!(
+                    "{src}{separator}shop={}",
+                    urls::encode_component(&shop.permanent_domain)
+                )
+            })
+            .collect();
+        out.push(script(
+            "",
+            &format!(
+                "(function() {{\n  var isLoaded = false;\n  function asyncLoad() {{\n    if (isLoaded) return;\n    isLoaded = true;\n    var urls = {};\n    for (var i = 0; i < urls.length; i++) {{\n      var s = document.createElement('script');\n      s.type = 'text/javascript';\n      s.async = true;\n      s.src = urls[i];\n      var x = document.getElementsByTagName('script')[0];\n      x.parentNode.insertBefore(s, x);\n    }}\n  }};\n  if(window.attachEvent) {{\n    window.attachEvent('onload', asyncLoad);\n  }} else {{\n    window.addEventListener('load', asyncLoad, false);\n  }}\n}})();",
+                misc_json(&json!(urls))
+            ),
+        ));
+    }
+
     let mut tracking = json!({
         "a": shop.id,
         "offset": site.now.with_timezone(&shop.timezone).offset().fix().local_minus_utc(),
