@@ -16,7 +16,10 @@
 //!   `themes/create`.
 //! - **`themeUpdate(id:, input: {name})`**: `TOO_LONG` past 50 characters (the admin's limit),
 //!   `INVALID` for a blank name. `themes/update`.
-//! - **`themeDelete(id:)`**: the main theme cannot be deleted. `themes/delete`.
+//! - **`themeDelete(id:)`**: the main theme cannot be deleted ("if the theme is the last
+//!   published theme", the REST reference says; the payload's only code is `NOT_FOUND`, so the
+//!   error has none). Nor can the local theme, published or not: it is the directory, which
+//!   has no copy in the shop to publish again. `themes/delete`.
 //! - **`themeDuplicate(id:, name:)`**: an `UNPUBLISHED` copy with every file, named
 //!   "Copy of <name>" unless given one (the admin's). `themes/create`.
 //! - **`themePublish(id:)`**: the theme becomes `MAIN` and the main one `UNPUBLISHED` ("There
@@ -236,6 +239,16 @@ fn theme_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         let error = UserError::new(
             &["id"],
             "The main theme can't be deleted: publish another theme first",
+        );
+        return Ok(payload(json!({"deletedThemeId": null}), &[error]));
+    }
+    // The theme directory has no copy in the shop: deleted, nothing could publish it again
+    // until a reset. It is refused as the main theme is, whatever its role now.
+    if is_local(&theme) {
+        let error = UserError::new(
+            &["id"],
+            "The local theme can't be deleted: it is the theme directory lsf serves, which \
+             themePublish makes the main theme again",
         );
         return Ok(payload(json!({"deletedThemeId": null}), &[error]));
     }

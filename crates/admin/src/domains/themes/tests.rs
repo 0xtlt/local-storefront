@@ -447,3 +447,46 @@ fn theme_webhooks_carry_the_rest_theme() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// Publishing another theme, then deleting the local one, left the directory unreachable until a
+/// reset: nothing in the shop could be published to serve it again.
+#[test]
+fn the_local_theme_cannot_be_deleted_even_when_another_is_published() {
+    let (mut shop, root) = shop_with_theme("delete-local");
+    let duplicated = run(
+        &mut shop,
+        "mutation { themeDuplicate(id: \"gid://shopify/OnlineStoreTheme/1\") { newTheme { id } userErrors { message } } }",
+        json!({}),
+    );
+    let id = duplicated["data"]["themeDuplicate"]["newTheme"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    run(
+        &mut shop,
+        "mutation($id: ID!) { themePublish(id: $id) { theme { id } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    shop.take_events();
+    let answer = run(
+        &mut shop,
+        "mutation { themeDelete(id: \"gid://shopify/OnlineStoreTheme/1\") { deletedThemeId userErrors { field message } } }",
+        json!({}),
+    );
+    let payload = &answer["data"]["themeDelete"];
+    assert_eq!(payload["deletedThemeId"], Value::Null, "{answer}");
+    assert_eq!(payload["userErrors"][0]["field"], json!(["id"]));
+    assert!(topics(&mut shop).is_empty(), "nothing was deleted");
+    // It can still be published again, and the directory is served.
+    let published = run(
+        &mut shop,
+        "mutation { themePublish(id: \"gid://shopify/OnlineStoreTheme/1\") { theme { role } userErrors { code } } }",
+        json!({}),
+    );
+    assert_eq!(
+        published["data"]["themePublish"]["theme"]["role"], "MAIN",
+        "{published}"
+    );
+    assert!(super::storefront_overlay(&shop).is_none());
+    let _ = std::fs::remove_dir_all(root);
+}

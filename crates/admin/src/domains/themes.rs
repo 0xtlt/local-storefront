@@ -16,7 +16,8 @@
 //! so a backend that edits the main theme sees its edit on the storefront, and the developer's
 //! files stay theirs. A reset (`DELETE /__lsf/admin`) drops the overlay. Publishing another theme
 //! makes the storefront serve that theme alone (an exclusive overlay of all its files);
-//! publishing the local theme again serves the directory.
+//! publishing the local theme again serves the directory, which is why the local theme cannot
+//! be deleted, published or not.
 //!
 //! Only the default shop's main theme reaches the storefront, as only its store syncs.
 //!

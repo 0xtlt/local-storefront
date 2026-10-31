@@ -1433,8 +1433,10 @@ the connection's `userErrors` (`NOT_FOUND`).
 - `themeCreate` from a ZIP (a staged upload of `stagedUploadsCreate`, or a URL lsf downloads,
   50 MB at most; `INVALID_ZIP`, `ZIP_IS_EMPTY`, `ZIP_TOO_LARGE`; roles `UNPUBLISHED` and
   `DEVELOPMENT`), `themeDuplicate` (all the files, "Copy of …"), `themeUpdate` (the name, 50
-  characters), `themeDelete` (not the main theme), `themePublish`. A published theme is what the
-  storefront serves, alone; publishing the local theme again serves the directory.
+  characters), `themeDelete` (not the main theme, and never the local theme, even once another
+  is published: it is the directory, which would be gone until a reset), `themePublish`. A
+  published theme is what the storefront serves, alone; publishing the local theme again serves
+  the directory.
 - `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories,
   JSON files valid JSON (`FILE_VALIDATION_ERROR`, `DUPLICATE_FILE_INPUT`,
   `LESS_THAN_OR_EQUAL_TO`); `TEXT`, `BASE64` and `URL` bodies (a `URL` file comes through the
