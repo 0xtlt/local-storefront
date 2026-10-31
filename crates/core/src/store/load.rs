@@ -493,9 +493,11 @@ pub struct Overlay {
     pub removed: Removals,
     /// Data in the format of a data file (any of its sections): an entity whose key (the handle
     /// of a product, the email of a customer, the code of a gift card, …) is that of an entity
-    /// already there replaces it where it is, the others are added after; `shop` is merged
-    /// field by field, `checkout` field by field and the settings of its Functions Function by
-    /// Function; `localization`, `session` and `now` replace the files' own.
+    /// already there replaces it where it is, the others are added after. An entity that gives
+    /// its `id` replaces the one with that id, whatever its key: its handle (or email, or name)
+    /// can change and its place stays. `shop` is merged field by field, `checkout` field by
+    /// field and the settings of its Functions Function by Function; `localization`, `session`
+    /// and `now` replace the files' own.
     pub data: Json,
 }
 
@@ -686,6 +688,8 @@ fn apply_overlay(
             });
         }
     }
+    // An entity replaces the one with its id when it gives one (an entity whose key changed
+    // stays where it was), the one with its key otherwise.
     macro_rules! upsert {
         ($field:ident, $key:expr) => {
             for (index, value) in input.$field.into_iter().enumerate() {
@@ -704,34 +708,106 @@ fn apply_overlay(
                 }
             }
         };
+        ($field:ident, $key:expr, $id:expr) => {
+            for (index, value) in input.$field.into_iter().enumerate() {
+                let key = $key(&value);
+                let explicit = value.id.and_then(|_| $id(&value));
+                let sourced = Sourced {
+                    value,
+                    origin: origin(format!("/{}/{index}", stringify!($field))),
+                };
+                let position = explicit
+                    .and_then(|id| {
+                        merged
+                            .$field
+                            .iter()
+                            .position(|existing| $id(&existing.value) == Some(id))
+                    })
+                    .or_else(|| {
+                        merged
+                            .$field
+                            .iter()
+                            .position(|existing| $key(&existing.value) == key)
+                    });
+                match position {
+                    Some(position) => merged.$field[position] = sourced,
+                    None => merged.$field.push(sourced),
+                }
+            }
+        };
     }
-    upsert!(products, |product: &model::ProductInput| effective_handle(
-        &product.handle,
-        &product.title
-    ));
-    upsert!(collections, |collection: &model::CollectionInput| {
-        effective_handle(&collection.handle, &collection.title)
-    });
-    upsert!(pages, |page: &model::PageInput| effective_handle(
-        &page.handle,
-        &page.title
-    ));
-    upsert!(blogs, |blog: &model::BlogInput| effective_handle(
-        &blog.handle,
-        &blog.title
-    ));
-    upsert!(customers, |customer: &model::CustomerInput| customer
-        .email
-        .to_lowercase());
-    upsert!(companies, |company: &model::CompanyInput| company
-        .name
-        .to_lowercase());
+    // The id of an entity, given or derived from its key as the build derives it.
+    let derived = |kind: &str, given: Option<u64>, key: &str| {
+        Some(given.unwrap_or_else(|| crate::util::stable_id(kind, key)))
+    };
+    upsert!(
+        products,
+        |product: &model::ProductInput| effective_handle(&product.handle, &product.title),
+        |product: &model::ProductInput| derived(
+            "product",
+            product.id,
+            &effective_handle(&product.handle, &product.title)
+        )
+    );
+    upsert!(
+        collections,
+        |collection: &model::CollectionInput| {
+            effective_handle(&collection.handle, &collection.title)
+        },
+        |collection: &model::CollectionInput| derived(
+            "collection",
+            collection.id,
+            &effective_handle(&collection.handle, &collection.title)
+        )
+    );
+    upsert!(
+        pages,
+        |page: &model::PageInput| effective_handle(&page.handle, &page.title),
+        |page: &model::PageInput| derived(
+            "page",
+            page.id,
+            &effective_handle(&page.handle, &page.title)
+        )
+    );
+    upsert!(
+        blogs,
+        |blog: &model::BlogInput| effective_handle(&blog.handle, &blog.title),
+        |blog: &model::BlogInput| derived(
+            "blog",
+            blog.id,
+            &effective_handle(&blog.handle, &blog.title)
+        )
+    );
+    upsert!(
+        customers,
+        |customer: &model::CustomerInput| customer.email.to_lowercase(),
+        |customer: &model::CustomerInput| derived(
+            "customer",
+            customer.id,
+            &customer.email.to_lowercase()
+        )
+    );
+    upsert!(
+        companies,
+        |company: &model::CompanyInput| company.name.to_lowercase(),
+        |company: &model::CompanyInput| derived(
+            "company",
+            company.id,
+            &company.name.to_lowercase()
+        )
+    );
     upsert!(gift_cards, |card: &model::GiftCardInput| card
         .code
         .to_uppercase());
-    upsert!(locations, |location: &model::LocationInput| location
-        .name
-        .to_lowercase());
+    upsert!(
+        locations,
+        |location: &model::LocationInput| location.name.to_lowercase(),
+        |location: &model::LocationInput| derived(
+            "location",
+            location.id,
+            &location.name.to_lowercase()
+        )
+    );
     upsert!(
         selling_plan_groups,
         |group: &model::SellingPlanGroupInput| { group.name.to_lowercase() }
@@ -1352,6 +1428,36 @@ mod tests {
             !files.iter().any(|(file, _)| *file == "(admin api)"),
             "{files:?}"
         );
+    }
+
+    #[test]
+    fn an_entity_with_its_id_replaces_the_one_with_that_id() {
+        let (before, _) = load(&DataSource::Demo, &LoadOptions::default());
+        let candle = before.product_by_handle("scented-candle").expect("candle");
+        let position = before
+            .products
+            .iter()
+            .position(|product| product.id == candle.id);
+        let overlay = Overlay::new(
+            "(admin api)",
+            serde_json::json!({"products": [
+                {"id": candle.id, "title": "Fig candle", "handle": "fig-candle", "price": 1800}
+            ]}),
+        );
+        let (store, diagnostics) =
+            load_with_overlays(&DataSource::Demo, &LoadOptions::default(), &[overlay]);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        assert!(store.product_by_handle("scented-candle").is_none());
+        let renamed = store.product_by_handle("fig-candle").expect("renamed");
+        assert_eq!(renamed.id, candle.id);
+        assert_eq!(
+            store
+                .products
+                .iter()
+                .position(|product| product.id == candle.id),
+            position
+        );
+        assert_eq!(store.products.len(), before.products.len());
     }
 
     #[test]
