@@ -11,11 +11,20 @@ use lsf_checkout::app::AppConfig;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::topics;
+use super::topics::{self, Topics};
 use crate::state::{Record, gid, parse_gid};
+use crate::version::{self, ApiVersion};
 
-/// The API version lsf serializes payloads in, whatever a subscription asks for.
-pub const API_VERSION: &str = "2026-10";
+/// The API version of a subscription that names none: [`version::DEFAULT`]. What a payload is
+/// built in is the subscription's version as the server serves it
+/// ([`version::Served::for_webhook`]).
+pub const API_VERSION: &str = version::DEFAULT;
+
+/// The topics a subscription in `api_version` can be to: those of the version, or of the
+/// default one for a version lsf does not know (its deliveries say what lsf did instead).
+fn topics_of(api_version: &str) -> &'static Topics {
+    topics::for_version(ApiVersion::get(api_version).unwrap_or_default())
+}
 
 /// Where a subscription comes from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -101,10 +110,9 @@ impl Subscription {
     /// `WebhookSubscription` type, for the resolvers of `webhookSubscription(s)` and the payloads
     /// of the mutations.
     pub fn to_record(&self) -> Record {
-        let topic = topics::by_written(&self.topic)
-            .map_or(self.topic.to_ascii_uppercase(), |topic| {
-                topic.name.to_string()
-            });
+        let topic = topics_of(&self.api_version)
+            .by_written(&self.topic)
+            .map_or(self.topic.to_ascii_uppercase(), |topic| topic.name.clone());
         let legacy = parse_gid(&self.id).map(|(_, id)| id.to_string());
         let value = json!({
             "__typename": "WebhookSubscription",
@@ -123,7 +131,7 @@ impl Subscription {
             "apiVersion": {
                 "handle": self.api_version,
                 "displayName": self.api_version,
-                "supported": self.api_version == API_VERSION,
+                "supported": !version::is_inaccessible(&self.api_version),
             },
             "createdAt": rfc3339(self.created_at),
             "updatedAt": rfc3339(self.updated_at),
@@ -153,12 +161,14 @@ fn rfc3339(at: DateTime<Utc>) -> String {
 
 /// The subscriptions of `shopify.app.toml`: one per topic of each `[[webhooks.subscriptions]]`
 /// (its `topics`, then its `compliance_topics`), with the `api_version` of `[webhooks]`
-/// (2026-10 when there is none). `at` is their `createdAt`: when the server read the file.
+/// ([`API_VERSION`] when there is none). `at` is their `createdAt`: when the server read the
+/// file.
 pub fn from_app_config(config: &AppConfig, at: DateTime<Utc>) -> Vec<Subscription> {
     let api_version = config
         .webhooks_api_version
         .clone()
         .unwrap_or_else(|| API_VERSION.to_string());
+    let topics = topics_of(&api_version);
     let mut subscriptions = Vec::new();
     for (index, entry) in config.webhook_subscriptions.iter().enumerate() {
         for topic in entry.topics.iter().chain(&entry.compliance_topics) {
@@ -167,7 +177,9 @@ pub fn from_app_config(config: &AppConfig, at: DateTime<Utc>) -> Vec<Subscriptio
                 source: Source::AppConfig { entry: index + 1 },
                 // `ORDERS_CREATE` is read as `orders/create`; an unknown topic is kept as written,
                 // so that its deliveries say why they are not sent.
-                topic: topics::written_form(topic).map_or_else(|| topic.clone(), str::to_string),
+                topic: topics
+                    .written_form(topic)
+                    .map_or_else(|| topic.clone(), str::to_string),
                 uri: entry.uri.clone(),
                 name: entry.name.clone(),
                 filter: entry
@@ -392,8 +404,8 @@ impl Registry {
             .find(|subscription| subscription.id == id)
     }
 
-    /// `webhookSubscriptionCreate`: `topic` as the enum value (`ORDERS_CREATE`) or written.
-    /// `api_version` is the version of the request.
+    /// `webhookSubscriptionCreate`: `topic` as the enum value (`ORDERS_CREATE`) or written, one
+    /// of the topics of `api_version`, the version of the request.
     pub fn create(
         &mut self,
         shop: &str,
@@ -402,9 +414,9 @@ impl Registry {
         api_version: &str,
         now: DateTime<Utc>,
     ) -> Result<Subscription, Vec<UserError>> {
-        let Some(topic) = topics::by_name(topic)
-            .or_else(|| topics::by_written(topic))
-            .map(|topic| topic.written)
+        let Some(topic) = topics_of(api_version)
+            .find(topic)
+            .map(|topic| topic.written.as_str())
         else {
             return Err(vec![UserError::new(
                 &["topic"],

@@ -165,9 +165,10 @@ fn webhooks_of<'m>(mutation: &'m Mutation<'_>) -> Result<&'m Webhooks, FieldErro
         .ok_or_else(|| FieldError::new("lsf: this shop has no webhooks to subscribe to"))
 }
 
-/// Whether the token may subscribe to `topic`: it holds one of the scopes the topic names.
+/// Whether the token may subscribe to `topic`: it holds one of the scopes the topic names in the
+/// version of the request.
 fn topic_allowed(mutation: &Mutation<'_>, topic: &str) -> Result<(), UserError> {
-    let Some(topic) = topics::by_name(topic).or_else(|| topics::by_written(topic)) else {
+    let Some(topic) = topics::for_version(mutation.version()).find(topic) else {
         return Ok(());
     };
     let Some(grant) = mutation.grant() else {

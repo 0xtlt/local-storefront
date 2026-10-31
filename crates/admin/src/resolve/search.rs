@@ -69,7 +69,9 @@ pub(super) fn filter(
     let Some(text) = ctx.arg_str("query").filter(|text| !text.trim().is_empty()) else {
         return items;
     };
-    let documented = search::documented_filters(ctx.parent_type(), ctx.field_name()).unwrap_or(&[]);
+    let documented = search::for_version(resolver.version())
+        .filters(ctx.parent_type(), ctx.field_name())
+        .unwrap_or(&[]);
     let mut query = Query::parse(text);
     let warnings = query.invalid_fields(|field| documented_type(documented, field).is_some());
     if !warnings.is_empty() {
@@ -226,7 +228,7 @@ fn generic(
     kind: &str,
 ) -> Option<Vec<SearchValue>> {
     let field = field.to_ascii_lowercase();
-    let schema = crate::schema::admin();
+    let schema = resolver.schema();
     let has_field = |name: &str| {
         record.contains_key(name)
             || schema

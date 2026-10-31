@@ -21,7 +21,7 @@ use crate::graphql::{self, Bucket, Request};
 use crate::resolve::{Registry, ShopResolver};
 use crate::state::{Event, ShopState, Shops};
 use crate::throttle::{self, Plan, Throttle};
-use crate::version::{self, ADMIN_2026_10, AdminPath};
+use crate::version::{self, AdminPath, ApiVersion, Resolution, Served};
 use crate::webhooks::{AppUrls, DeliveryOptions, Settings, TriggerError, TriggerRequest, Webhooks};
 
 /// The answer to a request without a valid access token: Shopify's, word for word.
@@ -110,6 +110,8 @@ pub struct AdminApi {
     scopes: Vec<String>,
     /// Store sync of the default shop, once the server turns it on ([`AdminApi::sync_store`]).
     sync: StoreSync,
+    /// The versions of the Admin API it serves ([`AdminApi::with_versions`]).
+    versions: Served,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -204,7 +206,27 @@ impl AdminApi {
             app,
             scopes,
             sync: StoreSync::default(),
+            versions: Served::default(),
         }
+    }
+
+    /// Serves these versions of the Admin API (`--admin-versions`), for requests and for the
+    /// payloads of webhooks: [`version::DEFAULT`] alone otherwise.
+    pub fn with_versions(mut self, versions: Served) -> AdminApi {
+        self.webhooks = self.webhooks.with_versions(versions.clone());
+        self.versions = versions;
+        self
+    }
+
+    /// The versions of the Admin API it serves.
+    pub fn versions(&self) -> &Served {
+        &self.versions
+    }
+
+    /// The path of the GraphQL Admin API of its primary version:
+    /// `/admin/api/2026-10/graphql.json`.
+    pub fn graphql_path(&self) -> String {
+        format!("/admin/api/{}/graphql.json", self.versions.primary())
     }
 
     /// The domain of the default shop: `shop.permanent_domain` of the store data.
@@ -476,7 +498,7 @@ impl AdminApi {
     ///
     /// | Path | What answers |
     /// |---|---|
-    /// | `/admin/api/<version>/graphql.json` | the GraphQL Admin API, 2026-10 |
+    /// | `/admin/api/<version>/graphql.json` | the GraphQL Admin API of a version it serves; one Shopify no longer serves falls forward; another is a `404` |
     /// | `/admin/api/<version>/<other>.json` | `404`: the REST Admin API is not served |
     /// | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | [`oauth::handle`] |
     /// | `/__lsf/admin`, `/__lsf/admin/shops`, `/__lsf/admin/install`, `/__lsf/admin/uninstall` | the control endpoints |
@@ -484,15 +506,33 @@ impl AdminApi {
     pub fn handle(&self, request: &HttpRequest) -> Option<HttpResponse> {
         let path = request.path.as_str();
         if let Some(admin) = version::parse_path(path) {
+            let primary = self.versions.primary();
             return Some(match admin {
-                AdminPath::Graphql(_) => self.graphql(request),
-                AdminPath::UnsupportedVersion(version) => self.api_headers(HttpResponse::json(
-                    404,
-                    &version::unsupported_version(version),
-                )),
-                AdminPath::Rest { resource, .. } => {
-                    self.api_headers(HttpResponse::json(404, &version::rest_not_served(resource)))
-                }
+                AdminPath::Graphql(asked) => match self.versions.resolve(asked) {
+                    Resolution::Served(version) => self.graphql(request, version),
+                    // As Shopify: the oldest supported version answers, and says so in
+                    // `X-Shopify-API-Version`.
+                    Resolution::FellForward { asked, served } => {
+                        self.graphql(request, served).header(
+                            "x-lsf-reason",
+                            format!(
+                                "API version {asked} is no longer supported: {served} answered, \
+                                 as Shopify falls forward to the oldest supported version"
+                            ),
+                        )
+                    }
+                    Resolution::NotServed(body) => {
+                        Self::api_headers(HttpResponse::json(404, &body), primary)
+                    }
+                },
+                AdminPath::UnsupportedVersion(asked) => Self::api_headers(
+                    HttpResponse::json(404, &self.versions.refusal(asked)),
+                    primary,
+                ),
+                AdminPath::Rest { resource, .. } => Self::api_headers(
+                    HttpResponse::json(404, &version::rest_not_served_by(&self.versions, resource)),
+                    primary,
+                ),
             });
         }
         if path.starts_with("/admin/oauth/")
@@ -523,54 +563,66 @@ impl AdminApi {
         None
     }
 
-    /// The headers of every answer of the Admin API.
-    fn api_headers(&self, response: HttpResponse) -> HttpResponse {
+    /// The headers of every answer of the Admin API: `X-Shopify-API-Version`, the version that
+    /// answered.
+    fn api_headers(response: HttpResponse, version: ApiVersion) -> HttpResponse {
         response
-            .header("x-shopify-api-version", ADMIN_2026_10)
+            .header("x-shopify-api-version", version.name())
             .header("x-request-id", crate::webhooks::sign::new_id())
     }
 
-    /// `POST /admin/api/2026-10/graphql.json`.
-    fn graphql(&self, request: &HttpRequest) -> HttpResponse {
+    /// `POST /admin/api/<version>/graphql.json`, in `version`: its schema, its access scopes, its
+    /// search filters, its adapters.
+    fn graphql(&self, request: &HttpRequest, version: ApiVersion) -> HttpResponse {
         let method = request.method.to_ascii_uppercase();
         if method != "POST" && method != "GET" {
-            return self.api_headers(HttpResponse::json(
-                405,
-                &json!({"errors": format!("{method} is not allowed: POST the query (or GET it with ?query=)")}),
-            ));
+            return Self::api_headers(
+                HttpResponse::json(
+                    405,
+                    &json!({"errors": format!("{method} is not allowed: POST the query (or GET it with ?query=)")}),
+                ),
+                version,
+            );
         }
         let grant = match self.grant_of(request) {
             Ok(grant) => grant,
             Err(reason) => {
-                return self
-                    .api_headers(HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })))
-                    .header("x-lsf-reason", reason);
+                return Self::api_headers(
+                    HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
+                    version,
+                )
+                .header("x-lsf-reason", reason);
             }
         };
         let query = match graphql_request(request) {
             Ok(query) => query,
             Err(reason) => {
-                return self
-                    .api_headers(HttpResponse::json(
+                return Self::api_headers(
+                    HttpResponse::json(
                         400,
                         &json!({"errors": {"query": "Required parameter missing or invalid"}}),
-                    ))
-                    .header("x-lsf-reason", reason);
+                    ),
+                    version,
+                )
+                .header("x-lsf-reason", reason);
             }
         };
         let Some(shop) = self.shop(&grant.shop) else {
-            return self
-                .api_headers(HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })))
-                .header(
-                    "x-lsf-reason",
-                    format!("the shop {} of this token is gone", grant.shop),
-                );
+            return Self::api_headers(
+                HttpResponse::json(401, &json!({ "errors": INVALID_TOKEN })),
+                version,
+            )
+            .header(
+                "x-lsf-reason",
+                format!("the shop {} of this token is gone", grant.shop),
+            );
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
         let mut live = lock(&shop);
         let origin = origin_of(request);
         let revision = live.state.revision();
         let mut resolver = ShopResolver::new(&mut live.state, self.registry)
+            .with_version(version)
             .with_grant(&grant)
             .with_webhooks(&self.webhooks)
             .with_origin(&origin);
@@ -578,8 +630,7 @@ impl AdminApi {
             throttle: &self.throttle,
             key: &key,
         };
-        let mut response =
-            graphql::run(crate::schema::admin(), &mut resolver, &query, Some(bucket));
+        let mut response = graphql::run(version.schema(), &mut resolver, &query, Some(bucket));
         response.extensions.extend(resolver.extensions());
         self.count_change(&live, revision);
         let events = live.state.take_events();
@@ -590,7 +641,7 @@ impl AdminApi {
             self.emit(&live.state, &events);
         }
         drop(live);
-        self.api_headers(HttpResponse::json(200, &response.to_json()))
+        Self::api_headers(HttpResponse::json(200, &response.to_json()), version)
     }
 
     /// What the request's `X-Shopify-Access-Token` grants, or why it grants nothing.
@@ -664,7 +715,7 @@ impl AdminApi {
                         &json!({
                             "shop": domain,
                             "token": token,
-                            "graphql": format!("/admin/api/{ADMIN_2026_10}/graphql.json"),
+                            "graphql": self.graphql_path(),
                         }),
                     ),
                     Err((status, error)) => HttpResponse::json(status, &json!({ "error": error })),
@@ -754,8 +805,16 @@ impl AdminApi {
             .collect();
         let plan = self.throttle.plan();
         json!({
-            "apiVersion": ADMIN_2026_10,
-            "graphql": format!("/admin/api/{ADMIN_2026_10}/graphql.json"),
+            "apiVersion": self.versions.primary().name(),
+            "graphql": self.graphql_path(),
+            "apiVersions": ApiVersion::all()
+                .map(|version| json!({
+                    "version": version.name(),
+                    "status": version.status().as_str(),
+                    "served": self.versions.serves(version),
+                    "graphql": format!("/admin/api/{version}/graphql.json"),
+                }))
+                .collect::<Vec<_>>(),
             "defaultShop": self.default_shop(),
             "app": {
                 "clientId": self.auth.client_id,

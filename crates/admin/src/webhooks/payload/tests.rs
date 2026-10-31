@@ -1,14 +1,13 @@
 use serde_json::{Value, json};
 
 use super::*;
+use crate::version::{ApiVersion, adapt};
 use crate::webhooks::samples;
 
-/// Shopify's example payloads of the topics lsf builds (`tools/admin/webhook_examples.mjs`).
-fn examples() -> Map<String, Value> {
-    let file: Value = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/webhooks/examples-2026-10.json"
-    ))
-    .unwrap();
+/// Shopify's example payloads of the topics lsf builds in a version
+/// (`tools/admin/webhook_examples.mjs --version <v>`).
+fn examples(version: ApiVersion) -> Map<String, Value> {
+    let file: Value = serde_json::from_str(version.files().webhook_examples).unwrap();
     file["examples"].as_object().unwrap().clone()
 }
 
@@ -148,32 +147,45 @@ fn allowed(list: &[(&str, &str)], topic: &str, path: &str) -> bool {
     })
 }
 
+/// In every version lsf knows, each payload it builds (with the version's adapters) has the keys
+/// of Shopify's example of the version, in its order. Values are compared with the examples of
+/// the default version, which the samples are made from: the examples of another version are of
+/// other records (other ids, other draft orders).
 #[test]
 fn every_payload_has_the_keys_of_shopifys_example_in_its_order() {
-    let examples = examples();
     let mut failures = Vec::new();
-    for topic in BUILT_TOPICS {
-        let example = examples
-            .get(*topic)
-            .unwrap_or_else(|| panic!("no example for {topic}"));
-        let sample = samples::fixed(topic).unwrap();
-        let built = sample.payload(topic).unwrap();
-        let mut differences = Differences::default();
-        compare(&built, example, "", &mut differences);
-        for missing in differences.missing {
-            failures.push(format!("{topic}: no {missing}"));
-        }
-        for order in differences.order {
-            failures.push(format!("{topic}: the keys of {order} are in another order"));
-        }
-        for extra in differences.extra {
-            if !allowed(EXTRA, topic, &extra) {
-                failures.push(format!("{topic}: {extra} is not in Shopify's example"));
+    for version in ApiVersion::all() {
+        let examples = examples(version);
+        for topic in BUILT_TOPICS {
+            let example = examples
+                .get(*topic)
+                .unwrap_or_else(|| panic!("no example for {topic} in {version}"));
+            let sample = samples::fixed(topic).unwrap();
+            let built = adapt::payload(version.adapters(), topic, &sample.payload(topic).unwrap());
+            let mut differences = Differences::default();
+            compare(&built, example, "", &mut differences);
+            for missing in differences.missing {
+                failures.push(format!("{version} {topic}: no {missing}"));
             }
-        }
-        for value in differences.values {
-            if !allowed(VALUES, topic, &value) {
-                failures.push(format!("{topic}: {value}"));
+            for order in differences.order {
+                failures.push(format!(
+                    "{version} {topic}: the keys of {order} are in another order"
+                ));
+            }
+            for extra in differences.extra {
+                if !allowed(EXTRA, topic, &extra) {
+                    failures.push(format!(
+                        "{version} {topic}: {extra} is not in Shopify's example"
+                    ));
+                }
+            }
+            if version != ApiVersion::default_version() {
+                continue;
+            }
+            for value in differences.values {
+                if !allowed(VALUES, topic, &value) {
+                    failures.push(format!("{version} {topic}: {value}"));
+                }
             }
         }
     }
@@ -430,7 +442,7 @@ fn a_topic_without_a_builder_has_no_payload() {
     assert_eq!(payload("carts/create", &record, &Records::default()), None);
     assert!(!is_built("carts/create"));
     assert!(is_built("orders/create"));
-    // Every built topic is a topic of 2026-10 or a compliance topic.
+    // Every built topic is a topic of the default version or a compliance topic.
     for topic in BUILT_TOPICS {
         assert!(
             crate::webhooks::topics::written_form(topic) == Some(*topic),

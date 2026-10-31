@@ -190,4 +190,22 @@ impl Registry {
         problems.dedup();
         problems
     }
+
+    /// What is registered for a field, a mutation or a type that no version lsf knows has: a
+    /// resolver of something only some versions have is fine (the schema of a request of
+    /// another version refuses it before it is reached).
+    pub fn check_versions(&self) -> Vec<String> {
+        let mut problems: Option<Vec<String>> = None;
+        for version in crate::version::ApiVersion::all() {
+            let found = self.check(version.schema());
+            problems = Some(match problems {
+                None => found,
+                Some(before) => before
+                    .into_iter()
+                    .filter(|problem| found.contains(problem))
+                    .collect(),
+            });
+        }
+        problems.unwrap_or_default()
+    }
 }

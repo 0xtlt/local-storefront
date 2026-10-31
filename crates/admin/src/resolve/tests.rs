@@ -59,11 +59,8 @@ fn titles(page: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_registry_names_only_what_the_schema_has() {
-    assert_eq!(
-        Registry::standard().check(crate::schema::admin()),
-        Vec::<String>::new()
-    );
+fn the_registry_names_only_what_a_version_has() {
+    assert_eq!(Registry::standard().check_versions(), Vec::<String>::new());
 }
 
 #[test]

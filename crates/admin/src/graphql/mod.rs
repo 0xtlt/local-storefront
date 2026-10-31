@@ -219,6 +219,22 @@ impl<'a> FieldContext<'a> {
         self.arguments
     }
 
+    /// The same field with other arguments: what a version's adapter of the arguments gives the
+    /// resolver (`crate::version::Adapter::Arguments`), rewritten into the shape it reads.
+    pub fn with_arguments<'b>(&'b self, arguments: &'b Map<String, Value>) -> FieldContext<'b>
+    where
+        'a: 'b,
+    {
+        FieldContext {
+            context: self.context,
+            parent_type: self.parent_type,
+            field: self.field,
+            nodes: self.nodes,
+            arguments,
+            path: self.path,
+        }
+    }
+
     /// An argument, `None` when it is missing or `null`.
     pub fn arg(&self, name: &str) -> Option<&'a Value> {
         self.arguments.get(name).filter(|value| !value.is_null())

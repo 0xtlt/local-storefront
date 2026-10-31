@@ -27,6 +27,7 @@ use super::{Obj, Registry, ShopResolver};
 use crate::auth::Grant;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::state::{Record, Savepoint, ShopState};
+use crate::version::ApiVersion;
 use crate::webhooks::Webhooks;
 
 /// The `extensions.code` of a mutation lsf does not simulate.
@@ -40,7 +41,7 @@ pub struct Mutation<'m> {
     registry: &'m Registry,
     grant: Option<&'m Grant>,
     webhooks: Option<&'m Webhooks>,
-    api_version: &'m str,
+    version: ApiVersion,
     origin: &'m str,
     notes: Vec<String>,
     /// Whether the changes stay when the payload has user errors (a partial update).
@@ -79,7 +80,17 @@ impl Mutation<'_> {
 
     /// The API version of the request: what a subscription created now asks for.
     pub fn api_version(&self) -> &str {
-        self.api_version
+        self.version.name()
+    }
+
+    /// The version of the request (see `ShopResolver::version`).
+    pub fn version(&self) -> ApiVersion {
+        self.version
+    }
+
+    /// The schema of the request's version.
+    pub fn schema(&self) -> &'static crate::schema::Schema {
+        crate::schema::for_version(self.version)
     }
 
     /// Where the request reached lsf (`http://127.0.0.1:9292`): the origin of the URLs a
@@ -93,17 +104,17 @@ impl Mutation<'_> {
     /// here (within this mutation's savepoint, as [`Mutation::state_mut`] opens it), and its
     /// events are the request's.
     pub fn resolver(&mut self) -> ShopResolver<'_> {
-        let (registry, grant, webhooks, api_version, origin) = (
+        let (registry, grant, webhooks, version, origin) = (
             self.registry,
             self.grant,
             self.webhooks,
-            self.api_version,
+            self.version,
             self.origin,
         );
         let mut resolver = ShopResolver::new(self.state_mut(), registry).with_origin(origin);
         resolver.grant = grant;
         resolver.webhooks = webhooks;
-        resolver.api_version = api_version;
+        resolver.version = version;
         resolver
     }
 
@@ -223,7 +234,7 @@ pub(super) fn run(
         registry,
         grant: resolver.grant,
         webhooks: resolver.webhooks,
-        api_version: resolver.api_version,
+        version: resolver.version,
         origin: resolver.origin,
         notes: Vec::new(),
         keep: false,

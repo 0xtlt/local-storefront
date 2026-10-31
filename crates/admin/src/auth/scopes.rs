@@ -1,5 +1,5 @@
-//! Access scopes: what a token's scopes cover, and what each field of the Admin API 2026-10
-//! requires.
+//! Access scopes: what a token's scopes cover, and what each field of a version of the Admin
+//! API requires.
 //!
 //! **Implication.** A `write_x` scope covers `read_x` (shopify.dev: "A `write_*` scope includes
 //! its matching `read_*` scope"), and `unauthenticated_write_x` covers `unauthenticated_read_x`,
@@ -8,10 +8,10 @@
 //! alternatives a field accepts (`read_companies` for `read_customers`, …) are part of what the
 //! field requires, below.
 //!
-//! **The table.** Shopify's introspection of 2026-10 (the pinned `@shopify/dev-mcp`) carries,
-//! for each type and field, the text shopify.dev prints as "Requires … access scope" and an
-//! `ACCESS_DENIED` error repeats. `tools/admin/access_scopes.mjs` writes those texts into
-//! `schemas/2026-10/access.json`; nothing in it is guessed. A root field requires its own text,
+//! **The table.** Shopify's introspection of each version (the pinned `@shopify/dev-mcp`)
+//! carries, for each type and field, the text shopify.dev prints as "Requires … access scope"
+//! and an `ACCESS_DENIED` error repeats. `tools/admin/access_scopes.mjs --version <v>` writes
+//! those texts into `schemas/<v>/access.json` ([`for_version`]); nothing in it is guessed. A root field requires its own text,
 //! or, for a query field without one, the text of the type it answers (`products` answers
 //! `Product`: "`read_products` access scope."). [`RequiredAccess::parse`] reads the scopes out of
 //! a text; how sure each reading is:
@@ -37,10 +37,12 @@
 //! whose own type may require one: see [`type_access`]).
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use crate::version::{self, ApiVersion};
 
 /// The page `extensions.documentation` of an `ACCESS_DENIED` error links to.
 pub const ACCESS_SCOPES_DOCUMENTATION: &str = "https://shopify.dev/api/usage/access-scopes";
@@ -48,10 +50,11 @@ pub const ACCESS_SCOPES_DOCUMENTATION: &str = "https://shopify.dev/api/usage/acc
 /// The `extensions.code` of an error for a field the token's scopes do not cover.
 pub const ACCESS_DENIED: &str = "ACCESS_DENIED";
 
-/// Every access scope of the 2026-10 Admin API, sorted: those the descriptions of its fields,
-/// mutations and webhook topics name, and those the access table ([`required_access`]) can
-/// require. What lsf grants an app without `shopify.app.toml`, and what its installation
-/// lists. A test checks that it covers every scope the table and the topics name.
+/// Every access scope of the versions of the Admin API lsf knows, sorted: those the descriptions
+/// of their fields, mutations and webhook topics name, and those their access tables
+/// ([`for_version`]) can require. What lsf grants an app without `shopify.app.toml`, and what its
+/// installation lists. A test checks that it covers every scope the tables and the topics of
+/// every version name.
 pub const ALL_SCOPES: &[&str] = &[
     "read_all_orders",
     "read_analytics_annotations",
@@ -501,9 +504,9 @@ fn is_resource_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-/// `schemas/2026-10/access.json`.
+/// The access table of a version: `schemas/<version>/access.json`.
 #[derive(Deserialize)]
-struct Table {
+pub struct AccessTable {
     query: String,
     mutation: String,
     types: HashMap<String, String>,
@@ -511,49 +514,69 @@ struct Table {
     roots: HashMap<String, String>,
 }
 
-static TABLE: LazyLock<Table> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../schemas/2026-10/access.json"))
-        .expect("schemas/2026-10/access.json is the table tools/admin/access_scopes.mjs writes")
-});
+/// The access table of a version, parsed the first time a request of the version needs it.
+pub fn for_version(version: ApiVersion) -> &'static AccessTable {
+    static PARSED: [OnceLock<AccessTable>; version::COUNT] =
+        [const { OnceLock::new() }; version::COUNT];
+    PARSED[version.index()].get_or_init(|| {
+        serde_json::from_str(version.files().access).unwrap_or_else(|error| {
+            panic!("schemas/{version}/access.json is the table tools/admin/access_scopes.mjs writes: {error}")
+        })
+    })
+}
 
-/// What the root field `field` requires, when it requires a scope: its own text, or for a query
-/// field without one, that of the type it answers. `None` for a field that needs none (`shop`,
-/// `app`, `currentAppInstallation`, `webhookSubscriptionCreate`, …), for an unknown field, and
-/// for one whose requirement names no scope lsf checks.
+impl AccessTable {
+    /// What the root field `field` requires, when it requires a scope: its own text, or for a
+    /// query field without one, that of the type it answers. `None` for a field that needs none
+    /// (`shop`, `app`, `currentAppInstallation`, `webhookSubscriptionCreate`, …), for an unknown
+    /// field, and for one whose requirement names no scope lsf checks.
+    pub fn required_access(&self, root: Root, field: &str) -> Option<RequiredAccess> {
+        let type_name = match root {
+            Root::Query => &self.query,
+            Root::Mutation => &self.mutation,
+        };
+        let text = self
+            .fields
+            .get(type_name)
+            .and_then(|fields| fields.get(field))
+            .or_else(|| match root {
+                Root::Query => self.roots.get(field).and_then(|node| self.types.get(node)),
+                Root::Mutation => None,
+            })?;
+        checked(RequiredAccess::parse(text, root))
+    }
+
+    /// What a field of any type requires by its own text (`Shop.productTags`:
+    /// "`read_products` access scope."), read for an operation of kind `root`. The type a
+    /// field answers may require more: [`AccessTable::type_access`].
+    pub fn field_access(&self, type_name: &str, field: &str, root: Root) -> Option<RequiredAccess> {
+        let text = self.fields.get(type_name)?.get(field)?;
+        checked(RequiredAccess::parse(text, root))
+    }
+
+    /// What reading a record of a type requires (`Customer`: "`read_customers` access scope."),
+    /// for an operation of kind `root`. Shopify denies a field that answers such a record,
+    /// nested or not, with the field's name: "Access denied for customer field.".
+    pub fn type_access(&self, type_name: &str, root: Root) -> Option<RequiredAccess> {
+        let text = self.types.get(type_name)?;
+        checked(RequiredAccess::parse(text, root))
+    }
+}
+
+/// [`AccessTable::required_access`] of the default version: what code that does not know the
+/// version of its request asks. The resolver asks the table of its request's version.
 pub fn required_access(root: Root, field: &str) -> Option<RequiredAccess> {
-    let table = &*TABLE;
-    let type_name = match root {
-        Root::Query => &table.query,
-        Root::Mutation => &table.mutation,
-    };
-    let text = table
-        .fields
-        .get(type_name)
-        .and_then(|fields| fields.get(field))
-        .or_else(|| match root {
-            Root::Query => table
-                .roots
-                .get(field)
-                .and_then(|node| table.types.get(node)),
-            Root::Mutation => None,
-        })?;
-    checked(RequiredAccess::parse(text, root))
+    for_version(ApiVersion::default_version()).required_access(root, field)
 }
 
-/// What a field of any type requires by its own text (`Shop.productTags`:
-/// "`read_products` access scope."), read for an operation of kind `root`. The type a
-/// field answers may require more: [`type_access`].
+/// [`AccessTable::field_access`] of the default version.
 pub fn field_access(type_name: &str, field: &str, root: Root) -> Option<RequiredAccess> {
-    let text = TABLE.fields.get(type_name)?.get(field)?;
-    checked(RequiredAccess::parse(text, root))
+    for_version(ApiVersion::default_version()).field_access(type_name, field, root)
 }
 
-/// What reading a record of a type requires (`Customer`: "`read_customers` access scope."),
-/// for an operation of kind `root`. Shopify denies a field that answers such a record, nested
-/// or not, with the field's name: "Access denied for customer field.".
+/// [`AccessTable::type_access`] of the default version.
 pub fn type_access(type_name: &str, root: Root) -> Option<RequiredAccess> {
-    let text = TABLE.types.get(type_name)?;
-    checked(RequiredAccess::parse(text, root))
+    for_version(ApiVersion::default_version()).type_access(type_name, root)
 }
 
 /// `access`, unless it names no scope to check.
@@ -570,25 +593,27 @@ mod tests {
     }
 
     #[test]
-    fn every_scope_the_table_and_the_topics_name_is_one_of_all_scopes() {
-        let table = &*TABLE;
-        let texts = table
-            .types
-            .values()
-            .chain(table.fields.values().flat_map(HashMap::values));
+    fn every_scope_the_tables_and_the_topics_name_is_one_of_all_scopes() {
         let mut named = BTreeSet::new();
-        for text in texts {
-            for root in [Root::Query, Root::Mutation] {
-                named.extend(
-                    RequiredAccess::parse(text, root)
-                        .alternatives
-                        .into_iter()
-                        .flatten(),
-                );
+        for version in ApiVersion::all() {
+            let table = for_version(version);
+            let texts = table
+                .types
+                .values()
+                .chain(table.fields.values().flat_map(HashMap::values));
+            for text in texts {
+                for root in [Root::Query, Root::Mutation] {
+                    named.extend(
+                        RequiredAccess::parse(text, root)
+                            .alternatives
+                            .into_iter()
+                            .flatten(),
+                    );
+                }
             }
-        }
-        for topic in crate::webhooks::topics::all() {
-            named.extend(topic.scopes.iter().map(|scope| scope.to_string()));
+            for topic in crate::webhooks::topics::for_version(version).all() {
+                named.extend(topic.scopes.iter().map(|scope| scope.to_string()));
+            }
         }
         let missing: Vec<&String> = named
             .iter()
@@ -738,11 +763,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_every_text_of_the_table() {
+    fn reads_every_text_of_the_tables() {
         // Every text names a scope, unless it is about something lsf does not check.
-        let table = &*TABLE;
-        let mut texts: Vec<&String> = table.types.values().collect();
-        texts.extend(table.fields.values().flat_map(HashMap::values));
+        let mut texts: Vec<&String> = Vec::new();
+        for version in ApiVersion::all() {
+            let table = for_version(version);
+            texts.extend(table.types.values());
+            texts.extend(table.fields.values().flat_map(HashMap::values));
+        }
         let mut unchecked = BTreeSet::new();
         for text in texts {
             for root in [Root::Query, Root::Mutation] {
