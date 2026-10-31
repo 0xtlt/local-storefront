@@ -500,9 +500,10 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    blank").code("BLANK")` (the `field` path is the input's, the message Shopify's where it is
    known, Rails' wording otherwise; `code` is ignored by error types that have none). Errors: answer
    the payload with its objects `null` and the errors, and change nothing.
-2. **Change through `m.state_mut()`**: the first call keeps a copy of the shop, which a payload
-   with user errors (`userErrors` or `…UserErrors` not empty) or an error puts back. Validating
-   first costs no copy on failure; a mutation that finds a problem halfway can still answer it.
+2. **Change through `m.state_mut()`**: the first call opens a savepoint of the shop
+   (`ShopState::savepoint`), from which each write keeps what it overwrote; a payload with user
+   errors (`userErrors` or `…UserErrors` not empty) or an error rolls back to it. Validating
+   first costs nothing on failure; a mutation that finds a problem halfway can still answer it.
    A mutation that applies what it can and reports the rest (`productVariantsBulkUpdate` with
    `allowPartialUpdates`, `productCreateMedia`) calls `m.keep_changes()`: its user errors then
    leave the changes in place.
@@ -516,8 +517,8 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    about something that is no record (a product on a publication) is
    `emit_with(topic, key, snapshot)`: its key names no record, and the payload is built
    from the snapshot. What a mutation keeps between requests that is not a record (an
-   idempotency key and the answer it gave) is `set_memo`/`memo`: copied and put back with the
-   shop, not seen by the store sync.
+   idempotency key and the answer it gave) is `set_memo`/`memo`: put back with the records
+   when the mutation fails, not seen by the store sync.
 5. **Say what is not simulated**: `m.note("productCreate: lsf does not simulate `media` yet")` for
    an input it ignores; an argument-dependent scope the access table cannot express is checked in
    the mutation (`tagsAdd` needs the write scope of the resource: `access::denied`).
@@ -558,8 +559,19 @@ tags matched one by one in their string; a filter that does not follow the gramm
 
 A mutation is a function from the shop and its arguments to its payload, run while the shop is
 locked. It validates as Shopify does and answers `userErrors` (`field`, `message`, `code`) when
-the input is wrong, changes nothing when it fails (the shop is copied on its first change and
-put back on a failure), and emits the **events** of what it changed. A mutation lsf does not
+the input is wrong, changes nothing when it fails, and emits the **events** of what it changed.
+
+**Rollback** (`ShopState::savepoint`, `rollback`, `release`): from the first write of a mutation
+on, the shop keeps an undo log, each write with what it overwrote: a record's entry before its
+first in-place change (one copy per record and savepoint), a record added (removed again), a
+record removed or retyped (put back at its positions among the records and among those of its
+type), a counter's value, a blob's, a memo's, a setting's. A failure replays the log backwards,
+then truncates the events and the changes tracked for the store sync to their length at the
+savepoint, and puts back the event sequence, the revision and the clock: the shop is as it was,
+the order of every map included. Savepoints nest: a bulk operation's mutation per line opens its
+own, which an outer failure still undoes once released. A success closes the log. The cost is
+what the mutation wrote: a copy of the shop, as it was done first, took 180 to 400 ms on 198,000
+records, before every mutation's first write. A mutation lsf does not
 simulate answers a GraphQL error with `extensions.code = "LSF_NOT_SIMULATED"`, never a silent
 success; `GET /__lsf/admin` lists those it simulates. Simulated so far, as references:
 `productCreate`, `productUpdate`, `productDelete`, `tagsAdd`, `tagsRemove`,
@@ -1273,15 +1285,18 @@ yet), `overlay` (`written`: entities by section; `removed`: their keys), `built`
 | Store | Records | Mutation (Admin request) | Next page: projection and build | Page without a change |
 |---|---|---|---|---|
 | Demo (8 products) | 251 | 0.5 ms | 0.5 to 1.3 ms | 0.1 ms |
-| 3,000 products of 12 variants | 198,000 | 400 ms | 290 to 370 ms (projection 70 ms, build 250 to 300 ms) | 0.1 ms |
+| 3,000 products of 12 variants | 198,000 | 0.06 ms (400 ms with the copy of the shop it made then) | 290 to 370 ms (projection 70 ms, build 250 to 300 ms) | 0.1 ms |
 
 - The build was cubic before: a product's default recommendations checked every product against
   the list so far before keeping ten. 2,000 products took 1.2 to 2 s to load, 3,000 products 5 to
   6 s; now 180 ms and 300 to 370 ms (`lsf-core`, `build_recommendations`).
-- The 400 ms of a mutation on the large store are not sync's: the mutation framework clones the
-  whole shop before the first write of a mutation, to undo it on `userErrors`
-  (`resolve::mutation`, `snapshot`). An undo log of the records written (what change tracking
-  keeps already) would make it as cheap as on the demo store.
+- The 400 ms a mutation took on the large store were not sync's: the mutation framework cloned
+  the whole shop before the first write of a mutation, to undo it on `userErrors`. The undo log
+  of "Mutations" replaced it: on an Apple M4 Pro, in release, a `productUpdate` went from 180 ms
+  to 0.06 ms, and a failure that changed a product and its 12 variants and created a product
+  rolls back in 0.04 ms (1.2 ms when it also removed a variant: removing one of 198,000 records
+  shifts the others, forward and back). `tests/mutation_cost.rs` measures it
+  (`cargo test --release -p lsf-admin --test mutation_cost -- --ignored --nocapture`).
 - Seeding 3,000 products takes 1.7 to 3.4 s, at start and on each reseed, not on a mutation.
 
 ## Crate layout

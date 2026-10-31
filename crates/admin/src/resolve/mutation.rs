@@ -5,9 +5,11 @@
 //!   `userErrors` (`field`, `message`, and `code` where the payload's error type has one), the
 //!   payload's objects `null`. Shopify answers `200` with them; a GraphQL error is for what the
 //!   request itself cannot do.
-//! - **Nothing on failure**: [`Mutation::state_mut`] keeps a copy of the shop the first time it
-//!   is called; a payload with user errors, or an error, puts that copy back. A mutation can
-//!   therefore validate as it goes. Validating first, then changing, costs no copy when it fails.
+//! - **Nothing on failure**: [`Mutation::state_mut`] opens a savepoint of the shop the first
+//!   time it is called ([`ShopState::savepoint`]): from then on each write keeps what it
+//!   overwrote, and a payload with user errors, or an error, puts it back. A mutation can
+//!   therefore validate as it goes; what a failure costs is what the mutation wrote, not the
+//!   size of the shop.
 //! - **Events**: what changed is emitted through the state (`state_mut().emit("products/update",
 //!   &gid)`; `state_mut().delete(&gid, "products/delete")` for a deletion, which keeps the record
 //!   for the payload). The api layer hands them to the webhooks once the shop is unlocked.
@@ -24,17 +26,17 @@ use serde_json::{Map, Value, json};
 use super::{Obj, Registry, ShopResolver};
 use crate::auth::Grant;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::state::{Record, ShopState};
+use crate::state::{Record, Savepoint, ShopState};
 use crate::webhooks::Webhooks;
 
 /// The `extensions.code` of a mutation lsf does not simulate.
 pub const LSF_NOT_SIMULATED: &str = "LSF_NOT_SIMULATED";
 
-/// What a mutation works with: the shop (copied before its first change, to be put back if the
-/// mutation fails), the app's webhooks, the token's grant.
+/// What a mutation works with: the shop (with a savepoint opened before its first change, which
+/// a failure rolls back to), the app's webhooks, the token's grant.
 pub struct Mutation<'m> {
     state: &'m mut ShopState,
-    snapshot: Option<ShopState>,
+    savepoint: Option<Savepoint>,
     registry: &'m Registry,
     grant: Option<&'m Grant>,
     webhooks: Option<&'m Webhooks>,
@@ -51,10 +53,10 @@ impl Mutation<'_> {
         self.state
     }
 
-    /// The shop, to change. The first call keeps a copy of it, which a failure puts back.
+    /// The shop, to change. The first call opens a savepoint, which a failure rolls back to.
     pub fn state_mut(&mut self) -> &mut ShopState {
-        if self.snapshot.is_none() {
-            self.snapshot = Some(self.state.clone());
+        if self.savepoint.is_none() {
+            self.savepoint = Some(self.state.savepoint());
         }
         self.state
     }
@@ -88,8 +90,8 @@ impl Mutation<'_> {
 
     /// A resolver over the same shop, the same token and webhooks: what runs the GraphQL of a
     /// bulk operation (its query, or its mutation once per line). What it changes is changed
-    /// here (the shop is copied first, as [`Mutation::state_mut`] does), and its events are the
-    /// request's.
+    /// here (within this mutation's savepoint, as [`Mutation::state_mut`] opens it), and its
+    /// events are the request's.
     pub fn resolver(&mut self) -> ShopResolver<'_> {
         let (registry, grant, webhooks, api_version, origin) = (
             self.registry,
@@ -217,7 +219,7 @@ pub(super) fn run(
     };
     let mut mutation = Mutation {
         state: &mut *resolver.state,
-        snapshot: None,
+        savepoint: None,
         registry,
         grant: resolver.grant,
         webhooks: resolver.webhooks,
@@ -228,7 +230,7 @@ pub(super) fn run(
     };
     let result = run(&mut mutation, ctx);
     let Mutation {
-        snapshot,
+        savepoint,
         notes,
         keep,
         ..
@@ -237,8 +239,12 @@ pub(super) fn run(
         Ok(payload) => has_user_errors(payload) && !keep,
         Err(_) => true,
     };
-    if failed && let Some(before) = snapshot {
-        *resolver.state = before;
+    if let Some(savepoint) = savepoint {
+        if failed {
+            resolver.state.rollback(savepoint);
+        } else {
+            resolver.state.release(savepoint);
+        }
     }
     for note in notes {
         resolver.note(note);
@@ -256,6 +262,123 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graphql::{self, Request};
+    use crate::state::Blob;
+
+    /// A `productCreate` that writes a lot, then answers as its `title` says: `fail` (user
+    /// errors), `keep` (user errors, changes kept), `error` (a GraphQL error, changes kept
+    /// asked), `ok`.
+    fn writes_then_answers(
+        m: &mut Mutation<'_>,
+        ctx: &FieldContext<'_>,
+    ) -> Result<Value, FieldError> {
+        let outcome = ctx.arguments()["product"]["title"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let products: Vec<String> = m.state().keys("Product").map(str::to_string).collect();
+        let variants: Vec<String> = m
+            .state()
+            .keys("ProductVariant")
+            .map(str::to_string)
+            .collect();
+        let state = m.state_mut();
+        for product in &products {
+            if let Some(record) = state.get_mut(product) {
+                record.insert("title".into(), json!(format!("Renamed by {outcome}")));
+            }
+            state.touch(product);
+            state.emit("products/update", product);
+        }
+        for variant in variants.iter().step_by(2) {
+            state.delete(variant, "variants/delete");
+        }
+        for n in 0..100 {
+            let mut record = Record::new();
+            record.insert("__typename".into(), json!("Product"));
+            record.insert("title".into(), json!(format!("New {n}")));
+            let gid = state.insert(record);
+            state.emit("products/create", &gid);
+        }
+        state.set_memo(format!("memo/{outcome}"), json!(outcome));
+        state.put_blob(
+            format!("blob/{outcome}"),
+            Blob::new(outcome.clone(), "text/plain"),
+        );
+        match outcome.as_str() {
+            "fail" => Ok(payload(
+                json!({"product": null}),
+                &[UserError::new(&["product"], "No")],
+            )),
+            "keep" => {
+                m.keep_changes();
+                Ok(payload(
+                    json!({"product": null}),
+                    &[UserError::new(&["product"], "Some")],
+                ))
+            }
+            "error" => {
+                m.keep_changes();
+                Err(FieldError::new("Broken"))
+            }
+            _ => Ok(payload(json!({"product": null}), &[])),
+        }
+    }
+
+    fn run_titled(shop: &mut ShopState, registry: &Registry, titles: &[&str]) -> Value {
+        let fields: Vec<String> = titles
+            .iter()
+            .map(|title| {
+                format!(r#"{title}: productCreate(product: {{title: "{title}"}}) {{ userErrors {{ message }} }}"#)
+            })
+            .collect();
+        let query = format!("mutation {{ {} }}", fields.join(" "));
+        let mut resolver = ShopResolver::new(shop, registry);
+        graphql::run(
+            crate::schema::admin(),
+            &mut resolver,
+            &Request::new(&query),
+            None,
+        )
+        .to_json()
+    }
+
+    #[test]
+    fn a_failed_mutation_leaves_the_shop_as_it_was_after_many_writes() {
+        let (store, _) = lsf_core::store::load::load(
+            &lsf_core::store::load::DataSource::Demo,
+            &Default::default(),
+        );
+        let mut shop = ShopState::seeded(&store, None);
+        let mut registry = Registry::new();
+        registry.mutation("productCreate", writes_then_answers);
+        let before = shop.picture();
+
+        // User errors, then an error even with the changes kept: nothing changed, no event.
+        let answer = run_titled(&mut shop, &registry, &["fail", "error"]);
+        assert_eq!(answer["data"]["fail"]["userErrors"][0]["message"], "No");
+        assert_eq!(answer["errors"][0]["message"], "Broken");
+        assert_eq!(shop.picture(), before);
+
+        // A partial update keeps its changes; a mutation that succeeds too, and the failure that
+        // follows it in the same request undoes only its own.
+        let answer = run_titled(&mut shop, &registry, &["keep", "ok", "fail"]);
+        assert_eq!(answer["data"]["keep"]["userErrors"][0]["message"], "Some");
+        assert_eq!(shop.memo("memo/keep"), Some(&json!("keep")));
+        assert_eq!(shop.memo("memo/ok"), Some(&json!("ok")));
+        assert_eq!(shop.memo("memo/fail"), None);
+        assert!(shop.blob("blob/ok").is_some() && shop.blob("blob/fail").is_none());
+        assert!(
+            shop.all("Product")
+                .all(|product| product["title"] != json!("Renamed by fail"))
+        );
+        let created = shop
+            .events()
+            .iter()
+            .filter(|event| event.topic == "products/create")
+            .count();
+        assert_eq!(created, 200);
+    }
 
     #[test]
     fn writes_user_errors_and_payloads() {

@@ -85,7 +85,7 @@ impl Clock {
 }
 
 /// A record and its type, as the state keeps it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Entry {
     type_name: String,
     record: Record,
@@ -151,11 +151,90 @@ pub struct ShopState {
     /// rate (`taxRateBps`), which draft orders compute their taxes with. Set by the seed, kept
     /// by a reset.
     settings: Map<String, Value>,
+    /// What undoes the writes made since the open savepoints, while there are some
+    /// ([`ShopState::savepoint`]).
+    journal: Option<Journal>,
+}
+
+/// The undo log of a shop: each write made since the oldest open savepoint, with what it
+/// overwrote, so that a failed mutation puts back what it touched and nothing else. Copying the
+/// shop instead costs what the whole shop costs (400 ms for 198,000 records); this costs what
+/// the mutation wrote.
+#[derive(Clone, Debug, Default)]
+struct Journal {
+    /// What undoes each write, in the order of the writes.
+    steps: Vec<Undo>,
+    /// The step that keeps the value of a record before an in-place write, by key: a record
+    /// written again within the same savepoint needs no second copy.
+    saved: HashMap<String, usize>,
+    /// Where each open savepoint starts in `steps`, the innermost last (a bulk operation runs
+    /// a mutation per line within its own).
+    starts: Vec<usize>,
+}
+
+/// What undoes one write ([`Journal`]).
+#[derive(Clone, Debug)]
+enum Undo {
+    /// A record was changed in place, or replaced by one of the same type: its entry before.
+    Changed {
+        key: String,
+        before: Entry,
+    },
+    /// A record was added, at the end: remove it.
+    Added {
+        key: String,
+    },
+    /// A record was replaced by one of another type: its entry before, and its position among
+    /// the keys of that type.
+    Retyped {
+        key: String,
+        before: Entry,
+        position: usize,
+    },
+    /// A record was removed: it, and its positions among the records and among those of its
+    /// type.
+    Removed {
+        key: String,
+        entry: Entry,
+        index: usize,
+        position: Option<usize>,
+    },
+    /// A counter moved: its value before.
+    Counter {
+        group: String,
+        before: Option<u64>,
+    },
+    /// A side entry was set: its value before.
+    Blob {
+        key: String,
+        before: Option<Blob>,
+    },
+    Memo {
+        key: String,
+        before: Option<Value>,
+    },
+    Setting {
+        key: String,
+        before: Option<Value>,
+    },
+}
+
+/// Where a mutation started writing ([`ShopState::savepoint`]): what [`ShopState::rollback`]
+/// goes back to, besides the records the journal keeps.
+#[derive(Clone, Copy, Debug)]
+#[must_use = "a savepoint is closed by `rollback` or `release`"]
+pub struct Savepoint {
+    steps: usize,
+    events: usize,
+    emitted: u64,
+    revision: u64,
+    originals: Option<usize>,
+    clock: Clock,
 }
 
 /// A file a shop keeps beside its records ([`ShopState::put_blob`]): what a client uploaded to a
 /// staged upload target, or what a bulk operation wrote. Cloning it is cheap, so that copying a
-/// shop (a mutation's snapshot) does not copy the bytes.
+/// shop (another shop made from the seed, the undo log of a mutation) does not copy the bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blob {
     pub bytes: std::sync::Arc<[u8]>,
@@ -188,13 +267,16 @@ impl ShopState {
             revision: 0,
             memos: HashMap::new(),
             settings: Map::new(),
+            journal: None,
         }
     }
 
     /// Keeps a file beside the records, under `key` (replacing the one there). A reset forgets
     /// it, as it forgets what the Admin API changed.
     pub fn put_blob(&mut self, key: impl Into<String>, blob: Blob) {
-        self.blobs.insert(key.into(), blob);
+        let key = key.into();
+        let before = self.blobs.insert(key.clone(), blob);
+        self.log(|| Undo::Blob { key, before });
     }
 
     /// The file kept under `key`.
@@ -214,7 +296,11 @@ impl ShopState {
 
     /// Sets a setting of the shop (the seed does).
     pub fn set_setting(&mut self, name: &str, value: Value) {
-        self.settings.insert(name.to_string(), value);
+        let before = self.settings.insert(name.to_string(), value);
+        self.log(|| Undo::Setting {
+            key: name.to_string(),
+            before,
+        });
     }
 
     /// The `*.myshopify.com` domain of the shop.
@@ -260,6 +346,7 @@ impl ShopState {
     /// on (it is kept as it was, and compared with when the changes are read).
     pub fn get_mut(&mut self, gid: &str) -> Option<&mut Record> {
         self.note(gid);
+        self.save_entry(gid);
         self.records.get_mut(gid).map(|entry| &mut entry.record)
     }
 
@@ -296,14 +383,34 @@ impl ShopState {
         self.note(&key);
         let type_name = record_type(&record).to_string();
         if let Some((gid_type, id)) = parse_gid(&key) {
-            let next = self.counters.entry(counter_group(gid_type)).or_insert(1);
-            *next = (*next).max(id.saturating_add(1));
+            let group = counter_group(gid_type);
+            let before = self.counters.get(&group).copied();
+            let next = before.unwrap_or(1).max(id.saturating_add(1));
+            if before != Some(next) {
+                self.counters.insert(group.clone(), next);
+                self.log(|| Undo::Counter { group, before });
+            }
         }
-        if let Some(previous) = self.records.get(&key)
-            && previous.type_name != type_name
-            && let Some(keys) = self.by_type.get_mut(&previous.type_name)
-        {
-            keys.shift_remove(&key);
+        let previous_type = self.records.get(&key).map(|entry| entry.type_name.clone());
+        match previous_type {
+            None => self.log(|| Undo::Added { key: key.clone() }),
+            Some(previous) if previous == type_name => self.save_entry(&key),
+            Some(previous) => {
+                let position = self
+                    .by_type
+                    .get_mut(&previous)
+                    .and_then(|keys| keys.shift_remove_full(&key))
+                    .map_or(0, |(position, _)| position);
+                if let Some(journal) = &mut self.journal
+                    && let Some(before) = self.records.get(&key)
+                {
+                    journal.steps.push(Undo::Retyped {
+                        key: key.clone(),
+                        before: before.clone(),
+                        position,
+                    });
+                }
+            }
         }
         self.by_type
             .entry(type_name.clone())
@@ -320,9 +427,19 @@ impl ShopState {
         if self.records.contains_key(gid) {
             self.note(gid);
         }
-        let entry = self.records.shift_remove(gid)?;
-        if let Some(keys) = self.by_type.get_mut(&entry.type_name) {
-            keys.shift_remove(gid);
+        let (index, key, entry) = self.records.shift_remove_full(gid)?;
+        let position = self
+            .by_type
+            .get_mut(&entry.type_name)
+            .and_then(|keys| keys.shift_remove_full(gid))
+            .map(|(position, _)| position);
+        if let Some(journal) = &mut self.journal {
+            journal.steps.push(Undo::Removed {
+                key,
+                entry: entry.clone(),
+                index,
+                position,
+            });
         }
         Some(entry.record)
     }
@@ -391,9 +508,11 @@ impl ShopState {
     /// type the state holds. The discount nodes (`DiscountAutomaticNode`, `DiscountCodeNode`,
     /// `DiscountNode`) share a counter, as they share their ids on Shopify.
     pub fn new_gid(&mut self, type_name: &str) -> String {
-        let next = self.counters.entry(counter_group(type_name)).or_insert(1);
-        let id = *next;
-        *next += 1;
+        let group = counter_group(type_name);
+        let before = self.counters.get(&group).copied();
+        let id = before.unwrap_or(1);
+        self.counters.insert(group.clone(), id + 1);
+        self.log(|| Undo::Counter { group, before });
         gid(type_name, id)
     }
 
@@ -465,7 +584,171 @@ impl ShopState {
     /// idempotency key and the answer it gave. Not a change of the records: the store sync does
     /// not see it.
     pub fn set_memo(&mut self, key: impl Into<String>, value: Value) {
-        self.memos.insert(key.into(), value);
+        let key = key.into();
+        let before = self.memos.insert(key.clone(), value);
+        self.log(|| Undo::Memo { key, before });
+    }
+
+    /// Opens a savepoint: from now on each write keeps what it overwrote, until
+    /// [`ShopState::rollback`] puts it back or [`ShopState::release`] keeps the writes. What a
+    /// mutation does before it fails is undone this way ([`crate::resolve::Mutation`]): the
+    /// records it wrote, created and removed (in their places), the counters of new ids, the
+    /// events it emitted, the side entries (blobs, memos, settings), the changes tracked for the
+    /// store sync, the revision and the clock. Savepoints nest (a bulk operation runs a mutation
+    /// per line within its own) and close in the reverse order. The events taken meanwhile
+    /// ([`ShopState::take_events`]) are not put back, nor what a reset or [`Shops`] does.
+    pub fn savepoint(&mut self) -> Savepoint {
+        let journal = self.journal.get_or_insert_with(Journal::default);
+        journal.starts.push(journal.steps.len());
+        Savepoint {
+            steps: journal.steps.len(),
+            events: self.events.len(),
+            emitted: self.emitted,
+            revision: self.revision,
+            originals: self.originals.as_ref().map(IndexMap::len),
+            clock: self.clock,
+        }
+    }
+
+    /// Keeps the writes made since `savepoint`. They stay in the journal while an outer
+    /// savepoint is open, which may still undo them.
+    pub fn release(&mut self, savepoint: Savepoint) {
+        let Some(journal) = &mut self.journal else {
+            return;
+        };
+        debug_assert_eq!(
+            journal.starts.last(),
+            Some(&savepoint.steps),
+            "the innermost savepoint"
+        );
+        journal.starts.pop();
+        if journal.starts.is_empty() {
+            self.journal = None;
+        }
+    }
+
+    /// Puts the shop back as it was when `savepoint` was opened (see [`ShopState::savepoint`]),
+    /// and closes it.
+    pub fn rollback(&mut self, savepoint: Savepoint) {
+        let Some(mut journal) = self.journal.take() else {
+            return;
+        };
+        debug_assert_eq!(
+            journal.starts.last(),
+            Some(&savepoint.steps),
+            "the innermost savepoint"
+        );
+        while journal.steps.len() > savepoint.steps {
+            let Some(step) = journal.steps.pop() else {
+                break;
+            };
+            self.undo(step);
+        }
+        journal.saved.retain(|_, step| *step < savepoint.steps);
+        journal.starts.pop();
+        if !journal.starts.is_empty() {
+            self.journal = Some(journal);
+        }
+        self.events.truncate(savepoint.events);
+        self.emitted = savepoint.emitted;
+        self.revision = savepoint.revision;
+        match (&mut self.originals, savepoint.originals) {
+            (Some(originals), Some(len)) => originals.truncate(len),
+            (originals, None) => *originals = None,
+            (None, Some(_)) => {}
+        }
+        self.clock = savepoint.clock;
+    }
+
+    /// Adds a step to the journal, when a savepoint is open.
+    fn log(&mut self, step: impl FnOnce() -> Undo) {
+        if let Some(journal) = &mut self.journal {
+            journal.steps.push(step());
+        }
+    }
+
+    /// Keeps the entry of `key` before an in-place write, unless the innermost savepoint keeps
+    /// it already.
+    fn save_entry(&mut self, key: &str) {
+        let Some(journal) = &mut self.journal else {
+            return;
+        };
+        let start = journal.starts.last().copied().unwrap_or(0);
+        if journal.saved.get(key).is_some_and(|&step| step >= start) {
+            return;
+        }
+        let Some(entry) = self.records.get(key) else {
+            return;
+        };
+        journal.saved.insert(key.to_string(), journal.steps.len());
+        journal.steps.push(Undo::Changed {
+            key: key.to_string(),
+            before: entry.clone(),
+        });
+    }
+
+    /// Undoes one write: the shop is as it was right after it, the later ones being undone.
+    fn undo(&mut self, step: Undo) {
+        match step {
+            Undo::Changed { key, before } => {
+                if let Some(entry) = self.records.get_mut(&key) {
+                    *entry = before;
+                }
+            }
+            Undo::Added { key } => {
+                if let Some(entry) = self.records.shift_remove(&key)
+                    && let Some(keys) = self.by_type.get_mut(&entry.type_name)
+                {
+                    keys.shift_remove(&key);
+                }
+            }
+            Undo::Retyped {
+                key,
+                before,
+                position,
+            } => {
+                if let Some(entry) = self.records.get_mut(&key) {
+                    if let Some(keys) = self.by_type.get_mut(&entry.type_name) {
+                        keys.shift_remove(&key);
+                    }
+                    let keys = self.by_type.entry(before.type_name.clone()).or_default();
+                    keys.shift_insert(position.min(keys.len()), key);
+                    *entry = before;
+                }
+            }
+            Undo::Removed {
+                key,
+                entry,
+                index,
+                position,
+            } => {
+                if let Some(position) = position {
+                    let keys = self.by_type.entry(entry.type_name.clone()).or_default();
+                    keys.shift_insert(position.min(keys.len()), key.clone());
+                }
+                let index = index.min(self.records.len());
+                self.records.shift_insert(index, key, entry);
+            }
+            Undo::Counter { group, before } => match before {
+                Some(next) => {
+                    self.counters.insert(group, next);
+                }
+                None => {
+                    self.counters.remove(&group);
+                }
+            },
+            Undo::Blob { key, before } => restore(&mut self.blobs, key, before),
+            Undo::Memo { key, before } => restore(&mut self.memos, key, before),
+            // The key set last is the map's last: removing it keeps the order of the others.
+            Undo::Setting { key, before } => match before {
+                Some(value) => {
+                    self.settings.insert(key, value);
+                }
+                None => {
+                    self.settings.remove(&key);
+                }
+            },
+        }
     }
 
     /// Starts tracking the changes made to the records from now on, forgetting those tracked so
@@ -554,6 +837,42 @@ impl ShopState {
         }
     }
 
+    /// Everything the shop holds, in a form two shops can be compared by (the orders included:
+    /// records, keys by type, counters, events, side entries, tracked changes): what the tests
+    /// of a rollback compare.
+    #[cfg(test)]
+    pub(crate) fn picture(&self) -> String {
+        fn sorted<T: std::fmt::Debug>(items: impl Iterator<Item = T>) -> Vec<String> {
+            let mut items: Vec<String> = items.map(|item| format!("{item:?}")).collect();
+            items.sort();
+            items
+        }
+        let by_type = sorted(
+            self.by_type
+                .iter()
+                .filter(|(_, keys)| !keys.is_empty())
+                .map(|(type_name, keys)| (type_name, keys.iter().collect::<Vec<_>>())),
+        );
+        format!(
+            "domain {:?}\nrecords {:?}\nby type {by_type:?}\ncounters {:?}\nclock {:?}\n\
+             events {:?}\nemitted {}\noriginals {:?}\nblobs {:?}\nrevision {}\nmemos {:?}\n\
+             settings {:?}",
+            self.domain,
+            self.records.iter().collect::<Vec<_>>(),
+            sorted(self.counters.iter()),
+            self.clock,
+            self.events,
+            self.emitted,
+            self.originals
+                .as_ref()
+                .map(|originals| originals.iter().collect::<Vec<_>>()),
+            sorted(self.blobs.iter()),
+            self.revision,
+            sorted(self.memos.iter()),
+            self.settings,
+        )
+    }
+
     /// Moves the shop to another domain: what a shop created from the seed of another one needs.
     /// The `Shop` record gets the id of the new domain, and every value naming the old domain
     /// (`myshopifyDomain`, the host of the primary domain when it is the myshopify one, URLs on
@@ -600,6 +919,18 @@ impl ShopState {
         self.revision = revision + 1;
         if domain != self.domain {
             self.rehost(&domain);
+        }
+    }
+}
+
+/// Puts back the value a key of a side map had (`None`: it had none).
+fn restore<V>(map: &mut HashMap<String, V>, key: String, before: Option<V>) {
+    match before {
+        Some(value) => {
+            map.insert(key, value);
+        }
+        None => {
+            map.remove(&key);
         }
     }
 }
@@ -951,6 +1282,93 @@ mod tests {
         assert_eq!(state.revision(), revision);
         let _ = state.get_mut("gid://shopify/Product/4");
         assert!(state.revision() > revision);
+    }
+
+    #[test]
+    fn a_rollback_puts_back_every_write_since_its_savepoint() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        for id in 1..=6 {
+            state.insert(record(json!({
+                "__typename": "Product", "id": gid("Product", id), "title": format!("P{id}"),
+                "updatedAt": "2024-01-01T00:00:00Z"
+            })));
+        }
+        state.insert(record(
+            json!({"__typename": "Collection", "id": "gid://shopify/Collection/1"}),
+        ));
+        state.set_setting("taxRateBps", json!(2000));
+        state.set_memo("kept", json!(1));
+        state.put_blob("kept", Blob::new("a", "text/plain"));
+        state.track_changes();
+        state.get_mut("gid://shopify/Product/1").unwrap()["title"] = json!("Changed before");
+        state.emit("products/update", "gid://shopify/Product/1");
+        let before = state.picture();
+
+        let savepoint = state.savepoint();
+        // Every kind of write, some twice, in an order that moves positions.
+        state.get_mut("gid://shopify/Product/2").unwrap()["title"] = json!("Two");
+        state.get_mut("gid://shopify/Product/2").unwrap()["title"] = json!("Deux");
+        state.touch("gid://shopify/Product/3");
+        state.remove("gid://shopify/Product/4");
+        state.delete("gid://shopify/Product/2", "products/delete");
+        let created = state.insert(record(json!({"__typename": "Product", "title": "New"})));
+        state.get_mut(&created).unwrap()["title"] = json!("Newer");
+        state.insert(record(json!({
+            "__typename": "Product", "id": "gid://shopify/Product/2", "title": "Back"
+        })));
+        state.insert(record(json!({
+            "__typename": "Collection", "id": "gid://shopify/Product/5", "title": "Retyped"
+        })));
+        state.insert(record(
+            json!({"__typename": "Order", "id": "gid://shopify/Order/40"}),
+        ));
+        state.new_gid("Customer");
+        state.emit_with("customer.tags_added", &created, Record::new());
+        state.set_setting("taxRateBps", json!(0));
+        state.set_setting("new", json!(true));
+        state.set_memo("kept", json!(2));
+        state.set_memo("new", json!(3));
+        state.put_blob("kept", Blob::new("b", "text/plain"));
+        state.put_blob("new", Blob::new("c", "text/plain"));
+        state.set_clock(Clock::Frozen(Utc::now()));
+        // A nested savepoint kept, then one undone: the outer rollback undoes both.
+        let inner = state.savepoint();
+        state.get_mut("gid://shopify/Product/6").unwrap()["title"] = json!("Inner");
+        state.remove("gid://shopify/Collection/1");
+        state.release(inner);
+        let inner = state.savepoint();
+        let mid = state.picture();
+        state.get_mut("gid://shopify/Product/6").unwrap()["title"] = json!("Undone");
+        state.remove("gid://shopify/Product/1");
+        state.rollback(inner);
+        assert_eq!(state.picture(), mid, "the inner rollback");
+        state.get_mut("gid://shopify/Product/6").unwrap()["title"] = json!("Again");
+        assert_ne!(state.picture(), before);
+        state.rollback(savepoint);
+
+        assert_eq!(state.picture(), before);
+        assert!(state.journal.is_none());
+        // New ids start where they did, and the next event has the next sequence.
+        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/7");
+        assert_eq!(state.changes().len(), 1);
+    }
+
+    #[test]
+    fn a_released_savepoint_keeps_the_writes() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        state.insert(record(
+            json!({"__typename": "Product", "id": "gid://shopify/Product/1", "title": "One"}),
+        ));
+        let savepoint = state.savepoint();
+        state.get_mut("gid://shopify/Product/1").unwrap()["title"] = json!("Kept");
+        state.emit("products/update", "gid://shopify/Product/1");
+        state.release(savepoint);
+        assert!(state.journal.is_none());
+        assert_eq!(
+            state.get("gid://shopify/Product/1").unwrap()["title"],
+            json!("Kept")
+        );
+        assert_eq!(state.events().len(), 1);
     }
 
     #[test]
