@@ -48,7 +48,7 @@ pub struct Sourced<T> {
 }
 
 /// Every data file merged together, each entity remembering where it came from.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct MergedInput {
     pub shop: Option<Sourced<model::ShopInput>>,
     pub products: Vec<Sourced<model::ProductInput>>,
@@ -3193,6 +3193,7 @@ fn override_checkout(
 }
 
 /// A file of `checkouts/`, read.
+#[derive(Clone)]
 pub struct MergedScenario {
     /// The name of the file without its extension.
     pub name: String,

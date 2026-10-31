@@ -277,14 +277,24 @@ scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app a
 (every token of the app on the shop now reads less, the printed one and those of token exchange
 and OAuth alike, and `app/scopes_update` is delivered).
 
-**Uninstall.** `POST /__lsf/admin/uninstall` revokes the app's tokens on the shop and delivers
-`app/uninstalled`; `POST /__lsf/admin/install` installs it again.
+**Uninstall.** `POST /__lsf/admin/uninstall` does what Shopify does when a merchant uninstalls
+the app: it revokes the app's tokens on the shop, cancels its subscription, delivers
+`app/uninstalled` (through the subscriptions the shop had), then deletes the subscriptions the
+backend made with `webhookSubscriptionCreate` ("Shopify automatically performs cleanup tasks,
+such as deleting WebhookSubscription objects", [`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)).
+From then on nothing is delivered for the shop: an order placed at the checkout is recorded, and
+no `orders/create` goes out, not even through `shopify.app.toml`, whose subscriptions apply to
+"every shop that installs your app". Installing it again (`POST /__lsf/admin/install`, OAuth, or a
+token exchange) brings back the subscriptions of `shopify.app.toml`; those of the shop are gone,
+for the backend to make again, as on Shopify. `shop/redact`, which Shopify sends 48 hours after
+an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/redact"}`.
 
 ## Webhooks
 
-- **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, every shop), and
-  those the backend makes with `webhookSubscriptionCreate` (per shop; listed by
-  `webhookSubscriptions`, which, as on Shopify, does not list those of the file). A subscription
+- **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, every shop the
+  app is installed on), and those the backend makes with `webhookSubscriptionCreate` (per shop,
+  deleted when the app is uninstalled; listed by `webhookSubscriptions`, which, as on Shopify,
+  does not list those of the file). A subscription
   made through the Admin API takes `https://` and, locally, `http://` to this machine.
 - **Events**: what the Admin API changes (`productCreate` → `products/create`,
   `inventory_items/create`, `inventory_levels/connect`; `productUpdate` and `tagsAdd` →
@@ -349,9 +359,11 @@ The full list, field by field, is in the design notes of `lsf-admin`
   the terminal says what was refused (once), and so does `GET /__lsf/admin`
   (`storeSync.built.diagnostics`).
 - **What it costs**: a request of the backend only counts the change. The next request that
-  reads the store builds it again, once for a burst of mutations: under 2 ms on the demo store,
-  about 0.3 s for 3,000 products of 12 variants. Pages served without a change in between cost
-  nothing more. `GET /__lsf/admin` gives `storeSync`: the generation of the changes, whether a
+  reads the store builds it again, once for a burst of mutations: under 1 ms on the demo store,
+  about 0.1 s for 3,000 products of 12 variants. It builds on the files as the server read them
+  at start (or at the last reload), never on the files on disk: with `--static`, or without
+  `--watch`, a data file edited since is not seen until a reload. Pages served without a change
+  in between cost nothing more. `GET /__lsf/admin` gives `storeSync`: the generation of the changes, whether a
   change waits for the next page (`pending`), what the overlay writes and removes, and how long
   the last build took.
 
@@ -365,6 +377,9 @@ The full list, field by field, is in the design notes of `lsf-admin`
   computes them, from a leaky bucket per shop and app (`--admin-throttle`).
 - `extensions.search`: Shopify's warnings when a `query:` names a field the connection does not
   have ("Invalid search field for this query."); the field is then ignored, as on Shopify.
+- Cursors are opaque, and resume as Shopify's do: right after their item in the connection's
+  sort order, even when the item was deleted in between (delete a page of products while paging,
+  and `after: endCursor` answers the next ones, not those a page further).
 - `extensions.lsf`, only lsf's, only when there is something to say: `defaulted`, the paths of
   the fields answered with a default because the store data does not give them (and
   `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an

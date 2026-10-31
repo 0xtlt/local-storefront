@@ -4,11 +4,12 @@
 //! runs its Function at the checkout.
 //!
 //! The shops of the Admin API are seeded from the store of the files (the *base*, which
-//! [`Loaded`] keeps). A change of the default shop is only counted on the Admin request's path;
-//! the next request that reads the store sees the count move, asks the Admin API for the
-//! overlay of its changes (made then, under the shop's lock), and when it is not the one the
-//! store was built with, builds the store again: the files with the overlay on top, swapped in
-//! whole, as a reload of the files is. A burst of mutations is built once, by the first page
+//! [`Loaded`] keeps, with the data the files gave). A change of the default shop is only counted
+//! on the Admin request's path; the next request that reads the store sees the count move, asks
+//! the Admin API for the overlay of its changes (made then, under the shop's lock), and when it
+//! is not the one the store was built with, builds the store again: the data the files gave
+//! when the base was loaded (never the files again) with the overlay on top, swapped in whole,
+//! as a reload of the files is. A burst of mutations is built once, by the first page
 //! that follows it; a page rendered meanwhile sees the store before or after, never half of it.
 //! Pages served without a mutation in between pay one atomic read.
 //!
@@ -23,7 +24,7 @@ use std::time::Instant;
 use lsf_admin::api::Synced;
 use lsf_core::Store;
 use lsf_core::diagnostics::Diagnostics;
-use lsf_core::store::load::{OVERLAY_FILE, Overlay, load_with_overlays};
+use lsf_core::store::load::{OVERLAY_FILE, Overlay};
 use serde_json::Value as Json;
 
 use super::{Incoming, Loaded, ServerState};
@@ -83,8 +84,9 @@ impl ServerState {
         }
     }
 
-    /// The store of the files of `files` (its base, its diagnostics, its fingerprint) with
-    /// what the Admin API changed on top, as `synced` says. The store data's problems with the
+    /// The store of the files of `files` (its base, the data its files gave, its diagnostics,
+    /// its fingerprint) with what the Admin API changed on top, as `synced` says: built from
+    /// that data, not from the files on disk, which may have changed since without a reload. The store data's problems with the
     /// overlay are printed when they are new, and the build is told to the Admin API for
     /// `GET /__lsf/admin`. Called while `rebuilding` is held.
     pub(super) fn with_admin_changes(&self, files: &Loaded, synced: &Synced) -> Loaded {
@@ -92,11 +94,9 @@ impl ServerState {
         let (store, diagnostics) = match &synced.overlay {
             None => (files.base.clone(), Diagnostics::new()),
             Some(overlay) => {
-                let (store, all) = load_with_overlays(
-                    &self.app.source(),
-                    &self.app.load_options(),
-                    std::slice::from_ref(overlay.as_ref()),
-                );
+                let (store, all) = files
+                    .source
+                    .build(&files.load_options, std::slice::from_ref(overlay.as_ref()));
                 (Arc::new(store), new_problems(all, &files.diagnostics))
             }
         };
@@ -116,6 +116,8 @@ impl ServerState {
             diagnostics: files.diagnostics.clone(),
             fingerprint: files.fingerprint,
             base: files.base.clone(),
+            source: files.source.clone(),
+            load_options: files.load_options.clone(),
             synced: Applied {
                 generation: synced.generation,
                 overlay: synced.overlay.clone(),
@@ -124,8 +126,8 @@ impl ServerState {
         }
     }
 
-    /// The store of a session with data of its own: the files, what the Admin API changed (as
-    /// `loaded` has it), then `data`. Its problems are those of the files, of the Admin API's
+    /// The store of a session with data of its own: the data the files of `loaded` gave, what
+    /// the Admin API changed (as `loaded` has it), then `data`. Its problems are those of the files, of the Admin API's
     /// overlay, and of `data` under [`OVERLAY_FILE`].
     pub(super) fn session_store(&self, loaded: &Loaded, data: &Json) -> (Store, Diagnostics) {
         let mut overlays: Vec<Overlay> = loaded
@@ -135,7 +137,7 @@ impl ServerState {
             .map(|overlay| Overlay::clone(overlay))
             .collect();
         overlays.push(Overlay::new(OVERLAY_FILE, data.clone()));
-        load_with_overlays(&self.app.source(), &self.app.load_options(), &overlays)
+        loaded.source.build(&loaded.load_options, &overlays)
     }
 
     /// Builds the store of the session `id` again when it has data of its own and the Admin

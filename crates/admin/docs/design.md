@@ -147,9 +147,10 @@ keeps the fields of an input object in a `BTreeMap` (sorted, duplicates lost, so
 graphql-ruby's errors point at. graphql-parser still reads the SDL. Parse errors are those of
 graphql-ruby's C parser, which keeps the messages of its Racc grammar:
 `Parse error on "}" (RCURLY) at [1, 9]` with the token's location, `Unexpected end of document`
-with `"locations": []`. A document nested more than 100 deep (selections or values, fragments
-included) answers graphql-ruby's `This query is too large to execute.`, rather than running out
-of stack.
+with `"locations": []`. A document nested more than 100 deep (selections, values or the type of
+a variable, `[[Int]]`; fragments included) answers graphql-ruby's `This query is too large to
+execute.`, rather than running out of stack. Variables are JSON, which `serde_json` reads 128
+deep at most (deeper, the body is not read: `400`), so their coercion recurses no further.
 
 Validation is graphql-ruby 2.6's `StaticValidation::ALL_RULES` (read in its source, tag of
 2026-10-30), as one walk of the document, each rule's errors in its order, with its messages,
@@ -235,7 +236,8 @@ for the REST Admin API; `unsupported_version` and `rest_not_served` are the JSON
   days, an online token and a client credentials token 24 hours (`expires_in` 86399). Refresh
   tokens rotate as Shopify documents: the one presented stays usable until the app uses its
   successor, a new grant is acquired, 30 days pass after its first use, or it expires.
-  Uninstalling (`Tokens::uninstall`) revokes every token of the app on the shop.
+  Uninstalling (`Tokens::uninstall`) revokes every token of the app on the shop; the webhooks
+  of the shop stop (see "Events and webhooks").
 - **OAuth**, as Shopify (`auth::oauth`): `GET /admin/oauth/authorize` approves at once and
   redirects to the `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`;
   `POST /admin/oauth/access_token` (JSON, form, or query parameters) exchanges the code (once,
@@ -422,8 +424,15 @@ should be used instead.\nSee https://shopify.dev/api/usage/bulk-operations/queri
 details.\n` (an Admin API answer quoted on community.shopify.dev; `last` by analogy), a cursor
 lsf did not make is `Malformed cursor` with empty `extensions` (also quoted there); each is a
 field error, the connection `null`, even when the record has nothing to page. A cursor is the
-base64 of `{"position", "id"}`: `after` finds its item by id, else by position. `pageInfo` is
-exact both ways.
+base64 of `{"position", "id", "sortKey", "value"}` (`connection::Cursor`): the item's place, its
+GID (or an inline object's `id`), and, when the list was sorted, the key and the item's value
+under it, as Shopify's cursors hold the sort value and the id of their item. `after` finds its
+item by id; when the item is gone (deleted, or filtered out by the `query`), it resumes at the
+first item that sorts strictly after the value and the id, in the list's direction (`reverse`
+included), and `before` ends at the last one strictly before them: deleting the page just read
+does not make the next one skip ahead. A list in its own order (a record's array without
+`sortKey`) or sorted by another key than the cursor's has no value to compare: the position,
+where the item that took a removed one's place comes next. `pageInfo` is exact both ways.
 
 **Sort keys** (`resolve::sort`): root connections sort by their `sortKey`, its default included
 (`products` by `ID`, `orders` by `PROCESSED_AT`), and by `ID` when they take none; a record's
@@ -431,7 +440,8 @@ array keeps its order unless the query asks for another key than the default. `I
 `RELEVANCE` sort by the number of the GID; another key by the camelCase field of its name
 (`TITLE` → `title`, `metaobjects(sortKey: "updated_at")` → `updatedAt`), numbers and decimal
 strings by value, text ignoring case, ties by id. A key the type does not have keeps the order,
-with a note in `extensions.lsf.notes`.
+with a note in `extensions.lsf.notes`. `sort::sort` answers the order it applied
+(`sort::Order`: the key, each item's value and id), which the cursors keep.
 
 **Search** (`resolve::search`): the `query` argument is `search::Query`, matched through a
 `Searchable` that reads the filters `search.json` documents for the connection, by their
@@ -543,7 +553,7 @@ a day, a time with or without a zone, and ranges (`2021-01-01..2021-01-02`), eac
 relative date (`-7d`) for search; lsf has none.
 
 `search` parses a query into a tree (`Query::parse`, never an error: a malformed query is read
-as far as it goes, with warnings) and matches a record through the `Searchable` trait, which
+as far as it goes, with warnings, each given once) and matches a record through the `Searchable` trait, which
 each domain implements from the filters its connections document (`documented_filters`, from
 the reference of 2026-10: `schemas/2026-10/search.json`). A value is tokenized text, a keyword,
 a number, a date, a boolean or an id, which says how `:` compares it. **A field the connection
@@ -551,6 +561,11 @@ does not know is ignored**, as shopify.dev says ("If you specify an invalid fiel
 is ignored and all results are returned"; an earlier draft of this design said it matched
 nothing), with the warning Shopify returns in `extensions.search` ("Invalid search field for
 this query.", `Query::invalid_fields`). A free term matches the type's default text fields.
+
+Parentheses nest 100 deep at most (`syntax::MAX_DEPTH`: the parser recurses once per `(`, on
+the stack of the request's thread, which 20,000 of them overflowed): a deeper group is ignored
+with the warning "Parentheses nest more than 100 deep: what they hold is ignored.", and refused
+in a filter. A chain of `NOT` and `-` is counted, not nested (`NOT NOT x` is `x`).
 
 A webhook `filter` (`search::Filter`) runs on the payload, as shopify.dev's "Filter webhook
 deliveries" says: dotted paths through arrays (`variants.price:>=10.00`), case-sensitive
@@ -1034,6 +1049,17 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   (`webhookSubscriptionCreate`, per shop, in `webhooks::Registry`, which gives the
   `WebhookSubscription` record of each). Compliance topics (`customers/data_request`,
   `customers/redact`, `shop/redact`) are only triggered on demand.
+- **Uninstall** (`POST /__lsf/admin/uninstall`), as shopify.dev describes it: `app/uninstalled`
+  is delivered through the subscriptions the shop has, then those made with
+  `webhookSubscriptionCreate` are deleted ("When an app uninstalls, Shopify automatically
+  performs cleanup tasks, such as deleting WebhookSubscription objects", `appUninstall`), and
+  `Webhooks::emit` delivers nothing more for the shop (`Registry::is_installed`): the
+  subscriptions of `shopify.app.toml` are "applied uniformly across every shop that installs
+  your app" ("Manage webhook subscriptions"), and stay the app's. Installing it again (the
+  control endpoint, OAuth, a token exchange: `AdminApi::note_installs` after each, the tokens
+  locked) brings them back; the shop's are gone. `shop/redact`, "48 hours after a store owner
+  uninstalls your app" ("Privacy law compliance"), is sent on demand. A trigger is not an
+  event: it is sent whether the app is installed or not.
 - **Where**: a `uri` starting with `/` joins the app URL (`--app-url`, else `application_url`),
   trailing slashes removed, as Shopify's CLI prepends `application_url`; an absolute one under
   `application_url` (or on its origin) moves to `--app-url` when it is given; another HTTP(S) URL
@@ -1104,8 +1130,9 @@ pub const sync::OVERLAY_NAME: &str = "(admin api)";
 `store` is the store the shop was seeded from: the files, loaded without any overlay. The
 overlay is `{name: "(admin api)", removed, data}`: the entities to remove (by the key the data
 names them by: handle, email, name, code), then store data (the format of a data file) to add
-and replace. `load_with_overlays(source, options, &[overlay])` gives the store with the
-changes. `None` when nothing the store data expresses changed.
+and replace. `SourceData::build(options, &[overlay])` over the data the files gave (or
+`load_with_overlays(source, options, &[overlay])`, which reads them first) gives the store with
+the changes. `None` when nothing the store data expresses changed.
 
 - **Change tracking** (`ShopState`): once the seed is made it calls `track_changes`; from then
   on the first change of a record (`insert`, `insert_as`, `remove`, `get_mut`, `touch`) keeps a
@@ -1241,12 +1268,17 @@ the date its position gave it). Sessions and carts that name variants by id keep
 ### Server wiring (done)
 
 The plan was to project after each change, under the shop's lock, and to build the store lazily.
-The projection is lazy too: on the store of 3,000 products of the timing below it takes 70 ms,
+The projection is lazy too: on the store of 3,000 products of the timing below it takes 40 to 70 ms,
 which every mutation would have paid on the Admin request's path, ten times for a burst of ten.
 
-1. **At start** (`ServerState::new`), the store of the files is loaded once and kept as the
-   *base* (`Loaded::base`): it seeds the shops (`AdminApi::new`) and turns sync on
-   (`AdminApi::sync_store(base)`). The store the storefront sees starts as the base.
+1. **At start** (`ServerState::new`), the files are read once (`lsf_core::store::load::
+   SourceData::read`: parsed, checked and merged) and kept (`Loaded::source`, with the
+   `LoadOptions` the store was built with); the store built from them is the *base*
+   (`Loaded::base`): it seeds the shops (`AdminApi::new`) and turns sync on
+   (`AdminApi::sync_store(base)`). The store the storefront sees starts as the base. Every
+   later build starts from that data, never from the files on disk: `--static` reads them once,
+   and without `--watch` a file changed on disk but not reloaded does not leak into a store
+   whose overlay was computed against the old base (the files' image sizes are kept too).
 2. **A change of the default shop is counted, not projected.** `ShopState::revision` grows with
    every write (`insert`, `insert_as`, `remove`, `get_mut`, `touch`, a reset), so `graphql` and
    `change_shop` (an order the checkout records goes through it) tell a request that wrote from
@@ -1263,20 +1295,21 @@ which every mutation would have paid on the Admin request's path, ten times for 
    `AdminApi::synced`, which projects the shop under its lock when the count moved since the
    last projection (`api::sync::StoreSync::update`), keeps the overlay when it is the same
    (`Overlay: PartialEq`), and moves the generation on only when it is not. A new generation is
-   built (`load_with_overlays(&source, &options, &[overlay])`, or the base itself for no
+   built (`loaded.source.build(&loaded.load_options, &[overlay])`, or the base itself for no
    overlay) outside the shop's lock, and swapped into `Loaded` whole: a page rendered meanwhile
    has the `Arc<Loaded>` it started with. A burst of mutations is projected and built once, by
    the first request that follows it; an order recorded at the checkout makes the same overlay
    and builds nothing (`an_order_placed_at_the_checkout_does_not_build_the_store_again`).
 4. **Sessions with their own data** keep it (`SessionEntry::data`, with the generation their
-   store was built at). Their store is `[sync_overlay, Overlay::new(OVERLAY_FILE, data)]`
-   (`ServerState::session_store`, which `PUT /__lsf/session` uses too), built again on the
+   store was built at). Their store is `[sync_overlay, Overlay::new(OVERLAY_FILE, data)]` on
+   the same data (`ServerState::session_store`, which `PUT /__lsf/session` uses too), built again on the
    session's next request when the generation moved. A session named only by
    `GET /__lsf/checkout?session=` sees its store as of its own last request.
 5. **Live reload**: the token has the generation of the store built (`Loaded::synced`), and
    `observe_changes` builds before it computes the token: the pages reload once the store is
    built, and find it so.
-6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` loads the new base, reseeds
+6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` reads the files again and
+   loads the new base, reseeds
    (`AdminApi::reseed`; the terminal says what was dropped), moves sync to the new base
    (`sync_store`, which counts a change), and builds from `synced()`: the store is the new base,
    unless the backend changed the shop in between.
@@ -1300,8 +1333,15 @@ yet), `overlay` (`written`: entities by section; `removed`: their keys), `built`
 
 | Store | Records | Mutation (Admin request) | Next page: projection and build | Page without a change |
 |---|---|---|---|---|
-| Demo (8 products) | 251 | 0.5 ms | 0.5 to 1.3 ms | 0.1 ms |
-| 3,000 products of 12 variants | 198,000 | 0.06 ms (400 ms with the copy of the shop it made then) | 290 to 370 ms (projection 70 ms, build 250 to 300 ms) | 0.1 ms |
+| Demo (8 products) | 251 | 0.5 ms | 0.3 ms (build 0.1 to 0.2 ms) | 0.1 ms |
+| 3,000 products of 12 variants | 198,000 | 0.06 ms (300 to 400 ms with the copy of the shop a mutation made before the undo log) | 100 ms (build 56 to 58 ms, the projection most of the rest) | 0.1 ms |
+
+- Measured on 2026-10-31 (three alternated runs, medians, a loaded machine): the build was
+  0.3 to 0.4 ms and 170 to 210 ms when it read the files again (`load_with_overlays` on the
+  source), the next page 0.5 ms and 240 to 270 ms. Building from the data read once
+  (`SourceData::build`: a copy of the merged data, the overlay, the build) skips reading,
+  parsing and checking 3,000 files. An earlier measure, before the build's recommendations were
+  fixed and on another machine, had the large store at 290 to 370 ms.
 
 - The build was cubic before: a product's default recommendations checked every product against
   the list so far before keeping ten. 2,000 products took 1.2 to 2 s to load, 3,000 products 5 to

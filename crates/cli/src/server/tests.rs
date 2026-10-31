@@ -12,6 +12,7 @@ use super::throttle::Throttle;
 use super::{Incoming, SESSION_HEADER, ServeOptions, ServerState};
 use crate::app::App;
 
+mod store_base;
 mod store_sync;
 
 fn server() -> ServerState {

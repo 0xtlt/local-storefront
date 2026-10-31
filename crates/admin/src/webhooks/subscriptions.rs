@@ -3,7 +3,7 @@
 //! which belong to one shop. And where each one delivers: its `uri`, resolved against the URL the
 //! backend of the app listens on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
 use chrono::{DateTime, Utc};
@@ -366,11 +366,14 @@ impl UserError {
 }
 
 /// The subscriptions created through the Admin API, per shop. Ids are GIDs of
-/// `WebhookSubscription`, from a counter shared by every shop.
+/// `WebhookSubscription`, from a counter shared by every shop. Also the shops the app is not
+/// installed on, for which nothing is delivered (see [`super::Webhooks::emit`]).
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
     shops: HashMap<String, Vec<Subscription>>,
     last_id: u64,
+    /// The shops the app was uninstalled from and not installed on again.
+    uninstalled: HashSet<String>,
 }
 
 impl Registry {
@@ -518,14 +521,36 @@ impl Registry {
         Ok(list.remove(position))
     }
 
-    /// Forgets the subscriptions of a shop: when its state is seeded again.
-    pub fn clear(&mut self, shop: &str) {
-        self.shops.remove(shop);
+    /// Forgets the subscriptions of a shop: when its state is seeded again, or the app
+    /// uninstalled from it. How many there were.
+    pub fn clear(&mut self, shop: &str) -> usize {
+        self.shops.remove(shop).map_or(0, |list| list.len())
     }
 
-    /// Forgets every subscription.
+    /// Forgets every subscription, and every uninstall: a reset of the server, which installs
+    /// the app on every shop again.
     pub fn clear_all(&mut self) {
         self.shops.clear();
+        self.uninstalled.clear();
+    }
+
+    /// Whether the app is installed on `shop`: what [`super::Webhooks::emit`] delivers for.
+    pub fn is_installed(&self, shop: &str) -> bool {
+        !self.uninstalled.contains(shop)
+    }
+
+    /// Records that the app is no longer installed on `shop` (`installed: false`), or is again.
+    pub fn set_installed(&mut self, shop: &str, installed: bool) {
+        if installed {
+            self.uninstalled.remove(shop);
+        } else {
+            self.uninstalled.insert(shop.to_string());
+        }
+    }
+
+    /// The shops the app is not installed on, in no particular order.
+    pub fn uninstalled_shops(&self) -> Vec<String> {
+        self.uninstalled.iter().cloned().collect()
     }
 }
 

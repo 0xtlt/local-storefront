@@ -573,3 +573,169 @@ fn inventory_quantities_are_those_asked() {
     assert_eq!(names, ["on_hand", "available"]);
     assert_eq!(quantities[0]["quantity"], quantities[1]["quantity"]);
 }
+
+/// The demo's products and twelve more, four of them titled the same, to page over.
+fn shop_of_products() -> ShopState {
+    let mut shop = demo();
+    for index in 0..12 {
+        let title = if index % 3 == 0 {
+            "Twin".to_string()
+        } else {
+            format!("Product {index:02}")
+        };
+        let created = run(
+            &mut shop,
+            &format!(
+                r#"mutation {{ productCreate(product: {{title: "{title}"}}) {{ userErrors {{ message }} }} }}"#
+            ),
+        );
+        assert_eq!(
+            created["data"]["productCreate"]["userErrors"],
+            json!([]),
+            "{created}"
+        );
+    }
+    shop
+}
+
+/// A page of products: the ids, and the cursors of its ends.
+fn product_page(shop: &mut ShopState, arguments: &str) -> (Vec<String>, String, String) {
+    let answer = run(
+        shop,
+        &format!(
+            "{{ products({arguments}) {{ nodes {{ id }} pageInfo {{ startCursor endCursor }} }} }}"
+        ),
+    );
+    let page = &answer["data"]["products"];
+    let ids = page["nodes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a page: {answer}"))
+        .iter()
+        .map(|node| node["id"].as_str().unwrap().to_string())
+        .collect();
+    let cursor = |name: &str| page["pageInfo"][name].as_str().unwrap_or("").to_string();
+    (ids, cursor("startCursor"), cursor("endCursor"))
+}
+
+fn delete_products(shop: &mut ShopState, ids: &[String]) {
+    for id in ids {
+        let deleted = run(
+            shop,
+            &format!(
+                r#"mutation {{ productDelete(input: {{id: "{id}"}}) {{ deletedProductId userErrors {{ message }} }} }}"#
+            ),
+        );
+        assert_eq!(
+            deleted["data"]["productDelete"]["deletedProductId"],
+            json!(id),
+            "{deleted}"
+        );
+    }
+}
+
+#[test]
+fn a_cursor_whose_item_was_deleted_resumes_right_after_it() {
+    // Shopify's cursors hold the sort value and the id of their item: a page deleted while
+    // paging does not make the next one skip ahead. lsf's fell back to the position, and
+    // answered products 11 to 15 where Shopify answers 6 to 10.
+    for (sort, reverse) in [
+        ("ID", false),
+        ("ID", true),
+        ("TITLE", false),
+        ("TITLE", true),
+        ("CREATED_AT", false),
+        ("UPDATED_AT", true),
+        ("PRODUCT_TYPE", false),
+    ] {
+        let arguments = format!("sortKey: {sort}, reverse: {reverse}");
+        let case = format!("{sort}, reverse: {reverse}");
+        let mut shop = shop_of_products();
+        let (all, ..) = product_page(&mut shop, &format!("first: 250, {arguments}"));
+        assert!(all.len() >= 15, "{case}: {} products", all.len());
+
+        // Forward: the first page is deleted, the next one starts after it.
+        let (first, _, end) = product_page(&mut shop, &format!("first: 5, {arguments}"));
+        assert_eq!(first, all[..5], "{case}");
+        delete_products(&mut shop, &first);
+        let (next, ..) = product_page(
+            &mut shop,
+            &format!("first: 5, after: \"{end}\", {arguments}"),
+        );
+        assert_eq!(next, all[5..10], "{case}: forward");
+
+        // Backward: the last page is deleted, the one before it ends before it.
+        let mut shop = shop_of_products();
+        let len = all.len();
+        let (last, start, _) = product_page(&mut shop, &format!("last: 5, {arguments}"));
+        assert_eq!(last, all[len - 5..], "{case}");
+        delete_products(&mut shop, &last);
+        let (previous, ..) = product_page(
+            &mut shop,
+            &format!("last: 5, before: \"{start}\", {arguments}"),
+        );
+        assert_eq!(previous, all[len - 10..len - 5], "{case}: backward");
+
+        // A cursor whose item is still there resumes after it, as before.
+        let mut shop = shop_of_products();
+        let (_, _, end) = product_page(&mut shop, &format!("first: 7, {arguments}"));
+        let (next, ..) = product_page(
+            &mut shop,
+            &format!("first: 3, after: \"{end}\", {arguments}"),
+        );
+        assert_eq!(next, all[7..10], "{case}: kept");
+    }
+}
+
+#[test]
+fn a_deleted_cursor_resumes_within_a_tie_by_id() {
+    // Four products titled "Twin": the cursor of the second, deleted, resumes at the third.
+    let mut shop = shop_of_products();
+    let (twins, ..) = product_page(
+        &mut shop,
+        "first: 250, sortKey: TITLE, query: \"title:Twin\"",
+    );
+    assert_eq!(twins.len(), 4);
+    for reverse in [false, true] {
+        let mut shop = shop_of_products();
+        let arguments = format!("sortKey: TITLE, reverse: {reverse}, query: \"title:Twin\"");
+        let expected: Vec<String> = if reverse {
+            twins.iter().rev().cloned().collect()
+        } else {
+            twins.clone()
+        };
+        let (first, _, end) = product_page(&mut shop, &format!("first: 2, {arguments}"));
+        assert_eq!(first, expected[..2]);
+        delete_products(&mut shop, &first[1..]);
+        let (next, ..) = product_page(
+            &mut shop,
+            &format!("first: 2, after: \"{end}\", {arguments}"),
+        );
+        assert_eq!(next, expected[2..], "reverse: {reverse}");
+        let (_, start, _) = product_page(&mut shop, &format!("last: 1, {arguments}"));
+        delete_products(&mut shop, &expected[3..]);
+        let (previous, ..) = product_page(
+            &mut shop,
+            &format!("last: 5, before: \"{start}\", {arguments}"),
+        );
+        assert_eq!(previous, [expected[0].clone(), expected[2].clone()]);
+    }
+}
+
+#[test]
+fn a_cursor_of_another_sort_key_or_another_connection_falls_back_to_its_place() {
+    let mut shop = shop_of_products();
+    let (by_id, ..) = product_page(&mut shop, "first: 250");
+    let (by_title, ..) = product_page(&mut shop, "first: 250, sortKey: TITLE");
+    // A cursor of the `TITLE` order whose item is gone, in the `ID` order: its position.
+    let (_, _, end) = product_page(&mut shop, "first: 3, sortKey: TITLE");
+    delete_products(&mut shop, &by_title[2..3]);
+    let (next, ..) = product_page(&mut shop, &format!("first: 2, after: \"{end}\""));
+    let remaining: Vec<&String> = by_id.iter().filter(|id| **id != by_title[2]).collect();
+    assert_eq!(next.iter().collect::<Vec<_>>(), remaining[2..4]);
+    // A cursor lsf did not make is still Shopify's error.
+    let malformed = run(
+        &mut shop,
+        "{ products(first: 1, after: \"bm90IGEgY3Vyc29y\") { nodes { id } } }",
+    );
+    assert_eq!(malformed["errors"][0]["message"], json!("Malformed cursor"));
+}

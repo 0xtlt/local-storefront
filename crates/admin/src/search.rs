@@ -740,6 +740,60 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_query_nested_too_deeply_is_not_read_past_the_limit() {
+        // 20,000 levels overflowed the stack of the request's thread, and the server aborted.
+        let deep = "(".repeat(20_000);
+        let lenient = Query::parse(&deep);
+        assert_eq!(lenient.root, None);
+        assert_eq!(
+            lenient.warnings,
+            [
+                Warning::new(
+                    None,
+                    "Parentheses nest more than 100 deep: what they hold is ignored."
+                ),
+                Warning::new(None, "A `(` is not closed."),
+            ]
+        );
+        let error = Query::parse_strict(&deep).unwrap_err();
+        assert_eq!(
+            error.message,
+            "parentheses nest more than 100 deep: what they hold is ignored"
+        );
+        // A deep group is skipped whole, and what follows it is read.
+        let skipped = format!(
+            "{}tag:a{} title:b",
+            "(".repeat(syntax::MAX_DEPTH + 1),
+            ")".repeat(syntax::MAX_DEPTH + 1)
+        );
+        let query = Query::parse(&skipped);
+        assert_eq!(query.root, Some(field("title", "b")));
+        assert_eq!(query.warnings.len(), 1);
+        assert!(Query::parse_strict(&skipped).is_err());
+        // Up to the limit, the query is read.
+        let fine = format!(
+            "{}tag:a{}",
+            "(".repeat(syntax::MAX_DEPTH),
+            ")".repeat(syntax::MAX_DEPTH)
+        );
+        assert_eq!(root(&fine), field("tag", "a"));
+        // A chain of modifiers is no nesting: `NOT` 20,000 times, then 20,001 times.
+        let even = format!("{}tag:a", "NOT ".repeat(20_000));
+        assert_eq!(root(&even), field("tag", "a"));
+        let odd = format!("-{}tag:a", "-".repeat(20_000));
+        assert_eq!(root(&odd), Node::Not(Box::new(field("tag", "a"))));
+        assert_eq!(
+            root("NOT (NOT tag:a)"),
+            field("tag", "a"),
+            "the negations cancel through a group"
+        );
+        // A webhook filter is parsed strictly.
+        assert!(
+            Filter::parse(&format!("{}a:b{}", "(".repeat(20_000), ")".repeat(20_000))).is_err()
+        );
+    }
+
     /// A record of a test: its fields and its default text.
     struct Record {
         fields: HashMap<&'static str, Vec<SearchValue>>,
