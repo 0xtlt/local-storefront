@@ -1,0 +1,8 @@
+<article id="product" data-handle="{{ product.handle }}" data-available="{{ product.available }}">
+  <h1 id="product-title">{{ product.title }}</h1>
+  <p id="product-price">{{ product.price | money }}</p>
+  <p id="product-vendor">{{ product.vendor }}</p>
+  <p id="product-tags">{{ product.tags | join: ',' }}</p>
+  <p id="product-inventory">{{ product.selected_or_first_available_variant.inventory_quantity }}</p>
+  <div id="product-description">{{ product.description }}</div>
+</article>

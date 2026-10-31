@@ -46,6 +46,15 @@ run = "cargo clippy --workspace --all-targets -- -D warnings"
 description = "Regenerate the Function API schemas of lsf-checkout (crates/checkout/schemas) from the pinned @shopify/dev-mcp package"
 run = "node tools/checkout/function_schemas.mjs"
 
+[tasks."admin:e2e"]
+description = "Run examples/admin-backend, an app backend written with Shopify's libraries, end to end against lsf's Admin API"
+dir = "examples/admin-backend"
+run = [
+  "cargo build --manifest-path ../../Cargo.toml -p lsf",
+  "npm install --no-audit --no-fund",
+  "npm run e2e",
+]
+
 [tasks."admin:schema"]
 description = "Regenerate the schema of the GraphQL Admin API of lsf-admin (crates/admin/schemas) from the pinned @shopify/dev-mcp package"
 run = "node tools/admin/admin_schema.mjs"
