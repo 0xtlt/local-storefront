@@ -7,6 +7,8 @@ pub mod catalog;
 pub mod content;
 pub mod customers;
 pub mod orders;
+pub mod platform;
+pub mod storefront;
 pub mod tags;
 pub mod webhook_subscriptions;
 
@@ -20,6 +22,8 @@ pub fn register(registry: &mut Registry) {
     content::register(registry);
     customers::register(registry);
     orders::register(registry);
+    platform::register(registry);
+    storefront::register(registry);
     tags::register(registry);
     webhook_subscriptions::register(registry);
 }

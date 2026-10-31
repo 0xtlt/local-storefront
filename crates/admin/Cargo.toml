@@ -32,3 +32,10 @@ brotli = { version = "9", default-features = false, features = ["std"] }
 # Delivers the webhooks, as lsf-checkout sends the requests of Functions: `http://localhost` needs
 # no TLS, an `https` subscription the `rustls` lsf-checkout already builds.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# The app's extensions lsf-checkout does not read (web pixels, Flow triggers): their
+# `shopify.extension.toml`, as lsf-checkout reads the others.
+toml = "0.9"
+# `OnlineStoreThemeFile.checksumMd5`, as lsf-core hashes theme assets.
+md-5 = "0.11"
+# The ZIP archive of a theme (`themeCreate`): its entries are deflated.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

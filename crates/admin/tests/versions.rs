@@ -121,14 +121,15 @@ fn a_field_or_a_mutation_of_one_version_is_refused_in_the_other_as_shopify_refus
         )
     );
 
-    // `appDowngradeAccessScopes`: a mutation of 2027-01 only. Valid there (lsf does not simulate
-    // it, and says so), unknown in 2026-10.
+    // `appDowngradeAccessScopes`: a mutation of 2027-01 only. It runs there (`write_products` is
+    // a required scope of this app, which cannot be downgraded), and is unknown in 2026-10.
     let downgrade = "mutation { appDowngradeAccessScopes(scopes: [\"write_products\"]) {
-        userErrors { message } } }";
+        userErrors { message code } } }";
     let new = query(&api, NEW, downgrade);
+    assert!(new.get("errors").is_none(), "{new}");
     assert_eq!(
-        new["errors"][0]["extensions"]["code"],
-        json!("LSF_NOT_SIMULATED"),
+        new["data"]["appDowngradeAccessScopes"]["userErrors"][0]["code"],
+        json!("CANNOT_DOWNGRADE_REQUIRED_SCOPES"),
         "{new}"
     );
     assert_eq!(

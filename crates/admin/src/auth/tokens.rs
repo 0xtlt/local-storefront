@@ -80,6 +80,9 @@ pub enum GrantSource {
     RefreshToken,
     /// `grant_type=client_credentials`.
     ClientCredentials,
+    /// `delegateAccessTokenCreate`: a subset of its parent's scopes, never more than the
+    /// installation grants.
+    Delegate,
 }
 
 /// The staff member an online token acts for: `associated_user` of the token response.
@@ -352,18 +355,7 @@ impl Tokens {
         // Scopes are approved (and revoked) for an installation, not for a token (shopify.dev,
         // "Manage access scopes" and `appRevokeAccessScopes`): the tokens the installation
         // issued, by token exchange or OAuth, carry its new scopes from now on.
-        let installation =
-            |grant_shop: &str, grant_client: &str| grant_shop == shop && grant_client == client_id;
-        for grant in self.access.values_mut() {
-            if installation(&grant.shop, &grant.client_id) {
-                grant.scopes = scopes.to_vec();
-            }
-        }
-        for entry in self.refresh.values_mut() {
-            if installation(&entry.shop, &entry.client_id) {
-                entry.scopes = scopes.to_vec();
-            }
-        }
+        self.set_scopes(shop, client_id, scopes);
         let token = default_token(shop, client_id);
         self.access.insert(
             token.clone(),
@@ -379,6 +371,63 @@ impl Tokens {
             },
         );
         token
+    }
+
+    /// Changes the scopes `client_id` is installed with on `shop`, and those of the tokens of the
+    /// installation: each carries the new ones, but a delegate token, which keeps those of its
+    /// own the installation still grants ("If your app is later re-authorized with fewer
+    /// scopes, every existing delegate token loses the scopes that are no longer authorized",
+    /// shopify.dev, "Delegate API access"). Nothing for an app not installed.
+    pub fn set_scopes(&mut self, shop: &str, client_id: &str, scopes: &[String]) {
+        let key = (shop.to_string(), client_id.to_string());
+        if let Some(installed) = self.installs.get_mut(&key) {
+            *installed = scopes.to_vec();
+        }
+        let installation =
+            |grant_shop: &str, grant_client: &str| grant_shop == shop && grant_client == client_id;
+        for grant in self.access.values_mut() {
+            if !installation(&grant.shop, &grant.client_id) {
+                continue;
+            }
+            if grant.source == GrantSource::Delegate {
+                grant
+                    .scopes
+                    .retain(|scope| super::scopes::covers(scopes, scope));
+            } else {
+                grant.scopes = scopes.to_vec();
+            }
+        }
+        for entry in self.refresh.values_mut() {
+            if installation(&entry.shop, &entry.client_id) {
+                entry.scopes = scopes.to_vec();
+            }
+        }
+    }
+
+    /// Keeps a delegate token of the app `client_id` on `shop`: `delegateAccessTokenCreate`
+    /// made it, with these scopes and this expiry (its parent's, or sooner).
+    pub fn delegate(
+        &mut self,
+        token: &str,
+        shop: &str,
+        client_id: &str,
+        scopes: &[String],
+        expires_at: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) {
+        self.access.insert(
+            token.to_string(),
+            Grant {
+                shop: shop.to_string(),
+                client_id: client_id.to_string(),
+                scopes: scopes.to_vec(),
+                mode: AccessMode::Offline,
+                user: None,
+                issued_at: now,
+                expires_at,
+                source: GrantSource::Delegate,
+            },
+        );
     }
 
     /// The scopes `client_id` is installed with on `shop`, if it is installed.

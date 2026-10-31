@@ -16,6 +16,7 @@ use super::{HttpRequest, HttpResponse};
 use crate::auth::oauth::{self, AppAuth};
 use crate::auth::scopes::{self, ALL_SCOPES};
 use crate::auth::tokens::{Grant, TokenError, Tokens};
+use crate::domains::platform::{self, access::AuthEffect};
 use crate::domains::{app as app_domain, orders};
 use crate::graphql::{self, Bucket, Request};
 use crate::resolve::{Registry, ShopResolver};
@@ -643,6 +644,7 @@ impl AdminApi {
         response.extensions.extend(resolver.extensions());
         self.count_change(&live, revision);
         let events = live.state.take_events();
+        let effects = platform::access::effects(&events);
         if !events.is_empty() {
             live.changed = true;
             // Built now from the shop as the request left it, queued for the worker: nothing
@@ -650,6 +652,9 @@ impl AdminApi {
             self.emit(&live.state, &events);
         }
         drop(live);
+        // What the request changed of the tokens, now that the shop is unlocked (the tokens
+        // come first in the order of the locks), before the backend hears the answer.
+        self.apply_auth_effects(&grant.shop, &effects);
         Self::api_headers(HttpResponse::json(200, &response.to_json()), version)
     }
 
@@ -728,6 +733,25 @@ impl AdminApi {
                         }),
                     ),
                     Err((status, error)) => HttpResponse::json(status, &json!({ "error": error })),
+                }
+            }
+            ("GET", "/__lsf/admin/outbox") => {
+                let domain = request
+                    .query
+                    .iter()
+                    .find(|(name, _)| name == "shop")
+                    .map_or_else(
+                        || self.default_shop(),
+                        |(_, shop)| oauth::normalize_shop(shop),
+                    );
+                match self.outbox(&domain) {
+                    Some(entries) => {
+                        HttpResponse::json(200, &json!({"shop": domain, "outbox": entries}))
+                    }
+                    None => HttpResponse::json(
+                        404,
+                        &json!({"error": format!("there is no shop {domain}")}),
+                    ),
                 }
             }
             ("POST", "/__lsf/admin/uninstall") => self.uninstall(request),
@@ -875,30 +899,95 @@ impl AdminApi {
                 &json!({"error": format!("there is no shop {domain}")}),
             );
         }
-        let (installed, revoked) = {
-            let mut tokens = lock(&self.tokens);
-            let installed = tokens
-                .installed_scopes(&domain, &self.auth.client_id)
-                .is_some();
-            (installed, tokens.uninstall(&domain, &self.auth.client_id))
-        };
-        // From now on only `app/uninstalled` is delivered for the shop, through the
-        // subscriptions it had; an app uninstalled already is not uninstalled again.
-        self.webhooks.registry().set_installed(&domain, false);
-        if installed {
-            self.change_shop(&domain, |state| {
-                // Shopify cancels the app's subscription when it is uninstalled.
-                app_domain::billing::cancel_on_uninstall(state);
-                if let Some(shop) = state.shop_gid().map(str::to_string) {
-                    state.emit("app/uninstalled", &shop);
-                }
-            });
-        }
-        let deleted = self.webhooks.registry().clear(&domain);
+        let installed = lock(&self.tokens)
+            .installed_scopes(&domain, &self.auth.client_id)
+            .is_some();
+        let (revoked, deleted) = self.finish_uninstall(&domain, || {
+            if installed {
+                self.change_shop(&domain, |state| {
+                    // Shopify cancels the app's subscription when it is uninstalled.
+                    app_domain::billing::cancel_on_uninstall(state);
+                    if let Some(shop) = state.shop_gid().map(str::to_string) {
+                        state.emit("app/uninstalled", &shop);
+                    }
+                });
+            }
+        });
         HttpResponse::json(
             200,
             &json!({"ok": true, "shop": domain, "revoked": revoked, "deletedSubscriptions": deleted}),
         )
+    }
+
+    /// The uninstall of the app from a shop, whether the control endpoint or `appUninstall` asked
+    /// for it: its tokens revoked, then `delivered` (what delivers `app/uninstalled` through the
+    /// subscriptions the shop had, if it was not delivered already), then nothing more is
+    /// delivered for the shop and the subscriptions it made are deleted. Answers how many tokens
+    /// were revoked and subscriptions deleted.
+    fn finish_uninstall(&self, domain: &str, delivered: impl FnOnce()) -> (usize, usize) {
+        let revoked = lock(&self.tokens).uninstall(domain, &self.auth.client_id);
+        // From now on only `app/uninstalled` is delivered for the shop, through the
+        // subscriptions it had; an app uninstalled already is not uninstalled again.
+        self.webhooks.registry().set_installed(domain, false);
+        delivered();
+        let deleted = self.webhooks.registry().clear(domain);
+        (revoked, deleted)
+    }
+
+    /// Applies to the tokens what the mutations of a request changed of them
+    /// (`domains::platform::access`): an uninstall, the installation's new scopes, a delegate
+    /// token made or destroyed.
+    fn apply_auth_effects(&self, shop: &str, effects: &[AuthEffect]) {
+        for effect in effects {
+            match effect {
+                AuthEffect::Uninstall => {
+                    // `appUninstall` delivered `app/uninstalled` with the request's events.
+                    self.finish_uninstall(shop, || {});
+                }
+                AuthEffect::Scopes(scopes) => {
+                    lock(&self.tokens).set_scopes(shop, &self.auth.client_id, scopes);
+                }
+                AuthEffect::Delegate {
+                    token,
+                    scopes,
+                    expires_at,
+                } => lock(&self.tokens).delegate(
+                    token,
+                    shop,
+                    &self.auth.client_id,
+                    scopes,
+                    *expires_at,
+                    Utc::now(),
+                ),
+                AuthEffect::Destroy { token } => {
+                    lock(&self.tokens).revoke(token);
+                }
+            }
+        }
+    }
+
+    /// What the app platform's mutations would have sent outside (a Flow trigger, …): the
+    /// outbox of a shop, oldest first (`GET /__lsf/admin/outbox?shop=`). `None` for a shop
+    /// lsf does not have.
+    pub fn outbox(&self, shop: &str) -> Option<Vec<Value>> {
+        let shop = self.shop(shop)?;
+        let live = lock(&shop);
+        Some(platform::outbox_entries(&live.state))
+    }
+
+    /// The association file the storefront serves at `path` (`/.well-known/assetlinks.json`,
+    /// `/.well-known/apple-app-site-association`) from the mobile platform applications of the
+    /// default shop: `None` when there is none to serve.
+    pub fn association_file(&self, path: &str) -> Option<Value> {
+        self.with_default_shop(|state| platform::mobile::association_file(state, path))
+            .flatten()
+    }
+
+    /// The `src` of the script tags of the default shop that the storefront loads, in order
+    /// (`domains::storefront::storefront_scripts`).
+    pub fn storefront_scripts(&self) -> Vec<String> {
+        self.with_default_shop(crate::domains::storefront::storefront_scripts)
+            .unwrap_or_default()
     }
 
     /// `POST /__lsf/admin/install`: installs the app again (its token works again), with other
