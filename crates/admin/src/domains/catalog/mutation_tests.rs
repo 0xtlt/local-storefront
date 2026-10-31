@@ -947,3 +947,359 @@ fn collections_custom_and_smart() {
         json!({"deletedCollectionId": null, "userErrors": [{"field": ["id"], "message": "Collection does not exist"}]})
     );
 }
+
+/// The level of the first variant of a product at its first location: `(item, location,
+/// level)`.
+fn first_level(shop: &ShopState, handle: &str) -> (String, String, String) {
+    let variant = variants(shop, &product(shop, handle))[0].clone();
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let level = super::gids(shop.get(&item).unwrap().get("inventoryLevels"))[0].clone();
+    let location = shop.get(&level).unwrap()["location"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (item, location, level)
+}
+
+fn quantity_of(shop: &ShopState, level: &str, name: &str) -> i64 {
+    super::records::quantity(shop.get(level).unwrap(), name)
+}
+
+const ADJUST: &str = r#"mutation($input: InventoryAdjustQuantitiesInput!, $key: String!) {
+    inventoryAdjustQuantities(input: $input) @idempotent(key: $key) {
+        inventoryAdjustmentGroup { id reason referenceDocumentUri changes { name delta quantityAfterChange ledgerDocumentUri item { id } } }
+        userErrors { field message code } } }"#;
+
+#[test]
+fn inventory_adjusts_with_compare_and_swap_and_idempotency() {
+    let mut shop = demo();
+    let (item, location, level) = first_level(&shop, "wool-beanie");
+    let available = quantity_of(&shop, &level, "available");
+    let on_hand = quantity_of(&shop, &level, "on_hand");
+    let beanie = product(&shop, "wool-beanie");
+    let variant = variants(&shop, &beanie)[0].clone();
+    let total = shop.get(&variant).unwrap()["inventoryQuantity"]
+        .as_i64()
+        .unwrap();
+    let input = json!({"reason": "correction", "name": "available", "referenceDocumentUri": "logistics://warehouse/take/1",
+        "changes": [{"delta": -4, "inventoryItemId": item, "locationId": location, "changeFromQuantity": available}]});
+    let answer = run_with(&mut shop, ADJUST, json!({"input": input, "key": "k-1"}));
+    let group = &ok(&answer, "inventoryAdjustQuantities")["inventoryAdjustmentGroup"];
+    // shopify.dev's example: the reason's display name, `available` and `on_hand` both.
+    assert_eq!(group["reason"], json!("Inventory correction"));
+    assert_eq!(
+        group["changes"],
+        json!([
+            {"name": "available", "delta": -4, "quantityAfterChange": null, "ledgerDocumentUri": null, "item": {"id": item}},
+            {"name": "on_hand", "delta": -4, "quantityAfterChange": null, "ledgerDocumentUri": null, "item": {"id": item}},
+        ])
+    );
+    assert_eq!(quantity_of(&shop, &level, "available"), available - 4);
+    assert_eq!(quantity_of(&shop, &level, "on_hand"), on_hand - 4);
+    assert_eq!(
+        shop.get(&variant).unwrap()["inventoryQuantity"],
+        json!(total - 4)
+    );
+    assert_eq!(topics(&mut shop), ["inventory_levels/update"]);
+
+    // The same key and arguments: the first answer, nothing done again.
+    let again = run_with(&mut shop, ADJUST, json!({"input": input, "key": "k-1"}));
+    assert_eq!(
+        again["data"]["inventoryAdjustQuantities"]["inventoryAdjustmentGroup"]["id"],
+        group["id"]
+    );
+    assert_eq!(quantity_of(&shop, &level, "available"), available - 4);
+    assert!(shop.events().is_empty());
+    // The same key, other arguments.
+    let mut other = input.clone();
+    other["changes"][0]["delta"] = json!(-1);
+    let mismatch = run_with(&mut shop, ADJUST, json!({"input": other, "key": "k-1"}));
+    assert_eq!(
+        mismatch["data"]["inventoryAdjustQuantities"],
+        json!({"inventoryAdjustmentGroup": null, "userErrors": [{
+            "field": null,
+            "message": "The same idempotency key cannot be used with different operation parameters.",
+            "code": "IDEMPOTENCY_KEY_PARAMETER_MISMATCH"}]})
+    );
+    // No key: an error, nothing done.
+    let keyless = run_with(
+        &mut shop,
+        r#"mutation($input: InventoryAdjustQuantitiesInput!) { inventoryAdjustQuantities(input: $input) { userErrors { message } } }"#,
+        json!({"input": other}),
+    );
+    assert!(
+        keyless["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("@idempotent"),
+        "{keyless}"
+    );
+    assert_eq!(quantity_of(&shop, &level, "available"), available - 4);
+
+    // A stale `changeFromQuantity`, an omitted one, a ledger document for `available`, a reason
+    // and a name that are not Shopify's: refused, nothing changed.
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        ADJUST,
+        json!({"key": "k-2", "input": {"reason": "because", "name": "available", "changes": [
+            {"delta": 1, "inventoryItemId": item, "locationId": location, "changeFromQuantity": 999},
+            {"delta": 1, "inventoryItemId": item, "locationId": location},
+            {"delta": 1, "inventoryItemId": item, "locationId": location, "changeFromQuantity": null, "ledgerDocumentUri": "uri://x/1"},
+        ]}}),
+    );
+    let codes: Vec<&Value> = refused["data"]["inventoryAdjustQuantities"]["userErrors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| &error["code"])
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            &json!("INVALID_REASON"),
+            &json!("CHANGE_FROM_QUANTITY_STALE"),
+            &Value::Null,
+            &json!("INVALID_AVAILABLE_DOCUMENT"),
+            &json!("MAX_ONE_LEDGER_DOCUMENT"),
+        ]
+    );
+    unchanged(&mut shop, &before, &[&level]);
+    let damaged = run_with(
+        &mut shop,
+        ADJUST,
+        json!({"key": "k-3", "input": {"reason": "damaged", "name": "damaged", "changes": [
+            {"delta": 2, "inventoryItemId": item, "locationId": location, "changeFromQuantity": 0}]}}),
+    );
+    assert_eq!(
+        damaged["data"]["inventoryAdjustQuantities"]["userErrors"],
+        json!([{"field": ["input", "changes", "0", "ledgerDocumentUri"], "message": "A ledger document URI is required except when adjusting available.", "code": "INVALID_QUANTITY_DOCUMENT"}])
+    );
+    // With its ledger document, `damaged` goes up and `on_hand` with it.
+    let damaged = run_with(
+        &mut shop,
+        ADJUST,
+        json!({"key": "k-4", "input": {"reason": "damaged", "name": "damaged", "changes": [
+            {"delta": 2, "inventoryItemId": item, "locationId": location, "changeFromQuantity": 0, "ledgerDocumentUri": "uri://x/1"}]}}),
+    );
+    assert_eq!(
+        ok(&damaged, "inventoryAdjustQuantities")["inventoryAdjustmentGroup"]["reason"],
+        json!("Damaged")
+    );
+    assert_eq!(quantity_of(&shop, &level, "damaged"), 2);
+    assert_eq!(quantity_of(&shop, &level, "on_hand"), on_hand - 2);
+    assert_eq!(quantity_of(&shop, &level, "available"), available - 4);
+}
+
+#[test]
+fn inventory_sets_and_moves_quantities() {
+    let mut shop = demo();
+    let (item, location, level) = first_level(&shop, "ceramic-mug");
+    let available = quantity_of(&shop, &level, "available");
+    let set = run_with(
+        &mut shop,
+        r#"mutation($input: InventorySetQuantitiesInput!) { inventorySetQuantities(input: $input) @idempotent(key: "s-1") {
+            inventoryAdjustmentGroup { changes { name delta } } userErrors { field message code } } }"#,
+        json!({"input": {"name": "on_hand", "reason": "cycle_count_available", "quantities": [
+            {"inventoryItemId": item, "locationId": location, "quantity": available + 10, "changeFromQuantity": available}]}}),
+    );
+    assert_eq!(
+        ok(&set, "inventorySetQuantities")["inventoryAdjustmentGroup"]["changes"],
+        json!([{"name": "on_hand", "delta": 10}, {"name": "available", "delta": 10}])
+    );
+    assert_eq!(quantity_of(&shop, &level, "available"), available + 10);
+    let stale = run_with(
+        &mut shop,
+        r#"mutation($input: InventorySetQuantitiesInput!) { inventorySetQuantities(input: $input) @idempotent(key: "s-2") { userErrors { field message code } } }"#,
+        json!({"input": {"name": "committed", "reason": "correction", "quantities": [
+            {"inventoryItemId": item, "locationId": location, "quantity": 1, "changeFromQuantity": available}]}}),
+    );
+    assert_eq!(
+        stale["data"]["inventorySetQuantities"]["userErrors"],
+        json!([
+            {"field": ["input", "name"], "message": "The quantity name must be either 'available' or 'on_hand'.", "code": "INVALID_NAME"},
+            {"field": ["input", "quantities", "0", "changeFromQuantity"], "message": "The changeFromQuantity value does not match persisted value.", "code": "CHANGE_FROM_QUANTITY_STALE"},
+        ])
+    );
+    shop.take_events();
+
+    // Move 3 from `available` to `reserved`: `on_hand` stays.
+    let on_hand = quantity_of(&shop, &level, "on_hand");
+    let moved = run_with(
+        &mut shop,
+        r#"mutation($input: InventoryMoveQuantitiesInput!) { inventoryMoveQuantities(input: $input) @idempotent(key: "m-1") {
+            inventoryAdjustmentGroup { reason changes { name delta ledgerDocumentUri } } userErrors { field message code } } }"#,
+        json!({"input": {"reason": "reservation_created", "referenceDocumentUri": "logistics://order/1", "changes": [{
+            "quantity": 3, "inventoryItemId": item,
+            "from": {"locationId": location, "name": "available", "changeFromQuantity": null},
+            "to": {"locationId": location, "name": "reserved", "ledgerDocumentUri": "uri://hold/1", "changeFromQuantity": 0}}]}}),
+    );
+    assert_eq!(
+        ok(&moved, "inventoryMoveQuantities")["inventoryAdjustmentGroup"]["changes"],
+        json!([
+            {"name": "available", "delta": -3, "ledgerDocumentUri": null},
+            {"name": "reserved", "delta": 3, "ledgerDocumentUri": "uri://hold/1"},
+        ])
+    );
+    assert_eq!(quantity_of(&shop, &level, "reserved"), 3);
+    assert_eq!(quantity_of(&shop, &level, "on_hand"), on_hand);
+    assert_eq!(topics(&mut shop), ["inventory_levels/update"]);
+}
+
+#[test]
+fn inventory_levels_are_activated_and_deactivated() {
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        r#"mutation { locationAdd(input: {name: "Warehouse", address: {countryCode: FR, city: "Lyon", address1: "1 rue Neuve", zip: "69001"}}) {
+            location { id name isActive fulfillsOnlineOrders address { country countryCode city formatted } } userErrors { field message code } } }"#,
+    );
+    let location = &ok(&created, "locationAdd")["location"];
+    assert_eq!(location["address"]["country"], json!("France"));
+    assert_eq!(location["isActive"], json!(true));
+    let warehouse = location["id"].as_str().unwrap().to_string();
+    assert_eq!(topics(&mut shop), ["locations/create"]);
+    let taken = run(
+        &mut shop,
+        r#"mutation { locationAdd(input: {name: "warehouse", address: {countryCode: FR}}) { userErrors { field message code } } }"#,
+    );
+    assert_eq!(
+        taken["data"]["locationAdd"]["userErrors"],
+        json!([{"field": ["input", "name"], "message": "Name has already been taken", "code": "TAKEN"}])
+    );
+
+    let (item, _, first) = first_level(&shop, "wool-beanie");
+    let activated = run_with(
+        &mut shop,
+        r#"mutation($item: ID!, $location: ID!) { inventoryActivate(inventoryItemId: $item, locationId: $location, available: 5) @idempotent(key: "a-1") {
+            inventoryLevel { id location { name } quantities(names: ["available", "on_hand"]) { name quantity } } userErrors { field message } } }"#,
+        json!({"item": item, "location": warehouse}),
+    );
+    let level = &ok(&activated, "inventoryActivate")["inventoryLevel"];
+    assert_eq!(level["location"]["name"], json!("Warehouse"));
+    assert_eq!(
+        level["quantities"],
+        json!([{"name": "available", "quantity": 5}, {"name": "on_hand", "quantity": 5}])
+    );
+    let new_level = level["id"].as_str().unwrap().to_string();
+    assert!(new_level.ends_with(&format!(
+        "?inventory_item_id={}",
+        crate::state::parse_gid(&item).unwrap().1
+    )));
+    assert_eq!(topics(&mut shop), ["inventory_levels/connect"]);
+
+    // Deactivating the location without a destination: refused while it has inventory; with
+    // one, the inventory moves there.
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { locationDeactivate(locationId: $id) @idempotent(key: "d-1") { location { id } locationDeactivateUserErrors { field message code } } }"#,
+        json!({"id": warehouse}),
+    );
+    assert_eq!(
+        refused["data"]["locationDeactivate"]["locationDeactivateUserErrors"][0]["code"],
+        json!("HAS_ACTIVE_INVENTORY_ERROR")
+    );
+    let first_location = shop.get(&first).unwrap()["location"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let available = quantity_of(&shop, &first, "available");
+    let deactivated = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $to: ID!) { locationDeactivate(locationId: $id, destinationLocationId: $to) @idempotent(key: "d-2") {
+            location { isActive } locationDeactivateUserErrors { message } } }"#,
+        json!({"id": warehouse, "to": first_location}),
+    );
+    let payload = &deactivated["data"]["locationDeactivate"];
+    assert_eq!(
+        payload["locationDeactivateUserErrors"],
+        json!([]),
+        "{deactivated}"
+    );
+    assert_eq!(payload["location"]["isActive"], json!(false));
+    assert_eq!(quantity_of(&shop, &first, "available"), available + 5);
+    assert!(!shop.contains(&new_level));
+    assert_eq!(
+        topics(&mut shop),
+        [
+            "inventory_levels/update",
+            "inventory_levels/disconnect",
+            "locations/deactivate"
+        ]
+    );
+    let events_disconnect = shop.events().is_empty();
+    assert!(events_disconnect);
+
+    // Deleting: refused while active (shopify.dev's example), done once deactivated.
+    let active = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { locationDelete(locationId: $id) { deletedLocationId locationDeleteUserErrors { field message code } } }"#,
+        json!({"id": first_location}),
+    );
+    assert_eq!(
+        active["data"]["locationDelete"],
+        json!({"deletedLocationId": null, "locationDeleteUserErrors": [{"field": ["locationId"], "message": "The location cannot be deleted while it is active.", "code": "LOCATION_IS_ACTIVE"}]})
+    );
+    let deleted = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { locationDelete(locationId: $id) { deletedLocationId locationDeleteUserErrors { message } } }"#,
+        json!({"id": warehouse}),
+    );
+    assert_eq!(
+        deleted["data"]["locationDelete"]["deletedLocationId"],
+        json!(warehouse)
+    );
+    assert_eq!(topics(&mut shop), ["locations/delete"]);
+
+    // The only level of an item cannot be removed.
+    let created = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Lonely"}) { product { variants(first: 1) { nodes { inventoryItem { inventoryLevels(first: 1) { nodes { id } } } } } } } }"#,
+    );
+    let only_level = created["data"]["productCreate"]["product"]["variants"]["nodes"][0]
+        ["inventoryItem"]["inventoryLevels"]["nodes"][0]["id"]
+        .clone();
+    let only = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { inventoryDeactivate(inventoryLevelId: $id) { userErrors { field message } } }"#,
+        json!({"id": only_level}),
+    );
+    assert_eq!(
+        only["data"]["inventoryDeactivate"]["userErrors"][0]["message"],
+        json!("Cannot unstock an inventory item from the only location at which it is stocked.")
+    );
+}
+
+#[test]
+fn inventory_items_are_updated() {
+    let mut shop = demo();
+    let (item, _, _) = first_level(&shop, "canvas-tote-bag");
+    let answer = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { inventoryItemUpdate(id: $id, input: {sku: "TOTE-2", tracked: true, cost: "4.50", countryCodeOfOrigin: FR, harmonizedSystemCode: "420292",
+            measurement: {weight: {unit: GRAMS, value: 300}}}) {
+            inventoryItem { sku tracked unitCost { amount } countryCodeOfOrigin harmonizedSystemCode measurement { weight { unit value } } variant { sku } }
+            userErrors { field message } } }"#,
+        json!({"id": item}),
+    );
+    let item_payload = &ok(&answer, "inventoryItemUpdate")["inventoryItem"];
+    assert_eq!(item_payload["sku"], json!("TOTE-2"));
+    assert_eq!(item_payload["variant"]["sku"], json!("TOTE-2"));
+    assert_eq!(item_payload["unitCost"]["amount"], json!("4.5"));
+    assert_eq!(
+        item_payload["measurement"]["weight"],
+        json!({"unit": "GRAMS", "value": 300.0})
+    );
+    assert_eq!(topics(&mut shop), ["inventory_items/update"]);
+    let missing = run(
+        &mut shop,
+        r#"mutation { inventoryItemUpdate(id: "gid://shopify/InventoryItem/1", input: {sku: "x"}) { inventoryItem { id } userErrors { field message } } }"#,
+    );
+    assert_eq!(
+        missing["data"]["inventoryItemUpdate"],
+        json!({"inventoryItem": null, "userErrors": [{"field": ["id"], "message": "Inventory item does not exist"}]})
+    );
+}

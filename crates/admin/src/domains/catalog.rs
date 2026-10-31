@@ -11,6 +11,8 @@ use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
 mod collections;
+mod inventory;
+mod locations;
 mod media;
 #[cfg(test)]
 mod mutation_tests;
@@ -1290,6 +1292,8 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     options::register(registry);
     media::register(registry);
     collections::register(registry);
+    inventory::register(registry);
+    locations::register(registry);
     registry.field("InventoryLevel", "quantities", level_quantities);
 }
 
