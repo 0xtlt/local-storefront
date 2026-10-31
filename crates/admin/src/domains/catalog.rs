@@ -15,6 +15,7 @@ mod collection_duplicate;
 mod collection_sources;
 mod collections;
 mod combined_listings;
+mod extra_queries;
 #[cfg(test)]
 mod extras_tests;
 pub mod feeds;
@@ -1339,6 +1340,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     collection_duplicate::register(registry);
     collection_sources::register(registry);
     combined_listings::register(registry);
+    extra_queries::register(registry);
     feeds::register(registry);
     inventory::register(registry);
     locations::register(registry);

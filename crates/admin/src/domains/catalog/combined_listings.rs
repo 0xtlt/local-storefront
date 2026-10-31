@@ -37,7 +37,16 @@ use crate::state::{ShopState, value};
 pub fn register(registry: &mut Registry) {
     registry
         .mutation("combinedListingUpdate", combined_listing_update)
-        .field("Product", "combinedListing", combined_listing);
+        .field("Product", "combinedListing", combined_listing)
+        // `null` for a product in no combined listing: what the seed's products are.
+        .field("Product", "combinedListingRole", |r, _ctx, object| {
+            let role = r
+                .map_of(object)
+                .and_then(|record| record.get("combinedListingRole"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            Ok(Output::Value(role))
+        });
 }
 
 /// The record field of a parent that lists its children: `[{"product", "parentVariant"}]`.

@@ -1291,3 +1291,42 @@ fn gift_card_notifications_are_logged_and_never_sent() {
     );
     unchanged(&mut shop, &before, &[&without, &with_customer]);
 }
+
+/// The root queries of the catalog's extras answer real values on the demo store: none reports
+/// a field answered with a default.
+#[test]
+fn the_extras_queries_answer_without_defaults_on_the_demo_store() {
+    let mut shop = demo();
+    let tote = product(&shop, "canvas-tote-bag");
+    let (_, device) = (
+        (),
+        crate::domains::pos::device_gid(shop.keys("Location").next().unwrap()),
+    );
+    let read = run_with(
+        &mut shop,
+        r#"query($tote: ID!, $device: ID!) {
+            productTags(first: 5) { nodes } productTypes(first: 5) { nodes } productVendors(first: 5) { nodes }
+            productSavedSearches(first: 5) { nodes { id } }
+            productDuplicateJob(id: "gid://shopify/ProductDuplicateJob/1") { id done }
+            productFeeds(first: 5) { nodes { id } }
+            collectionConditionsSourcesByApp(first: 5) { nodes { app { id } } }
+            cashDrawers(first: 5) { nodes { id } }
+            cashManagementReasonCodes(first: 3) { nodes { __typename ... on CashManagementDefaultReasonCode { id code } } }
+            pointOfSaleDevice(id: $device) { id cashDrawer { id } activePaymentSession { id } fiscalDeviceIdentifier }
+            pointOfSaleDevicePaymentSessions(first: 5) { nodes { id } }
+            cashTrackingSessions(first: 5) { nodes { id } }
+            discountNodes(first: 5, query: "tag:none") { nodes { id } }
+            product(id: $tote) { combinedListing { parentProduct { id } } combinedListingRole hasVariantsThatRequiresComponents
+                bundleComponents(first: 5) { nodes { quantity } } productComponents(first: 5) { nodes { product { id } } }
+                productParents(first: 5) { nodes { id } } sources: collections(first: 1) { nodes { sources { __typename } } }
+                variants(first: 1) { nodes { requiresComponents productVariantComponents(first: 5) { nodes { id } } productParents(first: 5) { nodes { id } } } } } }"#,
+        json!({"tote": tote, "device": device}),
+    );
+    assert!(read.get("errors").is_none(), "{read}");
+    assert_eq!(
+        read["extensions"]["lsf"]["defaulted"],
+        serde_json::Value::Null,
+        "{read}"
+    );
+    assert_eq!(read["data"]["productDuplicateJob"]["done"], json!(true));
+}
