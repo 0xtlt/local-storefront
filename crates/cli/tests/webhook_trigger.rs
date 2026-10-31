@@ -1,0 +1,299 @@
+//! `lsf app webhook trigger`, against a backend of the test's own.
+
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
+
+/// What the backend received: the path, the headers (lowercase names), the body.
+type Received = Arc<Mutex<Vec<(String, Vec<(String, String)>, Vec<u8>)>>>;
+
+/// A backend on a free port that answers every request with `status`.
+fn backend(status: u16) -> (String, Received) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://localhost:{}", listener.local_addr().unwrap().port());
+    let received: Received = Arc::default();
+    let log = Arc::clone(&received);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut bytes = Vec::new();
+            let mut buffer = [0u8; 8192];
+            let (head_end, length) = loop {
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                if read == 0 {
+                    break (None, 0);
+                }
+                bytes.extend_from_slice(&buffer[..read]);
+                if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                    let length = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse().ok())
+                        .unwrap_or(0);
+                    break (Some(end), length);
+                }
+            };
+            let Some(end) = head_end else { continue };
+            while bytes.len() < end + 4 + length {
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                if read == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&buffer[..read]);
+            }
+            let head = String::from_utf8_lossy(&bytes[..end]).into_owned();
+            let mut lines = head.split("\r\n");
+            let path = lines
+                .next()
+                .and_then(|line| line.split(' ').nth(1))
+                .unwrap_or("")
+                .to_string();
+            let headers = lines
+                .filter_map(|line| line.split_once(':'))
+                .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
+                .collect();
+            log.lock()
+                .unwrap()
+                .push((path, headers, bytes[end + 4..].to_vec()));
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} Answer\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"
+            );
+        }
+    });
+    (url, received)
+}
+
+/// An app of the test's own, with `shopify.app.toml`.
+struct App(PathBuf);
+
+impl App {
+    fn new(name: &str, toml: &str) -> App {
+        let path =
+            std::env::temp_dir().join(format!("lsf-webhook-trigger-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("shopify.app.toml"), toml).unwrap();
+        App(path)
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn lsf(directory: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_lsf"))
+        .args(args)
+        .current_dir(directory)
+        .env_remove("LSF_APP")
+        .env_remove("LSF_APP_URL")
+        .env_remove("LSF_CLIENT_SECRET")
+        .env_remove("SHOPIFY_API_SECRET")
+        .output()
+        .unwrap()
+}
+
+fn text(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(candidate, _)| candidate == name)
+        .map(|(_, value)| value.as_str())
+}
+
+#[test]
+fn a_webhook_is_sent_to_an_address_signed_with_the_client_secret() {
+    let (url, received) = backend(200);
+    let address = format!("{url}/webhooks/orders");
+    let output = lsf(
+        &std::env::temp_dir(),
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "ORDERS_CREATE",
+            "--address",
+            &address,
+            "--client-secret",
+            "hush",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let printed = text(&output);
+    assert!(
+        printed.contains("X-Shopify-Topic: orders/create"),
+        "{printed}"
+    );
+    assert!(printed.contains("← 200 in"), "{printed}");
+    assert!(printed.trim_end().ends_with("delivered"), "{printed}");
+
+    let received = received.lock().unwrap();
+    assert_eq!(received.len(), 1);
+    let (path, headers, body) = &received[0];
+    assert_eq!(path, "/webhooks/orders");
+    assert_eq!(header(headers, "x-shopify-topic"), Some("orders/create"));
+    assert_eq!(
+        header(headers, "x-shopify-shop-domain"),
+        Some("shop.myshopify.com")
+    );
+    assert_eq!(header(headers, "x-shopify-api-version"), Some("2026-10"));
+    // The signature is the HMAC of the body with the secret given.
+    let signature = header(headers, "x-shopify-hmac-sha256").unwrap();
+    assert!(lsf_admin::webhooks::sign::verify("hush", body, signature));
+    let payload: serde_json::Value = serde_json::from_slice(body).unwrap();
+    assert_eq!(payload["name"], "#9999");
+    assert_eq!(payload["line_items"].as_array().unwrap().len(), 5);
+}
+
+#[test]
+fn without_an_address_it_goes_to_the_subscriptions_of_the_app() {
+    let (url, received) = backend(200);
+    let app = App::new(
+        "subscriptions",
+        r#"
+client_id = "abc"
+application_url = "https://tunnel.trycloudflare.com"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/update"]
+  uri = "/webhooks/products"
+  include_fields = ["id", "title"]
+
+  [[webhooks.subscriptions]]
+  topics = ["products/update"]
+  uri = "https://tunnel.trycloudflare.com/webhooks/all"
+"#,
+    );
+    std::fs::write(app.0.join(".env"), "SHOPIFY_API_SECRET=from-dotenv\n").unwrap();
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "products/update",
+            "--app-url",
+            &url,
+            "--json",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["deliveries"].as_array().unwrap().len(), 2);
+
+    let mut received = received.lock().unwrap().clone();
+    received.sort_by(|a, b| a.0.cmp(&b.0));
+    let paths: Vec<&str> = received.iter().map(|(path, ..)| path.as_str()).collect();
+    assert_eq!(paths, ["/webhooks/all", "/webhooks/products"]);
+    let (_, headers, body) = &received[1];
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(body).unwrap(),
+        serde_json::json!({"id": 788032119674292922u64, "title": "Example T-Shirt"})
+    );
+    // The secret of the app's `.env`.
+    let signature = header(headers, "x-shopify-hmac-sha256").unwrap();
+    assert!(lsf_admin::webhooks::sign::verify(
+        "from-dotenv",
+        body,
+        signature
+    ));
+}
+
+#[test]
+fn a_failed_delivery_exits_with_1() {
+    let (url, _) = backend(500);
+    let output = lsf(
+        &std::env::temp_dir(),
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "app/uninstalled",
+            "--address",
+            &url,
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("failed: answered 500"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn what_cannot_be_sent_is_refused_with_why() {
+    let dir = std::env::temp_dir();
+    let refuse = |args: &[&str], said: &str| {
+        let output = lsf(&dir, args);
+        assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+        assert!(text(&output).contains(said), "{}", text(&output));
+    };
+    let base = [
+        "app",
+        "webhook",
+        "trigger",
+        "--address",
+        "http://localhost:1/x",
+    ];
+    refuse(
+        &[&base[..], &["--topic", "orders/created"]].concat(),
+        "did you mean `orders/create`?",
+    );
+    refuse(
+        &[
+            &base[..],
+            &["--topic", "orders/create", "--api-version", "2026-07"],
+        ]
+        .concat(),
+        "2026-10 only",
+    );
+    refuse(
+        &[&base[..], &["--topic", "carts/create"]].concat(),
+        "does not build the payload of `carts/create`",
+    );
+    refuse(
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "orders/create",
+            "--address",
+            "pubsub://project:topic",
+        ],
+        "over HTTP only",
+    );
+    // No address, and no subscription to the topic in the app.
+    let app = App::new("none", "client_id = \"abc\"\n");
+    let output = lsf(
+        &app.0,
+        &["app", "webhook", "trigger", "--topic", "orders/create"],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("no subscription to `orders/create`"),
+        "{}",
+        text(&output)
+    );
+}

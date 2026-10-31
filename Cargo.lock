@@ -2332,6 +2332,7 @@ dependencies = [
  "indexmap 2.14.2",
  "libc",
  "lightningcss",
+ "lsf-admin",
  "lsf-checkout",
  "lsf-core",
  "lsf-fmt",

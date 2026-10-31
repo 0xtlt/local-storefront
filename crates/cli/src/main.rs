@@ -157,6 +157,14 @@ mod tests {
         assert!(parse(&["app", "check", "--format", "json"]).is_ok());
         assert!(parse(&["app", "function", "run", "discount", "--scenario", "vip"]).is_ok());
         assert!(parse(&["app", "function", "build", "discount"]).is_ok());
+        assert!(parse(&["app", "webhook", "trigger", "--topic", "orders/create"]).is_ok());
+        assert!(
+            parse(&[
+                "app", "webhook", "trigger", "--path", "app", "--topic", "x", "--json"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["app", "webhook", "trigger"]).is_err());
         // `app` alone does nothing, and the options of `dev` are its own.
         assert!(parse(&["app"]).is_err());
         assert!(parse(&["app", "--port", "0"]).is_err());
