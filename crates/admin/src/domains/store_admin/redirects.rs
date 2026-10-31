@@ -168,14 +168,13 @@ fn delete_by_saved_search(
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
     let id = ctx.arg_str("savedSearchId").unwrap_or_default();
-    let saved = super::saved_searches::saved_search(m.state(), id)
-        .filter(|search| text(search, "resourceType") == "URL_REDIRECT");
-    let Some(saved) = saved else {
+    let Some(query) =
+        crate::domains::segments::saved_searches::query_for(m.state(), id, "URL_REDIRECT")
+    else {
         let error = UserError::new(&["savedSearchId"], "Saved search not found")
             .code("SAVED_SEARCH_NOT_FOUND");
         return Ok(payload(json!({"job": null}), &[error]));
     };
-    let query = text(&saved, "query").to_string();
     match search(m, &query) {
         Ok(ids) => Ok(delete_all_of(
             m,

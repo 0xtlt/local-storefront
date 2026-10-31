@@ -34,6 +34,7 @@ pub mod money;
 pub mod mutation;
 pub mod registry;
 pub mod search;
+pub mod selection;
 pub mod sort;
 #[cfg(test)]
 mod tests;

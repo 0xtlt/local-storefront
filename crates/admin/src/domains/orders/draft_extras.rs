@@ -30,6 +30,7 @@ use super::drafts::{create_from, find_draft, invoice_text, remove_draft};
 use super::model::{self, int, text};
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
+use crate::resolve::selection::{Selection, Wording, selection};
 use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
 use crate::state::{ShopState, value};
 
@@ -124,46 +125,27 @@ fn delivery_options(
     )))
 }
 
-/// The drafts a bulk mutation names: `ids`, or those `search` matches.
+/// The drafts a bulk mutation names: `ids`, or those `search` (or the saved search of draft
+/// orders `savedSearchId` names) matches. The payload's error type has no `code`.
 fn targets(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Vec<String>, UserError> {
-    let given = |name: &str| ctx.arg(name).is_some_and(|value| !value.is_null());
-    let count = ["ids", "search", "savedSearchId"]
-        .iter()
-        .filter(|name| given(name))
-        .count();
-    if count > 1 {
-        return Err(UserError::new(
-            &[],
-            "Only one of 'ids', 'search' or 'saved_search_id' is allowed.",
-        ));
-    }
-    if count == 0 {
-        return Err(UserError::new(
-            &[],
-            "One of 'ids', 'search' or 'saved_search_id' is required.",
-        ));
-    }
-    if given("savedSearchId") {
-        return Err(UserError::new(
-            &["savedSearchId"],
-            "lsf has no saved searches: use `ids` or `search`",
-        ));
-    }
     let state = mutation.state();
-    if let Some(ids) = ctx.arg("ids").and_then(Value::as_array) {
-        let mut drafts = Vec::new();
-        for (index, id) in ids.iter().enumerate() {
-            let id = id.as_str().unwrap_or_default();
-            if state.type_of(id) != Some("DraftOrder") {
-                let index = index.to_string();
-                return Err(UserError::new(&["ids", &index], "Draft order not found"));
+    let search = match selection(state, ctx, "DRAFT_ORDER") {
+        Err(error) => return Err(error.user_error(Wording::Arguments, false)),
+        Ok(Selection::Ids(ids)) => {
+            let mut drafts = Vec::new();
+            for (index, id) in ids.iter().enumerate() {
+                let id = id.as_str().unwrap_or_default();
+                if state.type_of(id) != Some("DraftOrder") {
+                    let index = index.to_string();
+                    return Err(UserError::new(&["ids", &index], "Draft order not found"));
+                }
+                drafts.push(id.to_string());
             }
-            drafts.push(id.to_string());
+            return Ok(drafts);
         }
-        return Ok(drafts);
-    }
+        Ok(Selection::Search(search)) => search,
+    };
     let all: Vec<Value> = state.keys("DraftOrder").map(|key| json!(key)).collect();
-    let search = ctx.arg_str("search").unwrap_or_default().to_string();
     let found =
         mutation
             .resolver()

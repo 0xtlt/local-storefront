@@ -1378,9 +1378,11 @@ classes and metafields), so the local checkout runs it. Shopify's own types (bas
 free shipping, automatic and code) are kept as records: the local checkout runs Functions only.
 Also: `discountAutomaticActivate`/`Deactivate`/`Delete` and the code ones (a discount's `status`
 follows its dates), `discountAutomaticBulkDelete`, `discountCodeBulkActivate`/`Deactivate`/
-`Delete` (done at once: their `job` is `done`), `discountRedeemCodeBulkAdd`,
-`discountCodeRedeemCodeBulkDelete`, `discountBulkTagsAdd`/`Remove` (the discounts of `ids`,
-`search` or a saved search, 5 tags at most each; done at once); the queries `discountNodes` (ids `DiscountNode/<n>`),
+`Delete`, `discountRedeemCodeBulkAdd`, `discountCodeRedeemCodeBulkDelete`,
+`discountBulkTagsAdd`/`Remove` (5 tags at most each): the bulk ones take exactly one of `ids`,
+`search` and `savedSearchId` (a saved search of discounts, `PRICE_RULE`, or of redeem codes,
+`DISCOUNT_REDEEM_CODE`), and are done at once (their `job` is `done`); the queries
+`discountNodes` (ids `DiscountNode/<n>`),
 `discountNodesCount`, `discountNode`, `codeDiscountNodeByCode`, `discountCodesCount`,
 `automaticDiscountNodes`, `codeDiscountNodes`, with their sort keys and search filters (`status`,
 `type`, `method`, `title`, `code`, `tag`, the dates, …). Webhooks: `discounts/create`,

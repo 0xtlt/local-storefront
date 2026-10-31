@@ -38,6 +38,7 @@ use serde_json::{Map, Value, json};
 use super::functions::{FunctionProblem, function_of};
 use super::metafields;
 use crate::graphql::{FieldContext, FieldError, Output};
+use crate::resolve::selection::{Selection, Wording, selection};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
 use crate::search::{Query, SearchValue, Searchable};
@@ -330,9 +331,6 @@ fn discount_nodes(
     ctx: &FieldContext<'_>,
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
-    if ctx.arg("savedSearchId").is_some_and(|id| !id.is_null()) {
-        r.note("discountNodes: lsf has no saved searches: `savedSearchId` was ignored");
-    }
     r.connection(ctx, discount_node_items(r))
 }
 
@@ -1777,67 +1775,34 @@ enum Bulk {
     Deactivate,
 }
 
-/// The nodes a bulk mutation targets: `ids`, or those `search` matches; exactly one of `ids`,
-/// `search` and `savedSearchId` (shopify.dev's "Only one of …" examples).
+/// The nodes a bulk mutation targets: `ids`, or those `search` (or the saved search of
+/// discounts `savedSearchId` names) matches; exactly one of them (shopify.dev's "Only one of …"
+/// examples, in the words of each mutation).
 fn targets(
     state: &ShopState,
     ctx: &FieldContext<'_>,
     node_type: &str,
     automatic: bool,
 ) -> Result<Vec<String>, UserError> {
-    let given = |name: &str| ctx.arg(name).is_some_and(|value| !value.is_null());
-    let count = ["ids", "search", "savedSearchId"]
-        .iter()
-        .filter(|name| given(name))
-        .count();
-    if count > 1 {
-        let message = if automatic {
-            "Only one of IDs, search argument or saved search ID is allowed."
-        } else {
-            "Only one of 'ids', 'search' or 'saved_search_id' is allowed."
-        };
-        return Err(UserError::new(&[], message).code("TOO_MANY_ARGUMENTS"));
-    }
-    if count == 0 {
-        let message = if automatic {
-            "One of IDs, search argument or saved search ID is required."
-        } else {
-            "One of 'ids', 'search' or 'saved_search_id' is required."
-        };
-        return Err(UserError::new(&[], message).code("MISSING_ARGUMENT"));
-    }
-    if given("savedSearchId") {
-        return Err(UserError::new(
-            &["savedSearchId"],
-            "lsf has no saved searches: use `ids` or `search`",
-        )
-        .code("INVALID"));
-    }
-    if let Some(ids) = ctx.arg("ids").and_then(Value::as_array) {
-        return Ok(ids
+    let wording = if automatic {
+        Wording::Titles
+    } else {
+        Wording::Arguments
+    };
+    match selection(state, ctx, DISCOUNT_SEARCHES) {
+        Err(error) => Err(error.user_error(wording, true)),
+        Ok(Selection::Ids(ids)) => Ok(ids
             .iter()
             .filter_map(Value::as_str)
             .filter_map(|id| node_of(state, id, &[node_type]))
-            .collect());
+            .collect()),
+        Ok(Selection::Search(search)) => Ok(search_nodes(state, &search, &[node_type])),
     }
-    let query = Query::parse(ctx.arg_str("search").unwrap_or_default());
-    let options = crate::search::Options::utc(state.now());
-    Ok(state
-        .keys(node_type)
-        .filter(|key| {
-            let Some(record) = state.get(key) else {
-                return false;
-            };
-            let searched = Searched {
-                state,
-                record,
-                id: parse_gid(key).map_or(0, |(_, id)| id),
-            };
-            query.matches(&searched, &options)
-        })
-        .map(str::to_string)
-        .collect())
 }
+
+/// The `SearchResultType` of the saved searches of discounts (`codeDiscountSavedSearches`,
+/// `automaticDiscountSavedSearches`).
+pub(super) const DISCOUNT_SEARCHES: &str = "PRICE_RULE";
 
 /// The nodes of `types` a search query of `discountNodes` matches, in creation order.
 pub(super) fn search_nodes(state: &ShopState, search: &str, types: &[&str]) -> Vec<String> {
@@ -1992,48 +1957,30 @@ fn redeem_codes_delete(
         let error = UserError::new(&["discountId"], "Discount does not exist").code("INVALID");
         return Ok(payload(json!({"job": null}), &[error]));
     };
-    let given = |name: &str| ctx.arg(name).is_some_and(|value| !value.is_null());
-    let count = ["ids", "search", "savedSearchId"]
-        .iter()
-        .filter(|name| given(name))
-        .count();
-    if count != 1 || given("savedSearchId") {
-        let message = if count > 1 {
-            "Only one of 'ids', 'search' or 'saved_search_id' is allowed."
-        } else if count == 0 {
-            "One of 'ids', 'search' or 'saved_search_id' is required."
-        } else {
-            "lsf has no saved searches: use `ids` or `search`"
-        };
-        let code = if count > 1 {
-            "TOO_MANY_ARGUMENTS"
-        } else {
-            "MISSING_ARGUMENT"
-        };
-        return Ok(payload(
-            json!({"job": null}),
-            &[UserError::new(&[], message).code(code)],
-        ));
-    }
-    let ids: Vec<&str> = ctx
-        .arg("ids")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    let search = ctx.arg_str("search").map(str::trim).unwrap_or_default();
-    let matches = |code: &Value| -> bool {
-        let text = code.get("code").and_then(Value::as_str).unwrap_or_default();
-        let id = code.get("id").and_then(Value::as_str).unwrap_or_default();
-        if !ids.is_empty() {
-            return ids.contains(&id);
+    let selected = match selection(state, ctx, "DISCOUNT_REDEEM_CODE") {
+        Ok(selected) => selected,
+        Err(error) => {
+            return Ok(payload(
+                json!({"job": null}),
+                &[error.user_error(Wording::Arguments, true)],
+            ));
         }
-        let wanted = search
-            .strip_prefix("code:")
-            .unwrap_or(search)
-            .trim_matches('"');
-        wanted.is_empty() || text.eq_ignore_ascii_case(wanted)
+    };
+    // `ids` removes those codes and no other (none for an empty list); `search` those whose
+    // code it names, every code for a blank search.
+    let matches = |code: &Value| -> bool {
+        match &selected {
+            Selection::Ids(ids) => ids.contains(code.get("id").unwrap_or(&Value::Null)),
+            Selection::Search(search) => {
+                let search = search.trim();
+                let text = code.get("code").and_then(Value::as_str).unwrap_or_default();
+                let wanted = search
+                    .strip_prefix("code:")
+                    .unwrap_or(search)
+                    .trim_matches('"');
+                wanted.is_empty() || text.eq_ignore_ascii_case(wanted)
+            }
+        }
     };
 
     let state = mutation.state_mut();

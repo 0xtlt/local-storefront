@@ -1135,7 +1135,7 @@ Each in a module of its own, whose header has the rules and their sources:
 | Module | What |
 |---|---|
 | `segments` | `Segment` records (ids of the counter); `segments::language` parses the segment query language (a lexer and a recursive parser, errors `Query Line L Column C: …` at the clause at fault), `segments::filters` lists the 33 filters of the reference (type, enum values, function parameters), `segments::evaluate` reads them on a customer (`Facts`: computed once per customer and request, from the customer, their addresses, orders and line items, company contacts, store credit accounts, abandoned checkouts and metafields; dates as whole days in the shop's zone). `customerSegmentMembers` pages the generic connection without its `query`, `sortKey` and `reverse` (they are the segment's), then adds `totalCount` and `statistics`. |
-| `segments::saved_searches` | `SavedSearch` records (`searchTerms` and `filters` split from the query by `search::Query`); `resolve::search` applies the query of a connection's `savedSearchId` under the connection's own (`(saved) AND (query)`). |
+| `segments::saved_searches` | `SavedSearch` records (`searchTerms` and `filters` split from the query by `search::Query`); `resolve::search` applies the query of a connection's `savedSearchId` under the connection's own (`(saved) AND (query)`); `resolve::selection` reads the `ids` \| `search` \| `savedSearchId` of a bulk mutation (a saved search of the mutation's resource, `query_for`). |
 | `customer_merge` | `customerMerge` (the kept customer by shopify.dev's rules; the other's orders, draft orders, addresses, metafields, tags and note moved, then deleted), `customerMergePreview`, `customerMergeJobStatus` (a memo per job), `Customer.mergeable`; `customers/purchasing_summary`. |
 | `privacy` | Data erasure (a memo per customer: pending 10 days, then redacted by `process_due_erasures`), `dataSaleOptOut`, the WhatsApp consent (on the customer, copied to `defaultPhoneNumber` by `customers::contact_fields`), `ConsentPolicy` records, the privacy features (a memo). |
 | `marketing` | `MarketingActivity` and `MarketingEvent` records (the app's remote id, channel handle and engagements under `lsf…` keys), the errors of `MarketingActivityUserErrorCode` with the code's description as message. |
@@ -1713,7 +1713,7 @@ never written to.**
 | Module | Records | Ids, keys |
 |---|---|---|
 | `storefront` | `ScriptTag`, `WebPixel`, `ServerPixel`, `StorefrontAccessToken` | the counter of each type; a storefront token's secret is a UUID of the shop and its id, without dashes |
-| `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `SavedSearch`, `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
+| `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
 | `platform` | `StaffMember/1` (the shop owner, seeded), `CheckoutProfile/1` and `CheckoutAndAccountsConfiguration/1` (seeded), `AndroidApplication`/`AppleApplication` (ids of `MobilePlatformApplication`, the type by platform, as the reference's), `FulfillmentConstraintRule`, `DelegateAccessToken` (key `delegate-access-token/<hash>`, never the token), `ProductResourceFeedback` (key `product-resource-feedback/<product>`) | the counter |
 
 - **App extensions** lsf-checkout lists without reading (`App::other`): the web pixel extension's

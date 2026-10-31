@@ -7,9 +7,10 @@
 //! payload is a `Job` and `DiscountUserError`s. lsf does the work within the request: the job
 //! answers `done: true`, as the other bulk discount mutations' (`discountCodeBulkActivate`, …).
 //!
-//! - Exactly one of `ids`, `search`, `savedSearchId`: the messages of `discountAutomaticBulkDelete`
-//!   ("Only one of IDs, search argument or saved search ID is allowed.", shopify.dev's example).
-//!   A saved search is read from its record (`SavedSearch.query`), when the shop has one.
+//! - Exactly one of `ids`, `search`, `savedSearchId` ([`crate::resolve::selection`]): the
+//!   messages of `discountAutomaticBulkDelete` ("Only one of IDs, search argument or saved
+//!   search ID is allowed.", shopify.dev's example). A saved search is one of discounts
+//!   (`PRICE_RULE`), its query run as `search`.
 //! - A discount takes 5 tags at most ("The number of tags exceeds the maximum of 5.", the error
 //!   of the create and update mutations): a discount the new tags would take past it keeps its
 //!   tags, as a background job leaves a discount it cannot save, and `extensions.lsf.notes`
@@ -19,8 +20,9 @@
 
 use serde_json::{Value, json};
 
-use super::discounts::{MAX_TAGS, inner_mut, node_of, search_nodes, tags_of};
+use super::discounts::{DISCOUNT_SEARCHES, MAX_TAGS, inner_mut, node_of, search_nodes, tags_of};
 use crate::graphql::{FieldContext, FieldError};
+use crate::resolve::selection::{Selection, Wording, selection};
 use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
 use crate::state::ShopState;
 
@@ -36,64 +38,30 @@ const NODE_TYPES: &[&str] = &["DiscountAutomaticNode", "DiscountCodeNode"];
 /// The longest tag lsf takes (Shopify's limit of a tag elsewhere: 255 characters).
 const TAG_LENGTH: usize = 255;
 
-/// The discount nodes the arguments name.
+/// The discount nodes the arguments name: exactly one of `ids` (each a discount), `search`, and
+/// `savedSearchId` (a saved search of discounts).
 fn targets(state: &ShopState, ctx: &FieldContext<'_>) -> Result<Vec<String>, UserError> {
-    let given = |name: &str| ctx.arg(name).is_some_and(|value| !value.is_null());
-    let count = ["ids", "search", "savedSearchId"]
-        .iter()
-        .filter(|name| given(name))
-        .count();
-    if count > 1 {
-        return Err(UserError::new(
-            &[],
-            "Only one of IDs, search argument or saved search ID is allowed.",
-        )
-        .code("TOO_MANY_ARGUMENTS"));
-    }
-    if count == 0 {
-        return Err(UserError::new(
-            &[],
-            "One of IDs, search argument or saved search ID is required.",
-        )
-        .code("MISSING_ARGUMENT"));
-    }
-    if let Some(ids) = ctx.arg("ids").and_then(Value::as_array) {
-        let mut nodes = Vec::new();
-        for (index, id) in ids.iter().enumerate() {
-            match id.as_str().and_then(|id| node_of(state, id, NODE_TYPES)) {
-                Some(node) => nodes.push(node),
-                None => {
-                    // lsf's wording, as the other discount mutations'.
-                    return Err(UserError::new(
-                        &["ids", &index.to_string()],
-                        "Discount does not exist",
-                    )
-                    .code("INVALID"));
+    match selection(state, ctx, DISCOUNT_SEARCHES) {
+        Err(error) => Err(error.user_error(Wording::Titles, true)),
+        Ok(Selection::Ids(ids)) => {
+            let mut nodes = Vec::new();
+            for (index, id) in ids.iter().enumerate() {
+                match id.as_str().and_then(|id| node_of(state, id, NODE_TYPES)) {
+                    Some(node) => nodes.push(node),
+                    None => {
+                        // lsf's wording, as the other discount mutations'.
+                        return Err(UserError::new(
+                            &["ids", &index.to_string()],
+                            "Discount does not exist",
+                        )
+                        .code("INVALID"));
+                    }
                 }
             }
+            Ok(nodes)
         }
-        return Ok(nodes);
+        Ok(Selection::Search(search)) => Ok(search_nodes(state, &search, NODE_TYPES)),
     }
-    let search = match ctx.arg_str("savedSearchId") {
-        Some(id) => match state
-            .get(id)
-            .filter(|_| state.type_of(id) == Some("SavedSearch"))
-        {
-            Some(saved) => saved
-                .get("query")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            None => {
-                return Err(
-                    UserError::new(&["savedSearchId"], "Saved search does not exist")
-                        .code("INVALID"),
-                );
-            }
-        },
-        None => ctx.arg_str("search").unwrap_or_default().to_string(),
-    };
-    Ok(search_nodes(state, &search, NODE_TYPES))
 }
 
 /// `discountBulkTagsAdd` (`add`) and `discountBulkTagsRemove`.

@@ -16,7 +16,6 @@
 pub mod files;
 pub mod policies;
 pub mod redirects;
-pub mod saved_searches;
 pub mod standard;
 
 use crate::resolve::Registry;
