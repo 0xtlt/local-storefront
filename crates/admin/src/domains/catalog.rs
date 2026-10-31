@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 mod bundles;
 mod collection_duplicate;
-mod collection_sources;
+pub(crate) mod collection_sources;
 mod collections;
 mod combined_listings;
 mod extra_queries;

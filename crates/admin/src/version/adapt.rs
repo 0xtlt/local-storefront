@@ -25,16 +25,33 @@ use crate::state::Record;
 
 /// What 2027-01 shows differently from the records (written in 2026-10).
 ///
-/// `MetaobjectAdminAccess` loses `PRIVATE` and `PUBLIC_READ` in 2027-01; 2026-10 deprecates both
-/// with "Use MERCHANT_READ instead. Removed in API version 2027-01." A definition kept with one of
-/// them (made before 2027-01) reads `MERCHANT_READ` there, rather than a value the enum of the
-/// version does not have, which the executor would refuse. Shopify does not say what it answers
-/// for such a definition in 2027-01: lsf reads the deprecation reason as the mapping.
-pub const V2027_01: &[Adapter] = &[Adapter::Field {
-    type_name: "MetaobjectAccess",
-    field: "admin",
-    read: metaobject_admin_access_2027_01,
-}];
+/// - `MetaobjectAdminAccess` loses `PRIVATE` and `PUBLIC_READ` in 2027-01; 2026-10 deprecates
+///   both with "Use MERCHANT_READ instead. Removed in API version 2027-01." A definition kept
+///   with one of them (made before 2027-01) reads `MERCHANT_READ` there, rather than a value the
+///   enum of the version does not have, which the executor would refuse. Shopify does not say
+///   what it answers for such a definition in 2027-01: lsf reads the deprecation reason as the
+///   mapping.
+/// - `CollectionSourceInclusionConditionMetafieldInteger` is removed in 2027-01: 2026-10 says
+///   `CollectionSourceInclusionConditionMetafieldInt` "replaces this one entirely". A condition
+///   made with `metafieldInteger` reads as one of those there (its `value` a `String`, as the
+///   new type has it), not as the first possible type of the interface, which was
+///   `…MetafieldBoolean`. Its `id` is the one it was made with.
+pub const V2027_01: &[Adapter] = &[
+    Adapter::Field {
+        type_name: "MetaobjectAccess",
+        field: "admin",
+        read: metaobject_admin_access_2027_01,
+    },
+    Adapter::Typename {
+        from: "CollectionSourceInclusionConditionMetafieldInteger",
+        to: "CollectionSourceInclusionConditionMetafieldInt",
+    },
+    Adapter::Field {
+        type_name: "CollectionSourceInclusionConditionMetafieldInt",
+        field: "value",
+        read: integer_as_string,
+    },
+];
 
 /// `MetaobjectAccess.admin` in 2027-01: `PRIVATE` and `PUBLIC_READ` are `MERCHANT_READ`.
 fn metaobject_admin_access_2027_01(access: &Record) -> Option<Value> {
@@ -42,6 +59,16 @@ fn metaobject_admin_access_2027_01(access: &Record) -> Option<Value> {
     Some(match admin.as_str() {
         Some("PRIVATE" | "PUBLIC_READ") => json!("MERCHANT_READ"),
         _ => admin.clone(),
+    })
+}
+
+/// `value` as a string: the `Int` of a `…MetafieldInteger` condition read as the `String` of a
+/// `…MetafieldInt` one; a string passes through.
+fn integer_as_string(condition: &Record) -> Option<Value> {
+    let value = condition.get("value")?;
+    Some(match value {
+        Value::Number(number) => json!(number.to_string()),
+        _ => value.clone(),
     })
 }
 
@@ -70,6 +97,24 @@ pub enum Adapter {
         topic: &'static str,
         write: fn(&mut Value),
     },
+    /// A type the records hold that this version does not have, read as `to`, the type that
+    /// replaced it: the `__typename` of a record or an inline object, which picks its type
+    /// among the possible ones of an interface or a union, and which type's fields it has.
+    Typename {
+        from: &'static str,
+        to: &'static str,
+    },
+}
+
+/// The type `type_name` of a record is in this version: itself, or what replaced it.
+pub fn typename<'n>(adapters: &[Adapter], type_name: &'n str) -> &'n str {
+    adapters
+        .iter()
+        .find_map(|adapter| match adapter {
+            Adapter::Typename { from, to } if *from == type_name => Some(*to),
+            _ => None,
+        })
+        .unwrap_or(type_name)
 }
 
 /// The adapter of `type_name.field` that reads it from the record, if any.
@@ -128,6 +173,142 @@ pub fn adapts_payload(adapters: &[Adapter], topic: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The type names the code writes as literals (`"__typename": "Product"`, `Obj::built(..)`,
+    /// `new_gid(..)`), outside its tests.
+    fn literal_type_names() -> std::collections::BTreeSet<String> {
+        fn walk(directory: &std::path::Path, names: &mut std::collections::BTreeSet<String>) {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, names);
+                    continue;
+                }
+                let file = path.file_name().unwrap().to_string_lossy().to_string();
+                if !file.ends_with(".rs") || file.contains("test") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                let code = text
+                    .split("#[cfg(test)]\nmod tests")
+                    .next()
+                    .unwrap_or_default();
+                for marker in [
+                    "\"__typename\": \"",
+                    "\"__typename\".into(), json!(\"",
+                    "Obj::built(\"",
+                    "Obj::inline(\"",
+                    "new_gid(\"",
+                ] {
+                    for (at, _) in code.match_indices(marker) {
+                        let rest = &code[at + marker.len()..];
+                        let name: String = rest
+                            .chars()
+                            .take_while(char::is_ascii_alphanumeric)
+                            .collect();
+                        if rest[name.len()..].starts_with('"') && !name.is_empty() {
+                            names.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+        let mut names = std::collections::BTreeSet::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut names,
+        );
+        names
+    }
+
+    /// Every `__typename` of a value, nested ones included.
+    fn nested_type_names(value: &Value, names: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(name)) = map.get("__typename") {
+                    names.insert(name.clone());
+                }
+                map.values()
+                    .for_each(|value| nested_type_names(value, names));
+            }
+            Value::Array(items) => items
+                .iter()
+                .for_each(|value| nested_type_names(value, names)),
+            _ => {}
+        }
+    }
+
+    /// A type the records hold that a served version does not have answered as the first
+    /// possible type of an interface (a `…MetafieldInteger` condition read as `…MetafieldBoolean`
+    /// in 2027-01), or not at all: each must exist in every version, as itself or through a
+    /// [`Adapter::Typename`] of the version.
+    #[test]
+    fn every_type_the_records_hold_exists_in_every_version() {
+        let mut names = literal_type_names();
+        for source in [
+            lsf_core::store::load::DataSource::Demo,
+            lsf_core::store::load::DataSource::Directory(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich"),
+            ),
+        ] {
+            let (store, _) = lsf_core::store::load::load(&source, &Default::default());
+            let shop = crate::state::ShopState::seeded(&store, None);
+            for (key, record) in shop.iter() {
+                if let Some(type_name) = shop.type_of(key) {
+                    names.insert(type_name.to_string());
+                }
+                nested_type_names(&Value::Object(record.clone()), &mut names);
+            }
+        }
+        names.extend(crate::domains::catalog::collection_sources::condition_type_names());
+        assert!(names.contains("CollectionSourceInclusionConditionMetafieldInteger"));
+        assert!(names.len() > 300, "{} types found", names.len());
+        // What no version answers as a GraphQL type: snapshots of events and GID types.
+        const INTERNAL: &[&str] = &[
+            // The snapshot of `admin_api_activities/create` (`api::audit`).
+            "AdminApiActivity",
+            // The GID types of the images of articles and collections, whose records are
+            // `Image`s.
+            "ArticleImage",
+            "CollectionImage",
+            // The storefront's cart of `carts/*` (`domains::checkouts`): the Admin API has none.
+            "Cart",
+            // The snapshot of `customers/purchasing_summary`.
+            "CustomerPurchasingSummary",
+            // The snapshot of a product feed's sync events, and the GID of a full sync.
+            "ProductFeedSync",
+            "ProductFullSync",
+        ];
+        let versions: Vec<_> = crate::version::ApiVersion::all().collect();
+        let mut missing = Vec::new();
+        let mut unknown = Vec::new();
+        for name in &names {
+            let has = |version: &crate::version::ApiVersion| {
+                version
+                    .schema()
+                    .get(typename(version.adapters(), name))
+                    .is_some()
+            };
+            if !versions.iter().any(has) {
+                if !INTERNAL.contains(&name.as_str()) {
+                    unknown.push(name.clone());
+                }
+                continue;
+            }
+            for version in versions.iter().filter(|version| !has(version)) {
+                missing.push(format!("{version}: {name}"));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "types a version does not have, without an adapter:\n{}",
+            missing.join("\n")
+        );
+        assert!(
+            unknown.is_empty(),
+            "types no version has (a typo, or an internal one to list): {unknown:?}"
+        );
+    }
 
     fn renamed(payload: &mut Value) {
         if let Some(map) = payload.as_object_mut()

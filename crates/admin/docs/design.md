@@ -304,7 +304,7 @@ builder is copied per version. A version is a view of the records:
   is reached only in those: there is nothing to gate by hand. `Registry::check_versions` (a test)
   accepts a registration that one known version has, and lists one that none has.
 - **What reads differently** is an `Adapter` of the version (`version::adapt`), declared in its
-  entry of `KNOWN`. Three kinds:
+  entry of `KNOWN`. Four kinds:
   - `Field { type_name, field, read }`: the version's `type_name.field` is `read(record)` rather
     than the record's value under `field`; the value is then converted by the field's type as a
     stored one is (a GID becomes its record, an object an inline one). A renamed field reads the
@@ -316,6 +316,12 @@ builder is copied per version. A version is a view of the records:
     the mutation or the resolver runs (`FieldContext::with_arguments`).
   - `Payload { topic, write }`: the payload of a webhook topic in the version, from the one the
     builders make; applied when a delivery is built in the version.
+  - `Typename { from, to }`: a type the records hold that the version removed reads as the one
+    that replaced it, for a record (`ShopResolver::type_of`, `reference`) and an inline object
+    (`inline_of`, which otherwise falls back to the first possible type of an interface: a
+    removed type silently became another). `version::adapt`'s
+    `every_type_the_records_hold_exists_in_every_version` checks every type the code writes
+    and the demo and rich stores hold against each version, through these adapters.
 
   An adapter maps any record to the version's view, whatever version wrote it: it is total (a
   value the version has passes through), so that it still holds when the default version, and
@@ -354,10 +360,12 @@ MERCHANT_READ instead. Removed in API version 2027-01." 2027-01 removes them; it
   Shopify does not say what it answers for such a definition in 2027-01: lsf reads the
   deprecation reason as the mapping.
 
-The rest of what 2027-01 changes needs no code: `QueryRoot.automaticDiscounts`,
+The rest of what 2027-01 changes needs no code but two adapters: `QueryRoot.automaticDiscounts`,
 `Mutation.marketCurrencySettingsUpdate`, `StandardMetaobjectDefinitionFieldTemplate
 .visibleToStorefrontApi` and the collection sources' `metafieldInteger` are removed (refused by
-the schema); `InventoryItemMeasurement.packedDimensions: BoxDimensions!` and
+the schema; a condition made with it in 2026-10 reads in 2027-01 as the
+`CollectionSourceInclusionConditionMetafieldInt` that "replaces this one entirely", through a
+`Typename` adapter and a `Field` one for its `value`, a `String` there); `InventoryItemMeasurement.packedDimensions: BoxDimensions!` and
 `Mutation.appDowngradeAccessScopes` are added (the first answered with a default, reported in
 `extensions.lsf.defaulted`; the second simulated, registered like any mutation: only 2027-01
 reaches it); new `MarketUserErrorCode` values. Its

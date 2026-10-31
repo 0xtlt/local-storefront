@@ -339,7 +339,9 @@ impl<'a> ShopResolver<'a> {
         match object {
             Obj::Query => "QueryRoot",
             Obj::Mutation => "Mutation",
-            Obj::Record(key) => self.state.type_of(key).unwrap_or_default(),
+            Obj::Record(key) => {
+                adapt::typename(self.adapters(), self.state.type_of(key).unwrap_or_default())
+            }
             Obj::Inline(inline) => &inline.type_name,
         }
     }
@@ -368,7 +370,7 @@ impl<'a> ShopResolver<'a> {
     /// `expected`'s), `None` when there is none.
     pub fn reference(&self, gid: &str, expected: &str) -> Option<Obj> {
         let key = self.lookup(gid)?;
-        let type_name = self.state.type_of(&key)?;
+        let type_name = adapt::typename(self.adapters(), self.state.type_of(&key)?);
         self.schema()
             .is_possible(expected, type_name)
             .then(|| Obj::record(&key))
@@ -533,6 +535,7 @@ impl<'a> ShopResolver<'a> {
             _ => map
                 .get("__typename")
                 .and_then(Value::as_str)
+                .map(|name| adapt::typename(self.adapters(), name))
                 .filter(|name| schema.is_possible(named, name))
                 .map(str::to_string)
                 .or_else(|| schema.possible_types(named).first().cloned())

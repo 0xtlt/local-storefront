@@ -98,7 +98,9 @@ admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
 - **The records are the same** in every version: what a 2027-01 request creates, a 2026-10 one
   reads. Where 2027-01 shows a record differently, lsf adapts it: a metaobject definition whose
   admin access is `PUBLIC_READ` or `PRIVATE` (removed in 2027-01, "Use MERCHANT_READ instead")
-  reads `MERCHANT_READ` in 2027-01.
+  reads `MERCHANT_READ` in 2027-01, and a collection source condition made with
+  `metafieldInteger` (removed in 2027-01) reads as a
+  `CollectionSourceInclusionConditionMetafieldInt`, its `value` a string.
 - `GET /__lsf/admin` lists the versions lsf knows, their status and whether they are served
   (`apiVersions`).
 
