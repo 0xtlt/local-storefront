@@ -917,8 +917,9 @@ fn same_address(a: &Value, b: &Value) -> bool {
 /// An order placed in the local checkout, as the checkout knows it once the buyer paid: what
 /// the server's `place_order` has. [`record_placed_order`] makes it an order of the shop.
 pub struct PlacedOrder<'a> {
-    /// The id the checkout gave the order (`gid://shopify/Order/1004`), kept when no order of
-    /// the shop has it. `None`: `gid://shopify/Order/<number>` when it is free, else a new one.
+    /// The id the checkout gave the order, kept when no order of the shop has it. `None`: a new
+    /// id of the shop's counter, as `orderCreate` gives (`gid://shopify/Order/<n>`, a large `n`,
+    /// not the order number).
     pub id: Option<&'a str>,
     /// The number of the order (`1004` for `#1004`), kept when no order of the shop has it.
     /// `None`: the shop's next one ([`model::next_order_number`]), as `orderCreate` and a
@@ -966,10 +967,8 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
                 .any(|order| order.get("number").and_then(Value::as_u64) == Some(*number))
         })
         .unwrap_or_else(|| model::next_order_number(state));
-    let own = gid("Order", number);
     let id = placed
         .id
-        .or((!state.contains(&own)).then_some(own.as_str()))
         .filter(|id| !state.contains(id) && crate::state::gid_type(id) == Some("Order"))
         .map_or_else(|| state.new_gid("Order"), str::to_string);
     let customer = placed

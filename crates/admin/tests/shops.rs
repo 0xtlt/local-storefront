@@ -278,6 +278,15 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
     );
     assert_eq!(next.number, 1006);
     assert_eq!(state.get(&next.id).unwrap()["name"], json!("#1006"));
+    // Its id is of the shop's counter, as `orderCreate`'s, not made of its number.
+    assert_ne!(next.id, gid("Order", 1006));
+    let seeded = store
+        .customers
+        .iter()
+        .flat_map(|customer| customer.orders.iter().map(|order| order.id))
+        .max()
+        .unwrap();
+    assert!(parse_gid(&next.id).unwrap().1 > seeded);
 }
 
 /// An order placed for a company location (a B2B checkout) is the location's: its

@@ -834,8 +834,9 @@ records, so both are the same shape.
   address, the note, the attributes, the payment method's name as the gateway, the company
   location of a B2B buyer, which makes `purchasingEntity` a `PurchasingCompany`), gives the order
   the shop's next number (`model::next_order_number`, which `orderCreate` and a completed draft
-  order take too: one numbering; a number or an id given and taken gets a new one), answers its
-  GID and number (`RecordedOrder`), which the checkout shows on its thank-you page, refreshes
+  order take too: one numbering; a number or an id given and taken gets a new one), a GID of the
+  shop's counter, as `orderCreate`'s (not made of the number), answers its GID and number
+  (`RecordedOrder`), which the checkout shows on its thank-you page, refreshes
   the customer, and emits `orders/create`,
   `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits
   no stock: the local checkout keeps the stock of the data *(chosen: test purchases never sell a

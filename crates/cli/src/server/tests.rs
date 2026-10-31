@@ -8523,6 +8523,29 @@ fn the_checkout_and_the_admin_api_number_orders_as_one() {
         ),
     );
     assert_eq!(recorded["data"]["order"]["name"], "#1006", "{recorded}");
+    // Its id is the Admin API's, of the counter `orderCreate` takes ids from: not its number.
+    assert_ne!(b["order"]["id"], "gid://shopify/Order/1006");
+    let created_id = admin_query(
+        &state,
+        r#"{ orders(first: 1, query: "name:#1004") { nodes { id } } }"#,
+    );
+    let created_id = created_id["data"]["orders"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    let b_id = b["order"]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!(b_id > created_id, "{b_id} after {created_id}");
     let next = admin_query(
         &state,
         r#"mutation { orderCreate(order: {lineItems: [{title: "Service", quantity: 1, priceSet: {shopMoney: {amount: "5.00", currencyCode: USD}}}]}) { order { name } userErrors { message } } }"#,
