@@ -212,9 +212,12 @@ fn is_date_time(text: &str) -> bool {
     zone_ok && clock_ok && !fraction.is_empty() && fraction.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// `+HH:MM` or `-HH:MM`. ASCII only, checked first: the slices below are of bytes, and a
+/// multibyte character in the text would not fall on their bounds.
 fn is_utc_offset(text: &str) -> bool {
     let bytes = text.as_bytes();
-    text.len() == 6
+    text.is_ascii()
+        && text.len() == 6
         && matches!(bytes[0], b'+' | b'-')
         && digits(&text[1..3], 2)
         && bytes[3] == b':'
@@ -658,6 +661,11 @@ mod tests {
         assert!(scalar("DateTime", &json!("2026-01-01T10:00:00Z")).is_ok());
         assert!(scalar("DateTime", &json!("2026-01-01T10:00:00.123+02:00")).is_ok());
         assert!(scalar("DateTime", &json!("2026-01-01")).is_ok());
+        assert_eq!(
+            scalar("DateTime", &json!("2026-01-01T10:00+1é:0")),
+            Err(ScalarError::Invalid)
+        );
+        assert_eq!(scalar("UtcOffset", &json!("+é:00")), Err(ScalarError::Invalid));
         assert!(scalar("DateTime", &json!("2026-13-01T10:00:00Z")).is_err());
         assert!(scalar("DateTime", &json!("yesterday")).is_err());
         assert!(scalar("Date", &json!("2026-02-29")).is_err());
