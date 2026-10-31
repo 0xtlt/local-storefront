@@ -23,7 +23,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{coded, input, is, number, objects, shop_locales, strings, text};
+use super::{coded, input, is, number, shop_locales, strings, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -40,7 +40,6 @@ pub fn register(registry: &mut Registry) {
         .field("Market", "webPresence", market_web_presence)
         .field("ShopLocale", "marketWebPresences", locale_web_presences)
         .field("MarketWebPresence", "market", presence_market);
-    let _ = objects;
 }
 
 /// The web presences of a market, as GIDs.
@@ -545,10 +544,8 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let Some(presence) = presence_arg(mutation.state(), ctx, "id") else {
         return Ok(payload(json!({"webPresence": null}), &[not_found("id")]));
     };
+    // `WebPresenceUpdateInput` has no `domainId`: a presence keeps its domain.
     let input = input(ctx, "input");
-    if input.contains_key("domainId") {
-        // `WebPresenceUpdateInput` has no `domainId`: a presence keeps its domain.
-    }
     let errors = update_presence(mutation, &presence, &input, "input");
     let presence = errors.is_empty().then_some(presence);
     Ok(payload(json!({"webPresence": presence}), &errors))

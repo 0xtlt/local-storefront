@@ -150,7 +150,7 @@ pub fn seed(seed: &mut Seed) {
     }
     // The backup region: the shop's country, else the first market's.
     let country = seed.store.shop.address.country_code.to_ascii_uppercase();
-    let backup = if regions_of_all(state).iter().any(|code| *code == country) {
+    let backup = if regions_of_all(state).contains(&country) {
         country
     } else {
         regions_of_all(state).into_iter().next().unwrap_or(country)
@@ -161,11 +161,9 @@ pub fn seed(seed: &mut Seed) {
 /// The fields of a market the content family's seed leaves out, as a market created through
 /// the Admin API has them.
 fn complete_market(record: &mut Record, taxes_included: bool) {
-    for list in ["regions"] {
-        if let Some(Value::Array(regions)) = record.get_mut(list) {
-            for region in regions.iter_mut() {
-                complete_currency(region.get_mut("currency"));
-            }
+    if let Some(Value::Array(regions)) = record.get_mut("regions") {
+        for region in regions.iter_mut() {
+            complete_currency(region.get_mut("currency"));
         }
     }
     if let Some(Value::Array(regions)) = record

@@ -1962,6 +1962,54 @@ fn records_product_resource_feedback() {
 }
 
 #[test]
+fn records_the_app_s_feedback_on_the_shop_and_its_channels() {
+    let mut shop = demo();
+    let channel = channel(&mut shop);
+    let create = "mutation($input: ResourceFeedbackCreateInput!) { shopResourceFeedbackCreate(input: $input) { feedback { messages { message } feedbackGeneratedAt state } userErrors { field message code } } }";
+    let answer = run(
+        &mut shop,
+        create,
+        json!({"input": {"channelId": channel, "messages": ["is not connected. Connect your account to use this sales channel."], "state": "REQUIRES_ACTION", "feedbackGeneratedAt": "2026-10-30T14:05:02.351662Z"}}),
+    );
+    assert_eq!(
+        ok(&answer, "shopResourceFeedbackCreate")["feedback"],
+        json!({"messages": [{"message": "Example marketplace is not connected. Connect your account to use this sales channel."}], "feedbackGeneratedAt": "2026-10-30T14:05:02Z", "state": "REQUIRES_ACTION"}),
+        "the name first, the date to the second: the reference's example"
+    );
+    let answer = run(
+        &mut shop,
+        "query($id: ID!) { channel(id: $id) { resourceFeedback { state } } }",
+        json!({"id": channel}),
+    );
+    assert_eq!(
+        answer["data"]["channel"]["resourceFeedback"]["state"],
+        json!("REQUIRES_ACTION")
+    );
+    let errors = refused(
+        &mut shop,
+        create,
+        json!({"input": {"channelId": channel, "messages": ["x"], "state": "REQUIRES_ACTION", "feedbackGeneratedAt": "1998-06-07T10:00:00Z"}}),
+        "shopResourceFeedbackCreate",
+    );
+    assert_eq!(
+        errors,
+        json!([{"field": ["input"], "message": "Feedback for a later version of this resource was already accepted.", "code": "OUTDATED_FEEDBACK"}])
+    );
+    let answer = run(
+        &mut shop,
+        create,
+        json!({"input": {"channelId": channel, "state": "ACCEPTED", "feedbackGeneratedAt": "2026-10-31T00:00:00Z"}}),
+    );
+    assert_eq!(
+        ok(&answer, "shopResourceFeedbackCreate")["feedback"],
+        Value::Null,
+        "cleared"
+    );
+    let answer = run(&mut shop, "{ app { feedback { state } } }", json!({}));
+    assert_eq!(answer["data"]["app"]["feedback"], Value::Null);
+}
+
+#[test]
 fn the_records_this_family_makes_are_in_the_shape_of_their_types() {
     // `tests/shape.rs` checks the seed; the integration tests (`tests/markets.rs`) what the
     // mutations make. Here: that every mutation of the family is registered.
@@ -2007,6 +2055,7 @@ fn the_records_this_family_makes_are_in_the_shape_of_their_types() {
         "shopLocaleDisable",
         "shopLocaleEnable",
         "shopLocaleUpdate",
+        "shopResourceFeedbackCreate",
         "webPresenceCreate",
         "webPresenceDelete",
         "webPresenceUpdate",
@@ -2016,4 +2065,43 @@ fn the_records_this_family_makes_are_in_the_shape_of_their_types() {
             "{name} is not simulated"
         );
     }
+}
+
+#[test]
+fn what_the_mutations_make_answers_without_defaults() {
+    let mut shop = rich();
+    let (list, location) = b2b_price_list(&mut shop);
+    let _ = channel(&mut shop);
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let answer = run(
+        &mut shop,
+        QUANTITY_PRICING,
+        json!({"id": list, "location": location, "input": {
+        "quantityPriceBreaksToAdd": [{"variantId": variant, "price": {"amount": "35", "currencyCode": "EUR"}, "minimumQuantity": 10}],
+        "quantityPriceBreaksToDelete": [], "quantityRulesToAdd": [], "quantityRulesToDeleteByVariantId": [],
+        "pricesToAdd": [{"price": {"amount": "40", "currencyCode": "EUR"}, "variantId": variant}], "pricesToDeleteByVariantId": []}}),
+    );
+    ok(&answer, "quantityPricingByVariantUpdate");
+    let answer = run(
+        &mut shop,
+        r#"{
+      priceLists(first: 5) { nodes { id name currency fixedPricesCount createdAt parent { adjustment { type value } settings { compareAtMode } } catalog { id title status }
+        prices(first: 2) { nodes { originType price { amount } compareAtPrice { amount } variant { id } quantityPriceBreaks(first: 2) { nodes { id minimumQuantity price { amount } } } } }
+        quantityRules(first: 2) { nodes { minimum maximum increment isDefault originType productVariant { id } } } } }
+      catalogs(first: 5) { nodes { id title status operations { id } priceList { id } publication { id }
+        ... on CompanyLocationCatalog { companyLocations(first: 2) { nodes { id } } companyLocationsCount { count } }
+        ... on AppCatalog { apps(first: 2) { nodes { id } } channels(first: 2) { nodes { id } } } } }
+      channels(first: 5) { nodes { id name handle accountId accountName specificationHandle activeRegions app { id } supportsFuturePublishing navigationItems { id } overviewPath resourceFeedback { state }
+        products(first: 2) { nodes { id } } productsCount { count } collections(first: 2) { nodes { id } } productPublicationsV3(first: 2) { nodes { isPublished publishDate } } markets(first: 2) { nodes { id } } marketsCount { count } } }
+      publications(first: 5) { nodes { id name autoPublish supportsFuturePublishing operation { __typename } catalog { id } channels(first: 2) { nodes { id } } } }
+      webPresences(first: 5) { nodes { id domain { id } subfolderSuffix rootUrls { url } market { id } } }
+    }"#,
+        json!({}),
+    );
+    assert!(answer.get("errors").is_none(), "{answer}");
+    assert!(
+        answer.get("extensions").is_none(),
+        "defaulted: {}",
+        answer["extensions"]
+    );
 }

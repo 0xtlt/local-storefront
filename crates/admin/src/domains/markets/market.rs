@@ -61,6 +61,7 @@ pub fn register(registry: &mut Registry) {
             Ok(Output::value(false))
         })
         .field("Market", "priceList", market_price_list)
+        .field("Customer", "market", customer_market)
         .field("MarketsResolvedValues", "catalogs", resolved_catalogs)
         .field(
             "MarketsResolvedValues",
@@ -271,6 +272,29 @@ fn market_price_list(
     Ok(Output::object_or_null(list))
 }
 
+/// `Customer.market`: the market of the country of the customer's default address.
+fn customer_market(
+    r: &ShopResolver<'_>,
+    _ctx: &FieldContext<'_>,
+    object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let state = r.state();
+    let country = r
+        .map_of(object)
+        .and_then(|customer| customer.get("defaultAddress"))
+        .and_then(|address| {
+            address
+                .get("countryCodeV2")
+                .or_else(|| address.get("countryCode"))
+        })
+        .and_then(Value::as_str);
+    Ok(Output::object_or_null(
+        country
+            .and_then(|country| market_of_country(state, country))
+            .map(|market| Obj::record(&market)),
+    ))
+}
+
 // --- What the mutations share ---
 
 /// The market of an `id` argument.
@@ -295,8 +319,8 @@ fn regions_input(
     notes: &mut Vec<String>,
 ) -> Vec<Value> {
     let mut regions = Vec::new();
-    for (index, item) in objects(condition.get("regions")).iter().enumerate() {
-        let Some(code) = text(item, "countryCode") else {
+    for item in objects(condition.get("regions")) {
+        let Some(code) = text(&item, "countryCode") else {
             continue;
         };
         if item
@@ -307,7 +331,6 @@ fn regions_input(
                 "lsf does not simulate the subdivisions of a market's region: {code} is the whole country"
             ));
         }
-        let _ = index;
         regions.push(region(state, code));
     }
     for (index, id) in strings(condition.get("regionIds")).iter().enumerate() {
@@ -871,11 +894,6 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         taxes_included,
         input.get("priceInclusions").and_then(Value::as_object),
     );
-    let shop_country = state
-        .shop()
-        .and_then(|shop| shop.pointer_str("/shopAddress/countryCodeV2"))
-        .unwrap_or_default()
-        .to_string();
     let mut record = value::object(json!({
         "__typename": "Market",
         "id": id,
@@ -895,7 +913,6 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         "discounts": discounts,
         "metafields": [],
     }));
-    let _ = shop_country;
     set_conditions(&mut record, conditions, regions);
     let state = mutation.state_mut();
     if make_draft {

@@ -17,7 +17,8 @@
 //! - Events: `product_publications/create` or `collection_publications/create` (and
 //!   `…/delete` when unpublished), with `products/update` (or `collections/update`), whose
 //!   `published_at` changed. `product_listings/*` and `collection_listings/*` are sent to the
-//!   sales channel apps whose own publication changes: the app lsf serves is not one.
+//!   sales channel app whose own publication changes: a channel's (`channelCreate`), whose
+//!   listings the markets family emits (`markets::scheduled`, `markets::listed`).
 //!
 //! A publication event names no record (a product on a publication is not one): its GID is the
 //! product's with `?publication_id=<id>`, and its snapshot holds the publication and the

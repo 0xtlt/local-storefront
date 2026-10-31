@@ -33,7 +33,10 @@
 //!   at the date).
 //! - `bulkProductResourceFeedbackCreate` records an app's feedback on products ("Feedback for a
 //!   later version of this resource was already accepted.", the reference's example error),
-//!   which `productResourceFeedback` reads.
+//!   which `productResourceFeedback` reads. `shopResourceFeedbackCreate` records its feedback on
+//!   the shop (or one of its channels), which `App.feedback` and `Channel.resourceFeedback` read:
+//!   each message starts with the name of the app or the channel ("Generic Channel is not
+//!   connected. …", the example), and `ACCEPTED` "removes the active feedback entry".
 //!
 //! Errors without a published message are lsf's (each says so).
 
@@ -76,6 +79,9 @@ pub fn register(registry: &mut Registry) {
             unpublish_from_current_channel,
         )
         .mutation("bulkProductResourceFeedbackCreate", feedback_create)
+        .mutation("shopResourceFeedbackCreate", shop_feedback_create)
+        .field("App", "feedback", app_feedback)
+        .field("Channel", "resourceFeedback", channel_feedback)
         .query("productResourceFeedback", resource_feedback)
         .field("Channel", "products", channel_products)
         .field("Channel", "productsCount", channel_products_count)
@@ -99,6 +105,11 @@ pub fn register(registry: &mut Registry) {
         .field("Channel", "markets", channel_markets)
         .field("Channel", "marketsCount", channel_markets_count)
         .field("App", "channels", app_channels)
+        .field("AppInstallation", "channel", |r, _ctx, _object| {
+            Ok(Output::object_or_null(
+                r.state().keys("Channel").next().map(Obj::record),
+            ))
+        })
         .field("Shop", "channels", shop_channels)
         .field("Publication", "channels", publication_channels);
     for type_name in ["Product", "Collection", "ProductVariant"] {
@@ -804,7 +815,6 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         "supportsFuturePublishing": true,
         "navigationItems": [],
         "overviewPath": null,
-        "resourceFeedback": null,
         "lsfPublication": publication,
         "lsfCatalog": app_catalog,
     })));
@@ -1157,4 +1167,134 @@ fn feedback_create(
         state.emit("product_resource_feedback/create", &key);
     }
     Ok(payload(json!({"feedback": answered}), &[]))
+}
+
+/// The key of the app's feedback on the shop (or on one of its channels).
+fn shop_feedback_key(channel: Option<&str>) -> String {
+    format!("feedback/shop/{}", channel.unwrap_or("app"))
+}
+
+/// `App.feedback`: the app's active feedback on the shop.
+fn app_feedback(
+    r: &ShopResolver<'_>,
+    _ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let key = shop_feedback_key(None);
+    Ok(Output::object_or_null(
+        r.state().contains(&key).then(|| Obj::record(&key)),
+    ))
+}
+
+/// `Channel.resourceFeedback`: the app's active feedback on the channel.
+fn channel_feedback(
+    r: &ShopResolver<'_>,
+    _ctx: &FieldContext<'_>,
+    object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let key = shop_feedback_key(object.key());
+    Ok(Output::object_or_null(
+        r.state().contains(&key).then(|| Obj::record(&key)),
+    ))
+}
+
+/// `shopResourceFeedbackCreate`.
+fn shop_feedback_create(
+    mutation: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let state = mutation.state();
+    let input = input(ctx, "input");
+    let mut errors = Vec::new();
+    let channel = text(&input, "channelId").map(str::to_string);
+    if channel
+        .as_deref()
+        .is_some_and(|channel| !is(state, channel, "Channel"))
+    {
+        errors.push(coded(
+            &["input", "channelId"],
+            "Channel does not exist",
+            "NOT_FOUND",
+        ));
+    }
+    let messages = strings(input.get("messages"));
+    let feedback_state = text(&input, "state").unwrap_or("ACCEPTED").to_string();
+    // lsf's wording, for the codes Shopify documents without a message.
+    if feedback_state == "REQUIRES_ACTION" && messages.is_empty() {
+        errors.push(coded(
+            &["input", "messages"],
+            "Messages can't be blank when the state requires action",
+            "BLANK",
+        ));
+    } else if feedback_state == "ACCEPTED" && !messages.is_empty() {
+        errors.push(coded(
+            &["input", "messages"],
+            "Messages must be blank when the state is accepted",
+            "PRESENT",
+        ));
+    }
+    let generated = text(&input, "feedbackGeneratedAt").and_then(time_of);
+    if generated.is_some_and(|generated| generated > state.now()) {
+        errors.push(coded(
+            &["input", "feedbackGeneratedAt"],
+            "Feedback generated at must not be in the future",
+            "FEEDBACK_DATE_IN_FUTURE",
+        ));
+    }
+    let key = shop_feedback_key(channel.as_deref());
+    // The latest feedback the app sent, accepted or not.
+    let memo = format!("{key}/generatedAt");
+    if let (Some(generated), Some(last)) = (
+        generated,
+        state.memo(&memo).and_then(Value::as_str).and_then(time_of),
+    ) && last > generated
+    {
+        // The reference's example.
+        errors.push(coded(
+            &["input"],
+            "Feedback for a later version of this resource was already accepted.",
+            "OUTDATED_FEEDBACK",
+        ));
+    }
+    if !errors.is_empty() {
+        return Ok(payload(json!({"feedback": null}), &errors));
+    }
+    let name = match &channel {
+        Some(channel) => state.get(channel).and_then(|record| record.get("name")),
+        None => state.all("App").next().and_then(|app| app.get("title")),
+    }
+    .and_then(Value::as_str)
+    .unwrap_or_default()
+    .to_string();
+    let app = state.keys("App").next().map(str::to_string);
+    let at = generated.map(value::date_time);
+    let state = mutation.state_mut();
+    state.set_memo(memo, json!(at));
+    if feedback_state == "ACCEPTED" {
+        // "Sending `state: ACCEPTED` removes the active feedback entry."
+        if state.contains(&key) {
+            state.remove(&key);
+        }
+        state.emit("app_feedback/update", &key);
+        return Ok(payload(json!({"feedback": null}), &[]));
+    }
+    let messages: Vec<Value> = messages
+        .iter()
+        .map(|message| json!({"field": null, "message": format!("{name} {message}").trim()}))
+        .collect();
+    state.insert_as(
+        key.clone(),
+        value::object(json!({
+            "__typename": "AppFeedback",
+            "app": app,
+            "channel": channel,
+            "feedbackGeneratedAt": at,
+            "link": null,
+            "messages": messages,
+            "state": feedback_state,
+        })),
+    );
+    // Shopify has no topic for resource feedback.
+    state.emit("app_feedback/update", &key);
+    Ok(payload(json!({"feedback": key}), &[]))
 }

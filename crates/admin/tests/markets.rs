@@ -5,10 +5,15 @@
 
 mod support;
 
+use std::collections::HashMap;
+use std::time::Duration;
+
+use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
 use lsf_admin::graphql::{self, Request};
 use lsf_admin::resolve::{Registry, ShopResolver};
 use lsf_admin::state::{Clock, ShopState};
 use lsf_admin::sync;
+use lsf_admin::webhooks::DeliveryOptions;
 use lsf_core::store::load::{DataSource, LoadOptions, load_with_overlays};
 use serde_json::{Value, json};
 use support::shape::Schema;
@@ -232,4 +237,76 @@ fn a_locale_disabled_leaves_the_store() {
         .map(|language| language.iso_code.as_str())
         .collect();
     assert_eq!(languages, ["fr"]);
+}
+
+#[test]
+fn the_status_endpoint_lists_the_family_s_mutations() {
+    let api = AdminApi::new(
+        &support::demo_store(),
+        AdminOptions {
+            app: None,
+            client_secret: "test-secret".to_string(),
+            app_url: None,
+            throttle: ThrottleSetting::Store,
+            delivery: DeliveryOptions {
+                timeout: Duration::from_secs(3),
+                retry_delays: Vec::new(),
+                ..DeliveryOptions::default()
+            },
+            token_seed: Some(7),
+        },
+    );
+    let response = api
+        .handle(&HttpRequest {
+            method: "GET".into(),
+            path: "/__lsf/admin".into(),
+            query: Vec::new(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+        })
+        .expect("the control endpoint answers");
+    let status: Value = serde_json::from_slice(&response.body).unwrap();
+    let listed: Vec<&str> = status["mutations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for name in [
+        "backupRegionUpdate",
+        "catalogContextUpdate",
+        "catalogCreate",
+        "catalogDelete",
+        "catalogUpdate",
+        "channelCreate",
+        "channelDelete",
+        "channelFullSync",
+        "channelUpdate",
+        "marketCreate",
+        "marketDelete",
+        "marketLocalizationsRegister",
+        "marketLocalizationsRemove",
+        "marketUpdate",
+        "priceListCreate",
+        "priceListDelete",
+        "priceListFixedPricesAdd",
+        "priceListFixedPricesByProductUpdate",
+        "priceListFixedPricesDelete",
+        "priceListFixedPricesUpdate",
+        "priceListUpdate",
+        "publicationCreate",
+        "publicationDelete",
+        "publicationUpdate",
+        "quantityPricingByVariantUpdate",
+        "quantityRulesAdd",
+        "quantityRulesDelete",
+        "shopLocaleDisable",
+        "shopLocaleEnable",
+        "shopLocaleUpdate",
+        "webPresenceCreate",
+        "webPresenceDelete",
+        "webPresenceUpdate",
+    ] {
+        assert!(listed.contains(&name), "{name} is not listed");
+    }
 }

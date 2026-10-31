@@ -1355,21 +1355,6 @@ fn discount() -> Value {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_built_topic_has_a_sample() {
-        for topic in payload::BUILT_TOPICS {
-            let sample = fixed(topic).unwrap_or_else(|| panic!("no sample for {topic}"));
-            assert!(sample.payload(topic).is_some(), "{topic}");
-        }
-        assert!(fixed("carts/create").is_none());
-        assert_eq!(FixedSamples.shop(), "shop.myshopify.com");
-    }
-}
-
 /// A market, as the examples of `markets/*` show it.
 fn market() -> Value {
     json!({
@@ -1444,4 +1429,19 @@ fn listing_option() -> Value {
         "position": 1,
         "values": ["Small", "Medium"],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_built_topic_has_a_sample() {
+        for topic in payload::BUILT_TOPICS {
+            let sample = fixed(topic).unwrap_or_else(|| panic!("no sample for {topic}"));
+            assert!(sample.payload(topic).is_some(), "{topic}");
+        }
+        assert!(fixed("carts/create").is_none());
+        assert_eq!(FixedSamples.shop(), "shop.myshopify.com");
+    }
 }
