@@ -20,8 +20,9 @@
 //!   completed", and a staff answer on community.shopify.dev).
 //!
 //! Messages: "The order cannot be edited." is quoted from community.shopify.com; the others are
-//! lsf's wording. Shipping lines in an edit (`orderEditAddShippingLine` and the others) are not
-//! simulated.
+//! lsf's wording. Shipping lines in an edit and the changes of a discount are in
+//! `edit_extras`: the calculated order keeps its shipping lines (`stagedStatus` `NONE`,
+//! `ADDED`, `REMOVED`), which its totals and the commit follow.
 //!
 //! The calculated line items keep what the commit needs besides their fields: the line item
 //! they are of (`lsfLineItem`), the units that cannot be edited (`lsfShipped`), and for an
@@ -128,6 +129,19 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         "id": session,
     })));
     let name = text(&order, "name").unwrap_or_default().to_string();
+    // The order's shipping lines, which the edit may remove (`stagedStatus` `NONE` until then).
+    let shipping_lines: Vec<Value> = model::array(&order, "shippingLines")
+        .into_iter()
+        .filter(|line| line.get("isRemoved").and_then(Value::as_bool) != Some(true))
+        .map(|line| {
+            json!({
+                "id": line.get("id"),
+                "title": line.get("title"),
+                "price": line.get("currentDiscountedPriceSet").or_else(|| line.get("discountedPriceSet")),
+                "stagedStatus": "NONE",
+            })
+        })
+        .collect();
     state.insert(value::object(json!({
         "__typename": "CalculatedOrder",
         "id": calculated,
@@ -137,7 +151,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         "addedLineItems": [],
         "addedDiscountApplications": [],
         "stagedChanges": [],
-        "shippingLines": [],
+        "shippingLines": shipping_lines,
         "createdAt": state.timestamp(),
         "notificationPreviewTitle": format!("Order {name} has been updated"),
         "notificationPreviewHtml": null,
@@ -151,7 +165,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
 
 /// The calculated order an edit mutation names (`CalculatedOrder/<n>` or `OrderEditSession/
 /// <n>`), not committed yet.
-fn calculated_order(state: &ShopState, id: &str) -> Result<String, UserError> {
+pub(super) fn calculated_order(state: &ShopState, id: &str) -> Result<String, UserError> {
     let calculated = match parse_gid(id) {
         Some(("CalculatedOrder", _)) => id.to_string(),
         Some(("OrderEditSession", n)) => gid("CalculatedOrder", n),
@@ -171,7 +185,12 @@ fn calculated_order(state: &ShopState, id: &str) -> Result<String, UserError> {
 
 /// The payload of a staging mutation: the calculated order, its session, a calculated line
 /// item when there is one.
-fn staged(state: &ShopState, calculated: &str, line: Option<&str>, extra: Value) -> Value {
+pub(super) fn staged(
+    state: &ShopState,
+    calculated: &str,
+    line: Option<&str>,
+    extra: Value,
+) -> Value {
     let line = line.and_then(|line| calculated_line(state, calculated, line));
     let mut fields = json!({
         "calculatedOrder": calculated,
@@ -185,7 +204,7 @@ fn staged(state: &ShopState, calculated: &str, line: Option<&str>, extra: Value)
 }
 
 /// A calculated line item of a calculated order, by its id.
-fn calculated_line(state: &ShopState, calculated: &str, line: &str) -> Option<Value> {
+pub(super) fn calculated_line(state: &ShopState, calculated: &str, line: &str) -> Option<Value> {
     state
         .get(calculated)?
         .get("lineItems")?
@@ -196,7 +215,7 @@ fn calculated_line(state: &ShopState, calculated: &str, line: &str) -> Option<Va
 }
 
 /// Changes a calculated line item in place (and in `addedLineItems`), then the totals.
-fn change_line(
+pub(super) fn change_line(
     state: &mut ShopState,
     calculated: &str,
     line: &str,
@@ -238,7 +257,7 @@ fn tax_rate_bps(state: &ShopState, order: &Record) -> i64 {
 
 /// Recomputes a calculated order: each line's subtotals and staged changes, then the order's
 /// quantity, subtotal, tax, total and outstanding amount.
-fn refresh_calculated(state: &mut ShopState, calculated: &str) {
+pub(super) fn refresh_calculated(state: &mut ShopState, calculated: &str) {
     let Some(record) = state.get(calculated).cloned() else {
         return;
     };
@@ -355,7 +374,35 @@ fn refresh_calculated(state: &mut ShopState, calculated: &str) {
     } else {
         ((taxable - cart.min(taxable)) as f64 * rate as f64 / 10_000.0).round() as i64
     };
-    let shipping = field_cents(&order, "currentShippingPriceSet");
+    // The order's shipping, with what the edit adds and removes of it.
+    let mut shipping = field_cents(&order, "currentShippingPriceSet");
+    for line in model::array(&record, "shippingLines") {
+        let price = model::cents(line.get("price"));
+        match line.get("stagedStatus").and_then(Value::as_str) {
+            Some("ADDED") => {
+                shipping += price;
+                changes.push(json!({
+                    "__typename": "OrderStagedChangeAddShippingLine",
+                    "title": line.get("title"),
+                    "presentmentTitle": line.get("title"),
+                    "phone": null,
+                    "price": value::money_v2(price, &currency),
+                }));
+            }
+            Some("REMOVED") => {
+                shipping -= price;
+                let removed = model::array(&order, "shippingLines")
+                    .into_iter()
+                    .find(|known| known.get("id") == line.get("id"))
+                    .unwrap_or(Value::Null);
+                changes.push(json!({
+                    "__typename": "OrderStagedChangeRemoveShippingLine",
+                    "shippingLine": removed,
+                }));
+            }
+            _ => {}
+        }
+    }
     let total = subtotal + shipping + tax;
     let net = field_cents(&order, "netPaymentSet");
     let added: Vec<Value> = lines
@@ -619,6 +666,39 @@ fn set_quantity(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(staged(state, &calculated, Some(&line_id), json!({})))
 }
 
+/// What a discount (`OrderEditAppliedDiscountInput`) takes off a calculated line item: a
+/// percentage of its total, or a fixed amount per unit (at most the total). `(cents, the
+/// application's value)`.
+pub(super) fn discount_of(
+    line: &Value,
+    discount: &Map<String, Value>,
+    currency: &str,
+) -> Result<(i64, Value), UserError> {
+    let units = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
+    let unit = line
+        .as_object()
+        .map_or(0, |line| cents_of(line, "originalUnitPriceSet"));
+    let percent = discount.get("percentValue").and_then(Value::as_f64);
+    let fixed = discount
+        .get("fixedValue")
+        .filter(|value| !value.is_null())
+        .map(|value| model::cents(Some(value)));
+    match (percent, fixed) {
+        (Some(percent), None) if (0.0..=100.0).contains(&percent) => Ok((
+            ((unit * units) as f64 * percent / 100.0).round() as i64,
+            json!({"__typename": "PricingPercentageValue", "percentage": percent}),
+        )),
+        (None, Some(fixed)) if fixed >= 0 => Ok((
+            fixed.saturating_mul(units).min(unit * units),
+            json!({"__typename": "MoneyV2", "amount": value::decimal(fixed), "currencyCode": currency}),
+        )),
+        _ => Err(UserError::new(
+            &["discount"],
+            "The discount needs either a percent value from 0 to 100 or a fixed value",
+        )),
+    }
+}
+
 /// `orderEditAddLineItemDiscount`: a discount on an added line item.
 fn add_line_item_discount(
     mutation: &mut Mutation<'_>,
@@ -647,29 +727,9 @@ fn add_line_item_discount(
     }
     let discount = model::input_of(ctx.arg("discount"));
     let currency = model::currency(state);
-    let units = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
-    let unit = line
-        .as_object()
-        .map_or(0, |line| cents_of(line, "originalUnitPriceSet"));
-    let percent = discount.get("percentValue").and_then(Value::as_f64);
-    let fixed = discount
-        .get("fixedValue")
-        .map(|value| model::cents(Some(value)));
-    let (amount, value) = match (percent, fixed) {
-        (Some(percent), None) if (0.0..=100.0).contains(&percent) => (
-            ((unit * units) as f64 * percent / 100.0).round() as i64,
-            json!({"__typename": "PricingPercentageValue", "percentage": percent}),
-        ),
-        (None, Some(fixed)) if fixed >= 0 => (
-            fixed.saturating_mul(units).min(unit * units),
-            json!({"__typename": "MoneyV2", "amount": value::decimal(fixed), "currencyCode": currency}),
-        ),
-        _ => {
-            return failed(UserError::new(
-                &["discount"],
-                "The discount needs either a percent value from 0 to 100 or a fixed value",
-            ));
-        }
+    let (amount, value) = match discount_of(&line, &discount, &currency) {
+        Ok(discount) => discount,
+        Err(error) => return failed(error),
     };
     let state = mutation.state_mut();
     let application_id = state.new_gid("CalculatedManualDiscountApplication");
@@ -712,7 +772,7 @@ fn add_line_item_discount(
 }
 
 /// `orderEditRemoveDiscount`: removes a discount added in the edit.
-fn remove_discount(
+pub(super) fn remove_discount(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
@@ -771,7 +831,7 @@ fn remove_discount(
 
 /// Adds units of a line item to a fulfillment order of the order that is still open (at
 /// `location` when one is), or to a new one there.
-fn add_to_fulfillment(
+pub(super) fn add_to_fulfillment(
     state: &mut ShopState,
     order: &str,
     line: &str,
@@ -1040,6 +1100,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     if !removals.lines.is_empty() {
         refunds::create_refund(state, &order, &removals);
     }
+    super::edit_extras::commit_shipping(state, &order, &record);
     // The tax of the edited order is the calculated order's.
     let wanted_tax = record
         .get("taxLines")

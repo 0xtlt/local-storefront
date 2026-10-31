@@ -9,16 +9,29 @@
 //! derive from one another, the money and the inventory they move), [`queries`] (the search
 //! filters, sort keys and resolvers of the family), and one module per group of mutations.
 
+mod draft_extras;
 mod drafts;
+mod edit_extras;
 mod edits;
 mod fulfillments;
 mod lifecycle;
 pub mod model;
+pub mod payments;
 mod queries;
 mod refunds;
+mod requested_edits;
+mod return_extras;
 mod returns;
+pub mod risk;
 mod services;
+pub mod shopify_payments;
+mod store_credit;
+pub mod tax;
 
+#[cfg(test)]
+mod extras_tests;
+#[cfg(test)]
+mod payments_tests;
 #[cfg(test)]
 mod tests;
 
@@ -216,10 +229,38 @@ fn derived(type_name: &str, kind: &str, order: &str, key: &str) -> String {
 /// draft orders compute their taxes with it.
 pub const TAX_RATE_SETTING: &str = "taxRateBps";
 
+/// The setting of the shop that holds the checkout's delivery rates (`checkout.shipping_rates`:
+/// `[{handle, title, price (cents), description, kind}]`): what a draft order may be delivered
+/// by.
+pub const DELIVERY_RATES_SETTING: &str = "deliveryRates";
+
 pub fn seed(seed: &mut Seed) {
     let store = seed.store;
     seed.state
         .set_setting(TAX_RATE_SETTING, json!(store.checkout.tax_rate_bps));
+    // The checkout's delivery rates: what a draft order may be delivered by.
+    let rates: Vec<Value> = store
+        .checkout
+        .shipping_rates
+        .iter()
+        .map(|rate| {
+            json!({
+                "handle": rate.handle,
+                "title": rate.title,
+                "price": rate.price,
+                "description": rate.description,
+                "kind": match rate.kind {
+                    lsf_core::store::model::CheckoutDeliveryKind::Shipping => "SHIPPING",
+                    lsf_core::store::model::CheckoutDeliveryKind::PickUp => "PICK_UP",
+                    lsf_core::store::model::CheckoutDeliveryKind::Local => "LOCAL",
+                },
+            })
+        })
+        .collect();
+    seed.state
+        .set_setting(DELIVERY_RATES_SETTING, Value::Array(rates));
+    payments::seed(&mut seed.state);
+    shopify_payments::seed(&mut seed.state);
     let location = catalog::locations(store).first().map(catalog::location_gid);
     for customer in &store.customers {
         for order in &customer.orders {
@@ -621,6 +662,10 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         }
         _ => {}
     }
+    // The tender transactions of the money they moved; the caller emits their events.
+    for made in &transactions {
+        payments::record_tender(state, made);
+    }
 
     // The returns. A line that was fulfilled comes back as a `ReturnLineItem` of its
     // fulfillment; one that was not, as an `UnverifiedReturnLineItem`.
@@ -697,7 +742,15 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             "totalQuantity": lines.iter().map(|(_, quantity)| quantity).sum::<u32>(),
             "createdAt": created,
             "closedAt": if status == "CLOSED" { json!(created) } else { Value::Null },
+            "exchangeLineItems": [],
+            "returnShippingFees": [],
+            "reverseFulfillmentOrders": [],
         })));
+        // An open or closed return has its reverse fulfillment order.
+        if matches!(status, "OPEN" | "CLOSED") {
+            return_extras::open_reverse_fulfillment(state, &id);
+            return_extras::follow_return(state, &id);
+        }
         returns.push(id);
     }
 
@@ -817,6 +870,8 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         "refunds": [],
         "discountApplications": [],
         "metafields": [],
+        "paymentTerms": null,
+        "shopifyProtect": null,
     })));
     state.insert(record);
     if let Some(customer) = &draft.customer {
@@ -1179,9 +1234,22 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         .unwrap_or_default()
     {
         state.emit("order_transactions/create", &transaction);
+        payments::emit_tender(state, &transaction);
     }
     if draft.financial == FinancialStatus::Paid {
         state.emit("orders/paid", &order);
+    }
+    // What is left to pay later (a deposit) is charged to the card the buyer paid with.
+    if result.cost.due_later > 0 {
+        let name = draft
+            .customer
+            .as_deref()
+            .and_then(|customer| state.get(customer))
+            .and_then(|customer| customer.get("displayName"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        payments::vault_checkout_card(state, &order, &name);
     }
     RecordedOrder { id: order, number }
 }
@@ -1290,6 +1358,17 @@ pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// What happens when the shop's clock passes a date: the payment schedules that came due fire
+/// `payment_schedules/due` ([`payments::tick`]), the store credit that expired leaves its
+/// account ([`store_credit::tick`]), the days Shopify Payments processed are paid out
+/// ([`shopify_payments::tick`]). Runs before every request of the Admin API,
+/// and when the clock is moved (`POST /__lsf/admin/clock`).
+pub fn tick(state: &mut ShopState) {
+    payments::tick(state);
+    store_credit::tick(state);
+    shopify_payments::tick(state);
+}
+
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a
 /// mutation" in `crates/admin/docs/design.md`.
 pub fn register(registry: &mut crate::resolve::Registry) {
@@ -1298,7 +1377,16 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     fulfillments::register(registry);
     refunds::register(registry);
     returns::register(registry);
+    return_extras::register(registry);
     edits::register(registry);
+    edit_extras::register(registry);
     drafts::register(registry);
+    draft_extras::register(registry);
     services::register(registry);
+    payments::register(registry);
+    requested_edits::register(registry);
+    risk::register(registry);
+    shopify_payments::register(registry);
+    store_credit::register(registry);
+    tax::register(registry);
 }

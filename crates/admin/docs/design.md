@@ -852,12 +852,13 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 
 | Path | What answers |
 |---|---|
-| `POST\|GET /admin/api/<version>/graphql.json` | The version (`Served::resolve`: served, fallen forward, or `404`), the token (`401` as Shopify, `X-Lsf-Reason` saying why), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
+| `POST\|GET /admin/api/<version>/graphql.json` | The version (`Served::resolve`: served, fallen forward, or `404`), the token (`401` as Shopify, `X-Lsf-Reason` saying why), what the shop's clock passed since the last request (`domains::orders::tick`: schedules due, store credit expired, payouts), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
 | other `/admin/api/<v>/…` | `404`: another version, or the REST Admin API, which lsf does not serve. |
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
 | `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |
 | `/__lsf/admin/card-sessions`, `/__lsf/admin/subscriptions`, `/__lsf/admin/billing-attempts/<n>/challenge[/complete\|/fail]`, `/__lsf/admin/payment-methods/<token>/update` | `api::subscriptions`: lsf's card vault, the log of the emails and charges, the customer's 3D Secure and card update pages; no token. |
+| `/__lsf/admin/clock`, `/__lsf/admin/emails`, `/__lsf/admin/disputes[/<n>/won\|lost\|accepted]`, `/__lsf/admin/orders/protect`, `/__lsf/admin/orders/link-request`, `/__lsf/admin/tax-app/activate` | `api::simulate`: the world outside the shop, which a test drives (see "Payments, store credit, disputes and the clock" under "Orders"). No token. |
 | `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
 
 `lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
@@ -1167,7 +1168,63 @@ orders" in `docs/admin.md`) make and keep:
   (`lsfLineItem`, `lsfShipped`, `lsfDiscount`, …).
 - **The tax rate** of draft orders and edits is the store data's `checkout.tax_rate`, which the
   seed keeps in the shop's settings (`ShopState::setting("taxRateBps")`), records having no
-  field for it.
+  field for it; its delivery rates (`checkout.shipping_rates`) are the setting
+  `deliveryRates`, which `draftOrderAvailableDeliveryOptions` offers.
+
+#### Payments, store credit, disputes and the clock
+
+The modules `payments`, `store_credit`, `shopify_payments`, `risk`, `requested_edits`,
+`edit_extras`, `draft_extras`, `return_extras` and `tax` of `domains/orders/` (and
+`gift_card_extras` of the catalog) carry the rest of the family; each module's header says
+what shopify.dev documents and what lsf chose. What they keep:
+
+- **Payment terms** (`PaymentTerms`, `PaymentSchedule`, of the nine `PaymentTermsTemplate`s the
+  seed makes with the ids of `paymentTermsTemplates`' example) name their order or draft; the
+  order or draft names them in `paymentTerms`. A schedule's amounts follow its order:
+  `refresh_order` runs `payments::refresh_terms` (`balanceDue` the outstanding amount,
+  `totalBalance` what is still to pay or authorize, `completedAt` once nothing is left, the due
+  date of terms due on fulfillment once fulfilled). Their dates for the webhooks are
+  `lsfCreatedAt` and `lsfUpdatedAt`: GraphQL's types have none. A draft's terms move to its
+  order (`payments::attach_to_order`), issued then if they were not.
+- **Tender transactions**: every successful sale, capture, refund or change makes one
+  (`payments::record_tender`, from `model::add_transaction` and for the seed's transactions in
+  `insert_order`), and with it Shopify Payments' balance transaction when it processed the
+  money (`shopify_payments::record_balance`: not through a manual gateway). The seed's make
+  their records without events; the transactions' events go with `order_transactions/create`.
+- **Mandates** are not records: an order's vaulted payment methods are the checkout's card
+  (`lsfMandates` on an order that left a balance) and its customer's `CustomerPaymentMethod`s,
+  read through the schema's fields; their ids are made of the order and the method.
+- **Store credit**: `StoreCreditAccount` per owner and currency (the owner lists them in
+  `storeCreditAccounts`), credit and debit transactions as records, expirations inline (their
+  type is not a `Node`) in the account's `transactions`.
+- **Shopify Payments**: one `ShopifyPaymentsAccount` and one `ShopifyPaymentsBankAccount` (the
+  seed's; what they take from the shop is read when they are, the shop being seeded after the
+  orders), `ShopifyPaymentsBalanceTransaction`s, `ShopifyPaymentsPayout`s,
+  `ShopifyPaymentsDispute`s and their `ShopifyPaymentsDisputeEvidence`.
+- **Returns**: `ExchangeLineItem`s (`lsfUnitPrice`, `lsfDiscount`), restocking and return
+  shipping fees inline, a `ReverseFulfillmentOrder` per open return (the seed's open and closed
+  returns too) with its line items (`lsfReturnLineItem`), `ReverseDelivery` and its line items,
+  `ReverseFulfillmentOrderDisposition`s (`lsfLineItem`; the reverse fulfillment order's
+  `lsfLastDispositions` are what its webhook lists). `returns/update` reads the return's
+  `lsfUpdateRemovals`.
+- **Requested order edits** (`RequestedOrderEdit` and its removals, `lsfQuantityAtRequest`),
+  **risk assessments** (inline in the order's `lsfRiskAssessments`), **attribution definitions**
+  (`OrderAttributionDefinition`), **the tax app's configuration** (a `TaxAppConfiguration` under
+  the key `TaxAppConfiguration/<app id>`: its type has no id).
+- **The clock**: `domains::orders::tick` does what the shop's clock passing does, before every
+  GraphQL request (before its revision is read: what it writes is not the request's change) and
+  when `POST /__lsf/admin/clock` moves the clock (`ShopState::set_clock`, a frozen clock; a reset
+  puts the store data's back): `payment_schedules/due` once per schedule that came due
+  (`lsfDueSent`), store credit that expired, a payout per day of Shopify Payments the shop's
+  day left behind.
+- **The outbox** (`crate::outbox`): the emails Shopify would send, kept in a memo of the shop
+  (`lsf/outbox`), so a failed mutation takes them back and a reset forgets them;
+  `GET /__lsf/admin/emails` reads them.
+- **What the outside world does** that no mutation does (a bank's dispute and its decision,
+  Shopify Protect, a buyer's link request, the merchant turning a tax app on) are functions of
+  the domain (`shopify_payments::open_dispute`, `risk::set_protect`, `risk::request_link`,
+  `tax::activate`) that `api::simulate` runs through `AdminApi::change_shop`, which delivers
+  their webhooks.
 
 ### Logistics (`domains/logistics.rs`)
 
@@ -1845,5 +1902,6 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |
+| `outbox` | The emails lsf records instead of sending them, in a memo of the shop. |
 | `throttle` | The cost bucket of each shop and app. |
-| `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. `api::sync`: store sync as a server runs it (the count of changes, the overlay made when asked). |
+| `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. `api::sync`: store sync as a server runs it (the count of changes, the overlay made when asked). `api::simulate`: the clock, the outbox, and what buyers, banks and Shopify do. |

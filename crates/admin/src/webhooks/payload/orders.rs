@@ -174,7 +174,7 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
             "discount_applications": applications.iter().map(discount_application).collect::<Vec<_>>(),
             "fulfillments": fulfillments,
             "line_items": line_items.iter().map(|line| line_item(line, lookup)).collect::<Vec<_>>(),
-            "payment_terms": Value::Null,
+            "payment_terms": payment_terms(field(record, "paymentTerms"), record, "Order", lookup),
             "refunds": refunds,
             "shipping_address": order_address(resolve(field(record, "shippingAddress"), lookup).as_ref()),
             "shipping_lines": shipping_lines.iter().map(shipping_line).collect::<Vec<_>>(),
@@ -748,8 +748,8 @@ pub(super) fn draft_order(record: &Map<String, Value>, lookup: &dyn Lookup) -> V
     })
 }
 
-/// `PaymentTerms` as REST writes them, with their schedules; `reference` is the order or the
-/// draft order they are of.
+/// `PaymentTerms` as REST writes them in an order's or a draft order's payload, with their
+/// schedules; `reference` is the order or the draft order they are of.
 fn payment_terms(
     terms: &Value,
     reference: &Map<String, Value>,
@@ -776,8 +776,8 @@ fn payment_terms(
             merge([
                 json!({
                     "id": id(schedule),
-                    "created_at": time(field(schedule, "createdAt")),
-                    "updated_at": time(field(schedule, "updatedAt")),
+                    "created_at": time(first(schedule, &["createdAt", "lsfCreatedAt"])),
+                    "updated_at": time(first(schedule, &["updatedAt", "lsfUpdatedAt"])),
                     "payment_terms_id": terms_id,
                     "reference_id": id(reference),
                     "reference_type": kind,
@@ -805,8 +805,8 @@ fn payment_terms(
         "payment_terms_name": text(&terms, "paymentTermsName"),
         "payment_terms_type": lower(field(&terms, "paymentTermsType")),
         "due_in_days": field(&terms, "dueInDays"),
-        "created_at": time(field(&terms, "createdAt")),
-        "updated_at": time(field(&terms, "updatedAt")),
+        "created_at": time(first(&terms, &["createdAt", "lsfCreatedAt"])),
+        "updated_at": time(first(&terms, &["updatedAt", "lsfUpdatedAt"])),
         "payment_schedules": schedules,
         "can_pay_early": boolean(&terms, "canPayEarly", true),
     })

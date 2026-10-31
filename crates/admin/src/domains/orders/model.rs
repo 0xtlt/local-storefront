@@ -342,6 +342,12 @@ fn refunded(state: &ShopState, order: &Record) -> Refunded {
     refunded
 }
 
+/// What the refunds of an order gave back beyond the value of what they took back: Shopify's
+/// `REFUND_DISCREPANCY` adjustment, `Order.refundDiscrepancySet`.
+pub fn refund_discrepancy(state: &ShopState, order: &Record) -> i64 {
+    refunded(state, order).discrepancy
+}
+
 /// What the transactions of an order moved: `(received, refunded, capturable, voided)`.
 /// Received is what sales and captures took; capturable what authorizations hold that was
 /// neither captured nor voided.
@@ -605,6 +611,13 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     if let Some(location) = location {
         customers::refresh_company_location(state, &location);
     }
+    if let Some(terms) = state
+        .get(order)
+        .and_then(|record| text(record, "paymentTerms"))
+        .map(str::to_string)
+    {
+        super::payments::refresh_terms(state, &terms);
+    }
 }
 
 /// Recomputes `displayFinancialStatus` from the money of an order, after a change of money (a
@@ -660,9 +673,21 @@ pub struct NewTransaction<'a> {
 }
 
 /// Records a successful transaction on an order: an `OrderTransaction` in `transactions`, with
-/// `order_transactions/create`. Returns its GID. The order's amounts are left to the caller's
-/// [`settle_financial_status`].
+/// `order_transactions/create`, and the tender transaction of the money it moved, with
+/// `tender_transactions/create` (`super::payments::record_tender`). Returns its GID. The order's
+/// amounts are left to the caller's [`settle_financial_status`].
 pub fn add_transaction(state: &mut ShopState, order: &str, transaction: &NewTransaction) -> String {
+    add_transaction_with_status(state, order, transaction, "SUCCESS")
+}
+
+/// [`add_transaction`] in a status (`SUCCESS`, `PENDING`, `FAILURE`, `ERROR`): only a
+/// successful one moves money, and so has a tender transaction.
+pub fn add_transaction_with_status(
+    state: &mut ShopState,
+    order: &str,
+    transaction: &NewTransaction,
+    status: &str,
+) -> String {
     let currency = currency(state);
     let now = state.timestamp();
     let id = state.new_gid("OrderTransaction");
@@ -671,7 +696,7 @@ pub fn add_transaction(state: &mut ShopState, order: &str, transaction: &NewTran
         "__typename": "OrderTransaction",
         "id": id,
         "kind": transaction.kind,
-        "status": "SUCCESS",
+        "status": status,
         "amountSet": value::money_bag(transaction.amount, &currency),
         "gateway": gateway,
         "formattedGateway": formatted_gateway(gateway),
@@ -687,6 +712,9 @@ pub fn add_transaction(state: &mut ShopState, order: &str, transaction: &NewTran
     })));
     push_key(state, order, "transactions", &id);
     state.emit("order_transactions/create", &id);
+    if let Some(tender) = super::payments::record_tender(state, &id) {
+        state.emit("tender_transactions/create", &tender);
+    }
     id
 }
 

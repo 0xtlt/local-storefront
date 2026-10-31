@@ -22,6 +22,7 @@ mod customers;
 mod logistics;
 mod markets;
 mod orders;
+mod payments;
 mod shop;
 mod subscriptions;
 
@@ -154,6 +155,8 @@ pub const BUILT_TOPICS: &[&str] = &[
     "discounts/redeemcode_added",
     "discounts/redeemcode_removed",
     "discounts/update",
+    "disputes/create",
+    "disputes/update",
     "domains/create",
     "domains/destroy",
     "domains/update",
@@ -231,9 +234,16 @@ pub const BUILT_TOPICS: &[&str] = &[
     "orders/delete",
     "orders/edited",
     "orders/fulfilled",
+    "orders/link_requested",
     "orders/paid",
     "orders/partially_fulfilled",
+    "orders/risk_assessment_changed",
+    "orders/shopify_protect_eligibility_changed",
     "orders/updated",
+    "payment_schedules/due",
+    "payment_terms/create",
+    "payment_terms/delete",
+    "payment_terms/update",
     "product_listings/add",
     "product_listings/remove",
     "product_listings/update",
@@ -247,12 +257,18 @@ pub const BUILT_TOPICS: &[&str] = &[
     "profiles/delete",
     "profiles/update",
     "refunds/create",
+    "requested_order_edit/created",
+    "requested_order_edit/declined",
+    "requested_order_edit/resolved",
     "returns/approve",
     "returns/cancel",
     "returns/close",
     "returns/decline",
     "returns/reopen",
     "returns/request",
+    "returns/update",
+    "reverse_deliveries/attach_deliverable",
+    "reverse_fulfillment_orders/dispose",
     "scheduled_product_listings/add",
     "scheduled_product_listings/remove",
     "scheduled_product_listings/update",
@@ -276,6 +292,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "subscription_contracts/fail",
     "subscription_contracts/pause",
     "subscription_contracts/update",
+    "tax_services/create",
+    "tax_services/update",
+    "tender_transactions/create",
     "variants/in_stock",
     "variants/out_of_stock",
 ];
@@ -340,7 +359,10 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         | "orders/paid"
         | "orders/cancelled"
         | "orders/fulfilled"
-        | "orders/partially_fulfilled" => orders::order(record, lookup),
+        | "orders/partially_fulfilled"
+        | "orders/link_requested" => orders::order(record, lookup),
+        "orders/risk_assessment_changed" => payments::risk_assessment(record, lookup),
+        "orders/shopify_protect_eligibility_changed" => payments::protect_eligibility(record),
         "draft_orders/create" | "draft_orders/update" => orders::draft_order(record, lookup),
         "fulfillments/create" | "fulfillments/update" => orders::fulfillment(record, None, lookup),
         "refunds/create" => orders::refund(record, lookup),
@@ -384,6 +406,18 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
             logistics::delivery_profile(record)
         }
         "delivery_promise_settings/update" => logistics::delivery_promise_settings(record, lookup),
+        "payment_schedules/due" => payments::payment_schedule(record),
+        "payment_terms/create" | "payment_terms/update" => payments::payment_terms(record, lookup),
+        "payment_terms/delete" => payments::payment_terms_deleted(record),
+        "tender_transactions/create" => payments::tender_transaction(record),
+        "disputes/create" | "disputes/update" => payments::dispute(record),
+        "tax_services/create" | "tax_services/update" => payments::tax_service(record),
+        "requested_order_edit/created"
+        | "requested_order_edit/declined"
+        | "requested_order_edit/resolved" => payments::requested_order_edit(record, lookup),
+        "returns/update" => payments::return_update(record),
+        "reverse_deliveries/attach_deliverable" => payments::reverse_delivery(record, lookup),
+        "reverse_fulfillment_orders/dispose" => payments::reverse_dispositions(record, lookup),
         "returns/approve" | "returns/cancel" | "returns/close" | "returns/decline"
         | "returns/reopen" | "returns/request" => orders::return_event(topic, record),
         "app/uninstalled" | "shop/update" => shop::shop(record, lookup),

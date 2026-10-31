@@ -85,12 +85,40 @@ pub fn fixed(topic: &str) -> Option<Sample> {
             vec![company_contact(), company_location(), company(), contact_role()],
         ),
         "orders" if topic == "orders/edited" => (order_edit(), Vec::new()),
+        "orders" if topic == "orders/risk_assessment_changed" => (
+            json!({"__typename": "Order", "lsfRiskAssessments": [{"riskLevel": "MEDIUM", "facts": [], "provider": null, "createdAt": null}]}),
+            Vec::new(),
+        ),
+        "orders" if topic == "orders/shopify_protect_eligibility_changed" => (
+            json!({"__typename": "Order", "id": "gid://shopify/Order/1",
+                   "shopifyProtect": {"status": "ACTIVE", "eligibility": {"status": "ELIGIBLE"}}}),
+            Vec::new(),
+        ),
         "orders" => (order(), order_parts(false)),
         "order_transactions" => (order_transaction(), vec![order()]),
+        "payment_schedules" => (payment_schedule(), Vec::new()),
+        "payment_terms" => (payment_terms(), vec![payment_schedule()]),
+        "tender_transactions" => (tender_transaction(), Vec::new()),
+        "disputes" => (dispute(), Vec::new()),
+        "tax_services" => (
+            json!({"__typename": "TaxAppConfiguration", "state": "ACTIVE",
+                   "lsfService": {"id": 1063370, "name": "Tax Service", "url": "https://taxes.shopify.com", "active": true}}),
+            Vec::new(),
+        ),
+        "requested_order_edit" => requested_order_edit(topic),
         "fulfillment_events" => (fulfillment_event(), vec![fulfillment()]),
         "fulfillment_holds" => (fulfillment_hold(topic), Vec::new()),
         "fulfillment_orders" => fulfillment_order_sample(topic),
+        "returns" if topic == "returns/update" => (
+            return_sample(topic).with(
+                "lsfUpdateRemovals",
+                json!([{"id": "gid://shopify/ReturnLineItem/987654321", "delta": 2}]),
+            ),
+            Vec::new(),
+        ),
         "returns" => (return_sample(topic), Vec::new()),
+        "reverse_deliveries" => reverse_delivery(),
+        "reverse_fulfillment_orders" => reverse_fulfillment_order(),
         "fulfillments" => (fulfillment(), [vec![order()], order_parts(true)].concat()),
         "refunds" => (refund(), [vec![order()], order_parts(true)].concat()),
         "draft_orders" => (draft_order(), Vec::new()),
@@ -949,6 +977,147 @@ fn order_transaction() -> Value {
             "shopMoney": {"amount": "419.95", "currencyCode": "USD"},
         },
         "manualPaymentGateway": true,
+    })
+}
+
+/// The schedule of the `payment_schedules/due` and `payment_terms/…` examples.
+fn payment_schedule() -> Value {
+    json!({
+        "__typename": "PaymentSchedule",
+        "id": "gid://shopify/PaymentSchedule/606405506930370084",
+        "paymentTerms": "gid://shopify/PaymentTerms/706405506930370084",
+        "amount": money("0.00"),
+        "balanceDue": money("0.00"),
+        "totalBalance": money("0.00"),
+        "completedAt": null,
+        "issuedAt": "2021-01-01T00:00:00-05:00",
+        "dueAt": "2022-01-07T19:00:00-05:00",
+        "createdAt": "2021-01-01T00:00:00-05:00",
+        "updatedAt": "2021-01-01T00:00:01-05:00",
+    })
+}
+
+/// The net terms of the `payment_terms/…` examples.
+fn payment_terms() -> Value {
+    json!({
+        "__typename": "PaymentTerms",
+        "id": "gid://shopify/PaymentTerms/706405506930370084",
+        "paymentTermsName": "Net 7",
+        "paymentTermsType": "NET",
+        "dueInDays": 7,
+        "paymentSchedules": ["gid://shopify/PaymentSchedule/606405506930370084"],
+        "createdAt": "2021-01-01T00:00:00-05:00",
+        "updatedAt": "2021-01-01T00:00:01-05:00",
+    })
+}
+
+/// The request of the `requested_order_edit/…` examples, in the status of the topic, and its
+/// removal.
+fn requested_order_edit(topic: &str) -> (Value, Vec<Value>) {
+    let (status, resolved) = match topic {
+        "requested_order_edit/declined" => ("DECLINED", 0),
+        "requested_order_edit/resolved" => ("RESOLVED", 2),
+        _ => ("REQUESTED", 0),
+    };
+    (
+        json!({
+            "__typename": "RequestedOrderEdit",
+            "id": "gid://shopify/RequestedOrderEdit/963881762",
+            "status": status,
+            "order": "gid://shopify/Order/820982911946154508",
+            "requestedAt": "2026-01-15T07:00:00-05:00",
+            "lineItems": {"removals": ["gid://shopify/RequestedOrderEditLineItem/1071823172"]},
+        }),
+        vec![json!({
+            "__typename": "RequestedOrderEditLineItem",
+            "id": "gid://shopify/RequestedOrderEditLineItem/1071823172",
+            "lineItem": "gid://shopify/LineItem/866550311766439020",
+            "quantity": 2,
+            "resolvedQuantity": resolved,
+        })],
+    )
+}
+
+/// The delivery of `reverse_deliveries/attach_deliverable`'s example, and its reverse
+/// fulfillment order.
+fn reverse_delivery() -> (Value, Vec<Value>) {
+    (
+        json!({
+            "__typename": "ReverseDelivery",
+            "id": "gid://shopify/ReverseDelivery/9080907654321",
+            "reverseFulfillmentOrder": "gid://shopify/ReverseFulfillmentOrder/11111111",
+            "reverseDeliveryLineItems": [],
+            "deliverable": {
+                "__typename": "ReverseDeliveryShippingDeliverable",
+                "tracking": {"carrierName": "USPS", "number": "123345345", "url": null},
+                "label": {"publicFileUrl": null, "createdAt": null},
+            },
+        }),
+        vec![json!({
+            "__typename": "ReverseFulfillmentOrder",
+            "id": "gid://shopify/ReverseFulfillmentOrder/11111111",
+            "lsfReturn": "gid://shopify/Return/123134564567890",
+        })],
+    )
+}
+
+/// The reverse fulfillment order of `reverse_fulfillment_orders/dispose`'s example and its two
+/// dispositions.
+fn reverse_fulfillment_order() -> (Value, Vec<Value>) {
+    let disposition = |id: u64, line: u64| {
+        json!({
+            "__typename": "ReverseFulfillmentOrderDisposition",
+            "id": format!("gid://shopify/ReverseFulfillmentOrderDisposition/{id}"),
+            "type": "RESTOCKED",
+            "quantity": 1,
+            "location": "gid://shopify/Location/3333333",
+            "lsfLineItem": format!("gid://shopify/ReverseFulfillmentOrderLineItem/{line}"),
+        })
+    };
+    (
+        json!({
+            "__typename": "ReverseFulfillmentOrder",
+            "id": "gid://shopify/ReverseFulfillmentOrder/11111111",
+            "status": "OPEN",
+            "lsfLastDispositions": [
+                "gid://shopify/ReverseFulfillmentOrderDisposition/1",
+                "gid://shopify/ReverseFulfillmentOrderDisposition/2",
+            ],
+        }),
+        vec![disposition(1, 2222222), disposition(2, 2222223)],
+    )
+}
+
+/// The chargeback of the `disputes/…` examples.
+fn dispute() -> Value {
+    json!({
+        "__typename": "ShopifyPaymentsDispute",
+        "id": "gid://shopify/ShopifyPaymentsDispute/285332461850802063",
+        "order": "gid://shopify/Order/820982911946154508",
+        "type": "CHARGEBACK",
+        "status": "UNDER_REVIEW",
+        "amount": {"amount": "11.50", "currencyCode": "CAD"},
+        "reasonDetails": {"reason": "FRAUDULENT", "networkReasonCode": "4837"},
+        "evidenceDueBy": "2021-12-30T19:00:00-05:00",
+        "evidenceSentOn": null,
+        "finalizedOn": null,
+        "initiatedAt": "2021-12-31T19:00:00-05:00",
+    })
+}
+
+/// The tender transaction of `tender_transactions/create`'s example.
+fn tender_transaction() -> Value {
+    json!({
+        "__typename": "TenderTransaction",
+        "id": "gid://shopify/TenderTransaction/220982911946154508",
+        "order": "gid://shopify/Order/820982911946154508",
+        "amount": money("419.95"),
+        "paymentMethod": null,
+        "processedAt": null,
+        "remoteReference": "1001",
+        "test": false,
+        "transactionDetails": null,
+        "user": null,
     })
 }
 

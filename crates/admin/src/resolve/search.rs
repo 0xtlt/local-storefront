@@ -72,7 +72,7 @@ pub(super) fn filter(
     let documented = search::for_version(resolver.version())
         .filters(ctx.parent_type(), ctx.field_name())
         .unwrap_or(&[]);
-    let mut query = Query::parse(text);
+    let query = Query::parse(text);
     let warnings = query.invalid_fields(|field| documented_type(documented, field).is_some());
     if !warnings.is_empty() {
         resolver.report_search(json!({
@@ -82,6 +82,32 @@ pub(super) fn filter(
             "warnings": warnings.iter().map(search::Warning::to_json).collect::<Vec<_>>(),
         }));
     }
+    matching(resolver, node_type, documented, query, items)
+}
+
+/// The items of a search, by the filters a connection documents (`documented_filters(parent,
+/// field)`), outside of a field's `query`: what a bulk mutation's `search` selects.
+pub(super) fn filter_text(
+    resolver: &ShopResolver<'_>,
+    node_type: &str,
+    (parent, field): (&str, &str),
+    text: &str,
+    items: Vec<Value>,
+) -> Vec<Value> {
+    let documented = search::for_version(resolver.version())
+        .filters(parent, field)
+        .unwrap_or(&[]);
+    matching(resolver, node_type, documented, Query::parse(text), items)
+}
+
+/// The items a parsed query matches.
+fn matching(
+    resolver: &ShopResolver<'_>,
+    node_type: &str,
+    documented: &[(String, String)],
+    mut query: Query,
+    items: Vec<Value>,
+) -> Vec<Value> {
     if let Some(root) = query.root.take() {
         query.root = Some(negations(root, documented));
     }

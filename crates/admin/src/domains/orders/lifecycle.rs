@@ -1,6 +1,6 @@
 //! The life of an order: `orderCreate`, `orderUpdate`, `orderCancel`, `orderClose`, `orderOpen`,
 //! `orderMarkAsPaid`, `orderCapture`, `transactionVoid`, `orderCustomerSet`,
-//! `orderCustomerRemove`, `orderInvoiceSend`, `orderDelete`.
+//! `orderCustomerRemove`, `orderInvoiceSend` (its email in the shop's outbox), `orderDelete`.
 //!
 //! As shopify.dev's reference of 2026-10 describes them (`mutations/<name>`), with what the
 //! topics of `WebhookSubscriptionTopic` say they fire on; Shopify documents no order between
@@ -13,7 +13,8 @@
 //!   query reads (Shopify cancels asynchronously, the job `done: false` in its examples). It
 //!   voids the authorizations ("Authorized payments will be voided regardless of this
 //!   setting"), refunds the payments to their methods when `refundMethod.
-//!   originalPaymentMethodsRefund` (or the deprecated `refund`) says so, puts the units that did
+//!   originalPaymentMethodsRefund` (or the deprecated `refund`) says so, or to the customer's
+//!   store credit with `refundMethod.storeCreditRefund`, puts the units that did
 //!   not ship back in stock when `restock`, and cancels the open fulfillment orders. What it takes
 //!   back is a refund, as Shopify records it, when it restocks or refunds. Events:
 //!   `order_transactions/create`, `refunds/create`, `fulfillment_orders/cancelled`,
@@ -29,7 +30,9 @@
 //!   once paid in full, `orders/updated`. `transactionVoid` voids an authorization, with the
 //!   messages of `TransactionVoidUserErrorCode`'s descriptions.
 //! - `orderCreate` imports an order (see [`order_create`]): `orders/create`, `orders/paid` when
-//!   paid, `order_transactions/create` for each transaction.
+//!   paid, `order_transactions/create` for each transaction. A sale through the gateway
+//!   `shopify_store_credit` is paid with the customer's store credit (`store_credit`), which
+//!   must cover it.
 //! - `orderDelete` deletes a cancelled or closed order ("cancelled or archived orders can be
 //!   deleted", Shopify's help center) with what is its alone: `orders/delete`.
 //!
@@ -256,16 +259,35 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_bool)
         .or_else(|| ctx.arg_bool("refund"))
         .unwrap_or(false);
-    if method.is_some_and(|method| {
-        method
-            .get("storeCreditRefund")
-            .is_some_and(|v| !v.is_null())
-    }) {
-        mutation.note(
-            "orderCancel: lsf does not simulate store credit: `storeCreditRefund` was ignored, \
-             nothing was refunded",
-        );
+    // `storeCreditRefund` gives what the payments took back as store credit instead.
+    let store_credit = method
+        .and_then(|method| method.get("storeCreditRefund"))
+        .filter(|refund| !refund.is_null())
+        .map(|refund| {
+            refund
+                .get("expiresAt")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+    // The codes are `OrderCancelUserErrorCode`'s; the messages lsf's wording of them.
+    if store_credit.is_some() && text(&record, "customer").is_none() {
+        return failed(&[UserError::new(
+            &["refundMethod", "storeCreditRefund"],
+            "A refund to store credit needs the order to have a customer",
+        )
+        .code("STORE_CREDIT_REFUND_MISSING_CUSTOMER")]);
     }
+    if let Some(Some(expires_at)) = &store_credit
+        && chrono::DateTime::parse_from_rfc3339(expires_at)
+            .is_ok_and(|at| at.with_timezone(&chrono::Utc) <= mutation.now())
+    {
+        return failed(&[UserError::new(
+            &["refundMethod", "storeCreditRefund", "expiresAt"],
+            "The expiry date of the store credit must be in the future",
+        )
+        .code("STORE_CREDIT_REFUND_EXPIRATION_IN_PAST")]);
+    }
+    let refund_money = refund_money || store_credit.is_some();
     if ctx.arg_bool("notifyCustomer") == Some(true) {
         mutation.note("orderCancel: lsf sends no email: `notifyCustomer` was recorded only");
     }
@@ -354,16 +376,23 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         let order_record = state.get(&order).cloned().unwrap_or_default();
         spec.shipping = refunds::refundable_shipping(&order_record);
         for (payment, left) in model::refundable_payments(state, &order_record) {
-            if left > 0 {
-                let gateway = state
-                    .get(&payment)
-                    .and_then(|record| text(record, "gateway"))
-                    .map(str::to_string);
-                spec.transactions.push((left, gateway, Some(payment)));
+            if left <= 0 {
+                continue;
+            }
+            match &store_credit {
+                Some(expires_at) => spec.store_credit.push((left, expires_at.clone())),
+                None => {
+                    let gateway = state
+                        .get(&payment)
+                        .and_then(|record| text(record, "gateway"))
+                        .map(str::to_string);
+                    spec.transactions.push((left, gateway, Some(payment)));
+                }
             }
         }
+        spec.cancellation = true;
     }
-    if !spec.lines.is_empty() || !spec.transactions.is_empty() {
+    if !spec.lines.is_empty() || !spec.transactions.is_empty() || !spec.store_credit.is_empty() {
         refunds::create_refund(state, &order, &spec);
     }
     if let Some(record) = state.get_mut(&order) {
@@ -678,7 +707,8 @@ fn set_customer(state: &mut ShopState, order: &str, customer: Option<&str>) {
     model::order_updated(state, order);
 }
 
-/// `orderInvoiceSend`: lsf sends no email; the order is answered as it is.
+/// `orderInvoiceSend`: the invoice is put in the shop's outbox (`crate::outbox`), to the
+/// email given, else the order's; lsf sends nothing. The order is answered as it is.
 fn order_invoice_send(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -686,7 +716,50 @@ fn order_invoice_send(
     let Some(order) = find_order(mutation.state(), ctx.arg_str("id").unwrap_or_default()) else {
         return Ok(payload(json!({"order": null}), &[no_order(&["id"])]));
     };
-    mutation.note("orderInvoiceSend: lsf sends no email; nothing was recorded");
+    let record = mutation.state().get(&order).cloned().unwrap_or_default();
+    let email = model::input_of(ctx.arg("email"));
+    let Some(to) = email
+        .get("to")
+        .and_then(Value::as_str)
+        .or_else(|| text(&record, "email"))
+        .filter(|to| to.contains('@'))
+        .map(str::to_string)
+    else {
+        // lsf's wording, as `draftOrderInvoiceSend`'s "To is invalid".
+        return Ok(payload(
+            json!({"order": null}),
+            &[UserError::new(&["email", "to"], "To is invalid")
+                .code("ORDER_INVOICE_SEND_UNSUCCESSFUL")],
+        ));
+    };
+    let name = text(&record, "name").unwrap_or_default().to_string();
+    let subject = email
+        .get("subject")
+        .and_then(Value::as_str)
+        .map_or_else(|| format!("Invoice for order {name}"), str::to_string);
+    let mut body = format!(
+        "Order {name}: {} {} outstanding.",
+        record
+            .get("totalOutstandingSet")
+            .and_then(|bag| bag.pointer("/shopMoney/amount"))
+            .and_then(Value::as_str)
+            .unwrap_or("0.0"),
+        model::currency(mutation.state())
+    );
+    if let Some(message) = email.get("customMessage").and_then(Value::as_str) {
+        body.push('\n');
+        body.push_str(message);
+    }
+    crate::outbox::send(
+        mutation.state_mut(),
+        &crate::outbox::Email {
+            template: "order_invoice",
+            to: &to,
+            subject,
+            body,
+            resource: Some(&order),
+        },
+    );
     Ok(payload(json!({"order": order}), &[]))
 }
 
@@ -1088,6 +1161,43 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         },
         None => None,
     };
+    // A payment in store credit is the customer's: their account must cover it.
+    let store_credit: i64 = array(&input, "transactions")
+        .iter()
+        .filter(|transaction| {
+            transaction.get("gateway").and_then(Value::as_str) == Some(super::store_credit::GATEWAY)
+                && transaction
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("SALE")
+                    == "SALE"
+                && transaction
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("SUCCESS")
+                    == "SUCCESS"
+        })
+        .map(|transaction| {
+            model::cents(
+                transaction
+                    .get("amountSet")
+                    .and_then(|set| set.get("shopMoney")),
+            )
+        })
+        .sum();
+    if store_credit > 0 {
+        let customer = customer.clone();
+        if !super::store_credit::can_pay(mutation.state(), customer.as_deref(), store_credit) {
+            // Shopify's message for a debit the account cannot cover.
+            errors.push(
+                UserError::new(
+                    &["order", "transactions"],
+                    "The store credit account does not have sufficient funds to satisfy the request",
+                )
+                .code("INVALID"),
+            );
+        }
+    }
     if !errors.is_empty() {
         return failed(&errors);
     }
@@ -1384,6 +1494,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .unwrap_or_default();
     for transaction in made {
         state.emit("order_transactions/create", &transaction);
+        super::payments::emit_tender(state, &transaction);
     }
     for transaction in &transactions {
         let amount = model::cents(
@@ -1400,7 +1511,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .and_then(Value::as_str)
             .unwrap_or("SUCCESS");
         let gateway = transaction.get("gateway").and_then(Value::as_str);
-        let created = model::add_transaction(
+        let created = model::add_transaction_with_status(
             state,
             &order,
             &NewTransaction {
@@ -1411,9 +1522,9 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 manual: gateway.is_none_or(|gateway| gateway == "manual"),
                 test: transaction.get("test").and_then(Value::as_bool) == Some(true) || test,
             },
+            status,
         );
         if let Some(record) = state.get_mut(&created) {
-            record.insert("status".into(), json!(status));
             for (from, to) in [
                 ("authorizationCode", "authorizationCode"),
                 ("processedAt", "processedAt"),
@@ -1422,6 +1533,12 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                     record.insert(to.into(), value.clone());
                 }
             }
+        }
+        if let Some(at) = transaction.get("processedAt").and_then(Value::as_str) {
+            super::payments::set_processed_at(state, &created, at);
+        }
+        if gateway == Some(super::store_credit::GATEWAY) && kind == "SALE" && status == "SUCCESS" {
+            super::store_credit::pay(state, &order, &created, amount);
         }
     }
     if !transactions.is_empty() {
