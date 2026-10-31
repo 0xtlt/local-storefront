@@ -152,9 +152,19 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             "INVALID_PACKAGE_DIMENSIONS",
         );
     }
+    // Without a package, the shop's default one (`shippingPackageMakeDefault`).
+    let default_package = super::delivery::default_package(state);
+    let package_weight = match package {
+        Some(_) => grams(custom.and_then(|custom| custom.get("weight"))),
+        None => grams(
+            default_package
+                .as_ref()
+                .and_then(|package| package.get("weight")),
+        ),
+    };
     let weight = match input.get("totalWeight") {
         Some(given) if !given.is_null() => grams(Some(given)),
-        _ => weight + grams(custom.and_then(|custom| custom.get("weight"))),
+        _ => weight + package_weight,
     };
     if weight <= 0.0 {
         return fail(&at("totalWeight"), "TOTAL_WEIGHT_ZERO");
@@ -235,7 +245,7 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             "trackingNumber": number,
             "weightGrams": weight.round(),
             "shippingDatetime": shipping_date.map(value::date_time),
-            "package": package.cloned().map(Value::Object),
+            "package": package.cloned().map(Value::Object).or(default_package),
         }),
     );
     fulfill(mutation, ctx.schema(), &id, &tracking, notify)?;
