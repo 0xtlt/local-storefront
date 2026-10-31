@@ -340,3 +340,77 @@ fn eventbridge_and_pubsub_subscriptions_are_made_and_their_deliveries_logged_not
         "{log}"
     );
 }
+
+#[test]
+fn the_status_lists_every_mutation_of_the_platform() {
+    let api = api();
+    let status = send(&api, "GET", "/__lsf/admin", None, Value::Null);
+    let status: Value = serde_json::from_slice(&status.body).unwrap();
+    let listed: Vec<&str> = status["mutations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    for mutation in [
+        "appDowngradeAccessScopes",
+        "appRevokeAccessScopes",
+        "appUninstall",
+        "bulkProductResourceFeedbackCreate",
+        "checkoutAndAccountsConfigurationUpdate",
+        "checkoutBrandingUpsert",
+        "delegateAccessTokenCreate",
+        "delegateAccessTokenDestroy",
+        "discountBulkTagsAdd",
+        "discountBulkTagsRemove",
+        "eventBridgeServerPixelUpdate",
+        "eventBridgeWebhookSubscriptionCreate",
+        "eventBridgeWebhookSubscriptionUpdate",
+        "fileAcknowledgeUpdateFailed",
+        "flowTriggerReceive",
+        "fulfillmentConstraintRuleCreate",
+        "fulfillmentConstraintRuleDelete",
+        "fulfillmentConstraintRuleUpdate",
+        "mobilePlatformApplicationCreate",
+        "mobilePlatformApplicationDelete",
+        "mobilePlatformApplicationUpdate",
+        "pubSubServerPixelUpdate",
+        "pubSubWebhookSubscriptionCreate",
+        "pubSubWebhookSubscriptionUpdate",
+        "savedSearchCreate",
+        "savedSearchDelete",
+        "savedSearchUpdate",
+        "scriptTagCreate",
+        "scriptTagDelete",
+        "scriptTagUpdate",
+        "serverPixelCreate",
+        "serverPixelDelete",
+        "shopPolicyUpdate",
+        "shopResourceFeedbackCreate",
+        "stagedUploadTargetGenerate",
+        "stagedUploadTargetsGenerate",
+        "standardMetafieldDefinitionEnable",
+        "standardMetaobjectDefinitionEnable",
+        "storefrontAccessTokenCreate",
+        "storefrontAccessTokenDelete",
+        "themeCreate",
+        "themeDelete",
+        "themeDuplicate",
+        "themeFilesCopy",
+        "themeFilesDelete",
+        "themeFilesUpsert",
+        "themePublish",
+        "themeUpdate",
+        "urlRedirectBulkDeleteAll",
+        "urlRedirectBulkDeleteByIds",
+        "urlRedirectBulkDeleteBySavedSearch",
+        "urlRedirectBulkDeleteBySearch",
+        "urlRedirectImportCreate",
+        "urlRedirectImportSubmit",
+        "webPixelCreate",
+        "webPixelDelete",
+        "webPixelUpdate",
+    ] {
+        assert!(listed.contains(&mutation), "{mutation} is not simulated");
+    }
+}
