@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -21,6 +21,49 @@ struct Entry {
     content: Option<Arc<str>>,
     modified: Option<SystemTime>,
     checked: Instant,
+}
+
+/// Files that are served in place of those of the directory, or on top of them: what the
+/// Admin API wrote into the theme the storefront serves (`themeFilesUpsert` on the local
+/// theme), or the whole of another theme it published. The directory is never written to.
+#[derive(Clone, Debug, Default)]
+pub struct FileOverlay {
+    /// By theme-relative path: the file's content, or `None` for a file deleted from the
+    /// directory's.
+    pub files: HashMap<String, Option<OverlayFile>>,
+    /// Whether the overlay is the whole theme: the directory's files are not served at all.
+    pub exclusive: bool,
+    /// What tells one overlay from the next: a new one is applied when it differs.
+    pub generation: u64,
+}
+
+/// The content of a file of an overlay.
+#[derive(Clone, Debug)]
+pub struct OverlayFile {
+    pub bytes: Arc<[u8]>,
+    /// The content as text when it is UTF-8: what Liquid, JSON and locales are read from. The
+    /// same `Arc` for the life of the overlay, so it doubles as a cache key, as a file's does.
+    pub text: Option<Arc<str>>,
+}
+
+impl OverlayFile {
+    pub fn new(bytes: impl Into<Arc<[u8]>>) -> OverlayFile {
+        let bytes: Arc<[u8]> = bytes.into();
+        let text = std::str::from_utf8(&bytes).ok().map(Arc::from);
+        OverlayFile { bytes, text }
+    }
+}
+
+impl FileOverlay {
+    /// What the overlay says of a path: `Some(Some(file))` it has the file, `Some(None)` the file
+    /// is not there (deleted, or not in an exclusive overlay), `None` the directory says.
+    fn entry(&self, relative: &str) -> Option<Option<&OverlayFile>> {
+        match self.files.get(relative) {
+            Some(file) => Some(file.as_ref()),
+            None if self.exclusive => Some(None),
+            None => None,
+        }
+    }
 }
 
 /// Something read from the file system (a directory listing, whether a file exists), and when.
@@ -51,6 +94,14 @@ pub struct ThemeFiles {
     listings: CheckedCache<Arc<[String]>>,
     existence: CheckedCache<bool>,
     versions: RwLock<HashMap<String, Version>>,
+    /// The files of the Admin API, on top of the directory's ([`ThemeFiles::set_overlay`]).
+    /// `has_overlay` is what a read looks at first: without an overlay, which is the common
+    /// case, a read costs one atomic load more than it did before overlays.
+    overlay: RwLock<Option<Arc<FileOverlay>>>,
+    has_overlay: AtomicBool,
+    /// Nanoseconds after `opened` at which the overlay last changed: what the theme's derived
+    /// values check, even for files read once.
+    overlay_changed: AtomicU64,
 }
 
 impl ThemeFiles {
@@ -64,7 +115,63 @@ impl ThemeFiles {
             listings: RwLock::new(HashMap::new()),
             existence: RwLock::new(HashMap::new()),
             versions: RwLock::new(HashMap::new()),
+            overlay: RwLock::new(None),
+            has_overlay: AtomicBool::new(false),
+            overlay_changed: AtomicU64::new(0),
         }
+    }
+
+    /// Serves `overlay` on top of the directory's files (or instead of them, when it is
+    /// exclusive), until another replaces it; `None` serves the directory alone again. What
+    /// is derived from the files is computed again from then on.
+    pub fn set_overlay(&self, overlay: Option<Arc<FileOverlay>>) {
+        let present = overlay.is_some();
+        if let Ok(mut current) = self.overlay.write() {
+            *current = overlay;
+        }
+        self.has_overlay.store(present, Ordering::Release);
+        let now = self.opened.elapsed().as_nanos() as u64;
+        self.overlay_changed
+            .fetch_max(now.max(1), Ordering::Relaxed);
+        self.expire();
+    }
+
+    /// The overlay served, if any.
+    pub fn overlay(&self) -> Option<Arc<FileOverlay>> {
+        if !self.has_overlay.load(Ordering::Acquire) {
+            return None;
+        }
+        self.overlay.read().ok()?.clone()
+    }
+
+    /// The generation of the overlay served: `0` without one.
+    pub fn overlay_generation(&self) -> u64 {
+        self.overlay().map_or(0, |overlay| overlay.generation)
+    }
+
+    /// Whether the overlay changed after `checked`.
+    pub fn overlay_changed_since(&self, checked: Instant) -> bool {
+        let checked = checked.saturating_duration_since(self.opened).as_nanos() as u64;
+        checked < self.overlay_changed.load(Ordering::Relaxed)
+    }
+
+    /// The bytes of a file: the overlay's, else the directory's. What a file that is not text
+    /// (an image of `assets/`) is served from.
+    pub fn bytes(&self, relative: &str) -> Option<Arc<[u8]>> {
+        if let Some(overlay) = self.overlay()
+            && let Some(entry) = overlay.entry(relative)
+        {
+            return entry.map(|file| file.bytes.clone());
+        }
+        let path = self.resolve(relative)?;
+        std::fs::read(path).ok().map(Arc::from)
+    }
+
+    /// Whether the overlay decides what a path is: the directory's file at it is not served
+    /// (it was written over, deleted, or the overlay is the whole theme).
+    pub fn overlaid(&self, relative: &str) -> bool {
+        self.overlay()
+            .is_some_and(|overlay| overlay.entry(relative).is_some())
     }
 
     pub fn root(&self) -> &Path {
@@ -132,6 +239,12 @@ impl ThemeFiles {
     /// The content of a theme file (`snippets/price.liquid`), or `None` when it does not exist.
     /// The returned `Arc` is stable while the file is unchanged, so it doubles as a cache key.
     pub fn read(&self, relative: &str) -> Option<Arc<str>> {
+        if self.has_overlay.load(Ordering::Acquire)
+            && let Some(overlay) = self.overlay()
+            && let Some(entry) = overlay.entry(relative)
+        {
+            return entry.and_then(|file| file.text.clone());
+        }
         if let Ok(cache) = self.cache.read()
             && let Some(entry) = cache.get(relative)
             && self.is_fresh(entry.checked)
@@ -165,14 +278,55 @@ impl ThemeFiles {
     }
 
     pub fn exists(&self, relative: &str) -> bool {
+        if self.has_overlay.load(Ordering::Acquire)
+            && let Some(overlay) = self.overlay()
+            && let Some(entry) = overlay.entry(relative)
+        {
+            return entry.is_some();
+        }
         let Some(path) = self.resolve(relative) else {
             return false;
         };
         self.checked(&self.existence, relative, || path.is_file())
     }
 
-    /// The file names directly inside a theme directory, sorted.
+    /// The file names directly inside a theme directory, sorted: the overlay's files there, and
+    /// the directory's that it does not delete.
     pub fn list(&self, directory: &str) -> Arc<[String]> {
+        let listed = self.list_directory(directory);
+        let Some(overlay) = self
+            .has_overlay
+            .load(Ordering::Acquire)
+            .then(|| self.overlay())
+            .flatten()
+        else {
+            return listed;
+        };
+        let prefix = format!("{}/", directory.trim_end_matches('/'));
+        let mut names: Vec<String> = if overlay.exclusive {
+            Vec::new()
+        } else {
+            listed.to_vec()
+        };
+        for (path, file) in &overlay.files {
+            let Some(name) = path
+                .strip_prefix(&prefix)
+                .filter(|name| !name.contains('/'))
+            else {
+                continue;
+            };
+            match file {
+                Some(_) if !names.iter().any(|known| known == name) => names.push(name.to_string()),
+                None => names.retain(|known| known != name),
+                _ => {}
+            }
+        }
+        names.sort();
+        names.into()
+    }
+
+    /// The file names directly inside a directory of the theme's directory, sorted.
+    fn list_directory(&self, directory: &str) -> Arc<[String]> {
         let Some(path) = self.resolve(directory) else {
             return Arc::default();
         };
@@ -194,6 +348,12 @@ impl ThemeFiles {
     /// It derives from the content rather than the modification time, so that the same theme
     /// renders the same HTML on every machine.
     pub fn version(&self, relative: &str) -> u64 {
+        if self.has_overlay.load(Ordering::Acquire)
+            && let Some(overlay) = self.overlay()
+            && let Some(entry) = overlay.entry(relative)
+        {
+            return entry.map_or(0, |file| content_version(&file.bytes));
+        }
         let Some(path) = self.resolve(relative) else {
             return 0;
         };
@@ -214,15 +374,7 @@ impl ThemeFiles {
             return cached.version;
         }
         let version = match (modified, std::fs::read(&path)) {
-            (Some(_), Ok(bytes)) => {
-                // FNV-1a over the content, folded into the range of a Unix timestamp.
-                let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-                for byte in &bytes {
-                    hash ^= u64::from(*byte);
-                    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-                }
-                1_600_000_000 + hash % 100_000_000
-            }
+            (Some(_), Ok(bytes)) => content_version(&bytes),
             _ => 0,
         };
         if let Ok(mut versions) = self.versions.write() {
@@ -239,9 +391,66 @@ impl ThemeFiles {
     }
 }
 
+/// The `?v=` of a file: FNV-1a over its content, folded into the range of a Unix timestamp.
+fn content_version(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    1_600_000_000 + hash % 100_000_000
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_overlay_is_read_on_top_of_the_directory_and_never_written_to_it() {
+        let (root, files, _) = changing_theme("overlay", Revalidate::Never);
+        let mut overlay = FileOverlay {
+            generation: 1,
+            ..FileOverlay::default()
+        };
+        overlay.files.insert(
+            "snippets/a.liquid".into(),
+            Some(OverlayFile::new(b"from the admin".to_vec())),
+        );
+        overlay.files.insert(
+            "snippets/c.liquid".into(),
+            Some(OverlayFile::new(b"new".to_vec())),
+        );
+        overlay.files.insert("snippets/b.liquid".into(), None);
+        files.set_overlay(Some(Arc::new(overlay.clone())));
+        assert_eq!(
+            files.read("snippets/a.liquid").as_deref(),
+            Some("from the admin")
+        );
+        assert_eq!(
+            *files.list("snippets"),
+            ["a.liquid".to_string(), "c.liquid".to_string()]
+        );
+        assert!(!files.exists("snippets/b.liquid"));
+        assert_eq!(files.overlay_generation(), 1);
+        // The directory is as it was.
+        assert_eq!(
+            std::fs::read_to_string(root.join("snippets/a.liquid")).unwrap(),
+            "changed"
+        );
+
+        // Exclusive: only the overlay's files are the theme.
+        overlay.exclusive = true;
+        overlay.generation = 2;
+        files.set_overlay(Some(Arc::new(overlay)));
+        assert_eq!(
+            *files.list("snippets"),
+            ["a.liquid".to_string(), "c.liquid".to_string()]
+        );
+        files.set_overlay(None);
+        assert_eq!(files.read("snippets/a.liquid").as_deref(), Some("changed"));
+        assert_eq!(files.overlay_generation(), 0);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     /// A theme directory with one snippet. Then a second snippet appears and the first changes.
     fn changing_theme(name: &str, revalidate: Revalidate) -> (PathBuf, ThemeFiles, u64) {

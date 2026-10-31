@@ -41,7 +41,13 @@ impl Admin {
     /// The Admin API of the store data, for the app in `app_dir` when there is one, with store
     /// sync on: what the backend changes in the default shop is projected onto `store`, the
     /// store of the files.
-    pub fn new(store: &Arc<Store>, settings: &AdminSettings, app_dir: Option<&Path>) -> Admin {
+    /// The theme the server serves is the shops' main theme: its directory is `theme`.
+    pub fn new(
+        store: &Arc<Store>,
+        settings: &AdminSettings,
+        app_dir: Option<&Path>,
+        theme: &Path,
+    ) -> Admin {
         let app = app_dir.and_then(|dir| lsf_checkout::app::load(dir).ok());
         let (secret, secret_source) =
             lsf_admin::auth::client_secret(settings.client_secret.as_deref(), app_dir);
@@ -56,7 +62,8 @@ impl Admin {
                 token_seed: None,
             },
         )
-        .with_versions(settings.versions.clone());
+        .with_versions(settings.versions.clone())
+        .with_theme(theme.to_path_buf());
         api.sync_store(store.clone());
         Admin {
             api,
@@ -100,6 +107,12 @@ impl Admin {
 pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
     let admin = state.admin.as_ref()?;
     let path = incoming.path.as_str();
+    // The association files of the shop's mobile apps (`mobilePlatformApplicationCreate`),
+    // which Shopify serves on the online store's domain; the storefront's 404 without one.
+    if path.starts_with("/.well-known/") || path == "/apple-app-site-association" {
+        let file = admin.api.association_file(path)?;
+        return Some(Reply::new(200, "application/json", file.to_string()));
+    }
     let ours = path.starts_with("/admin/")
         || path == "/__lsf/admin"
         || path.starts_with("/__lsf/admin/")

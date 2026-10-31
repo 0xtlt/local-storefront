@@ -11,6 +11,7 @@ pub mod platform;
 pub mod store_admin;
 pub mod storefront;
 pub mod tags;
+pub mod themes;
 pub mod webhook_subscriptions;
 
 use crate::resolve::Registry;
@@ -27,5 +28,6 @@ pub fn register(registry: &mut Registry) {
     store_admin::register(registry);
     storefront::register(registry);
     tags::register(registry);
+    themes::register(registry);
     webhook_subscriptions::register(registry);
 }

@@ -113,6 +113,9 @@ pub struct AdminApi {
     sync: StoreSync,
     /// The versions of the Admin API it serves ([`AdminApi::with_versions`]).
     versions: Served,
+    /// The directory of the theme the storefront serves: the shops' main theme
+    /// ([`AdminApi::with_theme`]).
+    theme: Option<std::path::PathBuf>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -208,7 +211,29 @@ impl AdminApi {
             scopes,
             sync: StoreSync::default(),
             versions: Served::default(),
+            theme: None,
         }
+    }
+
+    /// The theme the storefront serves is `root`: the main theme of every shop, its files read
+    /// from the directory (`domains::themes`). Called once the API is made, before any request.
+    pub fn with_theme(mut self, root: std::path::PathBuf) -> AdminApi {
+        {
+            let mut seed = lock(&self.seed);
+            seed.amend(|state| crate::domains::themes::attach(state, &root));
+        }
+        for (_, shop) in self.all_shops() {
+            crate::domains::themes::attach(&mut lock(&shop).state, &root);
+        }
+        self.theme = Some(root);
+        self
+    }
+
+    /// What the storefront serves of the default shop's main theme beside the theme directory
+    /// (`domains::themes::storefront_overlay`): `None` for the directory alone.
+    pub fn storefront_overlay(&self) -> Option<lsf_core::theme::FileOverlay> {
+        self.with_default_shop(crate::domains::themes::storefront_overlay)
+            .flatten()
     }
 
     /// Serves these versions of the Admin API (`--admin-versions`), for requests and for the
@@ -375,6 +400,9 @@ impl AdminApi {
         let mut seed = lock(&self.seed);
         let old_default = seed.default_domain().to_string();
         seed.reseed(store, self.app.as_ref());
+        if let Some(root) = &self.theme {
+            seed.amend(|state| crate::domains::themes::attach(state, root));
+        }
         let new_default = seed.default_domain().to_string();
         let mut dropped = Vec::new();
         let mut shops = self

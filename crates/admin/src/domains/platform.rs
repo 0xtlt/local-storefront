@@ -74,7 +74,8 @@ pub fn staff_gid(id: u64) -> String {
 }
 
 /// The records of the app platform: the shop owner as a staff member, the checkout profile and
-/// its configuration, and the app's extensions lsf-checkout does not read (kept as settings).
+/// its configuration, the standard definition templates, the local theme, and the app's
+/// extensions lsf-checkout does not read (kept as settings).
 pub fn seed(seed: &mut Seed) {
     let domain = seed.state.domain().to_string();
     let created = Seed::epoch_string();
@@ -85,6 +86,7 @@ pub fn seed(seed: &mut Seed) {
     ));
     checkout::seed(seed, &created);
     super::store_admin::standard::seed(seed);
+    super::themes::seed(seed);
     if let Some(app) = seed.app {
         let read = extensions::read(&app.root);
         if let Some(pixel) = read.web_pixel {

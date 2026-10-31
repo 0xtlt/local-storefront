@@ -14,6 +14,7 @@ use crate::app::App;
 
 mod store_base;
 mod store_sync;
+mod themes;
 
 fn server() -> ServerState {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");

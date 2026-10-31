@@ -255,7 +255,7 @@ impl ServerState {
                 .checkout
                 .as_ref()
                 .map(|checkout| checkout.app_dir.as_path());
-            admin::Admin::new(&base, settings, app_dir)
+            admin::Admin::new(&base, settings, app_dir, app.theme.files().root())
         });
         let app_proxy = options.admin.as_ref().and_then(|settings| {
             let app_dir = options.checkout.as_ref()?.app_dir.as_path();
@@ -390,8 +390,12 @@ impl ServerState {
     fn change_token(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         hasher.write_u64(self.builds.generation());
-        // What the Admin API changed, once the store has it.
+        // What the Admin API changed, once the store has it, and in the theme.
         hasher.write_u64(self.loaded().synced.generation);
+        hasher.write_u64(self.app.theme.files().overlay_generation());
+        for src in self.app.theme.script_tags().iter() {
+            hasher.write(src.as_bytes());
+        }
         let root = self.app.theme.files().root();
         for directory in THEME_DIRECTORIES {
             hasher.write_u64(fingerprint(&root.join(directory)));
