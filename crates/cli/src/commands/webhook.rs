@@ -10,6 +10,7 @@ use std::time::Duration;
 use chrono::Utc;
 use lsf_admin::api::samples::ShopSamples;
 use lsf_admin::state::ShopState;
+use lsf_admin::version::{ApiVersion, Served};
 use lsf_admin::webhooks::samples::Samples;
 use lsf_admin::webhooks::subscriptions::is_local_http;
 use lsf_admin::webhooks::{
@@ -49,7 +50,9 @@ pub struct TriggerArgs {
     #[arg(long, value_name = "TOPIC")]
     topic: String,
 
-    /// The API version of the payload. lsf builds those of 2026-10 only.
+    /// The API version of the payload sent to `--address`, one this build knows (the default
+    /// one without it). The subscriptions of shopify.app.toml get that of `[webhooks]
+    /// api_version`.
     #[arg(long, value_name = "VERSION", default_value = API_VERSION)]
     api_version: String,
 
@@ -126,21 +129,25 @@ fn trigger(
     previews: &[lsf_core::Preview],
     args: TriggerArgs,
 ) -> Result<ExitCode, String> {
-    let topic = topics::written_form(&args.topic).ok_or_else(|| {
-        let hint = topics::suggestion(&args.topic)
+    let version = ApiVersion::get(&args.api_version).ok_or_else(|| {
+        let known: Vec<&str> = ApiVersion::all().map(ApiVersion::name).collect();
+        format!(
+            "Api Version '{}' is not one lsf builds webhooks for: lsf knows {}",
+            args.api_version,
+            known.join(", ")
+        )
+    })?;
+    let topics = topics::for_version(version);
+    let topic = topics.written_form(&args.topic).ok_or_else(|| {
+        let hint = topics
+            .suggestion(&args.topic)
             .map(|topic| format!(" (did you mean `{topic}`?)"))
             .unwrap_or_default();
         format!(
-            "Topic '{}' does not exist for ApiVersion '{API_VERSION}'{hint}",
+            "Topic '{}' does not exist for ApiVersion '{version}'{hint}",
             args.topic
         )
     })?;
-    if args.api_version != API_VERSION {
-        return Err(format!(
-            "Api Version '{}' is not one lsf builds webhooks for: lsf serves {API_VERSION} only",
-            args.api_version
-        ));
-    }
     if let Some(address) = &args.address {
         check_address(address, args.delivery_method)?;
     }
@@ -174,7 +181,10 @@ fn trigger(
         retry_delays: Vec::new(),
         ..DeliveryOptions::default()
     };
-    let webhooks = Webhooks::for_app(&config, args.app_url.clone(), secret, options);
+    // The payload is built in `--api-version`, as Shopify's CLI sends the sample of that version;
+    // a subscription that asks for another says so in its delivery's notes.
+    let webhooks = Webhooks::for_app(&config, args.app_url.clone(), secret, options)
+        .with_versions(Served::new([version]));
     let shop = samples.shop();
     let ids = webhooks.trigger(&Trigger {
         topic,

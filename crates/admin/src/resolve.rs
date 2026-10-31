@@ -48,6 +48,7 @@ use crate::auth::Grant;
 use crate::graphql::{self, FieldContext, FieldError, Output};
 use crate::schema::{Kind, Schema, TypeRef};
 use crate::state::{Record, ShopState, gid_type, parse_gid};
+use crate::version::{ApiVersion, adapt};
 use crate::webhooks::Webhooks;
 
 pub use mutation::{Mutation, UserError, not_simulated, payload};
@@ -155,8 +156,12 @@ pub struct ShopResolver<'a> {
     grant: Option<&'a Grant>,
     /// The webhooks of the app, for the subscriptions the Admin API reads and writes.
     webhooks: Option<&'a Webhooks>,
-    /// The version of the request: `2026-10`.
-    api_version: &'a str,
+    /// The version of the request: its schema, its access table, its search filters, its
+    /// adapters.
+    version: ApiVersion,
+    /// Adapters a test gives in place of the version's.
+    #[cfg(test)]
+    adapters: Option<&'static [crate::version::Adapter]>,
     /// Where the request reached lsf (`http://127.0.0.1:9292`): the origin of the URLs lsf
     /// answers that point back at itself (a charge's confirmation page, an upload target).
     origin: &'a str,
@@ -178,11 +183,20 @@ impl<'a> ShopResolver<'a> {
             registry,
             grant: None,
             webhooks: None,
-            api_version: crate::version::ADMIN_2026_10,
+            version: ApiVersion::default_version(),
+            #[cfg(test)]
+            adapters: None,
             origin: DEFAULT_ORIGIN,
             bulk: false,
             report: RefCell::new(Report::default()),
         }
+    }
+
+    /// Runs the request in a version of the Admin API: the default one otherwise. Run it with
+    /// the version's schema too (`graphql::run(version.schema(), …)`).
+    pub fn with_version(mut self, version: ApiVersion) -> ShopResolver<'a> {
+        self.version = version;
+        self
     }
 
     /// Says where the request reached lsf: `http://127.0.0.1:9292`.
@@ -240,9 +254,41 @@ impl<'a> ShopResolver<'a> {
         self.webhooks
     }
 
-    /// The API version of the request.
+    /// The API version of the request: `2026-10`.
     pub fn api_version(&self) -> &str {
-        self.api_version
+        self.version.name()
+    }
+
+    /// The version of the request. A field or a mutation only some versions have needs no
+    /// check (the schema of the request refuses it elsewhere); what reads differently is an
+    /// [`crate::version::Adapter`] of the version; what behaves differently asks
+    /// `r.version().since("2027-01")`.
+    pub fn version(&self) -> ApiVersion {
+        self.version
+    }
+
+    /// The schema of the request's version.
+    pub fn schema(&self) -> &'static Schema {
+        crate::schema::for_version(self.version)
+    }
+
+    /// How the request's version reads the records differently ([`crate::version::adapt`]).
+    fn adapters(&self) -> &'static [crate::version::Adapter] {
+        #[cfg(test)]
+        if let Some(adapters) = self.adapters {
+            return adapters;
+        }
+        self.version.adapters()
+    }
+
+    /// Reads through `adapters` rather than the version's: what a test of the adapters runs.
+    #[cfg(test)]
+    pub(crate) fn with_adapters(
+        mut self,
+        adapters: &'static [crate::version::Adapter],
+    ) -> ShopResolver<'a> {
+        self.adapters = Some(adapters);
+        self
     }
 
     /// What the answer's `extensions` get from this request: `search` (Shopify's warnings of
@@ -319,7 +365,7 @@ impl<'a> ShopResolver<'a> {
     pub fn reference(&self, gid: &str, expected: &str) -> Option<Obj> {
         let key = self.lookup(gid)?;
         let type_name = self.state.type_of(&key)?;
-        crate::schema::admin()
+        self.schema()
             .is_possible(expected, type_name)
             .then(|| Obj::record(&key))
     }
@@ -347,7 +393,13 @@ impl<'a> ShopResolver<'a> {
         if let Some(output) = self.live_count(ctx, map) {
             return Ok(output);
         }
-        match map.get(name) {
+        // A field this version shows differently from the records reads through its adapter.
+        let adapted = adapt::field(self.adapters(), ctx.parent_type(), name).map(|read| read(map));
+        let stored = match &adapted {
+            Some(value) => value.as_ref(),
+            None => map.get(name),
+        };
+        match stored {
             Some(Value::Null) if !ctx.ty().is_non_null() => return Ok(Output::Null),
             Some(value) if !value.is_null() => return self.convert(ctx, value, reported),
             _ => {}
@@ -552,7 +604,7 @@ impl<'a> ShopResolver<'a> {
     /// The keys of the records of a type, or of every type of an interface or a union, in
     /// creation order: what a root connection lists.
     pub fn records_of(&self, type_name: &str) -> Vec<Value> {
-        let schema = crate::schema::admin();
+        let schema = self.schema();
         let possible = schema.possible_types(type_name);
         if possible.len() <= 1 {
             let only = possible.first().map_or(type_name, String::as_str);
@@ -930,6 +982,25 @@ impl graphql::Resolver for ShopResolver<'_> {
     }
 
     fn field(&mut self, ctx: &FieldContext<'_>, object: &Obj) -> Result<Output<Obj>, FieldError> {
+        // Arguments this version gives in another shape than the resolvers read.
+        if let Some(write) = adapt::arguments(self.adapters(), ctx.parent_type(), ctx.field_name())
+        {
+            let mut arguments = ctx.arguments().clone();
+            write(&mut arguments);
+            return self.resolve_field(&ctx.with_arguments(&arguments), object);
+        }
+        self.resolve_field(ctx, object)
+    }
+}
+
+impl ShopResolver<'_> {
+    /// A field of an object, its arguments in the shape the resolvers read: access, then a
+    /// mutation, a custom resolver, or the generic rules.
+    fn resolve_field(
+        &mut self,
+        ctx: &FieldContext<'_>,
+        object: &Obj,
+    ) -> Result<Output<Obj>, FieldError> {
         access::check(self, ctx, object)?;
         if let Obj::Mutation = object {
             // An amount past what lsf takes is refused before the mutation runs (`money`).

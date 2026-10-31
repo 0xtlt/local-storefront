@@ -122,6 +122,13 @@ pub struct Args {
         default_value = "store"
     )]
     admin_throttle: String,
+
+    /// The versions of the Admin API served, comma-separated (`2026-10,2027-01`), among those
+    /// this build knows: the default one alone without it. A request for another answers 404;
+    /// one Shopify no longer supports falls forward to the oldest stable version served, as
+    /// Shopify does.
+    #[arg(long, env = "LSF_ADMIN_VERSIONS", value_name = "VERSIONS")]
+    admin_versions: Option<String>,
 }
 
 /// The port used when `--port` is not given.
@@ -216,6 +223,11 @@ pub fn run(
         app_url: args.app_url.clone(),
         throttle: ThrottleSetting::parse(&args.admin_throttle)
             .map_err(|problem| format!("--admin-throttle: {problem}"))?,
+        versions: match &args.admin_versions {
+            Some(list) => lsf_admin::version::Served::parse(list)
+                .map_err(|problem| format!("--admin-versions: {problem}"))?,
+            None => Default::default(),
+        },
     };
     // The app's store data when the theme has none.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());

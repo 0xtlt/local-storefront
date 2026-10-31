@@ -1,5 +1,5 @@
-//! Access scopes, field by field: what [`crate::auth::scopes`] says each field requires, checked
-//! against the scopes of the request's token.
+//! Access scopes, field by field: what [`crate::auth::scopes`] says each field requires in the
+//! request's version, checked against the scopes of the request's token.
 //!
 //! - A root field requires its own `requiredAccess` text, or that of the type it answers
 //!   (`products` → `Product`: "`read_products` access scope.").
@@ -21,18 +21,19 @@ use serde_json::{Map, Value};
 use super::{Obj, ShopResolver};
 use crate::auth::scopes::{self, RequiredAccess, Root};
 use crate::graphql::{FieldContext, FieldError};
+use crate::version::ApiVersion;
 
-/// What fields require, by parent type and field.
-type Requirements = HashMap<(String, String), Arc<Vec<RequiredAccess>>>;
+/// What fields require, by version, parent type and field.
+type Requirements = HashMap<(ApiVersion, String, String), Arc<Vec<RequiredAccess>>>;
 
 /// What each field requires, read from the table the first time the field is asked.
 static REQUIRED: LazyLock<Mutex<Requirements>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// What a field requires.
-fn required(ctx: &FieldContext<'_>) -> Arc<Vec<RequiredAccess>> {
+fn required(version: ApiVersion, ctx: &FieldContext<'_>) -> Arc<Vec<RequiredAccess>> {
     let parent = ctx.parent_type();
     let field = ctx.field_name();
-    let key = (parent.to_string(), field.to_string());
+    let key = (version, parent.to_string(), field.to_string());
     if let Some(found) = REQUIRED
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -41,20 +42,24 @@ fn required(ctx: &FieldContext<'_>) -> Arc<Vec<RequiredAccess>> {
         return found.clone();
     }
     let schema = ctx.schema();
+    let table = scopes::for_version(version);
     let accesses: Vec<RequiredAccess> = if parent == schema.query_type() {
-        scopes::required_access(Root::Query, field)
+        table
+            .required_access(Root::Query, field)
             .into_iter()
             .collect()
     } else if Some(parent) == schema.mutation_type() {
-        scopes::required_access(Root::Mutation, field)
+        table
+            .required_access(Root::Mutation, field)
             .into_iter()
             .collect()
     } else {
         let named = ctx.ty().named();
         let answered = schema.connection_node(named).unwrap_or(named);
-        scopes::field_access(parent, field, Root::Query)
+        table
+            .field_access(parent, field, Root::Query)
             .into_iter()
-            .chain(scopes::type_access(answered, Root::Query))
+            .chain(table.type_access(answered, Root::Query))
             .collect()
     };
     let accesses = Arc::new(accesses);
@@ -74,7 +79,10 @@ pub(super) fn check(
     let Some(grant) = resolver.grant else {
         return Ok(());
     };
-    match required(ctx).iter().find(|access| !grant.allows(access)) {
+    match required(resolver.version(), ctx)
+        .iter()
+        .find(|access| !grant.allows(access))
+    {
         Some(access) => Err(denied(access, ctx.field_name())),
         None => Ok(()),
     }
@@ -89,7 +97,8 @@ pub(super) fn check_record(
     let Some(grant) = resolver.grant else {
         return Ok(());
     };
-    match scopes::type_access(resolver.type_of(object), Root::Query) {
+    match scopes::for_version(resolver.version()).type_access(resolver.type_of(object), Root::Query)
+    {
         Some(access) if !grant.allows(&access) => Err(denied(&access, field)),
         _ => Ok(()),
     }

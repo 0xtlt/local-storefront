@@ -1,18 +1,20 @@
 //! Introspection answers graphql-js's `getIntrospectionQuery()` (with descriptions,
 //! `specifiedByURL`, `isOneOf`, `isRepeatable` and the deprecation of input values, as GraphiQL
-//! and graphql-codegen send it) as Shopify does: the answer is compared with Shopify's own
-//! introspection, from the pinned @shopify/dev-mcp (`tests/fixtures/2026-10/introspection.json`,
-//! a few types, written by `tools/admin/admin_schema.mjs`).
+//! and graphql-codegen send it) as Shopify does, in every version lsf knows: the answer is
+//! compared with Shopify's own introspection of the version, from the pinned @shopify/dev-mcp
+//! (`tests/fixtures/<version>/introspection.json`, a few types, written by
+//! `tools/admin/admin_schema.mjs --version <version>`).
 //!
-//! The whole schema can be compared too:
+//! The whole schema of the default version can be compared too:
 //!
 //! ```text
-//! node tools/admin/admin_schema.mjs --introspection /tmp/admin-2026-10.json
-//! LSF_ADMIN_INTROSPECTION=/tmp/admin-2026-10.json cargo test -p lsf-admin --test introspection
+//! node tools/admin/admin_schema.mjs --introspection /tmp/admin.json
+//! LSF_ADMIN_INTROSPECTION=/tmp/admin.json cargo test -p lsf-admin --test introspection
 //! ```
 
 use lsf_admin::graphql::{self, FieldContext, FieldError, Output, Request, Resolver};
-use lsf_admin::schema::admin;
+use lsf_admin::schema::{Schema, admin};
+use lsf_admin::version::ApiVersion;
 use serde_json::{Value, json};
 
 /// graphql-js 16's `getIntrospectionQuery({descriptions, specifiedByUrl, directiveIsRepeatable,
@@ -123,8 +125,12 @@ impl Resolver for Nothing {
 }
 
 fn introspect() -> Value {
+    introspect_in(admin())
+}
+
+fn introspect_in(schema: &Schema) -> Value {
     let answer = graphql::run(
-        admin(),
+        schema,
         &mut Nothing,
         &Request::new(INTROSPECTION_QUERY),
         None,
@@ -189,16 +195,25 @@ fn compare_type(expected: &Value, actual: Option<&Value>, known: &[&str]) {
 
 #[test]
 fn answers_the_introspection_query_as_shopify() {
-    let fixture: Value =
-        serde_json::from_str(include_str!("fixtures/2026-10/introspection.json")).unwrap();
-    let schema = introspect();
+    assert_eq!(introspect()["types"].as_array().unwrap().len(), 3699);
+    for version in ApiVersion::all() {
+        answers_the_introspection_query_of(version);
+    }
+}
+
+fn answers_the_introspection_query_of(version: ApiVersion) {
+    let path = format!(
+        "{}/tests/fixtures/{version}/introspection.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let schema = introspect_in(version.schema());
     assert_eq!(schema["description"], Value::Null);
     assert_eq!(schema["queryType"], fixture["queryType"]);
     assert_eq!(schema["mutationType"], fixture["mutationType"]);
     assert_eq!(schema["subscriptionType"], Value::Null);
-    assert_eq!(schema["directives"], fixture["directives"]);
+    assert_eq!(schema["directives"], fixture["directives"], "{version}");
     let types = schema["types"].as_array().unwrap();
-    assert_eq!(types.len(), 3699);
     let known: Vec<&str> = types.iter().filter_map(|t| t["name"].as_str()).collect();
     let find = |name: &str| types.iter().find(|t| t["name"] == name);
     for expected in fixture["types"].as_array().unwrap() {

@@ -15,25 +15,18 @@
 // It also writes crates/admin/tests/fixtures/<version>/introspection.json: a few types of the
 // introspection as Shopify answers it, which the tests compare lsf's introspection with.
 //
-// Source: the npm package @shopify/dev-mcp (ISC, Shopify), pinned below, as for the Function
-// schemas of lsf-checkout (tools/checkout/function_schemas.mjs). It ships the introspection of the
-// Admin API of each release (`dist/data/admin_<version>.json.gz`). The tarball is checked against
-// the pinned SHA-256, so the result is reproducible. Needs network access and `npm`.
+// Source: the introspection of the version (tools/admin/source.mjs): the pinned @shopify/dev-mcp,
+// or shopify.dev's public proxy for a version the package does not ship.
 //
+// `--version <v>` writes the files of another version (default: lsf-admin's default version).
 // `--introspection <file>` also writes the whole introspection, in the shape of the fixture, to
 // <file>: `LSF_ADMIN_INTROSPECTION=<file> cargo test -p lsf-admin --test introspection` then
 // compares every type of it with what lsf answers.
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { brotliCompressSync, constants, gunzipSync } from "node:zlib";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { brotliCompressSync, constants } from "node:zlib";
 
-const PACKAGE = "@shopify/dev-mcp@1.17.0";
-const SHA256 = "f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a";
-const VERSION = "2026-10";
+import { PACKAGE, introspection, isMain, root, versionArg } from "./source.mjs";
 
 // The types the fixture keeps whole, and the root fields it keeps (the roots are too large).
 const FIXTURE_TYPES = [
@@ -65,29 +58,12 @@ const FIXTURE_FIELDS = {
   Mutation: ["productCreate", "productSet", "metafieldsSet"],
 };
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const out = join(root, "crates/admin/schemas", VERSION);
-const fixtures = join(root, "crates/admin/tests/fixtures", VERSION);
-const introspectionArg = process.argv.indexOf("--introspection");
-const introspectionOut = introspectionArg > 0 ? resolve(process.argv[introspectionArg + 1]) : null;
-
-const work = mkdtempSync(join(tmpdir(), "lsf-admin-schema-"));
-try {
-  execFileSync("npm", ["pack", PACKAGE, "--silent", "--pack-destination", work], {
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  const tarballs = readdirSync(work);
-  if (tarballs.length !== 1) throw new Error(`expected one tarball in ${work}, got ${tarballs}`);
-  const tarball = join(work, tarballs[0]);
-  const sha = createHash("sha256").update(readFileSync(tarball)).digest("hex");
-  if (sha !== SHA256) throw new Error(`${PACKAGE}: SHA-256 is ${sha}, expected ${SHA256}`);
-  const unpacked = join(work, "unpacked");
-  mkdirSync(unpacked);
-  execFileSync("tar", ["xzf", tarball, "-C", unpacked]);
-
-  const path = join(unpacked, "package/dist/data", `admin_${VERSION}.json.gz`);
-  const schema = JSON.parse(gunzipSync(readFileSync(path))).data.__schema;
-  const header = `# Shopify GraphQL Admin API ${VERSION}, from the introspection of ${PACKAGE}, by tools/admin/admin_schema.mjs: do not edit.`;
+/** Writes the schema files of `version` from its introspection. */
+export function generate(version, { schema, source, pinned }, introspectionOut = null) {
+  const out = join(root, "crates/admin/schemas", version);
+  const fixtures = join(root, "crates/admin/tests/fixtures", version);
+  const origin = pinned ? PACKAGE : source;
+  const header = `# Shopify GraphQL Admin API ${version}, from the introspection of ${origin}, by tools/admin/admin_schema.mjs: do not edit.`;
 
   mkdirSync(out, { recursive: true });
   const sdl = Buffer.from(`${header}\n\n${printSchema(schema)}`);
@@ -102,11 +78,19 @@ try {
   writeFileSync(join(out, "introspection.graphql"), `${header}\n\n${meta.map(printType).join("\n")}`);
 
   mkdirSync(fixtures, { recursive: true });
-  writeFileSync(join(fixtures, "introspection.json"), `${JSON.stringify(fixture(schema), null, 1)}\n`);
+  const fixtureSource = pinned
+    ? `${PACKAGE} dist/data/admin_${version}.json.gz, by tools/admin/admin_schema.mjs`
+    : `${source}, by tools/admin/admin_schema.mjs`;
+  writeFileSync(join(fixtures, "introspection.json"), `${JSON.stringify(fixture(schema, fixtureSource), null, 1)}\n`);
   if (introspectionOut) writeFileSync(introspectionOut, JSON.stringify(standard(schema)));
-  console.log(`${VERSION}: ${schema.types.length} types, ${schema.directives.length} directives`);
-} finally {
-  rmSync(work, { recursive: true, force: true });
+  console.log(`${version}: ${schema.types.length} types, ${schema.directives.length} directives`);
+}
+
+if (isMain(import.meta.url)) {
+  const version = versionArg();
+  const introspectionArg = process.argv.indexOf("--introspection");
+  const introspectionOut = introspectionArg > 0 ? resolve(process.argv[introspectionArg + 1]) : null;
+  generate(version, await introspection(version), introspectionOut);
 }
 
 // ---- SDL ----
@@ -220,14 +204,14 @@ function description(text, indent) {
 
 // ---- the fixture: the introspection as graphql-js's `getIntrospectionQuery()` asks for it ----
 
-function fixture(schema) {
+function fixture(schema, source) {
   const byName = new Map(schema.types.map((type) => [type.name, type]));
   const roots = Object.entries(FIXTURE_FIELDS).map(([name, fields]) => {
     const type = standardType(byName.get(name));
     return { ...type, fields: type.fields.filter((field) => fields.includes(field.name)) };
   });
   return {
-    source: `${PACKAGE} dist/data/admin_${VERSION}.json.gz, by tools/admin/admin_schema.mjs`,
+    source,
     queryType: schema.queryType,
     mutationType: schema.mutationType,
     subscriptionType: schema.subscriptionType,

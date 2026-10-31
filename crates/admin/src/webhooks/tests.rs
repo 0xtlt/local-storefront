@@ -439,6 +439,27 @@ fn a_wait_ends_at_its_timeout_and_says_so() {
 }
 
 #[test]
+fn a_topic_the_version_of_the_subscription_does_not_have_is_not_sent() {
+    let webhooks = webhooks(
+        vec![subscription(
+            &["pages/create"],
+            "https://example.invalid/hooks",
+        )],
+        "http://127.0.0.1:1",
+        options(),
+    );
+    webhooks.emit(&event("pages/create", "gid://shopify/Page/1"), &lookup());
+    let delivery = &webhooks.deliveries().list(&DeliveryFilter::default())[0];
+    assert_eq!(delivery.state, DeliveryState::NotSent);
+    assert_eq!(
+        delivery.reason.as_deref(),
+        Some(
+            format!("`pages/create` is not a webhook topic of API version {API_VERSION}").as_str()
+        )
+    );
+}
+
+#[test]
 fn what_cannot_be_sent_is_logged_with_why() {
     let backend = Backend::start(|_| (200, Duration::ZERO));
     let webhooks = webhooks(

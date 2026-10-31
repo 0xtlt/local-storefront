@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
 use lsf_admin::auth::SecretSource;
+use lsf_admin::version::Served;
 use lsf_admin::webhooks::DeliveryOptions;
 use lsf_core::Store;
 
@@ -24,6 +25,9 @@ pub struct AdminSettings {
     pub app_url: Option<String>,
     /// `--admin-throttle`.
     pub throttle: ThrottleSetting,
+    /// `--admin-versions` (`LSF_ADMIN_VERSIONS`): the versions of the Admin API served, the
+    /// default one alone unless told others.
+    pub versions: Served,
 }
 
 /// The Admin API of a server, and where its client secret came from.
@@ -51,7 +55,8 @@ impl Admin {
                 delivery: DeliveryOptions::default(),
                 token_seed: None,
             },
-        );
+        )
+        .with_versions(settings.versions.clone());
         api.sync_store(store.clone());
         Admin {
             api,
@@ -63,16 +68,23 @@ impl Admin {
     /// What the server prints of its Admin API when it starts, under `ready:`.
     pub fn banner(&self, origin: &str) -> Vec<String> {
         let shop = self.api.default_shop();
-        let mut lines = vec![
-            format!(
-                "admin:  {origin}/admin/api/{}/graphql.json",
-                lsf_admin::version::ADMIN_2026_10
-            ),
-            format!(
-                "        X-Shopify-Access-Token: {}   (shop: {shop})",
-                self.api.token(&shop)
-            ),
-        ];
+        let mut lines = vec![format!("admin:  {origin}{}", self.api.graphql_path())];
+        let primary = self.api.versions().primary();
+        let others: Vec<String> = self
+            .api
+            .versions()
+            .all()
+            .iter()
+            .filter(|version| **version != primary)
+            .map(|version| format!("{version} ({})", version.status().as_str()))
+            .collect();
+        if !others.is_empty() {
+            lines.push(format!("        also API version {}", others.join(", ")));
+        }
+        lines.push(format!(
+            "        X-Shopify-Access-Token: {}   (shop: {shop})",
+            self.api.token(&shop)
+        ));
         if self.secret_source == SecretSource::Default {
             lines.push(format!(
                 "        client secret: {}   (lsf's own: give --client-secret, or SHOPIFY_API_SECRET in the app's .env)",

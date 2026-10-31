@@ -59,11 +59,8 @@ fn titles(page: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_registry_names_only_what_the_schema_has() {
-    assert_eq!(
-        Registry::standard().check(crate::schema::admin()),
-        Vec::<String>::new()
-    );
+fn the_registry_names_only_what_a_version_has() {
+    assert_eq!(Registry::standard().check_versions(), Vec::<String>::new());
 }
 
 #[test]
@@ -738,4 +735,62 @@ fn a_cursor_of_another_sort_key_or_another_connection_falls_back_to_its_place() 
         "{ products(first: 1, after: \"bm90IGEgY3Vyc29y\") { nodes { id } } }",
     );
     assert_eq!(malformed["errors"][0]["message"], json!("Malformed cursor"));
+}
+
+/// The title a test adapter gives `productCreate`, and the one it reads `Product.title` as.
+fn shouted(arguments: &mut serde_json::Map<String, Value>) {
+    if let Some(Value::String(title)) = arguments
+        .get_mut("product")
+        .and_then(|product| product.get_mut("title"))
+    {
+        *title = title.to_uppercase();
+    }
+}
+
+fn whispered(product: &crate::state::Record) -> Option<Value> {
+    let title = product.get("title")?.as_str()?;
+    Some(json!(title.to_lowercase()))
+}
+
+/// What a version that gave `productCreate` its title in another shape, and read `Product.title`
+/// differently, would declare.
+static ADAPTERS: &[crate::version::Adapter] = &[
+    crate::version::Adapter::Arguments {
+        type_name: "Mutation",
+        field: "productCreate",
+        write: shouted,
+    },
+    crate::version::Adapter::Field {
+        type_name: "Product",
+        field: "title",
+        read: whispered,
+    },
+];
+
+#[test]
+fn a_version_adapts_the_arguments_it_is_given_and_the_fields_it_reads() {
+    let mut shop = demo();
+    let mut resolver = ShopResolver::new(&mut shop, Registry::standard()).with_adapters(ADAPTERS);
+    let answer = graphql::run(
+        crate::schema::admin(),
+        &mut resolver,
+        &Request::new(
+            "mutation { productCreate(product: {title: \"Rain Jacket\"}) {
+                product { id title handle } userErrors { message } } }",
+        ),
+        None,
+    )
+    .to_json();
+    let product = &answer["data"]["productCreate"]["product"];
+    // The mutation got the adapted title, and the field reads through the adapter.
+    assert_eq!(product["handle"], json!("rain-jacket"), "{answer}");
+    assert_eq!(product["title"], json!("rain jacket"));
+    let gid = product["id"].as_str().unwrap().to_string();
+    assert_eq!(shop.get(&gid).unwrap()["title"], json!("RAIN JACKET"));
+    // Without the adapters (the default version), the record reads as it is kept.
+    let read = run(
+        &mut shop,
+        &format!("{{ product(id: \"{gid}\") {{ title }} }}"),
+    );
+    assert_eq!(read["data"]["product"]["title"], json!("RAIN JACKET"));
 }

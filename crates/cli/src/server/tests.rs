@@ -8285,6 +8285,56 @@ fn admin_server() -> ServerState {
     state
 }
 
+#[test]
+fn the_admin_api_serves_the_versions_it_is_told() {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            admin: Some(super::admin::AdminSettings {
+                versions: lsf_admin::version::Served::parse("2026-10,2027-01").unwrap(),
+                ..Default::default()
+            }),
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+            checkout: None,
+        },
+    );
+    let query = json!({"query": "{ shop { name } }"}).to_string();
+    for version in ["2026-10", "2027-01"] {
+        let reply = admin_request(
+            &state,
+            "POST",
+            &format!("/admin/api/{version}/graphql.json"),
+            &query,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        assert_eq!(header(&reply, "x-shopify-api-version"), Some(version));
+    }
+    let admin = state.admin.as_ref().unwrap();
+    let banner = admin.banner("http://127.0.0.1:9292");
+    assert_eq!(
+        banner[0],
+        "admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json"
+    );
+    assert_eq!(
+        banner[1],
+        "        also API version 2027-01 (release candidate)"
+    );
+    // Without the option, the release candidate is not served.
+    let default = admin_server();
+    let reply = admin_request(&default, "POST", "/admin/api/2027-01/graphql.json", &query);
+    assert_eq!(reply.status, 404);
+    assert!(text(&reply).contains("--admin-versions 2026-10,2027-01"));
+}
+
 /// A request to the Admin API with a raw body, as a backend sends it.
 fn admin_request(state: &ServerState, method: &str, path: &str, body: &str) -> Reply {
     let admin = state

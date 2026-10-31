@@ -276,7 +276,7 @@ fn what_cannot_be_sent_is_refused_with_why() {
             &["--topic", "orders/create", "--api-version", "2026-07"],
         ]
         .concat(),
-        "2026-10 only",
+        "is not one lsf builds webhooks for: lsf knows 2026-10",
     );
     refuse(
         &[&base[..], &["--topic", "carts/create"]].concat(),

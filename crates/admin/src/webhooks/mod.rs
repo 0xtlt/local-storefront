@@ -16,7 +16,6 @@ pub mod samples;
 pub mod sign;
 pub mod subscriptions;
 pub mod topics;
-mod topics_2026_10;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -36,6 +35,7 @@ pub use subscriptions::{
 pub use topics::Topic;
 
 use crate::state::{Event, Record};
+use crate::version::{ApiVersion, Served, adapt};
 use delivery::SubscriptionRef;
 use sign::HeaderValues;
 
@@ -80,6 +80,8 @@ pub struct Webhooks {
     registry: Mutex<Registry>,
     filter: Option<Arc<dyn PayloadFilter>>,
     deliveries: Deliveries,
+    /// The versions payloads are built in: those the server serves.
+    versions: Served,
 }
 
 /// A webhook sent on demand: `lsf app webhook trigger`, `POST /__lsf/webhooks/trigger`.
@@ -108,6 +110,7 @@ impl Webhooks {
             registry: Mutex::new(Registry::new()),
             filter: None,
             deliveries: Deliveries::new(settings.delivery),
+            versions: Served::default(),
         }
     }
 
@@ -136,6 +139,24 @@ impl Webhooks {
     pub fn with_filter(mut self, filter: Arc<dyn PayloadFilter>) -> Webhooks {
         self.filter = Some(filter);
         self
+    }
+
+    /// Builds the payloads in the versions a server serves: a subscription's own when it is one
+    /// of them, else as [`Served::for_webhook`] says. [`Served::default`] otherwise.
+    pub fn with_versions(mut self, versions: Served) -> Webhooks {
+        self.versions = versions;
+        self
+    }
+
+    /// The versions payloads are built in.
+    pub fn versions(&self) -> &Served {
+        &self.versions
+    }
+
+    /// The version a delivery of `subscription` is built in, and what to say when it is not the
+    /// one the subscription asks for.
+    pub fn version_of(&self, subscription: &Subscription) -> (ApiVersion, Option<String>) {
+        self.versions.for_webhook(&subscription.api_version)
     }
 
     pub fn urls(&self) -> &AppUrls {
@@ -253,7 +274,9 @@ impl Webhooks {
                 metafield_namespaces: Vec::new(),
                 metafields: Vec::new(),
                 format: subscriptions::Format::Json,
-                api_version: API_VERSION.to_string(),
+                // Built in the server's primary version: `lsf app webhook trigger --api-version`
+                // serves the version asked for.
+                api_version: self.versions.primary().name().to_string(),
                 created_at: trigger.at,
                 updated_at: trigger.at,
             };
@@ -317,12 +340,8 @@ impl Webhooks {
         payload: Result<&Value, &String>,
     ) -> u64 {
         let mut notes = Vec::new();
-        if subscription.api_version != API_VERSION {
-            notes.push(format!(
-                "the subscription asks for API version {}: lsf builds the payloads of {API_VERSION} only",
-                subscription.api_version
-            ));
-        }
+        let (version, note) = self.version_of(subscription);
+        notes.extend(note);
         let destination = resolve_uri(&subscription.uri, &self.urls);
         let url = match &destination {
             Destination::Http { url } => Some(url.clone()),
@@ -336,11 +355,18 @@ impl Webhooks {
             shop: shop.to_string(),
             subscription: reference.clone(),
             url: url.clone(),
-            api_version: API_VERSION.to_string(),
+            api_version: version.name().to_string(),
             triggered_at: at,
             request,
             notes,
         };
+        let topics = topics::for_version(version);
+        if !subscription.is_compliance() && !topics.has(topic) {
+            return self.deliveries.not_sent(
+                delivery(None, notes),
+                format!("`{topic}` is not a webhook topic of API version {version}"),
+            );
+        }
         let payload = match payload {
             Ok(payload) => payload,
             Err(reason) => {
@@ -348,6 +374,15 @@ impl Webhooks {
                     .deliveries
                     .not_sent(delivery(None, notes), reason.clone());
             }
+        };
+        // The builders write the payload of the records' version; this version's adapters give
+        // its own.
+        let adapted;
+        let payload = if adapt::adapts_payload(version.adapters(), topic) {
+            adapted = adapt::payload(version.adapters(), topic, payload);
+            &adapted
+        } else {
+            payload
         };
         if subscription.format == subscriptions::Format::Xml {
             return self.deliveries.not_sent(
@@ -381,7 +416,7 @@ impl Webhooks {
             &HeaderValues {
                 topic,
                 shop,
-                api_version: API_VERSION,
+                api_version: version.name(),
                 webhook_id: &webhook_id,
                 event_id,
                 triggered_at: at,

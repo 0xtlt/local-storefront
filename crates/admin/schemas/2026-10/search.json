@@ -154,6 +154,7 @@
     ["email", "string"],
     ["id", "id"],
     ["location_name", "string"],
+    ["name", "string"],
     ["role_name", "string"],
     ["status", "string"],
     ["updated_at", "time"]
@@ -183,6 +184,7 @@
     ["id", "id"],
     ["ids", "string"],
     ["metafields.{namespace}.{key}", "mixed"],
+    ["name", "string"],
     ["updated_at", "time"]
    ],
    "metafieldDefinitions": [
@@ -281,6 +283,7 @@
     ["id", "id"],
     ["ids", "string"],
     ["metafields.{namespace}.{key}", "mixed"],
+    ["name", "string"],
     ["updated_at", "time"]
    ]
   },
@@ -376,6 +379,7 @@
     ["id", "id"],
     ["legacy", "boolean"],
     ["location_id", "id"],
+    ["name", "string"],
     ["pickup_in_store", "string"],
     ["province", "string"],
     ["zip", "string"]
@@ -527,6 +531,7 @@
     ["id", "id"],
     ["legacy", "boolean"],
     ["location_id", "id"],
+    ["name", "string"],
     ["pickup_in_store", "string"],
     ["province", "string"],
     ["zip", "string"]
@@ -665,6 +670,7 @@
     ["id", "id"],
     ["market_condition_types", "string"],
     ["market_type", "string"],
+    ["name", "string"],
     ["status", "string"],
     ["wildcard_company_location_with_country_code", "string"]
    ]
@@ -1185,6 +1191,7 @@
     ["external_id", "id"],
     ["id", "id"],
     ["metafields.{namespace}.{key}", "mixed"],
+    ["name", "string"],
     ["ordering_status", "string"],
     ["since_date", "time"],
     ["updated_at", "time"]
@@ -1197,11 +1204,13 @@
     ["id", "id"],
     ["ids", "string"],
     ["metafields.{namespace}.{key}", "mixed"],
+    ["name", "string"],
     ["updated_at", "time"]
    ],
    "customerSavedSearches": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["name", "string"]
    ],
    "customers": [
     ["default", "string"],
@@ -1424,6 +1433,7 @@
     ["id", "id"],
     ["legacy", "boolean"],
     ["location_id", "id"],
+    ["name", "string"],
     ["pickup_in_store", "string"],
     ["province", "string"],
     ["zip", "string"]
@@ -1440,6 +1450,7 @@
     ["id", "id"],
     ["legacy", "boolean"],
     ["location_id", "id"],
+    ["name", "string"],
     ["pickup_in_store", "string"],
     ["province", "string"],
     ["zip", "string"]
@@ -1469,6 +1480,7 @@
     ["id", "id"],
     ["market_condition_types", "string"],
     ["market_type", "string"],
+    ["name", "string"],
     ["status", "string"],
     ["wildcard_company_location_with_country_code", "string"]
    ],
@@ -1720,12 +1732,14 @@
    "returnReasonDefinitions": [
     ["default", "string"],
     ["deleted", "boolean"],
-    ["id", "id"]
+    ["id", "id"],
+    ["name", "string"]
    ],
    "rollouts": [
     ["default", "string"],
     ["change_type", "string"],
     ["id", "id"],
+    ["name", "string"],
     ["status", "string"]
    ],
    "scriptTags": [
@@ -1736,7 +1750,8 @@
    ],
    "segments": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["name", "string"]
    ],
    "sellingPlanGroups": [
     ["default", "string"],
@@ -1745,6 +1760,7 @@
     ["created_at", "time"],
     ["delivery_frequency", "string"],
     ["id", "id"],
+    ["name", "string"],
     ["percentage_off", "float"]
    ],
    "shopPayPaymentRequestReceipts": [
@@ -1895,6 +1911,7 @@
     ["id", "id"],
     ["legacy", "boolean"],
     ["location_id", "id"],
+    ["name", "string"],
     ["pickup_in_store", "string"],
     ["province", "string"],
     ["zip", "string"]

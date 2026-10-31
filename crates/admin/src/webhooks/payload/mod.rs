@@ -3,8 +3,10 @@
 //! prices as strings with two decimals, enums in lowercase, tags as one comma-separated string.
 //! Each builder turns a record, in the shape of its GraphQL type (see "The state of a shop" in
 //! `crates/admin/docs/design.md`), into that representation, in the key order of the example
-//! payload of the topic in Shopify's webhook reference for API 2026-10
-//! (<https://shopify.dev/docs/api/webhooks/2026-10>).
+//! payload of the topic in Shopify's webhook reference of the records' version
+//! ([`crate::version::DEFAULT`]: <https://shopify.dev/docs/api/webhooks/2026-10>). A version whose
+//! payload of a topic differs says how in its adapters (`crate::version::Adapter::Payload`),
+//! applied when a delivery is built in it.
 //!
 //! The builders read the state through a [`Lookup`] only: the records a record refers to by GID
 //! (the variants of a product, the line items of an order) and the shop. A reference may also be

@@ -53,6 +53,7 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens (`http://localhost:3000`). The webhooks of `shopify.app.toml` go there (a relative `uri` is joined to it; an absolute one on the origin of `application_url` is moved to it), and so do the OAuth redirects and the launch of the embedded app. Without it, `application_url`. See [Admin API](admin.md). |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret webhooks, OAuth and session tokens are signed with. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else `lsf-local-client-secret`, printed at start. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket of the Admin API, per shop and app: `store` (the default: Plus for store data with companies, Standard otherwise), `standard` (2000 points, 100 a second), `advanced` (4000, 200), `plus` (20000, 1000), `enterprise` (40000, 2000), `legacy` (1000, 50), or `off`. |
+| `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The versions of the Admin API served, comma-separated, among those lsf knows: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. Another version answers `404`; one Shopify no longer supports is answered by the oldest stable version served, as Shopify does. See [API versions](admin.md#api-versions). |
 
 When it is ready, the server prints a line to stderr that starts with
 `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. It runs
@@ -230,9 +231,9 @@ a `shopify app dev` that is not running. As Shopify's, a triggered webhook is no
 
 | Option | Environment variable | What it does |
 |---|---|---|
-| `--topic <topic>` | | The topic, as Shopify writes it (`orders/create`) or as the GraphQL enum does (`ORDERS_CREATE`). Every topic of API 2026-10 and the compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`). A topic close to an existing one is suggested. |
+| `--topic <topic>` | | The topic, as Shopify writes it (`orders/create`) or as the GraphQL enum does (`ORDERS_CREATE`). Every topic of the API version (`--api-version`) and the compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`). A topic close to an existing one is suggested. |
 | `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine). |
-| `--api-version <version>` | | `2026-10`, the default and the only version lsf builds. |
+| `--api-version <version>` | | The version the payload is built in: `2026-10` (the default) or another lsf knows (`2027-01`). A topic the version does not have is refused. |
 | `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |
 | `--app <dir>`, `--path <dir>` | `LSF_APP` | The app. Defaults to the app the current folder is in; may be left out with `--address`. |

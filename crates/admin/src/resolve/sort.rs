@@ -164,7 +164,8 @@ pub(super) fn sort(
     let field = camel_case(&key.to_ascii_lowercase());
     let readable = custom.is_some()
         || matches!(key.as_str(), "ID" | "RELEVANCE")
-        || crate::schema::admin()
+        || ctx
+            .schema()
             .get(node_type)
             .is_some_and(|def| def.fields.contains_key(&field))
         || items.iter().any(|item| {

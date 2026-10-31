@@ -16,19 +16,28 @@ use std::sync::OnceLock;
 use indexmap::IndexMap;
 use serde_json::Value;
 
-/// The SDL of 2026-10, Brotli-compressed by `tools/admin/admin_schema.mjs` (its 4 MB take
-/// 0.4 MB of the binary, and are read back in about 5 ms).
-const ADMIN_2026_10: &[u8] = include_bytes!("../../schemas/2026-10/admin.graphql.br");
-/// The introspection types of 2026-10 (`__Schema`, `__Type`, ...), as Shopify defines them.
-const INTROSPECTION_2026_10: &str = include_str!("../../schemas/2026-10/introspection.graphql");
+use crate::version::{self, ApiVersion};
 
-/// The schema of the Admin API 2026-10, parsed the first time it is asked for.
-pub fn admin() -> &'static Schema {
-    static SCHEMA: OnceLock<Schema> = OnceLock::new();
-    SCHEMA.get_or_init(|| {
-        let sdl = decompress(ADMIN_2026_10);
-        Schema::parse(&sdl, INTROSPECTION_2026_10).expect("the Admin schema of lsf parses")
+/// The schema of a version of the Admin API, parsed the first time a request of the version asks
+/// for it: from `schemas/<version>/admin.graphql.br`, the SDL Brotli-compressed by
+/// `tools/admin/admin_schema.mjs` (its 4 MB take 0.4 MB of the binary, and are read back in
+/// about 5 ms), and `introspection.graphql`. Validation, execution, introspection and cost of a
+/// request use the schema of its version.
+pub fn for_version(version: ApiVersion) -> &'static Schema {
+    static PARSED: [OnceLock<Schema>; version::COUNT] = [const { OnceLock::new() }; version::COUNT];
+    PARSED[version.index()].get_or_init(|| {
+        let files = version.files();
+        let sdl = decompress(files.schema);
+        Schema::parse(&sdl, files.introspection)
+            .unwrap_or_else(|error| panic!("the Admin schema {version} of lsf parses: {error}"))
     })
+}
+
+/// The schema of the default version ([`crate::version::DEFAULT`]): what code that does not know
+/// the version of its request uses. A resolver uses the schema of its request
+/// (`ShopResolver::schema`, `FieldContext::schema`).
+pub fn admin() -> &'static Schema {
+    for_version(ApiVersion::default_version())
 }
 
 /// The SDL of a compressed schema file.
@@ -424,12 +433,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_embedded_schema_is_the_generated_sdl() {
-        let sdl = decompress(ADMIN_2026_10);
-        assert!(
-            sdl == include_str!("../../schemas/2026-10/admin.graphql"),
-            "schemas/2026-10/admin.graphql.br is not admin.graphql: run `mise run admin:schema`"
-        );
+    fn the_embedded_schema_of_each_version_is_its_generated_sdl() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for version in ApiVersion::all() {
+            let sdl = decompress(version.files().schema);
+            let path = root.join(format!("schemas/{version}/admin.graphql"));
+            let generated = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                sdl == generated,
+                "schemas/{version}/admin.graphql.br is not admin.graphql: run `mise run admin:schema -- --version {version}`"
+            );
+        }
     }
 
     #[test]

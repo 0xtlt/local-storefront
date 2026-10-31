@@ -25,22 +25,24 @@
 //! - **a malformed query is read as far as it goes**, with warnings, never refused: Shopify
 //!   answers it with results and "warnings in the `extensions` section".
 //!
-//! **The filters of each connection.** The reference of 2026-10 documents, in the description
-//! of each `query` argument, the filters it accepts and their type (`created_at`: `time`);
-//! `tools/admin/access_scopes.mjs` writes them into `schemas/2026-10/search.json`, and
-//! [`documented_filters`] reads them: what a [`Searchable`] should answer, and what
-//! [`Query::invalid_fields`] can be given to warn about the others.
+//! **The filters of each connection.** The reference of each version documents, in the
+//! description of each `query` argument, the filters it accepts and their type (`created_at`:
+//! `time`); `tools/admin/access_scopes.mjs --version <v>` writes them into
+//! `schemas/<v>/search.json`, and [`for_version`] reads them: what a [`Searchable`] should
+//! answer, and what [`Query::invalid_fields`] can be given to warn about the others.
 
 pub mod date;
 pub mod filter;
 mod syntax;
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
+
+use crate::version::{self, ApiVersion};
 
 pub use filter::Filter;
 
@@ -274,44 +276,63 @@ fn visit_terms(node: &Node, visit: &mut dyn FnMut(&Term)) {
     }
 }
 
-/// `schemas/2026-10/search.json`.
+/// The search filters a version documents: `schemas/<version>/search.json`.
 #[derive(Deserialize)]
-struct Documented {
+pub struct Documented {
     connections: HashMap<String, HashMap<String, Vec<(String, String)>>>,
 }
 
-static DOCUMENTED: LazyLock<Documented> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../schemas/2026-10/search.json"))
-        .expect("schemas/2026-10/search.json is the table tools/admin/access_scopes.mjs writes")
-});
-
-/// The filters the `query` argument of `field` of `type_name` documents in 2026-10, as
-/// `(name, type)`: `("created_at", "time")`, `("tag", "string")`, `("id", "id")`,
-/// `("metafields.{namespace}.{key}", "mixed")`. The types are `string`, `id`, `time`, `date`,
-/// `boolean`, `integer`, `float`, `bigdecimal` and `mixed`. `None` for a field without one.
-pub fn documented_filters(type_name: &str, field: &str) -> Option<&'static [(String, String)]> {
-    DOCUMENTED
-        .connections
-        .get(type_name)?
-        .get(field)
-        .map(Vec::as_slice)
-}
-
-/// Whether `filter` (`title`, `metafields.custom.on_sale`) is one `field` of `type_name`
-/// documents; a `{placeholder}` of a documented name stands for one segment.
-pub fn is_documented_filter(type_name: &str, field: &str, filter: &str) -> bool {
-    let filter = filter.to_ascii_lowercase();
-    documented_filters(type_name, field).is_some_and(|filters| {
-        filters.iter().any(|(name, _)| {
-            let pattern: Vec<&str> = name.split('.').collect();
-            let parts: Vec<&str> = filter.split('.').collect();
-            pattern.len() == parts.len()
-                && pattern
-                    .iter()
-                    .zip(&parts)
-                    .all(|(pattern, part)| pattern.starts_with('{') || pattern == part)
+/// The search filters of a version, parsed the first time a request of the version searches.
+pub fn for_version(version: ApiVersion) -> &'static Documented {
+    static PARSED: [OnceLock<Documented>; version::COUNT] =
+        [const { OnceLock::new() }; version::COUNT];
+    PARSED[version.index()].get_or_init(|| {
+        serde_json::from_str(version.files().search).unwrap_or_else(|error| {
+            panic!("schemas/{version}/search.json is the table tools/admin/access_scopes.mjs writes: {error}")
         })
     })
+}
+
+impl Documented {
+    /// The filters the `query` argument of `field` of `type_name` documents, as
+    /// `(name, type)`: `("created_at", "time")`, `("tag", "string")`, `("id", "id")`,
+    /// `("metafields.{namespace}.{key}", "mixed")`. The types are `string`, `id`, `time`,
+    /// `date`, `boolean`, `integer`, `float`, `bigdecimal` and `mixed`. `None` for a field
+    /// without one.
+    pub fn filters(&self, type_name: &str, field: &str) -> Option<&[(String, String)]> {
+        self.connections
+            .get(type_name)?
+            .get(field)
+            .map(Vec::as_slice)
+    }
+
+    /// Whether `filter` (`title`, `metafields.custom.on_sale`) is one `field` of `type_name`
+    /// documents; a `{placeholder}` of a documented name stands for one segment.
+    pub fn is_documented(&self, type_name: &str, field: &str, filter: &str) -> bool {
+        let filter = filter.to_ascii_lowercase();
+        self.filters(type_name, field).is_some_and(|filters| {
+            filters.iter().any(|(name, _)| {
+                let pattern: Vec<&str> = name.split('.').collect();
+                let parts: Vec<&str> = filter.split('.').collect();
+                pattern.len() == parts.len()
+                    && pattern
+                        .iter()
+                        .zip(&parts)
+                        .all(|(pattern, part)| pattern.starts_with('{') || pattern == part)
+            })
+        })
+    }
+}
+
+/// [`Documented::filters`] of the default version: what code that does not know the version of
+/// its request asks. The resolver asks the filters of its request's version.
+pub fn documented_filters(type_name: &str, field: &str) -> Option<&'static [(String, String)]> {
+    for_version(ApiVersion::default_version()).filters(type_name, field)
+}
+
+/// [`Documented::is_documented`] of the default version.
+pub fn is_documented_filter(type_name: &str, field: &str, filter: &str) -> bool {
+    for_version(ApiVersion::default_version()).is_documented(type_name, field, filter)
 }
 
 /// What a search compares dates with.
