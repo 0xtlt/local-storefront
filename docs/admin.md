@@ -30,6 +30,18 @@ Every server serves the Admin API (`serve` too, with a theme). With `--app`, the
 scopes and the webhooks are those of `shopify.app.toml`; without, a local client id
 (`lsf-local-client-id`), every scope, and no subscription.
 
+`app dev` serves the app alone: its checkout, its customer account, the Admin API and the app
+proxy, but no theme, so no storefront pages (`/products/…` answers `404`). To see on the theme's
+pages what the backend changes, serve the theme with the app:
+
+```bash
+npx local-storefront serve --theme ../my-theme --app ../my-app --app-url http://localhost:3000
+```
+
+`examples/admin-backend` of the repository is a backend written with Shopify's libraries (the
+React Router package and `@shopify/shopify-api`), with a script that runs it against lsf end to
+end: every recipe below is checked there.
+
 - **The shop** is the store data's: `shop.permanent_domain` (`my-shop.myshopify.com`), seeded
   from the products, collections, customers, orders, metafields, metaobjects, markets, discounts
   and Functions of the data. The ids are those the storefront, the checkout and the Function
@@ -65,8 +77,11 @@ so that the same code talks to Shopify when it is not set.
 Every request of `@shopify/shopify-api` (the Admin API clients, token exchange, OAuth) goes
 through its runtime's fetch function, which `setAbstractFetchFunc` of
 `@shopify/shopify-api/runtime` replaces (`lib/clients/admin/graphql/client.ts`,
-`lib/utils/fetch-request.ts` of 15.0.1). The node adapter sets it to `globalThis.fetch` when it is
-imported, so replace it after that import, in `app/shopify.server.ts`:
+`lib/utils/fetch-request.ts` of 15.0.1). `@shopify/shopify-app-react-router/server` sets it to
+`fetch` when it is imported (it imports `@shopify/shopify-api/adapters/web-api`; the adapters of
+`@shopify/shopify-api` do the same), so replace it in the body of `app/shopify.server.ts`, which
+runs after every import. A module of its own that sets it, imported before `/server`, is undone
+without a word, and the backend talks to Shopify:
 
 ```ts
 import "@shopify/shopify-app-react-router/adapters/node";
@@ -108,7 +123,32 @@ template's `authenticate.admin` reads the session token, exchanges it for an acc
 lsf, and the loader's `admin.graphql(…)` queries lsf. The App Bridge script of the page needs
 the real admin around it; what the server does is all there. A route the front end calls with
 `fetch` is authenticated with `Authorization: Bearer <session token>`: mint one with
-`POST /__lsf/admin/session-token`.
+`POST /__lsf/admin/session-token`. A session token is valid for a minute, as Shopify's: a test
+mints one per request. And `authenticate.admin` answers `410 Gone` to a client whose
+`User-Agent` looks like a bot (the `isbot` package): curl's and Node's `fetch`'s do; send a
+browser's.
+
+- **Billing from a page.** `billing.request` (and `billing.require` with it) in the loader of a
+  page sends the browser to the template's exit-iframe page, which only goes on to the admin
+  over `https` (`admin.shopify.com`, `<shop>.myshopify.com/admin`): it refuses lsf's charge page
+  (`http://127.0.0.1:9292/__lsf/admin/charges/<n>`) with "Invalid exit-iframe destination". Call
+  it from a route the front end fetches: the library then answers `401` with the charge page in
+  `X-Shopify-API-Request-Failure-Reauthorize-Url`, which App Bridge (or the test) opens. In a
+  test, `POST /__lsf/admin/charges/<n>/approve` approves without the page.
+- **OAuth.** The React Router package has no authorization code grant (it installs through
+  token exchange). `auth.begin` of `@shopify/shopify-api` redirects the browser to
+  `https://<shop>/admin/oauth/authorize?…`, which no fetch function sees: send it to lsf
+  instead, the same path and query. lsf approves and redirects to the callback, whose
+  `auth.callback` gets the token through the fetch function.
+
+  ```js
+  const response = await shopify.auth.begin({ shop, callbackPath: "/auth/callback", isOnline: false, rawRequest: request });
+  if (process.env.LSF_URL) {
+    const authorize = new URL(response.headers.get("location"));
+    response.headers.set("location", `${process.env.LSF_URL}${authorize.pathname}${authorize.search}`);
+  }
+  return response;
+  ```
 
 `authenticate.webhook` verifies the webhooks lsf delivers with `apiSecretKey`: give lsf the same
 secret.
@@ -661,7 +701,8 @@ and staff authors of articles (`author.userId`).
 
 **Billing.** The billing helpers of the React Router template (`billing.require`,
 `billing.request`, `billing.check`, `billing.cancel`, `createUsageRecord`,
-`updateUsageCappedAmount` of `@shopify/shopify-api`) work unchanged:
+`updateUsageCappedAmount` of `@shopify/shopify-api`) work unchanged, from a route the front end
+fetches (from the loader of a page, see ["Billing from a page"](#react-router-app-shopifyshopify-app-react-router-and-shopifyshopify-api)):
 
 - `appSubscriptionCreate` (recurring and usage lines, a discount, `trialDays`, `test`) and
   `appPurchaseOneTimeCreate` make a `PENDING` charge and answer a `confirmationUrl` on lsf:
