@@ -280,6 +280,24 @@ without a server. See the [control API](control-api.md) and the [CLI](cli.md#app
   a silent success. `GET /__lsf/admin` lists those it simulates. The REST Admin API
   (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API only.
 
+## What lsf simulates
+
+Every query of 2026-10 is answered from the records of the shop: a field the store data does not
+give is a default, reported in `extensions.lsf.defaulted`. The mutations, and the queries that
+need more than reading records, are listed by family below.
+
+### Products, collections and inventory
+
+### Orders, fulfillments and draft orders
+
+### Customers and companies
+
+### Metafields, metaobjects and content
+
+### The app: billing, discounts, Functions and bulk operations
+
+### App proxy
+
 ## Testing
 
 - **Wait for a webhook**: `GET /__lsf/webhooks?topic=products/create&wait=1` answers once one is
