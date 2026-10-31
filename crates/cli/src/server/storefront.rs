@@ -32,9 +32,30 @@ impl Visit<'_> {
             .with_session(&self.session_id, |entry| entry.session.clone())
     }
 
+    /// Changes the visitor's session. A change of the cart (its lines, note or attributes) is
+    /// reported to the Admin API, as the storefront's cart fires `carts/create` and
+    /// `carts/update` on Shopify.
     pub fn update_session(&self, change: impl FnOnce(&mut Session)) {
-        self.state
-            .with_session(&self.session_id, |entry| change(&mut entry.session));
+        let changed = self.state.with_session(&self.session_id, |entry| {
+            let cart = |session: &Session| {
+                (
+                    session.cart_lines.clone(),
+                    session.cart_note.clone(),
+                    session.cart_attributes.clone(),
+                )
+            };
+            let before = cart(&entry.session);
+            change(&mut entry.session);
+            (cart(&entry.session) != before).then(|| entry.session.clone())
+        });
+        if let Some(session) = changed {
+            let token = if session.cart_token.is_empty() {
+                super::cart_token_of(&self.session_id)
+            } else {
+                session.cart_token.clone()
+            };
+            super::admin::record_cart(self.state, &token, &session);
+        }
     }
 
     pub fn site(&self) -> Arc<Site> {

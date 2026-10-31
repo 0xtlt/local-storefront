@@ -61,6 +61,10 @@ pub fn fixed(topic: &str) -> Option<Sample> {
     let (mut main, others): (Value, Vec<Value>) = match resource {
         "products" => (product(), variants()),
         "collections" => (collection(), Vec::new()),
+        "customers" if topic == "customers/merge" => (customer_merge(), Vec::new()),
+        "customers" if topic == "customers/purchasing_summary" => {
+            (purchasing_summary(), Vec::new())
+        }
         "customers" => (customer(), Vec::new()),
         "customer.tags_added" | "customer.tags_removed" => (
             customer()
@@ -77,6 +81,20 @@ pub fn fixed(topic: &str) -> Option<Sample> {
             Vec::new(),
         ),
         "customers_marketing_consent" => (customer(), Vec::new()),
+        "customers_whats_app_marketing_consent" => (
+            customer().with(
+                "whatsAppMarketingConsent",
+                json!({"state": "NEVER_SUBSCRIBED", "optInLevel": null, "updatedAt": null, "collectedFrom": "OTHER"}),
+            ),
+            Vec::new(),
+        ),
+        "customer.joined_segment" | "customer.left_segment" => (segment_membership(), Vec::new()),
+        "customer_account_settings" => (shop().with("customerAccounts", json!("REQUIRED")), Vec::new()),
+        "customer_groups" => (customer_group(), Vec::new()),
+        "segments" => (segment(topic), Vec::new()),
+        "audit_events" => (admin_api_activity(), Vec::new()),
+        "carts" => (cart(), Vec::new()),
+        "checkouts" => (checkout(), checkout_parts()),
         "companies" => (company(), Vec::new()),
         "company_contacts" => (company_contact(), vec![company()]),
         "company_locations" => (company_location(), vec![company()]),
@@ -1874,6 +1892,235 @@ fn customer_payment_method() -> Value {
     })
 }
 
+fn segment(topic: &str) -> Value {
+    let created = if topic == "segments/update" {
+        "2005-05-05T00:00:00Z"
+    } else {
+        "2022-01-01T00:00:00Z"
+    };
+    json!({
+        "__typename": "Segment",
+        "id": "gid://shopify/Segment/1",
+        "name": "Customers who have one order",
+        "query": "number_of_orders = 1",
+        "creationDate": created,
+        "lastEditDate": "2022-01-01T00:00:00Z",
+    })
+}
+
+fn segment_membership() -> Value {
+    json!({
+        "__typename": "SegmentMembership",
+        "shopId": "gid://shopify/Shop/1",
+        "customerId": "gid://shopify/Customer/2",
+        "segmentId": "gid://shopify/Segment/3",
+    })
+}
+
+fn customer_group() -> Value {
+    json!({
+        "__typename": "SavedSearch",
+        "id": "gid://shopify/SavedSearch/239443597569284757",
+        "name": "Bob Customers",
+        "query": "email:bob*",
+        "resourceType": "CUSTOMER",
+        "lsfCreatedAt": "2021-12-31T19:00:00-05:00",
+        "lsfUpdatedAt": "2021-12-31T19:00:00-05:00",
+    })
+}
+
+fn customer_merge() -> Value {
+    json!({
+        "__typename": "CustomerMergeRequest",
+        "customerKept": "gid://shopify/Customer/1",
+        "customerDeleted": "gid://shopify/Customer/2",
+        "jobId": null,
+        "status": "FAILED",
+        "customerMergeErrors": [{
+            "customerIds": [1],
+            "field": "MERGE_IN_PROGRESS",
+            "message": "John Doe is currently being merged.",
+        }],
+    })
+}
+
+fn purchasing_summary() -> Value {
+    json!({
+        "__typename": "CustomerPurchasingSummary",
+        "customerId": "gid://shopify/Customer/1",
+        "numberOfOrders": "1",
+        "amountSpent": money("100.0"),
+        "lastOrderId": "gid://shopify/Order/1",
+        "occurredAt": "2005-05-05T00:00:00Z",
+    })
+}
+
+fn admin_api_activity() -> Value {
+    json!({
+        "__typename": "AdminApiActivity",
+        "time": 1634678724,
+        "requestId": "13493be9-24f2-4eea-b71d-a8acd7af7917",
+        "clientIp": "192.168.64.1",
+        "responseTimeMs": 116.47000000812113,
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_2_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36",
+        "failed": false,
+        "responseCode": 200,
+        "app": "gid://shopify/App/4",
+        "appName": "Private app",
+        "ecosystemCategory": "private",
+        "versionRequested": "unstable",
+        "versionServed": "unstable",
+        "userEmail": "dev@example.com",
+        "shop": "shop1.myshopify.io",
+        "timestamp": "2021-10-19T21:25:24Z",
+        "mutationNames": [],
+        "query": "query orders {\n  orders(first: $first) {\n    edges {\n      node {\n        id\n      }\n    }\n  }\n}",
+        "variables": {"first": 10},
+        "errorCodes": [],
+    })
+}
+
+fn cart() -> Value {
+    json!({
+        "__typename": "Cart",
+        "token": "exampleCartId",
+        "note": "",
+        "currencyCode": "USD",
+        "lineItems": [{
+            "id": 704912205188288575u64,
+            "variant": "gid://shopify/ProductVariant/704912205188288575",
+            "product": "gid://shopify/Product/788032119674292922",
+            "key": "704912205188288575:3abdf474dce81d0025dd15b9a02ef6bf",
+            "quantity": 3,
+            "properties": [],
+            "price": "19.99",
+            "linePrice": "59.97",
+            "title": "Example T-Shirt - Small",
+            "sku": "example-shirt-s",
+            "taxable": true,
+            "vendor": "Acme",
+            "giftCard": false,
+            "weight": {"unit": "GRAMS", "value": 200.0},
+        }],
+        "createdAt": "2022-01-01T00:00:00Z",
+        "updatedAt": "2022-01-01T00:00:00Z",
+    })
+}
+
+/// The address of the checkout example: the billing one, else the shipping one.
+fn checkout_address(billing: bool) -> Value {
+    if billing {
+        json!({
+            "firstName": "Bob", "lastName": "Biller", "address1": "123 Billing Street",
+            "address2": null, "phone": "555-555-BILL", "city": "Billtown", "zip": "K2P0B0",
+            "province": "Kentucky", "provinceCode": "KY", "country": "United States",
+            "countryCodeV2": "US", "company": "My Company", "latitude": null, "longitude": null,
+            "name": "Bob Biller",
+        })
+    } else {
+        json!({
+            "firstName": "Steve", "lastName": "Shipper", "address1": "123 Shipping Street",
+            "address2": null, "phone": "555-555-SHIP", "city": "Shippington", "zip": "K2P0S0",
+            "province": "Kentucky", "provinceCode": "KY", "country": "United States",
+            "countryCodeV2": "US", "company": "Shipping Company", "latitude": null,
+            "longitude": null, "name": "Steve Shipper",
+        })
+    }
+}
+
+fn checkout() -> Value {
+    let line = json!({
+        "id": "gid://shopify/AbandonedCheckoutLineItem/1",
+        "lsfKey": "139cb5712fb4c8d9957dcfad9a3028da",
+        "title": "IPod Nano - 8GB",
+        "variantTitle": "Pink",
+        "sku": "IPOD2008PINK",
+        "quantity": 1,
+        "product": "gid://shopify/Product/632910392",
+        "variant": "gid://shopify/ProductVariant/808950810",
+        "vendor": "Apple",
+        "requiresShipping": true,
+        "customAttributes": [],
+        "originalUnitPriceSet": bag("199.0"),
+        "originalTotalPriceSet": bag("199.0"),
+        "discountedUnitPriceSet": bag("199.0"),
+        "discountedTotalPriceSet": bag("199.0"),
+    });
+    json!({
+        "__typename": "AbandonedCheckout",
+        "id": "gid://shopify/AbandonedCheckout/123456789",
+        "name": "#981820079255243537",
+        "abandonedCheckoutUrl": "https://checkout.local/548380009/checkouts/123123123/recover?key=example-secret-token",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+        "completedAt": null,
+        "customer": "gid://shopify/Customer/603851970716743426",
+        "lineItems": [line.clone(), line],
+        "subtotalPriceSet": bag("398.0"),
+        "totalLineItemsPriceSet": bag("398.0"),
+        "totalDiscountSet": bag("0.0"),
+        "totalTaxSet": bag("23.88"),
+        "totalPriceSet": bag("421.88"),
+        "taxLines": [{"title": "Tax", "rate": 0.06, "priceSet": bag("23.88"), "channelLiable": false}],
+        "taxesIncluded": false,
+        "discountCodes": [],
+        "note": "",
+        "customAttributes": [],
+        "billingAddress": checkout_address(true),
+        "shippingAddress": checkout_address(false),
+        "lsfToken": "123123123",
+        "lsfCartToken": "eeafa272cebfd4b22385bc4b645e762c",
+        "lsfEmail": "example@email.com",
+        "lsfPhone": null,
+        "lsfGateway": null,
+        "lsfShippingLines": [],
+        "lsfLocale": null,
+        "lsfCurrency": "USD",
+    })
+}
+
+/// What the checkout example names: its customer, its variant and the variant's weight.
+fn checkout_parts() -> Vec<Value> {
+    vec![
+        json!({
+            "__typename": "Customer",
+            "id": "gid://shopify/Customer/603851970716743426",
+            "firstName": "John",
+            "lastName": "Smith",
+            "email": "john@example.com",
+            "phone": null,
+            "state": "DISABLED",
+            "note": null,
+            "verifiedEmail": true,
+            "multipassIdentifier": null,
+            "taxExempt": false,
+            "taxExemptions": [],
+            "createdAt": null,
+            "updatedAt": null,
+            "defaultAddress": {
+                "firstName": "John", "lastName": "Smith", "company": null,
+                "address1": "123 Elm St.", "address2": null, "city": "Ottawa",
+                "province": "Ontario", "provinceCode": "ON", "country": "Canada",
+                "countryCodeV2": "CA", "zip": "K2H7A8", "phone": "123-123-1234",
+                "name": "John Smith",
+            },
+            "amountSpent": money("0.0"),
+        }),
+        json!({
+            "__typename": "ProductVariant",
+            "id": "gid://shopify/ProductVariant/808950810",
+            "taxable": true,
+            "compareAtPrice": null,
+            "inventoryItem": "gid://shopify/InventoryItem/808950810",
+        }),
+        json!({
+            "__typename": "InventoryItem",
+            "id": "gid://shopify/InventoryItem/808950810",
+            "measurement": {"weight": {"unit": "GRAMS", "value": 567.0}},
+        }),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1884,7 +2131,7 @@ mod tests {
             let sample = fixed(topic).unwrap_or_else(|| panic!("no sample for {topic}"));
             assert!(sample.payload(topic).is_some(), "{topic}");
         }
-        assert!(fixed("carts/create").is_none());
+        assert!(fixed("shipping_addresses/create").is_none());
         assert_eq!(FixedSamples.shop(), "shop.myshopify.com");
     }
 }

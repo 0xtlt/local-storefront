@@ -122,3 +122,61 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
         body: response.body,
     })
 }
+
+/// Reports a change of a storefront cart to the default shop of the Admin API: `carts/create`
+/// for a cart that had nothing, `carts/update` after (see `lsf_admin::domains::checkouts`).
+/// Nothing without the Admin API.
+pub fn record_cart(state: &ServerState, token: &str, session: &lsf_core::Session) {
+    let Some(admin) = state.admin.as_ref() else {
+        return;
+    };
+    let lines: Vec<lsf_admin::domains::checkouts::CartLine> = session
+        .cart_lines
+        .iter()
+        .map(|line| lsf_admin::domains::checkouts::CartLine {
+            variant_id: line.variant_id,
+            quantity: line.quantity,
+            properties: line
+                .properties
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            key: lsf_core::drops::cart::line_key(line),
+        })
+        .collect();
+    let attributes: Vec<(String, String)> = session
+        .cart_attributes
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let cart = lsf_admin::domains::checkouts::Cart {
+        token,
+        note: &session.cart_note,
+        attributes: &attributes,
+        lines: &lines,
+    };
+    admin.api.change_shop(&admin.api.default_shop(), |shop| {
+        lsf_admin::domains::checkouts::record_cart(shop, &cart)
+    });
+}
+
+/// What the local checkout computed, reported to the default shop of the Admin API:
+/// `checkouts/create` the first time, `checkouts/update` when it changed.
+pub fn record_checkout(state: &ServerState, checkout: &lsf_admin::domains::checkouts::Checkout) {
+    let Some(admin) = state.admin.as_ref() else {
+        return;
+    };
+    admin.api.change_shop(&admin.api.default_shop(), |shop| {
+        lsf_admin::domains::checkouts::record_checkout(shop, checkout)
+    });
+}
+
+/// The order of a checkout was placed: the checkout is completed (`checkouts/update`).
+pub fn complete_checkout(state: &ServerState, cart_token: &str, generation: u64) {
+    let Some(admin) = state.admin.as_ref() else {
+        return;
+    };
+    admin.api.change_shop(&admin.api.default_shop(), |shop| {
+        lsf_admin::domains::checkouts::complete_checkout(shop, cart_token, generation)
+    });
+}

@@ -816,7 +816,7 @@ fn address_delete(
 
 /// Changes the tax settings of a location (`taxSettings` and the deprecated `taxRegistrationId`
 /// and `taxExemptions` beside it) and emits `company_locations/update`.
-fn change_tax_settings(
+pub(crate) fn change_tax_settings(
     state: &mut ShopState,
     location: &str,
     change: impl FnOnce(&mut Map<String, Value>),

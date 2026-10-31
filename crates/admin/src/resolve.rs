@@ -1037,6 +1037,11 @@ impl ShopResolver<'_> {
             let output = mutation::run(self, ctx);
             // What follows a change on its own: listings, auto-publishing (`domains::markets`).
             crate::domains::markets::after_mutation(self.state, start);
+            // The segments the customers it changed joined or left, and their sales.
+            let (webhooks, shop) = (self.webhooks, self.state.domain().to_string());
+            crate::domains::segments::follow(self.state, start, &|topic| {
+                webhooks.is_some_and(|webhooks| webhooks.subscribes(&shop, topic))
+            });
             self.state.merge_events_from(start);
             return output;
         }

@@ -46,15 +46,42 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Ok(target) => target,
                 Err(error) => return Some(HttpResponse::json(422, &json!({ "error": error }))),
             };
-            api.change_shop(&shop, |state| {
+            let moved = api.change_shop(&shop, |state| {
                 let now = target(state.now());
                 state.set_clock(Clock::Frozen(now));
                 orders::tick(state);
+                // The data erasures the clock made due, with the `customers/redact` payloads they
+                // send, and the checkouts old enough to be deleted.
+                let due = crate::domains::privacy::due_erasures(state);
+                let mut redact = Vec::new();
+                for customer in &due {
+                    if let Ok(payload) =
+                        super::samples::payload_of(state, "customers/redact", Some(customer))
+                    {
+                        redact.push(payload);
+                    }
+                }
+                let erased = crate::domains::privacy::process_due_erasures(state);
+                let deleted = crate::domains::checkouts::delete_expired(state);
                 let mut answer = clock_json(state);
                 answer["ok"] = json!(true);
-                answer
-            })
-            .map_or_else(no_shop, |answer| HttpResponse::json(200, &answer))
+                answer["erased"] = json!(erased);
+                answer["deletedCheckouts"] = json!(deleted);
+                (answer, redact)
+            });
+            let Some((answer, redact)) = moved else {
+                return Some(no_shop());
+            };
+            for payload in &redact {
+                api.webhooks().trigger(&crate::webhooks::Trigger {
+                    topic: "customers/redact",
+                    shop: &shop,
+                    payload,
+                    address: None,
+                    at: Utc::now(),
+                });
+            }
+            HttpResponse::json(200, &answer)
         }
         ("emails", "GET") => api
             .change_shop(&shop, |state| {
@@ -196,7 +223,12 @@ fn clock_json(state: &ShopState) -> Value {
 type Target = Box<dyn Fn(DateTime<Utc>) -> DateTime<Utc>>;
 
 fn target_time(body: &Value) -> Result<Target, String> {
-    if let Some(now) = body.get("now").and_then(Value::as_str) {
+    // `now`, or `at`: the instant to move the clock to.
+    if let Some(now) = body
+        .get("now")
+        .or_else(|| body.get("at"))
+        .and_then(Value::as_str)
+    {
         let at = DateTime::parse_from_rfc3339(now)
             .map_err(|_| format!("`now` is not an RFC 3339 date and time: {now}"))?
             .with_timezone(&Utc);

@@ -6,8 +6,8 @@
 //!
 //! The filters are those `customers` documents in 2026-10 (`schemas/2026-10/search.json`); the
 //! others (`email`, `phone`, `first_name`, `last_name`, `state`, `tag`, `updated_at`, `id`) the
-//! generic search reads from the record. `last_abandoned_order_date` matches no customer: lsf
-//! has no abandoned checkouts.
+//! generic search reads from the record. `last_abandoned_order_date` reads the customer's last
+//! abandoned checkout of the local checkout (`domains::checkouts`).
 
 use serde_json::Value;
 
@@ -60,9 +60,23 @@ pub fn register(registry: &mut Registry) {
                     .and_then(|amount| amount.get("amount")),
             ))
         })
-        .search_field("Customer", "last_abandoned_order_date", |_r, _item, _| {
-            Some(Vec::new())
-        })
+        // The customer's last abandoned checkout (`domains::checkouts`).
+        .search_field(
+            "Customer",
+            "last_abandoned_order_date",
+            |r, _item, customer| {
+                let id = customer
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                Some(
+                    crate::domains::checkouts::last_abandonment(r.state(), id)
+                        .map(SearchValue::Date)
+                        .into_iter()
+                        .collect(),
+                )
+            },
+        )
         .default_text("Customer", |_r, customer| {
             let mut texts: Vec<String> = ["displayName", "firstName", "lastName", "email", "phone"]
                 .iter()

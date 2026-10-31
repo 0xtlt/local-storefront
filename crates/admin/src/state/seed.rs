@@ -11,7 +11,9 @@ use lsf_core::store::{CheckoutMetafield, Image, Metafields};
 use serde_json::Value;
 
 use super::{Clock, Record, ShopState, value};
-use crate::domains::{app, catalog, content, customers, logistics, markets, orders, subscriptions};
+use crate::domains::{
+    app, catalog, content, customers, logistics, markets, orders, staff, subscriptions,
+};
 
 /// The records of the store data and of the app. The same data gives the same records, ids and
 /// dates every time (dates the data does not give are fixed ones, never the clock).
@@ -28,6 +30,7 @@ pub fn seed(store: &Store, app: Option<&App>) -> ShopState {
     markets::seed(&mut seed);
     content::seed_files(&mut seed);
     content::infer_metafield_definitions(&mut seed.state);
+    staff::seed(&mut seed);
     // From here on, a change is one the Admin API made: what the store sync projects.
     seed.state.track_changes();
     seed.state

@@ -17,9 +17,11 @@
 //! is not built rather than sending a body made up for it.
 
 mod catalog;
+mod checkouts;
 mod content;
 mod customers;
 mod logistics;
+mod marketing;
 mod markets;
 mod orders;
 mod payments;
@@ -113,8 +115,14 @@ pub const BUILT_TOPICS: &[&str] = &[
     "app_purchases_one_time/update",
     "app_subscriptions/approaching_capped_amount",
     "app_subscriptions/update",
+    "audit_events/admin_api_activity",
     "bulk_operations/finish",
+    "carts/create",
+    "carts/update",
     "channels/delete",
+    "checkouts/create",
+    "checkouts/delete",
+    "checkouts/update",
     "collection_listings/add",
     "collection_listings/remove",
     "collection_listings/update",
@@ -135,8 +143,14 @@ pub const BUILT_TOPICS: &[&str] = &[
     "company_locations/create",
     "company_locations/delete",
     "company_locations/update",
+    "customer.joined_segment",
+    "customer.left_segment",
     "customer.tags_added",
     "customer.tags_removed",
+    "customer_account_settings/update",
+    "customer_groups/create",
+    "customer_groups/delete",
+    "customer_groups/update",
     "customer_payment_methods/create",
     "customer_payment_methods/revoke",
     "customer_payment_methods/update",
@@ -145,10 +159,13 @@ pub const BUILT_TOPICS: &[&str] = &[
     "customers/delete",
     "customers/disable",
     "customers/enable",
+    "customers/merge",
+    "customers/purchasing_summary",
     "customers/redact",
     "customers/update",
     "customers_email_marketing_consent/update",
     "customers_marketing_consent/update",
+    "customers_whats_app_marketing_consent/update",
     "delivery_promise_settings/update",
     "discounts/create",
     "discounts/delete",
@@ -272,6 +289,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "scheduled_product_listings/add",
     "scheduled_product_listings/remove",
     "scheduled_product_listings/update",
+    "segments/create",
+    "segments/delete",
+    "segments/update",
     "selling_plan_groups/create",
     "selling_plan_groups/delete",
     "selling_plan_groups/update",
@@ -437,6 +457,22 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "metaobjects/delete" => shop::metaobject_deleted(record),
         "discounts/create" | "discounts/update" => shop::discount(record, lookup),
         "discounts/delete" => shop::discount_deleted(record),
+        "segments/create" | "segments/update" => marketing::segment(record),
+        "segments/delete" | "customer_groups/delete" => json!({ "id": id(record) }),
+        "customer.joined_segment" | "customer.left_segment" => {
+            marketing::segment_membership(record, lookup)
+        }
+        "customer_groups/create" | "customer_groups/update" => marketing::customer_group(record),
+        "customers/merge" => marketing::customer_merge(record),
+        "customers/purchasing_summary" => marketing::purchasing_summary(record),
+        "customers_whats_app_marketing_consent/update" => {
+            marketing::whatsapp_consent_update(record)
+        }
+        "customer_account_settings/update" => marketing::customer_account_settings(record),
+        "audit_events/admin_api_activity" => marketing::admin_api_activity(record),
+        "carts/create" | "carts/update" => checkouts::cart(record),
+        "checkouts/create" | "checkouts/update" => checkouts::checkout(record, lookup),
+        "checkouts/delete" => checkouts::checkout_deleted(record),
         "customers/data_request" => shop::customer_data_request(record, lookup),
         "customers/redact" => shop::customer_redact(record, lookup),
         "shop/redact" => shop::shop_redact(record, lookup),

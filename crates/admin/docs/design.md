@@ -1067,6 +1067,46 @@ they create has the seed's shape, so that store sync writes it back:
   company in its snapshot: the payloads of `company_contacts/delete` and
   `company_locations/delete` name it though it is gone.
 
+### Segments, marketing, analytics, privacy and the storefront's checkouts
+
+Each in a module of its own, whose header has the rules and their sources:
+
+| Module | What |
+|---|---|
+| `segments` | `Segment` records (ids of the counter); `segments::language` parses the segment query language (a lexer and a recursive parser, errors `Query Line L Column C: …` at the clause at fault), `segments::filters` lists the 33 filters of the reference (type, enum values, function parameters), `segments::evaluate` reads them on a customer (`Facts`: computed once per customer and request, from the customer, their addresses, orders and line items, company contacts, store credit accounts, abandoned checkouts and metafields; dates as whole days in the shop's zone). `customerSegmentMembers` pages the generic connection without its `query`, `sortKey` and `reverse` (they are the segment's), then adds `totalCount` and `statistics`. |
+| `segments::saved_searches` | `SavedSearch` records (`searchTerms` and `filters` split from the query by `search::Query`); `resolve::search` applies the query of a connection's `savedSearchId` under the connection's own (`(saved) AND (query)`). |
+| `customer_merge` | `customerMerge` (the kept customer by shopify.dev's rules; the other's orders, draft orders, addresses, metafields, tags and note moved, then deleted), `customerMergePreview`, `customerMergeJobStatus` (a memo per job), `Customer.mergeable`; `customers/purchasing_summary`. |
+| `privacy` | Data erasure (a memo per customer: pending 10 days, then redacted by `process_due_erasures`), `dataSaleOptOut`, the WhatsApp consent (on the customer, copied to `defaultPhoneNumber` by `customers::contact_fields`), `ConsentPolicy` records, the privacy features (a memo). |
+| `marketing` | `MarketingActivity` and `MarketingEvent` records (the app's remote id, channel handle and engagements under `lsf…` keys), the errors of `MarketingActivityUserErrorCode` with the code's description as message. |
+| `analytics` | `AnalyticsAnnotation`, `AnalyticsTarget` records; `analytics::shopifyql`, a ShopifyQL subset (`FROM sales`) over a row per line sold, per order (its shipping and taxes) and per refund. |
+| `staff` | The shop's owner (`StaffMember`, seeded last, when no family seeded staff), `CompanyLocationStaffMemberAssignment` records, and the deprecated tax registration mutations on the companies family's `change_tax_settings`. |
+| `checkouts` | `AbandonedCheckout` records of the local checkout (one per cart token and order generation, a memo naming it), `Abandonment` records for checkouts of customers, the cart events (no record: the event's snapshot), what is abandoned when read (`is_listed`: contact, and more than ten minutes since the last change by the shop's clock), the three-month cleanup. |
+| `outbox` | What Shopify would send the outside world: a memo of the shop, listed by `GET /__lsf/admin`. |
+
+**What follows a change** (`segments::follow`): the mutation framework calls it after each
+mutation (`resolve::ShopResolver`, before the events are merged), and `AdminApi::change_shop`
+after the changes the server makes (an order of the checkout, a cart, a checkout). From the
+events since the mutation began, it finds the customers they concern (their own topics, the
+customer of an order, a refund, a company contact or a checkout), evaluates every segment again
+for them against the members it remembers (`segments/members/<GID>`, a memo), and emits
+`customer.joined_segment` and `customer.left_segment` under a key that names no record
+(`segment-membership/<customer>/<segment>`), so that one customer's moves in two segments are
+two events. It also emits `customers/purchasing_summary` when an order of the customer changed
+and their numbers did, only when the app subscribes to the topic (`Webhooks::subscribes`): the
+topic follows every order flow, which the other families' tests and webhooks do not expect.
+
+**Time** (`POST /__lsf/admin/clock`, `api::clock`): freezes a shop's clock at a later instant,
+then runs what time brings (the due erasures, with `customers/redact` through the app's
+compliance subscriptions, made from the customer before the redaction; the abandoned checkouts
+past three months). **Audit events** (`api::audit`): after each GraphQL request, when the app
+subscribes to `audit_events/admin_api_activity`, an event built from the request (no change of
+the shop) is handed to the webhooks.
+
+**The server** (`crates/cli/src/server`): `Visit::update_session` compares the cart's lines, note
+and attributes before and after a change and reports a changed cart (`admin::record_cart`); the
+checkout's `compute` reports what it computed (`admin::record_checkout`, which emits only when
+the fields differ from the record's), and `place_order` completes it once the cart is taken.
+
 ### Orders (`domains/orders.rs`)
 
 An order of the data or of the checkout is first an `OrderDraft`; `insert_order` makes its
@@ -1750,6 +1790,10 @@ Kept here so that nobody invents a field for it; each would need the store data 
 - **Subscriptions**: contracts, drafts, calculations, billing attempts and saved payment methods
   (the store data has none of them, and the local checkout charges no saved method). The stock a
   billing attempt's order commits syncs, as any order's.
+- Segments, saved searches, marketing activities and events, analytics annotations and targets,
+  consent policies and privacy settings, abandoned checkouts and abandonments, staff assignments:
+  none is store data. A merge, an erasure, a data sale opt-out and a WhatsApp consent change
+  customers, which sync as customers do (the WhatsApp and the opt-out are not in the data).
 - Metafield and metaobject definitions, files (`files/` is on disk), translations, webhooks,
   publications other than the Online Store, inventory transfers and shipments (the stock they
   move syncs), fulfillment orders, fulfillment constraint rules, shipping labels, carrier
@@ -1898,7 +1942,7 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`, `segments`, `customer_merge`, `privacy`, `marketing`, `analytics`, `staff`, `checkouts`, `outbox`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |

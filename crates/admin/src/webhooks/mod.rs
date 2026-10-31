@@ -184,6 +184,22 @@ impl Webhooks {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Whether the app, installed on the shop, has a subscription to `topic` there (one of
+    /// `shopify.app.toml`, or the shop's own): a topic only reported when asked for
+    /// (`customers/purchasing_summary`) is not emitted otherwise.
+    pub fn subscribes(&self, shop: &str, topic: &str) -> bool {
+        let registry = self.registry();
+        registry.is_installed(shop)
+            && (self
+                .app_subscriptions
+                .iter()
+                .any(|subscription| subscription.topic == topic)
+                || registry
+                    .list(shop)
+                    .iter()
+                    .any(|subscription| subscription.topic == topic))
+    }
+
     /// The log of deliveries.
     pub fn deliveries(&self) -> &Deliveries {
         &self.deliveries

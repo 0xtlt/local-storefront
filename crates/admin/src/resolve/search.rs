@@ -66,8 +66,23 @@ pub(super) fn filter(
     if ctx.definition().arg("query").is_none() {
         return items;
     }
-    let Some(text) = ctx.arg_str("query").filter(|text| !text.trim().is_empty()) else {
-        return items;
+    // A saved search's query, with the field's own on top (`savedSearchId`).
+    let saved = ctx
+        .arg_str("savedSearchId")
+        .and_then(|id| crate::domains::segments::saved_searches::query_of(resolver.state(), id));
+    let own = ctx.arg_str("query").filter(|text| !text.trim().is_empty());
+    let combined;
+    let text = match (saved.filter(|text| !text.trim().is_empty()), own) {
+        (Some(saved), Some(own)) => {
+            combined = format!("({saved}) AND ({own})");
+            combined.as_str()
+        }
+        (Some(saved), None) => {
+            combined = saved;
+            combined.as_str()
+        }
+        (None, Some(own)) => own,
+        (None, None) => return items,
     };
     let documented = search::for_version(resolver.version())
         .filters(ctx.parent_type(), ctx.field_name())

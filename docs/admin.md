@@ -348,6 +348,21 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
   `products/update`; `productDelete` → `products/delete`), an order placed at the checkout
   (`orders/create`, `order_transactions/create`, then `orders/paid` when it is paid in full), an
   uninstall, a change of scopes.
+- **The storefront's own events**, as the online store's cart and checkout fire them on
+  Shopify, through the default shop:
+  - `carts/create` when a cart of the theme gets its first line (`/cart/add.js`, the cart
+    form, `/cart/update.js`), `carts/update` at each change of its lines, note or attributes;
+    the payload's `id` and `token` are the cart's token (`/cart.js`'s), its prices the
+    variants' in the Admin API;
+  - `checkouts/create` when the [local checkout](checkout.md) of a cart is first shown,
+    `checkouts/update` when what the buyer sees changes (lines, email, phone, address, delivery,
+    payment, discount codes) and when the order is placed (`completed_at`); reading the checkout
+    again sends nothing;
+  - a checkout with contact information and no order for more than ten minutes ("A checkout is
+    considered abandoned if it remains incomplete for more than ten minutes", Help Center) is in
+    `abandonedCheckouts`, and, for a customer of the shop, has an `Abandonment`; three months on,
+    the admin deletes it (`checkouts/delete`). The time is the shop's: with a store data `now`,
+    move it with `POST /__lsf/admin/clock {"advance": "11m"}` ([control API](control-api.md)).
 - **Payloads** are Shopify's JSON for the topic (the REST representation of the resource), built
   from the record as the change left it, cut to `include_fields`, and checked against `filter`.
   A topic whose payload lsf does not build is logged as not sent, never sent with a made-up body.
@@ -844,15 +859,125 @@ Every id that names nothing answers a `userError` (`Customer does not exist`, `R
 does not exist.`), and a mutation that fails changes nothing. The order of the webhooks of one
 mutation is lsf's: Shopify does not document it.
 
-**Not simulated yet** (they answer `LSF_NOT_SIMULATED`): `customerMerge` (and the
-`customerMergePreview`, `customerMergeJobStatus` queries), `customerRequestDataErasure`,
-`customerCancelDataErasure`, `customerWhatsAppMarketingConsentUpdate`, store credit (`storeCreditAccountCredit`, `storeCreditAccountDebit`),
-segments (`segmentCreate`, `segmentUpdate`, `segmentDelete`, `customerSegmentMembersQueryCreate`;
-the `segments` and `customerSegmentMembers` queries answer empty), and the staff and tax
-registrations of a company location (`companyLocationAssignStaffMembers`,
-`companyLocationRemoveStaffMembers`, `companyLocationCreateTaxRegistration`,
-`companyLocationRevokeTaxRegistration`). The WhatsApp consent of `customerCreate` is ignored, with
-a note.
+Merges, data erasure, the WhatsApp consent, segments and the staff and tax registrations of a
+company location are in "Segments, marketing, analytics and privacy" below.
+
+The WhatsApp consent of `customerCreate` is ignored, with a note.
+
+### Segments, marketing, analytics and privacy
+
+A backend that segments customers, runs campaigns, reports on sales or handles privacy requests
+works against lsf as against a store: the segment query language is parsed and evaluated over the
+customers of the shop, the marketing activities and analytics the app records are read back,
+what Shopify would send to the outside world is recorded in an outbox, never sent.
+
+**Segments** (`segmentCreate`, `segmentUpdate`, `segmentDelete`; `segments`, `segment`,
+`segmentsCount`, `customerSegmentMembers`, `customerSegmentMembership`,
+`customerSegmentMembersQueryCreate` and `customerSegmentMembersQuery`, `segmentFilters`,
+`segmentFilterSuggestions`, `segmentValueSuggestions`):
+
+- The query language of shopify.dev's "Segment query language reference": clauses joined by
+  `AND` (tighter) and `OR`, parentheses, `=`, `!=`, `>`, `>=`, `<`, `<=`, `BETWEEN … AND …`,
+  `CONTAINS`, `NOT CONTAINS`, `IS NULL`, `IS NOT NULL`, `MATCHES (…)` and `NOT MATCHES (…)`;
+  quoted strings, numbers, dates, date-times, offsets (`-7d`, `-2w`, `-1m`, `+1y`), `today`,
+  `yesterday`, the deprecated `30_days_ago`; at most 10 clauses. Dates are whole days in the
+  shop's time zone (`customerSegmentMembers(timezone:)` for that query, UTC by default).
+- The filters: `amount_spent`, `number_of_orders`, `customer_added_date`, `first_order_date`,
+  `last_order_date`, `abandoned_checkout_date` (the local checkout's), `customer_account_status`,
+  `email_subscription_status`, `sms_subscription_status`, `customer_tags` (case ignored),
+  `customer_email_domain`, `customer_language` (`en` matches `en-GB`), `customer_countries`,
+  `customer_regions` (`US-NY`), `customer_cities` (`US-NY-NewYorkCity`), `companies`,
+  `created_by_app_id` (the app, for the customers it created), `product_subscription_status`,
+  `orders_placed MATCHES (app_id, location_id, count, amount, sum_amount, date)`,
+  `products_purchased MATCHES (id, tag, quantity, sum_quantity, date)`,
+  `store_credit_accounts MATCHES (balance, currency, next_expiry_date, last_credit_date)`,
+  `customer_within_distance MATCHES (coordinates, distance_km | distance_mi)`, and
+  `anniversary('metafields.<namespace>.<key>')`. What lsf has no data for matches no customer:
+  `predicted_spend_tier` and `rfm_group` (Shopify's models: `IS NULL` holds), `shopify_email.*`
+  (lsf sends no email), `storefront_event.*` (the storefront records no views).
+- A bad query is a user error on `query`, in Shopify's form: `Query Line 1 Column 0:
+  'total_spent' filter cannot be found.` (the form and `'MATCHES' is unexpected.` are Shopify's,
+  quoted from real answers; the other messages are lsf's).
+- Members: `customerSegmentMembers(segmentId: | query: | queryId:)` with `sortKey`
+  (`created_at`, `first_order_date`, `last_abandoned_order_date`, `last_order_date`,
+  `number_of_orders`, `amount_spent`), `reverse`, `totalCount` and
+  `statistics.attributeStatistics` (`amount_spent`, `number_of_orders`). A member's id is
+  `gid://shopify/CustomerSegmentMember/<customer id>`. `customerSegmentMembersQueryCreate` runs
+  at once: the query is `done`, and `queryId` reads the members it found then.
+- **Webhooks**: `segments/create`, `/update`, `/delete`; `customer.joined_segment` and
+  `customer.left_segment` when a change of a customer (their record, an order, a company
+  contact, a checkout) moves them into or out of a segment. Creating or editing a segment moves
+  nobody, and a member whose dates move them out as time passes leaves at their next change.
+
+**Saved searches** (`savedSearchCreate`, `savedSearchUpdate`, `savedSearchDelete`; the
+`…SavedSearches` queries of products, collections, customers, orders, draft orders, files, URL
+redirects, discounts and redeem codes; `segmentMigrations`): the query is split into
+`searchTerms` and `filters` as Shopify's example shows; a connection given `savedSearchId`
+(`orders`, `products`, `abandonedCheckouts`, …) lists what the saved search's query keeps.
+Customer saved searches fire `customer_groups/create`, `/update`, `/delete`.
+
+**Customers**:
+
+| Mutation | What lsf does | Webhooks |
+|---|---|---|
+| `customerMerge` (with `customerMergePreview`, `customerMergeJobStatus`, `Customer.mergeable`) | Shopify's rules of the customer kept (the override's email, the only email, an enabled account, the consent, else `customerTwoId`); refused for a company contact, gift cards, a subscription, store credit, payment methods, a multipass identifier, a pending erasure, merged tags over 250 or a note over 5000 characters. The kept customer gets the other's orders, draft orders, addresses, metafields, tags and note (or the overrides); the job is done at once. | `customers/update`, `customers/delete`, `customers/merge` |
+| `customerRequestDataErasure`, `customerCancelDataErasure` | The erasure waits 10 days, cancellable meanwhile; then (by the shop's clock: `POST /__lsf/admin/clock`) the names, email, phone, note and addresses are redacted, consents `REDACTED`, and `customers/redact` is sent to the app. Each step is in the outbox. | `customers/update`, `customers/redact` |
+| `customerWhatsAppMarketingConsentUpdate` | As the SMS consent: a phone is required, `SUBSCRIBED`, `UNSUBSCRIBED` or `PENDING`; it shows in `defaultPhoneNumber.whatsAppMarketingConsent`. | `customers/update`, `customers_whats_app_marketing_consent/update` |
+| `dataSaleOptOut` | The customer of the email opts out (`dataSaleOptOut: true`); an email no customer has gets a customer of its own *(chosen)*. | `customers/update` or `customers/create` |
+| `companyLocationAssignStaffMembers`, `companyLocationRemoveStaffMembers` | The shop's owner is a `StaffMember` (`Shop.accountOwner`); assignments show in `CompanyLocation.staffMemberAssignments`. | none |
+| `companyLocationCreateTaxRegistration`, `companyLocationRevokeTaxRegistration` (deprecated) | As `companyLocationTaxSettingsUpdate`: the location's `taxSettings.taxRegistrationId`. | `company_locations/update` |
+
+`customers/purchasing_summary` follows every change of a customer's sales (an order created,
+paid, cancelled, edited, refunded): sent when the app subscribes to it, its numbers those of the
+customer after the change.
+
+**Marketing** (`marketingActivityUpsertExternal`, `…CreateExternal` (deprecated),
+`…UpdateExternal`, `…DeleteExternal`, `marketingActivitiesDeleteAllExternal`,
+`marketingActivityCreate` and `marketingActivityUpdate` (the deprecated extension activities),
+`marketingEngagementCreate`, `marketingEngagementsDelete`; `marketingActivities` with
+`marketingActivityIds`, `remoteIds` and `utm`, `marketingActivity`, `marketingEvent`,
+`marketingEvents`): each external activity has its `MarketingEvent` (remote id, URLs, UTM
+parameters, dates); `remoteId` names it in every mutation; the errors are
+`MarketingActivityUserErrorCode`'s (a UTM campaign or remote id taken, UTM parameters that cannot
+change, an activity outside a hierarchy without UTM or URL parameter, …); engagements add up to
+the activity's `adSpend`; deleting all is a `Job` done at once. Nothing is sent to the channels.
+
+**Abandoned checkouts**: `abandonedCheckouts` (filters `status`, `recovery_state`,
+`email_state`, `created_at`, `updated_at`; sort keys `CUSTOMER_NAME`, `TOTAL_PRICE`, …),
+`abandonedCheckoutsCount`, `abandonment`, `abandonmentByAbandonedCheckoutId`,
+`abandonmentUpdateActivitiesDeliveryStatuses` and the deprecated `abandonmentEmailStateUpdate`
+(the email state an app's marketing activity reports). See "Webhooks" for how the storefront makes
+them.
+
+**Analytics**: `analyticsAnnotationCreate`, `…Update`, `…Delete` (the app's annotations, of the
+types apps may create: `campaign`, `product_launch`, …; `Shop.analyticsAnnotations`);
+`analyticsTargetCreate`, `…Update`, `analyticsTargetsDelete` (a metric of the `sales` schema,
+unique by metric, dates and filters; `analyticsTargets`, `presentmentExpectedValue` in the shop's
+currency). `shopifyqlQuery` answers `FROM sales` over the shop's orders and refunds: `SHOW`,
+`WHERE`, `GROUP BY`, `TIMESERIES` (periods filled), `SINCE`/`UNTIL`/`DURING`, `ORDER BY`,
+`LIMIT`, `WITH TOTALS`; the metrics `gross_sales`, `discounts`, `returns`, `net_sales`,
+`shipping_charges`, `taxes`, `total_sales`, `orders`, `average_order_value`, `quantity_ordered`,
+`net_items_sold`, `customers`, `new_customers`, `returning_customers`, … and the dimensions of
+time, order, customer, product and address; a column it does not know is the reference's
+`Column Not Found: Column 'total_sale' not found`. `VISUALIZE` and `COMPARE TO` are ignored, with
+a note; another schema than `sales` is a parse error.
+
+**Privacy**: `consentPolicyUpdate` (once `privacyFeaturesDisable([COOKIE_BANNER])` turned
+Shopify's banner off, as Shopify requires), `consentPolicy`, `consentPolicyRegions`;
+`privacyFeaturesDisable` and `privacySettings`.
+
+**The outbox**: lsf sends no email, no WhatsApp message, and erases nothing outside the shop.
+What Shopify would have sent is listed per shop in `GET /__lsf/admin` (`shops[].outbox`: `at`,
+`channel`, `to`, `what`, `about`).
+
+**Webhooks**: also `customer_account_settings/update` (built from the shop's customer account
+setting, sent on demand: no mutation changes it) and `audit_events/admin_api_activity` (each
+GraphQL request, when the app subscribes to it; Shopify delivers it through Pub/Sub or
+EventBridge only, which lsf logs as not sent).
+
+**Store sync**: none of these records reach the storefront or the checkout (segments, saved
+searches, marketing, analytics, consent policies, abandoned checkouts, staff assignments). A
+merge, an erasure and a data sale opt-out change customers, which sync as customers do.
 
 ### Subscriptions and customer payment methods
 

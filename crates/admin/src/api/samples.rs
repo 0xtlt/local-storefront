@@ -33,10 +33,16 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("app" | "shop", _) => &["Shop"],
         ("products", _) => &["Product"],
         ("collections", _) => &["Collection"],
+        (_, "customers/merge" | "customers/purchasing_summary") => &[],
         ("customers", _)
         | ("customers_email_marketing_consent", _)
         | ("customers_marketing_consent", _)
+        | ("customers_whats_app_marketing_consent", _)
         | ("customer.tags_added" | "customer.tags_removed", _) => &["Customer"],
+        ("customer_account_settings", _) => &["Shop"],
+        ("customer_groups", _) => &["SavedSearch"],
+        ("segments", _) => &["Segment"],
+        ("checkouts", _) => &["AbandonedCheckout"],
         ("companies", _) => &["Company"],
         ("company_locations", _) => &["CompanyLocation"],
         ("company_contacts", _) => &["CompanyContact"],

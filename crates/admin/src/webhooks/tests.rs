@@ -464,7 +464,7 @@ fn what_cannot_be_sent_is_logged_with_why() {
     let backend = Backend::start(|_| (200, Duration::ZERO));
     let webhooks = webhooks(
         vec![
-            subscription(&["carts/create"], "/hooks"),
+            subscription(&["shipping_addresses/create"], "/hooks"),
             subscription(&["products/update"], "pubsub://project:topic"),
             subscription(
                 &["products/update"],
@@ -474,7 +474,10 @@ fn what_cannot_be_sent_is_logged_with_why() {
         &backend.url,
         options(),
     );
-    webhooks.emit(&event("carts/create", "gid://shopify/Cart/1"), &lookup());
+    webhooks.emit(
+        &event("shipping_addresses/create", "gid://shopify/Channel/1"),
+        &lookup(),
+    );
     webhooks.emit(
         &event("products/update", "gid://shopify/Product/1"),
         &lookup(),
@@ -497,7 +500,7 @@ fn what_cannot_be_sent_is_logged_with_why() {
         .collect();
     assert_eq!(
         reasons[0],
-        "lsf does not build the payload of `carts/create`"
+        "lsf does not build the payload of `shipping_addresses/create`"
     );
     assert!(reasons[1].contains("Pub/Sub"), "{}", reasons[1]);
     assert!(reasons[2].contains("EventBridge"), "{}", reasons[2]);
@@ -977,7 +980,7 @@ fn the_control_endpoints_say_what_is_wrong() {
         "POST",
         "/__lsf/webhooks/trigger",
         &[],
-        json!({"topic": "carts/create"}),
+        json!({"topic": "shipping_addresses/create"}),
     )));
     assert_eq!(status, 422);
     // No subscription to the topic.
