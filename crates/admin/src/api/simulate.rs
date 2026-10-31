@@ -10,6 +10,8 @@
 //! | `DELETE /__lsf/admin/emails?shop=` | Forgets them. |
 //! | `POST /__lsf/admin/orders/protect` (`{"shop"?, "order", "status"?, "eligibility"?}`) | Shopify Protect changes its mind about an order: `Order.shopifyProtect` takes the status (`ACTIVE` by default) and the eligibility (`ELIGIBLE`), and `orders/shopify_protect_eligibility_changed` fires. |
 //! | `POST /__lsf/admin/orders/link-request` (`{"shop"?, "order"}`) | The buyer asks for a new link to the order's status page: the email is recorded in the outbox, `orders/link_requested` fires. |
+//! | `POST /__lsf/admin/disputes` (`{"shop"?, "order", "amount"?, "type"?, "reason"?}`) | The buyer's bank opens a dispute (a `CHARGEBACK` of what the order was paid, `FRAUDULENT`, by default): `disputes/create`. `201` `{ok, shop, dispute}`. |
+//! | `POST /__lsf/admin/disputes/<n>/won`, `…/lost`, `…/accepted` | The bank decides it: `disputes/update`. `409` when it is decided already. |
 //!
 //! The shop is `?shop=` or the body's `shop`, else the default one. No token is needed: these
 //! are lsf's, for the tests on this machine, as the other control endpoints are.
@@ -101,10 +103,74 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Some(Err(error)) => HttpResponse::json(422, &json!({ "error": error })),
             }
         }
-        ("clock" | "emails" | "orders/protect" | "orders/link-request", _) => HttpResponse::json(
-            405,
-            &json!({"error": format!("{method} is not allowed here")}),
-        ),
+        ("disputes", "POST") => {
+            let Some(order) = body
+                .get("order")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                return Some(HttpResponse::json(
+                    422,
+                    &json!({"error": "the body names the order: {\"order\": \"gid://shopify/Order/1\"}"}),
+                ));
+            };
+            let amount = body.get("amount").and_then(|amount| {
+                orders::model::parse_cents(&amount.to_string().replace('"', ""))
+            });
+            let kind = body
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("CHARGEBACK")
+                .to_ascii_uppercase();
+            let reason = body
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("FRAUDULENT")
+                .to_ascii_uppercase();
+            let opened = api.change_shop(&shop, |state| {
+                orders::shopify_payments::open_dispute(
+                    state,
+                    &orders::shopify_payments::NewDispute {
+                        order: &order,
+                        amount,
+                        kind: &kind,
+                        reason: &reason,
+                    },
+                )
+            });
+            match opened {
+                None => no_shop(),
+                Some(Ok(dispute)) => {
+                    HttpResponse::json(201, &json!({"ok": true, "shop": shop, "dispute": dispute}))
+                }
+                Some(Err(error)) => HttpResponse::json(422, &json!({ "error": error })),
+            }
+        }
+        (path, "POST") if path.starts_with("disputes/") => {
+            let rest = &path["disputes/".len()..];
+            let (number, outcome) = rest.split_once('/').unwrap_or((rest, ""));
+            let Ok(number) = number.parse::<u64>() else {
+                return Some(HttpResponse::json(
+                    404,
+                    &json!({"error": format!("no dispute `{number}`: /__lsf/admin/disputes/<number>/won")}),
+                ));
+            };
+            match api.change_shop(&shop, |state| {
+                orders::shopify_payments::decide_dispute(state, number, outcome)
+            }) {
+                None => no_shop(),
+                Some(Ok(dispute)) => {
+                    HttpResponse::json(200, &json!({"ok": true, "shop": shop, "dispute": dispute}))
+                }
+                Some(Err(error)) => HttpResponse::json(409, &json!({ "error": error })),
+            }
+        }
+        ("clock" | "emails" | "orders/protect" | "orders/link-request" | "disputes", _) => {
+            HttpResponse::json(
+                405,
+                &json!({"error": format!("{method} is not allowed here")}),
+            )
+        }
         _ => return None,
     })
 }

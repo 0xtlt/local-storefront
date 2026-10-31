@@ -246,3 +246,23 @@ pub(super) fn reverse_dispositions(reverse: &Map<String, Value>, lookup: &dyn Lo
         "total_dispositions": total,
     })
 }
+
+/// `disputes/create` and `disputes/update`: a `ShopifyPaymentsDispute`.
+pub(super) fn dispute(dispute: &Map<String, Value>) -> Value {
+    let amount = field(dispute, "amount");
+    let reason = field(dispute, "reasonDetails");
+    json!({
+        "id": id(dispute),
+        "order_id": ref_id(field(dispute, "order")),
+        "type": lower(field(dispute, "type")),
+        "amount": money_amount(amount),
+        "currency": amount.get("currencyCode").cloned().unwrap_or(Value::Null),
+        "reason": lower(reason.get("reason").unwrap_or(&Value::Null)),
+        "network_reason_code": reason.get("networkReasonCode").cloned().unwrap_or(Value::Null),
+        "status": lower(field(dispute, "status")),
+        "evidence_due_by": time(field(dispute, "evidenceDueBy")),
+        "evidence_sent_on": time(field(dispute, "evidenceSentOn")),
+        "finalized_on": time(field(dispute, "finalizedOn")),
+        "initiated_at": time(field(dispute, "initiatedAt")),
+    })
+}

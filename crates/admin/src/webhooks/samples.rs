@@ -99,6 +99,7 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "payment_schedules" => (payment_schedule(), Vec::new()),
         "payment_terms" => (payment_terms(), vec![payment_schedule()]),
         "tender_transactions" => (tender_transaction(), Vec::new()),
+        "disputes" => (dispute(), Vec::new()),
         "requested_order_edit" => requested_order_edit(topic),
         "fulfillment_events" => (fulfillment_event(), vec![fulfillment()]),
         "fulfillment_holds" => (fulfillment_hold(topic), Vec::new()),
@@ -1060,6 +1061,23 @@ fn reverse_fulfillment_order() -> (Value, Vec<Value>) {
         }),
         vec![disposition(1, 2222222), disposition(2, 2222223)],
     )
+}
+
+/// The chargeback of the `disputes/…` examples.
+fn dispute() -> Value {
+    json!({
+        "__typename": "ShopifyPaymentsDispute",
+        "id": "gid://shopify/ShopifyPaymentsDispute/285332461850802063",
+        "order": "gid://shopify/Order/820982911946154508",
+        "type": "CHARGEBACK",
+        "status": "UNDER_REVIEW",
+        "amount": {"amount": "11.50", "currencyCode": "CAD"},
+        "reasonDetails": {"reason": "FRAUDULENT", "networkReasonCode": "4837"},
+        "evidenceDueBy": "2021-12-30T19:00:00-05:00",
+        "evidenceSentOn": null,
+        "finalizedOn": null,
+        "initiatedAt": "2021-12-31T19:00:00-05:00",
+    })
 }
 
 /// The tender transaction of `tender_transactions/create`'s example.

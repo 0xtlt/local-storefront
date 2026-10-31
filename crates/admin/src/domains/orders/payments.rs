@@ -1273,6 +1273,7 @@ pub fn record_tender(state: &mut ShopState, transaction: &str) -> Option<String>
     if let Some(record) = state.get_mut(transaction) {
         record.insert(TENDER.into(), json!(tender));
     }
+    super::shopify_payments::record_balance(state, transaction);
     Some(tender)
 }
 

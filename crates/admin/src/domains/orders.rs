@@ -24,6 +24,7 @@ mod return_extras;
 mod returns;
 pub mod risk;
 mod services;
+pub mod shopify_payments;
 mod store_credit;
 
 #[cfg(test)]
@@ -232,6 +233,7 @@ pub fn seed(seed: &mut Seed) {
     seed.state
         .set_setting(TAX_RATE_SETTING, json!(store.checkout.tax_rate_bps));
     payments::seed(&mut seed.state);
+    shopify_payments::seed(&mut seed.state);
     let location = catalog::locations(store).first().map(catalog::location_gid);
     for customer in &store.customers {
         for order in &customer.orders {
@@ -1331,11 +1333,13 @@ pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
 
 /// What happens when the shop's clock passes a date: the payment schedules that came due fire
 /// `payment_schedules/due` ([`payments::tick`]), the store credit that expired leaves its
-/// account ([`store_credit::tick`]). Runs before every request of the Admin API,
+/// account ([`store_credit::tick`]), the days Shopify Payments processed are paid out
+/// ([`shopify_payments::tick`]). Runs before every request of the Admin API,
 /// and when the clock is moved (`POST /__lsf/admin/clock`).
 pub fn tick(state: &mut ShopState) {
     payments::tick(state);
     store_credit::tick(state);
+    shopify_payments::tick(state);
 }
 
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a
@@ -1355,5 +1359,6 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     payments::register(registry);
     requested_edits::register(registry);
     risk::register(registry);
+    shopify_payments::register(registry);
     store_credit::register(registry);
 }

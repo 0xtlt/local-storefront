@@ -471,3 +471,73 @@ fn what_buyers_and_shopify_do_to_an_order_is_delivered() {
     );
     assert_eq!(status, 422, "{refused}");
 }
+
+#[test]
+fn a_chargeback_is_opened_answered_and_won() {
+    let api = api();
+    let receiver = Receiver::start();
+    subscribe(&api, &receiver, &["DISPUTES_CREATE", "DISPUTES_UPDATE"]);
+    let orders = graphql(
+        &api,
+        "{ orders(first: 1, sortKey: ORDER_NUMBER) { nodes { id } } }",
+        json!({}),
+    );
+    let order = orders["data"]["orders"]["nodes"][0]["id"].clone();
+    let (status, opened) = request(
+        &api,
+        "POST",
+        "/__lsf/admin/disputes",
+        json!({"order": order, "amount": "11.50", "reason": "fraudulent"}),
+    );
+    assert_eq!(status, 201, "{opened}");
+    let (topic, created) = receiver.next();
+    assert_eq!(topic, "disputes/create");
+    assert_eq!(created["type"], "chargeback");
+    assert_eq!(created["amount"], "11.50");
+    assert_eq!(created["reason"], "fraudulent");
+    assert_eq!(created["status"], "needs_response");
+    let dispute = graphql(
+        &api,
+        "query($id: ID!) { dispute(id: $id) { disputeEvidence { id } } }",
+        json!({"id": opened["dispute"]}),
+    );
+    let evidence = dispute["data"]["dispute"]["disputeEvidence"]["id"].clone();
+    let submitted = graphql(
+        &api,
+        "mutation($id: ID!) { disputeEvidenceUpdate(id: $id, input: {uncategorizedText: \"Delivered\", submitEvidence: true}) { disputeEvidence { submitted } userErrors { message } } }",
+        json!({"id": evidence}),
+    );
+    assert_eq!(
+        submitted["data"]["disputeEvidenceUpdate"]["disputeEvidence"]["submitted"],
+        true
+    );
+    let (topic, update) = receiver.next();
+    assert_eq!(topic, "disputes/update");
+    assert_eq!(update["status"], "under_review");
+    assert!(update["evidence_sent_on"].is_string());
+    let number = opened["dispute"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, _) = request(
+        &api,
+        "POST",
+        &format!("/__lsf/admin/disputes/{number}/won"),
+        Value::Null,
+    );
+    assert_eq!(status, 200);
+    let (topic, won) = receiver.next();
+    assert_eq!(topic, "disputes/update");
+    assert_eq!(won["status"], "won");
+    assert!(won["finalized_on"].is_string());
+    let (status, _) = request(
+        &api,
+        "POST",
+        &format!("/__lsf/admin/disputes/{number}/lost"),
+        Value::Null,
+    );
+    assert_eq!(status, 409);
+}

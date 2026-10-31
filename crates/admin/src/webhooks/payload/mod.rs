@@ -141,6 +141,8 @@ pub const BUILT_TOPICS: &[&str] = &[
     "discounts/redeemcode_added",
     "discounts/redeemcode_removed",
     "discounts/update",
+    "disputes/create",
+    "disputes/update",
     "draft_orders/create",
     "draft_orders/delete",
     "draft_orders/update",
@@ -316,6 +318,7 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "payment_terms/create" | "payment_terms/update" => payments::payment_terms(record, lookup),
         "payment_terms/delete" => payments::payment_terms_deleted(record),
         "tender_transactions/create" => payments::tender_transaction(record),
+        "disputes/create" | "disputes/update" => payments::dispute(record),
         "requested_order_edit/created"
         | "requested_order_edit/declined"
         | "requested_order_edit/resolved" => payments::requested_order_edit(record, lookup),

@@ -1236,3 +1236,299 @@ fn shopify_protect_and_a_link_request_are_what_a_test_makes_happen() {
     );
     assert_eq!(outbox::emails(&shop)[0]["template"], "order_link_requested");
 }
+
+const ACCOUNT: &str = "{ shopifyPaymentsAccount { id activated defaultCurrency country accountOpenerName payoutStatementDescriptor
+    payoutSchedule { interval } balance { amount currencyCode }
+    bankAccounts(first: 5) { nodes { bankName currency country status } }
+    balanceTransactions(first: 50) { nodes { id type amount { amount } fee { amount } net { amount } associatedOrder { name } associatedPayout { id status } } }
+    payouts(first: 50) { nodes { id issuedAt status transactionType net { amount } summary { chargesGross { amount } chargesFee { amount } } } } } }";
+
+#[test]
+fn the_shopify_payments_account_is_what_its_orders_paid_and_its_payouts() {
+    let mut shop = demo();
+    let answer = run(&mut shop, ACCOUNT, json!({}));
+    assert!(answer.get("extensions").is_none(), "{answer}");
+    let account = &answer["data"]["shopifyPaymentsAccount"];
+    assert_eq!(account["activated"], true);
+    assert_eq!(account["defaultCurrency"], "USD");
+    assert_eq!(account["accountOpenerName"], "Local Supply Co.");
+    assert_eq!(account["payoutStatementDescriptor"], "LOCAL SUPP");
+    assert_eq!(account["bankAccounts"]["nodes"][0]["status"], "VALIDATED");
+    // The orders of the store data were paid by card: charges, less their fee.
+    let charges: Vec<&Value> = account["balanceTransactions"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|transaction| transaction["type"] == "CHARGE")
+        .collect();
+    assert!(!charges.is_empty());
+    for charge in &charges {
+        let amount = cents(&charge["amount"]["amount"]);
+        assert_eq!(
+            cents(&charge["fee"]["amount"]),
+            (amount * 29 + 500) / 1000 + 30
+        );
+        assert_eq!(
+            cents(&charge["net"]["amount"]),
+            amount - cents(&charge["fee"]["amount"])
+        );
+    }
+    // Their days are over: the clock pays them out.
+    super::tick(&mut shop);
+    let paid = run(&mut shop, ACCOUNT, json!({}));
+    let account = &paid["data"]["shopifyPaymentsAccount"];
+    assert_eq!(account["balance"][0]["amount"], "0.0");
+    let payouts = account["payouts"]["nodes"].as_array().unwrap();
+    assert!(!payouts.is_empty());
+    assert!(payouts.iter().all(|payout| payout["status"] == "PAID"));
+    assert!(
+        account["balanceTransactions"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|transaction| transaction["associatedPayout"]["status"] == "PAID")
+    );
+    let hidden = run(
+        &mut shop,
+        "{ shopifyPaymentsAccount { balanceTransactions(first: 50, hideTransfers: true) { nodes { type } } } }",
+        json!({}),
+    );
+    assert!(
+        hidden["data"]["shopifyPaymentsAccount"]["balanceTransactions"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|transaction| transaction["type"] != "TRANSFER")
+    );
+}
+
+fn cents(text: &Value) -> i64 {
+    super::model::parse_cents(text.as_str().unwrap()).unwrap()
+}
+
+#[test]
+fn a_payment_today_is_paid_out_at_once_in_its_currency_only() {
+    let mut shop = demo();
+    super::tick(&mut shop);
+    let order = pending_order(&mut shop);
+    let mandate = vaulted_card(&mut shop, &order);
+    run(
+        &mut shop,
+        MANDATE,
+        json!({"id": order, "mandate": mandate, "key": "k"}),
+    );
+    let balance = run(
+        &mut shop,
+        "{ shopifyPaymentsAccount { balance { amount } } }",
+        json!({}),
+    );
+    let pending = cents(&balance["data"]["shopifyPaymentsAccount"]["balance"][0]["amount"]);
+    assert!(pending > 0);
+    let payout = "mutation($currency: CurrencyCode!) { shopifyPaymentsPayoutAlternateCurrencyCreate(currency: $currency) {
+        success payout { amount { amount } currency remoteId } userErrors { field message code } } }";
+    let refused = run(&mut shop, payout, json!({"currency": "CAD"}));
+    let refused = &refused["data"]["shopifyPaymentsPayoutAlternateCurrencyCreate"];
+    assert_eq!(refused["success"], false);
+    assert_eq!(
+        refused["userErrors"][0]["code"],
+        "ALTERNATE_CURRENCY_PAYOUT_FAILED_NO_ELIGIBLE_BALANCE"
+    );
+    assert_eq!(
+        cents(
+            &run(
+                &mut shop,
+                "{ shopifyPaymentsAccount { balance { amount } } }",
+                json!({})
+            )["data"]["shopifyPaymentsAccount"]["balance"][0]["amount"]
+        ),
+        pending
+    );
+    let done = run(&mut shop, payout, json!({"currency": "USD"}));
+    let done = &done["data"]["shopifyPaymentsPayoutAlternateCurrencyCreate"];
+    assert_eq!(done["success"], true, "{done}");
+    assert_eq!(cents(&done["payout"]["amount"]["amount"]), pending);
+    assert!(
+        done["payout"]["remoteId"]
+            .as_str()
+            .unwrap()
+            .starts_with("po_")
+    );
+    let after = run(
+        &mut shop,
+        "{ shopifyPaymentsAccount { balance { amount } } }",
+        json!({}),
+    );
+    assert_eq!(
+        after["data"]["shopifyPaymentsAccount"]["balance"][0]["amount"],
+        "0.0"
+    );
+}
+
+const EVIDENCE: &str = "mutation($id: ID!, $input: ShopifyPaymentsDisputeEvidenceUpdateInput!) {
+    disputeEvidenceUpdate(id: $id, input: $input) {
+      disputeEvidence { id submitted uncategorizedText customerFirstName shippingAddress { city countryCodeV2 }
+        disputeFileUploads { id disputeEvidenceType } dispute { status evidenceSentOn } }
+      userErrors { field message code } } }";
+
+#[test]
+fn a_dispute_takes_money_back_and_takes_evidence_until_submitted() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let dispute = super::shopify_payments::open_dispute(
+        &mut shop,
+        &super::shopify_payments::NewDispute {
+            order: &order,
+            amount: Some(1150),
+            kind: "CHARGEBACK",
+            reason: "FRAUDULENT",
+        },
+    )
+    .unwrap();
+    assert_eq!(topics(&mut shop), ["disputes/create"]);
+    let read = run(
+        &mut shop,
+        "query($id: ID!, $order: ID!) { dispute(id: $id) { amount { amount } status type reasonDetails { reason networkReasonCode }
+            evidenceDueBy initiatedAt order { id } disputeEvidence { id customerEmailAddress fulfillments { id } } }
+          order(id: $order) { disputes { id initiatedAs status } }
+          disputes(first: 5, query: \"status:needs_response\") { nodes { id } } }",
+        json!({"id": dispute, "order": order}),
+    );
+    assert!(read.get("extensions").is_none(), "{read}");
+    let found = &read["data"]["dispute"];
+    assert_eq!(found["amount"]["amount"], "11.5");
+    assert_eq!(
+        found["reasonDetails"],
+        json!({"reason": "FRAUDULENT", "networkReasonCode": "4837"})
+    );
+    assert_eq!(
+        read["data"]["order"]["disputes"],
+        json!([{"id": dispute, "initiatedAs": "CHARGEBACK", "status": "NEEDS_RESPONSE"}])
+    );
+    assert_eq!(read["data"]["disputes"]["nodes"][0]["id"], json!(dispute));
+    let evidence = found["disputeEvidence"]["id"].clone();
+    // The chargeback and its fee left the balance.
+    let adjustment = shop
+        .all("ShopifyPaymentsBalanceTransaction")
+        .find(|transaction| transaction["type"] == "ADJUSTMENT")
+        .unwrap();
+    assert_eq!(adjustment["amount"]["amount"], "-11.5");
+    assert_eq!(adjustment["fee"]["amount"], "15.0");
+
+    // Evidence, with a file of the shop, then submitted.
+    let file = "gid://shopify/GenericFile/77";
+    shop.insert(value::object(json!({"__typename": "GenericFile", "id": file, "url": "https://example.com/receipt.pdf", "mimeType": "application/pdf", "originalFileSize": 1024})));
+    let updated = run(
+        &mut shop,
+        EVIDENCE,
+        json!({"id": evidence, "input": {
+            "customerFirstName": "Kermit", "uncategorizedText": "Test uncategorized text",
+            "shippingAddress": {"address1": "1 Infinite Loop", "city": "Cupertino", "zip": "95014", "country": "US", "province": "California"},
+            "uncategorizedFile": {"id": file},
+        }}),
+    );
+    let payload = &updated["data"]["disputeEvidenceUpdate"];
+    assert_eq!(payload["userErrors"], json!([]), "{updated}");
+    let evidence_read = &payload["disputeEvidence"];
+    assert_eq!(
+        evidence_read["uncategorizedText"],
+        "Test uncategorized text"
+    );
+    assert_eq!(
+        evidence_read["shippingAddress"],
+        json!({"city": "Cupertino", "countryCodeV2": "US"})
+    );
+    assert_eq!(
+        evidence_read["disputeFileUploads"][0]["disputeEvidenceType"],
+        "UNCATEGORIZED_FILE"
+    );
+    assert_eq!(evidence_read["dispute"]["status"], "NEEDS_RESPONSE");
+    assert_eq!(topics(&mut shop), ["disputes/update"]);
+    let submitted = run(
+        &mut shop,
+        EVIDENCE,
+        json!({"id": evidence, "input": {"submitEvidence": true}}),
+    );
+    let submitted = &submitted["data"]["disputeEvidenceUpdate"]["disputeEvidence"];
+    assert_eq!(submitted["submitted"], true);
+    assert_eq!(submitted["dispute"]["status"], "UNDER_REVIEW");
+    assert!(submitted["dispute"]["evidenceSentOn"].is_string());
+    topics(&mut shop);
+    // Once submitted, the evidence is refused, and nothing changes.
+    let before = shop.get(evidence.as_str().unwrap()).cloned();
+    let refused = run(
+        &mut shop,
+        EVIDENCE,
+        json!({"id": evidence, "input": {"uncategorizedText": "More"}}),
+    );
+    assert_eq!(
+        refused["data"]["disputeEvidenceUpdate"]["userErrors"][0]["code"],
+        "EVIDENCE_ALREADY_ACCEPTED"
+    );
+    assert_eq!(shop.get(evidence.as_str().unwrap()).cloned(), before);
+    assert!(topics(&mut shop).is_empty());
+    // The bank decides for the merchant: the amount comes back.
+    let number = crate::state::parse_gid(&dispute).unwrap().1;
+    super::shopify_payments::decide_dispute(&mut shop, number, "won").unwrap();
+    assert_eq!(shop.get(&dispute).unwrap()["status"], "WON");
+    assert!(
+        shop.all("ShopifyPaymentsBalanceTransaction")
+            .any(|transaction| transaction["type"] == "DISPUTE_REVERSAL")
+    );
+    assert_eq!(topics(&mut shop), ["disputes/update"]);
+    assert!(super::shopify_payments::decide_dispute(&mut shop, number, "lost").is_err());
+}
+
+#[test]
+fn dispute_evidence_is_refused_past_its_due_date_or_with_an_unknown_file() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let dispute = super::shopify_payments::open_dispute(
+        &mut shop,
+        &super::shopify_payments::NewDispute {
+            order: &order,
+            amount: None,
+            kind: "INQUIRY",
+            reason: "GENERAL",
+        },
+    )
+    .unwrap();
+    let evidence = shop.get(&dispute).unwrap()["disputeEvidence"].clone();
+    // An inquiry moves no money.
+    assert!(
+        !shop
+            .all("ShopifyPaymentsBalanceTransaction")
+            .any(|transaction| transaction["type"] == "ADJUSTMENT")
+    );
+    let unknown = run(
+        &mut shop,
+        EVIDENCE,
+        json!({"id": evidence, "input": {"uncategorizedFile": {"id": "gid://shopify/GenericFile/1"}}}),
+    );
+    assert_eq!(
+        unknown["data"]["disputeEvidenceUpdate"]["userErrors"][0]["code"],
+        "FILE_NOT_FOUND"
+    );
+    let missing = run(
+        &mut shop,
+        EVIDENCE,
+        json!({"id": "gid://shopify/ShopifyPaymentsDisputeEvidence/0", "input": {}}),
+    );
+    assert_eq!(
+        missing["data"]["disputeEvidenceUpdate"]["userErrors"][0]["code"],
+        "DISPUTE_EVIDENCE_NOT_FOUND"
+    );
+    later(&mut shop, 8);
+    let late = run(
+        &mut shop,
+        EVIDENCE,
+        json!({"id": evidence, "input": {"uncategorizedText": "Late"}}),
+    );
+    assert_eq!(
+        late["data"]["disputeEvidenceUpdate"]["userErrors"][0]["code"],
+        "EVIDENCE_PAST_DUE_DATE"
+    );
+    assert_eq!(
+        shop.get(evidence.as_str().unwrap()).unwrap()["uncategorizedText"],
+        Value::Null
+    );
+}

@@ -69,6 +69,7 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("metafield_definitions", _) => &["MetafieldDefinition"],
         ("metaobjects", _) => &["Metaobject"],
         ("discounts", _) => &["DiscountAutomaticNode", "DiscountCodeNode"],
+        ("disputes", _) => &["ShopifyPaymentsDispute"],
         _ => &[],
     }
 }
