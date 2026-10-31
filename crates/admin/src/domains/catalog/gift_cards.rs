@@ -348,6 +348,20 @@ fn transaction(
             "The gift card does not have sufficient funds to satisfy the request.",
             "INSUFFICIENT_FUNDS",
         )),
+        // The balance stays within the bound of an amount (`value::MAX_MONEY_CENTS`, lsf's), with
+        // the code Shopify has for it and its description.
+        Some((cents, _))
+            if credit
+                && !cents_in(&record, "balance")
+                    .checked_add(*cents)
+                    .is_some_and(value::money_in_bounds) =>
+        {
+            errors.push(coded(
+                &at,
+                "The gift card's value exceeds the allowed limits.",
+                "GIFT_CARD_LIMIT_EXCEEDED",
+            ))
+        }
         _ => {}
     }
     let today = mutation

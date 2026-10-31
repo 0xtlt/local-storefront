@@ -5,6 +5,31 @@ use chrono::{DateTime, Utc};
 use lsf_core::store::{Address, Image};
 use serde_json::{Map, Value, json};
 
+/// The bound of a money input, in cents: an amount must be below 10^13 in the currency's unit
+/// (ten trillion), either sign.
+///
+/// Shopify publishes no limit on its `Money` and `Decimal` amounts: shopify.dev documents none
+/// for the scalars or for the inputs that take them. This one is lsf's, chosen so that what an
+/// order, a refund or a balance adds or multiplies of such amounts stays far within the 64 bits
+/// of cents lsf counts in.
+pub const MAX_MONEY_CENTS: i64 = 1_000_000_000_000_000;
+
+/// [`MAX_MONEY_CENTS`] in the currency's unit, as the message of an amount past it writes it.
+pub const MAX_MONEY_TEXT: &str = "10000000000000";
+
+/// Whether an amount in cents is within [`MAX_MONEY_CENTS`], either sign.
+pub fn money_in_bounds(cents: i64) -> bool {
+    cents
+        .checked_abs()
+        .is_some_and(|cents| cents < MAX_MONEY_CENTS)
+}
+
+/// The message of an amount past [`MAX_MONEY_CENTS`] (`"Price must be less than
+/// 10000000000000"`): lsf's, in the wording of Rails' numericality validation.
+pub fn money_too_large(name: &str) -> String {
+    format!("{name} must be less than {MAX_MONEY_TEXT}")
+}
+
 /// Cents as the `Money` scalar: `"19.99"`, `"20.00"` (as `ProductVariant.price` reads).
 pub fn money(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };

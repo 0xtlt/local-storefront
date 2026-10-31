@@ -372,7 +372,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     let mut subtotal = 0;
     let mut line_discounts = 0;
     let mut quantity = 0;
-    let mut grams = 0;
+    let mut grams: u64 = 0;
     let order_number = crate::state::parse_gid(&order).map_or(0, |(_, id)| id);
     for (position, line) in draft.lines.iter().enumerate() {
         let id = line_item_gid(order_number, position);
@@ -381,7 +381,10 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         subtotal += discounted;
         line_discounts += line.discount;
         quantity += line.quantity;
-        grams += line.grams * u64::from(line.quantity);
+        grams = line
+            .grams
+            .saturating_mul(u64::from(line.quantity))
+            .saturating_add(grams);
         state.insert(line_item_record(
             &id,
             line,
@@ -485,7 +488,11 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             );
             let share = line.unit_price * i64::from(fulfilled[position]);
             let discounted = share
-                - line.discount * i64::from(fulfilled[position]) / i64::from(line.quantity.max(1));
+                - model::share(
+                    line.discount,
+                    i64::from(fulfilled[position]),
+                    i64::from(line.quantity.max(1)),
+                );
             state.insert(value::object(json!({
                 "__typename": "FulfillmentLineItem",
                 "id": id,
@@ -840,7 +847,7 @@ pub fn line_item_record(
         if line.quantity == 0 {
             0
         } else {
-            total * i64::from(unfulfilled) / i64::from(line.quantity)
+            model::share(total, i64::from(unfulfilled), i64::from(line.quantity))
         }
     };
     let name = match &line.variant_title {

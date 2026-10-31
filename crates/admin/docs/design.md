@@ -382,7 +382,12 @@ field, in order:
    `read_customers`), read as a query's, in a payload too; `node` and `nodes` what the type of the
    record they find requires. The requirements are read once per field and kept.
 2. **A mutation** runs its registered function (see "Mutations" below); one without answers
-   `LSF_NOT_SIMULATED`.
+   `LSF_NOT_SIMULATED`. Before it runs, a money input of 10^13 or more in the currency's unit
+   (`Money`, or a `Decimal` amount: `MoneyInput.amount`, a discount's amount, …) answers a user
+   error in every user error list of the payload, the rest `null` (`resolve::money`). Shopify
+   publishes no limit; `state::value::MAX_MONEY_CENTS` is lsf's, so that sums and products of
+   amounts hold in 64 bits. The mutations check what they multiply (a line's total, an order's)
+   against the same bound.
 3. **A custom resolver** registered for `(type, field)` answers it (see "Writing a resolver or a
    mutation").
 4. **Root conventions**: `node(id:)` and `nodes(ids:)` read any record (aliases followed:

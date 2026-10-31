@@ -171,7 +171,17 @@ fn line_value(
             })));
         }
     }
-    let original = unit * quantity;
+    // Amounts are bounded (`value::MAX_MONEY_CENTS`), so that the draft's sums of them hold.
+    let Some(original) = unit
+        .checked_mul(quantity)
+        .filter(|total| value::money_in_bounds(*total))
+    else {
+        errors.push(UserError::new(
+            &[path, &["quantity"]].concat(),
+            value::money_too_large("Total price"),
+        ));
+        return None;
+    };
     let discount_input = input
         .get("appliedDiscount")
         .filter(|discount| !discount.is_null());
@@ -228,7 +238,7 @@ fn applied_discount(input: &Value, base: i64, units: Option<i64>, currency: &str
                     || (value * 100.0).round() as i64,
                     |amount| model::cents(Some(amount)),
                 );
-            (fixed * units.unwrap_or(1)).min(base)
+            fixed.saturating_mul(units.unwrap_or(1)).min(base)
         }
     }
     .max(0);
@@ -323,9 +333,9 @@ fn totals(
                     })
                 })
                 .unwrap_or(0.0);
-            (grams.round() as i64) * int(line, "quantity")
+            (grams.round() as i64).saturating_mul(int(line, "quantity"))
         })
-        .sum();
+        .fold(0i64, i64::saturating_add);
     let overridden: Vec<bool> = lines
         .iter()
         .map(|line| {
@@ -431,6 +441,18 @@ fn read_input(
                 })
                 .collect()
         });
+    if let Some(lines) = &lines {
+        let total: i128 = lines
+            .iter()
+            .map(|line| i128::from(field_cents(line, "originalTotalSet")))
+            .sum();
+        if !i64::try_from(total).is_ok_and(value::money_in_bounds) {
+            errors.push(UserError::new(
+                &["lineItems"],
+                value::money_too_large("Total price"),
+            ));
+        }
+    }
     let lines = match (lines, base) {
         (Some(lines), _) => lines,
         (None, Some(base)) => gids(base.get("lineItems"))

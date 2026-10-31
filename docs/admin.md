@@ -327,6 +327,10 @@ The full list, field by field, is in the design notes of `lsf-admin`
   the fields answered with a default because the store data does not give them (and
   `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an
   input it ignored, a search filter it does not read).
+- A money input of ten trillion or more in the currency's unit (`Money`, `MoneyInput.amount`, a
+  discount's amount, …), or a line or an order whose total would be, answers a `userError`
+  ("Price must be less than 10000000000000") and changes nothing. Shopify publishes no limit:
+  this one is lsf's, so that no total overflows.
 - A mutation lsf does not simulate answers an error with `extensions.code: LSF_NOT_SIMULATED`, never
   a silent success. `GET /__lsf/admin` lists those it simulates. The REST Admin API
   (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API only.

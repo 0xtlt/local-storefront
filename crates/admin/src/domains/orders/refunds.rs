@@ -86,17 +86,17 @@ pub fn line_amounts(
     let after_cart = if lines_total == 0 {
         discounted
     } else {
-        discounted - cart * discounted / lines_total
+        discounted - model::share(cart, discounted, lines_total)
     };
     let unit = after_cart / ordered;
-    let subtotal = after_cart * quantity / ordered;
+    let subtotal = model::share(after_cart, quantity, ordered);
     let order_subtotal = field_cents(order, "subtotalPriceSet");
     let tax = field_cents(order, "totalTaxSet");
     let line_tax =
         if order_subtotal <= 0 || item.get("taxable").and_then(Value::as_bool) == Some(false) {
             0
         } else {
-            tax * subtotal / order_subtotal
+            model::share(tax, subtotal, order_subtotal)
         };
     (unit, subtotal, line_tax)
 }

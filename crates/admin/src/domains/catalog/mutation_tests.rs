@@ -1861,3 +1861,30 @@ fn products_join_selling_plan_groups_and_locations_offer_pickup() {
     );
     assert_eq!(topics(&mut shop), ["locations/update"]);
 }
+
+/// A variant's price past lsf's bound of an amount is refused before anything changes, so that
+/// an order of it cannot overflow its totals.
+#[test]
+fn a_price_past_the_bound_is_refused() {
+    let mut shop = demo();
+    let beanie = product(&shop, "ceramic-mug");
+    let variant = variants(&shop, &beanie)[0].clone();
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $id, variants: $variants) { productVariants { id } userErrors { field message code } } }"#,
+        json!({"id": beanie, "variants": [{"id": variant, "price": "92233720368547758.07"}]}),
+    );
+    assert_eq!(
+        refused["data"]["productVariantsBulkUpdate"],
+        json!({"productVariants": null, "userErrors": [{
+            "field": ["variants", "0", "price"],
+            "message": "Price must be less than 10000000000000",
+            "code": "INVALID_INPUT",
+        }]}),
+        "{refused}"
+    );
+    assert_eq!(shop.get(&variant), before.get(&variant));
+    assert!(shop.take_events().is_empty());
+}

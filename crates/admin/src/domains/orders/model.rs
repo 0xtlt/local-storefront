@@ -70,10 +70,10 @@ pub fn parse_cents(text: &str) -> Option<i64> {
             .get(index)
             .map_or(0, |byte| i64::from(byte - b'0'))
     };
-    let mut cents = units.checked_mul(100)? + digit(0) * 10 + digit(1);
-    if digit(2) >= 5 {
-        cents += 1;
-    }
+    // `None` past what 64 bits of cents hold, rather than an overflow.
+    let cents = units
+        .checked_mul(100)?
+        .checked_add(digit(0) * 10 + digit(1) + i64::from(digit(2) >= 5))?;
     Some(if negative { -cents } else { cents })
 }
 
@@ -92,6 +92,17 @@ pub fn cents(value: Option<&Value>) -> i64 {
             .map_or(0, |amount| (amount * 100.0).round() as i64),
         _ => 0,
     }
+}
+
+/// `amount × part / whole`, the share of an amount (a discount spread over lines, the tax of a
+/// part of the subtotal), computed wide so that the product of two amounts does not overflow; 0
+/// when `whole` is 0.
+pub fn share(amount: i64, part: i64, whole: i64) -> i64 {
+    if whole == 0 {
+        return 0;
+    }
+    let share = i128::from(amount) * i128::from(part) / i128::from(whole);
+    i64::try_from(share).unwrap_or(if share < 0 { i64::MIN } else { i64::MAX })
 }
 
 /// The cents of a field of a record.
@@ -1204,6 +1215,10 @@ mod tests {
         assert_eq!(parse_cents(".5"), Some(50));
         assert_eq!(parse_cents("x"), None);
         assert_eq!(parse_cents(""), None);
+        // Past what 64 bits of cents hold: `None`, not an overflow.
+        assert_eq!(parse_cents("92233720368547758.07"), Some(i64::MAX));
+        assert_eq!(parse_cents("92233720368547758.09"), None);
+        assert_eq!(parse_cents("92233720368547758.075"), None);
         assert_eq!(cents(Some(&json!({"shopMoney": {"amount": "12.5"}}))), 1250);
         assert_eq!(
             cents(Some(&json!({"amount": "3", "currencyCode": "EUR"}))),

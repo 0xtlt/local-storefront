@@ -63,8 +63,11 @@ impl Money {
                 {
                     return None;
                 }
-                let cents = units.parse::<i64>().ok()?.checked_mul(100)?
-                    + format!("{fraction:0<2}").parse::<i64>().ok()?;
+                let cents = units
+                    .parse::<i64>()
+                    .ok()?
+                    .checked_mul(100)?
+                    .checked_add(format!("{fraction:0<2}").parse::<i64>().ok()?)?;
                 Some(if negative { -cents } else { cents })
             }
         }
@@ -1819,6 +1822,12 @@ mod tests {
     #[test]
     fn converts_money() {
         assert_eq!(Money::Cents(1999).cents(), Some(1999));
+        // Past what 64 bits of cents hold: `None`, not an overflow.
+        assert_eq!(
+            Money::Decimal("92233720368547758.07".into()).cents(),
+            Some(i64::MAX)
+        );
+        assert_eq!(Money::Decimal("92233720368547758.08".into()).cents(), None);
         assert_eq!(Money::Decimal("19.99".into()).cents(), Some(1999));
         assert_eq!(Money::Decimal("20".into()).cents(), Some(2000));
         assert_eq!(Money::Decimal("0.5".into()).cents(), Some(50));

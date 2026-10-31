@@ -30,6 +30,7 @@
 pub mod access;
 pub mod connection;
 mod defaults;
+pub mod money;
 pub mod mutation;
 pub mod registry;
 pub mod search;
@@ -880,6 +881,18 @@ impl graphql::Resolver for ShopResolver<'_> {
     fn field(&mut self, ctx: &FieldContext<'_>, object: &Obj) -> Result<Output<Obj>, FieldError> {
         access::check(self, ctx, object)?;
         if let Obj::Mutation = object {
+            // An amount past what lsf takes is refused before the mutation runs (`money`).
+            if self.registry.mutation_fn(ctx.field_name()).is_some() {
+                let oversized = money::oversized(ctx);
+                if !oversized.is_empty() {
+                    let type_name = ctx.ty().named();
+                    let mut payload = money::refused(ctx.schema(), type_name, &oversized);
+                    if ctx.schema().field(type_name, "shop").is_some() {
+                        payload.insert("shop".into(), json!(self.state.shop_gid()));
+                    }
+                    return Ok(Output::Object(Obj::built(type_name, payload)));
+                }
+            }
             return mutation::run(self, ctx);
         }
         if let Some(resolve) = self.registry.field_fn(ctx.parent_type(), ctx.field_name()) {

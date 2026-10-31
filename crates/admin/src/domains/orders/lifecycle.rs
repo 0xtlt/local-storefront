@@ -808,7 +808,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .code("INVALID")]);
     }
     let mut lines = Vec::new();
-    let mut line_tax = 0;
+    let mut line_tax: i64 = 0;
     for (index, item) in items.iter().enumerate() {
         let index = index.to_string();
         let path = ["order", "lineItems", index.as_str()];
@@ -956,7 +956,35 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 }
             }
         }
-        line_tax += tax_lines_cents(item.get("taxLines"), line.unit_price * quantity);
+        // Amounts are bounded (`value::MAX_MONEY_CENTS`), so that the order's sums of them hold.
+        let Some(total) = line
+            .unit_price
+            .checked_mul(quantity)
+            .filter(|total| value::money_in_bounds(*total))
+        else {
+            errors.push(
+                UserError::new(
+                    &[&path[..], &["quantity"]].concat(),
+                    value::money_too_large("Total price"),
+                )
+                .code("INVALID"),
+            );
+            continue;
+        };
+        match tax_lines_cents(item.get("taxLines"), total).and_then(|tax| line_tax.checked_add(tax))
+        {
+            Some(tax) => line_tax = tax,
+            None => {
+                errors.push(
+                    UserError::new(
+                        &[&path[..], &["taxLines"]].concat(),
+                        value::money_too_large("Tax"),
+                    )
+                    .code("INVALID"),
+                );
+                continue;
+            }
+        }
         lines.push(line);
     }
 
@@ -1084,9 +1112,10 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     if shipping_lines.len() > 1 {
         mutation.note("orderCreate: lsf keeps the first shipping line only");
     }
+    let mut shipping_tax = Some(0);
     let mut shipping = shipping_lines.first().map(|line| {
         let price = model::cents(line.get("priceSet").and_then(|set| set.get("shopMoney")));
-        line_tax += tax_lines_cents(line.get("taxLines"), price);
+        shipping_tax = tax_lines_cents(line.get("taxLines"), price);
         ShippingDraft {
             title: line
                 .get("title")
@@ -1098,10 +1127,41 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             discounted: price,
         }
     });
-    let subtotal: i64 = lines
+    // Each line's total is bounded; their sum, the shipping and the tax must be too.
+    let subtotal = lines
         .iter()
-        .map(|line| line.unit_price * i64::from(line.quantity))
-        .sum();
+        .map(|line| i128::from(line.unit_price) * i128::from(line.quantity))
+        .sum::<i128>();
+    let order_tax = tax_lines_cents(
+        input.get("taxLines"),
+        i64::try_from(subtotal).unwrap_or(i64::MAX),
+    );
+    let total = [
+        Some(subtotal),
+        Some(
+            shipping
+                .as_ref()
+                .map_or(0, |shipping| i128::from(shipping.original)),
+        ),
+        shipping_tax.map(i128::from),
+        order_tax.map(i128::from),
+        Some(i128::from(line_tax)),
+    ]
+    .into_iter()
+    .try_fold(0i128, |sum, part| Some(sum + part?));
+    let bounded = |amount: Option<i128>| {
+        amount
+            .and_then(|amount| i64::try_from(amount).ok())
+            .filter(|amount| value::money_in_bounds(*amount))
+    };
+    let (Some(_), Some(subtotal)) = (bounded(total), bounded(Some(subtotal))) else {
+        // lsf's wording, as every message of the bound.
+        return failed(&[UserError::new(
+            &["order", "lineItems"],
+            value::money_too_large("Total price"),
+        )
+        .code("INVALID")]);
+    };
     let discount = model::input_of(input.get("discountCode"));
     let mut discount_codes = Vec::new();
     let mut order_discount = 0;
@@ -1112,7 +1172,8 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         let percentage = code
             .get("percentage")
             .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+            .unwrap_or(0.0)
+            .clamp(0.0, 100.0);
         for line in &mut lines {
             let total = line.unit_price * i64::from(line.quantity);
             line.discount = ((total as f64) * percentage / 100.0).round() as i64;
@@ -1134,7 +1195,8 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         }
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
     }
-    let tax = tax_lines_cents(input.get("taxLines"), subtotal) + line_tax;
+    // Bounded above: the order's total holds them.
+    let tax = order_tax.unwrap_or(0) + shipping_tax.unwrap_or(0) + line_tax;
 
     // The money.
     let transactions = array(&input, "transactions");
@@ -1363,26 +1425,31 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 }
 
 /// The tax of `taxLines` (`OrderCreateTaxLineInput`): their `priceSet`, else their `rate` of
-/// `base`.
-fn tax_lines_cents(lines: Option<&Value>, base: i64) -> i64 {
-    lines
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(
-            |line| match line.get("priceSet").and_then(|set| set.get("shopMoney")) {
-                Some(money) => model::cents(Some(money)),
-                None => {
-                    let rate = line
-                        .get("rate")
-                        .and_then(|rate| match rate {
-                            Value::String(text) => text.parse::<f64>().ok(),
-                            other => other.as_f64(),
-                        })
-                        .unwrap_or(0.0);
-                    ((base as f64) * rate).round() as i64
+/// `base`. `None` when it is past the bound of an amount (`value::MAX_MONEY_CENTS`): a rate can be
+/// any `Decimal`.
+fn tax_lines_cents(lines: Option<&Value>, base: i64) -> Option<i64> {
+    let mut tax: i64 = 0;
+    for line in lines.and_then(Value::as_array).into_iter().flatten() {
+        let cents = match line.get("priceSet").and_then(|set| set.get("shopMoney")) {
+            Some(money) => model::cents(Some(money)),
+            None => {
+                let rate = line
+                    .get("rate")
+                    .and_then(|rate| match rate {
+                        Value::String(text) => text.parse::<f64>().ok(),
+                        other => other.as_f64(),
+                    })
+                    .unwrap_or(0.0);
+                let cents = ((base as f64) * rate).round();
+                if !cents.is_finite() || cents.abs() >= value::MAX_MONEY_CENTS as f64 {
+                    return None;
                 }
-            },
-        )
-        .sum()
+                cents as i64
+            }
+        };
+        tax = tax
+            .checked_add(cents)
+            .filter(|tax| value::money_in_bounds(*tax))?;
+    }
+    Some(tax)
 }

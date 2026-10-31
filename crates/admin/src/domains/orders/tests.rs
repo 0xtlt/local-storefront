@@ -1992,3 +1992,84 @@ fn an_order_ships_and_restocks_only_what_it_committed() {
 fn gids_of(record: &crate::state::Record, field: &str) -> Vec<String> {
     crate::domains::catalog::gids(record.get(field))
 }
+
+/// No amount of an order or a draft overflows: a money input past lsf's bound, or a line whose
+/// total would be, answers a user error, never a panic or a wrapped total.
+#[test]
+fn amounts_past_the_bound_answer_user_errors() {
+    let mut shop = demo();
+    let (variant, _) = first_variant(&shop);
+    let money = |amount: &str| json!({"shopMoney": {"amount": amount, "currencyCode": "EUR"}});
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"title": "Huge", "quantity": 2, "priceSet": money("92233720368547758.07")}]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"],
+        json!({"order": null, "userErrors": [{
+            "field": ["order", "lineItems", "0", "priceSet", "shopMoney", "amount"],
+            "message": "Amount must be less than 10000000000000",
+            "code": "INVALID",
+        }]}),
+        "{answer}"
+    );
+    // Within the bound, but not twice over.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"title": "Large", "quantity": 2, "priceSet": money("9999999999999.99")}]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([{"field": ["order", "lineItems", "0", "quantity"], "message": "Total price must be less than 10000000000000", "code": "INVALID"}]),
+        "{answer}"
+    );
+    // Two lines within the bound whose sum is not; a tax rate past it.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [
+            {"title": "A", "quantity": 1, "priceSet": money("6000000000000")},
+            {"title": "B", "quantity": 1, "priceSet": money("6000000000000")},
+        ]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"][0]["message"],
+        json!("Total price must be less than 10000000000000"),
+        "{answer}"
+    );
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"variantId": variant, "quantity": 1}], "taxLines": [{"title": "VAT", "rate": "100000000000000000000"}]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"][0]["message"],
+        json!("Total price must be less than 10000000000000"),
+        "{answer}"
+    );
+    let draft = |shop: &mut ShopState, line: Value| {
+        run(
+            shop,
+            "mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } userErrors { field message } } }",
+            json!({"input": {"lineItems": [line]}}),
+        )["data"]["draftOrderCreate"]
+            .clone()
+    };
+    assert_eq!(
+        draft(
+            &mut shop,
+            json!({"title": "Huge", "quantity": 2, "originalUnitPrice": "92233720368547758.07"})
+        ),
+        json!({"draftOrder": null, "userErrors": [{"field": ["input", "lineItems", "0", "originalUnitPrice"], "message": "Original unit price must be less than 10000000000000"}]})
+    );
+    assert_eq!(
+        draft(
+            &mut shop,
+            json!({"title": "Large", "quantity": 2000000000, "originalUnitPrice": "9999.99"})
+        ),
+        json!({"draftOrder": null, "userErrors": [{"field": ["lineItems", "0", "quantity"], "message": "Total price must be less than 10000000000000"}]})
+    );
+    assert!(shop.take_events().is_empty());
+}
