@@ -8,6 +8,7 @@
     ["id", "id"],
     ["published_at", "time"],
     ["published_status", "string"],
+    ["status", "string"],
     ["updated_at", "time"]
    ],
    "commentsCount": [
@@ -16,6 +17,7 @@
     ["id", "id"],
     ["published_at", "time"],
     ["published_status", "string"],
+    ["status", "string"],
     ["updated_at", "time"]
    ],
    "events": [
@@ -57,17 +59,21 @@
   },
   "CalculatedOrder": {
    "lineItems": [
+    ["editable", "boolean"],
     ["id", "id"]
    ]
   },
   "CashDrawer": {
    "cashActivities": [
-    ["id", "id"]
+    ["id", "id"],
+    ["type", "string"]
    ]
   },
   "CashTrackingSession": {
    "cashTransactions": [
-    ["id", "id"]
+    ["id", "id"],
+    ["kind", "string"],
+    ["processed_at", "time"]
    ]
   },
   "Channel": {
@@ -80,6 +86,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -141,11 +148,25 @@
   "Company": {
    "contacts": [
     ["default", "string"],
-    ["id", "id"]
+    ["company_id", "id"],
+    ["company_location_id", "id"],
+    ["created_at", "time"],
+    ["email", "string"],
+    ["id", "id"],
+    ["location_name", "string"],
+    ["role_name", "string"],
+    ["status", "string"],
+    ["updated_at", "time"]
    ],
    "draftOrders": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["customer_id", "id"],
+    ["id", "id"],
+    ["source", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["updated_at", "time"]
    ],
    "events": [
     ["action", "string"],
@@ -156,8 +177,13 @@
    ],
    "locations": [
     ["default", "string"],
+    ["company_id", "id"],
+    ["created_at", "time"],
+    ["external_id", "string"],
     ["id", "id"],
-    ["metafields.{namespace}.{key}", "mixed"]
+    ["ids", "string"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["updated_at", "time"]
    ],
    "metafieldDefinitions": [
     ["default", "string"],
@@ -173,17 +199,37 @@
   "CompanyContact": {
    "draftOrders": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["customer_id", "id"],
+    ["id", "id"],
+    ["source", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["updated_at", "time"]
    ],
    "roleAssignments": [
     ["default", "string"],
-    ["id", "id"]
+    ["company_contact_id", "id"],
+    ["company_contact_role_id", "id"],
+    ["company_id", "id"],
+    ["company_location_id", "id"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["location_name", "string"],
+    ["role_name", "string"],
+    ["updated_at", "time"]
    ]
   },
   "CompanyLocation": {
    "draftOrders": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["customer_id", "id"],
+    ["id", "id"],
+    ["source", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["updated_at", "time"]
    ],
    "events": [
     ["action", "string"],
@@ -204,20 +250,38 @@
    ],
    "roleAssignments": [
     ["default", "string"],
-    ["id", "id"]
+    ["company_contact_id", "id"],
+    ["company_contact_role_id", "id"],
+    ["company_id", "id"],
+    ["company_location_id", "id"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["location_name", "string"],
+    ["role_name", "string"],
+    ["updated_at", "time"]
    ],
    "staffMemberAssignments": [
-    ["id", "id"]
+    ["company_location_id", "id"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["staff_member_id", "id"],
+    ["updated_at", "time"]
    ],
    "storeCreditAccounts": [
+    ["currency_code", "string"],
     ["id", "id"]
    ]
   },
   "CompanyLocationCatalog": {
    "companyLocations": [
     ["default", "string"],
+    ["company_id", "id"],
+    ["created_at", "time"],
+    ["external_id", "string"],
     ["id", "id"],
-    ["metafields.{namespace}.{key}", "mixed"]
+    ["ids", "string"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["updated_at", "time"]
    ]
   },
   "Customer": {
@@ -282,6 +346,7 @@
     ["updated_at", "time"]
    ],
    "storeCreditAccounts": [
+    ["currency_code", "string"],
     ["id", "id"]
    ]
   },
@@ -300,7 +365,19 @@
   "DeliveryLocationGroup": {
    "locations": [
     ["default", "string"],
-    ["id", "id"]
+    ["active", "string"],
+    ["address1", "string"],
+    ["address2", "string"],
+    ["city", "string"],
+    ["country", "string"],
+    ["created_at", "time"],
+    ["geolocated", "boolean"],
+    ["id", "id"],
+    ["legacy", "boolean"],
+    ["location_id", "id"],
+    ["pickup_in_store", "string"],
+    ["province", "string"],
+    ["zip", "string"]
    ]
   },
   "DiscountAutomaticApp": {
@@ -352,7 +429,8 @@
   "DiscountCodeApp": {
    "codes": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["times_used", "integer"]
    ],
    "rollouts": [
     ["status", "string"]
@@ -361,7 +439,8 @@
   "DiscountCodeBasic": {
    "codes": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["times_used", "integer"]
    ],
    "rollouts": [
     ["status", "string"]
@@ -370,7 +449,8 @@
   "DiscountCodeBxgy": {
    "codes": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["times_used", "integer"]
    ],
    "rollouts": [
     ["status", "string"]
@@ -379,7 +459,8 @@
   "DiscountCodeFreeShipping": {
    "codes": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["times_used", "integer"]
    ],
    "rollouts": [
     ["status", "string"]
@@ -435,7 +516,19 @@
   "FulfillmentOrder": {
    "locationsForMove": [
     ["default", "string"],
-    ["id", "id"]
+    ["active", "string"],
+    ["address1", "string"],
+    ["address2", "string"],
+    ["city", "string"],
+    ["country", "string"],
+    ["created_at", "time"],
+    ["geolocated", "boolean"],
+    ["id", "id"],
+    ["legacy", "boolean"],
+    ["location_id", "id"],
+    ["pickup_in_store", "string"],
+    ["province", "string"],
+    ["zip", "string"]
    ]
   },
   "HasEvents": {
@@ -466,23 +559,35 @@
   },
   "HasStoreCreditAccounts": {
    "storeCreditAccounts": [
+    ["currency_code", "string"],
     ["id", "id"]
    ]
   },
   "InventoryItem": {
    "inventoryLevels": [
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["inventory_group_id", "id"],
+    ["inventory_item_id", "id"],
+    ["updated_at", "time"]
    ]
   },
   "InventoryLevel": {
    "scheduledChanges": [
-    ["id", "id"]
+    ["expected_at", "time"],
+    ["id", "id"],
+    ["quantity_names", "string"]
    ]
   },
   "InventoryPurchaseOrder": {
    "lineItems": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["incoming_quantity", "integer"],
+    ["supplier_sku", "string"],
+    ["title", "string"],
+    ["unit_cost", "float"],
+    ["variant_id", "id"]
    ]
   },
   "InventoryShipment": {
@@ -524,7 +629,11 @@
   },
   "Location": {
    "inventoryLevels": [
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["inventory_group_id", "id"],
+    ["inventory_item_id", "id"],
+    ["updated_at", "time"]
    ],
    "metafieldDefinitions": [
     ["default", "string"],
@@ -552,11 +661,16 @@
   "MarketCatalog": {
    "marketsCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["market_condition_types", "string"],
+    ["market_type", "string"],
+    ["status", "string"],
+    ["wildcard_company_location_with_country_code", "string"]
    ]
   },
   "Order": {
    "agreements": [
+    ["happened_at", "time"],
     ["id", "id"]
    ],
    "events": [
@@ -568,7 +682,10 @@
    ],
    "fulfillmentOrders": [
     ["default", "string"],
-    ["id", "id"]
+    ["assigned_location_id", "id"],
+    ["id", "id"],
+    ["status", "string"],
+    ["updated_at", "time"]
    ],
    "metafieldDefinitions": [
     ["default", "string"],
@@ -581,7 +698,8 @@
     ["updated_at", "time"]
    ],
    "returns": [
-    ["id", "id"]
+    ["id", "id"],
+    ["status", "string"]
    ]
   },
   "Page": {
@@ -617,21 +735,29 @@
   },
   "PointOfSaleDevicePaymentSession": {
    "cashActivities": [
-    ["id", "id"]
+    ["id", "id"],
+    ["type", "string"]
    ]
   },
   "PriceList": {
    "prices": [
-    ["id", "id"]
+    ["id", "id"],
+    ["product_id", "id"],
+    ["variant_id", "id"]
    ]
   },
   "Product": {
    "collections": [
     ["default", "string"],
+    ["collection_type", "string"],
+    ["handle", "string"],
     ["id", "id"],
     ["product_id", "id"],
     ["publishable_status", "string"],
-    ["published_status", "string"]
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["title", "string"],
+    ["updated_at", "time"]
    ],
    "events": [
     ["action", "string"],
@@ -641,7 +767,8 @@
     ["subject_type", "string"]
    ],
    "media": [
-    ["id", "id"]
+    ["id", "id"],
+    ["media_type", "string"]
    ],
    "metafieldDefinitions": [
     ["default", "string"],
@@ -662,6 +789,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -719,6 +847,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -759,6 +888,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -797,6 +927,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -835,6 +966,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -868,11 +1000,21 @@
   "QueryRoot": {
    "abandonedCheckouts": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["email_state", "string"],
+    ["id", "id"],
+    ["recovery_state", "string"],
+    ["status", "string"],
+    ["updated_at", "time"]
    ],
    "abandonedCheckoutsCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["email_state", "string"],
+    ["id", "id"],
+    ["recovery_state", "string"],
+    ["status", "string"],
+    ["updated_at", "time"]
    ],
    "analyticsTargets": [
     ["default", "string"],
@@ -884,10 +1026,14 @@
    ],
    "articles": [
     ["default", "string"],
+    ["author", "string"],
+    ["blog_id", "string"],
+    ["blog_title", "string"],
     ["created_at", "time"],
     ["handle", "string"],
     ["id", "id"],
     ["published_at", "time"],
+    ["published_status", "string"],
     ["tag", "string"],
     ["tag_not", "string"],
     ["title", "string"],
@@ -895,6 +1041,7 @@
    ],
    "automaticDiscountNodes": [
     ["default", "string"],
+    ["combines_with.product_discounts_with_tags_on_same_cart_line", "string"],
     ["id", "id"],
     ["status", "string"],
     ["tag", "string"],
@@ -902,6 +1049,7 @@
    ],
    "automaticDiscounts": [
     ["default", "string"],
+    ["combines_with.product_discounts_with_tags_on_same_cart_line", "string"],
     ["id", "id"],
     ["status", "string"],
     ["tag", "string"],
@@ -909,41 +1057,80 @@
    ],
    "blogs": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["handle", "string"],
+    ["id", "id"],
+    ["title", "string"],
+    ["updated_at", "time"]
    ],
    "blogsCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["handle", "string"],
+    ["id", "id"],
+    ["title", "string"],
+    ["updated_at", "time"]
    ],
    "bulkOperations": [
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["operation_type", "string"],
+    ["status", "string"]
    ],
    "carrierServices": [
+    ["active", "boolean"],
     ["id", "id"]
    ],
    "cashDrawers": [
-    ["id", "id"]
+    ["id", "id"],
+    ["location_id", "id"]
    ],
    "cashTrackingSessions": [
-    ["id", "id"]
+    ["closing_time", "time"],
+    ["id", "id"],
+    ["location_id", "id"],
+    ["opening_time", "time"],
+    ["point_of_sale_device_ids", "string"],
+    ["status", "string"]
    ],
    "catalogs": [
     ["default", "string"],
-    ["id", "id"]
+    ["app_id", "id"],
+    ["assigned_company_location_id", "string"],
+    ["company_id", "id"],
+    ["company_location_id", "id"],
+    ["id", "id"],
+    ["managed_country_id", "id"],
+    ["market_id", "string"],
+    ["status", "string"],
+    ["title", "string"]
    ],
    "catalogsCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["app_id", "id"],
+    ["assigned_company_location_id", "string"],
+    ["company_id", "id"],
+    ["company_location_id", "id"],
+    ["id", "id"],
+    ["managed_country_id", "id"],
+    ["market_id", "string"],
+    ["status", "string"],
+    ["title", "string"]
    ],
    "checkoutAndAccountsConfigurations": [
-    ["id", "id"]
+    ["id", "id"],
+    ["is_published", "boolean"],
+    ["one_page_checkout_enabled", "boolean"],
+    ["typ_osp_pages_enabled", "boolean"]
    ],
    "checkoutProfiles": [
-    ["id", "id"]
+    ["id", "id"],
+    ["is_published", "boolean"]
    ],
    "codeDiscountNodes": [
     ["default", "string"],
     ["combines_with", "string"],
+    ["combines_with.product_discounts_with_tags_on_same_cart_line", "string"],
     ["created_at", "time"],
     ["discount_type", "string"],
     ["ends_at", "time"],
@@ -958,17 +1145,27 @@
    ],
    "collections": [
     ["default", "string"],
+    ["collection_type", "string"],
+    ["handle", "string"],
     ["id", "id"],
     ["product_id", "id"],
     ["publishable_status", "string"],
-    ["published_status", "string"]
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["title", "string"],
+    ["updated_at", "time"]
    ],
    "collectionsCount": [
     ["default", "string"],
+    ["collection_type", "string"],
+    ["handle", "string"],
     ["id", "id"],
     ["product_id", "id"],
     ["publishable_status", "string"],
-    ["published_status", "string"]
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["title", "string"],
+    ["updated_at", "time"]
    ],
    "comments": [
     ["default", "string"],
@@ -976,17 +1173,29 @@
     ["id", "id"],
     ["published_at", "time"],
     ["published_status", "string"],
+    ["status", "string"],
     ["updated_at", "time"]
    ],
    "companies": [
     ["default", "string"],
+    ["active_customers_count", "integer"],
+    ["created_at", "time"],
+    ["external_id", "id"],
     ["id", "id"],
-    ["metafields.{namespace}.{key}", "mixed"]
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["ordering_status", "string"],
+    ["since_date", "time"],
+    ["updated_at", "time"]
    ],
    "companyLocations": [
     ["default", "string"],
+    ["company_id", "id"],
+    ["created_at", "time"],
+    ["external_id", "string"],
     ["id", "id"],
-    ["metafields.{namespace}.{key}", "mixed"]
+    ["ids", "string"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["updated_at", "time"]
    ],
    "customerSavedSearches": [
     ["default", "string"],
@@ -1012,22 +1221,29 @@
     ["updated_at", "time"]
    ],
    "customersCount": [
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["updated_at", "time"]
    ],
    "deletionEvents": [
-    ["id", "id"]
+    ["id", "id"],
+    ["occurred_at", "time"]
    ],
    "deliveryCustomizations": [
+    ["enabled", "boolean"],
+    ["function_id", "string"],
     ["id", "id"]
    ],
    "discountCodesCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["times_used", "integer"]
    ],
    "discountNodes": [
     ["default", "string"],
     ["code", "string"],
     ["combines_with", "string"],
+    ["combines_with.product_discounts_with_tags_on_same_cart_line", "string"],
     ["context", "string"],
     ["created_at", "time"],
     ["customer_ids", "string"],
@@ -1050,6 +1266,7 @@
     ["default", "string"],
     ["code", "string"],
     ["combines_with", "string"],
+    ["combines_with.product_discounts_with_tags_on_same_cart_line", "string"],
     ["context", "string"],
     ["created_at", "time"],
     ["customer_ids", "string"],
@@ -1070,22 +1287,39 @@
    ],
    "discountRedeemCodeSavedSearches": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["times_used", "integer"]
    ],
    "discountTags": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["title", "string"]
    ],
    "disputes": [
-    ["id", "id"]
+    ["id", "id"],
+    ["initiated_at", "time"],
+    ["status", "string"]
    ],
    "draftOrders": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["customer_id", "id"],
+    ["id", "id"],
+    ["source", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["updated_at", "time"]
    ],
    "draftOrdersCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["customer_id", "id"],
+    ["id", "id"],
+    ["ids", "string"],
+    ["source", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["updated_at", "time"]
    ],
    "events": [
     ["action", "string"],
@@ -1103,20 +1337,33 @@
    ],
    "files": [
     ["default", "string"],
+    ["created_at", "time"],
+    ["filename", "string"],
     ["id", "id"],
-    ["original_upload_size", "string"]
+    ["ids", "string"],
+    ["media_type", "string"],
+    ["original_upload_size", "string"],
+    ["product_id", "string"],
+    ["status", "string"],
+    ["updated_at", "time"],
+    ["used_in", "string"]
    ],
    "fulfillmentOrders": [
     ["default", "string"],
-    ["id", "id"]
+    ["assigned_location_id", "id"],
+    ["id", "id"],
+    ["status", "string"],
+    ["updated_at", "time"]
    ],
    "giftCards": [
     ["default", "string"],
     ["balance_status", "string"],
     ["created_at", "time"],
+    ["customer_id", "id"],
     ["expires_on", "date"],
     ["id", "id"],
     ["initial_value", "string"],
+    ["recipient_id", "id"],
     ["source", "string"],
     ["status", "string"]
    ],
@@ -1124,50 +1371,109 @@
     ["default", "string"],
     ["balance_status", "string"],
     ["created_at", "time"],
+    ["customer_id", "id"],
     ["expires_on", "date"],
     ["id", "id"],
     ["initial_value", "string"],
+    ["recipient_id", "id"],
     ["source", "string"],
     ["status", "string"]
    ],
    "inventoryItems": [
+    ["created_at", "time"],
     ["id", "id"],
-    ["sku", "string"]
+    ["sku", "string"],
+    ["updated_at", "time"]
    ],
    "inventoryPurchaseOrders": [
-    ["id", "id"]
+    ["destination_id", "id"],
+    ["id", "id"],
+    ["status", "string"]
    ],
    "inventoryShipments": [
-    ["id", "id"]
+    ["barcode", "string"],
+    ["destination_id", "id"],
+    ["id", "id"],
+    ["status", "string"],
+    ["tracking_number", "string"]
    ],
    "inventoryTransfers": [
     ["default", "string"],
+    ["created_at", "time"],
+    ["destination_id", "id"],
     ["id", "id"],
+    ["origin_id", "id"],
+    ["product_id", "id"],
+    ["product_variant_id", "id"],
+    ["source_id", "id"],
+    ["status", "string"],
     ["tag", "string"],
     ["tag_not", "string"]
    ],
    "locations": [
     ["default", "string"],
-    ["id", "id"]
+    ["active", "string"],
+    ["address1", "string"],
+    ["address2", "string"],
+    ["city", "string"],
+    ["country", "string"],
+    ["created_at", "time"],
+    ["geolocated", "boolean"],
+    ["id", "id"],
+    ["legacy", "boolean"],
+    ["location_id", "id"],
+    ["pickup_in_store", "string"],
+    ["province", "string"],
+    ["zip", "string"]
    ],
    "locationsCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["active", "string"],
+    ["address1", "string"],
+    ["address2", "string"],
+    ["city", "string"],
+    ["country", "string"],
+    ["created_at", "time"],
+    ["geolocated", "boolean"],
+    ["id", "id"],
+    ["legacy", "boolean"],
+    ["location_id", "id"],
+    ["pickup_in_store", "string"],
+    ["province", "string"],
+    ["zip", "string"]
    ],
    "marketingActivities": [
     ["default", "string"],
-    ["id", "id"]
+    ["app_id", "id"],
+    ["app_name", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["marketing_campaign_id", "id"],
+    ["scheduled_to_end_at", "time"],
+    ["scheduled_to_start_at", "time"],
+    ["tactic", "string"],
+    ["title", "string"],
+    ["updated_at", "time"]
    ],
    "marketingEvents": [
-    ["id", "id"]
+    ["app_id", "id"],
+    ["description", "string"],
+    ["id", "id"],
+    ["started_at", "time"],
+    ["type", "string"]
    ],
    "markets": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["market_condition_types", "string"],
+    ["market_type", "string"],
+    ["status", "string"],
+    ["wildcard_company_location_with_country_code", "string"]
    ],
    "menus": [
     ["default", "string"],
-    ["id", "id"]
+    ["id", "id"],
+    ["title", "string"]
    ],
    "metafieldDefinitions": [
     ["default", "string"],
@@ -1180,8 +1486,11 @@
     ["updated_at", "time"]
    ],
    "metaobjects": [
+    ["display_name", "string"],
     ["fields.{key}", "mixed"],
-    ["id", "id"]
+    ["handle", "string"],
+    ["id", "id"],
+    ["updated_at", "time"]
    ],
    "orders": [
     ["default", "string"],
@@ -1272,15 +1581,27 @@
    "pages": [
     ["default", "string"],
     ["created_at", "time"],
+    ["handle", "string"],
     ["id", "id"],
     ["published_at", "time"],
+    ["published_status", "string"],
+    ["title", "string"],
     ["updated_at", "time"]
    ],
    "paymentCustomizations": [
+    ["enabled", "boolean"],
+    ["function_id", "string"],
     ["id", "id"]
    ],
    "pointOfSaleDevicePaymentSessions": [
-    ["id", "id"]
+    ["closing_date", "date"],
+    ["closing_time", "time"],
+    ["id", "id"],
+    ["is_open", "boolean"],
+    ["location_id", "id"],
+    ["opening_date", "date"],
+    ["opening_time", "time"],
+    ["point_of_sale_device_id", "id"]
    ],
    "productVariants": [
     ["default", "string"],
@@ -1323,6 +1644,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -1361,6 +1683,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -1392,6 +1715,7 @@
    ],
    "returnReasonDefinitions": [
     ["default", "string"],
+    ["deleted", "boolean"],
     ["id", "id"]
    ],
    "rollouts": [
@@ -1401,7 +1725,10 @@
     ["status", "string"]
    ],
    "scriptTags": [
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["src", "string"],
+    ["updated_at", "time"]
    ],
    "segments": [
     ["default", "string"],
@@ -1410,7 +1737,11 @@
    "sellingPlanGroups": [
     ["default", "string"],
     ["app_id", "id"],
-    ["id", "id"]
+    ["category", "string"],
+    ["created_at", "time"],
+    ["delivery_frequency", "string"],
+    ["id", "id"],
+    ["percentage_off", "float"]
    ],
    "shopPayPaymentRequestReceipts": [
     ["created_at", "time"],
@@ -1419,34 +1750,60 @@
     ["state", "string"]
    ],
    "staffMembers": [
-    ["id", "id"]
+    ["account_type", "string"],
+    ["email", "string"],
+    ["first_name", "string"],
+    ["id", "id"],
+    ["last_name", "string"]
    ],
    "subscriptionBillingAttempts": [
+    ["created_at", "time"],
+    ["error_code", "string"],
+    ["error_message", "string"],
     ["id", "id"]
    ],
    "subscriptionContracts": [
+    ["created_at", "time"],
     ["customer_id", "id"],
     ["id", "id"],
+    ["last_billing_attempt_error_type", "string"],
     ["product_id", "id"],
     ["product_variant_id", "id"],
-    ["selling_plan_id", "id"]
+    ["selling_plan_id", "id"],
+    ["status", "string"],
+    ["updated_at", "time"]
    ],
    "tenderTransactions": [
-    ["id", "id"]
+    ["id", "id"],
+    ["point_of_sale_device_id", "id"],
+    ["processed_at", "time"],
+    ["test", "boolean"]
    ],
    "urlRedirects": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["path", "string"],
+    ["target", "string"]
    ],
    "urlRedirectsCount": [
     ["default", "string"],
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["path", "string"],
+    ["target", "string"]
    ],
    "webhookSubscriptions": [
-    ["id", "id"]
+    ["created_at", "time"],
+    ["id", "id"],
+    ["updated_at", "time"]
    ],
    "webhookSubscriptionsCount": [
-    ["id", "id"]
+    ["created_at", "time"],
+    ["endpoint", "string"],
+    ["id", "id"],
+    ["topic", "string"],
+    ["updated_at", "time"]
    ]
   },
   "RolloutTreatment": {
@@ -1480,10 +1837,15 @@
    ],
    "collections": [
     ["default", "string"],
+    ["collection_type", "string"],
+    ["handle", "string"],
     ["id", "id"],
     ["product_id", "id"],
     ["publishable_status", "string"],
-    ["published_status", "string"]
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["title", "string"],
+    ["updated_at", "time"]
    ],
    "customers": [
     ["default", "string"],
@@ -1506,15 +1868,32 @@
    ],
    "fulfillmentOrders": [
     ["default", "string"],
-    ["id", "id"]
+    ["assigned_location_id", "id"],
+    ["id", "id"],
+    ["status", "string"],
+    ["updated_at", "time"]
    ],
    "inventoryItems": [
+    ["created_at", "time"],
     ["id", "id"],
-    ["sku", "string"]
+    ["sku", "string"],
+    ["updated_at", "time"]
    ],
    "locations": [
     ["default", "string"],
-    ["id", "id"]
+    ["active", "string"],
+    ["address1", "string"],
+    ["address2", "string"],
+    ["city", "string"],
+    ["country", "string"],
+    ["created_at", "time"],
+    ["geolocated", "boolean"],
+    ["id", "id"],
+    ["legacy", "boolean"],
+    ["location_id", "id"],
+    ["pickup_in_store", "string"],
+    ["province", "string"],
+    ["zip", "string"]
    ],
    "metafieldDefinitions": [
     ["default", "string"],
@@ -1610,6 +1989,7 @@
     ["combined_listing_role", "string"],
     ["created_at", "time"],
     ["delivery_profile_id", "id"],
+    ["error_feedback", "string"],
     ["gift_card", "boolean"],
     ["handle", "string"],
     ["has_only_composites", "boolean"],
@@ -1643,20 +2023,46 @@
   "ShopifyPaymentsAccount": {
    "balanceTransactions": [
     ["default", "string"],
-    ["id", "id"]
+    ["available_on", "time"],
+    ["credit_card_last4", "string"],
+    ["currency", "string"],
+    ["id", "id"],
+    ["payment_method_name", "string"],
+    ["payments_transfer_id", "id"],
+    ["payout_date", "time"],
+    ["payout_status", "string"],
+    ["processed_at", "time"],
+    ["tax_reporting_exempt", "boolean"],
+    ["transaction_type", "string"]
    ],
    "disputes": [
-    ["id", "id"]
+    ["id", "id"],
+    ["initiated_at", "time"],
+    ["status", "string"]
    ],
    "payouts": [
     ["default", "string"],
-    ["id", "id"]
+    ["amount", "float"],
+    ["bank_account", "string"],
+    ["currency", "string"],
+    ["id", "id"],
+    ["issued_at", "time"],
+    ["ledger_type", "string"],
+    ["status", "string"],
+    ["transaction_dates", "time"]
    ]
   },
   "ShopifyPaymentsBankAccount": {
    "payouts": [
     ["default", "string"],
-    ["id", "id"]
+    ["amount", "float"],
+    ["bank_account", "string"],
+    ["currency", "string"],
+    ["id", "id"],
+    ["issued_at", "time"],
+    ["ledger_type", "string"],
+    ["status", "string"],
+    ["transaction_dates", "time"]
    ]
   },
   "StoreCreditAccount": {
