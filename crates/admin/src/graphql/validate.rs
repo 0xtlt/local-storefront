@@ -1631,3 +1631,508 @@ impl Extensions for Error {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::admin;
+    use serde_json::json;
+
+    fn errors(query: &str) -> Vec<Value> {
+        let document = super::super::parse::parse(query).unwrap();
+        validate(admin(), &document)
+            .iter()
+            .map(Error::to_json)
+            .collect()
+    }
+
+    /// The one error of a query.
+    fn error(query: &str) -> Value {
+        let errors = errors(query);
+        assert_eq!(errors.len(), 1, "{query}: {errors:#?}");
+        errors.into_iter().next().unwrap()
+    }
+
+    fn messages(query: &str) -> Vec<String> {
+        errors(query)
+            .iter()
+            .map(|e| e["message"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_valid_query_has_no_error() {
+        let query = r#"
+            query Products($first: Int = 2, $query: String, $withTags: Boolean!) {
+              shop { name currencyCode }
+              products(first: $first, query: $query, sortKey: TITLE) {
+                edges { cursor node { ...ProductFields tags @include(if: $withTags) } }
+                pageInfo { hasNextPage endCursor }
+              }
+              node(id: "gid://shopify/Product/1") { __typename id ... on Product { title } }
+              productByIdentifier(identifier: {handle: "shirt"}) { id }
+            }
+            fragment ProductFields on Product { id title status }
+        "#;
+        assert_eq!(errors(query), Vec::<Value>::new());
+        let mutation = r#"
+            mutation Set($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message code } }
+            }
+        "#;
+        assert_eq!(errors(mutation), Vec::<Value>::new());
+    }
+
+    #[test]
+    fn fields_are_defined_on_their_type() {
+        assert_eq!(
+            error("{ shop { foo } }"),
+            json!({
+                "message": "Field 'foo' doesn't exist on type 'Shop'",
+                "locations": [{"line": 1, "column": 10}],
+                "path": ["query", "shop", "foo"],
+                "extensions": {"code": "undefinedField", "typeName": "Shop", "fieldName": "foo"}
+            })
+        );
+        // An unknown field is not checked further.
+        assert_eq!(errors("{ shop { foo(x: 1) { bar } } }").len(), 1);
+        assert_eq!(
+            error("{ shop { metafield(key: \"a\") { reference { id } } } }"),
+            json!({
+                "message": "Selections can't be made directly on unions (see selections on MetafieldReference)",
+                "locations": [{"line": 1, "column": 32}],
+                "path": ["query", "shop", "metafield", "reference", "id"],
+                "extensions": {"code": "selectionMismatch", "nodeName": "MetafieldReference"}
+            })
+        );
+    }
+
+    #[test]
+    fn leaves_have_no_selection_and_objects_have_one() {
+        assert_eq!(
+            error("{ shop { name { x } } }"),
+            json!({
+                "message": "Selections can't be made on scalars (field 'name' returns String but has selections [\"x\"])",
+                "locations": [{"line": 1, "column": 10}],
+                "path": ["query", "shop", "name"],
+                "extensions": {"code": "selectionMismatch", "nodeName": "field 'name'", "typeName": "String"}
+            })
+        );
+        assert_eq!(
+            error("query { shop }")["message"],
+            "Field must have selections (field 'shop' returns Shop but has no selections. Did you mean 'shop { ... }'?)"
+        );
+        assert_eq!(
+            messages(
+                "{ product(id: \"gid://shopify/Product/1\") { status { a ... on X { b } } } }"
+            ),
+            [
+                "Selections can't be made on enums (field 'status' returns ProductStatus but has selections [\"a\", \"... on X { ... }\"])"
+            ]
+        );
+    }
+
+    #[test]
+    fn arguments_are_known_unique_and_required() {
+        assert_eq!(
+            error("{ shop(x: 1) { name } }"),
+            json!({
+                "message": "Field 'shop' doesn't accept argument 'x'",
+                "locations": [{"line": 1, "column": 8}],
+                "path": ["query", "shop", "x"],
+                "extensions": {"code": "argumentNotAccepted", "name": "shop", "typeName": "Field", "argumentName": "x"}
+            })
+        );
+        assert_eq!(
+            error("{ s: shop @skip(if: false, unless: true) { name } }")["message"],
+            "Directive 'skip' doesn't accept argument 'unless'"
+        );
+        assert_eq!(
+            error("{ product { id } }"),
+            json!({
+                "message": "Field 'product' is missing required arguments: id",
+                "locations": [{"line": 1, "column": 3}],
+                "path": ["query", "product"],
+                "extensions": {"code": "missingRequiredArguments", "className": "Field", "name": "product", "arguments": "id"}
+            })
+        );
+        assert_eq!(
+            error("{ products(first: 1, first: 2) { nodes { id } } }"),
+            json!({
+                "message": "There can be only one argument named \"first\"",
+                "locations": [{"line": 1, "column": 12}, {"line": 1, "column": 22}],
+                "path": ["query", "products"],
+                "extensions": {"code": "argumentNotUnique", "name": "first"}
+            })
+        );
+    }
+
+    #[test]
+    fn literals_fit_their_type() {
+        assert_eq!(
+            error("{ products(first: \"x\") { nodes { id } } }"),
+            json!({
+                "message": "Argument 'first' on Field 'products' has an invalid value (\"x\"). Expected type 'Int'.",
+                "locations": [{"line": 1, "column": 3}],
+                "path": ["query", "products", "first"],
+                "extensions": {"code": "argumentLiteralsIncompatible", "typeName": "Field", "argumentName": "first"}
+            })
+        );
+        // A coercion error of a scalar is its own message.
+        assert_eq!(
+            error("{ product(id: \"1\") { id } }"),
+            json!({
+                "message": "Invalid global id `1`",
+                "locations": [{"line": 1, "column": 3}],
+                "path": ["query", "product", "id"],
+                "extensions": {"code": "argumentLiteralsIncompatible", "typeName": "CoercionError"}
+            })
+        );
+        assert_eq!(
+            error("{ products(first: 1, sortKey: NAME) { nodes { id } } }")["message"],
+            "Argument 'sortKey' on Field 'products' has an invalid value (NAME). Expected type 'ProductSortKeys'."
+        );
+        assert_eq!(
+            error("{ nodes(ids: [\"gid://shopify/Product/1\", null]) { id } }")["message"],
+            "Argument 'ids' on Field 'nodes' has an invalid value ([\"gid://shopify/Product/1\", null]). Expected type '[ID!]!'."
+        );
+        // An unknown field of an input object is reported, not the whole value.
+        assert_eq!(
+            error("{ productByIdentifier(identifier: {sku: \"a\"}) { id } }"),
+            json!({
+                "message": "InputObject 'ProductIdentifierInput' doesn't accept argument 'sku'",
+                "locations": [{"line": 1, "column": 36}],
+                "path": ["query", "productByIdentifier", "identifier", "sku"],
+                "extensions": {"code": "argumentNotAccepted", "name": "ProductIdentifierInput", "typeName": "InputObject", "argumentName": "sku"}
+            })
+        );
+    }
+
+    #[test]
+    fn input_objects_have_their_required_fields_once_each() {
+        let query = "mutation { metafieldsSet(metafields: [{key: \"a\", value: \"b\"}]) { userErrors { message } } }";
+        assert_eq!(
+            error(query),
+            json!({
+                "message": "Argument 'ownerId' on InputObject 'MetafieldsSetInput' is required. Expected type ID!",
+                "locations": [{"line": 1, "column": 39}],
+                "path": ["mutation", "metafieldsSet", "metafields", 0, "ownerId"],
+                "extensions": {
+                    "code": "missingRequiredInputObjectAttribute",
+                    "argumentName": "ownerId",
+                    "argumentType": "ID!",
+                    "inputObjectType": "MetafieldsSetInput"
+                }
+            })
+        );
+        assert_eq!(
+            messages("{ productByIdentifier(identifier: {handle: \"a\", handle: \"b\"}) { id } }"),
+            [
+                "There can be only one input field named \"handle\"",
+                "OneOf Input Object 'ProductIdentifierInput' must specify exactly one key.",
+            ]
+        );
+    }
+
+    #[test]
+    fn one_of_input_objects_have_one_field() {
+        assert_eq!(
+            error(
+                "{ productByIdentifier(identifier: {id: \"gid://shopify/Product/1\", handle: \"a\"}) { id } }"
+            ),
+            json!({
+                "message": "OneOf Input Object 'ProductIdentifierInput' must specify exactly one key.",
+                "locations": [{"line": 1, "column": 35}],
+                "path": ["query", "productByIdentifier", "identifier"],
+                "extensions": {"code": "invalidOneOfInputObject", "inputObjectType": "ProductIdentifierInput"}
+            })
+        );
+        assert_eq!(
+            error("{ productByIdentifier(identifier: {handle: null}) { id } }")["message"],
+            "Argument 'ProductIdentifierInput.handle' must be non-null."
+        );
+        assert_eq!(
+            error("query Q($h: String) { productByIdentifier(identifier: {handle: $h}) { id } }")["message"],
+            "Variable 'h' must be non-nullable to be used for OneOf Input Object 'ProductIdentifierInput'."
+        );
+    }
+
+    #[test]
+    fn fragments_are_known_used_possible_and_finite() {
+        assert_eq!(
+            error("{ shop { ... on Foo { id } } }"),
+            json!({
+                "message": "No such type Foo, so it can't be a fragment condition",
+                "locations": [{"line": 1, "column": 10}],
+                "path": ["query", "shop", "... on Foo"],
+                "extensions": {"code": "undefinedType", "typeName": "Foo"}
+            })
+        );
+        assert_eq!(
+            error("{ shop { ... on String { id } } }")["message"],
+            "Invalid fragment on type String (must be Union, Interface or Object)"
+        );
+        assert_eq!(
+            error("{ shop { ... on Product { id } } }"),
+            json!({
+                "message": "Fragment on Product can't be spread inside Shop",
+                "locations": [{"line": 1, "column": 10}],
+                "path": ["query", "shop", "... on Product"],
+                "extensions": {"code": "cannotSpreadFragment", "typeName": "Product", "fragmentName": "unknown", "parentName": "Shop"}
+            })
+        );
+        assert_eq!(
+            error("{ shop { ...P } } fragment P on Product { id }"),
+            json!({
+                "message": "Fragment P on Product can't be spread inside Shop",
+                "locations": [{"line": 1, "column": 10}],
+                "path": ["query", "shop", "... P"],
+                "extensions": {"code": "cannotSpreadFragment", "typeName": "Product", "fragmentName": " P", "parentName": "Shop"}
+            })
+        );
+        assert_eq!(
+            error("{ shop { name } } fragment F on Shop { name }"),
+            json!({
+                "message": "Fragment F was defined, but not used",
+                "locations": [{"line": 1, "column": 19}],
+                "path": ["fragment F"],
+                "extensions": {"code": "useAndDefineFragment", "fragmentName": "F"}
+            })
+        );
+        assert_eq!(
+            error("{ shop { ...F } }"),
+            json!({
+                "message": "Fragment F was used, but not defined",
+                "locations": [{"line": 1, "column": 10}],
+                "path": ["query", "shop", "... F"],
+                "extensions": {"code": "useAndDefineFragment", "fragmentName": "F"}
+            })
+        );
+        assert_eq!(
+            messages("{ shop { ...A } } fragment A on Shop { ...B } fragment B on Shop { ...A }"),
+            [
+                "Fragment A contains an infinite loop",
+                "Fragment B contains an infinite loop",
+            ]
+        );
+        assert_eq!(
+            error("{ shop { ...F } } fragment F on Shop { name } fragment F on Shop { id }"),
+            json!({
+                "message": "Fragment name \"F\" must be unique",
+                "locations": [{"line": 1, "column": 19}, {"line": 1, "column": 47}],
+                "path": [],
+                "extensions": {"code": "fragmentNotUnique", "fragmentName": "F"}
+            })
+        );
+    }
+
+    #[test]
+    fn operations_are_named_uniquely() {
+        assert_eq!(
+            error("query A { shop { name } } query A { shop { id } }"),
+            json!({
+                "message": "Operation name \"A\" must be unique",
+                "locations": [{"line": 1, "column": 1}, {"line": 1, "column": 27}],
+                "path": [],
+                "extensions": {"code": "uniquelyNamedOperations", "operationName": "A"}
+            })
+        );
+        assert_eq!(
+            error("{ shop { name } } query B { shop { id } }"),
+            json!({
+                "message": "Operation name is required when multiple operations are present",
+                "locations": [{"line": 1, "column": 1}],
+                "path": [],
+                "extensions": {"code": "uniquelyNamedOperations"}
+            })
+        );
+        assert_eq!(
+            error("subscription { shop { name } }"),
+            json!({
+                "message": "Schema is not configured for subscriptions",
+                "locations": [{"line": 1, "column": 1}],
+                "path": ["subscription"],
+                "extensions": {"code": "missingSubscriptionConfiguration"}
+            })
+        );
+        assert_eq!(
+            error("type Foo { a: Int }\n{ shop { name } }"),
+            json!({
+                "message": "Query cannot contain schema definitions",
+                "locations": [{"line": 1, "column": 1}],
+                "path": [],
+                "extensions": {"code": "queryContainsSchemaDefinitions"}
+            })
+        );
+    }
+
+    #[test]
+    fn variables_are_defined_used_unique_and_of_input_types() {
+        assert_eq!(
+            error("query Q($id: ID!) { shop { name } }"),
+            json!({
+                "message": "Variable $id is declared by Q but not used",
+                "locations": [{"line": 1, "column": 1}],
+                "path": ["query Q"],
+                "extensions": {"code": "variableNotUsed", "variableName": "id"}
+            })
+        );
+        assert_eq!(
+            error("query { product(id: $id) { id } }"),
+            json!({
+                "message": "Variable $id is used by anonymous query but not declared",
+                "locations": [{"line": 1, "column": 21}],
+                "path": ["query", "product", "id"],
+                "extensions": {"code": "variableNotDefined", "variableName": "id"}
+            })
+        );
+        assert_eq!(
+            error("query Q { shop { ...F } } fragment F on Shop { metafield(key: $key) { id } }")["message"],
+            "Variable $key is used by F but not declared"
+        );
+        assert!(errors("query Q($key: String!) { shop { ...F } } fragment F on Shop { metafield(key: $key) { id } }").is_empty());
+        assert_eq!(
+            error("query Q($a: Int, $a: Int) { products(first: $a) { nodes { id } } }"),
+            json!({
+                "message": "There can only be one variable named \"a\"",
+                "locations": [{"line": 1, "column": 9}, {"line": 1, "column": 18}],
+                "path": ["query Q"],
+                "extensions": {"code": "variableNotUnique", "variableName": "a"}
+            })
+        );
+        assert_eq!(
+            messages("query Q($a: Shop, $b: Foo) { shop { name } }"),
+            [
+                "Shop isn't a valid input type (on $a)",
+                "Foo isn't a defined input type (on $b)",
+                "Variable $a is declared by Q but not used",
+                "Variable $b is declared by Q but not used",
+            ]
+        );
+        assert_eq!(
+            errors("query Q($a: Shop) { shop { name } }")[0]["extensions"],
+            json!({"code": "variableRequiresValidType", "typeName": "Shop", "variableName": "a"})
+        );
+        assert_eq!(
+            error("query Q($n: Int = \"x\") { products(first: $n) { nodes { id } } }"),
+            json!({
+                "message": "Could not coerce value \"x\" to Int",
+                "locations": [{"line": 1, "column": 9}],
+                "path": ["query Q"],
+                "extensions": {"code": "defaultValueInvalidType", "variableName": "n", "typeName": "Int"}
+            })
+        );
+    }
+
+    #[test]
+    fn variables_are_used_where_their_type_is_allowed() {
+        assert_eq!(
+            error("query Q($id: String!) { product(id: $id) { id } }"),
+            json!({
+                "message": "Type mismatch on variable $id and argument id (String! / ID!)",
+                "locations": [{"line": 1, "column": 33}],
+                "path": ["query Q", "product", "id"],
+                "extensions": {
+                    "code": "variableMismatch",
+                    "variableName": "id",
+                    "typeName": "String!",
+                    "argumentName": "id",
+                    "errorMessage": "Type mismatch"
+                }
+            })
+        );
+        assert_eq!(
+            error("query Q($id: ID) { product(id: $id) { id } }")["message"],
+            "Nullability mismatch on variable $id and argument id (ID / ID!)"
+        );
+        assert_eq!(
+            error("query Q($ids: ID!) { nodes(ids: $ids) { id } }")["message"],
+            "List dimension mismatch on variable $ids and argument ids (ID! / [ID!]!)"
+        );
+        // In a list, with a default, or for an argument with a default: allowed.
+        assert!(errors("query Q($id: ID!) { nodes(ids: [$id]) { id } }").is_empty());
+        assert!(errors("query Q($n: Int = 5) { products(first: $n) { nodes { id } } }").is_empty());
+        assert!(
+            errors("query Q($r: Boolean) { products(first: 1, reverse: $r) { nodes { id } } }")
+                .is_empty()
+        );
+        assert_eq!(
+            error(
+                "query Q($id: ID) { shop { ...F } } fragment F on Shop { m: metafield(key: \"a\") { reference { ... on Product { id } } } p: metafield(key: $id) { id } }"
+            )["message"],
+            "Type mismatch on variable $id and argument key (ID / String!)"
+        );
+    }
+
+    #[test]
+    fn directives_are_known_in_their_place_and_unique() {
+        assert_eq!(
+            error("{ shop @foo { name } a: shop @foo { id } }"),
+            json!({
+                "message": "Directive @foo is not defined",
+                "locations": [{"line": 1, "column": 8}, {"line": 1, "column": 30}],
+                "path": ["query", "shop"],
+                "extensions": {"code": "undefinedDirective", "directiveName": "foo"}
+            })
+        );
+        assert_eq!(
+            error("query Q @skip(if: true) { shop { name } }"),
+            json!({
+                "message": "'@skip' can't be applied to queries (allowed: fields, fragment spreads, inline fragments)",
+                "locations": [{"line": 1, "column": 9}],
+                "path": ["query Q"],
+                "extensions": {"code": "directiveCannotBeApplied", "targetName": "queries", "name": "skip"}
+            })
+        );
+        assert_eq!(
+            error("{ shop @skip(if: false) @skip(if: false) { name } }"),
+            json!({
+                "message": "The directive \"skip\" can only be used once at this location.",
+                "locations": [{"line": 1, "column": 8}, {"line": 1, "column": 25}],
+                "path": ["query", "shop"],
+                "extensions": {"code": "directiveNotUniqueForLocation", "directiveName": "skip"}
+            })
+        );
+        assert_eq!(
+            error("{ shop @skip { name } }")["message"],
+            "Directive 'skip' is missing required arguments: if"
+        );
+        assert!(errors("mutation { productCreate(product: {title: \"a\"}) @idempotent(key: \"k\") { product { id } } }").is_empty());
+    }
+
+    #[test]
+    fn fields_with_one_response_key_can_be_merged() {
+        assert_eq!(
+            error("{ shop { name: id name } }"),
+            json!({
+                "message": "Field 'name' has a field conflict: id or name?",
+                "locations": [{"line": 1, "column": 10}, {"line": 1, "column": 19}],
+                "path": [],
+                "extensions": {"code": "fieldConflict", "fieldName": "name", "conflicts": "id or name"}
+            })
+        );
+        assert_eq!(
+            error("{ products(first: 1) { nodes { id } } products(first: 2) { nodes { id } } }"),
+            json!({
+                "message": "Field 'products' has an argument conflict: {first:\"1\"} or {first:\"2\"}?",
+                "locations": [{"line": 1, "column": 3}, {"line": 1, "column": 39}],
+                "path": [],
+                "extensions": {"code": "fieldConflict", "fieldName": "products", "conflicts": "{first:\"1\"} or {first:\"2\"}"}
+            })
+        );
+        assert_eq!(
+            error(
+                "{ node(id: \"gid://shopify/Product/1\") { ... on Product { x: title } ... on Collection { x: updatedAt } } }"
+            )["message"],
+            "Field 'x' has a return_type conflict: `String!` or `DateTime!`?"
+        );
+        // On two object types, two fields of a key need not be the same field.
+        assert!(errors("{ node(id: \"gid://shopify/Product/1\") { ... on Product { x: title } ... on Collection { x: handle } } }").is_empty());
+        // Deeper, through the selections of two fields of a key.
+        assert_eq!(
+            error("{ shop { a: name } shop { a: email } }")["message"],
+            "Field 'a' has a field conflict: name or email?"
+        );
+        assert!(errors("{ shop { name } shop { name id } }").is_empty());
+    }
+}
