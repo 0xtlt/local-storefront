@@ -690,6 +690,29 @@ fn reports_its_status_and_triggers_webhooks_from_the_shop() {
         json!({"topic": "products/update", "id": "gid://shopify/Product/1", "address": receiver.url}),
     );
     assert_eq!(missing.status, 404);
+
+    // A payload of its own is sent as is, for a topic lsf builds no payload of, to the default
+    // shop or to the one named (its domain written in full).
+    for (shop, domain) in [
+        (None, api.default_shop()),
+        (Some("other"), "other.myshopify.com".to_string()),
+    ] {
+        let triggered = send(
+            &api,
+            "POST",
+            "/__lsf/webhooks/trigger",
+            json!({"topic": "carts/create", "shop": shop, "payload": {"a": 1}, "address": receiver.url, "wait": true}),
+        );
+        assert_eq!(
+            triggered.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&triggered.body)
+        );
+        let (headers, body) = receiver.next();
+        assert_eq!(headers["x-shopify-shop-domain"], domain);
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!({"a": 1}));
+    }
 }
 
 #[test]

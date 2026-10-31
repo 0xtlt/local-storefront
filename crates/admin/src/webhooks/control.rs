@@ -46,7 +46,8 @@ pub struct TriggerRequest {
 }
 
 /// What the api layer gives [`Webhooks::handle`] to build the payload of a trigger: the shop it is
-/// for, and the payload built from its state.
+/// for (the default one when the trigger names none, its domain written in full), and the payload
+/// built from its state, or the trigger's own `payload` as is.
 pub type BuildTrigger<'a> = dyn Fn(&TriggerRequest) -> Result<(String, Value), TriggerError> + 'a;
 
 /// Why the api layer could not build the payload of a trigger.
@@ -154,20 +155,14 @@ impl Webhooks {
             topic: topic.to_string(),
             ..trigger.clone()
         };
-        let (shop, payload) = match (&trigger.payload, &trigger.shop) {
-            (Some(payload), Some(shop)) => (shop.clone(), payload.clone()),
-            _ => match build(&normalized) {
-                Ok((shop, built)) => (
-                    trigger.shop.clone().unwrap_or(shop),
-                    trigger.payload.clone().unwrap_or(built),
-                ),
-                Err(TriggerError::NotFound(message)) => {
-                    return HttpResponse::json(404, &json!({"error": message}));
-                }
-                Err(TriggerError::NotBuilt(message)) => {
-                    return HttpResponse::json(422, &json!({"error": message}));
-                }
-            },
+        let (shop, payload) = match build(&normalized) {
+            Ok(built) => built,
+            Err(TriggerError::NotFound(message)) => {
+                return HttpResponse::json(404, &json!({"error": message}));
+            }
+            Err(TriggerError::NotBuilt(message)) => {
+                return HttpResponse::json(422, &json!({"error": message}));
+            }
         };
         let ids = self.trigger(&Trigger {
             topic,

@@ -592,12 +592,17 @@ impl AdminApi {
         }
     }
 
-    /// The payload of `POST /__lsf/webhooks/trigger`, from the shop's records.
+    /// The shop and the payload of `POST /__lsf/webhooks/trigger`: the payload from the shop's
+    /// records, unless the trigger gives its own. A given payload may be for a shop lsf does not
+    /// have (sent to an `address`).
     fn build_trigger(&self, trigger: &TriggerRequest) -> Result<(String, Value), TriggerError> {
         let domain = match &trigger.shop {
             Some(shop) => oauth::normalize_shop(shop),
             None => self.default_shop(),
         };
+        if let Some(payload) = &trigger.payload {
+            return Ok((domain, payload.clone()));
+        }
         let shop = self
             .shop(&domain)
             .ok_or_else(|| TriggerError::NotFound(format!("there is no shop {domain}")))?;

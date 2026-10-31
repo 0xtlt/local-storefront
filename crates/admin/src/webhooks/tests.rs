@@ -800,8 +800,13 @@ fn body(response: &crate::api::HttpResponse) -> Value {
     serde_json::from_slice(&response.body).unwrap()
 }
 
-/// What the api layer gives the trigger: a product of the store for `products/*`.
+/// What the api layer gives the trigger: a product of the store for `products/*`, or the
+/// trigger's own payload.
 fn build(trigger: &TriggerRequest) -> Result<(String, Value), TriggerError> {
+    if let Some(payload) = &trigger.payload {
+        let shop = trigger.shop.clone().unwrap_or_else(|| SHOP.to_string());
+        return Ok((shop, payload.clone()));
+    }
     match trigger.topic.as_str() {
         "products/update" => {
             let record = product();
