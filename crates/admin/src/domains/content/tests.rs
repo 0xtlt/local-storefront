@@ -521,3 +521,300 @@ fn lists_the_metafield_definition_types() {
             "supportedValidations": [{"name": "min", "type": "date_time"}, {"name": "max", "type": "date_time"}]})
     );
 }
+
+const CREATE_TYPE: &str = "mutation($definition: MetaobjectDefinitionCreateInput!) {
+    metaobjectDefinitionCreate(definition: $definition) {
+        metaobjectDefinition { id type name displayNameKey fieldDefinitions { key name required type { name } }
+            capabilities { publishable { enabled } } access { admin storefront } }
+        userErrors { field message code elementKey }
+    }
+}";
+
+const CREATE_ENTRY: &str = "mutation($metaobject: MetaobjectCreateInput!) {
+    metaobjectCreate(metaobject: $metaobject) {
+        metaobject { id handle type displayName values capabilities { publishable { status } }
+            fields { key type value } year: field(key: \"year\") { value jsonValue } }
+        userErrors { field message code elementKey }
+    }
+}";
+
+/// Creates the `$app:author` type: a required name, a year, a product.
+fn author_type(shop: &mut ShopState) -> Value {
+    let answer = run(
+        shop,
+        CREATE_TYPE,
+        json!({"definition": {
+            "type": "$app:author", "displayNameKey": "full_name",
+            "capabilities": {"publishable": {"enabled": true}},
+            "fieldDefinitions": [
+                {"key": "full_name", "type": "single_line_text_field", "required": true},
+                {"key": "year", "type": "number_integer", "validations": [{"name": "min", "value": "1000"}]},
+                {"key": "book", "type": "product_reference"},
+            ],
+        }}),
+    );
+    let created = &answer["data"]["metaobjectDefinitionCreate"];
+    assert_eq!(created["userErrors"], json!([]), "{answer}");
+    created["metaobjectDefinition"].clone()
+}
+
+#[test]
+fn creates_metaobject_definitions_and_entries() {
+    let mut shop = rich();
+    shop.take_events();
+    let definition = author_type(&mut shop);
+    let app_type = format!("app--{}--author", super::app_id(&shop));
+    assert_eq!(definition["type"], json!(app_type));
+    assert_eq!(definition["name"], "Author");
+    assert_eq!(definition["fieldDefinitions"][0]["name"], "Full name");
+    assert_eq!(definition["access"]["admin"], "MERCHANT_READ_WRITE");
+    assert_eq!(definition["access"]["storefront"], "NONE");
+    assert_eq!(topics(&mut shop), ["metaobject_definitions/create"]);
+
+    let taken = run(
+        &mut shop,
+        CREATE_TYPE,
+        json!({"definition": {"type": "$app:author"}}),
+    );
+    assert_eq!(
+        taken["data"]["metaobjectDefinitionCreate"]["userErrors"][0]["code"],
+        "TAKEN"
+    );
+
+    let product = find(&shop, "Product", "handle", "linen-dress");
+    let answer = run(
+        &mut shop,
+        CREATE_ENTRY,
+        json!({"metaobject": {"type": "$app:author", "fields": [
+            {"key": "full_name", "value": "Jane Austen"},
+            {"key": "year", "value": "1811"},
+            {"key": "book", "value": product},
+        ]}}),
+    );
+    let created = &answer["data"]["metaobjectCreate"];
+    assert_eq!(created["userErrors"], json!([]), "{answer}");
+    let entry = &created["metaobject"];
+    assert_eq!(entry["handle"], "jane-austen", "made from the display name");
+    assert_eq!(entry["displayName"], "Jane Austen");
+    assert_eq!(entry["capabilities"]["publishable"]["status"], "DRAFT");
+    assert_eq!(
+        entry["values"],
+        json!({"book": product, "full_name": "Jane Austen", "year": 1811})
+    );
+    assert_eq!(entry["year"], json!({"value": "1811", "jsonValue": 1811}));
+    // The id lsf-core gives the metaobject of the store data.
+    assert_eq!(
+        entry["id"],
+        json!(super::metaobject_gid(&app_type, "jane-austen"))
+    );
+    assert_eq!(topics(&mut shop), ["metaobjects/create"]);
+
+    // A second one with the same display name gets another handle.
+    let second = run(
+        &mut shop,
+        CREATE_ENTRY,
+        json!({"metaobject": {"type": "$app:author", "values": {"full_name": "Jane Austen"},
+            "capabilities": {"publishable": {"status": "ACTIVE"}}}}),
+    );
+    let second = &second["data"]["metaobjectCreate"]["metaobject"];
+    assert_eq!(second["handle"], "jane-austen-1");
+    assert_eq!(second["capabilities"]["publishable"]["status"], "ACTIVE");
+
+    let listed = run(
+        &mut shop,
+        "{ metaobjects(type: \"$app:author\", first: 5, sortKey: \"display_name\", query: \"fields.year:1811\") { nodes { handle } }
+           metaobjectByHandle(handle: {type: \"$app:author\", handle: \"jane-austen-1\"}) { displayName }
+           metaobjectDefinitionByType(type: \"$app:author\") { metaobjectsCount } }",
+        Value::Null,
+    );
+    assert_eq!(
+        listed["data"]["metaobjects"]["nodes"],
+        json!([{"handle": "jane-austen"}]),
+        "{listed}"
+    );
+    assert_eq!(
+        listed["data"]["metaobjectByHandle"]["displayName"],
+        "Jane Austen"
+    );
+    assert_eq!(
+        listed["data"]["metaobjectDefinitionByType"]["metaobjectsCount"],
+        json!(2)
+    );
+}
+
+#[test]
+fn refuses_wrong_metaobjects() {
+    let mut shop = rich();
+    author_type(&mut shop);
+    shop.take_events();
+    let missing_type = run(
+        &mut shop,
+        CREATE_ENTRY,
+        json!({"metaobject": {"type": "nothing", "fields": []}}),
+    );
+    assert_eq!(
+        missing_type["data"]["metaobjectCreate"]["userErrors"],
+        json!([{"field": ["metaobject", "type"], "message": "No metaobject definition exists for type \"nothing\"", "code": "UNDEFINED_OBJECT_TYPE", "elementKey": null}])
+    );
+    let wrong = run(
+        &mut shop,
+        CREATE_ENTRY,
+        json!({"metaobject": {"type": "$app:author", "fields": [
+            {"key": "year", "value": "999"},
+            {"key": "colour", "value": "red"},
+        ]}}),
+    );
+    let errors = wrong["data"]["metaobjectCreate"]["userErrors"]
+        .as_array()
+        .unwrap();
+    let codes: Vec<(&Value, &Value)> = errors
+        .iter()
+        .map(|error| (&error["code"], &error["elementKey"]))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            (&json!("UNDEFINED_OBJECT_FIELD"), &json!("colour")),
+            (&json!("OBJECT_FIELD_REQUIRED"), &json!("full_name")),
+            (&json!("INVALID_VALUE"), &json!("year")),
+        ],
+        "{wrong}"
+    );
+    assert!(topics(&mut shop).is_empty());
+    assert_eq!(shop.count("Metaobject"), rich().count("Metaobject"));
+}
+
+#[test]
+fn updates_upserts_and_deletes_metaobjects() {
+    let mut shop = rich();
+    author_type(&mut shop);
+    let created = run(
+        &mut shop,
+        CREATE_ENTRY,
+        json!({"metaobject": {"type": "$app:author", "handle": "austen", "fields": [
+            {"key": "full_name", "value": "Jane Austen"}, {"key": "year", "value": "1811"}]}}),
+    );
+    let id = created["data"]["metaobjectCreate"]["metaobject"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { metaobjectUpdate(id: $id, metaobject: {fields: [{key: \"full_name\", value: \"J. Austen\"}]}) {
+            metaobject { displayName values } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    let entry = &updated["data"]["metaobjectUpdate"]["metaobject"];
+    assert_eq!(entry["displayName"], "J. Austen", "{updated}");
+    assert_eq!(entry["values"]["year"], json!(1811), "fields patch");
+    assert_eq!(topics(&mut shop), ["metaobjects/update"]);
+
+    // `values` replaces: the year is cleared.
+    let upserted = run(
+        &mut shop,
+        "mutation { metaobjectUpsert(handle: {type: \"$app:author\", handle: \"austen\"}, values: {full_name: \"Jane\"}) {
+            metaobject { id values } userErrors { code } } }",
+        Value::Null,
+    );
+    let entry = &upserted["data"]["metaobjectUpsert"]["metaobject"];
+    assert_eq!(entry["id"], json!(id), "{upserted}");
+    assert_eq!(entry["values"]["year"], Value::Null);
+    let new = run(
+        &mut shop,
+        "mutation { metaobjectUpsert(handle: {type: \"$app:author\", handle: \"bronte\"}, metaobject: {fields: [{key: \"full_name\", value: \"Charlotte Brontë\"}]}) {
+            metaobject { id handle } userErrors { code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        new["data"]["metaobjectUpsert"]["metaobject"]["handle"],
+        "bronte"
+    );
+    assert_eq!(
+        topics(&mut shop),
+        ["metaobjects/update", "metaobjects/create"]
+    );
+
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { metaobjectDelete(id: $id) { deletedId userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(deleted["data"]["metaobjectDelete"]["deletedId"], json!(id));
+    assert!(shop.get(&id).is_none());
+    let bulk = run(
+        &mut shop,
+        "mutation { metaobjectBulkDelete(where: {type: \"$app:author\"}) { job { done } userErrors { code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        bulk["data"]["metaobjectBulkDelete"]["job"]["done"],
+        json!(true)
+    );
+    assert_eq!(
+        topics(&mut shop),
+        ["metaobjects/delete", "metaobjects/delete"]
+    );
+    let missing = run(
+        &mut shop,
+        "mutation($id: ID!) { metaobjectDelete(id: $id) { deletedId userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        missing["data"]["metaobjectDelete"]["userErrors"][0]["code"],
+        "RECORD_NOT_FOUND"
+    );
+}
+
+#[test]
+fn updates_and_deletes_metaobject_definitions() {
+    let mut shop = rich();
+    let definition = author_type(&mut shop);
+    let id = definition["id"].as_str().unwrap().to_string();
+    let created = run(
+        &mut shop,
+        CREATE_ENTRY,
+        json!({"metaobject": {"type": "$app:author", "fields": [{"key": "full_name", "value": "Ann"}, {"key": "year", "value": "1900"}]}}),
+    );
+    assert_eq!(created["data"]["metaobjectCreate"]["userErrors"], json!([]));
+    shop.take_events();
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { metaobjectDefinitionUpdate(id: $id, definition: {name: \"Writer\", fieldDefinitions: [
+            {create: {key: \"country\", type: \"single_line_text_field\"}}, {delete: {key: \"year\"}}]}) {
+            metaobjectDefinition { name fieldDefinitions { key } } userErrors { code elementKey } } }",
+        json!({"id": id}),
+    );
+    let definition = &updated["data"]["metaobjectDefinitionUpdate"]["metaobjectDefinition"];
+    assert_eq!(definition["name"], "Writer", "{updated}");
+    assert_eq!(
+        definition["fieldDefinitions"],
+        json!([{"key": "full_name"}, {"key": "book"}, {"key": "country"}])
+    );
+    let entries = run(
+        &mut shop,
+        "{ metaobjects(type: \"$app:author\", first: 1) { nodes { values } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        entries["data"]["metaobjects"]["nodes"][0]["values"],
+        json!({"book": null, "country": null, "full_name": "Ann"})
+    );
+    assert_eq!(
+        topics(&mut shop),
+        ["metaobjects/update", "metaobject_definitions/update"]
+    );
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { metaobjectDefinitionDelete(id: $id) { deletedId userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        deleted["data"]["metaobjectDefinitionDelete"]["deletedId"],
+        json!(id)
+    );
+    assert_eq!(
+        topics(&mut shop),
+        ["metaobjects/delete", "metaobject_definitions/delete"]
+    );
+}

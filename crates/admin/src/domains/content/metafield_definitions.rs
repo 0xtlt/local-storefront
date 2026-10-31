@@ -147,8 +147,9 @@ fn metafield_definition_types(
 }
 
 /// The `MetafieldDefinitionValidation`s of an input (`{name, value}`), with their `type`, checked
-/// against what the type supports. `field` is the path of the input's `validations`.
-fn validations_of(
+/// against what the type supports. `field` is the path of the input's `validations`. The field
+/// definitions of metaobjects take the same.
+pub(super) fn checked_validations(
     kind: &str,
     input: Option<&Value>,
     field: &[&str],
@@ -438,7 +439,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                 .code("INCLUSION"),
         );
     }
-    let validations = validations_of(
+    let validations = checked_validations(
         &kind,
         input.get("validations"),
         &["definition", "validations"],
@@ -591,7 +592,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let mut errors = Vec::new();
     check_name(&input, false, &mut errors);
     let validations = input.contains_key("validations").then(|| {
-        validations_of(
+        checked_validations(
             &kind,
             input.get("validations"),
             &["definition", "validations"],

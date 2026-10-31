@@ -6,6 +6,7 @@
 
 mod metafield_definitions;
 pub mod metafields;
+mod metaobjects;
 #[cfg(test)]
 mod tests;
 pub mod types;
@@ -1178,6 +1179,7 @@ pub fn app_id(state: &ShopState) -> u64 {
 pub fn register(registry: &mut crate::resolve::Registry) {
     metafields::register(registry);
     metafield_definitions::register(registry);
+    metaobjects::register(registry);
 }
 
 #[cfg(test)]
