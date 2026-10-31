@@ -10,6 +10,7 @@
 //! filters, sort keys and resolvers of the family), and one module per group of mutations.
 
 mod drafts;
+mod edit_extras;
 mod edits;
 mod fulfillments;
 mod lifecycle;
@@ -22,6 +23,8 @@ pub mod risk;
 mod services;
 mod store_credit;
 
+#[cfg(test)]
+mod extras_tests;
 #[cfg(test)]
 mod payments_tests;
 #[cfg(test)]
@@ -1333,6 +1336,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     refunds::register(registry);
     returns::register(registry);
     edits::register(registry);
+    edit_extras::register(registry);
     drafts::register(registry);
     services::register(registry);
     payments::register(registry);
