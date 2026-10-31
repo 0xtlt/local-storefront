@@ -895,7 +895,8 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | `MediaImage`, `Video`, `ExternalVideo`, `Model3d` of a product | lsf-core's media id, the type by kind |
 | `MediaImage`, `Video`, `GenericFile` of `files/` | `stable_id("image" \| "video" \| "file", path)`, by extension (the ids Liquid gives a `file_reference`) |
 | `CompanyContact` | the customer's id (the checkout's `purchasingCompany.contact.id`) |
-| `Market` | `stable_id("market", handle)` of a declared market, `stable_id("market", "FR")` (upper-case code) of a country in none (the checkout's) |
+| `Market` | `stable_id("market", handle)` of a declared market, `stable_id("market", "FR")` (upper-case code) of a country in none (the checkout's); `marketCreate`'s: `stable_id("market", handle)` too, the id the store sync reads |
+| `MarketWebPresence` (primary domain), `AppCatalog` (Online Store) | `stable_id("market_web_presence", host)`, `stable_id("app_catalog", "online-store")`; the catalogs share one counter (`Catalog/<n>` names any) |
 | `Metaobject` | `stable_id("metaobject", "<type>/<handle>")` (the checkout's, lsf-core's `metaobject_by_reference`), the type as the store data writes it (`$app:author` for the app's `app--<id>--author`: `content::data_type`) |
 | `DiscountAutomaticNode`, `DiscountCodeNode` | `id` of the discount in `checkout.discounts`, its position from 1 by default (the checkout's `discount.id`; `DiscountNode/<n>` of the legacy APIs is the same discount) |
 | `CartTransform`, `DeliveryCustomization`, `PaymentCustomization`, `Validation` | position of the Function in the app from 1 (the checkout's owner ids) |
@@ -1299,6 +1300,62 @@ reads the seed's:
   usage record, a charge waiting for the merchant) emits `domains::app::CHANGED`
   (`lsf/changed`): no subscription can receive it, but it says the shop changed.
 
+### Markets, catalogs and channels (`domains/markets.rs`)
+
+The content family seeds the markets and the locales; this family completes them
+(`markets::seed`, after the app's seed) and owns what sells in them. Each module of
+`domains/markets/` says in its header what shopify.dev documents of its mutations and where lsf
+differs; `markets::tests` tests every mutation over the demo store, `tests/markets.rs` the shape
+of what they make and what syncs.
+
+- **`Market`**, completed: `priceInclusions` (taxes in the price when the shop's prices include
+  them), `currencySettings.roundingEnabled: false`, the conditions it has not
+  (`companyLocationsCondition: null`, …), `delivery`, `returnPolicyProfile: null`. `regions` and
+  `conditions.regionsCondition.regions` hold the same inline `MarketRegionCountry`s; `type`
+  follows the conditions. A market's catalogs and web presences are read from the catalogs and
+  presences that name it (`markets`): one place holds each link.
+- **`MarketWebPresence`**: the primary domain's, for every market and every locale of the shop
+  (`defaultLocale` the primary one, the others alternate), then those the mutations make. Its
+  `rootUrls` are recomputed by `web_presences::refresh`; `refresh_domains` keeps each `Domain`'s
+  `marketWebPresence` and `localization` (its presence's locales, else the primary domain's),
+  which `domains/update` reports. `ShopLocale.marketWebPresences` is read from the presences.
+- **The backup region**: the shop's setting `backupRegion` (a country code), the shop's
+  country by default. `markets_backup_region/update` names no record: its snapshot is the
+  region.
+- **Catalogs**: `MarketCatalog` (`markets`), `CompanyLocationCatalog` (`companyLocations`),
+  `AppCatalog` (`apps`, `channels`), with `title`, `status`, `priceList`, `publication`,
+  `operations: []`. The Online Store's publication gets the Online Store's app catalog, and the
+  fields the catalog family's seed leaves out (`autoPublish: false`, `supportsFuturePublishing:
+  false`: lsf publishes on it at once).
+- **`PriceList`**: `name`, `currency`, `parent` (`adjustment`, `settings`), `catalog`,
+  `createdAt`, `fixedPricesCount`, and what GraphQL reads through custom fields:
+  `lsfFixedPrices` (`[{variant, price, compareAtPrice}]`), `lsfQuantityRules`
+  (`[{variant, minimum, maximum, increment}]`), `lsfPriceBreaks` (the `QuantityPriceBreak`
+  records: `minimumQuantity`, `price`, `priceList`, `variant`). `PriceList.prices` lists every
+  variant, fixed or relative; contextual pricing is computed when it is read
+  (`price_lists::contextual_price`).
+- **`Channel`** (`channelCreate`): its account, specification, handle, `activeRegions` (the
+  countries of the active region markets), `app`, and its own `Publication` (`lsfChannel` names
+  the channel back, `supportsFuturePublishing: true`, `lsfScheduled` its scheduled listings) and
+  `AppCatalog` (`lsfPublication`, `lsfCatalog`).
+- **Without an id**: `ProductResourceFeedback` under `feedback/<product GID>/<channel GID or
+  app>`, `AppFeedback` under `feedback/shop/<channel GID or app>`, `MarketLocalizableResource`
+  (`resourceId`, `lsfLocalizations`) under `market_localizations/<resource GID>`.
+- **Listings**: the catalog family's publish path (`catalog::publish_on`, shared by
+  `publishablePublish`, `publicationUpdate` and the current channel's mutations) asks
+  `markets::scheduled` before it changes a publication (a future date on a channel's
+  publication schedules the listing) and tells `markets::listed` after (the listing events);
+  `delete_product` and `delete_collection` call `markets::removing`. What follows any mutation
+  is `markets::after_mutation`, which the resolver runs after each one that emitted events,
+  before their repeats are merged: the products created join the publications with
+  `autoPublish`, a listed product or collection changed is `…_listings/update`, and the
+  scheduled listings whose date has passed are listed. A listing event names no record
+  (`<publishable GID>?publication_id=<n>`): its snapshot is the product or collection, with the
+  listing (`lsfListing`: `publishedAt`, `publishAt`).
+- Events without a topic in 2026-10 (catalogs, price lists, publications, web presences, market
+  localizations, resource feedback, `channels/create`, `channels/update`, a full sync) are
+  emitted under a topic no subscription can name, as the content family's.
+
 ## Events and webhooks (`webhooks`)
 
 A change emits events: `{topic, shop, gid, at, id, snapshot}` (`products/update`, `orders/create`,
@@ -1453,7 +1510,7 @@ the changes. `None` when nothing the store data expresses changed.
 | `selling_plan_groups` | `SellingPlanGroup` (name, app id, options, products) with its `SellingPlan`s (name, description, options, pricing policies, recurring or not, checkout charge) |
 | metafields | of every owner above, of variants and company locations, of the shop and of the declared markets: the namespace of the app (`app--<id>--config`) as `$app:config`, references as the keys the data names them by (handle, `blog/article`, `type/handle`, path of `files/`, variant id, email, company name), JSON types as JSON |
 | `shop` | name, email, description, the five policies of the data, metafields (merged field by field; a metafield removed is in `removed.shop_metafields`) |
-| `localization` | rewritten with the data's countries and languages when a market changed: the markets declared in the data or created by the Admin API (id `market_gid(handle)`), enabled, with their countries (a country they add is added) and metafields |
+| `localization` | rewritten when a market or a locale changed: the markets declared in the data or created by the Admin API (renamed or not; not a country's market of its own), active and of type `REGION`, with their countries (a country they add is added) and metafields; each country in the currency its active region market sells in (its own with `localCurrencies`, else the market's base currency, a country's own market included); the published `ShopLocale`s as the languages, the primary first |
 | `checkout.discounts` | rewritten when an app discount changed: every `DiscountAutomaticApp` and `DiscountCodeApp` active by the shop's clock (`startsAt` ≤ now < `endsAt`), in id order, with its `id`, the handle of its Function (`appDiscountType.functionId`), title, first code, classes and metafields |
 | `checkout.functions` | the settings of a Function whose owner changed: the metafields of its enabled `CartTransform`, `DeliveryCustomization`, `PaymentCustomization` and `Validation` objects, in creation order, a later one's taking the place of an earlier one's |
 
@@ -1482,12 +1539,19 @@ Kept here so that nobody invents a field for it; each would need the store data 
 - **Customers**: the note, the language, tax exemptions, SMS consent, a customer without an
   email (removed from the storefront), the roles of a contact beyond the locations it orders
   for, a second contact.
-- **Companies**: the note, the billing address, catalogs and price lists.
+- **Companies**: the note, the billing address, catalogs and price lists (the local checkout
+  gives a company location buyer the prices and quantity rules of the data).
 - **Content**: a blog's feed, comments that are not published, menu items of a type the data
   has no field for (a metaobject, a customer account page: written by URL); `main-menu` and
   `footer` always exist (lsf-core adds them back).
-- **Markets**: a country's market of its own (its metafields, its currency), currency settings,
-  web presences, catalogs, price lists.
+- **Markets**: a country's market of its own (its metafields; its currency syncs), the rest of
+  the currency settings (a manual rate, rounding: the storefront converts no price), price
+  inclusions, a market of company locations or locations (the storefront has no such buyer),
+  web presences (the storefront has one address and serves every language under
+  `/<locale>/`), catalogs, price lists and their fixed prices, quantity rules and price breaks
+  (one price and one rule per variant in the store data, for every buyer), market
+  localizations, the backup region, channels and their listings, resource feedback, an
+  unpublished locale (not served).
 - **Locations**: fulfillment services; the "Shop location" lsf adds to a store without locations
   becomes a location of the data once it changes.
 - **The shop**: anything else (domains, currency, time zone, plan: the Admin API does not
@@ -1636,7 +1700,7 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |

@@ -386,7 +386,7 @@ What the backend changes through the Admin API is what the storefront and the
 | Collections: title, handle, description, image, products in order | Discounts that are not app discounts (`DiscountCodeBasic`, …): the local checkout runs Functions only; of an app discount, `combinesWith`, usage limits and every code but the first |
 | Customers: email, names, phone, tags, marketing consent, account state, addresses, their company | Gift cards the Admin API creates (changes to the data's cards sync) |
 | Companies and their locations, pages, blogs and articles, menus, locations, metaobjects, selling plan groups | SEO, product categories, bundles, collection rules (a changed automated collection becomes a manual one) |
-| Metafields of all of these, of the shop and of markets; markets and their countries | Metafield and metaobject definitions, files, translations, publications other than the Online Store |
+| Metafields of all of these, of the shop and of markets; markets, their countries and their currency; the published languages | Metafield and metaobject definitions, files, translations, publications other than the Online Store; catalogs, price lists, quantity rules, web presences, channels |
 | Shop: name, email, description, policies | Domains, currency, time zone, plan; turning a Function off (its settings go, it still runs) |
 
 The full list, field by field, is in the design notes of `lsf-admin`
@@ -537,13 +537,10 @@ category.
 **Not simulated yet** (they answer `LSF_NOT_SIMULATED`): the new collection model of 2026-10
 (`collection.sources`, `sourcesToCreate`, `collectionConditionsSourceCreate`, `…Update`,
 `…Delete`), `collectionDuplicate`, `collectionPublish`, `collectionUnpublish`, `productPublish`,
-`productUnpublish`, `publishablePublishToCurrentChannel`, `publishableUnpublishToCurrentChannel`,
-`publicationCreate`, `publicationUpdate`, `publicationDelete`, bundles and combined listings
+`productUnpublish`, bundles and combined listings
 (`productBundleCreate`, `productBundleUpdate`, `combinedListingUpdate`,
 `productVariantRelationshipBulkUpdate`), `productFullSync`, `productFeedCreate`,
-`productFeedDelete`, `bulkProductResourceFeedbackCreate`, quantity rules and price breaks
-(`quantityRulesAdd`, `quantityRulesDelete`, `quantityPricingByVariantUpdate`), inventory
-transfers and shipments (`inventoryTransfer…`, `inventoryShipment…`), fulfillment services
+`productFeedDelete`, inventory transfers and shipments (`inventoryTransfer…`, `inventoryShipment…`), fulfillment services
 (`fulfillmentServiceCreate`, `…Update`, `…Delete`), `giftCardProductSet`,
 `giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient`. Inputs a simulated
 mutation ignores (`category`, `linkedMetafield`, `combinedListingRole`, a future `publishDate`,
@@ -792,12 +789,101 @@ metafields change. Shopify has no topic for pages, blogs, articles, comments, me
 files, or the metafields of other owners.
 
 **Not simulated yet** (`LSF_NOT_SIMULATED`): `standardMetafieldDefinitionEnable`,
-`standardMetaobjectDefinitionEnable`, `shopLocaleEnable`, `shopLocaleUpdate`, `shopLocaleDisable`, `urlRedirectBulkDeleteAll`,
+`standardMetaobjectDefinitionEnable`, `urlRedirectBulkDeleteAll`,
 `urlRedirectBulkDeleteByIds`, `urlRedirectBulkDeleteBySavedSearch`,
 `urlRedirectBulkDeleteBySearch`, `urlRedirectImportCreate`, `urlRedirectImportSubmit`,
-`fileAcknowledgeUpdateFailed`, the `theme*` mutations, and the `market*` mutations. Nor are
+`fileAcknowledgeUpdateFailed`, and the `theme*` mutations. Nor are
 metafield definition `constraints`, the effects of `capabilities` and `access` (kept as given),
 and staff authors of articles (`author.userId`).
+
+### Markets, catalogs, price lists and channels
+
+The markets of the store data (those it declares, and a market of its own for each country in
+none) are the shop's markets, with the primary domain's web presence in every locale; a backend
+that manages markets, B2B catalogs or a sales channel works against lsf as against a store.
+
+| Area | Mutations lsf simulates |
+|---|---|
+| Markets | `marketCreate`, `marketUpdate` (conditions to add and delete, currency settings, price inclusions, catalogs, web presences, discounts), `marketDelete`, `backupRegionUpdate`; the deprecated `marketCurrencySettingsUpdate`, `marketRegionsCreate`, `marketRegionDelete`, `marketRegionsDelete` |
+| Localization | `marketLocalizationsRegister`, `marketLocalizationsRemove`, `shopLocaleEnable`, `shopLocaleUpdate`, `shopLocaleDisable`, `webPresenceCreate`, `webPresenceUpdate`, `webPresenceDelete`; the deprecated `marketWebPresenceCreate`, `…Update`, `…Delete` |
+| Catalogs | `catalogCreate`, `catalogUpdate`, `catalogDelete` (`deleteDependentResources` included), `catalogContextUpdate` |
+| Price lists | `priceListCreate`, `priceListUpdate`, `priceListDelete`, `priceListFixedPricesAdd`, `priceListFixedPricesUpdate`, `priceListFixedPricesDelete`, `priceListFixedPricesByProductUpdate`, `quantityRulesAdd`, `quantityRulesDelete`, `quantityPricingByVariantUpdate` |
+| Publications and channels | `publicationCreate`, `publicationUpdate`, `publicationDelete`, `channelCreate`, `channelUpdate`, `channelDelete`, `channelFullSync`, `bulkProductResourceFeedbackCreate`, `shopResourceFeedbackCreate`; the deprecated `publishablePublishToCurrentChannel`, `publishableUnpublishToCurrentChannel` |
+
+How they behave, as shopify.dev documents it:
+
+- **Markets** match buyers by their conditions: countries (`REGION`), company locations, retail
+  locations. A country is in one active region market at most: a second answers
+  `DUPLICATE_UNIQUE_MARKET`, unless `makeDuplicateUniqueMarketsDraft` puts the other in draft.
+  The handle is made from the name, and written as a handle (`"NA"` is `na`). A market's
+  currency is the local one of its countries when they share one, else the shop's;
+  `localCurrencies` says whether each country keeps its own. The primary market (the shop's
+  country's) cannot be deleted or put in draft.
+- **Web presences** are a domain or a subfolder of the primary domain (`/fr-ca`), with a
+  default locale and alternate ones, which must be the shop's (`DISABLED_LANGUAGE`). Their
+  `rootUrls` follow (`https://shop/fr`, `https://shop/fr-ca`). A domain whose presence or
+  locales change sends `domains/update`, its `localization` in the payload.
+- **Locales**: `shopLocaleEnable` adds one unpublished (Shopify's 137 locales,
+  `availableLocales`), `shopLocaleUpdate` publishes it, `shopLocaleDisable` deletes it with its
+  translations. Market localizations are of metafields (`value`) and metaobjects (their
+  fields), checked by the content's digest as translations are.
+- **Catalogs** have markets or company locations as context ("exactly one context type"), a
+  price list and a publication, both optional. `gid://shopify/Catalog/<n>` names any catalog,
+  as Shopify's examples do. The Online Store's catalog and a channel's are app catalogs, which
+  cannot be changed.
+- **Price lists** adjust every variant's price by a percentage (`RELATIVE` prices), with fixed
+  prices in the list's currency (`FIXED`; "The specified currency does not match the price
+  list's currency."). Changing the currency removes the fixed prices. Quantity rules and price
+  breaks are B2B: a company location catalog's price list takes them, with the checks and the
+  messages of the reference's examples (the increment at most the minimum, a break at least the
+  rule's minimum, …). `quantityPricingByVariantUpdate` deletes, then adds, all or nothing.
+- **Contextual pricing**: `Product.contextualPricing` and `ProductVariant.contextualPricing`
+  answer the price of a context (`country`, `companyLocationId`, `locationId`) from the price
+  list of its active catalog (the lowest of several, as B2B does), with the variant's quantity
+  rule and price breaks; without one, the variant's own price in the market's currency.
+  `marketsResolvedValues` answers what a buyer of a country gets.
+- **Publications** of catalogs: empty or with every product (`ALL_PRODUCTS`), and the products
+  created later with `autoPublish`. `publicationUpdate` adds and removes products and
+  collections, 50 at most, with the events of `publishablePublish`.
+- **Channels**: `channelCreate` makes the app's channel, with a publication and an app catalog
+  of its own; it covers every country of the shop's active region markets (lsf has no channel
+  specification to read). Publishing on it (`publishablePublish` with its publication, or
+  `publishablePublishToCurrentChannel`) is `product_listings/add` (`collection_listings/add`),
+  unpublishing or deleting the product `…/remove`, changing it while listed `…/update`. A future
+  `publishDate` on a channel schedules the listing: `scheduled_product_listings/add`, listed by
+  the first mutation once the date has passed (lsf has no clock of its own to run it at the
+  date). `channelFullSync` answers a trace per country and published language.
+- **Resource feedback**: `bulkProductResourceFeedbackCreate` (read by
+  `productResourceFeedback`) and `shopResourceFeedbackCreate` (read by `App.feedback` and
+  `Channel.resourceFeedback`; `ACCEPTED` clears it). Older feedback answers "Feedback for a
+  later version of this resource was already accepted."
+- **Queries**: `markets(type:)` (by name), `marketByGeography`, `primaryMarket`,
+  `backupRegion`, `marketLocalizableResource(s)`, `catalogs(type:)`, `catalogsCount`,
+  `priceList(s)`, `publications(catalogType:)`, `publicationsCount`, `channels`,
+  `channelByHandle`, `shopLocales(published:)`, `webPresences`, and what they are read through:
+  `Market.catalogs`, `Market.webPresences`, `CompanyLocation.catalogs`, `inCatalog`, `market`,
+  `Customer.market`, `publishedOnChannel`, `publishedOnCurrentChannel`, `unpublishedChannels`.
+
+**Webhooks**: `markets/create`, `markets/update`, `markets/delete`,
+`markets_backup_region/update`, `locales/create`, `locales/update`, `locales/destroy`,
+`domains/update` (and `domains/create`, `domains/destroy` on demand: Shopify makes domains, not
+the Admin API), `channels/delete`, `product_listings/*`, `collection_listings/*`,
+`scheduled_product_listings/*`. Shopify has no topic for catalogs, price lists, publications,
+web presences or market localizations.
+
+**Store sync**: a market's countries and the currency each sells in reach the store (a market
+created, renamed, put in draft, given countries or another currency), and so do the published
+languages (served under `/<locale>/`). Not synced: price lists and their fixed prices (the
+storefront has one price per variant, and no exchange rates), B2B catalogs and quantity rules
+(the local checkout gives a company location buyer the prices and rules of the data, as it
+gives everyone), web presences (the storefront has one address), channels and their listings,
+market localizations.
+
+**Differences**: lsf has no exchange rates: a price converted to another currency uses the
+market's `baseCurrencyManualRate`, else 1.0, and `extensions.lsf.notes` says so. The product
+feed webhooks of a channel (`product_feeds/*`) are not sent. Where shopify.dev documents a user
+error by its code only, the message is the code's description in the schema or lsf's (the source
+of each is in the code).
 
 ### The app: billing, discounts, Functions and bulk operations
 

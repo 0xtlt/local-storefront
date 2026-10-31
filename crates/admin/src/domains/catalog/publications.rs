@@ -17,7 +17,8 @@
 //! - Events: `product_publications/create` or `collection_publications/create` (and
 //!   `…/delete` when unpublished), with `products/update` (or `collections/update`), whose
 //!   `published_at` changed. `product_listings/*` and `collection_listings/*` are sent to the
-//!   sales channel apps whose own publication changes: the app lsf serves is not one.
+//!   sales channel app whose own publication changes: a channel's (`channelCreate`), whose
+//!   listings the markets family emits (`markets::scheduled`, `markets::listed`).
 //!
 //! A publication event names no record (a product on a publication is not one): its GID is the
 //! product's with `?publication_id=<id>`, and its snapshot holds the publication and the
@@ -408,19 +409,47 @@ fn change(
     if !errors.is_empty() {
         return Ok(payload(json!({"publishable": null}), &errors));
     }
-    let product = state.type_of(&publishable) == Some("Product");
+    // A sales channel's publication that supports future publishing schedules it.
     if published
-        && publications.iter().any(|(_, date)| {
+        && publications.iter().any(|(publication, date)| {
             date.as_deref()
                 .is_some_and(|date| date > mutation.timestamp().as_str())
+                && state
+                    .get(publication)
+                    .and_then(|record| record.get("supportsFuturePublishing"))
+                    .and_then(Value::as_bool)
+                    != Some(true)
         })
     {
         mutation.note("publishablePublish: lsf does not schedule publishing: a future `publishDate` is published at once");
     }
-    let state = mutation.state_mut();
+    publish_on(mutation.state_mut(), &publishable, &publications, published);
+    Ok(payload(json!({"publishable": publishable}), &[]))
+}
+
+/// Publishes a product or a collection on publications (`(publication, publish date)`), or
+/// unpublishes it, with the events of `publishablePublish`: what the markets family's
+/// publications and channels share. A listing on a sales channel's publication is the markets
+/// family's (`markets::scheduled`, `markets::listed`). The publications it changed.
+pub fn publish_on(
+    state: &mut ShopState,
+    publishable: &str,
+    publications: &[(String, Option<String>)],
+    published: bool,
+) -> Vec<String> {
+    let product = state.type_of(publishable) == Some("Product");
     let mut changed = Vec::new();
-    for (publication, date) in &publications {
-        if set_published(state, &publishable, publication, date.as_deref(), published) {
+    for (publication, date) in publications {
+        if crate::domains::markets::scheduled(
+            state,
+            publishable,
+            publication,
+            date.as_deref(),
+            published,
+        ) {
+            continue;
+        }
+        if set_published(state, publishable, publication, date.as_deref(), published) {
             changed.push(publication.clone());
         }
     }
@@ -432,20 +461,21 @@ fn change(
         };
         let action = if published { "create" } else { "delete" };
         for publication in &changed {
-            let snapshot = publication_snapshot(state, &publishable, publication, published);
+            let snapshot = publication_snapshot(state, publishable, publication, published);
             state.emit_with(
                 &format!("{kind}/{action}"),
-                &event_gid(&publishable, publication),
+                &event_gid(publishable, publication),
                 snapshot,
             );
+            crate::domains::markets::listed(state, publishable, publication, published);
         }
-        state.touch(&publishable);
+        state.touch(publishable);
         if product {
-            product_changed(state, &publishable);
+            product_changed(state, publishable);
         }
-        state.emit(update, &publishable);
+        state.emit(update, publishable);
     }
-    Ok(payload(json!({"publishable": publishable}), &[]))
+    changed
 }
 
 fn publish(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {

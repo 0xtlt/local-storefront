@@ -19,6 +19,7 @@
 mod catalog;
 mod content;
 mod customers;
+mod markets;
 mod orders;
 mod shop;
 
@@ -109,6 +110,10 @@ pub const BUILT_TOPICS: &[&str] = &[
     "app_subscriptions/approaching_capped_amount",
     "app_subscriptions/update",
     "bulk_operations/finish",
+    "channels/delete",
+    "collection_listings/add",
+    "collection_listings/remove",
+    "collection_listings/update",
     "collection_publications/create",
     "collection_publications/delete",
     "collection_publications/update",
@@ -142,6 +147,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "discounts/redeemcode_added",
     "discounts/redeemcode_removed",
     "discounts/update",
+    "domains/create",
+    "domains/destroy",
+    "domains/update",
     "draft_orders/create",
     "draft_orders/delete",
     "draft_orders/update",
@@ -170,11 +178,18 @@ pub const BUILT_TOPICS: &[&str] = &[
     "inventory_levels/connect",
     "inventory_levels/disconnect",
     "inventory_levels/update",
+    "locales/create",
+    "locales/destroy",
+    "locales/update",
     "locations/activate",
     "locations/create",
     "locations/deactivate",
     "locations/delete",
     "locations/update",
+    "markets/create",
+    "markets/delete",
+    "markets/update",
+    "markets_backup_region/update",
     "metafield_definitions/create",
     "metafield_definitions/delete",
     "metafield_definitions/update",
@@ -190,6 +205,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "orders/paid",
     "orders/partially_fulfilled",
     "orders/updated",
+    "product_listings/add",
+    "product_listings/remove",
+    "product_listings/update",
     "product_publications/create",
     "product_publications/delete",
     "product_publications/update",
@@ -203,6 +221,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "returns/decline",
     "returns/reopen",
     "returns/request",
+    "scheduled_product_listings/add",
+    "scheduled_product_listings/remove",
+    "scheduled_product_listings/update",
     "selling_plan_groups/create",
     "selling_plan_groups/delete",
     "selling_plan_groups/update",
@@ -318,6 +339,24 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "customers/data_request" => shop::customer_data_request(record, lookup),
         "customers/redact" => shop::customer_redact(record, lookup),
         "shop/redact" => shop::shop_redact(record, lookup),
+        "markets/create" | "markets/update" => markets::market(record),
+        "markets/delete" => markets::market_deleted(record),
+        "markets_backup_region/update" => markets::backup_region(record),
+        "locales/create" | "locales/update" | "locales/destroy" => markets::locale(record),
+        "domains/create" | "domains/update" | "domains/destroy" => markets::domain(record),
+        "channels/delete" => markets::channel_deleted(record),
+        "collection_listings/add" | "collection_listings/update" => {
+            markets::collection_listing(record)
+        }
+        "collection_listings/remove" => markets::collection_listing_removed(record),
+        "product_listings/add" | "product_listings/update" => {
+            markets::product_listing(record, lookup, false)
+        }
+        "scheduled_product_listings/add" | "scheduled_product_listings/update" => {
+            markets::product_listing(record, lookup, true)
+        }
+        "product_listings/remove" => markets::product_listing_removed(record, false),
+        "scheduled_product_listings/remove" => markets::product_listing_removed(record, true),
         _ => return None,
     })
 }
