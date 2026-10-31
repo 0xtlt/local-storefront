@@ -115,7 +115,8 @@ A test runner can wait on this URL to know the server is up.
 
 | Key | Value |
 |---|---|
-| `apiVersion`, `graphql` | `2026-10`, and the path of the GraphQL Admin API. |
+| `apiVersion`, `graphql` | The version the server names (`2026-10`, unless `--admin-versions` leaves it out), and the path of its GraphQL Admin API. |
+| `apiVersions` | Every version lsf knows: `version`, `status` (`stable`, `release candidate`), `served`, `graphql`. |
 | `defaultShop` | The shop of the store data (`shop.permanent_domain`). |
 | `app` | `clientId`, `appUrl` (where webhooks and redirects go), `scopes` (what the app is installed with). |
 | `throttle` | `enabled`, `maximumAvailable`, `restoreRate`. |

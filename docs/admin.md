@@ -1,8 +1,8 @@
 # Admin API
 
 The backend of a Shopify app talks to Shopify through the **GraphQL Admin API** and receives
-**webhooks**. While it runs, local-storefront serves a local Admin API (version **2026-10**)
-over the store data, with OAuth, token exchange and session tokens, and delivers the webhooks of
+**webhooks**. While it runs, local-storefront serves a local Admin API (version **2026-10**, and
+[2027-01 on demand](#api-versions)) over the store data, with OAuth, token exchange and session tokens, and delivers the webhooks of
 the app to its backend, signed as Shopify signs them. The backend runs and is tested offline: no
 development store, no tunnel, the same data every run, and the failures that are hard to provoke
 on a real store (a missing scope, throttling, an uninstall) on demand.
@@ -59,6 +59,52 @@ end: every recipe below is checked there.
 | `--app-url <url>` | `LSF_APP_URL` | Where the backend listens. Webhooks with a relative `uri` go there, and an absolute `uri` on the origin of `application_url` (often the tunnel of a `shopify app dev` that is not running) is moved there. Without it, `application_url`. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The client secret. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket: `store` (default), `standard`, `advanced`, `plus`, `enterprise`, `legacy`, `off`. |
+| `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The [API versions](#api-versions) served: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. |
+
+## API versions
+
+| Version | Shopify's status | Served |
+|---|---|---|
+| `2026-10` | latest stable | by default |
+| `2027-01` | release candidate | with `--admin-versions 2026-10,2027-01` |
+
+Each version is served at `/admin/api/<version>/graphql.json` with its own schema: its fields,
+mutations and enum values (a field of another version answers Shopify's `Field '…' doesn't
+exist on type '…'`), its introspection, its access scopes, its search filters and its webhook
+topics. `X-Shopify-API-Version` says which version answered.
+
+```bash
+npx local-storefront app dev --app ../my-app --admin-versions 2026-10,2027-01
+```
+
+```text
+admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
+        also API version 2027-01 (release candidate)
+```
+
+- **A version Shopify no longer supports** (`2025-10`, `2024-01`, …) is answered by the oldest
+  stable version served, as Shopify [falls forward](https://shopify.dev/docs/api/usage/versioning)
+  to "the oldest accessible stable version": `X-Shopify-API-Version` says `2026-10`, and
+  `X-Lsf-Reason` why.
+- **A version lsf does not serve** answers `404` with a JSON message that says which ones it
+  serves: a version Shopify supports but lsf has no data for (`2026-07`), `unstable`, and
+  `2027-01` without the option, whose message says how to serve it. lsf does not answer them
+  with another version's schema.
+- **Webhooks** are built in the version of their subscription: `[webhooks] api_version` of
+  `shopify.app.toml`, or the version of the request that made it with
+  `webhookSubscriptionCreate`. A version the server does not serve is built in 2026-10, and the
+  delivery's notes (`GET /__lsf/webhooks`) say so. `lsf app webhook trigger --api-version
+  2027-01` builds its payload in 2027-01.
+- **The records are the same** in every version: what a 2027-01 request creates, a 2026-10 one
+  reads. Where 2027-01 shows a record differently, lsf adapts it: a metaobject definition whose
+  admin access is `PUBLIC_READ` or `PRIVATE` (removed in 2027-01, "Use MERCHANT_READ instead")
+  reads `MERCHANT_READ` in 2027-01.
+- `GET /__lsf/admin` lists the versions lsf knows, their status and whether they are served
+  (`apiVersions`).
+
+Adding another version is a data drop and a line of code: `mise run admin:version -- <version>`
+writes its files from Shopify's introspection and says what is left
+(`crates/admin/docs/design.md`, "Add a version").
 
 ## Point the backend at lsf
 
@@ -66,8 +112,9 @@ Shopify's libraries build the URL of a shop as `https://<shop>/admin/api/<versio
 (and `https://<shop>/admin/oauth/access_token` for tokens), and some force `https` on whatever
 host they are given. lsf listens on `http://127.0.0.1:9292` and serves every shop there: the
 token, not the host, picks the shop. So the way in is the library's HTTP layer: send the
-requests for `*.myshopify.com` to lsf. Use API version `2026-10`; lsf answers another with a
-`404` that says so.
+requests for `*.myshopify.com` to lsf. Use API version `2026-10` (or a version you serve with
+`--admin-versions`); lsf answers another with a `404` that says so, and one Shopify no longer
+supports with 2026-10, as Shopify does ([API versions](#api-versions)).
 
 The recipes read the address of lsf from an environment variable of your own (`LSF_URL` here),
 so that the same code talks to Shopify when it is not set.
@@ -305,7 +352,8 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
   from the record as the change left it, cut to `include_fields`, and checked against `filter`.
   A topic whose payload lsf does not build is logged as not sent, never sent with a made-up body.
 - **Headers**: `X-Shopify-Topic`, `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the body with the
-  client secret), `X-Shopify-Shop-Domain`, `X-Shopify-API-Version: 2026-10`,
+  client secret), `X-Shopify-Shop-Domain`, `X-Shopify-API-Version` (the version the payload is
+  built in: the subscription's, `2026-10` by default),
   `X-Shopify-Webhook-Id`, `X-Shopify-Event-Id`, `X-Shopify-Triggered-At`, `User-Agent:
   Shopify-Captain-Hook`. Every library's verification accepts them with the shared secret.
 - **Delivery** is from a background worker, in order, retried after 1, 5 and 15 seconds when the

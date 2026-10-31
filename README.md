@@ -93,7 +93,8 @@ input and output. Guide: [checkout](docs/checkout.md).
 npx local-storefront app dev --app ../my-app --app-url http://localhost:3000
 ```
 
-Serves a local GraphQL Admin API (version 2026-10) over the store data, at
+Serves a local GraphQL Admin API (version 2026-10, and the 2027-01 release candidate with
+`--admin-versions 2026-10,2027-01`) over the store data, at
 `/admin/api/2026-10/graphql.json`, with OAuth, token exchange and session tokens. Webhooks of
 the app reach its backend, signed as Shopify signs them. The backend runs offline, against the
 same data every run, and what it changes shows on the storefront and in the checkout at once.

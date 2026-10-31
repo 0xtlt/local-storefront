@@ -4,7 +4,8 @@
 
 The backend of a Shopify app (a React Router or Remix app, Rails, Laravel, Express, Django, Go,
 …) talks to Shopify through the **GraphQL Admin API** and receives **webhooks**. `lsf` serves
-a local Admin API, **API version 2026-10 only**, backed by the store data, and delivers the
+a local Admin API, **API version 2026-10 by default** and the other versions it knows on demand
+(2027-01, the release candidate: see "API versions"), backed by the store data, and delivers the
 webhooks of the app to its backend, signed as Shopify signs them. A developer runs and tests
 their backend offline: no development store, no tunnel, no network, the same data every run,
 and the failures that are hard to provoke on a real store (throttling, a missing access scope, a
@@ -17,7 +18,7 @@ lists and the `orders/create` webhook reports.
 
 Not a goal: the REST Admin API (deprecated by Shopify; `/admin/api/<v>/*.json` other than
 `graphql.json` answers that it is not served), the Storefront API, the Customer Account API,
-other API versions (2027-01 comes later, the way the checkout added it), the admin web UI.
+the versions lsf has no data for (adding one is a data drop: "Add a version"), the admin web UI.
 
 ## User-facing surface
 
@@ -43,6 +44,7 @@ Webhooks   3 subscriptions of shopify.app.toml → http://localhost:3000
 |---|---|
 | `--app-url <url>` (`LSF_APP_URL`) | Where the backend of the app listens. Relative webhook `uri`s are joined to it, and an absolute one on the origin of `application_url` is moved to it. Without it, `application_url` is used. |
 | `--client-secret <secret>` (`LSF_CLIENT_SECRET`) | The secret webhooks, OAuth and session tokens are signed with. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else a fixed local secret printed at start. |
+| `--admin-versions <list>` (`LSF_ADMIN_VERSIONS`) | The API versions served, among those lsf knows: `2026-10` (the default) alone without it, `2026-10,2027-01` with the release candidate. See "API versions". |
 | `--admin-throttle <plan>` (`LSF_ADMIN_THROTTLE`) | The cost bucket: `store` (the default: Plus for store data with companies, as the seed's `plan.shopifyPlus`, Standard otherwise), a plan (`standard`, `advanced`, `plus`, `enterprise`, `legacy`), or `off`. |
 
 The client id is `client_id` of `shopify.app.toml` (a fixed local one without an app). The
@@ -51,14 +53,16 @@ from the app when there is one (`--app`).
 
 ## The HTTP protocol, as Shopify's
 
-- `POST /admin/api/2026-10/graphql.json` with `{"query", "variables", "operationName"}`
+- `POST /admin/api/<version>/graphql.json` with `{"query", "variables", "operationName"}`
   (`application/json`), or the query alone (`application/graphql`). `GET` with `?query=` too.
 - Authentication: `X-Shopify-Access-Token`. Missing or unknown: `401`
   `{"errors":"[API] Invalid API key or access token (unrecognized login or wrong password)"}`.
-- Another version (`2026-07`, `2027-01`, `unstable`): `404` with a JSON message saying lsf serves
-  2026-10 only. Unlike Shopify, which serves the oldest supported version instead: a local tool
-  says what it does not do.
-- Response headers: `X-Shopify-API-Version: 2026-10`, `X-Request-Id`, JSON content type.
+- The version of the path is served when the server serves it; one Shopify no longer supports
+  (`2025-07`) falls forward to the oldest stable version served, as Shopify does; another
+  (`2026-07`, `unstable`, `2027-01` when not served) answers `404` with a JSON message saying which
+  versions lsf serves (see "API versions").
+- Response headers: `X-Shopify-API-Version` (the version that answered), `X-Request-Id`, JSON
+  content type.
 - Errors in the format of Shopify (graphql-ruby): parse errors, validation errors with
   `locations`, `path` and `extensions.code` (`undefinedField`, `argumentNotAccepted`,
   `missingRequiredArguments`, …), variable errors with `extensions.problems`, field errors with
@@ -112,8 +116,9 @@ validate, coerce the variables) then `Prepared::requested_cost` and `Prepared::e
 
 ### Schema
 
-`tools/admin/admin_schema.mjs` (`mise run admin:schema`) writes `schemas/2026-10/admin.graphql`
-from the introspection of the pinned `@shopify/dev-mcp@1.17.0` (SHA-256 checked): every
+`tools/admin/admin_schema.mjs` (`mise run admin:schema -- --version <v>`) writes
+`schemas/<v>/admin.graphql` from the introspection of the pinned `@shopify/dev-mcp@1.17.0`
+(SHA-256 checked; shopify.dev's public proxy for a version it lacks): every
 description, deprecation reason, default value, `@oneOf`, and the six directives the schema
 declares (`@idempotent`, `@oneOf`, `@include`, `@skip`, `@deprecated`, `@specifiedBy`), in the
 order of Shopify's introspection. The introspection types (`__Schema`, …) are in
@@ -126,7 +131,8 @@ generator also writes `admin.graphql.br` (Brotli, quality 11, 393,867 bytes), wh
 embeds and decompresses on first use: 0.4 MB of the binary. A Brotli step in a `build.rs` was
 rejected: build scripts run unoptimized, where quality 11 takes 46 s for this file (quality 9:
 1.8 s for 440 KB), and the build would compile `brotli` a second time for the host. A test checks
-that the `.br` is the `.graphql`. `schema::admin()` parses it once (`OnceLock`): 24 ms in
+that the `.br` is the `.graphql`, for each version. `schema::for_version(v)` parses a version's
+once (`OnceLock`), at its first request; `schema::admin()` is the default version's: 24 ms in
 release on an Apple M4 Pro (decompression about 5 ms, graphql-parser about 18 ms, the
 model the rest); `prepare` and the requested cost of a typical query take about 5 µs.
 
@@ -213,9 +219,230 @@ tests); `Throttle::set_enabled(false)` turns it off (a full bucket, nothing refu
 
 ### Versions
 
-`version::parse_path` reads `/admin/api/<version>/graphql.json`: `Graphql("2026-10")`,
-`UnsupportedVersion(v)` for any other version (and for `/admin/api/graphql.json` without one), `Rest`
-for the REST Admin API; `unsupported_version` and `rest_not_served` are the JSON of their 404s.
+`version::parse_path` reads `/admin/api/<version>/graphql.json`: `Graphql(v)` for any version
+name, `UnsupportedVersion(x)` for a path segment that is not one (and for `/admin/api/graphql.json`
+without one), `Rest` for the REST Admin API. Which version answers is the server's
+`Served::resolve`: see "API versions" below.
+
+## API versions (`version`)
+
+A version of the Admin API is data, and a request runs in its own. lsf serves **2026-10 by
+default** (`version::DEFAULT`, the one place the code names it), and the other versions it knows
+on demand: `--admin-versions 2026-10,2027-01` (`LSF_ADMIN_VERSIONS`, `AdminApi::with_versions`).
+
+### The registry
+
+`version::KNOWN` lists every version lsf knows, oldest first, each a line:
+
+```rust
+static KNOWN: [Entry; COUNT] = [
+    version!("2026-10", Stable, &[]),
+    version!("2027-01", ReleaseCandidate, adapt::V2027_01),
+];
+```
+
+An entry has its name, its status (`Stable`, `ReleaseCandidate`, `Unstable`, `Unsupported`:
+shopify.dev's labels), its adapters, and its files, embedded by the `version!` macro from
+`schemas/<version>/`:
+
+| File | What reads it |
+|---|---|
+| `admin.graphql.br`, `introspection.graphql` | `schema::for_version(v)`: validation, execution, introspection, cost |
+| `access.json` | `auth::scopes::for_version(v)`: the `requiredAccess` of its fields (`ACCESS_DENIED`) |
+| `search.json` | `search::for_version(v)`: the filters each connection's `query` documents |
+| `topics.json` | `webhooks::topics::for_version(v)`: its `WebhookSubscriptionTopic` values, written forms and scopes |
+| `tests/fixtures/webhooks/examples-<v>.json` (tests only) | the payload test: Shopify's example payload of each topic lsf builds |
+| `tests/fixtures/<v>/introspection.json` (tests only) | the introspection test |
+
+`ApiVersion` is a `Copy` handle on an entry (`ApiVersion::get("2027-01")`, `::all()`,
+`::default_version()`, `.name()`, `.status()`, `.since("2027-01")`, `.schema()`). Each module
+parses its part the first time a request of the version needs it, in a `OnceLock` per version
+(`static PARSED: [OnceLock<T>; version::COUNT]`, as `lsf-checkout` keeps the Function schemas):
+a server that serves 2026-10 only never decompresses 2027-01. The free functions that existed
+before versions (`schema::admin()`, `scopes::required_access`, `search::documented_filters`,
+`topics::all`, `topics::written_form`, …) stay, as shims on the default version: code that does
+not know the version of its request keeps working, and reads 2026-10.
+
+### Which version answers
+
+`Served` is the set a server serves. `Served::resolve(asked)`:
+
+1. A version it serves (and that is not `Unsupported`) answers.
+2. A version Shopify no longer serves (a dated one older than `version::OLDEST_ACCESSIBLE`,
+   2026-01 today, or one lsf knows as `Unsupported`) **falls forward** to the oldest stable
+   version served, as Shopify does: "If your app targets an inaccessible version, Shopify falls
+   forward and responds using the oldest accessible stable version", and "API responses include
+   the `X-Shopify-API-Version` header reflecting the version used to fulfill the request"
+   (shopify.dev, "API versioning", <https://shopify.dev/docs/api/usage/versioning>, read on
+   2026-10-31; its release schedule has 2025-10 accessible until October 16, 2026).
+   `POST /admin/api/2025-07/graphql.json` is answered by 2026-10, with
+   `X-Shopify-API-Version: 2026-10` and an `X-Lsf-Reason` saying why. A release candidate is
+   never the fallback.
+3. Any other version answers `404`, saying which versions the server serves: one Shopify
+   supports but lsf has no data for (`2026-07`), `unstable`, and one lsf knows but the server was
+   not asked to serve, whose message says how (`lsf knows API version 2027-01 (release
+   candidate) but this server serves 2026-10 only: start it with --admin-versions
+   2026-10,2027-01`). lsf could answer them with another version, as Shopify answers an
+   inaccessible one; it does not, since Shopify would answer them in their own: a local tool
+   says what it does not do.
+
+`X-Shopify-API-Version` is the version that answered, on every answer of the GraphQL endpoint.
+`Served::primary` (the default when served, else the oldest) is the version the server names:
+the banner, `GET /__lsf/admin` (`apiVersion`, and `apiVersions`: each known version, its status,
+whether it is served), the answer of `POST /__lsf/admin/shops`.
+
+### One store of records, a view per version
+
+The shops keep **one set of records, in one shape**: that of the default version, which the
+seed, the mutations, store sync and the payload builders write and read. No resolver, mutation or
+builder is copied per version. A version is a view of the records:
+
+- **What exists** is its schema's business. A field, an argument, an input field, an enum value
+  or a mutation the version does not have is refused by validation, with graphql-ruby's error,
+  before any resolver runs (`Field 'automaticDiscounts' doesn't exist on type 'QueryRoot'`,
+  `undefinedField`). A resolver or a mutation registered for something only some versions have
+  is reached only in those: there is nothing to gate by hand. `Registry::check_versions` (a test)
+  accepts a registration that one known version has, and lists one that none has.
+- **What reads differently** is an `Adapter` of the version (`version::adapt`), declared in its
+  entry of `KNOWN`. Three kinds:
+  - `Field { type_name, field, read }`: the version's `type_name.field` is `read(record)` rather
+    than the record's value under `field`; the value is then converted by the field's type as a
+    stored one is (a GID becomes its record, an object an inline one). A renamed field reads the
+    records' name for it, a reshaped one computes its value, a removed enum value maps to the one
+    that replaced it. Applied at rule 5 of "How a field is resolved", for records and inline
+    objects alike; a custom resolver of the field, if any, reads `r.version()` itself.
+  - `Arguments { type_name, field, write }`: the arguments of `type_name.field` (a mutation's
+    input) as the version gives them, rewritten into the shape the resolvers read before access,
+    the mutation or the resolver runs (`FieldContext::with_arguments`).
+  - `Payload { topic, write }`: the payload of a webhook topic in the version, from the one the
+    builders make; applied when a delivery is built in the version.
+
+  An adapter maps any record to the version's view, whatever version wrote it: it is total (a
+  value the version has passes through), so that it still holds when the default version, and
+  with it the records' shape, moves on.
+- **What behaves differently** (a mutation whose rules changed, not its shape) asks the version
+  of its request: `r.version()` in a resolver, `m.version()` in a mutation
+  (`m.version().since("2027-01")`), `m.api_version()` its name, `r.schema()`/`m.schema()` its
+  schema (`ctx.schema()` is the same). Rare: a difference of shape is an adapter.
+
+A domain helper that has no request (`content::fit_code`) reads the default version's schema: the
+code enums it reads are the same in both versions lsf knows.
+
+### A worked example: `MetaobjectAdminAccess` in 2027-01
+
+2026-10 deprecates two values of `MetaobjectAdminAccess`, the admin access of a metaobject
+definition (`MetaobjectDefinition.access.admin`): `PRIVATE` and `PUBLIC_READ`, "Use
+MERCHANT_READ instead. Removed in API version 2027-01." 2027-01 removes them; its
+`MetaobjectAdminAccessInput` never had them.
+
+- A request of 2027-01 that names them (`__type`, an enum literal) is refused by its schema; a
+  request of 2026-10 is not. Nothing to write.
+- A definition kept with `PUBLIC_READ` (on Shopify, one made before 2027-01; in lsf, a record of
+  the shape of 2026-10) has a value the enum of 2027-01 does not have: read as it is, the executor
+  would answer an error for the field. 2027-01's adapter reads it as `MERCHANT_READ`:
+
+  ```rust
+  pub const V2027_01: &[Adapter] = &[Adapter::Field {
+      type_name: "MetaobjectAccess",
+      field: "admin",
+      read: metaobject_admin_access_2027_01, // PRIVATE | PUBLIC_READ → MERCHANT_READ, the rest as is
+  }];
+  ```
+
+  The record does not change: 2026-10 reads `PUBLIC_READ`, 2027-01 `MERCHANT_READ`
+  (`tests/versions.rs`, `a_record_written_in_2026_10_reads_through_the_adapter_of_2027_01`).
+  Shopify does not say what it answers for such a definition in 2027-01: lsf reads the
+  deprecation reason as the mapping.
+
+The rest of what 2027-01 changes needs no code: `QueryRoot.automaticDiscounts`,
+`Mutation.marketCurrencySettingsUpdate`, `StandardMetaobjectDefinitionFieldTemplate
+.visibleToStorefrontApi` and the collection sources' `metafieldInteger` are removed (refused by
+the schema); `InventoryItemMeasurement.packedDimensions: BoxDimensions!` and
+`Mutation.appDowngradeAccessScopes` are added (the first answered with a default, reported in
+`extensions.lsf.defaulted`; the second `LSF_NOT_SIMULATED`); new `MarketUserErrorCode` values. Its
+webhook topics and the keys of its example payloads are 2026-10's. `mise run admin:version`
+prints this list for a new version.
+
+A **rename** would be declared the same way. Were 2027-01 to rename `Product.bodyHtml` to
+`Product.descriptionMarkup` and the `ProductInput.bodyHtml` field with it:
+
+```rust
+Adapter::Field { type_name: "Product", field: "descriptionMarkup",
+    read: |product| product.get("bodyHtml").cloned() },
+Adapter::Arguments { type_name: "Mutation", field: "productUpdate",
+    write: |arguments| rename_input(arguments, "product", "descriptionMarkup", "bodyHtml") },
+Adapter::Payload { topic: "products/update", write: |payload| rename_key(payload, "body_html", "description_markup") },
+```
+
+and the records, the mutation and the builder would stay those of 2026-10.
+(`resolve::tests::a_version_adapts_the_arguments_it_is_given_and_the_fields_it_reads` runs an
+`Arguments` and a `Field` adapter through the resolver; `version::adapt` tests a `Payload` one.)
+
+### Webhooks per version
+
+- A subscription has an `api_version`: `[webhooks] api_version` of `shopify.app.toml` for its
+  subscriptions (the default version when there is none), the version of the request for one
+  made with `webhookSubscriptionCreate`. `WebhookSubscription.apiVersion` answers it
+  (`supported`: whether Shopify still serves it).
+- A delivery is built in the subscription's version as the server serves it
+  (`Served::for_webhook`): the version itself when served; an inaccessible one falls forward, as
+  shopify.dev says webhooks do ("Shopify falls forward when your selected version becomes
+  inaccessible, and webhooks include the `X-Shopify-Api-Version` header to confirm which version
+  was used"); one the server does not serve is built in the primary version, the delivery's
+  notes saying so and, for a version lsf knows, how to serve it. Its payload is the builders'
+  with the version's `Payload` adapters, and `X-Shopify-API-Version` is that version.
+- Topics are per version: a topic the version does not have is refused there,
+  `webhookSubscriptionCreate` by validation (the `WebhookSubscriptionTopic` enum of its schema),
+  a subscription of `shopify.app.toml` by its deliveries ("`x` is not a webhook topic of API
+  version 2026-10"), `lsf app webhook trigger --api-version` before anything is sent. The scopes
+  a subscription needs are those its version's topic names.
+- `lsf app webhook trigger --api-version <v>` builds its payload in `v`, any version lsf knows.
+
+### Size
+
+What a version adds to the binary: its compressed schema (2027-01: 393,820 bytes) and its tables,
+embedded as JSON (access 202,763, search 53,448, topics 53,481, introspection types 5,806):
+709 KB. The release binary (macOS, arm64) went from 54,969,280 bytes before versions to
+55,927,712 bytes with 2027-01 and the code of this section (+958 KB, 1.7 %): not enough to keep
+the version out of the binary as a test fixture. Parsing waits for the first request of the
+version (24 ms for the schema in release).
+
+2027-01 is embedded and registered, not served by default: an app developer tests the next
+release against lsf with `--admin-versions 2026-10,2027-01`, and a backend that hard-codes
+2026-10 sees nothing change. A release candidate "may include backwards-incompatible changes":
+it is not what an app talks to unless it asks.
+
+### Add a version
+
+1. `mise run admin:version -- <version>` (`tools/admin/add_version.mjs`). From one introspection
+   (the pinned `@shopify/dev-mcp`, which ships `admin_<version>.json.gz` for the versions shopify.dev
+   lists: 2026-01 to 2027-01 and `unstable` in 1.17.0; else shopify.dev's public proxy of the
+   Admin API, `https://shopify.dev/admin-graphql-direct-proxy/<version>`, which answers
+   introspection without a token, `requiredAccess` included; `LSF_ADMIN_SOURCE=shopify.dev`
+   forces it) it writes `schemas/<version>/` (`admin.graphql`, `.br`, `introspection.graphql`,
+   `access.json`, `search.json`, `topics.json`), `tests/fixtures/<version>/introspection.json`
+   and, from shopify.dev's webhook reference of the version,
+   `tests/fixtures/webhooks/examples-<version>.json`. It then prints Shopify's status of the
+   version, a newer `OLDEST_ACCESSIBLE` if there is one, and how the schema differs from the
+   default version's. Each part has its own task too (`admin:schema`, `admin:access-scopes`,
+   `admin:topics`, `admin:webhook-examples`, each with `-- --version <v>`).
+2. `crates/admin/src/version.rs`: a `version!("<version>", <Status>, &[])` line in `KNOWN`, in
+   date order, and `COUNT` one higher (the array's length checks it).
+3. For each difference the tool listed that reads differently from the records (a removed or
+   renamed value, field or input field, a reshaped payload), an `Adapter` in
+   `version/adapt.rs`, with a test. What a version only removes or only adds needs none.
+4. `cargo test -p lsf-admin`: the payload test compares every builder with the examples of the
+   version (keys and their order; values with the default version's examples, which the samples
+   are made from), the introspection test with its fixture, the topics with its enum, and
+   `ALL_SCOPES` with what its tables and topics name (add a scope it reports).
+5. A test of what the version changes, in `tests/versions.rs`.
+6. To make it the default: `DEFAULT`, then the adapters move to the version that now differs from
+   the records (the records' shape is the default's); the payload builders follow the new
+   version's examples.
+7. Docs: `docs/admin.md` ("API versions"), `CHANGELOG.md`.
+
+When Shopify retires a version: its status becomes `Unsupported` (requests and webhooks for it
+fall forward), and `OLDEST_ACCESSIBLE` moves; its files can go once nothing serves it.
 
 ## Shops, apps and tokens
 
@@ -279,10 +506,11 @@ for the REST Admin API; `unsupported_version` and `rest_not_served` are the JSON
   cover answers `ACCESS_DENIED` with Shopify's message ("Access denied for products field.
   Required access: `read_products` access scope.") and `extensions` (`code`, `documentation`,
   `requiredAccess`). `write_x` implies `read_x`, `unauthenticated_write_x` implies
-  `unauthenticated_read_x`. The table is not hand-written: Shopify's introspection of 2026-10
-  carries the `requiredAccess` text of every type and field, which `mise run admin:access-scopes`
-  writes into `schemas/2026-10/access.json`; a root field without one requires that of the type
-  it answers (`products` → `Product`). Staff permissions, plans and requirements that depend on
+  `unauthenticated_read_x`. The table is not hand-written, and is the request's version's:
+  Shopify's introspection of each version carries the `requiredAccess` text of every type and
+  field, which `mise run admin:access-scopes -- --version <v>` writes into
+  `schemas/<v>/access.json` (`auth::scopes::for_version`); a root field without one requires that
+  of the type it answers (`products` → `Product`). Staff permissions, plans and requirements that depend on
   the arguments (`metafieldsSet`, `tagsAdd`) are not checked.
 
 ## The state of a shop (`state`)
@@ -548,10 +776,14 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    the mutation (`tagsAdd` needs the write scope of the resource: `access::denied`).
 
 `m.webhooks()` gives the app's webhooks (their registry of subscriptions), `m.grant()` the token's
-scopes, `m.api_version()`, `m.now()` and `m.timestamp()` the shop's clock.
+scopes, `m.version()` the request's version (`m.api_version()` its name, `m.schema()` its
+schema; `r.version()` and `r.schema()` in a resolver), `m.now()` and `m.timestamp()` the shop's
+clock. A field or a mutation that only some versions have needs no check, and one that reads
+differently in a version is an adapter of the version, not a branch: see "API versions".
 
 **Checking a registry**: `Registry::check(schema)` lists what is registered for a field, a
-mutation or a type the schema does not have; a test runs it on `Registry::standard()`.
+mutation or a type the schema does not have; `Registry::check_versions()` what no version lsf
+knows has, which a test runs on `Registry::standard()`.
 
 ### Search syntax (`search`)
 
@@ -567,7 +799,8 @@ relative date (`-7d`) for search; lsf has none.
 `search` parses a query into a tree (`Query::parse`, never an error: a malformed query is read
 as far as it goes, with warnings, each given once) and matches a record through the `Searchable` trait, which
 each domain implements from the filters its connections document (`documented_filters`, from
-the reference of 2026-10: `schemas/2026-10/search.json`). A value is tokenized text, a keyword,
+the reference of the request's version: `schemas/<v>/search.json`, `search::for_version(v)`;
+`documented_filters` is the default version's). A value is tokenized text, a keyword,
 a number, a date, a boolean or an id, which says how `:` compares it. **A field the connection
 does not know is ignored**, as shopify.dev says ("If you specify an invalid field, then the query
 is ignored and all results are returned"; an earlier draft of this design said it matched
@@ -619,7 +852,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 
 | Path | What answers |
 |---|---|
-| `POST\|GET /admin/api/2026-10/graphql.json` | The token (`401` as Shopify, `X-Lsf-Reason` saying why), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
+| `POST\|GET /admin/api/<version>/graphql.json` | The version (`Served::resolve`: served, fallen forward, or `404`), the token (`401` as Shopify, `X-Lsf-Reason` saying why), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
 | other `/admin/api/<v>/…` | `404`: another version, or the REST Admin API, which lsf does not serve. |
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
@@ -1013,7 +1246,7 @@ changed.
   (the client id, `lsf-local-client-id` without one), `embedded`, `developerType: PARTNER`,
   `requestedAccessScopes`, `availableAccessScopes`, `optionalAccessScopes`, `installation`,
   `webhookApiVersion`. **`AppInstallation`**: `app`, `accessScopes` (`[access_scopes] scopes`;
-  without an app every scope of the 2026-10 schema, `auth::scopes::ALL_SCOPES`, the list the access
+  without an app every scope of the versions lsf knows, `auth::scopes::ALL_SCOPES`, the list the access
   checks share), `launchUrl`.
 - **`ShopifyFunction`** per Function of the app: `id`, `title`, `handle`, `apiType`,
   `apiVersion`, `app`, `appKey`, `inputQuery`.
@@ -1072,9 +1305,9 @@ A change emits events: `{topic, shop, gid, at, id, snapshot}` (`products/update`
 …), after the mutation succeeded. `Webhooks::emit(event, lookup)` turns an event into a delivery
 for each subscription of the shop whose topic matches and whose `filter` matches the payload:
 
-- **Topics**: the 227 values of the 2026-10 `WebhookSubscriptionTopic` enum with their written
-  form, read from the description of each value in the pinned introspection
-  (`tools/admin/webhook_topics.mjs` writes `webhooks/topics_2026_10.rs`): the split between
+- **Topics**: the 227 values of the `WebhookSubscriptionTopic` enum of each version with their
+  written form, read from the description of each value in its introspection
+  (`tools/admin/webhook_topics.mjs --version <v>` writes `schemas/<v>/topics.json`): the split between
   resource and action is not mechanical (`CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE` is
   `customers_email_marketing_consent/update`, `CUSTOMER_TAGS_ADDED` is `customer.tags_added`).
 - **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, app-wide, one per
@@ -1103,7 +1336,7 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   topic. `webhooks::payload` builds it from the record through a `Lookup` (the records a record
   names by GID, and the `Shop`), so that it needs nothing of the state but its records: the
   builders are there, by family, rather than in `domains/`. A test compares the payload of every
-  topic lsf builds with Shopify's example (`tests/fixtures/webhooks/examples-2026-10.json`,
+  topic lsf builds with Shopify's example of each version (`tests/fixtures/webhooks/examples-<v>.json`,
   written by `tools/admin/webhook_examples.mjs`), key for key and value for value, with the
   differences listed and explained. `include_fields` keeps only those fields (`variants.price`
   for a nested one). Topics whose payload lsf does not build are logged as not sent, never sent
@@ -1122,8 +1355,8 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   (the webhooks used alone), a filter matches, and the delivery notes that it was not evaluated.
 - **Headers**: `Content-Type: application/json`, `X-Shopify-Topic`, `X-Shopify-Hmac-Sha256`
   (base64 HMAC-SHA256 of the body with the client secret), `X-Shopify-Shop-Domain`,
-  `X-Shopify-API-Version` (`2026-10`, whatever the subscription asks, with a note when it asks
-  for another), `X-Shopify-Webhook-Id` (one per delivery, the same across its retries),
+  `X-Shopify-API-Version` (the version the payload is built in: the subscription's as the server
+  serves it, with a note when it is another; see "Webhooks per version"), `X-Shopify-Webhook-Id` (one per delivery, the same across its retries),
   `X-Shopify-Triggered-At` (the event's time, `2025-07-10T16:15:47.000000Z`),
   `X-Shopify-Event-Id` (shared by the deliveries of one event), `X-Shopify-Name` for a named
   subscription, `User-Agent: Shopify-Captain-Hook`. Ids are random UUIDs: a backend that
@@ -1397,8 +1630,8 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 
 | Module | Role |
 |---|---|
-| `version` | The API versions lsf serves (2026-10), from the path of a request. |
-| `schema` | The schema of the Admin API, parsed once from `schemas/2026-10/admin.graphql` (generated by `tools/admin/admin_schema.mjs` from the pinned `@shopify/dev-mcp`, with its descriptions, for introspection; embedded Brotli-compressed). |
+| `version` | The versions lsf knows (`KNOWN`: each one's status, files and adapters), the ones a server serves (`Served`), which one answers a request; `version::adapt`, how a version reads the records differently. |
+| `schema` | The schema of each version, parsed at its first request from `schemas/<version>/admin.graphql` (generated by `tools/admin/admin_schema.mjs` from the pinned `@shopify/dev-mcp`, with its descriptions, for introspection; embedded Brotli-compressed). |
 | `graphql` | Parsing (a parser of its own), validation, variables, execution, introspection, cost: a GraphQL server over a `Resolver`. Knows nothing of Shopify's data. |
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |

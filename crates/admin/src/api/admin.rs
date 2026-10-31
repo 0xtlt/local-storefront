@@ -513,13 +513,22 @@ impl AdminApi {
                     // As Shopify: the oldest supported version answers, and says so in
                     // `X-Shopify-API-Version`.
                     Resolution::FellForward { asked, served } => {
-                        self.graphql(request, served).header(
-                            "x-lsf-reason",
-                            format!(
-                                "API version {asked} is no longer supported: {served} answered, \
-                                 as Shopify falls forward to the oldest supported version"
-                            ),
-                        )
+                        let response = self.graphql(request, served);
+                        if response
+                            .headers
+                            .iter()
+                            .any(|(name, _)| name == "x-lsf-reason")
+                        {
+                            response
+                        } else {
+                            response.header(
+                                "x-lsf-reason",
+                                format!(
+                                    "API version {asked} is no longer supported: {served} answered, \
+                                     as Shopify falls forward to the oldest supported version"
+                                ),
+                            )
+                        }
                     }
                     Resolution::NotServed(body) => {
                         Self::api_headers(HttpResponse::json(404, &body), primary)

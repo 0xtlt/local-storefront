@@ -27,6 +27,17 @@ the same data every run.
 
   A failed mutation changes nothing. One lsf does not simulate answers `LSF_NOT_SIMULATED`; the
   guide lists them. Guide: [Admin API](docs/admin.md).
+- **API version 2027-01, the release candidate, on demand.** `--admin-versions 2026-10,2027-01`
+  serves it next to 2026-10, each at its own `/admin/api/<version>/graphql.json`, with its own
+  schema, introspection, access scopes, search filters and webhook topics:
+  - a field or a mutation of one version is refused in the other with Shopify's error;
+  - a webhook subscription is delivered in the version that made it (`X-Shopify-API-Version`);
+  - the records are shared, and 2027-01 reads what it removed the way Shopify says to replace it.
+
+  A version Shopify no longer supports (`2025-10`) is answered by 2026-10, as Shopify falls
+  forward, and `X-Shopify-API-Version` says so. Another answers `404` saying which versions are
+  served. `lsf app webhook trigger --api-version 2027-01` builds the payload in 2027-01.
+  [API versions](docs/admin.md#api-versions).
 - **The storefront and the checkout show what the backend changes.** A product it creates is on
   the theme's pages at once, and a draft leaves them. A customer it creates can log in at the
   checkout. A metafield it sets is read by Liquid and by the Functions, and an app discount it
@@ -61,6 +72,7 @@ the same data every run.
   - `--app-url`: where the backend listens.
   - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
   - `--admin-throttle`.
+  - `--admin-versions`: the API versions served.
 - **`examples/admin-backend`:** a backend written with Shopify's libraries
   (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
   against lsf end to end (`mise run admin:e2e`).
