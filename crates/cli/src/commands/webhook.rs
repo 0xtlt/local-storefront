@@ -1,13 +1,16 @@
 //! `lsf app webhook trigger`: one webhook, built by lsf, signed and sent, as
 //! `shopify app webhook trigger` sends the sample of a topic, but without Shopify: the body is
-//! built from records rather than asked of Shopify's servers, and the answer is printed.
+//! built from the records of the store data (a product, an order, a customer of the shop the
+//! server seeds) rather than asked of Shopify's servers, and the answer is printed.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use chrono::Utc;
-use lsf_admin::webhooks::samples::{FixedSamples, Samples};
+use lsf_admin::api::samples::ShopSamples;
+use lsf_admin::state::ShopState;
+use lsf_admin::webhooks::samples::Samples;
 use lsf_admin::webhooks::subscriptions::is_local_http;
 use lsf_admin::webhooks::{
     API_VERSION, Delivery, DeliveryFilter, DeliveryOptions, DeliveryState, Trigger, Webhooks,
@@ -85,23 +88,44 @@ pub struct TriggerArgs {
     json: bool,
 }
 
-pub fn run(args: Args) -> Result<ExitCode, String> {
+pub fn run(
+    theme: &Path,
+    data: Option<&Path>,
+    previews: &[lsf_core::Preview],
+    args: Args,
+) -> Result<ExitCode, String> {
     match args.command {
-        Subcommand::Trigger(args) => trigger(args, &sample_records()),
+        Subcommand::Trigger(args) => trigger(theme, data, previews, args),
     }
 }
 
-/// Where the records of a triggered webhook come from: the built-in samples, modelled on
-/// Shopify's example payloads.
-///
-/// Integration hook: give the records of the shop seeded from the store data instead (an
-/// implementation of `Samples` over the state of `lsf_admin`), so that the payload is that of a
-/// product, an order, a customer of the store.
-fn sample_records() -> impl Samples {
-    FixedSamples
+/// The records a triggered webhook is built from: the shop the server seeds from the store data
+/// (`--data`, else the `shopify-local` of the theme or of the app, else the demo store) and the
+/// app, as the Admin API has it when the server starts. A topic whose type the store data has no
+/// record of is built from lsf's sample of it, modelled on Shopify's example payload.
+fn sample_records(
+    theme: &Path,
+    data: Option<&Path>,
+    previews: &[lsf_core::Preview],
+    app_dir: Option<&Path>,
+) -> Result<ShopSamples, String> {
+    let data = crate::app::data_with_app(theme, data, app_dir);
+    let local = crate::app::App::open_without_theme(theme, data.as_deref(), previews)?;
+    let (store, diagnostics) = local.load_store();
+    if diagnostics.has_errors() {
+        crate::output::print_diagnostics(&diagnostics);
+        return Err("the store data has errors (see above)".to_string());
+    }
+    let app = app_dir.and_then(|dir| lsf_checkout::app::load(dir).ok());
+    Ok(ShopSamples(ShopState::seeded(&store, app.as_ref())))
 }
 
-fn trigger(args: TriggerArgs, samples: &dyn Samples) -> Result<ExitCode, String> {
+fn trigger(
+    theme: &Path,
+    data: Option<&Path>,
+    previews: &[lsf_core::Preview],
+    args: TriggerArgs,
+) -> Result<ExitCode, String> {
     let topic = topics::written_form(&args.topic).ok_or_else(|| {
         let hint = topics::suggestion(&args.topic)
             .map(|topic| format!(" (did you mean `{topic}`?)"))
@@ -135,6 +159,7 @@ fn trigger(args: TriggerArgs, samples: &dyn Samples) -> Result<ExitCode, String>
     };
     let (secret, _) =
         lsf_admin::auth::client_secret(args.client_secret.as_deref(), app_dir.as_deref());
+    let samples = sample_records(theme, data, previews, app_dir.as_deref())?;
     let Some(payload) = samples
         .sample(topic)
         .and_then(|sample| sample.payload(topic))

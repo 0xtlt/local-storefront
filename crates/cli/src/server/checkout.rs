@@ -1682,7 +1682,10 @@ pub(super) fn place_order(
         .max()
         .unwrap_or(1000)
         .max(1000);
-    let placed_at = store.now.unwrap_or_else(chrono::Utc::now).to_rfc3339();
+    let processed_at = store.now.unwrap_or_else(chrono::Utc::now);
+    let placed_at = processed_at.to_rfc3339();
+    // What the Admin API records of the order, read in the step that takes the cart.
+    let mut placed = None;
     // The cart is taken only if it is still the one that was priced; the check and the take are
     // one step of the session.
     let taken = state.with_session(id, |entry| {
@@ -1690,6 +1693,17 @@ pub(super) fn place_order(
             return false;
         }
         let number = last + entry.checkout.placed + 1;
+        placed = Some(Placed {
+            number,
+            customer_id: entry.session.customer_id,
+            note: entry.session.cart_note.clone(),
+            attributes: entry
+                .session
+                .cart_attributes
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        });
         order["status"] = json!("completed");
         // The order costs the whole price: what is paid now is received, and what a selling
         // plan defers is outstanding (`totalReceivedSet` and `totalOutstandingSet` of Shopify's
@@ -1716,6 +1730,15 @@ pub(super) fn place_order(
         true
     });
     if taken {
+        if let Some(placed) = placed {
+            record_in_admin(
+                state,
+                &computed.result,
+                &computed.checkout,
+                &placed,
+                processed_at,
+            );
+        }
         return redirect_to_thanks(state, incoming, id, token);
     }
     // Another request placed the order meanwhile.
@@ -1725,6 +1748,51 @@ pub(super) fn place_order(
     // The cart changed while the order was being priced: nothing was bought, and the buyer
     // sees the cart as it is now.
     conflict(state, incoming, id)
+}
+
+/// What the session held of an order when it was placed.
+struct Placed {
+    number: u64,
+    customer_id: Option<u64>,
+    note: String,
+    attributes: Vec<(String, String)>,
+}
+
+/// Records a placed order in the default shop of the Admin API, which delivers its
+/// `orders/create` webhook (and `orders/paid`, when it is paid in full) to the backend of the app.
+fn record_in_admin(
+    state: &ServerState,
+    result: &lsf_checkout::CheckoutResult,
+    checkout: &CheckoutState,
+    placed: &Placed,
+    processed_at: chrono::DateTime<chrono::Utc>,
+) {
+    let Some(admin) = &state.admin else {
+        return;
+    };
+    let id = format!("gid://shopify/Order/{}", placed.number);
+    let payment = checkout.selected_payment.as_ref().and_then(|handle| {
+        result
+            .payment_methods
+            .iter()
+            .find(|method| &method.handle == handle)
+            .map(|method| method.name.as_str())
+    });
+    admin
+        .api
+        .record_order(&lsf_admin::domains::orders::PlacedOrder {
+            id: Some(&id),
+            number: placed.number,
+            processed_at,
+            result,
+            customer_id: placed.customer_id,
+            email: checkout.email.as_deref(),
+            phone: checkout.phone.as_deref(),
+            shipping_address: checkout.shipping_address.as_ref(),
+            note: Some(placed.note.as_str()).filter(|note| !note.is_empty()),
+            attributes: &placed.attributes,
+            payment,
+        });
 }
 
 /// A file of the page, from the binary.

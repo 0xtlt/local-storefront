@@ -1,6 +1,7 @@
 //! The local storefront server.
 
 mod account;
+pub mod admin;
 mod cart;
 mod cdn;
 mod checkout;
@@ -80,6 +81,9 @@ pub struct ServeOptions {
     /// The Shopify app whose checkout the server shows. Without it, `/checkout` is a page that
     /// lists the cart.
     pub checkout: Option<crate::checkout::CheckoutOptions>,
+    /// Serve the Admin API of the store (and the webhooks of the app of `checkout`). `None`
+    /// for the commands that only run the checkout.
+    pub admin: Option<admin::AdminSettings>,
 }
 
 /// The store as last loaded from disk.
@@ -122,6 +126,8 @@ pub struct ServerState {
     pub(crate) home_check: home_check::Cache,
     /// The builds of `--watch`: the ones that failed, and when the pages should reload.
     pub(crate) builds: Arc<crate::watch::Builds>,
+    /// The Admin API of the store, when the server serves it.
+    pub admin: Option<admin::Admin>,
 }
 
 /// One HTTP request, decoded.
@@ -133,6 +139,8 @@ pub struct Incoming {
     pub headers: HashMap<String, String>,
     /// The body, parsed into nested parameters.
     pub params: Json,
+    /// The body as sent: what the Admin API reads (a GraphQL request, an OAuth form).
+    pub body: bytes::Bytes,
     pub host: String,
 }
 
@@ -210,6 +218,13 @@ impl ServerState {
         let fingerprint = app
             .data_dir()
             .map_or(0, |directory| fingerprint(&directory));
+        let admin = options.admin.as_ref().map(|settings| {
+            let app_dir = options
+                .checkout
+                .as_ref()
+                .map(|checkout| checkout.app_dir.as_path());
+            admin::Admin::new(&store, settings, app_dir)
+        });
         let state = ServerState {
             loaded: RwLock::new(Arc::new(Loaded {
                 store: Arc::new(store),
@@ -229,6 +244,7 @@ impl ServerState {
             timings: timing::Totals::default(),
             home_check: home_check::Cache::default(),
             builds: Default::default(),
+            admin,
         };
         (state, diagnostics)
     }
@@ -245,9 +261,19 @@ impl ServerState {
         self.loaded.read().expect("store lock poisoned").clone()
     }
 
-    /// Reloads the store from disk. Sessions keep their cart and customer.
+    /// Reloads the store from disk. Sessions keep their cart and customer; the shops of the
+    /// Admin API are seeded again, and what it changed in them is dropped (the terminal says so).
     pub fn reload(&self) -> Arc<Loaded> {
         let (store, diagnostics) = self.app.load_store();
+        if let Some(admin) = &self.admin {
+            let reseeded = admin.api.reseed(&store);
+            if !reseeded.dropped.is_empty() && !self.options.quiet {
+                eprintln!(
+                    "admin:  the store data changed: the shops were seeded again, and what the Admin API changed in {} was dropped",
+                    reseeded.dropped.join(", ")
+                );
+            }
+        }
         let loaded = Arc::new(Loaded {
             store: Arc::new(store),
             diagnostics,
@@ -497,6 +523,11 @@ impl ServerState {
     }
 
     fn dispatch(&self, incoming: &Incoming) -> Reply {
+        // The Admin API, OAuth and their control endpoints come first: a backend's request is
+        // never a page.
+        if let Some(reply) = admin::route(self, incoming) {
+            return reply;
+        }
         if incoming.path.starts_with("/__lsf") {
             return control::handle(self, incoming);
         }
@@ -542,7 +573,8 @@ async fn handle(
             .get("host")
             .cloned()
             .unwrap_or_else(|| "localhost".to_string()),
-        params: params::parse_body(&content_type, body).await,
+        params: params::parse_body(&content_type, body.clone()).await,
+        body,
         headers,
     };
 

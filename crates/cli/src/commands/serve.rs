@@ -8,9 +8,11 @@ use lsf_core::theme::Revalidate;
 use crate::app::App;
 use crate::checkout::{self, AppArgs, CheckoutOptions, Variant};
 use crate::output::print_diagnostics;
+use crate::server::admin::AdminSettings;
 use crate::server::throttle::Throttle;
 use crate::server::{ServeOptions, ServerState, run as run_server};
 use crate::watch::{self, Watcher};
+use lsf_admin::api::ThrottleSetting;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -90,6 +92,36 @@ pub struct Args {
     /// (the Shop app and Shop Pay). A checkout URL can ask for the other with `?variant=`.
     #[arg(long, value_enum, default_value_t = Variant::Standard)]
     variant: Variant,
+
+    /// Where the backend of the app listens (`http://localhost:3000`): the webhooks of
+    /// shopify.app.toml are delivered there (a relative `uri` is joined to it, and an absolute
+    /// one on the origin of `application_url` is moved to it), and the OAuth redirects and the
+    /// embedded app's launch go there. Without it, `application_url`.
+    #[arg(long, env = "LSF_APP_URL", value_name = "URL")]
+    app_url: Option<String>,
+
+    /// The client secret webhooks, OAuth and session tokens are signed with: the backend checks
+    /// them with its own. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's
+    /// `.env`, else a fixed local secret, printed at start.
+    #[arg(
+        long,
+        env = "LSF_CLIENT_SECRET",
+        value_name = "SECRET",
+        hide_env_values = true
+    )]
+    client_secret: Option<String>,
+
+    /// The cost bucket of the Admin API, per shop and app: `store` (the plan of the store data:
+    /// Plus for a store with companies, Standard otherwise), a plan (`standard`: 2000 points
+    /// restored at 100 a second, `advanced`, `plus`, `enterprise`, `legacy`: 1000 at 50), or
+    /// `off` (nothing is throttled; `extensions.cost` is still reported).
+    #[arg(
+        long,
+        env = "LSF_ADMIN_THROTTLE",
+        value_name = "PLAN",
+        default_value = "store"
+    )]
+    admin_throttle: String,
 }
 
 /// The port used when `--port` is not given.
@@ -179,6 +211,12 @@ pub fn run(
     };
     let throttle = Throttle::parse(args.throttle.iter().map(String::as_str))
         .map_err(|problem| format!("--throttle: {problem}"))?;
+    let admin = AdminSettings {
+        client_secret: args.client_secret.clone(),
+        app_url: args.app_url.clone(),
+        throttle: ThrottleSetting::parse(&args.admin_throttle)
+            .map_err(|problem| format!("--admin-throttle: {problem}"))?,
+    };
     // The app's store data when the theme has none.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
     let data = data.as_deref();
@@ -195,6 +233,7 @@ pub fn run(
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
+            admin: Some(admin),
             live_reload: args.live_reload || args.watch,
             watch: !args.static_files,
             quiet: args.quiet,
@@ -303,6 +342,11 @@ pub fn run(
                 eprintln!(
                     "home:   http://{local}/__lsf/checkouts   (extensions and checkout scenarios of the app)"
                 );
+            }
+        }
+        if let Some(admin) = &state.admin {
+            for line in admin.banner(&format!("http://{local}")) {
+                eprintln!("{line}");
             }
         }
         if args.watch {

@@ -18,6 +18,7 @@ fn server() -> ServerState {
     let (state, diagnostics) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -50,6 +51,7 @@ fn request(method: &str, path_and_query: &str, body: Json, session: &str) -> Inc
         query: super::params::query_pairs(query),
         headers,
         params: body,
+        body: Default::default(),
         host: "shop.test".to_string(),
     }
 }
@@ -785,6 +787,7 @@ fn server_with_throttle(rules: &str) -> ServerState {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1102,6 +1105,7 @@ fn the_server_can_start_logged_in() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1210,6 +1214,7 @@ fn robots_and_sitemaps_are_served() {
     let (plain, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1610,6 +1615,7 @@ fn images_of_the_theme_and_of_the_store_go_through_the_image_cdn() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1694,6 +1700,7 @@ fn a_video_is_served_in_the_parts_the_browser_asks_for() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -1761,6 +1768,7 @@ fn a_theme_with_partials_gets_their_runtime_with_the_preview() {
         ServerState::new(
             app,
             ServeOptions {
+                admin: None,
                 live_reload: false,
                 watch: false,
                 quiet: true,
@@ -1835,6 +1843,7 @@ fn preloads_are_one_link_header_written_as_shopify_writes_it() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -2008,6 +2017,7 @@ fn stylesheets_and_scripts_are_minified_as_on_shopify() {
         let (state, _) = ServerState::new(
             app,
             ServeOptions {
+                admin: None,
                 live_reload: false,
                 watch: false,
                 quiet: true,
@@ -2169,6 +2179,7 @@ async fn live_reload_tells_pages_about_changes_over_a_websocket() {
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: true,
             watch: true,
             quiet: true,
@@ -2276,6 +2287,7 @@ async fn serve_fixture(compress: bool) -> (std::net::SocketAddr, tokio::task::Jo
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -2305,6 +2317,7 @@ async fn a_part_of_a_file_is_sent_as_it_is_even_to_a_browser_that_accepts_compre
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -2574,6 +2587,7 @@ fn what_is_rendered_says_how_long_it_took() {
     let (naming, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
@@ -3021,10 +3035,22 @@ fn checkout_server_with_data(
     standalone: bool,
     data: Option<&Path>,
 ) -> ServerState {
+    checkout_server_with(app_dir, extensions, standalone, data, None)
+}
+
+/// [`checkout_server_with_data`], serving the Admin API with `admin`.
+fn checkout_server_with(
+    app_dir: std::path::PathBuf,
+    extensions: &[&str],
+    standalone: bool,
+    data: Option<&Path>,
+    admin: Option<super::admin::AdminSettings>,
+) -> ServerState {
     let options = |app: App| {
         ServerState::new(
             app,
             ServeOptions {
+                admin,
                 live_reload: false,
                 watch: false,
                 quiet: true,
@@ -8230,4 +8256,234 @@ fn the_home_page_says_what_never_runs() {
     for scenario in json["scenarios"].as_array().unwrap() {
         assert_ne!(scenario["status"], "warning", "{scenario}");
     }
+}
+
+// --- The Admin API ---
+
+/// The fixture theme's server, serving the Admin API.
+fn admin_server() -> ServerState {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let app = App::open(&theme, None, Revalidate::Never, &[]).expect("fixture theme");
+    let (state, _) = ServerState::new(
+        app,
+        ServeOptions {
+            admin: Some(Default::default()),
+            live_reload: false,
+            watch: false,
+            quiet: true,
+            compress: true,
+            minify: true,
+            throttle: Default::default(),
+            timings: false,
+            customer: None,
+            checkout: None,
+        },
+    );
+    state
+}
+
+/// A request to the Admin API with a raw body, as a backend sends it.
+fn admin_request(state: &ServerState, method: &str, path: &str, body: &str) -> Reply {
+    let admin = state
+        .admin
+        .as_ref()
+        .expect("the server serves the Admin API");
+    let token = admin.api.token(&admin.api.default_shop());
+    let mut incoming = request(method, path, json!({}), "admin");
+    incoming
+        .headers
+        .insert("x-shopify-access-token".to_string(), token);
+    incoming
+        .headers
+        .insert("content-type".to_string(), "application/json".to_string());
+    incoming.body = bytes::Bytes::from(body.to_string());
+    state.dispatch(&incoming)
+}
+
+/// A GraphQL query to the Admin API of the server.
+fn admin_query(state: &ServerState, query: &str) -> Json {
+    let reply = admin_request(
+        state,
+        "POST",
+        "/admin/api/2026-10/graphql.json",
+        &json!({ "query": query }).to_string(),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    body_json(&reply)
+}
+
+#[test]
+fn the_admin_api_is_served_before_the_storefront() {
+    let state = admin_server();
+    let answer = admin_query(
+        &state,
+        "{ shop { myshopifyDomain } products(first: 1) { nodes { id } } }",
+    );
+    assert!(
+        answer["data"]["shop"]["myshopifyDomain"].is_string(),
+        "{answer}"
+    );
+    let reply = admin_request(&state, "POST", "/admin/api/2026-10/graphql.json", "{}");
+    assert_eq!(header(&reply, "x-shopify-api-version"), Some("2026-10"));
+    let rest = admin_request(&state, "GET", "/admin/api/2026-10/products.json", "");
+    assert_eq!(rest.status, 404);
+    assert!(
+        body_json(&rest)["errors"]
+            .as_str()
+            .unwrap()
+            .contains("REST")
+    );
+    let status = admin_request(&state, "GET", "/__lsf/admin", "");
+    assert_eq!(body_json(&status)["apiVersion"], "2026-10");
+    let webhooks = admin_request(&state, "GET", "/__lsf/webhooks", "");
+    assert_eq!(body_json(&webhooks)["count"], 0);
+    // The rest of the control API, and the storefront, are where they were.
+    assert_eq!(get(&state, "/__lsf/status", "admin").status, 200);
+    assert_eq!(get(&state, "/", "admin").status, 200);
+    // A server without the Admin API leaves its paths to the storefront.
+    assert_eq!(
+        server()
+            .dispatch(&request(
+                "POST",
+                "/admin/api/2026-10/graphql.json",
+                json!({}),
+                "x"
+            ))
+            .status,
+        404
+    );
+}
+
+#[test]
+fn reloading_the_store_data_seeds_the_shops_again() {
+    let state = admin_server();
+    let count = |state: &ServerState| {
+        admin_query(state, "{ productsCount { count } }")["data"]["productsCount"]["count"]
+            .as_u64()
+            .unwrap()
+    };
+    let before = count(&state);
+    let created = admin_query(
+        &state,
+        r#"mutation { productCreate(product: {title: "Made by the backend"}) { product { id } userErrors { message } } }"#,
+    );
+    assert_eq!(created["data"]["productCreate"]["userErrors"], json!([]));
+    assert_eq!(count(&state), before + 1);
+    let reply = post(&state, "/__lsf/reload", json!({}), "admin");
+    assert_eq!(reply.status, 200);
+    assert_eq!(count(&state), before);
+}
+
+/// What a test backend received: the path, the headers (lowercase names), the body.
+type Received = std::sync::mpsc::Receiver<(String, HashMap<String, String>, Vec<u8>)>;
+
+/// A backend that answers `200` to every request and hands over what it received.
+fn webhook_receiver() -> (String, Received) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (sender, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let path = line.split(' ').nth(1).unwrap_or_default().to_string();
+            let mut headers = HashMap::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                match line.trim_end().split_once(':') {
+                    Some((name, value)) => {
+                        headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+                    }
+                    None => break,
+                }
+            }
+            let length = headers
+                .get("content-length")
+                .and_then(|length| length.parse().ok())
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+            if sender.send((path, headers, body)).is_err() {
+                break;
+            }
+        }
+    });
+    (url, received)
+}
+
+#[test]
+fn an_order_placed_at_the_checkout_is_an_order_of_the_admin_api() {
+    let (url, received) = webhook_receiver();
+    let state = checkout_server_with(
+        fixture_app(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings {
+            app_url: Some(url.clone()),
+            ..Default::default()
+        }),
+    );
+    // The fixture app asks for no scope: the backend gets the one it needs to read orders.
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let subscribed = admin_query(
+        &state,
+        &format!(
+            r#"mutation {{ webhookSubscriptionCreate(topic: ORDERS_CREATE, webhookSubscription: {{uri: "{url}/webhooks/orders"}}) {{ userErrors {{ message }} }} }}"#
+        ),
+    );
+    assert_eq!(
+        subscribed["data"]["webhookSubscriptionCreate"]["userErrors"],
+        json!([]),
+        "{subscribed}"
+    );
+
+    let path = start_checkout(
+        &state,
+        "co-admin",
+        json!([{"variant": "TEE-BLK-M", "quantity": 2}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-admin", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-admin");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+
+    let (webhook_path, headers, body) = received
+        .recv_timeout(Duration::from_secs(10))
+        .expect("orders/create was delivered");
+    assert_eq!(webhook_path, "/webhooks/orders");
+    assert_eq!(headers["x-shopify-topic"], "orders/create");
+    let payload: Json = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["email"], "buyer@example.com");
+    let id = payload["admin_graphql_api_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let order = admin_query(
+        &state,
+        &format!(
+            r#"{{ order(id: "{id}") {{ name email lineItems(first: 5) {{ nodes {{ sku quantity }} }} }} }}"#
+        ),
+    );
+    assert_eq!(order["data"]["order"]["email"], "buyer@example.com");
+    assert_eq!(
+        order["data"]["order"]["lineItems"]["nodes"],
+        json!([{"sku": "TEE-BLK-M", "quantity": 2}])
+    );
+    assert_eq!(order["data"]["order"]["name"], payload["name"]);
 }

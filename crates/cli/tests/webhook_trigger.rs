@@ -146,17 +146,27 @@ fn a_webhook_is_sent_to_an_address_signed_with_the_client_secret() {
     let (path, headers, body) = &received[0];
     assert_eq!(path, "/webhooks/orders");
     assert_eq!(header(headers, "x-shopify-topic"), Some("orders/create"));
+    // The shop and the records of the store data: the demo store, without one.
     assert_eq!(
         header(headers, "x-shopify-shop-domain"),
-        Some("shop.myshopify.com")
+        Some("local-supply-co.myshopify.com")
     );
     assert_eq!(header(headers, "x-shopify-api-version"), Some("2026-10"));
     // The signature is the HMAC of the body with the secret given.
     let signature = header(headers, "x-shopify-hmac-sha256").unwrap();
     assert!(lsf_admin::webhooks::sign::verify("hush", body, signature));
     let payload: serde_json::Value = serde_json::from_slice(body).unwrap();
-    assert_eq!(payload["name"], "#9999");
-    assert_eq!(payload["line_items"].as_array().unwrap().len(), 5);
+    assert!(
+        payload["name"].as_str().unwrap().starts_with('#'),
+        "{payload}"
+    );
+    assert!(
+        payload["admin_graphql_api_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("gid://shopify/Order/")
+    );
+    assert!(!payload["line_items"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -207,7 +217,7 @@ api_version = "2026-10"
     let (_, headers, body) = &received[1];
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(body).unwrap(),
-        serde_json::json!({"id": 788032119674292922u64, "title": "Example T-Shirt"})
+        serde_json::json!({"id": 6551952040971u64, "title": "Organic Cotton T-Shirt"})
     );
     // The secret of the app's `.env`.
     let signature = header(headers, "x-shopify-hmac-sha256").unwrap();

@@ -99,7 +99,7 @@ pub fn run(
         ),
         Subcommand::Check(args) => check(theme, data, previews, args),
         Subcommand::Function(args) => function::run(theme, data, previews, args),
-        Subcommand::Webhook(args) => webhook::run(args),
+        Subcommand::Webhook(args) => webhook::run(theme, data, previews, args),
     }
 }
 
@@ -131,6 +131,7 @@ fn check(
     let (state, diagnostics) = ServerState::new(
         local,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,
