@@ -90,6 +90,26 @@ struct Entry {
     record: Record,
 }
 
+/// What changed in a record since the seed: see [`ShopState::changes`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeKind {
+    /// Created since the seed.
+    Inserted,
+    /// Seeded, and no longer the same.
+    Changed,
+    /// Seeded, and gone.
+    Removed,
+}
+
+/// A record that changed since the seed: its key, how it changed, and what it was in the seed
+/// (`None` for a record created since).
+#[derive(Clone, Copy, Debug)]
+pub struct Change<'s> {
+    pub key: &'s str,
+    pub kind: ChangeKind,
+    pub original: Option<&'s Record>,
+}
+
 /// The records of one shop, its clock and the events of what changed.
 ///
 /// Records are kept in creation order: the order of the store data for the seeded ones, then the
@@ -111,6 +131,10 @@ pub struct ShopState {
     /// How many events the shop emitted, ever: the sequence event ids are made from. It
     /// survives a reset, so that a webhook receiver never sees an event id twice.
     emitted: u64,
+    /// The records as they were before their first change since the seed, by key (`None` for a
+    /// record that did not exist), once [`ShopState::track_changes`] turned tracking on: what
+    /// the store sync projects, and what it compares with to drop the changes that were undone.
+    originals: Option<IndexMap<String, Option<Record>>>,
 }
 
 impl ShopState {
@@ -124,6 +148,7 @@ impl ShopState {
             clock,
             events: Vec::new(),
             emitted: 0,
+            originals: None,
         }
     }
 
@@ -171,7 +196,10 @@ impl ShopState {
         self.records.get(gid).map(|entry| &entry.record)
     }
 
+    /// The record of a GID, to change. With tracking on, the record counts as changed from now
+    /// on (it is kept as it was, and compared with when the changes are read).
     pub fn get_mut(&mut self, gid: &str) -> Option<&mut Record> {
+        self.note(gid);
         self.records.get_mut(gid).map(|entry| &mut entry.record)
     }
 
@@ -205,6 +233,7 @@ impl ShopState {
     /// (`ShopifyFunction`, whose id is a UUID; `ShopLocale`, kept under its locale).
     pub fn insert_as(&mut self, key: impl Into<String>, record: Record) -> String {
         let key = key.into();
+        self.note(&key);
         let type_name = record_type(&record).to_string();
         if let Some((gid_type, id)) = parse_gid(&key) {
             let next = self.counters.entry(counter_group(gid_type)).or_insert(1);
@@ -228,6 +257,9 @@ impl ShopState {
     /// Removes a record. What refers to it is left as it is: a reference to a record that is
     /// gone resolves to `null`.
     pub fn remove(&mut self, gid: &str) -> Option<Record> {
+        if self.records.contains_key(gid) {
+            self.note(gid);
+        }
         let entry = self.records.shift_remove(gid)?;
         if let Some(keys) = self.by_type.get_mut(&entry.type_name) {
             keys.shift_remove(gid);
@@ -350,6 +382,84 @@ impl ShopState {
         std::mem::take(&mut self.events)
     }
 
+    /// Starts tracking the changes made to the records from now on, forgetting those tracked so
+    /// far: the seed calls it once the records of the data are made, so that what
+    /// [`ShopState::changes`] lists is what the Admin API changed since.
+    pub fn track_changes(&mut self) {
+        self.originals = Some(IndexMap::new());
+    }
+
+    /// Keeps the record of `key` as it is, before its first change since tracking started.
+    /// Cheap: one copy of a record the first time it changes, nothing afterwards.
+    fn note(&mut self, key: &str) {
+        let Some(originals) = &mut self.originals else {
+            return;
+        };
+        if !originals.contains_key(key) {
+            let original = self.records.get(key).map(|entry| entry.record.clone());
+            originals.insert(key.to_string(), original);
+        }
+    }
+
+    /// Whether a record may have changed since the seed: it was changed, created or removed,
+    /// possibly back to what it was. Without tracking, nothing has.
+    pub fn touched(&self) -> bool {
+        self.originals
+            .as_ref()
+            .is_some_and(|originals| !originals.is_empty())
+    }
+
+    /// The records that changed since the seed, in the order they were first changed: created,
+    /// changed (and not back to what they were), or removed. A record created then removed is
+    /// not listed. Without tracking, none.
+    pub fn changes(&self) -> Vec<Change<'_>> {
+        let Some(originals) = &self.originals else {
+            return Vec::new();
+        };
+        originals
+            .iter()
+            .filter_map(|(key, original)| {
+                let current = self.get(key);
+                let kind = match (original, current) {
+                    (None, Some(_)) => ChangeKind::Inserted,
+                    (Some(_), None) => ChangeKind::Removed,
+                    (Some(before), Some(now)) if before != now => ChangeKind::Changed,
+                    _ => return None,
+                };
+                Some(Change {
+                    key,
+                    kind,
+                    original: original.as_ref(),
+                })
+            })
+            .collect()
+    }
+
+    /// The record of a key as the seed made it: the record itself when it did not change, its
+    /// copy when it did, `None` when the seed did not make it.
+    pub fn original(&self, key: &str) -> Option<&Record> {
+        match self
+            .originals
+            .as_ref()
+            .and_then(|originals| originals.get(key))
+        {
+            Some(original) => original.as_ref(),
+            None => self.get(key),
+        }
+    }
+
+    /// Whether the record of a key differs from the seed's (created, changed or removed).
+    pub fn changed(&self, key: &str) -> bool {
+        match self
+            .originals
+            .as_ref()
+            .and_then(|originals| originals.get(key))
+        {
+            Some(original) => original.as_ref() != self.get(key),
+            None => false,
+        }
+    }
+
     /// Moves the shop to another domain: what a shop created from the seed of another one needs.
     /// The `Shop` record gets the id of the new domain, and every value naming the old domain
     /// (`myshopifyDomain`, the host of the primary domain when it is the myshopify one, URLs on
@@ -376,11 +486,14 @@ impl ShopState {
                 rewrite_strings(value, &rewrite);
             }
         }
+        // Moving is not a change the store sync projects: what was tracked stays as it was.
+        let originals = self.originals.take();
         if let Some(old_shop) = old_shop
             && let Some(record) = self.remove(&old_shop)
         {
             self.insert(record);
         }
+        self.originals = originals;
     }
 
     /// The shop as it is after a reset: `seed`, under this shop's domain, with the events gone
@@ -676,6 +789,85 @@ mod tests {
         assert_ne!(events[0].id, events[1].id);
         assert_eq!(events[0].id.len(), 36);
         assert!(state.take_events().is_empty());
+    }
+
+    #[test]
+    fn tracks_what_changed_since_the_seed() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        let product = |id: u64, title: &str| {
+            record(json!({"__typename": "Product", "id": gid("Product", id), "title": title}))
+        };
+        state.insert(product(1, "One"));
+        state.insert(product(2, "Two"));
+        state.insert(product(3, "Three"));
+        state.insert(product(4, "Four"));
+        // Before tracking starts, nothing counts.
+        assert!(!state.touched());
+        state.track_changes();
+        assert!(!state.touched() && state.changes().is_empty());
+
+        state.get_mut("gid://shopify/Product/1").unwrap()["title"] = json!("Uno");
+        // Changed, then back to what it was: not a change.
+        state.get_mut("gid://shopify/Product/2").unwrap()["title"] = json!("Dos");
+        state.get_mut("gid://shopify/Product/2").unwrap()["title"] = json!("Two");
+        // Read through `get_mut` without a change: not a change either.
+        let _ = state.get_mut("gid://shopify/Product/4");
+        state.remove("gid://shopify/Product/3");
+        let created = state.insert(record(json!({"__typename": "Product", "title": "New"})));
+        // Created then removed: nothing to say.
+        let gone = state.insert(record(json!({"__typename": "Product", "title": "Gone"})));
+        state.remove(&gone);
+
+        assert!(state.touched());
+        let changes: Vec<(&str, ChangeKind)> = state
+            .changes()
+            .iter()
+            .map(|change| (change.key, change.kind))
+            .collect();
+        assert_eq!(
+            changes,
+            [
+                ("gid://shopify/Product/1", ChangeKind::Changed),
+                ("gid://shopify/Product/3", ChangeKind::Removed),
+                (created.as_str(), ChangeKind::Inserted),
+            ]
+        );
+        assert_eq!(
+            state.original("gid://shopify/Product/1").unwrap()["title"],
+            json!("One")
+        );
+        assert_eq!(
+            state.original("gid://shopify/Product/3").unwrap()["title"],
+            json!("Three")
+        );
+        assert_eq!(
+            state.original("gid://shopify/Product/4").unwrap()["title"],
+            json!("Four")
+        );
+        assert!(state.original(&created).is_none());
+        assert!(state.changed("gid://shopify/Product/1"));
+        assert!(!state.changed("gid://shopify/Product/2"));
+        assert!(!state.changed("gid://shopify/Product/4"));
+    }
+
+    #[test]
+    fn a_shop_starts_without_changes_and_a_reset_forgets_them() {
+        let store = lsf_core::store::load::load(
+            &lsf_core::store::load::DataSource::Demo,
+            &lsf_core::store::load::LoadOptions::default(),
+        )
+        .0;
+        let mut shops = Shops::new(&store, None);
+        let shop = shops.default_shop_mut().unwrap();
+        assert!(!shop.touched());
+        let product = shop.keys("Product").next().unwrap().to_string();
+        shop.get_mut(&product).unwrap()["title"] = json!("Changed");
+        assert_eq!(shop.changes().len(), 1);
+        // A shop made from the seed is moved to its domain without a change.
+        let other = shops.create("test-1").unwrap();
+        assert!(other.changes().is_empty());
+        shops.reset();
+        assert!(!shops.default_shop().unwrap().touched());
     }
 
     #[test]

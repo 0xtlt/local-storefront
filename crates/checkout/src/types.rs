@@ -185,6 +185,10 @@ impl PaymentPlacement {
 
 #[derive(Clone, Debug)]
 pub struct DiscountConfig {
+    /// The number of the discount's GID, which its Function reads
+    /// (`gid://shopify/DiscountAutomaticNode/<id>`): its position in `discounts` from 1 when
+    /// `None`.
+    pub id: Option<u64>,
     /// The handle of the discount Function in the app.
     pub function: String,
     pub title: String,

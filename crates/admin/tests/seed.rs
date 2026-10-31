@@ -716,3 +716,35 @@ fn the_same_data_gives_the_same_records() {
     // The frozen clock of the data is the clock of the shop.
     assert_eq!(state.timestamp(), "2026-03-15T10:00:00Z");
 }
+
+#[test]
+fn products_off_the_storefront_are_listed_with_their_status() {
+    let overlay = json!({
+        "products": [
+            {"title": "Draft dress", "price": 100, "status": "draft"},
+            {"title": "Hidden mug", "price": 100, "published": false}
+        ],
+        "checkout": {"discounts": [{"function": "volume-discount", "id": 9}]}
+    });
+    let (store, diagnostics) = lsf_core::store::load::load_with_overlay(
+        &lsf_core::store::load::DataSource::Demo,
+        &lsf_core::store::load::LoadOptions::default(),
+        Some(&overlay),
+    );
+    assert!(!diagnostics.has_errors(), "{diagnostics}");
+    let state = ShopState::seeded(&store, None);
+    let draft = record(&state, &catalog::product_gid(&store.unlisted_products[0]));
+    assert_eq!(draft["status"], json!("DRAFT"));
+    assert!(draft["publishedAt"].is_string());
+    assert_eq!(draft["onlineStoreUrl"], Value::Null);
+    let hidden = record(&state, &catalog::product_gid(&store.unlisted_products[1]));
+    assert_eq!(hidden["status"], json!("ACTIVE"));
+    assert_eq!(hidden["publishedAt"], Value::Null);
+    let publication = record(&state, &catalog::online_store_publication_gid());
+    let published = strings(&publication["products"]);
+    assert!(published.contains(&draft["id"].as_str().unwrap_or_default()));
+    assert!(!published.contains(&hidden["id"].as_str().unwrap_or_default()));
+    assert_eq!(state.count("Product"), store.products.len() + 2);
+    // A discount with an id of its own has it in the Admin API.
+    assert!(state.contains("gid://shopify/DiscountAutomaticNode/9"));
+}
