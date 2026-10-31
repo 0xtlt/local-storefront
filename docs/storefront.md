@@ -72,6 +72,10 @@ in.
   `Shopify.loadFeatures`, the Customer Privacy API and `ShopifyAnalytics.meta`.
 - **The Ajax APIs a theme calls** answer as Shopify's do: cart, Section Rendering, predictive
   search, recommendations, forms. The list: [testing](testing.md#what-the-server-answers).
+- **The app proxy of an app:** with `--app` and an `[app_proxy]` in `shopify.app.toml`,
+  `/apps/<subpath>` (or the `prefix` it names) is forwarded to the backend of the app, signed as
+  Shopify signs it, and a Liquid answer is rendered in the theme's layout. See the
+  [Admin API guide](admin.md#app-proxy).
 
 ## Feature previews
 

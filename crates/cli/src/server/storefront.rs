@@ -291,7 +291,7 @@ fn header_text(reason: &str) -> String {
         .collect()
 }
 
-fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
+pub(super) fn reply_from(visit: &Visit<'_>, rendered: Rendered, target: &Target) -> Reply {
     log_problems(visit.state, &rendered);
     // A missing page is easy to take for a working one: say why it is missing.
     if let Some(reason) = &rendered.not_found

@@ -2,6 +2,7 @@
 
 mod account;
 pub mod admin;
+pub mod app_proxy;
 mod cart;
 mod cdn;
 mod checkout;
@@ -128,6 +129,9 @@ pub struct ServerState {
     pub(crate) builds: Arc<crate::watch::Builds>,
     /// The Admin API of the store, when the server serves it.
     pub admin: Option<admin::Admin>,
+    /// The app proxy of the app, when it has an `[app_proxy]` and the server serves the Admin
+    /// API (whose client secret signs the requests, and whose shop they are from).
+    pub app_proxy: Option<app_proxy::AppProxy>,
 }
 
 /// One HTTP request, decoded.
@@ -225,6 +229,10 @@ impl ServerState {
                 .map(|checkout| checkout.app_dir.as_path());
             admin::Admin::new(&store, settings, app_dir)
         });
+        let app_proxy = options.admin.as_ref().and_then(|settings| {
+            let app_dir = options.checkout.as_ref()?.app_dir.as_path();
+            app_proxy::AppProxy::of_app(app_dir, settings.app_url.as_deref())
+        });
         let state = ServerState {
             loaded: RwLock::new(Arc::new(Loaded {
                 store: Arc::new(store),
@@ -245,6 +253,7 @@ impl ServerState {
             home_check: home_check::Cache::default(),
             builds: Default::default(),
             admin,
+            app_proxy,
         };
         (state, diagnostics)
     }
@@ -535,6 +544,10 @@ impl ServerState {
             return cdn::handle(self, incoming);
         }
         self.refresh_if_changed(false);
+        // The app proxy before the theme's pages: its path is the backend's.
+        if let Some(reply) = app_proxy::route(self, incoming) {
+            return reply;
+        }
         if let Some(reply) = checkout::route(self, incoming) {
             return reply;
         }

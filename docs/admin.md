@@ -298,6 +298,94 @@ need more than reading records, are listed by family below.
 
 ### App proxy
 
+With `--app` and an `[app_proxy]` in `shopify.app.toml`, the storefront forwards
+`/<prefix>/<subpath>` and every path below it to the backend, signed as Shopify signs it, and
+renders the answer in the theme when it is Liquid. A backend that serves storefront pages or JSON
+through its app proxy (reviews, loyalty pages, wishlists) is tested on the local storefront.
+
+```toml
+[app_proxy]
+url = "/proxy"        # or https://<the tunnel of shopify app dev>/proxy
+prefix = "apps"       # a, apps, community or tools
+subpath = "reviews"
+```
+
+```text
+proxy:  http://127.0.0.1:9292/apps/reviews → http://localhost:3000/proxy
+```
+
+- **Where it goes**: a `url` that is a path joins `--app-url` (else `application_url`), as
+  Shopify's CLI prepends the app URL; one on the origin of `application_url` moves to
+  `--app-url`, as webhooks do; another is used as given. `/apps/reviews/product/1?page=2` goes to
+  `http://localhost:3000/proxy/product/1?page=2&shop=my-shop.myshopify.com&logged_in_customer_id=&path_prefix=%2Fapps%2Freviews&timestamp=1793440800&signature=…`.
+- **The query**: the browser's, then Shopify's: `shop`, `logged_in_customer_id` (the customer the
+  session is logged in as, empty when logged out), `path_prefix`, `timestamp` (now: Shopify's
+  libraries refuse one more than 90 seconds off) and `signature`, the hex HMAC-SHA256 of the
+  others with the client secret.
+- **The request**: its method and body, and the browser's headers without `Cookie` (Shopify strips
+  it), with `X-Forwarded-For` and `X-Forwarded-Host`. A localized URL (`/fr/apps/reviews`) is
+  proxied too, with `Accept-Language: fr;q=1.0, en;q=0.5`; `path_prefix` stays `/apps/reviews`.
+- **The answer**: `Content-Type: application/liquid` is rendered as the template of a page, with
+  the objects of the request (`shop`, `customer`, `cart`, `request.locale`, `settings`), inside
+  `layout/theme.liquid`; `{% layout none %}` (what `liquid(body, {layout: false})` of the
+  templates sends) renders it alone, and so does `lsf app dev` without a theme. Anything else is
+  passed on with its status and its headers, redirects included, but those Shopify strips:
+  `Set-Cookie`, `Server`, `X-Powered-By`, `Date` and the rest of shopify.dev's list.
+- **When the backend does not answer**: nothing listening is a `502` page, no answer within 10
+  seconds a `504` page, each saying what failed and to start the backend on `--app-url`.
+  Shopify documents no timeout for app proxies; 10 seconds is what it documents for its APIs.
+
+In a React Router app, `authenticate.public.appProxy` verifies the request and `liquid` answers
+in the theme:
+
+```ts
+// app/routes/proxy.$.tsx
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { liquid } = await authenticate.public.appProxy(request);
+  return liquid("<h1>Reviews</h1><p>{{ shop.name }}, {{ customer.first_name | default: 'guest' }}</p>");
+};
+```
+
+Without a library, a handler verifies the signature as shopify.dev's "Authenticate app proxies"
+does: every parameter but `signature`, the values of a repeated name joined with commas,
+`name=value` sorted and concatenated.
+
+```js
+import crypto from "node:crypto";
+import express from "express";
+
+function verifyAppProxy(url, secret) {
+  const params = new URL(url, "http://localhost").searchParams;
+  const signature = params.get("signature") ?? "";
+  const values = new Map();
+  for (const [name, value] of params) {
+    if (name !== "signature") {
+      values.set(name, values.has(name) ? `${values.get(name)},${value}` : value);
+    }
+  }
+  const message = [...values].map(([name, value]) => `${name}=${value}`).sort().join("");
+  const expected = crypto.createHmac("sha256", secret).update(message).digest("hex");
+  return (
+    expected.length === signature.length &&
+    crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature)) &&
+    Math.abs(Date.now() / 1000 - Number(params.get("timestamp"))) <= 90
+  );
+}
+
+const app = express();
+app.get("/proxy/*rest", (req, res) => {
+  if (!verifyAppProxy(req.originalUrl, process.env.SHOPIFY_API_SECRET)) {
+    return res.status(401).send("bad signature");
+  }
+  res.type("application/liquid").send("<h1>Reviews of {{ shop.name }}</h1>");
+});
+app.listen(3000);
+```
+
+Not simulated: the prefix and subpath a merchant can change in the admin (lsf serves those of
+the file). Shopify does not document what `template` and `request.page_type` are on a proxied
+page; lsf leaves them empty.
+
 ## Testing
 
 - **Wait for a webhook**: `GET /__lsf/webhooks?topic=products/create&wait=1` answers once one is

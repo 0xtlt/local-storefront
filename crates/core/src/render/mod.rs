@@ -283,7 +283,22 @@ impl Renderer {
     /// Renders an already resolved page. Used for the endpoints that render a section against
     /// a resource of their own (product recommendations, predictive search).
     pub fn render_page(&self, site: &Arc<Site>, page: Page, target: &Target) -> Rendered {
-        self.render_page_with(site, page, target, None)
+        self.render_page_with(site, page, target, None, None)
+    }
+
+    /// Renders a page whose template is `source` rather than a file of the theme: the Liquid an
+    /// app proxy answers with `Content-Type: application/liquid`. As a Liquid template of the
+    /// theme, it goes into `content_for_layout` of `layout/theme.liquid`, or of the layout its
+    /// `{% layout %}` names (`none` for none); without the layout file, the content is the page.
+    /// `name` is what its Liquid errors are reported under.
+    pub fn render_source(
+        &self,
+        site: &Arc<Site>,
+        page: Page,
+        source: &str,
+        name: &str,
+    ) -> Rendered {
+        self.render_page_with(site, page, &Target::Page, None, Some((source, name)))
     }
 
     /// Renders a page as [`Renderer::render_page`] does, and records what the render spends
@@ -302,7 +317,7 @@ impl Renderer {
             // What the objects of the page load is charged to the profiler of the thread.
             let _active = profiler.activate();
             let _span = profiler.span(PROFILE_ROOT, None);
-            self.render_page_with(site, page, target, Some(profiler.clone()))
+            self.render_page_with(site, page, target, Some(profiler.clone()), None)
         };
         (rendered, profiler.finish())
     }
@@ -313,6 +328,7 @@ impl Renderer {
         page: Page,
         target: &Target,
         profiler: Option<Arc<Profiler>>,
+        source: Option<(&str, &str)>,
     ) -> Rendered {
         let started = Instant::now();
         let (mut ctx, state, globals) = self.context(site, &page, profiler);
@@ -322,7 +338,10 @@ impl Renderer {
         let (status, content_type, body) = match target {
             Target::Page => {
                 let template_started = Instant::now();
-                let (content, layout) = self.render_template(&ctx, &page);
+                let (content, layout) = match source {
+                    Some((source, name)) => self.render_source_template(&ctx, source, name),
+                    None => self.render_template(&ctx, &page),
+                };
                 timings.template = Some(template_started.elapsed());
                 globals.set("content_for_layout", Value::from(content.clone()));
                 let layout = state.layout_override().unwrap_or(layout);
@@ -461,6 +480,19 @@ impl Renderer {
             Ok(None) => (self.builtin_template(ctx, page), default_layout),
             Err(error) => (ctx.handle_error(error, 1), default_layout),
         }
+    }
+
+    /// Renders Liquid given as text the way a Liquid template of the theme is rendered: in a
+    /// scope of its own, inside the default layout unless its `{% layout %}` names another.
+    fn render_source_template(&self, ctx: &Context, source: &str, name: &str) -> (String, Layout) {
+        let content = match Template::parse_named(&self.env, source, Some(name)) {
+            Ok(template) => match ctx.isolated() {
+                Ok(mut inner) => template.render(&mut inner),
+                Err(error) => ctx.handle_error(error, 1),
+            },
+            Err(error) => ctx.handle_error(error, 1),
+        };
+        (content, Layout::Default)
     }
 
     /// What Shopify renders for pages a theme has no template for.
