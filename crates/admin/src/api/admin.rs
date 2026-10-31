@@ -230,10 +230,23 @@ impl AdminApi {
     }
 
     /// What the storefront serves of the default shop's main theme beside the theme directory
-    /// (`domains::themes::storefront_overlay`): `None` for the directory alone.
-    pub fn storefront_overlay(&self) -> Option<lsf_core::theme::FileOverlay> {
-        self.with_default_shop(crate::domains::themes::storefront_overlay)
-            .flatten()
+    /// (`domains::themes::storefront_overlay`): `None` for the directory alone. The files of
+    /// `previous`, the overlay served, are kept where they did not change.
+    pub fn storefront_overlay(
+        &self,
+        previous: Option<&lsf_core::theme::FileOverlay>,
+    ) -> Option<lsf_core::theme::FileOverlay> {
+        self.with_default_shop(|state| {
+            crate::domains::themes::storefront_overlay_from(state, previous)
+        })
+        .flatten()
+    }
+
+    /// The generation of [`AdminApi::storefront_overlay`] without making it: `0` for the
+    /// directory alone. What a server compares before it asks for the overlay.
+    pub fn storefront_overlay_generation(&self) -> u64 {
+        self.with_default_shop(crate::domains::themes::storefront_overlay_generation)
+            .unwrap_or(0)
     }
 
     /// Which theme of the default shop the storefront serves (`domains::themes::

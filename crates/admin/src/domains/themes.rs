@@ -148,9 +148,49 @@ pub fn main_theme(state: &ShopState) -> Option<String> {
 /// What the storefront serves of the shop's main theme beside its directory: `None` when it is
 /// the directory alone (the local theme is the main one and the Admin API wrote nothing to it),
 /// an overlay of what the Admin API wrote to it, or, when another theme is the main one, all of
-/// that theme's files, exclusively. Its generation is a hash of what it holds, so that the
-/// server applies a new one only when it changed.
+/// that theme's files, exclusively. Its generation is a hash of what it holds
+/// ([`storefront_overlay_generation`]), so that the server makes and applies a new one only
+/// when it changed.
 pub fn storefront_overlay(state: &ShopState) -> Option<FileOverlay> {
+    storefront_overlay_from(state, None)
+}
+
+/// [`storefront_overlay`], with the files of `previous` (the overlay served) kept where their
+/// bytes are the same blob: no byte is copied, and a file that did not change keeps its text
+/// `Arc`, which the theme's caches of parsed Liquid and JSON are keyed by.
+pub fn storefront_overlay_from(
+    state: &ShopState,
+    previous: Option<&FileOverlay>,
+) -> Option<FileOverlay> {
+    let (local, entries, generation) = overlay_of(state)?;
+    let mut overlay = FileOverlay {
+        exclusive: !local,
+        generation,
+        ..FileOverlay::default()
+    };
+    for (filename, entry) in entries {
+        let file = files::entry_bytes(state, entry).map(|bytes| {
+            previous
+                .and_then(|previous| previous.files.get(filename)?.as_ref())
+                .filter(|kept| std::sync::Arc::ptr_eq(&kept.bytes, &bytes))
+                .cloned()
+                .unwrap_or_else(|| lsf_core::theme::OverlayFile::new(bytes))
+        });
+        overlay.files.insert(filename.clone(), file);
+    }
+    Some(overlay)
+}
+
+/// The generation of [`storefront_overlay`] without making it (`0` for none): from the
+/// filenames and digests alone, so that a change of the shop that is not one of its main theme
+/// copies nothing.
+pub fn storefront_overlay_generation(state: &ShopState) -> u64 {
+    overlay_of(state).map_or(0, |(_, _, generation)| generation)
+}
+
+/// Whether the main theme is the local one, its file entries and the generation of its
+/// overlay: `None` when the storefront serves the directory alone.
+fn overlay_of(state: &ShopState) -> Option<(bool, &serde_json::Map<String, Value>, u64)> {
     let main = main_theme(state)?;
     let theme = state.get(&main)?;
     let entries = theme.get(FILES).and_then(Value::as_object)?;
@@ -158,13 +198,8 @@ pub fn storefront_overlay(state: &ShopState) -> Option<FileOverlay> {
     if local && entries.is_empty() {
         return None;
     }
-    let mut overlay = FileOverlay {
-        exclusive: !local,
-        ..FileOverlay::default()
-    };
     let mut fingerprint = format!("{main}\0{local}");
     for (filename, entry) in entries {
-        let content = files::entry_bytes(state, entry);
         fingerprint.push('\0');
         fingerprint.push_str(filename);
         fingerprint.push('\0');
@@ -174,13 +209,9 @@ pub fn storefront_overlay(state: &ShopState) -> Option<FileOverlay> {
                 .and_then(Value::as_str)
                 .unwrap_or("deleted"),
         );
-        overlay.files.insert(
-            filename.clone(),
-            content.map(lsf_core::theme::OverlayFile::new),
-        );
     }
-    overlay.generation = lsf_core::util::stable_id("theme-overlay", &fingerprint).max(1);
-    Some(overlay)
+    let generation = lsf_core::util::stable_id("theme-overlay", &fingerprint).max(1);
+    Some((local, entries, generation))
 }
 
 /// Which theme the storefront serves, as `Shopify.theme`, the `theme` object and the asset URLs

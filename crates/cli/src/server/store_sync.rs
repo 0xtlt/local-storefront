@@ -93,10 +93,11 @@ impl ServerState {
     /// shop, and after a reseed (`ServerState::reload`).
     pub(super) fn sync_theme(&self, api: &lsf_admin::api::AdminApi) {
         let files = self.app.theme.files();
-        let overlay = api.storefront_overlay();
-        let generation = overlay.as_ref().map_or(0, |overlay| overlay.generation);
-        if generation != files.overlay_generation() {
-            files.set_overlay(overlay.map(Arc::new));
+        // Made only when it changed, from the one served: a change of the shop that is not one
+        // of its theme copies nothing.
+        if api.storefront_overlay_generation() != files.overlay_generation() {
+            let previous = files.overlay();
+            files.set_overlay(api.storefront_overlay(previous.as_deref()).map(Arc::new));
         }
         let scripts = api.storefront_scripts();
         if *self.app.theme.script_tags() != *scripts {

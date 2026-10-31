@@ -147,10 +147,11 @@ pub fn check_filename(filename: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The bytes a file entry of a theme record holds: `None` for a deleted one.
-pub fn entry_bytes(state: &ShopState, entry: &Value) -> Option<Vec<u8>> {
+/// The bytes a file entry of a theme record holds, shared with the shop's blob: `None` for a
+/// deleted one.
+pub fn entry_bytes(state: &ShopState, entry: &Value) -> Option<Arc<[u8]>> {
     let key = entry.get("blob")?.as_str()?;
-    state.blob(key).map(|blob| blob.bytes.to_vec())
+    state.blob(key).map(|blob| blob.bytes.clone())
 }
 
 fn entry_file(state: &ShopState, filename: &str, entry: &Value) -> Option<ThemeFile> {
@@ -172,17 +173,64 @@ fn entry_file(state: &ShopState, filename: &str, entry: &Value) -> Option<ThemeF
     })
 }
 
-/// The files of the directory, by filename, sorted.
-fn directory_files(root: &Path, created: &str) -> Vec<ThemeFile> {
-    let mut files = Vec::new();
-    for directory in lsf_core::theme::THEME_DIRECTORIES {
-        walk(root, &root.join(directory), created, &mut files);
-    }
-    files.sort_by(|a, b| a.filename.cmp(&b.filename));
-    files
+/// A file of a theme before it is read: its filename and where its bytes are. Listing a theme
+/// reads no file; only the files a page of `OnlineStoreTheme.files` answers are read.
+#[derive(Clone, Debug)]
+pub struct Listed {
+    pub filename: String,
+    source: Source,
 }
 
-fn walk(root: &Path, directory: &Path, created: &str, files: &mut Vec<ThemeFile>) {
+#[derive(Clone, Debug)]
+enum Source {
+    /// A file of the directory, found by walking it.
+    Disk(std::path::PathBuf),
+    /// An entry of the theme record (`lsfFiles`), whose blob holds the bytes.
+    Entry(Value),
+}
+
+impl Listed {
+    /// The file, read now: `None` when it is gone since it was listed.
+    pub fn read(&self, state: &ShopState, theme: &Record) -> Option<ThemeFile> {
+        match &self.source {
+            Source::Entry(entry) => entry_file(state, &self.filename, entry),
+            Source::Disk(path) => disk_file(&self.filename, path, &theme_created(theme)),
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many files of the directory this thread read: what a test of the listing counts.
+    pub static DISK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A file of the directory at `path`, with the dates a file of the local theme has.
+fn disk_file(filename: &str, path: &Path, created: &str) -> Option<ThemeFile> {
+    #[cfg(test)]
+    DISK_READS.with(|reads| reads.set(reads.get() + 1));
+    let bytes = std::fs::read(path).ok()?;
+    let updated = std::fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .map(|modified| value::date_time(chrono::DateTime::<chrono::Utc>::from(modified)))
+        .unwrap_or_else(|| created.to_string());
+    Some(ThemeFile {
+        filename: filename.to_string(),
+        bytes: Arc::from(bytes),
+        created_at: created.to_string(),
+        updated_at: updated,
+    })
+}
+
+/// The files of the directory, by filename, unread.
+fn directory_files(root: &Path, files: &mut Vec<Listed>) {
+    for directory in lsf_core::theme::THEME_DIRECTORIES {
+        walk(root, &root.join(directory), files);
+    }
+}
+
+fn walk(root: &Path, directory: &Path, files: &mut Vec<Listed>) {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
@@ -196,7 +244,7 @@ fn walk(root: &Path, directory: &Path, created: &str, files: &mut Vec<ThemeFile>
             continue;
         };
         if kind.is_dir() {
-            walk(root, &path, created, files);
+            walk(root, &path, files);
             continue;
         }
         let Ok(relative) = path.strip_prefix(root) else {
@@ -207,20 +255,9 @@ fn walk(root: &Path, directory: &Path, created: &str, files: &mut Vec<ThemeFile>
             .map(|part| part.as_os_str().to_string_lossy().to_string())
             .collect::<Vec<_>>()
             .join("/");
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        let updated = entry
-            .metadata()
-            .ok()
-            .and_then(|metadata| metadata.modified().ok())
-            .map(|modified| value::date_time(chrono::DateTime::<chrono::Utc>::from(modified)))
-            .unwrap_or_else(|| created.to_string());
-        files.push(ThemeFile {
+        files.push(Listed {
             filename,
-            bytes: Arc::from(bytes),
-            created_at: created.to_string(),
-            updated_at: updated,
+            source: Source::Disk(path),
         });
     }
 }
@@ -233,30 +270,40 @@ fn theme_created(theme: &Record) -> String {
         .to_string()
 }
 
-/// Every file of a theme, by filename.
-pub fn list(state: &ShopState, theme: &Record) -> Vec<ThemeFile> {
-    let entries = theme
-        .get(FILES)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let mut files: Vec<ThemeFile> = if is_local(theme) {
-        root(state)
-            .map(|root| directory_files(&root, &theme_created(theme)))
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|file| !entries.contains_key(&file.filename))
-            .collect()
-    } else {
-        Vec::new()
-    };
+/// The files of a theme, by filename, without reading any: those of the directory the record
+/// does not name (for the local theme), and the record's that have bytes.
+pub fn listed(state: &ShopState, theme: &Record) -> Vec<Listed> {
+    let entries = theme.get(FILES).and_then(Value::as_object);
+    let mut files = Vec::new();
+    if is_local(theme)
+        && let Some(root) = root(state)
+    {
+        directory_files(&root, &mut files);
+        files.retain(|file| entries.is_none_or(|entries| !entries.contains_key(&file.filename)));
+    }
     files.extend(
         entries
-            .iter()
-            .filter_map(|(filename, entry)| entry_file(state, filename, entry)),
+            .into_iter()
+            .flatten()
+            .filter_map(|(filename, entry)| {
+                let blob = entry.get("blob")?.as_str()?;
+                state.blob(blob)?;
+                Some(Listed {
+                    filename: filename.clone(),
+                    source: Source::Entry(entry.clone()),
+                })
+            }),
     );
     files.sort_by(|a, b| a.filename.cmp(&b.filename));
     files
+}
+
+/// Every file of a theme, by filename, read.
+pub fn list(state: &ShopState, theme: &Record) -> Vec<ThemeFile> {
+    listed(state, theme)
+        .iter()
+        .filter_map(|file| file.read(state, theme))
+        .collect()
 }
 
 /// Where a file of the local theme is on disk: a filename of a theme ([`check_filename`]),
@@ -275,20 +322,11 @@ pub fn read(state: &ShopState, theme: &Record, filename: &str) -> Option<ThemeFi
     if !is_local(theme) {
         return None;
     }
-    let path = disk_path(state, filename)?;
-    let bytes = std::fs::read(&path).ok()?;
-    let created = theme_created(theme);
-    let updated = std::fs::metadata(&path)
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-        .map(|modified| value::date_time(chrono::DateTime::<chrono::Utc>::from(modified)))
-        .unwrap_or_else(|| created.clone());
-    Some(ThemeFile {
-        filename: filename.to_string(),
-        bytes: Arc::from(bytes),
-        created_at: created,
-        updated_at: updated,
-    })
+    disk_file(
+        filename,
+        &disk_path(state, filename)?,
+        &theme_created(theme),
+    )
 }
 
 /// Writes a file of a theme: its bytes kept as a blob of the shop (by their digest: two themes
@@ -396,7 +434,8 @@ fn theme_files(
                 .map(str::to_string)
                 .collect()
         });
-    let mut files = list(r.state(), &theme);
+    // The filenames first: only the files of the page are read, digested and encoded.
+    let mut files = listed(r.state(), &theme);
     let mut missing = Vec::new();
     if let Some(patterns) = &patterns {
         files.retain(|file| {
@@ -410,12 +449,52 @@ fn theme_files(
             }
         }
     }
-    let items: Vec<Value> = files.iter().map(ThemeFile::to_value).collect();
+    let items: Vec<Value> = files
+        .iter()
+        .map(|file| json!({"filename": file.filename}))
+        .collect();
     let output = r.connection(ctx, items)?;
     // The read errors go with the connection: its `userErrors` field reads them.
     Ok(match output {
         Output::Object(Obj::Inline(inline)) => {
             let mut value = inline.value.clone();
+            // Each file of the page read once, for its node and its edge.
+            let mut read: std::collections::HashMap<String, Value> = Default::default();
+            for node in value
+                .get("nodes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(filename) = node.get("filename").and_then(Value::as_str) else {
+                    continue;
+                };
+                let file = files
+                    .binary_search_by(|file| file.filename.as_str().cmp(filename))
+                    .ok()
+                    .and_then(|at| files[at].read(r.state(), &theme));
+                if let Some(file) = file {
+                    read.insert(filename.to_string(), file.to_value());
+                }
+            }
+            let fill = |node: &mut Value| {
+                if let Some(file) = node
+                    .get("filename")
+                    .and_then(Value::as_str)
+                    .and_then(|filename| read.get(filename))
+                {
+                    *node = file.clone();
+                }
+            };
+            if let Some(Value::Array(nodes)) = value.get_mut("nodes") {
+                nodes.iter_mut().for_each(fill);
+            }
+            if let Some(Value::Array(edges)) = value.get_mut("edges") {
+                edges
+                    .iter_mut()
+                    .filter_map(|edge| edge.get_mut("node"))
+                    .for_each(fill);
+            }
             value.insert("lsfReadErrors".into(), json!(missing));
             Output::Object(if inline.reported {
                 Obj::inline(&inline.type_name, value)

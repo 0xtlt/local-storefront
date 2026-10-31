@@ -1700,7 +1700,12 @@ never written to.**
 - *What the storefront serves* (`themes::storefront_overlay`, `AdminApi::storefront_overlay`):
   the main theme of the default shop. The local theme without writes: nothing (the directory
   alone). With writes: the overlay. Another theme published: all its files, exclusively. Its
-  `generation` is a hash of what it holds. The server applies it where store sync builds the store
+  `generation` is a hash of the filenames and digests it holds
+  (`storefront_overlay_generation`, which reads no byte): the server makes a new overlay only
+  when it moved, from the one it serves (`storefront_overlay_from`), whose files it keeps where
+  their blob is the same `Arc` (no byte is copied, the text `Arc` the Liquid caches are keyed by
+  stays). `OnlineStoreTheme.files` lists the filenames first (`files::listed`, no file read),
+  pages them, and reads, digests and encodes only the files of the page. The server applies it where store sync builds the store
   (`ServerState::sync_theme`, when the count of changes moved, under the build lock, and after
   each reseed of `reload`, which drops the Admin API's files and script tags), only when the
   generation differs; live reload's token includes it. The CDN serves an asset of the overlay
