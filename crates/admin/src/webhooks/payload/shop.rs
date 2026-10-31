@@ -6,7 +6,8 @@ use serde_json::{Map, Value, json};
 use super::customers::{email, phone};
 use super::{
     DELETED_AT, Lookup, PREVIOUS_ACCESS_SCOPES, boolean, field, first, id, items, lower, merge,
-    millis, money_amount, numeric, object, ref_gid, ref_id, resolve, text, time, weight_unit,
+    millis, money_amount, numeric, object, records, ref_gid, ref_id, resolve, text, time,
+    weight_unit,
 };
 use crate::state::parse_gid;
 
@@ -167,14 +168,23 @@ pub(super) fn scopes_update(record: &Map<String, Value>, lookup: &dyn Lookup) ->
     })
 }
 
+/// The pricing details of the line items of an `AppSubscription`: its lines are records
+/// (`AppSubscriptionLineItem`s by GID) or embedded.
+fn subscription_pricing(
+    record: &Map<String, Value>,
+    lookup: &dyn Lookup,
+) -> Vec<Map<String, Value>> {
+    records(field(record, "lineItems"), lookup)
+        .iter()
+        .filter_map(|line| line.get("plan")?.get("pricingDetails").cloned())
+        .map(|details| object(&details))
+        .collect()
+}
+
 /// `app_subscriptions/update`: an `AppSubscription`, its price and its capped amount from its
 /// line items.
 pub(super) fn app_subscription(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let pricing: Vec<Map<String, Value>> = items(field(record, "lineItems"))
-        .iter()
-        .filter_map(|line| line.pointer("/plan/pricingDetails").cloned())
-        .map(|details| object(&details))
-        .collect();
+    let pricing = subscription_pricing(record, lookup);
     let recurring = pricing
         .iter()
         .find(|details| details.contains_key("interval"));
@@ -207,6 +217,90 @@ pub(super) fn app_subscription(record: &Map<String, Value>, lookup: &dyn Lookup)
             "interval": recurring.map_or(Value::Null, |details| lower(field(details, "interval"))),
             "plan_handle": recurring.map_or(Value::Null, |details| text(details, "planHandle")),
         }
+    })
+}
+
+/// `app_subscriptions/approaching_capped_amount`: an `AppSubscription`, the balance used and
+/// the capped amount of its usage line (`balance_used` a number, `capped_amount` the `Decimal`,
+/// as shopify.dev's example writes them).
+pub(super) fn approaching_capped_amount(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let pricing = subscription_pricing(record, lookup);
+    let usage = pricing
+        .iter()
+        .find(|details| details.contains_key("cappedAmount"));
+    let shop = lookup.shop().unwrap_or_default();
+    let balance = usage
+        .and_then(|details| details.get("balanceUsed"))
+        .and_then(|money| money.get("amount"))
+        .and_then(|amount| match amount {
+            Value::String(text) => text.parse::<f64>().ok(),
+            other => other.as_f64(),
+        })
+        .unwrap_or(0.0);
+    let balance = if balance.fract() == 0.0 {
+        json!(balance as i64)
+    } else {
+        json!(balance)
+    };
+    let capped = usage.and_then(|details| details.get("cappedAmount"));
+    json!({
+        "app_subscription": {
+            "admin_graphql_api_id": text(record, "id"),
+            "name": text(record, "name"),
+            "balance_used": balance,
+            "capped_amount": capped
+                .and_then(|money| money.get("amount"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "currency_code": capped
+                .and_then(|money| money.get("currencyCode"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "admin_graphql_api_shop_id": text(&shop, "id"),
+            "created_at": time(field(record, "createdAt")),
+            "updated_at": time(first(record, &["updatedAt", "createdAt"])),
+        }
+    })
+}
+
+/// `app_purchases_one_time/update`: an `AppPurchaseOneTime`.
+pub(super) fn app_purchase_one_time(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let shop = lookup.shop().unwrap_or_default();
+    json!({
+        "app_purchase_one_time": {
+            "admin_graphql_api_id": text(record, "id"),
+            "name": text(record, "name"),
+            "status": text(record, "status"),
+            "admin_graphql_api_shop_id": text(&shop, "id"),
+            "created_at": time(field(record, "createdAt")),
+            "updated_at": time(first(record, &["updatedAt", "createdAt"])),
+        }
+    })
+}
+
+/// `discounts/redeemcode_added`, `discounts/redeemcode_removed`: the code discount and the code
+/// (`redeemCode` of the record the event keeps, else the discount's first code), and when.
+pub(super) fn redeem_code(record: &Map<String, Value>) -> Value {
+    let code = match field(record, "redeemCode") {
+        Value::Object(code) => code.clone(),
+        _ => field(record, "codeDiscount")
+            .get("codes")
+            .and_then(Value::as_array)
+            .and_then(|codes| codes.first())
+            .map(object)
+            .unwrap_or_default(),
+    };
+    let updated = match field(record, "updatedAt") {
+        Value::Null => field(record, "codeDiscount")
+            .get("updatedAt")
+            .cloned()
+            .unwrap_or(Value::Null),
+        updated => updated.clone(),
+    };
+    json!({
+        "admin_graphql_api_id": text(record, "id"),
+        "redeem_code": {"id": text(&code, "id"), "code": text(&code, "code")},
+        "updated_at": millis(&updated),
     })
 }
 
