@@ -310,6 +310,7 @@ curl -s http://127.0.0.1:9292/admin/api/2026-10/graphql.json \
 | An access token by token exchange | `POST /admin/oauth/access_token` with the session token, as the React Router template and the libraries do: offline or online, expiring or not. |
 | An access token by the authorization code grant | `GET /admin/oauth/authorize?client_id=&scope=&redirect_uri=&state=` approves at once and redirects to `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`; then `POST /admin/oauth/access_token`. `redirect_uri` must be one of `[auth] redirect_urls` (also on the origin of `--app-url`). |
 | Refresh tokens, client credentials | `grant_type=refresh_token`, `grant_type=client_credentials`, as Shopify. |
+| A delegate access token | `delegateAccessTokenCreate`: `shppa_…`, a subset of the parent's scopes, expiring with it or sooner (see "The app platform"). |
 
 Every access token is `shpat_` and 32 hex digits, as Shopify's. A token belongs to one shop. A
 request without a valid token is answered `401`
@@ -378,6 +379,12 @@ What the backend changes through the Admin API is what the storefront and the
   customization or a cart transform;
 - an app discount it creates (`discountAutomaticAppCreate`, `discountCodeAppCreate`) runs its
   Function at the checkout, with the metafields it was given, while it is active;
+- a theme file it writes to the main theme (`themeFilesUpsert`, `themeFilesCopy`,
+  `themeFilesDelete`) is served on top of the theme directory, which is never written to; a theme
+  it publishes is served instead of the directory;
+- a script tag it creates (`scriptTagCreate`, `ONLINE_STORE`) is loaded by `content_for_header`;
+- a mobile app it declares (`mobilePlatformApplicationCreate`) is in
+  `/.well-known/assetlinks.json` or `/.well-known/apple-app-site-association`;
 - the open pages reload, with `--live-reload`.
 
 | Syncs | Does not sync |
@@ -791,11 +798,10 @@ are not shown on the storefront.
 metafields change. Shopify has no topic for pages, blogs, articles, comments, menus, redirects,
 files, or the metafields of other owners.
 
-**Not simulated yet** (`LSF_NOT_SIMULATED`): `standardMetafieldDefinitionEnable`,
-`standardMetaobjectDefinitionEnable`, `shopLocaleEnable`, `shopLocaleUpdate`, `shopLocaleDisable`, `urlRedirectBulkDeleteAll`,
-`urlRedirectBulkDeleteByIds`, `urlRedirectBulkDeleteBySavedSearch`,
-`urlRedirectBulkDeleteBySearch`, `urlRedirectImportCreate`, `urlRedirectImportSubmit`,
-`fileAcknowledgeUpdateFailed`, the `theme*` mutations, and the `market*` mutations. Nor are
+**Not simulated yet** (`LSF_NOT_SIMULATED`): `shopLocaleEnable`, `shopLocaleUpdate`,
+`shopLocaleDisable`, and the `market*` mutations. (Redirects in bulk, standard definitions,
+`fileAcknowledgeUpdateFailed` and themes are in "The online store: themes, script tags,
+redirects in bulk, policies" below.) Nor are
 metafield definition `constraints`, the effects of `capabilities` and `access` (kept as given),
 and staff authors of articles (`author.userId`).
 
@@ -867,10 +873,134 @@ target (the default). The bytes stay in the shop until it is reset, for
 `bulkOperationRunMutation` (`stagedUploadPath`) and `fileCreate` (`originalSource`, the
 `resourceUrl`).
 
-Not simulated yet (they answer `LSF_NOT_SIMULATED`): `appUninstall`, `appRevokeAccessScopes`,
-`discountBulkTagsAdd`/`Remove`, `fulfillmentConstraintRuleCreate`/`Update`/`Delete`, the
-deprecated `stagedUploadTargetGenerate(s)`. Saved searches (`savedSearchId`), credits,
-revenue attribution records and frozen subscriptions have no data behind them.
+The app's access, delegate tokens, Flow triggers, discount tags in bulk, fulfillment constraint
+rules and the deprecated `stagedUploadTargetGenerate(s)` are in "The app platform" below.
+Credits, revenue attribution records and frozen subscriptions have no data behind them.
+
+### The online store: themes, script tags, redirects in bulk, policies
+
+**Themes.** The theme lsf serves (`lsf serve --theme`, the scratch theme of `lsf app dev`) is
+the shop's **main theme**, `gid://shopify/OnlineStoreTheme/1` (the id `content_for_header`
+gives `Shopify.theme`), named as its `config/settings_schema.json` says. `theme`, `themes(roles:,
+names:)` and `OnlineStoreTheme.files(filenames:, first:)` read its files from the directory,
+with their `checksumMd5` (hex MD5), `size`, `contentType` (`text/x-liquid` for Liquid) and
+body (text, or Base64 for the others); `filenames` takes `*`, and a name no file has is one of
+the connection's `userErrors` (`NOT_FOUND`).
+
+- **The directory is never written to.** `themeFilesUpsert`, `themeFilesCopy` and
+  `themeFilesDelete` on the main theme are kept in memory and served by the storefront on top of
+  the directory: a backend that writes `templates/index.json` sees its page on the storefront,
+  and your files stay yours. `DELETE /__lsf/admin` drops what it wrote.
+- `themeCreate` from a ZIP (a staged upload of `stagedUploadsCreate`, or a URL lsf downloads,
+  50 MB at most; `INVALID_ZIP`, `ZIP_IS_EMPTY`, `ZIP_TOO_LARGE`; roles `UNPUBLISHED` and
+  `DEVELOPMENT`), `themeDuplicate` (all the files, "Copy of …"), `themeUpdate` (the name, 50
+  characters), `themeDelete` (not the main theme), `themePublish`. A published theme is what the
+  storefront serves, alone; publishing the local theme again serves the directory.
+- `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories,
+  JSON files valid JSON (`FILE_VALIDATION_ERROR`, `DUPLICATE_FILE_INPUT`,
+  `LESS_THAN_OR_EQUAL_TO`); `TEXT`, `BASE64` and `URL` bodies (a `URL` file comes through the
+  `job`, done, as in Shopify's example). Nothing is written when a file is refused.
+  `layout/theme.liquid` cannot be deleted.
+- Webhooks: `themes/create`, `themes/update`, `themes/publish`, `themes/delete` (none for files,
+  as on Shopify).
+
+**Script tags.** `scriptTagCreate`, `scriptTagUpdate`, `scriptTagDelete`; `scriptTag`,
+`scriptTags(src:, query:)`. A script tag shown on the online store (`ONLINE_STORE`, or the
+deprecated `ALL`) is loaded by the storefront's `content_for_header` as Shopify loads it, once
+the page has loaded, with `shop=<domain>` added to its URL. `cache` is kept (lsf serves the
+script from its `src` either way).
+
+**Pixels.** `webPixelCreate`, `webPixelUpdate`, `webPixelDelete`, `webPixel`: one per app, its
+`settings` checked against the `[settings]` of the app's web pixel extension
+(`type = "web_pixel_extension"` in `extensions/*/shopify.extension.toml`): every field given
+("Missing keys: accountID"), no other, each value as its type and validations say. Without such
+an extension: `NO_EXTENSION`. The storefront does not run web pixels. `serverPixelCreate`,
+`serverPixelDelete`, `eventBridgeServerPixelUpdate`, `pubSubServerPixelUpdate`, `serverPixel`:
+one per app, `CONNECTED` once it has an endpoint; nothing is sent to it.
+
+**Storefront access tokens.** `storefrontAccessTokenCreate` (100 per shop),
+`storefrontAccessTokenDelete`, `shop.storefrontAccessTokens`: 32 hex digits, with the app's
+`unauthenticated_*` scopes. lsf serves no Storefront API, so they authenticate nothing.
+
+**Redirects in bulk.** `urlRedirectBulkDeleteAll`, `urlRedirectBulkDeleteByIds`,
+`urlRedirectBulkDeleteBySearch` (the `query` of `urlRedirects`; a field it does not have is
+refused rather than deleting every redirect), `urlRedirectBulkDeleteBySavedSearch`, each done at
+once (its `job` done). `urlRedirectImportCreate` reads a redirect CSV (`Redirect from,Redirect
+to`) from a staged upload or a URL (`count`, `previewRedirects`); `urlRedirectImportSubmit`
+creates and updates the redirects (`createdCount`, `updatedCount`, `failedCount`, `finished`;
+twice is `ALREADY_IMPORTED`); `urlRedirectImport`.
+
+**Saved searches.** `savedSearchCreate`, `savedSearchUpdate`, `savedSearchDelete`, and the
+`…SavedSearches` queries of each resource (`urlRedirectSavedSearches`, `productSavedSearches`,
+…): a name is unique per resource type; `searchTerms` and `filters` are the query split.
+
+**Policies.** `shopPolicyUpdate`: the policy of its type replaced, or created with Shopify's title
+and URL; the five policies of the store data (privacy, refund, shipping, terms of service,
+subscription) reach the storefront's `shop.policies`.
+
+**Standard definitions.** `standardMetafieldDefinitionTemplates` (shopify.dev's 16, `excludeActivated`),
+`standardMetafieldDefinitionEnable` (by `id`, or `namespace` and `key`; the owner type must be
+one of the template's) and `standardMetaobjectDefinitionEnable` (`product_review`) create the
+definition as `metafieldDefinitionCreate` and `metaobjectDefinitionCreate` do (same checks, same
+webhooks), with its `standardTemplate`.
+
+**Files.** `fileAcknowledgeUpdateFailed` puts a `FAILED` file back to `READY` and clears its
+errors (lsf's files are `READY` at once, so only a file made `FAILED` otherwise is one).
+
+### The app platform
+
+**Access.** `appUninstall` is the uninstall of `POST /__lsf/admin/uninstall` (tokens revoked,
+subscription cancelled, `app/uninstalled`, the shop's webhook subscriptions deleted).
+`appRevokeAccessScopes` revokes optional scopes the installation was granted (not the
+`scopes` of `shopify.app.toml`: `CANNOT_REVOKE_REQUIRED_SCOPES`; not an undeclared one; not a
+`read_x` its `write_x` implies): every token of the installation loses them at once, and
+`app/scopes_update` is delivered. `appDowngradeAccessScopes` (2027-01) turns optional `write_x`
+scopes into `read_x`. To grant optional scopes first: `POST /__lsf/admin/install {"scopes": …}`.
+
+**Delegate access tokens.** `delegateAccessTokenCreate` makes a `shppa_…` token with a subset of
+the parent's scopes (`UNKNOWN_SCOPES` for one the app was not granted), expiring with its parent
+or sooner (`expiresIn`, `EXPIRES_AFTER_PARENT`); it authenticates the Admin API with those
+scopes only, and cannot make delegates of its own (`DELEGATE_ACCESS_TOKEN`).
+`delegateAccessTokenDestroy` revokes one. A scope the installation loses goes from its delegates
+too.
+
+**Flow triggers.** `flowTriggerReceive(handle:, payload:)` is checked against the app's
+`flow_trigger` extensions: the handle, every field of the trigger (a reference field by its key,
+`customer_id`, the `legacyResourceId` of a record of the shop), 50,000 bytes at most. lsf runs
+no workflow: the trigger goes to the shop's outbox, `GET /__lsf/admin/outbox` (`?shop=`), where
+lsf writes what it would have sent to a service outside.
+
+**Mobile apps.** `mobilePlatformApplicationCreate`, `Update`, `Delete`,
+`mobilePlatformApplication(s)`: Android and Apple apps. The storefront serves their association
+files, as Shopify does on the shop's domain: `/.well-known/assetlinks.json` (App Links) and
+`/.well-known/apple-app-site-association` (Universal Links, shared web credentials, app clips).
+
+**Checkout configuration.** `checkoutAndAccountsConfigurationUpdate` and the deprecated
+`checkoutBrandingUpsert` merge the branding they are given into the shop's default
+configuration and checkout profile (a field given `null` is reset); `checkoutProfile(s)`,
+`checkoutBranding`, `checkoutAndAccountsConfiguration(s)` read it back. The local checkout keeps
+its own look.
+
+**Webhook subscriptions to EventBridge and Pub/Sub.** The deprecated
+`eventBridgeWebhookSubscriptionCreate`/`Update` (an `arn`) and `pubSubWebhookSubscriptionCreate`/`Update`
+(a `pubSubProject` and a `pubSubTopic`) make the same subscriptions as `webhookSubscriptionCreate`.
+lsf delivers nothing to them: their deliveries are in `GET /__lsf/webhooks`, `not_sent`, with
+their payload.
+
+**Also:** `shopResourceFeedbackCreate` (`app.feedback`; `ACCEPTED` clears it) and
+`bulkProductResourceFeedbackCreate`, `fulfillmentConstraintRuleCreate`/`Update`/`Delete` (a
+fulfillment constraints Function of the app, its metafields; `fulfillmentConstraintRules`),
+`discountBulkTagsAdd`/`Remove` (by ids, search or saved search), the deprecated
+`stagedUploadTargetGenerate(s)` (targets of `stagedUploadsCreate`). The queries `app`,
+`appByHandle`, `appByKey`, `appInstallation(s)`, `currentAppInstallation`, `staffMember(s)`
+(the shop owner is `StaffMember/1`) and `currentStaffMember` (the user of an online token,
+`null` for an offline one) answer every field; what an App Store listing would give (an icon, a
+category) is lsf's, an app in development having none.
+
+**Webhooks** without a mutation behind them, sent by `POST /__lsf/webhooks/trigger` and
+`lsf app webhook trigger`: `rollouts/*` (from a `Rollout`, else Shopify's example),
+`finance_app_staff_member/*` (from the staff member) and `finance_kyc_information/update`, which
+Shopify documents with an empty payload: lsf sends the record in REST's shape.
 
 ### App proxy
 
