@@ -544,9 +544,9 @@ fn tags_and_mutations_lsf_does_not_simulate() {
 
     let unknown = run(
         &mut shop,
-        r#"mutation { collectionCreate(input: {title: "X"}) { collection { id } } }"#,
+        r#"mutation { productBundleCreate(input: {title: "X", components: []}) { productBundleOperation { id } } }"#,
     );
-    assert_eq!(unknown["data"]["collectionCreate"], Value::Null);
+    assert_eq!(unknown["data"]["productBundleCreate"], Value::Null);
     assert_eq!(
         unknown["errors"][0]["extensions"]["code"],
         json!("LSF_NOT_SIMULATED")

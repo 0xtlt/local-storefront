@@ -500,13 +500,21 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
 2. **Change through `m.state_mut()`**: the first call keeps a copy of the shop, which a payload
    with user errors (`userErrors` or `…UserErrors` not empty) or an error puts back. Validating
    first costs no copy on failure; a mutation that finds a problem halfway can still answer it.
+   A mutation that applies what it can and reports the rest (`productVariantsBulkUpdate` with
+   `allowPartialUpdates`, `productCreateMedia`) calls `m.keep_changes()`: its user errors then
+   leave the changes in place.
 3. **Keep derived values right** with the domain's functions the seed uses (`refresh_product`,
    `refresh_customer`; for metafields `content::metafields::set`, which links the definition),
    `touch` what changed (`updatedAt`), and use `new_gid` for new records (or the id lsf-core
    derives, for what store sync writes back without an id: see "Store sync").
 4. **Emit the events of what changed**: `state_mut().emit("products/update", &gid)`; a deletion
    with `state_mut().delete(&gid, "products/delete")`, which keeps the record for the payload. A
-   change always emits an event: that is also how the api layer knows a shop changed.
+   change always emits an event: that is also how the api layer knows a shop changed. An event
+   about something that is no record (a product on a publication) is
+   `emit_with(topic, key, snapshot)`: its key names no record, and the payload is built
+   from the snapshot. What a mutation keeps between requests that is not a record (an
+   idempotency key and the answer it gave) is `set_memo`/`memo`: copied and put back with the
+   shop, not seen by the store sync.
 5. **Say what is not simulated**: `m.note("productCreate: lsf does not simulate `media` yet")` for
    an input it ignores; an argument-dependent scope the access table cannot express is checked in
    the mutation (`tagsAdd` needs the write scope of the resource: `access::denied`).
@@ -689,6 +697,28 @@ Every id is a function of the data: the same data gives the same records every r
   `maskedCode`, `customer`, `recipientAttributes` when the recipient is a customer (`recipient`
   is a `Customer!`: the message and nickname of a card for someone else are not kept),
   `templateSuffix`, dates.
+
+#### The catalog's mutations (`domains/catalog/`)
+
+One submodule per area, each with its mutations and its custom fields: `products`,
+`product_set`, `variants`, `options`, `media`, `collections`, `inventory`, `locations`,
+`publications`, `selling_plans`, `gift_cards`, and `queries` (sort keys, search filters, the
+fields that take an argument). `records` is what they share: reading inputs, and making
+variants, inventory items and levels, option values and metafields in the seed's shapes. Each
+module's header says what shopify.dev documents of its mutations (validations, side effects,
+events) and its sources; `mutation_tests` tests them all over the demo store.
+
+- **Derived values**: a mutation that changed a product runs `product_changed`, which runs
+  `refresh_product` (price ranges, `totalInventory`, `featuredMedia`, …), renumbers and renames
+  the variants, sets each option value's `hasVariants`, and puts the product in or out of the
+  smart collections (`collections::apply_rules`).
+- **Smart collections** keep their `ruleSet` and their `products`, which `apply_rules` keeps
+  right for every product a mutation changes: the store sync reads `Collection.products` only.
+- **`@idempotent`**: `inventory::with_idempotency` keeps each key with the arguments' fingerprint
+  and the answer (`ShopState::set_memo`), so a retry answers the first answer again.
+- **Partial updates** (`allowPartialUpdates`, `productCreateMedia`) call `m.keep_changes()`.
+- **Publication events** name no record: `emit_with` with the product (or collection) and the
+  publication as snapshot (`publications.rs`).
 
 ### Customers (`domains/customers.rs` and `domains/customers/`)
 

@@ -41,6 +41,8 @@ pub struct Mutation<'m> {
     api_version: &'m str,
     origin: &'m str,
     notes: Vec<String>,
+    /// Whether the changes stay when the payload has user errors (a partial update).
+    keep: bool,
 }
 
 impl Mutation<'_> {
@@ -121,6 +123,13 @@ impl Mutation<'_> {
     /// Says what the mutation did not simulate (an input it ignored), in `extensions.lsf.notes`.
     pub fn note(&mut self, text: impl Into<String>) {
         self.notes.push(text.into());
+    }
+
+    /// Keeps the changes made even though the payload reports user errors: a mutation that
+    /// applies what it can and reports the rest (`productVariantsBulkUpdate` with
+    /// `allowPartialUpdates`). An error still puts the shop back.
+    pub fn keep_changes(&mut self) {
+        self.keep = true;
     }
 }
 
@@ -215,13 +224,17 @@ pub(super) fn run(
         api_version: resolver.api_version,
         origin: resolver.origin,
         notes: Vec::new(),
+        keep: false,
     };
     let result = run(&mut mutation, ctx);
     let Mutation {
-        snapshot, notes, ..
+        snapshot,
+        notes,
+        keep,
+        ..
     } = mutation;
     let failed = match &result {
-        Ok(payload) => has_user_errors(payload),
+        Ok(payload) => has_user_errors(payload) && !keep,
         Err(_) => true,
     };
     if failed && let Some(before) = snapshot {

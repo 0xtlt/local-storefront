@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     Lookup, boolean, field, first, id, integer, items, lower, millis, object, price, records,
-    ref_gid, ref_id, resolve, tags, text, text_or, time, weight_unit,
+    ref_gid, ref_id, resolve, strings, tags, text, text_or, time, weight_unit,
 };
 
 /// `products/create`, `products/update`: a `Product`.
@@ -425,5 +425,163 @@ pub(super) fn location(record: &Map<String, Value>) -> Value {
         "legacy": boolean(record, "isFulfillmentService", false),
         "active": boolean(record, "isActive", true),
         "admin_graphql_api_id": text(record, "id"),
+    })
+}
+
+/// `variants/in_stock`, `variants/out_of_stock`: a `ProductVariant`, in the keys of the
+/// reference's example (a REST variant without its inventory item and weight).
+pub(super) fn variant_stock(record: &Map<String, Value>) -> Value {
+    let selected = field(record, "selectedOptions")
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let option = |position: usize| {
+        selected
+            .get(position)
+            .and_then(|option| option.get("value"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let quantity = integer(record, "inventoryQuantity", Value::from(0));
+    json!({
+        "id": id(record),
+        "product_id": ref_id(field(record, "product")),
+        "title": text(record, "title"),
+        "price": price(field(record, "price")),
+        "position": integer(record, "position", Value::from(1)),
+        "inventory_policy": match lower(field(record, "inventoryPolicy")) {
+            Value::Null => json!("deny"),
+            policy => policy,
+        },
+        "compare_at_price": price(field(record, "compareAtPrice")),
+        "option1": option(0),
+        "option2": option(1),
+        "option3": option(2),
+        "created_at": time(field(record, "createdAt")),
+        "updated_at": time(field(record, "updatedAt")),
+        "taxable": boolean(record, "taxable", true),
+        "barcode": text(record, "barcode"),
+        "sku": text(record, "sku"),
+        "inventory_quantity": quantity,
+        "old_inventory_quantity": quantity,
+        "admin_graphql_api_id": text(record, "id"),
+        "image_id": ref_id(first(record, &["image", "featuredMedia"])),
+    })
+}
+
+/// `product_publications/create`, `…/update`, and the `collection_publications/…` ones: a
+/// `ResourcePublication` (its `publication` and `publishable`), whose REST id is `null` in the
+/// reference's examples.
+pub(super) fn resource_publication(record: &Map<String, Value>, resource: &str) -> Value {
+    let mut payload = json!({
+        "id": null,
+        "publication_id": ref_id(field(record, "publication")),
+        "published_at": time(field(record, "publishDate")),
+        "published": boolean(record, "isPublished", true),
+        "created_at": null,
+        "updated_at": null,
+    });
+    if let Value::Object(map) = &mut payload {
+        map.insert(
+            format!("{resource}_id"),
+            ref_id(field(record, "publishable")),
+        );
+    }
+    payload
+}
+
+/// `selling_plan_groups/create`, `selling_plan_groups/update`: a `SellingPlanGroup` with its
+/// plans. The example lists `products` and `product_variants` empty: lsf writes each as its id
+/// and GID *(lsf's guess of their shape)*, and a plan's policies with REST's lowercase enums.
+pub(super) fn selling_plan_group(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let plans = records(field(record, "sellingPlans"), lookup);
+    let refs = |list: &str| -> Vec<Value> {
+        items(field(record, list))
+            .iter()
+            .map(|item| json!({"id": ref_id(item), "admin_graphql_api_id": ref_gid(item)}))
+            .collect()
+    };
+    json!({
+        "admin_graphql_api_id": text(record, "id"),
+        "id": id(record),
+        "name": text(record, "name"),
+        "merchant_code": text(record, "merchantCode"),
+        // The app that made the group: GraphQL's `SellingPlanGroup` does not name it.
+        "admin_graphql_api_app": text(record, "app"),
+        "app_id": text(record, "appId"),
+        "description": text(record, "description"),
+        "options": strings(field(record, "options")),
+        "position": field(record, "position").clone(),
+        "summary": text(record, "summary"),
+        "selling_plans": plans.iter().map(selling_plan).collect::<Vec<_>>(),
+        "product_variants": refs("productVariants"),
+        "products": refs("products"),
+    })
+}
+
+/// A plan of a `selling_plan_groups/…` payload.
+fn selling_plan(plan: &Map<String, Value>) -> Value {
+    let billing = object(field(plan, "billingPolicy"));
+    let delivery = object(field(plan, "deliveryPolicy"));
+    let billing_policy = if billing.contains_key("interval") {
+        json!({
+            "interval": lower(field(&billing, "interval")),
+            "interval_count": field(&billing, "intervalCount").clone(),
+            "min_cycles": field(&billing, "minCycles").clone(),
+            "max_cycles": field(&billing, "maxCycles").clone(),
+        })
+    } else {
+        json!({
+            "checkout_charge": field(&billing, "checkoutCharge").clone(),
+            "remaining_balance_charge_trigger": lower(field(&billing, "remainingBalanceChargeTrigger")),
+        })
+    };
+    let delivery_policy = if delivery.contains_key("interval") {
+        json!({
+            "interval": lower(field(&delivery, "interval")),
+            "interval_count": field(&delivery, "intervalCount").clone(),
+            "anchors": items(field(&delivery, "anchors")),
+            "cutoff": field(&delivery, "cutoff").clone(),
+            "pre_anchor_behavior": lower(field(&delivery, "preAnchorBehavior")),
+        })
+    } else {
+        json!({
+            "anchors": items(field(&delivery, "anchors")),
+            "cutoff": field(&delivery, "cutoff").clone(),
+            "fulfillment_trigger": lower(field(&delivery, "fulfillmentTrigger")),
+            "pre_anchor_behavior": lower(field(&delivery, "preAnchorBehavior")),
+        })
+    };
+    let pricing: Vec<Value> = items(field(plan, "pricingPolicies"))
+        .iter()
+        .map(|policy| {
+            let policy = object(policy);
+            let value = object(field(&policy, "adjustmentValue"));
+            json!({
+                "adjustment_type": lower(field(&policy, "adjustmentType")),
+                "adjustment_value": match field(&value, "percentage") {
+                    Value::Null => price(field(&value, "amount")),
+                    percentage => percentage.clone(),
+                },
+                "after_cycle": field(&policy, "afterCycle").clone(),
+            })
+        })
+        .collect();
+    json!({
+        "name": text(plan, "name"),
+        "options": strings(field(plan, "options")),
+        "position": field(plan, "position").clone(),
+        "description": text(plan, "description"),
+        "billing_policy": billing_policy,
+        "delivery_policy": delivery_policy,
+        "pricing_policies": pricing,
+    })
+}
+
+/// `selling_plan_groups/delete`.
+pub(super) fn selling_plan_group_deleted(record: &Map<String, Value>) -> Value {
+    json!({
+        "admin_graphql_api_id": text(record, "id"),
+        "id": id(record),
     })
 }

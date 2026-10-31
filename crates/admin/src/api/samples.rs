@@ -48,6 +48,8 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("inventory_items", _) => &["InventoryItem"],
         ("inventory_levels", _) => &["InventoryLevel"],
         ("locations", _) => &["Location"],
+        ("variants", _) => &["ProductVariant"],
+        ("selling_plan_groups", _) => &["SellingPlanGroup"],
         ("app_subscriptions", _) => &["AppSubscription"],
         ("app_purchases_one_time", _) => &["AppPurchaseOneTime"],
         (_, "discounts/redeemcode_added" | "discounts/redeemcode_removed") => &["DiscountCodeNode"],
