@@ -1352,6 +1352,14 @@ never written to.**
   (`ServerState::sync_theme`, when the count of changes moved, under the build lock), only when
   the generation differs; live reload's token includes it. The CDN serves an asset of the overlay
   as it is (`/cdn/shop/t/1/assets/…`; an image without the CDN's transforms).
+- *What it costs* (release builds of the commit before themes and of this one, the fixture theme
+  of lsf-core, the demo store, the two servers' renders interleaved by batches of 25, 1000 each,
+  medians of `Server-Timing: render`, on 2026-10-31 on a machine loaded with other builds):
+  without an overlay, `/` 168 → 166 µs, `/collections/all` 326 → 331 µs, a product 199 → 198 µs,
+  a search 128 → 128 µs revalidating; 77 → 77, 366 → 361, 94 → 95, 60 → 60 µs with `--static`:
+  within ±5 µs (±1.5 %) either way, which is the noise. With an overlay of two files and a script
+  tag, `/` renders in 163 to 172 µs against 161 to 165 µs before (alternated runs): a few µs,
+  most of it the 640 bytes of the script tag's loader.
 - *What does not follow*: `Shopify.theme` of `content_for_header` keeps id 1 and the name of the
   directory's `settings_schema.json` while another theme is published (its files are served); a
   `URL` body of `themeFilesUpsert` and a `themeCreate` from a URL are downloaded within the
