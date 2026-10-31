@@ -494,6 +494,16 @@ fall forward), and `OLDEST_ACCESSIBLE` moves; its files can go once nothing serv
   narrowed. A failed mutation emits nothing, so changes nothing of the tokens either. The
   uninstall is the control endpoint's path (`AdminApi::finish_uninstall`), its `app/uninstalled`
   delivered with the mutation's events.
+- **A request that waited on the shop** runs with the tokens as they are when it gets the shop,
+  not as they were when it looked its token up. Each `LiveShop` has an `auth_generation`, moved
+  under its lock by every change of what its tokens grant: a request with auth effects (which
+  also counts them `auth_pending` until it has applied them, the shop unlocked), a reset, an
+  install, an uninstall and an OAuth grant (after they changed the tokens). A GraphQL request
+  reads the generation once nothing is pending, looks its token up, locks the shop, and runs
+  only if the generation did not move; otherwise it looks the token up again (`401` for one
+  revoked, the narrowed scopes for one revoked from). Without it, a `productCreate` queued
+  behind an `appUninstall` ran after it with the token it had revoked
+  (`api::tests::a_request_that_waited_on_the_shop_runs_with_the_tokens_as_they_are_now`).
 - **OAuth**, as Shopify (`auth::oauth`): `GET /admin/oauth/authorize` approves at once and
   redirects to the `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`;
   `POST /admin/oauth/access_token` (JSON, form, or query parameters) exchanges the code (once,
