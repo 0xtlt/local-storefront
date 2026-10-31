@@ -1175,6 +1175,13 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let discount = model::input_of(input.get("discountCode"));
     let mut discount_codes = Vec::new();
     let mut order_discount = 0;
+    let mut applied_code = None;
+    let code_of = |code: &serde_json::Map<String, Value>| {
+        code.get("code")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
     if let Some(code) = discount
         .get("itemPercentageDiscountCode")
         .and_then(Value::as_object)
@@ -1189,21 +1196,36 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             line.discount = ((total as f64) * percentage / 100.0).round() as i64;
         }
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
+        applied_code = Some(CodeApplied::Percentage {
+            code: code_of(code),
+            percentage,
+        });
     } else if let Some(code) = discount
         .get("itemFixedDiscountCode")
         .and_then(Value::as_object)
     {
-        order_discount =
-            model::cents(code.get("amountSet").and_then(|set| set.get("shopMoney"))).min(subtotal);
+        let amount = model::cents(code.get("amountSet").and_then(|set| set.get("shopMoney")));
+        order_discount = amount.min(subtotal).max(0);
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
+        applied_code = Some(CodeApplied::Fixed {
+            code: code_of(code),
+            amount: amount.max(0),
+            applied: order_discount,
+        });
     } else if let Some(code) = discount
         .get("freeShippingDiscountCode")
         .and_then(Value::as_object)
     {
+        let mut taken = 0;
         if let Some(shipping) = &mut shipping {
+            taken = shipping.discounted;
             shipping.discounted = 0;
         }
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
+        applied_code = Some(CodeApplied::FreeShipping {
+            code: code_of(code),
+            taken,
+        });
     }
     // Bounded above: the order's total holds them.
     let tax = order_tax.unwrap_or(0) + shipping_tax.unwrap_or(0) + line_tax;
@@ -1304,6 +1326,9 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         location: location.clone(),
     };
     let order = super::insert_order(state, &draft);
+    if let Some(applied) = &applied_code {
+        record_discount_code(state, &order, applied, &draft.lines);
+    }
     let test = input.get("test").and_then(Value::as_bool) == Some(true);
     let now_text = value::date_time(now);
     if let Some(record) = state.get_mut(&order) {
@@ -1432,6 +1457,119 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         state.emit("orders/paid", &order);
     }
     Ok(payload(json!({"order": order}), &[]))
+}
+
+/// The discount code of an `orderCreate` (`OrderCreateDiscountCodeInput`), as it was applied.
+enum CodeApplied {
+    /// `itemPercentageDiscountCode`: a percentage of each line, as given (`10` for 10%).
+    Percentage { code: String, percentage: f64 },
+    /// `itemFixedDiscountCode`: an amount off the order, `applied` what the lines could take.
+    Fixed {
+        code: String,
+        amount: i64,
+        applied: i64,
+    },
+    /// `freeShippingDiscountCode`: the shipping, `taken` its price.
+    FreeShipping { code: String, taken: i64 },
+}
+
+/// Records the discount code of an `orderCreate` as Shopify records one: a
+/// `DiscountCodeApplication` in `discountApplications` (its `value` a `PricingPercentageValue`
+/// for a percentage, a `MoneyV2` for an amount, as the reference's examples answer them), and the
+/// `DiscountAllocation`s it made on the lines (a fixed amount spread over them in proportion to
+/// their totals, the remainder on the last) or on the shipping line, in the shapes the checkout's
+/// orders keep. `allocationMethod`, `targetSelection` and `targetType` are not in the examples:
+/// lsf's (`ACROSS` all line items for an amount off the order, `EACH` for a percentage of each
+/// line and for free shipping).
+fn record_discount_code(
+    state: &mut ShopState,
+    order: &str,
+    applied: &CodeApplied,
+    lines: &[super::LineDraft],
+) {
+    let currency = model::currency(state);
+    let (code, allocation_method, target_type, value) = match applied {
+        CodeApplied::Percentage { code, percentage } => (
+            code,
+            "EACH",
+            "LINE_ITEM",
+            json!({"__typename": "PricingPercentageValue", "percentage": percentage}),
+        ),
+        CodeApplied::Fixed { code, amount, .. } => {
+            let mut money = value::money_v2(*amount, &currency);
+            money["__typename"] = json!("MoneyV2");
+            (code, "ACROSS", "LINE_ITEM", money)
+        }
+        CodeApplied::FreeShipping { code, .. } => (
+            code,
+            "EACH",
+            "SHIPPING_LINE",
+            json!({"__typename": "PricingPercentageValue", "percentage": 100.0}),
+        ),
+    };
+    let application = json!({
+        "__typename": "DiscountCodeApplication",
+        "index": 0,
+        "code": code,
+        "allocationMethod": allocation_method,
+        "targetSelection": "ALL",
+        "targetType": target_type,
+        "value": value,
+    });
+    let allocation = |cents: i64| {
+        json!([{
+            "allocatedAmountSet": value::money_bag(cents, &currency),
+            "discountApplication": application,
+        }])
+    };
+    let amounts: Vec<i64> = match applied {
+        CodeApplied::Percentage { .. } => lines.iter().map(|line| line.discount).collect(),
+        CodeApplied::Fixed { applied, .. } => {
+            let totals: Vec<i64> = lines
+                .iter()
+                .map(|line| line.unit_price * i64::from(line.quantity))
+                .collect();
+            let whole: i64 = totals.iter().sum();
+            let mut shares: Vec<i64> = totals
+                .iter()
+                .map(|total| model::share(*applied, *total, whole))
+                .collect();
+            let given: i64 = shares.iter().sum();
+            if let Some(last) = shares.last_mut() {
+                *last += applied - given;
+            }
+            shares
+        }
+        CodeApplied::FreeShipping { .. } => Vec::new(),
+    };
+    for (item, cents) in super::line_items(state, order).iter().zip(amounts) {
+        if cents > 0
+            && let Some(record) = state.get_mut(item)
+        {
+            record.insert("discountAllocations".into(), allocation(cents));
+        }
+    }
+    let Some(record) = state.get_mut(order) else {
+        return;
+    };
+    if let CodeApplied::FreeShipping { taken, .. } = applied
+        && *taken > 0
+    {
+        for key in ["shippingLine", "shippingLines"] {
+            match record.get_mut(key) {
+                Some(Value::Object(line)) => {
+                    line.insert("discountAllocations".into(), allocation(*taken));
+                }
+                Some(Value::Array(lines)) => {
+                    for line in lines.iter_mut().filter_map(Value::as_object_mut) {
+                        line.insert("discountAllocations".into(), allocation(*taken));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    record.insert("discountApplications".into(), json!([application]));
 }
 
 /// The tax of `taxLines` (`OrderCreateTaxLineInput`): their `priceSet`, else their `rate` of

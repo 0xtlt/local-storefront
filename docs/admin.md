@@ -502,6 +502,10 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
   took nothing (of the store data or the checkout) ships and restocks without moving the stock. A variant an order
   sells out is out of stock as after an inventory mutation: `availableForSale` is `false`,
   `variants/out_of_stock` is sent, and the storefront shows it sold out.
+- `orderCreate`'s `discountCode` makes a `DiscountCodeApplication` (its `value` as the
+  reference's examples answer it) and the allocations on the lines (an amount off the order is
+  spread over them by their totals) or on the shipping line. Its `allocationMethod`,
+  `targetSelection` and `targetType` are lsf's: Shopify's examples do not show them.
 - `orderCancel` is synchronous (Shopify's runs as a job). `orderCreate` with a
   `financialStatus` and no `transactions` records the transaction the status implies (a sale of
   the total for `PAID`). `fulfillmentCancel` does not put the shipped units back in stock.

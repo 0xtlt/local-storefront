@@ -2273,3 +2273,115 @@ fn an_order_obeying_the_policy_checks_the_stock_where_it_commits() {
     assert_eq!(order(&mut shop, 3), json!([]));
     assert_eq!(quantities(&shop, &item, "available"), [4, 0]);
 }
+
+/// `orderCreate`'s `discountCode` makes a `DiscountCodeApplication` and the allocations it made
+/// on the lines or the shipping line, as the reference's examples read them back, so that a
+/// backend that splits discounts by line finds them, in the API and in `orders/create`.
+#[test]
+fn an_order_created_with_a_discount_code_records_its_application_and_allocations() {
+    let mut shop = demo();
+    let money = |amount: &str| json!({"shopMoney": {"amount": amount, "currencyCode": "EUR"}});
+    let lines = json!([
+        {"title": "A", "quantity": 1, "priceSet": money("30.00")},
+        {"title": "B", "quantity": 2, "priceSet": money("10.00")},
+    ]);
+    let query = "query($id: ID!) { order(id: $id) {
+        discountCodes totalDiscountsSet { shopMoney { amount } }
+        discountApplications(first: 5) { nodes { __typename allocationMethod targetSelection targetType
+            value { ... on MoneyV2 { amount } ... on PricingPercentageValue { percentage } }
+            ... on DiscountCodeApplication { code } } }
+        lineItems(first: 5) { nodes { discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } } } }
+        shippingLine { discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } }";
+    let create = |shop: &mut ShopState, code: Value| -> (String, Value) {
+        let answer = run(
+            shop,
+            ORDER_CREATE,
+            json!({"order": {"lineItems": lines, "discountCode": code,
+                "shippingLines": [{"title": "Express", "priceSet": money("7.00")}]}}),
+        );
+        assert_eq!(
+            answer["data"]["orderCreate"]["userErrors"],
+            json!([]),
+            "{answer}"
+        );
+        let id = answer["data"]["orderCreate"]["order"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let read = run(shop, query, json!({"id": id}));
+        (id, read["data"]["order"].clone())
+    };
+    let allocated = |order: &Value| -> Vec<Value> {
+        order["lineItems"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| {
+                line["discountAllocations"][0]["allocatedAmountSet"]["shopMoney"]["amount"].clone()
+            })
+            .collect()
+    };
+
+    // 10% of each line: the reference's example answers `value { percentage: 10 }`.
+    let (id, order) = create(
+        &mut shop,
+        json!({"itemPercentageDiscountCode": {"code": "SUMMER SALE", "percentage": 10}}),
+    );
+    assert_eq!(order["discountCodes"], json!(["SUMMER SALE"]));
+    assert_eq!(
+        order["discountApplications"]["nodes"],
+        json!([{"__typename": "DiscountCodeApplication", "allocationMethod": "EACH", "targetSelection": "ALL",
+            "targetType": "LINE_ITEM", "value": {"percentage": 10.0}, "code": "SUMMER SALE"}])
+    );
+    assert_eq!(allocated(&order), [json!("3.0"), json!("2.0")]);
+    assert_eq!(
+        order["lineItems"]["nodes"][0]["discountAllocations"][0]["discountApplication"]["index"],
+        json!(0)
+    );
+    let payload = payload_of(&shop, "orders/create", &id);
+    assert_eq!(
+        payload["discount_applications"][0]["code"],
+        json!("SUMMER SALE")
+    );
+    assert_eq!(
+        payload["line_items"][0]["discount_allocations"][0]["amount"],
+        json!("3.00")
+    );
+
+    // 5.00 off the order, spread over the lines by their totals (30 and 20).
+    let (_, order) = create(
+        &mut shop,
+        json!({"itemFixedDiscountCode": {"code": "FIVE", "amountSet": money("5.00")}}),
+    );
+    assert_eq!(
+        order["discountApplications"]["nodes"][0]["value"],
+        json!({"amount": "5.0"})
+    );
+    assert_eq!(
+        order["discountApplications"]["nodes"][0]["allocationMethod"],
+        json!("ACROSS")
+    );
+    assert_eq!(allocated(&order), [json!("3.0"), json!("2.0")]);
+    assert_eq!(
+        order["totalDiscountsSet"]["shopMoney"]["amount"],
+        json!("5.0")
+    );
+
+    // Free shipping: the shipping line's price.
+    let (_, order) = create(
+        &mut shop,
+        json!({"freeShippingDiscountCode": {"code": "SHIPFREE"}}),
+    );
+    assert_eq!(
+        order["discountApplications"]["nodes"][0]["targetType"],
+        json!("SHIPPING_LINE")
+    );
+    assert_eq!(
+        order["shippingLine"]["discountAllocations"][0]["allocatedAmountSet"]["shopMoney"]["amount"],
+        json!("7.0")
+    );
+    assert_eq!(
+        order["lineItems"]["nodes"][0]["discountAllocations"],
+        json!([])
+    );
+}
