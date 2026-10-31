@@ -55,6 +55,11 @@ pub fn register(registry: &mut Registry) {
             "billingCycles",
             edited_contract_cycles,
         )
+        .field(
+            "SubscriptionBillingCycleEditedContract",
+            "orders",
+            edited_contract_orders,
+        )
         .mutation("subscriptionBillingCycleSkip", |m, ctx| skip(m, ctx, true))
         .mutation("subscriptionBillingCycleUnskip", |m, ctx| {
             skip(m, ctx, false)
@@ -788,6 +793,35 @@ fn edited_contract_cycles(
             .unwrap_or_default(),
         None => Vec::new(),
     };
+    r.connection(ctx, items)
+}
+
+/// `SubscriptionBillingCycleEditedContract.orders`: the orders the cycle's billing attempts made.
+fn edited_contract_orders(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let state = r.state();
+    let items: Vec<Value> = r
+        .map_of(object)
+        .and_then(|edited| {
+            let contract = contract_of(state, text(edited, "lsfContract")?)?;
+            let index = edited.get("lsfCycleIndex")?.as_i64()?;
+            Some(
+                attempts(state, &contract, index)
+                    .iter()
+                    .filter_map(|attempt| {
+                        state
+                            .get(attempt)?
+                            .get("order")
+                            .filter(|order| order.is_string())
+                            .cloned()
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
     r.connection(ctx, items)
 }
 

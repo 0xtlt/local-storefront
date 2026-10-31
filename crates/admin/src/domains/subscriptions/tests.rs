@@ -1995,6 +1995,17 @@ fn a_cycle_edit_calculation_edits_that_cycle_only() {
         json!(1)
     );
     assert_eq!(shop.get(&id).unwrap()["lines"][0]["quantity"], json!(2));
+    // The edited contract of the cycle lists the order its attempt made.
+    let order = read["data"]["subscriptionBillingAttempt"]["order"]["id"].clone();
+    let cycle = run(
+        &mut shop,
+        "query($id: ID!) { subscriptionBillingCycle(billingCycleInput: {contractId: $id, selector: {index: 2}}) { editedContract { orders(first: 2) { nodes { id } } } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        cycle["data"]["subscriptionBillingCycle"]["editedContract"]["orders"]["nodes"],
+        json!([{"id": order}])
+    );
     // A contract with a current or future contract edit is not updated.
     at(&mut shop, "2026-01-20T12:00:00Z");
     let errors = refused(
