@@ -524,6 +524,19 @@ impl<'a> ShopResolver<'a> {
         search::filter(self, ctx, node_type, items)
     }
 
+    /// The items a search query matches, by the filters the connection `field` of `parent`
+    /// documents (`("QueryRoot", "draftOrders")`): what a bulk mutation's `search` argument
+    /// selects.
+    pub fn search_query(
+        &self,
+        node_type: &str,
+        connection: (&str, &str),
+        text: &str,
+        items: Vec<Value>,
+    ) -> Vec<Value> {
+        search::filter_text(self, node_type, connection, text, items)
+    }
+
     /// A `Count`: `{count, precision}`, `AT_LEAST` past the `limit` argument of the field.
     pub fn count(&self, ctx: &FieldContext<'_>, count: usize) -> Output<Obj> {
         let limit = ctx

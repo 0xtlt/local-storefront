@@ -388,3 +388,180 @@ fn a_requested_edit_is_refused_beyond_what_is_left_to_fulfill() {
     assert_eq!(shop.count("RequestedOrderEdit"), 0);
     assert!(topics(&mut shop).is_empty());
 }
+
+/// A draft order of the demo store's first variant, tagged.
+fn draft(shop: &mut ShopState, tags: &[&str]) -> String {
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let answer = run(
+        shop,
+        "mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } userErrors { message } } }",
+        json!({"input": {"lineItems": [{"variantId": variant, "quantity": 1}], "tags": tags, "email": "buyer@example.com"}}),
+    );
+    topics(shop);
+    answer["data"]["draftOrderCreate"]["draftOrder"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn drafts_are_tagged_untagged_and_deleted_in_bulk() {
+    let mut shop = demo();
+    let first = draft(&mut shop, &["wholesale"]);
+    let second = draft(&mut shop, &["retail"]);
+    let add = "mutation($ids: [ID!], $search: String, $tags: [String!]!) { draftOrderBulkAddTags(ids: $ids, search: $search, tags: $tags) { job { id done } userErrors { field message } } }";
+    let added = run(
+        &mut shop,
+        add,
+        json!({"ids": [first, second], "tags": ["priority"]}),
+    );
+    assert_eq!(added["data"]["draftOrderBulkAddTags"]["job"]["done"], true);
+    assert_eq!(
+        topics(&mut shop),
+        ["draft_orders/update", "draft_orders/update"]
+    );
+    assert_eq!(
+        shop.get(&first).unwrap()["tags"],
+        json!(["wholesale", "priority"])
+    );
+    // By a search: only the drafts it matches.
+    let remove = "mutation($search: String, $tags: [String!]!) { draftOrderBulkRemoveTags(search: $search, tags: $tags) { job { done } userErrors { field message } } }";
+    let removed = run(
+        &mut shop,
+        remove,
+        json!({"search": "tag:retail", "tags": ["priority"]}),
+    );
+    assert_eq!(
+        removed["data"]["draftOrderBulkRemoveTags"]["userErrors"],
+        json!([])
+    );
+    assert_eq!(shop.get(&second).unwrap()["tags"], json!(["retail"]));
+    assert_eq!(
+        shop.get(&first).unwrap()["tags"],
+        json!(["wholesale", "priority"])
+    );
+    assert_eq!(topics(&mut shop), ["draft_orders/update"]);
+    let deleted = run(
+        &mut shop,
+        "mutation($ids: [ID!]) { draftOrderBulkDelete(ids: $ids) { job { done } userErrors { message } } }",
+        json!({"ids": [first]}),
+    );
+    assert_eq!(deleted["data"]["draftOrderBulkDelete"]["job"]["done"], true);
+    assert!(!shop.contains(&first));
+    assert!(shop.contains(&second));
+    assert_eq!(topics(&mut shop), ["draft_orders/delete"]);
+}
+
+#[test]
+fn a_bulk_draft_mutation_is_refused_without_one_target_and_changes_nothing() {
+    let mut shop = demo();
+    let first = draft(&mut shop, &["wholesale"]);
+    let before = shop.get(&first).cloned();
+    let add = "mutation($ids: [ID!], $search: String, $tags: [String!]!) { draftOrderBulkAddTags(ids: $ids, search: $search, tags: $tags) { job { id } userErrors { field message } } }";
+    for variables in [
+        json!({"tags": ["x"]}),
+        json!({"ids": [first], "search": "tag:x", "tags": ["x"]}),
+        json!({"ids": [first], "tags": []}),
+        json!({"ids": [first, "gid://shopify/DraftOrder/999999"], "tags": ["x"]}),
+    ] {
+        let variables_text = variables.to_string();
+        let answer = run(&mut shop, add, variables);
+        assert_eq!(
+            answer["data"]["draftOrderBulkAddTags"]["job"],
+            Value::Null,
+            "{variables_text} {answer}"
+        );
+        assert_eq!(
+            answer["data"]["draftOrderBulkAddTags"]["userErrors"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    let deleted = run(
+        &mut shop,
+        "mutation { draftOrderBulkDelete(savedSearchId: \"gid://shopify/SavedSearch/1\") { job { id } userErrors { field message } } }",
+        json!({}),
+    );
+    assert_eq!(deleted["data"]["draftOrderBulkDelete"]["job"], Value::Null);
+    assert_eq!(shop.get(&first).cloned(), before);
+    assert!(topics(&mut shop).is_empty());
+}
+
+#[test]
+fn a_draft_is_made_from_an_order_and_its_invoice_previewed() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1002");
+    let record = shop.get(&order).unwrap().clone();
+    let made = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderCreateFromOrder(orderId: $id) { draftOrder { id name status customer { id } email
+            lineItems(first: 10) { nodes { quantity variant { id } } } } userErrors { field message } } }",
+        json!({"id": order}),
+    );
+    let draft = &made["data"]["draftOrderCreateFromOrder"]["draftOrder"];
+    assert_eq!(
+        made["data"]["draftOrderCreateFromOrder"]["userErrors"],
+        json!([]),
+        "{made}"
+    );
+    assert_eq!(draft["status"], "OPEN");
+    assert_eq!(draft["customer"]["id"], record["customer"]);
+    let lines = super::line_items(&shop, &order);
+    let first = shop.get(&lines[0]).unwrap();
+    assert_eq!(
+        draft["lineItems"]["nodes"][0]["variant"]["id"],
+        first["variant"]
+    );
+    assert_eq!(
+        draft["lineItems"]["nodes"][0]["quantity"],
+        first["currentQuantity"]
+    );
+    assert_eq!(topics(&mut shop), ["draft_orders/create"]);
+
+    let id = draft["id"].clone();
+    let name = draft["name"].as_str().unwrap();
+    let preview = run(
+        &mut shop,
+        "mutation($id: ID!, $email: EmailInput) { draftOrderInvoicePreview(id: $id, email: $email) { previewHtml previewSubject userErrors { field message } } }",
+        json!({"id": id, "email": {"subject": "Custom subject", "customMessage": "Hi,\nThis is a custom message for the customer."}}),
+    );
+    let preview = &preview["data"]["draftOrderInvoicePreview"];
+    assert_eq!(preview["previewSubject"], "Custom subject");
+    assert_eq!(
+        preview["previewHtml"],
+        format!(
+            "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\" \"http://www.w3.org/TR/REC-html40/loose.dtd\">\n<html><body>\n<p>Invoice {name} from Local Supply Co.</p>\n<p>Hi,<br>This is a custom message for the customer.</p>\n</body></html>\n"
+        )
+    );
+    assert!(topics(&mut shop).is_empty());
+    assert!(
+        crate::outbox::emails(&shop).is_empty(),
+        "a preview sends nothing"
+    );
+    // A completed draft cannot be previewed: the reference's message.
+    run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id } } }",
+        json!({"id": id}),
+    );
+    let refused = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderInvoicePreview(id: $id) { previewHtml userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        refused["data"]["draftOrderInvoicePreview"],
+        json!({"previewHtml": null, "userErrors": [{"field": null, "message": "Draft order Invoice can't be sent. This draft order is already paid."}]})
+    );
+    let unknown = run(
+        &mut shop,
+        "mutation { draftOrderCreateFromOrder(orderId: \"gid://shopify/Order/1\") { draftOrder { id } userErrors { field message } } }",
+        json!({}),
+    );
+    assert_eq!(
+        unknown["data"]["draftOrderCreateFromOrder"]["userErrors"][0]["field"],
+        json!(["orderId"])
+    );
+}

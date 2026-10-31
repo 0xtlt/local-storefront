@@ -413,12 +413,11 @@ struct Draft {
 /// creation): its line items when given, the fields given.
 fn read_input(
     mutation: &mut Mutation<'_>,
-    ctx: &FieldContext<'_>,
+    name: &str,
     input: &Map<String, Value>,
     base: Option<&Record>,
     errors: &mut Vec<UserError>,
 ) -> Option<Draft> {
-    let name = ctx.field_name().to_string();
     for (field, what) in NOT_SIMULATED {
         if input
             .get(*field)
@@ -909,26 +908,39 @@ fn new_draft(state: &mut ShopState) -> String {
 /// `draftOrderCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = model::input_of(ctx.arg("input"));
+    Ok(match create_from(mutation, ctx.field_name(), &input) {
+        Ok(id) => payload(json!({"draftOrder": id}), &[]),
+        Err(errors) => payload(json!({"draftOrder": null}), &errors),
+    })
+}
+
+/// Makes a draft order of a `DraftOrderInput`, as `draftOrderCreate` does (`name` is the
+/// mutation, for its notes): `draft_orders/create`. Its GID, or the input's errors.
+pub(super) fn create_from(
+    mutation: &mut Mutation<'_>,
+    name: &str,
+    input: &Map<String, Value>,
+) -> Result<String, Vec<UserError>> {
     let mut errors = Vec::new();
-    let Some(draft) = read_input(mutation, ctx, &input, None, &mut errors) else {
-        return Ok(payload(json!({"draftOrder": null}), &errors));
+    let Some(draft) = read_input(mutation, name, input, None, &mut errors) else {
+        return Err(errors);
     };
-    if array(&input, "lineItems").is_empty() {
+    if array(input, "lineItems").is_empty() {
         errors.insert(0, UserError::new(&[], "Add at least 1 product"));
     }
     if !errors.is_empty() {
-        return Ok(payload(json!({"draftOrder": null}), &errors));
+        return Err(errors);
     }
     let state = mutation.state_mut();
     let id = new_draft(state);
     let terms = write_draft(state, &id, &draft, true);
     state.emit("draft_orders/create", &id);
     apply_terms(state, &id, terms.as_ref());
-    Ok(payload(json!({"draftOrder": id}), &[]))
+    Ok(id)
 }
 
 /// The draft order of a GID, or Shopify's "Draft order not found".
-fn find_draft(state: &ShopState, id: &str) -> Result<Record, UserError> {
+pub(super) fn find_draft(state: &ShopState, id: &str) -> Result<Record, UserError> {
     state
         .get(id)
         .filter(|_| state.type_of(id) == Some("DraftOrder"))
@@ -956,7 +968,13 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     }
     let input = model::input_of(ctx.arg("input"));
     let mut errors = Vec::new();
-    let Some(draft) = read_input(mutation, ctx, &input, Some(&record), &mut errors) else {
+    let Some(draft) = read_input(
+        mutation,
+        ctx.field_name(),
+        &input,
+        Some(&record),
+        &mut errors,
+    ) else {
         return Ok(payload(json!({"draftOrder": null}), &errors));
     };
     if input.contains_key("lineItems") && draft.lines.is_empty() && errors.is_empty() {
@@ -1038,7 +1056,7 @@ pub(super) fn invoice_text(
 fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = model::input_of(ctx.arg("input"));
     let mut errors = Vec::new();
-    let Some(draft) = read_input(mutation, ctx, &input, None, &mut errors) else {
+    let Some(draft) = read_input(mutation, ctx.field_name(), &input, None, &mut errors) else {
         return Ok(payload(json!({"calculatedDraftOrder": null}), &errors));
     };
     if array(&input, "lineItems").is_empty() {
