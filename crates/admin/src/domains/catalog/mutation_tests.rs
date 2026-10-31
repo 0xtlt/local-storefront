@@ -1629,3 +1629,107 @@ fn gift_cards_are_issued_credited_debited_and_deactivated() {
         json!([{"field": ["input", "code"], "message": "Code has already been taken", "code": "TAKEN"}])
     );
 }
+
+/// The `handle` (or `title`) of each node of a page.
+fn handles(page: &Value) -> Vec<String> {
+    page["nodes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a page: {page}"))
+        .iter()
+        .map(|node| {
+            node.get("handle")
+                .or_else(|| node.get("title"))
+                .and_then(Value::as_str)
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn products_and_variants_sort_and_search_as_shopify_documents() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        r#"{ byInventory: products(first: 3, sortKey: INVENTORY_TOTAL, reverse: true) { nodes { handle totalInventory } }
+            bySku: products(first: 5, query: "sku:MUG-OAT") { nodes { handle } }
+            cheap: products(first: 10, query: "price:<20", sortKey: TITLE) { nodes { handle } }
+            stocked: products(first: 10, query: "inventory_total:>50") { nodes { handle totalInventory } }
+            free: products(first: 5, query: "BNE-NVY") { nodes { handle } }
+            reduced: productsCount(query: "is_price_reduced:true") { count }
+            variants: productVariants(first: 3, query: "product_type:* sku:TEE*", sortKey: SKU) { nodes { sku } }
+            byOption: productVariants(first: 5, query: "option1:Navy") { nodes { sku } }
+            tags: productTags(first: 3) { nodes }
+            vendors: productVendors(first: 5) { nodes } }"#,
+    );
+    let data = &answer["data"];
+    assert!(answer.get("errors").is_none(), "{answer}");
+    let totals: Vec<i64> = data["byInventory"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["totalInventory"].as_i64().unwrap())
+        .collect();
+    assert!(
+        totals.windows(2).all(|pair| pair[0] >= pair[1]),
+        "{totals:?}"
+    );
+    assert_eq!(handles(&data["bySku"]), ["ceramic-mug"]);
+    assert!(handles(&data["cheap"]).contains(&"merino-crew-socks".to_string()));
+    let stocked = data["stocked"]["nodes"].as_array().unwrap();
+    assert!(handles(&data["stocked"]).contains(&"merino-crew-socks".to_string()));
+    assert!(
+        stocked
+            .iter()
+            .all(|node| node["totalInventory"].as_i64().unwrap() > 50)
+    );
+    assert!(stocked.len() < shop.count("Product"));
+    assert_eq!(handles(&data["free"]), ["wool-beanie"]);
+    assert_eq!(
+        data["variants"]["nodes"],
+        json!([{"sku": "TEE-BLK-L"}, {"sku": "TEE-BLK-M"}, {"sku": "TEE-BLK-S"}])
+    );
+    assert_eq!(data["byOption"]["nodes"], json!([{"sku": "BNE-NVY"}]));
+    assert_eq!(data["tags"]["nodes"].as_array().unwrap().len(), 3);
+    assert_eq!(data["vendors"]["nodes"], json!(["Local Supply Co."]));
+    assert!(answer["extensions"].get("search").is_none(), "{answer}");
+}
+
+#[test]
+fn records_are_found_by_identifier_and_by_their_relations() {
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "ERP item", metafields: [{namespace: "erp", key: "id", type: "single_line_text_field", value: "A-42"}]}) { product { id } } }"#,
+    );
+    let id = created["data"]["productCreate"]["product"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mug = product(&shop, "ceramic-mug");
+    let frontpage = shop
+        .keys("Collection")
+        .find(|key| shop.get(key).unwrap()["handle"] == json!("frontpage"))
+        .unwrap()
+        .to_string();
+    let (item, location, level) = first_level(&shop, "ceramic-mug");
+    let answer = run_with(
+        &mut shop,
+        r#"query($mug: ID!, $frontpage: ID!, $item: ID!, $location: ID!) {
+            byCustomId: productByIdentifier(identifier: {customId: {namespace: "erp", key: "id", value: "A-42"}}) { id }
+            byHandle: productByIdentifier(identifier: {handle: "ceramic-mug"}) { id inCollection(id: $frontpage) }
+            collection: collectionByIdentifier(identifier: {handle: "frontpage"}) { id hasProduct(id: $mug) }
+            item: inventoryItem(id: $item) { inventoryLevel(locationId: $location) { id } }
+            location: location(id: $location) { inventoryLevel(inventoryItemId: $item) { id } } }"#,
+        json!({"mug": mug, "frontpage": frontpage, "item": item, "location": location}),
+    );
+    let data = &answer["data"];
+    assert_eq!(data["byCustomId"]["id"], json!(id));
+    assert_eq!(data["byHandle"], json!({"id": mug, "inCollection": true}));
+    assert_eq!(
+        data["collection"],
+        json!({"id": frontpage, "hasProduct": true})
+    );
+    assert_eq!(data["item"]["inventoryLevel"]["id"], json!(level));
+    assert_eq!(data["location"]["inventoryLevel"]["id"], json!(level));
+}

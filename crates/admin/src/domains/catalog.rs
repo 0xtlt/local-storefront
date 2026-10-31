@@ -21,6 +21,7 @@ mod options;
 mod product_set;
 mod products;
 mod publications;
+mod queries;
 mod records;
 mod selling_plans;
 mod variants;
@@ -1303,6 +1304,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     selling_plans::register(registry);
     publications::register(registry);
     gift_cards::register(registry);
+    queries::register(registry);
     registry.field("InventoryLevel", "quantities", level_quantities);
 }
 
