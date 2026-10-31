@@ -132,6 +132,18 @@ const VALUES: &[(&str, &str)] = &[
     // The example of `out_of_stock` is the same variant with no stock; the sample has some.
     ("variants/out_of_stock", ".inventory_quantity"),
     ("variants/out_of_stock", ".old_inventory_quantity"),
+    // The example's line has no discount yet reports one of 39.98: lsf reports none.
+    ("carts/*", ".line_items[0].total_discount"),
+    // The example's two lines of 567 g weigh 1133 g; lsf sums them (1134). The locations a
+    // line ships from and to, and the tax zone, are not in GraphQL's checkout: lsf leaves them
+    // null.
+    ("checkouts/*", ".total_weight"),
+    ("checkouts/*", ".line_items[0].destination_location_id"),
+    ("checkouts/*", ".line_items[0].origin_location_id"),
+    ("checkouts/*", ".line_items[0].tax_lines[0].zone"),
+    ("checkouts/*", ".line_items[1].destination_location_id"),
+    ("checkouts/*", ".line_items[1].origin_location_id"),
+    ("checkouts/*", ".line_items[1].tax_lines[0].zone"),
     ("customers/data_request", "."),
     ("customers/redact", "."),
     ("shop/redact", "."),
@@ -438,9 +450,12 @@ fn deletes_send_what_shopify_sends() {
 
 #[test]
 fn a_topic_without_a_builder_has_no_payload() {
-    let record = record(json!({"id": "gid://shopify/Cart/1"}));
-    assert_eq!(payload("carts/create", &record, &Records::default()), None);
-    assert!(!is_built("carts/create"));
+    let record = record(json!({"id": "gid://shopify/Channel/1"}));
+    assert_eq!(
+        payload("channels/delete", &record, &Records::default()),
+        None
+    );
+    assert!(!is_built("channels/delete"));
     assert!(is_built("orders/create"));
     // Every built topic is a topic of the default version or a compliance topic.
     for topic in BUILT_TOPICS {

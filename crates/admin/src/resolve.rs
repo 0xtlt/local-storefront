@@ -1018,6 +1018,11 @@ impl ShopResolver<'_> {
             // One webhook per topic and record of this mutation (`ShopState::merge_events_from`).
             let start = self.state.event_count();
             let output = mutation::run(self, ctx);
+            // The segments the customers it changed joined or left, and their sales.
+            let (webhooks, shop) = (self.webhooks, self.state.domain().to_string());
+            crate::domains::segments::follow(self.state, start, &|topic| {
+                webhooks.is_some_and(|webhooks| webhooks.subscribes(&shop, topic))
+            });
             self.state.merge_events_from(start);
             return output;
         }

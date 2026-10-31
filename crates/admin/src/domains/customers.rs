@@ -224,6 +224,12 @@ pub fn contact_fields(record: &mut Record) {
             .cloned()
             .unwrap_or_else(consent::default_sms_consent)
     });
+    // The WhatsApp consent (`domains::privacy`), on the phone number as the schema has it.
+    let whatsapp = record
+        .get("whatsAppMarketingConsent")
+        .filter(|consent| consent.is_object())
+        .cloned()
+        .unwrap_or_else(crate::domains::privacy::default_whatsapp_consent);
     let default_phone = phone
         .as_ref()
         .zip(sms_consent.as_ref())
@@ -249,6 +255,7 @@ pub fn contact_fields(record: &mut Record) {
                     "collectedFrom": field("consentCollectedFrom"),
                     "sourceLocation": field("sourceLocation"),
                 },
+                "whatsAppMarketingConsent": whatsapp,
             })
         });
     record.insert("smsMarketingConsent".into(), json!(sms_consent));

@@ -1,0 +1,967 @@
+//! The storefront's carts and checkouts as the Admin API sees them: the `carts/create`,
+//! `carts/update`, `checkouts/create`, `checkouts/update` and `checkouts/delete` webhooks, the
+//! abandoned checkouts (`abandonedCheckouts`, `abandonedCheckoutsCount`), the abandonments of
+//! customers (`abandonment`, `abandonmentByAbandonedCheckoutId`), and
+//! `abandonmentUpdateActivitiesDeliveryStatuses`.
+//!
+//! The server reports what the buyer does (`lsf`'s cart routes and local checkout), through the
+//! default shop (`AdminApi::change_shop`):
+//!
+//! - **Carts** ([`record_cart`]): a cart that gets its first line, note or attribute is
+//!   `carts/create` ("Occurs when a cart is created in the online store"); each later change of
+//!   its lines, note or attributes `carts/update`. A cart is no record of the Admin API (its
+//!   GraphQL has none): the payload is built from the event, its `id` and `token` the cart's
+//!   token, its prices the variants' in the Admin API.
+//! - **Checkouts** ([`record_checkout`]): the first time the checkout of a cart is computed it is
+//!   `checkouts/create`, then each change of what the buyer sees (lines, contact, address,
+//!   delivery, payment, discount codes, totals) `checkouts/update`; placing the order
+//!   ([`complete_checkout`]) sets `completedAt` (`checkouts/update`). Each checkout is an
+//!   `AbandonedCheckout` record from its creation, numbered by the shop's counter (`name` is
+//!   `#<n>`), with its lines, totals, addresses and the customer (the one logged in, or the
+//!   customer whose email the buyer typed, as orders link guests). A checkout of the same cart
+//!   after an order is another one.
+//! - **Abandonment**: "A checkout is considered abandoned if it remains incomplete for more than
+//!   ten minutes" (Help Center, "Recovering abandoned checkouts"), and only once "a customer
+//!   adds contact information" (shopify.dev, `abandonedCheckouts`). `abandonedCheckouts` lists
+//!   those, by the shop's clock, and those recovered (completed after being abandoned: "Includes
+//!   both abandoned and recovered checkouts"). Its filters: `status` (`open`, `closed`),
+//!   `recovery_state` (`recovered`, `not_recovered`), `email_state` (`sent`, `not_sent`,
+//!   `scheduled`), `created_at`, `updated_at`, `id`; its sort keys include `CUSTOMER_NAME` and
+//!   `TOTAL_PRICE`. "Abandoned checkouts that are older than three months are automatically
+//!   deleted": [`delete_expired`] deletes them (`checkouts/delete`, `{"id": <n>}`).
+//! - **Abandonments**: a checkout of a customer (an `Abandonment` needs one: `customer:
+//!   Customer!`) has an `Abandonment` of type `CHECKOUT`, readable once the checkout is
+//!   abandoned; its other fields are computed when read (whether the customer ordered since,
+//!   hours since their last abandoned checkout, whether the products are still available, the
+//!   most significant one being the customer's latest). Its `app` is the app's record *(chosen:
+//!   lsf has no record of the Online Store app)*; lsf sends no abandoned checkout email, so
+//!   `emailState` is `null` until the app reports one with
+//!   `abandonmentUpdateActivitiesDeliveryStatuses` (`ABANDONMENT_NOT_FOUND`,
+//!   `MARKETING_ACTIVITY_NOT_FOUND`), which sets `emailState` and, when `SENT`, `emailSentAt`.
+//!
+//! Carts and checkouts are not store data: they do not sync. The payloads follow the examples of
+//! shopify.dev's webhook reference, field by field.
+
+use chrono::{DateTime, Duration, Utc};
+use lsf_core::util::stable_id;
+use serde_json::{Value, json};
+
+use crate::domains::catalog::cents_of;
+use crate::graphql::{FieldContext, FieldError, Output};
+use crate::resolve::sort::SortValue;
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::search::SearchValue;
+use crate::state::value::{self, money_bag};
+use crate::state::{Record, ShopState, gid};
+
+/// How long a checkout stays incomplete before it is abandoned (Help Center: "more than ten
+/// minutes").
+pub const ABANDONMENT_DELAY_MINUTES: i64 = 10;
+
+/// How long the admin keeps an abandoned checkout ("older than three months are automatically
+/// deleted").
+pub const RETENTION_DAYS: i64 = 90;
+
+/// A line of a cart, as the server reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CartLine {
+    pub variant_id: u64,
+    pub quantity: u32,
+    pub properties: Vec<(String, String)>,
+    /// The line's key, as `/cart.js` gives it.
+    pub key: String,
+}
+
+/// A cart of the storefront, as the server reports it after a change.
+#[derive(Clone, Debug)]
+pub struct Cart<'a> {
+    pub token: &'a str,
+    pub note: &'a str,
+    pub attributes: &'a [(String, String)],
+    pub lines: &'a [CartLine],
+}
+
+/// A checkout of the local checkout, as the server computed it.
+#[derive(Clone, Debug)]
+pub struct Checkout<'a> {
+    /// The token of the cart the checkout is of.
+    pub cart_token: &'a str,
+    /// How many orders the session placed before this checkout: a cart's checkouts after an
+    /// order are other checkouts.
+    pub generation: u64,
+    pub result: &'a lsf_checkout::CheckoutResult,
+    pub customer_id: Option<u64>,
+    pub email: Option<&'a str>,
+    pub phone: Option<&'a str>,
+    pub shipping_address: Option<&'a lsf_checkout::Address>,
+    pub note: &'a str,
+    pub attributes: &'a [(String, String)],
+    /// The name of the payment method chosen: the checkout's gateway.
+    pub payment: Option<&'a str>,
+    /// The language of the checkout (`fr`).
+    pub locale: Option<&'a str>,
+}
+
+pub fn register(registry: &mut Registry) {
+    registry
+        .mutation(
+            "abandonmentUpdateActivitiesDeliveryStatuses",
+            update_delivery_statuses,
+        )
+        .query("abandonedCheckouts", abandoned_checkouts)
+        .query("abandonedCheckoutsCount", abandoned_checkouts_count)
+        .query("abandonment", abandonment)
+        .query("abandonmentByAbandonedCheckoutId", abandonment_by_checkout)
+        .field(
+            "Abandonment",
+            "customerHasNoOrderSinceAbandonment",
+            |r, _ctx, object| Ok(Output::value(!customer_ordered_since(r, object, "Order"))),
+        )
+        .field(
+            "Abandonment",
+            "customerHasNoDraftOrderSinceAbandonment",
+            |r, _ctx, object| {
+                Ok(Output::value(!customer_ordered_since(
+                    r,
+                    object,
+                    "DraftOrder",
+                )))
+            },
+        )
+        .field(
+            "Abandonment",
+            "daysSinceLastAbandonmentEmail",
+            |r, _ctx, object| {
+                let sent = r
+                    .map_of(object)
+                    .and_then(|record| instant(record.get("emailSentAt")));
+                Ok(Output::value(sent.map_or(0, |sent| {
+                    (r.state().now() - sent).num_days().max(0)
+                })))
+            },
+        )
+        .field(
+            "Abandonment",
+            "hoursSinceLastAbandonedCheckout",
+            |r, _ctx, object| {
+                let customer = r
+                    .map_of(object)
+                    .and_then(|record| record.get("customer"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                Ok(match last_abandonment(r.state(), customer) {
+                    Some(at) => {
+                        Output::value((r.state().now() - at).num_seconds().max(0) as f64 / 3600.0)
+                    }
+                    None => Output::Null,
+                })
+            },
+        )
+        .field("Abandonment", "inventoryAvailable", |r, _ctx, object| {
+            Ok(Output::value(inventory_available(r, object)))
+        })
+        .field(
+            "Abandonment",
+            "isMostSignificantAbandonment",
+            |r, _ctx, object| {
+                let customer = r
+                    .map_of(object)
+                    .and_then(|record| record.get("customer"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let latest = latest_abandonment_of(r.state(), customer);
+                Ok(Output::value(latest.as_deref() == object.key()))
+            },
+        )
+        .field(
+            "Abandonment",
+            "lastBrowseAbandonmentDate",
+            last_abandonment_date,
+        )
+        .field(
+            "Abandonment",
+            "lastCartAbandonmentDate",
+            last_abandonment_date,
+        )
+        .field(
+            "Abandonment",
+            "lastCheckoutAbandonmentDate",
+            last_abandonment_date,
+        )
+        .search_field("AbandonedCheckout", "status", |_r, _item, record| {
+            let closed = record.get("completedAt").is_some_and(|at| !at.is_null());
+            Some(vec![SearchValue::Keyword(
+                if closed { "closed" } else { "open" }.into(),
+            )])
+        })
+        .search_field(
+            "AbandonedCheckout",
+            "recovery_state",
+            |_r, _item, record| {
+                let recovered = record.get("lsfRecovered").and_then(Value::as_bool) == Some(true);
+                Some(vec![SearchValue::Keyword(
+                    if recovered {
+                        "recovered"
+                    } else {
+                        "not_recovered"
+                    }
+                    .into(),
+                )])
+            },
+        )
+        .search_field("AbandonedCheckout", "email_state", |r, _item, record| {
+            let state = record
+                .get("lsfAbandonment")
+                .and_then(Value::as_str)
+                .and_then(|abandonment| r.state().get(abandonment))
+                .and_then(|abandonment| abandonment.get("emailState"))
+                .and_then(Value::as_str)
+                .unwrap_or("NOT_SENT")
+                .to_ascii_lowercase();
+            Some(vec![SearchValue::Keyword(state)])
+        })
+        .sort_key("AbandonedCheckout", "CHECKOUT_ID", |_r, item| {
+            SortValue::of(
+                item.as_str()
+                    .and_then(crate::state::parse_gid)
+                    .map(|(_, id)| json!(id))
+                    .as_ref(),
+            )
+        })
+        .sort_key("AbandonedCheckout", "TOTAL_PRICE", |r, item| {
+            SortValue::of(
+                r.item_map(item)
+                    .and_then(|record| record.get("totalPriceSet"))
+                    .and_then(|set| set.pointer("/shopMoney/amount")),
+            )
+        })
+        .sort_key("AbandonedCheckout", "CUSTOMER_NAME", |r, item| {
+            SortValue::of(
+                r.item_map(item)
+                    .and_then(|record| record.get("customer"))
+                    .and_then(Value::as_str)
+                    .and_then(|customer| r.state().get(customer))
+                    .and_then(|customer| customer.get("displayName")),
+            )
+        })
+        .default_text("AbandonedCheckout", |r, record| {
+            let mut texts: Vec<String> = ["name", "lsfEmail"]
+                .iter()
+                .filter_map(|field| record.get(*field).and_then(Value::as_str))
+                .map(str::to_string)
+                .collect();
+            if let Some(name) = record
+                .get("customer")
+                .and_then(Value::as_str)
+                .and_then(|customer| r.state().get(customer))
+                .and_then(|customer| customer.get("displayName"))
+                .and_then(Value::as_str)
+            {
+                texts.push(name.to_string());
+            }
+            texts
+        });
+}
+
+fn instant(value: Option<&Value>) -> Option<DateTime<Utc>> {
+    value
+        .and_then(Value::as_str)
+        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+        .map(|at| at.with_timezone(&Utc))
+}
+
+fn shop_currency(state: &ShopState) -> String {
+    crate::domains::customers::shop_currency(state)
+}
+
+// --- Carts ---
+
+/// What the webhooks of a cart report of its lines: the variants' prices and details as the
+/// Admin API has them.
+fn cart_lines(state: &ShopState, lines: &[CartLine]) -> Vec<Value> {
+    lines
+        .iter()
+        .map(|line| {
+            let variant_gid = gid("ProductVariant", line.variant_id);
+            let variant = state.get(&variant_gid);
+            let product = variant
+                .and_then(|variant| variant.get("product"))
+                .and_then(Value::as_str)
+                .and_then(|product| state.get(product));
+            let price = cents_of(variant.and_then(|variant| variant.get("price"))).unwrap_or(0);
+            let title = product
+                .and_then(|product| product.get("title"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let variant_title = variant
+                .and_then(|variant| variant.get("title"))
+                .and_then(Value::as_str)
+                .filter(|title| *title != "Default Title");
+            let weight = variant
+                .and_then(|variant| variant.get("inventoryItem"))
+                .and_then(Value::as_str)
+                .and_then(|item| state.get(item))
+                .and_then(|item| item.get("measurement"))
+                .and_then(|measurement| measurement.get("weight"))
+                .cloned();
+            json!({
+                "id": line.variant_id,
+                "variant": variant_gid,
+                "product": variant.and_then(|variant| variant.get("product")),
+                "key": line.key,
+                "quantity": line.quantity,
+                "properties": line.properties.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
+                "price": value::money(price),
+                "linePrice": value::money(price.saturating_mul(i64::from(line.quantity))),
+                "title": match variant_title {
+                    Some(variant_title) => format!("{title} - {variant_title}"),
+                    None => title.to_string(),
+                },
+                "sku": variant.and_then(|variant| variant.get("sku")),
+                "taxable": variant.and_then(|variant| variant.get("taxable")).cloned().unwrap_or(json!(true)),
+                "vendor": product.and_then(|product| product.get("vendor")),
+                "giftCard": product.and_then(|product| product.get("isGiftCard")).cloned().unwrap_or(json!(false)),
+                "weight": weight,
+            })
+        })
+        .collect()
+}
+
+/// Records a change of a storefront cart: `carts/create` for a cart that had nothing, else
+/// `carts/update`. A cart that is still empty is no cart: nothing happens.
+pub fn record_cart(state: &mut ShopState, cart: &Cart<'_>) {
+    let empty = cart.lines.is_empty() && cart.note.is_empty() && cart.attributes.is_empty();
+    let memo = format!("carts/{}", cart.token);
+    let known = state.memo(&memo).cloned();
+    if known.is_none() && empty {
+        return;
+    }
+    let now = state.timestamp();
+    let created = known
+        .as_ref()
+        .and_then(|known| known.get("createdAt").cloned())
+        .unwrap_or_else(|| json!(now));
+    let topic = if known.is_none() {
+        "carts/create"
+    } else {
+        "carts/update"
+    };
+    state.set_memo(memo, json!({"createdAt": created}));
+    let snapshot = value::object(json!({
+        "__typename": "Cart",
+        "token": cart.token,
+        "note": cart.note,
+        "attributes": cart.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
+        "lineItems": cart_lines(state, cart.lines),
+        "currencyCode": shop_currency(state),
+        "createdAt": created,
+        "updatedAt": now,
+    }));
+    state.emit_with(topic, &format!("cart/{}", cart.token), snapshot);
+}
+
+// --- Checkouts ---
+
+fn checkout_key(cart_token: &str, generation: u64) -> String {
+    format!("checkouts/{cart_token}/{generation}")
+}
+
+/// The `AbandonedCheckout` of a cart's checkout, if it has one.
+fn checkout_of(state: &ShopState, cart_token: &str, generation: u64) -> Option<String> {
+    state
+        .memo(&checkout_key(cart_token, generation))
+        .and_then(Value::as_str)
+        .filter(|id| state.contains(id))
+        .map(str::to_string)
+}
+
+/// A customer of the shop by email, ignoring case: the customer a guest's checkout is linked to.
+fn customer_by_email(state: &ShopState, email: &str) -> Option<String> {
+    let email = email.trim();
+    if email.is_empty() {
+        return None;
+    }
+    state
+        .all("Customer")
+        .find(|customer| {
+            customer
+                .get("email")
+                .and_then(Value::as_str)
+                .is_some_and(|known| known.eq_ignore_ascii_case(email))
+        })
+        .and_then(|customer| customer.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+fn mailing_address(address: &lsf_checkout::Address, id: &str) -> Value {
+    let address = address.clone().normalized();
+    let core = lsf_core::store::Address {
+        id: stable_id("address", &format!("{id}/checkout")),
+        first_name: address.first_name.unwrap_or_default(),
+        last_name: address.last_name.unwrap_or_default(),
+        company: address.company.unwrap_or_default(),
+        address1: address.address1.unwrap_or_default(),
+        address2: address.address2.unwrap_or_default(),
+        city: address.city.unwrap_or_default(),
+        province: String::new(),
+        province_code: address.province_code.unwrap_or_default(),
+        country: address
+            .country_code
+            .as_deref()
+            .and_then(lsf_core::store::reference::country_name)
+            .unwrap_or_default()
+            .to_string(),
+        country_code: address.country_code.unwrap_or_default(),
+        zip: address.zip.unwrap_or_default(),
+        phone: address.phone.unwrap_or_default(),
+    };
+    value::mailing_address(&core, "Address")
+}
+
+/// The fields of a checkout's record as the result gives them.
+fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Record {
+    let result = checkout.result;
+    let currency = if result.cost.currency_code.is_empty() {
+        shop_currency(state)
+    } else {
+        result.cost.currency_code.to_ascii_uppercase()
+    };
+    let bag = |cents: i64| money_bag(cents, &currency);
+    let lines: Vec<Value> = result
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(position, line)| {
+            let variant = gid("ProductVariant", line.variant_id);
+            let quantity = i64::from(line.quantity);
+            let unit_after = if quantity > 0 { line.total / quantity } else { line.total };
+            json!({
+                "id": gid("AbandonedCheckoutLineItem", stable_id("abandoned_checkout_line_item", &format!("{id}/{position}"))),
+                // The key of the line in the checkout's webhooks: 32 hexadecimal digits, as
+                // Shopify's.
+                "lsfKey": value::uuid(&format!("{id}/{}/{position}", line.id)).replace('-', ""),
+                "title": line.title,
+                "variantTitle": line.variant_title.clone().filter(|title| title != "Default Title"),
+                "sku": line.sku,
+                "quantity": line.quantity,
+                "product": gid("Product", line.product_id),
+                "variant": variant,
+                "image": line.image.as_ref().map(|url| json!({"url": url, "altText": line.image_alt})),
+                "originalUnitPriceSet": bag(line.unit_price),
+                "originalTotalPriceSet": bag(line.subtotal),
+                "discountedUnitPriceSet": bag(unit_after),
+                "discountedTotalPriceSet": bag(line.total),
+                "discountedUnitPriceWithCodeDiscount": bag(unit_after),
+                "discountedTotalPriceWithCodeDiscount": bag(line.total),
+                "customAttributes": line.attributes.iter().map(|attribute| json!({"key": attribute.key, "value": attribute.value})).collect::<Vec<_>>(),
+                "discountAllocations": [],
+                "components": null,
+                "parentRelationship": null,
+                "requiresShipping": line.requires_shipping,
+                "vendor": line.vendor,
+            })
+        })
+        .collect();
+    let quantity: u32 = result.lines.iter().map(|line| line.quantity).sum();
+    let address = checkout
+        .shipping_address
+        .filter(|address| address.country_code.is_some() || address.address1.is_some())
+        .map(|address| mailing_address(address, id));
+    let shipping: Vec<Value> = result
+        .delivery_groups
+        .iter()
+        .filter_map(|group| {
+            let handle = group.selected.as_ref()?;
+            let option = group
+                .options
+                .iter()
+                .find(|option| &option.handle == handle)?;
+            Some(json!({
+                "title": option.title,
+                "handle": option.handle,
+                "price": value::money(group.selected_cost()),
+            }))
+        })
+        .collect();
+    let rate = state
+        .setting("taxRateBps")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let mut fields = value::object(json!({
+        "updatedAt": state.timestamp(),
+        "lineItems": lines,
+        "lineItemsQuantity": quantity,
+        "subtotalPriceSet": bag(result.cost.subtotal - result.cost.discounts),
+        "totalLineItemsPriceSet": bag(result.cost.subtotal),
+        "totalDiscountSet": bag(result.cost.discounts),
+        "totalTaxSet": bag(result.cost.tax),
+        "totalPriceSet": bag(result.cost.total),
+        "totalDutiesSet": null,
+        "taxLines": if result.cost.tax > 0 {
+            json!([{"title": "Tax", "rate": rate as f64 / 10_000.0, "priceSet": bag(result.cost.tax), "channelLiable": false}])
+        } else {
+            json!([])
+        },
+        "taxesIncluded": false,
+        "discountCodes": result.discount_codes.iter().filter(|code| code.applicable).map(|code| code.code.clone()).collect::<Vec<_>>(),
+        "note": checkout.note,
+        "customAttributes": checkout.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
+        "shippingAddress": address,
+        "billingAddress": address,
+        // What the webhooks report that GraphQL's `AbandonedCheckout` does not show.
+        "lsfEmail": checkout.email.filter(|email| !email.trim().is_empty()),
+        "lsfPhone": checkout.phone.filter(|phone| !phone.trim().is_empty()),
+        "lsfGateway": checkout.payment,
+        "lsfShippingLines": shipping,
+        "lsfLocale": checkout.locale,
+        "lsfCurrency": currency,
+    }));
+    let customer = checkout
+        .customer_id
+        .map(|id| gid("Customer", id))
+        .filter(|customer| state.contains(customer))
+        .or_else(|| {
+            checkout
+                .email
+                .and_then(|email| customer_by_email(state, email))
+        });
+    fields.insert("customer".into(), json!(customer));
+    fields
+}
+
+/// What a webhook reports of a checkout: the fields that change it, without the dates.
+fn fingerprint(fields: &Record) -> Value {
+    let mut fields = fields.clone();
+    fields.remove("updatedAt");
+    Value::Object(fields)
+}
+
+/// Records the checkout of a cart as the server just computed it: `checkouts/create` the first
+/// time, `checkouts/update` when what it reports changed. Answers the `AbandonedCheckout`.
+pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option<String> {
+    if checkout.result.lines.is_empty() {
+        return checkout_of(state, checkout.cart_token, checkout.generation);
+    }
+    delete_expired(state);
+    let now = state.timestamp();
+    match checkout_of(state, checkout.cart_token, checkout.generation) {
+        Some(id) => {
+            if state
+                .get(&id)
+                .is_some_and(|record| record.get("completedAt").is_some_and(|at| !at.is_null()))
+            {
+                return Some(id);
+            }
+            let fields = checkout_fields(state, &id, checkout);
+            let before = state.get(&id).map(|record| {
+                let mut known = Record::new();
+                for key in fields.keys() {
+                    if let Some(value) = record.get(key) {
+                        known.insert(key.clone(), value.clone());
+                    }
+                }
+                fingerprint(&known)
+            });
+            if before.as_ref() == Some(&fingerprint(&fields)) {
+                return Some(id);
+            }
+            if let Some(record) = state.get_mut(&id) {
+                record.extend(fields);
+                record.insert("lsfLastActivityAt".into(), json!(now));
+            }
+            ensure_abandonment(state, &id);
+            state.emit("checkouts/update", &id);
+            Some(id)
+        }
+        None => {
+            let id = state.new_gid("AbandonedCheckout");
+            let number = crate::state::parse_gid(&id).map_or(0, |(_, n)| n);
+            let domain = state
+                .shop()
+                .and_then(|shop| shop.get("primaryDomain"))
+                .and_then(Value::as_str)
+                .and_then(|domain| state.get(domain))
+                .and_then(|domain| domain.get("host"))
+                .and_then(Value::as_str)
+                .unwrap_or(state.domain())
+                .to_string();
+            let shop_number = state
+                .shop_gid()
+                .and_then(crate::state::parse_gid)
+                .map_or(0, |(_, n)| n);
+            let key = value::uuid(&format!("abandoned-checkout-key/{id}")).replace('-', "");
+            let mut record = value::object(json!({
+                "__typename": "AbandonedCheckout",
+                "id": id,
+                "name": format!("#{number}"),
+                "abandonedCheckoutUrl": format!(
+                    "https://{domain}/{shop_number}/checkouts/ac/{}/recover?key={key}",
+                    checkout.cart_token
+                ),
+                "createdAt": now,
+                "completedAt": null,
+                "lsfToken": value::uuid(&format!("checkout-token/{id}")).replace('-', ""),
+                "lsfCartToken": checkout.cart_token,
+                "lsfLastActivityAt": now,
+                "lsfRecovered": false,
+            }));
+            record.extend(checkout_fields(state, &id, checkout));
+            state.insert_as(id.clone(), record);
+            state.set_memo(
+                checkout_key(checkout.cart_token, checkout.generation),
+                json!(id),
+            );
+            ensure_abandonment(state, &id);
+            state.emit("checkouts/create", &id);
+            Some(id)
+        }
+    }
+}
+
+/// Gives a checkout of a customer its `Abandonment`, when it has none yet.
+fn ensure_abandonment(state: &mut ShopState, checkout: &str) {
+    let Some(record) = state.get(checkout) else {
+        return;
+    };
+    if record
+        .get("lsfAbandonment")
+        .is_some_and(|known| !known.is_null())
+    {
+        return;
+    }
+    let Some(customer) = record
+        .get("customer")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let created = record.get("createdAt").cloned().unwrap_or(Value::Null);
+    let products: Vec<Value> = record
+        .get("lineItems")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|line| {
+            json!({
+                "product": line.get("product"),
+                "variant": line.get("variant"),
+                "quantity": line.get("quantity"),
+            })
+        })
+        .collect();
+    let app = state.keys("App").next().map(str::to_string);
+    let id = state.new_gid("Abandonment");
+    state.insert_as(
+        id.clone(),
+        value::object(json!({
+            "__typename": "Abandonment",
+            "id": id,
+            "abandonmentType": "CHECKOUT",
+            "mostRecentStep": "CHECKOUT",
+            "abandonedCheckoutPayload": checkout,
+            "app": app,
+            "cartUrl": null,
+            "createdAt": created,
+            "customer": customer,
+            "emailState": null,
+            "emailSentAt": null,
+            "isFromOnlineStore": true,
+            "isFromShopApp": false,
+            "isFromShopPay": false,
+            "isFromCustomStorefront": false,
+            "visitStartedAt": null,
+            "productsAddedToCart": products,
+            "productsViewed": [],
+            "lsfDeliveries": [],
+        })),
+    );
+    if let Some(record) = state.get_mut(checkout) {
+        record.insert("lsfAbandonment".into(), json!(id));
+    }
+}
+
+/// Records that the checkout of a cart was completed by an order: `completedAt` is set, and a
+/// checkout that was abandoned before is recovered.
+pub fn complete_checkout(state: &mut ShopState, cart_token: &str, generation: u64) {
+    let Some(id) = checkout_of(state, cart_token, generation) else {
+        return;
+    };
+    let now = state.now();
+    let Some(record) = state.get(&id) else {
+        return;
+    };
+    if record.get("completedAt").is_some_and(|at| !at.is_null()) {
+        return;
+    }
+    let recovered = is_abandoned_at(record, now);
+    if let Some(record) = state.get_mut(&id) {
+        record.insert("completedAt".into(), json!(value::date_time(now)));
+        record.insert("updatedAt".into(), json!(value::date_time(now)));
+        record.insert("lsfRecovered".into(), json!(recovered));
+    }
+    state.emit("checkouts/update", &id);
+}
+
+/// Whether a checkout is abandoned at `now`: it has contact information, and it was left
+/// incomplete for more than the delay.
+fn is_abandoned_at(record: &Record, now: DateTime<Utc>) -> bool {
+    let contact = ["lsfEmail", "lsfPhone"].iter().any(|field| {
+        record
+            .get(*field)
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty())
+    });
+    let last = instant(record.get("lsfLastActivityAt"));
+    contact && last.is_some_and(|last| now - last > Duration::minutes(ABANDONMENT_DELAY_MINUTES))
+}
+
+/// Whether `abandonedCheckouts` lists a checkout: abandoned now, or recovered.
+pub fn is_listed(state: &ShopState, record: &Record) -> bool {
+    let completed = record.get("completedAt").is_some_and(|at| !at.is_null());
+    if completed {
+        return record.get("lsfRecovered").and_then(Value::as_bool) == Some(true);
+    }
+    is_abandoned_at(record, state.now())
+}
+
+/// When the customer last abandoned a checkout (its last activity, if it is abandoned now):
+/// what `abandoned_checkout_date` reads.
+pub fn last_abandonment(state: &ShopState, customer: &str) -> Option<DateTime<Utc>> {
+    state
+        .all("AbandonedCheckout")
+        .filter(|record| record.get("customer").and_then(Value::as_str) == Some(customer))
+        .filter(|record| is_listed(state, record))
+        .filter_map(|record| instant(record.get("lsfLastActivityAt")))
+        .max()
+}
+
+/// The customer's latest abandonment that is listed.
+fn latest_abandonment_of(state: &ShopState, customer: &str) -> Option<String> {
+    state
+        .all("Abandonment")
+        .filter(|record| record.get("customer").and_then(Value::as_str) == Some(customer))
+        .filter(|record| abandonment_listed(state, record))
+        .max_by_key(|record| instant(record.get("createdAt")))
+        .and_then(|record| record.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+/// Whether an abandonment is readable: its checkout is abandoned (or recovered).
+fn abandonment_listed(state: &ShopState, abandonment: &Record) -> bool {
+    abandonment
+        .get("abandonedCheckoutPayload")
+        .and_then(Value::as_str)
+        .and_then(|checkout| state.get(checkout))
+        .is_some_and(|checkout| is_listed(state, checkout))
+}
+
+/// Deletes the abandoned checkouts older than three months, as the admin does:
+/// `checkouts/delete` for each, its abandonment with it.
+pub fn delete_expired(state: &mut ShopState) -> usize {
+    let now = state.now();
+    let expired: Vec<String> = state
+        .all("AbandonedCheckout")
+        .filter(|record| {
+            instant(record.get("lsfLastActivityAt"))
+                .is_some_and(|last| now - last > Duration::days(RETENTION_DAYS))
+        })
+        .filter_map(|record| record.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    for id in &expired {
+        let abandonment = state
+            .get(id)
+            .and_then(|record| record.get("lsfAbandonment"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        state.delete(id, "checkouts/delete");
+        if let Some(abandonment) = abandonment {
+            state.remove(&abandonment);
+        }
+    }
+    expired.len()
+}
+
+// --- Queries ---
+
+fn listed_checkouts(r: &ShopResolver<'_>) -> Vec<Value> {
+    r.state()
+        .all("AbandonedCheckout")
+        .filter(|record| is_listed(r.state(), record))
+        .filter_map(|record| record.get("id").cloned())
+        .collect()
+}
+
+fn abandoned_checkouts(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    r.connection(ctx, listed_checkouts(r))
+}
+
+fn abandoned_checkouts_count(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let items = r.search(ctx, "AbandonedCheckout", listed_checkouts(r));
+    Ok(r.count(ctx, items.len()))
+}
+
+fn abandonment(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let id = ctx.arg_str("id").unwrap_or_default();
+    let state = r.state();
+    Ok(Output::object_or_null(
+        state
+            .get(id)
+            .filter(|_| state.type_of(id) == Some("Abandonment"))
+            .filter(|record| abandonment_listed(state, record))
+            .map(|_| Obj::record(id)),
+    ))
+}
+
+fn abandonment_by_checkout(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let checkout = ctx.arg_str("abandonedCheckoutId").unwrap_or_default();
+    let state = r.state();
+    let found = state
+        .get(checkout)
+        .filter(|record| is_listed(state, record))
+        .and_then(|record| record.get("lsfAbandonment"))
+        .and_then(Value::as_str)
+        .filter(|abandonment| state.contains(abandonment));
+    Ok(Output::object_or_null(found.map(Obj::record)))
+}
+
+/// Whether the customer of an abandonment placed an order (a draft order) since.
+fn customer_ordered_since(r: &ShopResolver<'_>, object: &Obj, type_name: &str) -> bool {
+    let Some(record) = r.map_of(object) else {
+        return false;
+    };
+    let customer = record.get("customer").and_then(Value::as_str);
+    let since = instant(record.get("createdAt"));
+    r.state().all(type_name).any(|order| {
+        order.get("customer").and_then(Value::as_str) == customer
+            && instant(order.get("createdAt"))
+                .zip(since)
+                .is_some_and(|(at, since)| at >= since)
+    })
+}
+
+/// Whether the variants of an abandonment's checkout are still for sale.
+fn inventory_available(r: &ShopResolver<'_>, object: &Obj) -> bool {
+    r.map_of(object)
+        .and_then(|record| record.get("productsAddedToCart"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|product| product.get("variant").and_then(Value::as_str))
+        .all(|variant| {
+            r.state()
+                .get(variant)
+                .and_then(|record| record.get("availableForSale"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+}
+
+/// `lastCheckoutAbandonmentDate` (and the cart's and the browse's: lsf records the checkout
+/// only): when the customer last abandoned a checkout, else the abandonment's date.
+fn last_abandonment_date(
+    r: &ShopResolver<'_>,
+    _ctx: &FieldContext<'_>,
+    object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let Some(record) = r.map_of(object) else {
+        return Ok(Output::Null);
+    };
+    let customer = record
+        .get("customer")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let at = last_abandonment(r.state(), customer)
+        .map(value::date_time)
+        .or_else(|| {
+            record
+                .get("createdAt")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    Ok(Output::value(at))
+}
+
+/// `abandonmentUpdateActivitiesDeliveryStatuses`.
+fn update_delivery_statuses(
+    m: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let abandonment = ctx.arg_str("abandonmentId").unwrap_or_default().to_string();
+    let activity = ctx
+        .arg_str("marketingActivityId")
+        .unwrap_or_default()
+        .to_string();
+    let status = ctx
+        .arg_str("deliveryStatus")
+        .unwrap_or("NOT_SENT")
+        .to_string();
+    let mut errors = Vec::new();
+    if m.state().type_of(&abandonment) != Some("Abandonment") {
+        // lsf's words for the codes of `AbandonmentUpdateActivitiesDeliveryStatusesUserErrorCode`.
+        errors.push(
+            UserError::new(&["abandonmentId"], "Abandonment not found")
+                .code("ABANDONMENT_NOT_FOUND"),
+        );
+    }
+    if m.state().type_of(&activity) != Some("MarketingActivity") {
+        errors.push(
+            UserError::new(&["marketingActivityId"], "Marketing activity not found")
+                .code("MARKETING_ACTIVITY_NOT_FOUND"),
+        );
+    }
+    if !errors.is_empty() {
+        return Ok(payload(json!({"abandonment": null}), &errors));
+    }
+    let delivered = ctx
+        .arg_str("deliveredAt")
+        .map(str::to_string)
+        .or_else(|| (status == "SENT").then(|| m.timestamp()));
+    let reason = ctx
+        .arg_str("deliveryStatusChangeReason")
+        .map(str::to_string);
+    let state = m.state_mut();
+    if let Some(record) = state.get_mut(&abandonment) {
+        let mut deliveries: Vec<Value> = record
+            .get("lsfDeliveries")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|delivery| {
+                delivery.get("marketingActivity").and_then(Value::as_str) != Some(activity.as_str())
+            })
+            .cloned()
+            .collect();
+        deliveries.push(json!({
+            "marketingActivity": activity,
+            "deliveryStatus": status,
+            "deliveredAt": delivered,
+            "reason": reason,
+        }));
+        record.insert("lsfDeliveries".into(), json!(deliveries));
+        record.insert("emailState".into(), json!(status));
+        if status == "SENT" {
+            record.insert("emailSentAt".into(), json!(delivered));
+        }
+    }
+    state.emit(crate::domains::app::CHANGED, &abandonment);
+    Ok(payload(json!({"abandonment": abandonment}), &[]))
+}

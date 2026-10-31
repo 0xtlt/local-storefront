@@ -27,6 +27,7 @@ mod selling_plans;
 mod variants;
 
 pub use collections::apply_rules;
+pub use media::done_job;
 pub use products::{delete_product, tags_of};
 pub use records::{after_inventory_change, stock_of};
 
