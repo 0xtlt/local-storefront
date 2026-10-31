@@ -547,27 +547,18 @@ fn order_cancel_voids_refunds_and_restocks() {
         refund["parentTransaction"]["id"],
         before["transactions"][0]["id"]
     );
-    let tracked = line_is_tracked(&shop, &item);
-    let restocked = if tracked {
-        line["quantity"].as_i64().unwrap()
-    } else {
-        0
-    };
-    assert_eq!(available(&shop, &item), available_before + restocked);
-    // The units go back in stock, then the money goes back.
-    let mut expected = if tracked {
-        vec!["inventory_levels/update"]
-    } else {
-        Vec::new()
-    };
-    expected.extend([
-        "order_transactions/create",
-        "refunds/create",
-        "fulfillment_orders/cancelled",
-        "orders/cancelled",
-        "orders/updated",
-    ]);
-    assert_eq!(topics(&mut shop), expected);
+    // An order of the store data committed no stock: restocking it puts nothing back.
+    assert_eq!(available(&shop, &item), available_before);
+    assert_eq!(
+        topics(&mut shop),
+        [
+            "order_transactions/create",
+            "refunds/create",
+            "fulfillment_orders/cancelled",
+            "orders/cancelled",
+            "orders/updated",
+        ]
+    );
     let again = run(
         &mut shop,
         ORDER_CANCEL,
@@ -1761,4 +1752,636 @@ fn a_fulfillment_service_receives_accepts_and_cancels_requests() {
     // Its open fulfillment order went back to a location of the shop.
     let moved_back = order(&mut shop, &id)["fulfillmentOrders"]["nodes"][1]["assignedLocation"]["location"]["id"].clone();
     assert!(shop.keys("Location").any(|key| json!(key) == moved_back));
+}
+
+/// The rich fixture's store and the shop seeded from it.
+fn rich_with_store() -> (lsf_core::Store, ShopState) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Directory(path),
+        &Default::default(),
+    );
+    let shop = ShopState::seeded(&store, None);
+    (store, shop)
+}
+
+/// Sets the `available` and `on_hand` quantities of an inventory level, as
+/// `inventorySetQuantities` would, and refreshes its product.
+fn set_stock(shop: &mut ShopState, level: &str, product: &str, quantity: i64) {
+    for entry in shop.get_mut(level).unwrap()["quantities"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if entry["name"] == json!("available") || entry["name"] == json!("on_hand") {
+            entry["quantity"] = json!(quantity);
+        }
+    }
+    crate::domains::catalog::refresh_product(shop, product);
+}
+
+/// The linen dress of the rich fixture (tracked, `DENY`), its first variant and its inventory
+/// item, with 4 units at Paris and none at Berlin.
+fn dress_with_four_at_paris(store: &lsf_core::Store, shop: &mut ShopState) -> (String, String) {
+    use crate::domains::catalog;
+    let dress = store.product_by_handle("linen-dress").unwrap();
+    let variant = &dress.variants[0];
+    let product = catalog::product_gid(dress);
+    for (location, quantity) in [(&store.locations[0], 4), (&store.locations[1], 0)] {
+        let level = catalog::inventory_level_gid(variant.id, location.id);
+        set_stock(shop, &level, &product, quantity);
+    }
+    let variant = catalog::variant_gid(variant);
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (variant, item)
+}
+
+/// An order that takes a variant's last units sells it out as an inventory mutation does: its
+/// `availableForSale` turns false, `variants/out_of_stock` is emitted, and the storefront shows
+/// it out of stock.
+#[test]
+fn an_order_that_takes_the_last_units_sells_the_variant_out() {
+    let (store, mut shop) = rich_with_store();
+    let (variant, _) = dress_with_four_at_paris(&store, &mut shop);
+    shop.take_events();
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 4}]},
+            "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { productVariant(id: $id) { inventoryQuantity availableForSale } }",
+        json!({"id": variant}),
+    );
+    assert_eq!(
+        read["data"]["productVariant"],
+        json!({"inventoryQuantity": 0, "availableForSale": false})
+    );
+    let fired = events(&mut shop);
+    assert!(
+        fired.contains(&("variants/out_of_stock".to_string(), variant.clone())),
+        "{fired:?}"
+    );
+    let overlay = crate::sync::overlay(&shop, &store).expect("the stock changed");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+    let (synced, _) = lsf_core::store::load::load_with_overlays(
+        &lsf_core::store::load::DataSource::Directory(path),
+        &Default::default(),
+        &[overlay],
+    );
+    let after = &synced.product_by_handle("linen-dress").unwrap().variants[0];
+    assert_eq!(after.inventory_quantity, 0);
+    assert!(!after.available);
+}
+
+/// The quantities of an inventory item at each of its levels, under a name.
+fn quantities(shop: &ShopState, item: &str, name: &str) -> Vec<i64> {
+    crate::domains::catalog::gids(shop.get(item).unwrap().get("inventoryLevels"))
+        .iter()
+        .map(|level| {
+            shop.get(level).unwrap()["quantities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|quantity| quantity["name"] == json!(name))
+                .and_then(|quantity| quantity["quantity"].as_i64())
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
+/// Ships every unit of an order's first fulfillment order.
+fn ship_all(shop: &mut ShopState, order_id: &str) -> Value {
+    let fo = order(shop, order_id)["fulfillmentOrders"]["nodes"][0].clone();
+    let lines: Vec<Value> = fo["lineItems"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| json!({"id": line["id"], "quantity": line["remainingQuantity"]}))
+        .collect();
+    run(
+        shop,
+        FULFILLMENT_CREATE,
+        json!({"input": {"lineItemsByFulfillmentOrder": [{"fulfillmentOrderId": fo["id"], "fulfillmentOrderLineItems": lines}]}}),
+    )
+}
+
+/// Shipping or restocking an order moves the units it committed, never those another order
+/// committed: an order of the store data committed none, so its fulfillment and its restock
+/// leave the stock as it is.
+#[test]
+fn an_order_ships_and_restocks_only_what_it_committed() {
+    let mut shop = demo();
+    let seeded = order_named(&shop, "#1002");
+    let line = gids_of(shop.get(&seeded).unwrap(), "lineItems")[0].clone();
+    let variant = shop.get(&line).unwrap()["variant"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let location = shop
+        .get(&item)
+        .map(|record| gids_of(record, "inventoryLevels"))
+        .unwrap()[0]
+        .clone();
+    let location = shop.get(&location).unwrap()["location"].clone();
+    assert_eq!(quantities(&shop, &item, "available"), [15, 15]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+
+    // An order of the admin commits 2 units.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 2}]},
+            "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"},
+        }),
+    );
+    let created = answer["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(quantities(&shop, &item, "committed"), [2, 0]);
+
+    // #1002 of the store data never committed its 4 units: shipping them does not take the
+    // other order's, and restocking them on a return puts nothing back.
+    let shipped = ship_all(&mut shop, &seeded);
+    assert_eq!(
+        shipped["data"]["fulfillmentCreate"]["userErrors"],
+        json!([]),
+        "{shipped}"
+    );
+    assert_eq!(quantities(&shop, &item, "committed"), [2, 0]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+    let quantity = shop.get(&line).unwrap()["quantity"].clone();
+    let refund = run(
+        &mut shop,
+        REFUND_CREATE,
+        json!({"input": {"orderId": seeded, "refundLineItems": [{"lineItemId": line, "quantity": quantity, "restockType": "RETURN", "locationId": location}]}}),
+    );
+    assert_eq!(
+        refund["data"]["refundCreate"]["userErrors"],
+        json!([]),
+        "{refund}"
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [13, 15]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+
+    // The order that committed ships its own units, then gets them back on a return.
+    ship_all(&mut shop, &created);
+    assert_eq!(quantities(&shop, &item, "committed"), [0, 0]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [13, 15]);
+    let line = gids_of(shop.get(&created).unwrap(), "lineItems")[0].clone();
+    let refund = run(
+        &mut shop,
+        REFUND_CREATE,
+        json!({"input": {"orderId": created, "refundLineItems": [{"lineItemId": line, "quantity": 2, "restockType": "RETURN", "locationId": location}]}}),
+    );
+    assert_eq!(
+        refund["data"]["refundCreate"]["userErrors"],
+        json!([]),
+        "{refund}"
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [15, 15]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+
+    // Cancelled before it ships, an order that committed gives its units back to `available`;
+    // a second restock of the same order finds nothing left to give.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 3}]},
+            "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"},
+        }),
+    );
+    let third = answer["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(quantities(&shop, &item, "available"), [12, 15]);
+    let cancelled = run(
+        &mut shop,
+        ORDER_CANCEL,
+        json!({"id": third, "restock": true, "refund": false}),
+    );
+    assert_eq!(
+        cancelled["data"]["orderCancel"]["orderCancelUserErrors"],
+        json!([]),
+        "{cancelled}"
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [15, 15]);
+    assert_eq!(quantities(&shop, &item, "committed"), [0, 0]);
+    assert_eq!(quantities(&shop, &item, "on_hand"), [15, 15]);
+}
+
+fn gids_of(record: &crate::state::Record, field: &str) -> Vec<String> {
+    crate::domains::catalog::gids(record.get(field))
+}
+
+/// No amount of an order or a draft overflows: a money input past lsf's bound, or a line whose
+/// total would be, answers a user error, never a panic or a wrapped total.
+#[test]
+fn amounts_past_the_bound_answer_user_errors() {
+    let mut shop = demo();
+    let (variant, _) = first_variant(&shop);
+    let money = |amount: &str| json!({"shopMoney": {"amount": amount, "currencyCode": "EUR"}});
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"title": "Huge", "quantity": 2, "priceSet": money("92233720368547758.07")}]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"],
+        json!({"order": null, "userErrors": [{
+            "field": ["order", "lineItems", "0", "priceSet", "shopMoney", "amount"],
+            "message": "Amount must be less than 10000000000000",
+            "code": "INVALID",
+        }]}),
+        "{answer}"
+    );
+    // Within the bound, but not twice over.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"title": "Large", "quantity": 2, "priceSet": money("9999999999999.99")}]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([{"field": ["order", "lineItems", "0", "quantity"], "message": "Total price must be less than 10000000000000", "code": "INVALID"}]),
+        "{answer}"
+    );
+    // Two lines within the bound whose sum is not; a tax rate past it.
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [
+            {"title": "A", "quantity": 1, "priceSet": money("6000000000000")},
+            {"title": "B", "quantity": 1, "priceSet": money("6000000000000")},
+        ]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"][0]["message"],
+        json!("Total price must be less than 10000000000000"),
+        "{answer}"
+    );
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"variantId": variant, "quantity": 1}], "taxLines": [{"title": "VAT", "rate": "100000000000000000000"}]}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"][0]["message"],
+        json!("Total price must be less than 10000000000000"),
+        "{answer}"
+    );
+    let draft = |shop: &mut ShopState, line: Value| {
+        run(
+            shop,
+            "mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } userErrors { field message } } }",
+            json!({"input": {"lineItems": [line]}}),
+        )["data"]["draftOrderCreate"]
+            .clone()
+    };
+    assert_eq!(
+        draft(
+            &mut shop,
+            json!({"title": "Huge", "quantity": 2, "originalUnitPrice": "92233720368547758.07"})
+        ),
+        json!({"draftOrder": null, "userErrors": [{"field": ["input", "lineItems", "0", "originalUnitPrice"], "message": "Original unit price must be less than 10000000000000"}]})
+    );
+    assert_eq!(
+        draft(
+            &mut shop,
+            json!({"title": "Large", "quantity": 2000000000, "originalUnitPrice": "9999.99"})
+        ),
+        json!({"draftOrder": null, "userErrors": [{"field": ["lineItems", "0", "quantity"], "message": "Total price must be less than 10000000000000"}]})
+    );
+    assert!(shop.take_events().is_empty());
+}
+
+/// A fulfillment service's location is the service's, not one of the store: the storefront
+/// does not get it.
+#[test]
+fn a_fulfillment_service_location_does_not_reach_the_storefront() {
+    let (store, mut shop) = rich_with_store();
+    let created = run(
+        &mut shop,
+        "mutation { fulfillmentServiceCreate(name: \"Acme 3PL\", callbackUrl: \"https://3pl.example/callback\", inventoryManagement: true) {
+            fulfillmentService { location { id isFulfillmentService } } userErrors { field message } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        created["data"]["fulfillmentServiceCreate"]["fulfillmentService"]["location"]["isFulfillmentService"],
+        json!(true),
+        "{created}"
+    );
+    let names = |store: &lsf_core::Store| -> Vec<String> {
+        store
+            .locations
+            .iter()
+            .map(|location| location.name.clone())
+            .collect()
+    };
+    match crate::sync::overlay(&shop, &store) {
+        None => {}
+        Some(overlay) => {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+            let (synced, _) = lsf_core::store::load::load_with_overlays(
+                &lsf_core::store::load::DataSource::Directory(path),
+                &Default::default(),
+                &[overlay],
+            );
+            assert_eq!(names(&synced), names(&store));
+        }
+    }
+}
+
+/// A checkout order of a variant the Admin API created names that variant's inventory item,
+/// whose id is of the counter, not the one lsf-core would derive from the variant.
+#[test]
+fn a_checkout_order_names_the_inventory_item_of_its_variant() {
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        "mutation { productCreate(product: {title: \"Admin hat\"}) { product { id variants(first: 1) { nodes { id inventoryItem { id } } } } userErrors { message } } }",
+        Value::Null,
+    );
+    let product = created["data"]["productCreate"]["product"].clone();
+    let variant = product["variants"]["nodes"][0].clone();
+    let item = variant["inventoryItem"]["id"].as_str().unwrap().to_string();
+    let id = |gid: &Value| crate::state::parse_gid(gid.as_str().unwrap()).unwrap().1;
+    assert_ne!(
+        item,
+        crate::domains::catalog::inventory_item_gid(id(&variant["id"]))
+    );
+    let result = lsf_checkout::CheckoutResult {
+        lines: vec![lsf_checkout::ResultLine {
+            id: "gid://shopify/CartLine/1".into(),
+            variant_id: id(&variant["id"]),
+            product_id: id(&product["id"]),
+            title: "Admin hat".into(),
+            quantity: 1,
+            unit_price: 1000,
+            subtotal: 1000,
+            total: 1000,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let recorded = super::record_placed_order(
+        &mut shop,
+        &super::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: None,
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    let answer = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 1) { nodes { lineItems(first: 1) { nodes { inventoryItemId } } } } } }",
+        json!({"id": recorded.id}),
+    );
+    assert_eq!(
+        answer["data"]["order"]["fulfillmentOrders"]["nodes"][0]["lineItems"]["nodes"][0]["inventoryItemId"],
+        json!(item),
+        "{answer}"
+    );
+}
+
+/// One mutation sends one webhook per topic and record: an order created fulfilled that commits
+/// then ships the units of one level reports that level once, and a product given metafields
+/// with its variant is updated once.
+#[test]
+fn a_mutation_sends_one_event_per_topic_and_record() {
+    let mut shop = demo();
+    let id = order_named(&shop, "#1002");
+    let line = gids_of(shop.get(&id).unwrap(), "lineItems")[0].clone();
+    let variant = shop.get(&line).unwrap()["variant"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let product = shop.get(&variant).unwrap()["product"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 2}], "fulfillmentStatus": "FULFILLED"},
+            "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let fired = topics(&mut shop);
+    assert_eq!(
+        fired
+            .iter()
+            .filter(|topic| *topic == "inventory_levels/update")
+            .count(),
+        1,
+        "{fired:?}"
+    );
+
+    let set = run(
+        &mut shop,
+        "mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } } }",
+        json!({"metafields": [
+            {"ownerId": product, "namespace": "custom", "key": "zz_a", "type": "single_line_text_field", "value": "a"},
+            {"ownerId": variant, "namespace": "custom", "key": "zz_b", "type": "single_line_text_field", "value": "b"},
+        ]}),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    assert_eq!(
+        events(&mut shop),
+        [("products/update".to_string(), product)]
+    );
+
+    // Two mutations of one request are two changes: each sends its own.
+    let twice = run(
+        &mut shop,
+        "mutation($id: ID!) { a: tagsAdd(id: $id, tags: [\"zz-1\"]) { userErrors { message } } b: tagsAdd(id: $id, tags: [\"zz-2\"]) { userErrors { message } } }",
+        json!({"id": id}),
+    );
+    assert!(twice.get("errors").is_none(), "{twice}");
+    assert_eq!(topics(&mut shop), ["orders/updated", "orders/updated"]);
+}
+
+/// `DECREMENT_OBEYING_POLICY` checks the stock of the level the order commits from, at the
+/// order's location, not the item's first level.
+#[test]
+fn an_order_obeying_the_policy_checks_the_stock_where_it_commits() {
+    let (store, mut shop) = rich_with_store();
+    let dress = store.product_by_handle("linen-dress").unwrap();
+    let variant = crate::domains::catalog::variant_gid(&dress.variants[0]);
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(quantities(&shop, &item, "available"), [4, 3]);
+    let berlin = crate::state::gid("Location", store.locations[1].id);
+    let order = |shop: &mut ShopState, quantity: i64| {
+        run(
+            shop,
+            ORDER_CREATE,
+            json!({
+                "order": {"lineItems": [{"variantId": variant, "quantity": quantity}], "fulfillment": {"locationId": berlin}},
+                "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+            }),
+        )["data"]["orderCreate"]["userErrors"]
+            .clone()
+    };
+    // Paris has 4, Berlin 3: 4 from Berlin is too many, though the first level has them.
+    assert_eq!(
+        order(&mut shop, 4),
+        json!([{"field": ["order", "lineItems", "0", "quantity"], "message": "Linen Dress is out of stock", "code": "INVENTORY_CLAIM_FAILED"}])
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [4, 3]);
+    assert_eq!(order(&mut shop, 3), json!([]));
+    assert_eq!(quantities(&shop, &item, "available"), [4, 0]);
+}
+
+/// `orderCreate`'s `discountCode` makes a `DiscountCodeApplication` and the allocations it made
+/// on the lines or the shipping line, as the reference's examples read them back, so that a
+/// backend that splits discounts by line finds them, in the API and in `orders/create`.
+#[test]
+fn an_order_created_with_a_discount_code_records_its_application_and_allocations() {
+    let mut shop = demo();
+    let money = |amount: &str| json!({"shopMoney": {"amount": amount, "currencyCode": "EUR"}});
+    let lines = json!([
+        {"title": "A", "quantity": 1, "priceSet": money("30.00")},
+        {"title": "B", "quantity": 2, "priceSet": money("10.00")},
+    ]);
+    let query = "query($id: ID!) { order(id: $id) {
+        discountCodes totalDiscountsSet { shopMoney { amount } }
+        discountApplications(first: 5) { nodes { __typename allocationMethod targetSelection targetType
+            value { ... on MoneyV2 { amount } ... on PricingPercentageValue { percentage } }
+            ... on DiscountCodeApplication { code } } }
+        lineItems(first: 5) { nodes { discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } } } }
+        shippingLine { discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } }";
+    let create = |shop: &mut ShopState, code: Value| -> (String, Value) {
+        let answer = run(
+            shop,
+            ORDER_CREATE,
+            json!({"order": {"lineItems": lines, "discountCode": code,
+                "shippingLines": [{"title": "Express", "priceSet": money("7.00")}]}}),
+        );
+        assert_eq!(
+            answer["data"]["orderCreate"]["userErrors"],
+            json!([]),
+            "{answer}"
+        );
+        let id = answer["data"]["orderCreate"]["order"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let read = run(shop, query, json!({"id": id}));
+        (id, read["data"]["order"].clone())
+    };
+    let allocated = |order: &Value| -> Vec<Value> {
+        order["lineItems"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| {
+                line["discountAllocations"][0]["allocatedAmountSet"]["shopMoney"]["amount"].clone()
+            })
+            .collect()
+    };
+
+    // 10% of each line: the reference's example answers `value { percentage: 10 }`.
+    let (id, order) = create(
+        &mut shop,
+        json!({"itemPercentageDiscountCode": {"code": "SUMMER SALE", "percentage": 10}}),
+    );
+    assert_eq!(order["discountCodes"], json!(["SUMMER SALE"]));
+    assert_eq!(
+        order["discountApplications"]["nodes"],
+        json!([{"__typename": "DiscountCodeApplication", "allocationMethod": "EACH", "targetSelection": "ALL",
+            "targetType": "LINE_ITEM", "value": {"percentage": 10.0}, "code": "SUMMER SALE"}])
+    );
+    assert_eq!(allocated(&order), [json!("3.0"), json!("2.0")]);
+    assert_eq!(
+        order["lineItems"]["nodes"][0]["discountAllocations"][0]["discountApplication"]["index"],
+        json!(0)
+    );
+    let payload = payload_of(&shop, "orders/create", &id);
+    assert_eq!(
+        payload["discount_applications"][0]["code"],
+        json!("SUMMER SALE")
+    );
+    assert_eq!(
+        payload["line_items"][0]["discount_allocations"][0]["amount"],
+        json!("3.00")
+    );
+
+    // 5.00 off the order, spread over the lines by their totals (30 and 20).
+    let (_, order) = create(
+        &mut shop,
+        json!({"itemFixedDiscountCode": {"code": "FIVE", "amountSet": money("5.00")}}),
+    );
+    assert_eq!(
+        order["discountApplications"]["nodes"][0]["value"],
+        json!({"amount": "5.0"})
+    );
+    assert_eq!(
+        order["discountApplications"]["nodes"][0]["allocationMethod"],
+        json!("ACROSS")
+    );
+    assert_eq!(allocated(&order), [json!("3.0"), json!("2.0")]);
+    assert_eq!(
+        order["totalDiscountsSet"]["shopMoney"]["amount"],
+        json!("5.0")
+    );
+
+    // Free shipping: the shipping line's price.
+    let (_, order) = create(
+        &mut shop,
+        json!({"freeShippingDiscountCode": {"code": "SHIPFREE"}}),
+    );
+    assert_eq!(
+        order["discountApplications"]["nodes"][0]["targetType"],
+        json!("SHIPPING_LINE")
+    );
+    assert_eq!(
+        order["shippingLine"]["discountAllocations"][0]["allocatedAmountSet"]["shopMoney"]["amount"],
+        json!("7.0")
+    );
+    assert_eq!(
+        order["lineItems"]["nodes"][0]["discountAllocations"],
+        json!([])
+    );
 }

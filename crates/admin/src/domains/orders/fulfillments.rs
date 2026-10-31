@@ -309,9 +309,7 @@ fn fulfillment_create(
         })));
         fulfillment_lines.push(line_id);
         total += quantity;
-        if let Some(inventory_item) = model::inventory_item_of(state, &item) {
-            model::ship_inventory(state, &inventory_item, location.as_deref(), *quantity);
-        }
+        model::ship_line(state, &line, location.as_deref(), *quantity);
         if !fulfillment_orders.contains(fulfillment_order) {
             fulfillment_orders.push(fulfillment_order.clone());
         }
@@ -1050,23 +1048,7 @@ fn move_fulfillment_order(
         else {
             continue;
         };
-        let Some(item) = state
-            .get(&line)
-            .and_then(|record| model::inventory_item_of(state, record))
-        else {
-            continue;
-        };
-        let committed = model::inventory_quantity(state, &item, from.as_deref(), "committed");
-        let units = (*quantity).min(committed);
-        if units > 0 {
-            model::move_inventory(
-                state,
-                &item,
-                from.as_deref(),
-                &[("committed", -units), ("available", units)],
-            );
-            model::commit_inventory(state, &item, Some(&location), units);
-        }
+        model::move_line_commitment(state, &line, from.as_deref(), &location, *quantity);
     }
     let requested: Vec<Value> = picked
         .iter()

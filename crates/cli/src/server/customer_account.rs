@@ -419,8 +419,18 @@ fn placed_order_json(placed: Json) -> Json {
     let ids: Vec<Json> = lines.iter().map(|line| line["id"].clone()).collect();
     let object = order.as_object_mut().expect("an order is an object");
     let name = object["order"]["number"].clone();
-    object.insert("id".into(), json!(format!("gid://shopify/Order/{number}")));
-    object.insert("legacyId".into(), json!(number));
+    // The id the order was placed with: the Admin API's when it recorded it (an id of its
+    // counter, as `orderCreate` gives), else one made of the number.
+    let id = object["order"]["id"]
+        .as_str()
+        .map_or_else(|| format!("gid://shopify/Order/{number}"), str::to_string);
+    let legacy = id
+        .rsplit('/')
+        .next()
+        .and_then(|id| id.parse::<u64>().ok())
+        .unwrap_or(number);
+    object.insert("id".into(), json!(id));
+    object.insert("legacyId".into(), json!(legacy));
     object.insert("name".into(), name);
     object.insert(
         "confirmationNumber".into(),

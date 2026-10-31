@@ -2033,3 +2033,130 @@ fn the_primary_location_is_where_a_new_product_is_stocked() {
         json!({"id": other, "isPrimary": false})
     );
 }
+
+/// A variant's price past lsf's bound of an amount is refused before anything changes, so that
+/// an order of it cannot overflow its totals.
+#[test]
+fn a_price_past_the_bound_is_refused() {
+    let mut shop = demo();
+    let beanie = product(&shop, "ceramic-mug");
+    let variant = variants(&shop, &beanie)[0].clone();
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $id, variants: $variants) { productVariants { id } userErrors { field message code } } }"#,
+        json!({"id": beanie, "variants": [{"id": variant, "price": "92233720368547758.07"}]}),
+    );
+    assert_eq!(
+        refused["data"]["productVariantsBulkUpdate"],
+        json!({"productVariants": null, "userErrors": [{
+            "field": ["variants", "0", "price"],
+            "message": "Price must be less than 10000000000000",
+            "code": "INVALID_INPUT",
+        }]}),
+        "{refused}"
+    );
+    assert_eq!(shop.get(&variant), before.get(&variant));
+    assert!(shop.take_events().is_empty());
+}
+
+/// `tagsAdd` and `tagsRemove` on a product move it in and out of the smart collections its
+/// tags match, as `productUpdate(tags:)` does.
+#[test]
+fn tags_added_to_a_product_follow_the_smart_collections() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let smart = run(
+        &mut shop,
+        r#"mutation { collectionCreate(input: {title: "Sale", ruleSet: {appliedDisjunctively: false, rules: [
+            {column: TAG, relation: EQUALS, condition: "zz-sale"}]}}) { collection { id productsCount { count } } userErrors { message } } }"#,
+    );
+    let collection = ok(&smart, "collectionCreate")["collection"].clone();
+    assert_eq!(collection["productsCount"]["count"], json!(0));
+    let count = |shop: &mut ShopState| {
+        run_with(
+            shop,
+            "query($id: ID!) { collection(id: $id) { productsCount { count } products(first: 5) { nodes { id } } } }",
+            json!({"id": collection["id"]}),
+        )["data"]["collection"]
+            .clone()
+    };
+    let tags = "mutation($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { message } } }";
+    run_with(&mut shop, tags, json!({"id": mug, "tags": ["zz-sale"]}));
+    assert_eq!(
+        count(&mut shop),
+        json!({"productsCount": {"count": 1}, "products": {"nodes": [{"id": mug}]}})
+    );
+    run_with(
+        &mut shop,
+        &tags.replace("tagsAdd", "tagsRemove"),
+        json!({"id": mug, "tags": ["ZZ-SALE"]}),
+    );
+    assert_eq!(
+        count(&mut shop),
+        json!({"productsCount": {"count": 0}, "products": {"nodes": []}})
+    );
+
+    // An article's tags are its blog's too.
+    let article = shop.keys("Article").next().unwrap().to_string();
+    let blog = shop.get(&article).unwrap()["blog"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    run_with(&mut shop, tags, json!({"id": article, "tags": ["zz-new"]}));
+    assert!(
+        shop.get(&blog).unwrap()["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("zz-new"))
+    );
+}
+
+/// A gift card expires by the shop's day, in its time zone, the zone the seed writes
+/// `expiresOn` in, and `isRedeemable` is read at the shop's clock rather than kept from when the
+/// card was written.
+#[test]
+fn gift_cards_expire_by_the_shop_s_day() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+    let (mut store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Directory(path),
+        &Default::default(),
+    );
+    // 23:30 in UTC is already the next day in Paris, the shop's zone.
+    store.now = Some("2026-03-15T23:30:00Z".parse().unwrap());
+    let mut shop = ShopState::seeded(&store, None);
+    let created = run(
+        &mut shop,
+        r#"mutation { giftCardCreate(input: {initialValue: "20", expiresOn: "2026-03-15"}) { giftCard { id isRedeemable } userErrors { message } } }"#,
+    );
+    let card = ok(&created, "giftCardCreate")["giftCard"].clone();
+    assert_eq!(card["isRedeemable"], json!(false), "{created}");
+    let credit = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardCredit(id: $id, creditInput: {creditAmount: {amount: "5", currencyCode: EUR}}) { userErrors { field code } } }"#,
+        json!({"id": card["id"]}),
+    );
+    assert_eq!(
+        credit["data"]["giftCardCredit"]["userErrors"],
+        json!([{"field": ["id"], "code": "INVALID"}])
+    );
+
+    // Stored redeemable, expired since: it is read as it is now.
+    let id = card["id"].as_str().unwrap();
+    let record = shop.get_mut(id).unwrap();
+    record.insert("isRedeemable".into(), json!(true));
+    let read = |shop: &mut ShopState| {
+        run_with(
+            shop,
+            "query($id: ID!) { giftCard(id: $id) { isRedeemable } }",
+            json!({"id": id}),
+        )["data"]["giftCard"]["isRedeemable"]
+            .clone()
+    };
+    assert_eq!(read(&mut shop), json!(false));
+    shop.get_mut(id)
+        .unwrap()
+        .insert("expiresOn".into(), json!("2026-03-16"));
+    assert_eq!(read(&mut shop), json!(true));
+}

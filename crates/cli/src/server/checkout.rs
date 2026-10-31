@@ -1671,9 +1671,12 @@ pub(super) fn place_order(
         return Reply::json(422, &computed.json).cached(cache::PRIVATE);
     }
     let mut order = computed.json;
-    // The orders of a session are numbered after the last one of the store data (#1001 when it
-    // has none), one after the other, whatever the other sessions do: a test reads the same
-    // number every time. They are placed at the frozen clock of the data, if it has one.
+    // Without the Admin API, the orders of a session are numbered after the last one of the
+    // store data (#1001 when it has none), one after the other, whatever the other sessions do:
+    // a test reads the same number every time. With it, the Admin API's default shop numbers
+    // them when it records them, as it numbers the orders `orderCreate` makes: one numbering, no
+    // two orders with the same name. They are placed at the frozen clock of the data, if it has
+    // one.
     let (_, store) = state.snapshot(id);
     let last = store
         .customers
@@ -1684,18 +1687,25 @@ pub(super) fn place_order(
         .max(1000);
     let processed_at = store.now.unwrap_or_else(chrono::Utc::now);
     let placed_at = processed_at.to_rfc3339();
-    // What the Admin API records of the order, read in the step that takes the cart.
-    let mut placed = None;
     // The cart is taken only if it is still the one that was priced; the check and the take are
     // one step of the session.
     let taken = state.with_session(id, |entry| {
         if !computed.basis.matches(entry, &state.loaded().store) {
             return false;
         }
-        let number = last + entry.checkout.placed + 1;
-        placed = Some(Placed {
-            number,
+        // The company location a B2B buyer orders for, as the checkout shows it.
+        let company_location = entry.session.customer_id.and_then(|customer_id| {
+            let customer = store
+                .customers
+                .iter()
+                .find(|customer| customer.id == customer_id)?;
+            let company = store.companies.get(customer.company?)?;
+            let index = customer.current_location(entry.session.company_location, &store)?;
+            company.locations.get(index).map(|location| location.id)
+        });
+        let own = Placed {
             customer_id: entry.session.customer_id,
+            company_location,
             note: entry.session.cart_note.clone(),
             attributes: entry
                 .session
@@ -1703,14 +1713,30 @@ pub(super) fn place_order(
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
-        });
+        };
+        // Recorded while the cart is taken, so that the thank-you page shows the number the
+        // Admin API gave the order. The Admin API never takes a session's lock: holding this
+        // one while it records cannot deadlock.
+        let (number, order_id) = match record_in_admin(
+            state,
+            &computed.result,
+            &computed.checkout,
+            &own,
+            processed_at,
+        ) {
+            Some(recorded) => (recorded.number, recorded.id),
+            None => {
+                let number = last + entry.checkout.placed + 1;
+                (number, format!("gid://shopify/Order/{number}"))
+            }
+        };
         order["status"] = json!("completed");
         // The order costs the whole price: what is paid now is received, and what a selling
         // plan defers is outstanding (`totalReceivedSet` and `totalOutstandingSet` of Shopify's
         // Order).
         let (received, outstanding) = (&order["cost"]["dueNow"], &order["cost"]["dueLater"]);
         order["order"] = json!({
-            "id": format!("gid://shopify/Order/{number}"),
+            "id": order_id,
             "number": format!("#{number}"),
             "totalReceived": received,
             "totalOutstanding": outstanding,
@@ -1730,15 +1756,6 @@ pub(super) fn place_order(
         true
     });
     if taken {
-        if let Some(placed) = placed {
-            record_in_admin(
-                state,
-                &computed.result,
-                &computed.checkout,
-                &placed,
-                processed_at,
-            );
-        }
         return redirect_to_thanks(state, incoming, id, token);
     }
     // Another request placed the order meanwhile.
@@ -1752,25 +1769,23 @@ pub(super) fn place_order(
 
 /// What the session held of an order when it was placed.
 struct Placed {
-    number: u64,
     customer_id: Option<u64>,
+    company_location: Option<u64>,
     note: String,
     attributes: Vec<(String, String)>,
 }
 
-/// Records a placed order in the default shop of the Admin API, which delivers its
-/// `orders/create` webhook (and `orders/paid`, when it is paid in full) to the backend of the app.
+/// Records a placed order in the default shop of the Admin API, which numbers it and delivers
+/// its `orders/create` webhook (and `orders/paid`, when it is paid in full) to the backend of the
+/// app. `None` without the Admin API.
 fn record_in_admin(
     state: &ServerState,
     result: &lsf_checkout::CheckoutResult,
     checkout: &CheckoutState,
     placed: &Placed,
     processed_at: chrono::DateTime<chrono::Utc>,
-) {
-    let Some(admin) = &state.admin else {
-        return;
-    };
-    let id = format!("gid://shopify/Order/{}", placed.number);
+) -> Option<lsf_admin::domains::orders::RecordedOrder> {
+    let admin = state.admin.as_ref()?;
     let payment = checkout.selected_payment.as_ref().and_then(|handle| {
         result
             .payment_methods
@@ -1781,18 +1796,19 @@ fn record_in_admin(
     admin
         .api
         .record_order(&lsf_admin::domains::orders::PlacedOrder {
-            id: Some(&id),
-            number: placed.number,
+            id: None,
+            number: None,
             processed_at,
             result,
             customer_id: placed.customer_id,
+            company_location_id: placed.company_location,
             email: checkout.email.as_deref(),
             phone: checkout.phone.as_deref(),
             shipping_address: checkout.shipping_address.as_ref(),
             note: Some(placed.note.as_str()).filter(|note| !note.is_empty()),
             attributes: &placed.attributes,
             payment,
-        });
+        })
 }
 
 /// A file of the page, from the binary.

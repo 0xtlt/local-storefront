@@ -514,7 +514,7 @@ fn blog_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
 }
 
 /// The tags of a blog: those of its articles, in order.
-fn refresh_blog(state: &mut ShopState, blog: &str) {
+pub fn refresh_blog(state: &mut ShopState, blog: &str) {
     let articles = state
         .get(blog)
         .map(|record| gids(record.get("articles")))

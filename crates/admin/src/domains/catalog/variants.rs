@@ -602,7 +602,7 @@ pub fn remove_variant(state: &mut ShopState, product: &str, variant: &str) {
         .map(|record| gids(record.get("metafields")))
         .unwrap_or_default();
     for metafield in metafields {
-        state.remove(&metafield);
+        crate::domains::content::metafields::remove(state, &metafield);
     }
     for group in state
         .keys("SellingPlanGroup")

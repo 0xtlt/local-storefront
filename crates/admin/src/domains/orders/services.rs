@@ -287,31 +287,41 @@ fn service_delete(
             .get(location)
             .map(|record| gids(record.get("inventoryLevels")))
             .unwrap_or_default();
-        let mut products = Vec::new();
+        let mut products: Vec<String> = Vec::new();
+        for product in levels
+            .iter()
+            .filter_map(|level| state.get(level).and_then(|record| text(record, "item")))
+            .filter_map(|item| state.get(item).and_then(|record| text(record, "variant")))
+            .filter_map(|variant| {
+                state
+                    .get(variant)
+                    .and_then(|record| text(record, "product"))
+            })
+        {
+            if !products.iter().any(|known| known == product) {
+                products.push(product.to_string());
+            }
+        }
+        let before = crate::domains::catalog::stock_of(state, &products);
         for level in levels {
             let item = state
                 .get(&level)
                 .and_then(|record| text(record, "item"))
                 .map(str::to_string);
-            if let Some(item) = item {
-                if let Some(Value::Array(item_levels)) = state
+            if let Some(item) = item
+                && let Some(Value::Array(item_levels)) = state
                     .get_mut(&item)
                     .and_then(|record| record.get_mut("inventoryLevels"))
-                {
-                    item_levels.retain(|known| known.as_str() != Some(level.as_str()));
-                }
-                let product = state
-                    .get(&item)
-                    .and_then(|record| text(record, "variant"))
-                    .and_then(|variant| state.get(variant))
-                    .and_then(|variant| text(variant, "product"))
-                    .map(str::to_string);
-                products.extend(product);
+            {
+                item_levels.retain(|known| known.as_str() != Some(level.as_str()));
             }
             state.remove(&level);
         }
-        for product in products {
-            crate::domains::catalog::refresh_product(state, &product);
+        // The stock at the location goes with it, as an inventory mutation of the catalog would
+        // leave it.
+        crate::domains::catalog::after_inventory_change(state, &products, &before);
+        for product in &products {
+            crate::domains::catalog::product_changed(state, product);
         }
         state.delete(location, "locations/delete");
     }

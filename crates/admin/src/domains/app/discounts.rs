@@ -1117,6 +1117,40 @@ fn check_common(
             }
         }
     }
+    // A percentage is a fraction: "Value must be between 0.00 - 1.00" (the 2026-10 reference
+    // of `DiscountCustomerGetsValueInput.percentage` and `DiscountEffectInput.percentage`). The
+    // message of the error is not published: this one is lsf's, with the code Shopify has for
+    // it (`VALUE_OUTSIDE_RANGE`, "The value is outside of the allowed range.").
+    let value = input.get("customerGets").and_then(|gets| gets.get("value"));
+    for (path, percentage) in [
+        (
+            vec![kind.input, "customerGets", "value", "percentage"],
+            value.and_then(|value| value.get("percentage")),
+        ),
+        (
+            vec![
+                kind.input,
+                "customerGets",
+                "value",
+                "discountOnQuantity",
+                "effect",
+                "percentage",
+            ],
+            value
+                .and_then(|value| value.get("discountOnQuantity"))
+                .and_then(|on_quantity| on_quantity.get("effect"))
+                .and_then(|effect| effect.get("percentage")),
+        ),
+    ] {
+        if let Some(percentage) = percentage.and_then(Value::as_f64)
+            && !(0.0..=1.0).contains(&percentage)
+        {
+            errors.push(
+                UserError::new(&path, "Percentage must be between 0.0 and 1.0")
+                    .code("VALUE_OUTSIDE_RANGE"),
+            );
+        }
+    }
     if tags_of(input.get("tags")).len() > MAX_TAGS {
         errors.push(
             UserError::new(&at("tags"), "The number of tags exceeds the maximum of 5.")

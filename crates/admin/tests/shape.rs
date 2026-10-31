@@ -98,10 +98,11 @@ fn the_records_of_a_created_shop_and_of_a_placed_order_are_in_shape() {
         shop,
         &lsf_admin::domains::orders::PlacedOrder {
             id: None,
-            number: 1005,
+            number: Some(1005),
             processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
             result: &result,
             customer_id: store.customers.first().map(|customer| customer.id),
+            company_location_id: None,
             email: None,
             phone: None,
             shipping_address: None,

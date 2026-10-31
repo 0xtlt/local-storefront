@@ -346,7 +346,9 @@ storefront, the checkout and the Function inputs already use.
   and the mutations share: `catalog::refresh_product` (price ranges, `totalInventory`,
   `tracksInventory`, `hasOutOfStockVariants`, `hasOnlyDefaultVariant`, `featuredMedia`, the
   variants' `inventoryQuantity`), `customers::refresh_customer` (`orders`, `numberOfOrders`,
-  `amountSpent`, `lastOrder`, `canDelete`), `content::attach_definition` (the seed's: a
+  `amountSpent`, `lastOrder`, `canDelete`), `customers::refresh_company_location` (a company
+  location's `ordersCount` and `totalSpent`, its company's `totalSpent`),
+  `content::attach_definition` (the seed's: a
   metafield's `definition`, created when there is none, the definition's `metafields` and
   `metafieldsCount`; the mutations link a metafield to an existing definition only, with
   `content::metafields::link_definition`, as Shopify keeps metafields without one).
@@ -360,7 +362,10 @@ storefront, the checkout and the Function inputs already use.
   keeps a copy of the record: emit before removing, or use `ShopState::delete`;
   `ShopState::emit_with` gives the copy, the record before the change for a topic that says
   what changed);
-  `take_events` hands them over. Event ids are UUIDs made of the shop and a sequence that a reset
+  `take_events` hands them over. One mutation emits one event per topic and record: the resolver
+  merges the repeats of a mutation into the first (`ShopState::merge_events_from`), whose
+  payload is built from the record as the mutation left it (an order created fulfilled that
+  commits then ships a level's units reports the level once). Event ids are UUIDs made of the shop and a sequence that a reset
   does not restart, so a receiver never sees one twice.
 - **Shops** (`Shops`): the default shop is the store data's (`shop.permanent_domain`); `create`
   makes another from the same seed (cloned, not seeded again) and moves it to its domain: its own
@@ -384,7 +389,12 @@ field, in order:
    `read_customers`), read as a query's, in a payload too; `node` and `nodes` what the type of the
    record they find requires. The requirements are read once per field and kept.
 2. **A mutation** runs its registered function (see "Mutations" below); one without answers
-   `LSF_NOT_SIMULATED`.
+   `LSF_NOT_SIMULATED`. Before it runs, a money input of 10^13 or more in the currency's unit
+   (`Money`, or a `Decimal` amount: `MoneyInput.amount`, a discount's amount, …) answers a user
+   error in every user error list of the payload, the rest `null` (`resolve::money`). Shopify
+   publishes no limit; `state::value::MAX_MONEY_CENTS` is lsf's, so that sums and products of
+   amounts hold in 64 bits. The mutations check what they multiply (a line's total, an order's)
+   against the same bound.
 3. **A custom resolver** registered for `(type, field)` answers it (see "Writing a resolver or a
    mutation").
 4. **Root conventions**: `node(id:)` and `nodes(ids:)` read any record (aliases followed:
@@ -398,7 +408,9 @@ field, in order:
    (`shopLocales`); a field without required arguments answers the only record of its type
    (`shop`, `app`, `currentAppInstallation`). Otherwise a default.
 5. **The object's value**, converted by the field's type: a string for an object type is the key
-   of a record (`null` when it is gone, or not of a possible type), an object is an inline object
+   of a record (`null` when it is gone, or not of a possible type; left out of a list or a
+   connection, as Shopify never lists a deleted resource, and not counted by the `Count` or the
+   `Int` count of the array: `MetafieldDefinition.metafieldsCount`), an object is an inline object
    (its type the field's, or its `__typename` for an abstract one), an array of a connection is
    paged, an array of a list is mapped (cut to `first` when the list takes one, as
    `Product.options(first:)`). Before the value: `metafield(namespace:, key:)` and
@@ -616,7 +628,8 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 
 `lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
 storefront, the checkout and the control API, records the orders `place_order` places
-(`AdminApi::record_order`), and reseeds it when the store data reloads (`AdminApi::reseed`:
+(`AdminApi::record_order`, while the cart is taken, so that the order's number is the Admin
+API's; without the Admin API a session numbers its orders on its own), and reseeds it when the store data reloads (`AdminApi::reseed`:
 what the Admin API changed is dropped and the terminal says so; the subscriptions the backend made
 stay, as the app's setup of the shop). It turns store sync on (`AdminApi::sync_store`): see
 "Server wiring" under "Store sync". `lsf app webhook trigger` builds its payloads with
@@ -725,7 +738,8 @@ Every id is a function of the data: the same data gives the same records every r
   with its checkout charge and is a `PRE_ORDER` when it takes a deposit, `OTHER` otherwise.
 - **`GiftCard`**: `balance`, `initialValue` (in the card's currency), `enabled`, `expiresOn` (the
   day of the data, in the shop's time zone),
-  `isRedeemable` (enabled, not expired by the shop's clock, a balance left), `lastCharacters`,
+  `isRedeemable` (enabled, not expired by the shop's day in its time zone, a balance left;
+  computed when it is read, as the clock runs), `lastCharacters`,
   `maskedCode`, `customer`, `recipientAttributes` when the recipient is a customer (`recipient`
   is a `Customer!`: the message and nickname of a card for someone else are not kept),
   `templateSuffix`, dates.
@@ -783,7 +797,11 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
 - **`CompanyLocation`**: `name`, `externalId`, `company`, `locale`, `currency`,
   `shippingAddress` (an inline `CompanyAddress` with its id), `billingAddress: null` (the data
   has none), `taxSettings` (`taxRegistrationId`), `ordersCount`, `totalSpent`,
-  `roleAssignments`, dates, `metafields`.
+  `roleAssignments`, dates, `metafields`. The data's counters, given without the orders behind
+  them, are kept under `lsfOrdersBase`; `customers::refresh_company_location` (which
+  `refresh_order` runs) adds the orders placed for the location (`purchasingEntity` a
+  `PurchasingCompany`: a B2B order of the checkout) to them, and sums the company's
+  `totalSpent` again.
 - **`CompanyContact`**: `company`, `customer`, `title`, `locale`, `isMainContact`,
   `roleAssignments`, dates. **`CompanyContactRoleAssignment`**: one per location the buyer can
   order for, with the default role *(chosen)*.
@@ -850,10 +868,15 @@ records, so both are the same shape.
   `ReturnLineItem` of the line's fulfillment when it was fulfilled, an
   `UnverifiedReturnLineItem` (with `unitPrice`) otherwise.
 - **Orders of the checkout**: `orders::record_placed_order(state, &PlacedOrder)` takes what the
-  server's `place_order` has (the `CheckoutResult`, the order number and id it gave, the time,
-  the customer, the contact, the address, the note, the attributes, the payment method's name as
-  the gateway), keeps the checkout's id when it is free (sessions number their orders on their
-  own: a taken id gets a new one), refreshes the customer, and emits `orders/create`,
+  server's `place_order` has (the `CheckoutResult`, the time, the customer, the contact, the
+  address, the note, the attributes, the payment method's name as the gateway, the company
+  location of a B2B buyer, which makes `purchasingEntity` a `PurchasingCompany`), gives the order
+  the shop's next number (`model::next_order_number`, which `orderCreate` and a completed draft
+  order take too: one numbering; a number or an id given and taken gets a new one), a GID of the
+  shop's counter, as `orderCreate`'s (not made of the number), answers its GID and number
+  (`RecordedOrder`), which the checkout shows on its thank-you page, links a guest whose email
+  is a customer's (ignoring case) to that customer, as Shopify does (Help Center behaviour, not
+  on shopify.dev), refreshes the customer, and emits `orders/create`,
   `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits
   no stock: the local checkout keeps the stock of the data *(chosen: test purchases never sell a
   product out)*. `lsf`'s `place_order` calls it through `AdminApi::record_order`.
@@ -885,9 +908,17 @@ orders" in `docs/admin.md`) make and keep:
   `FulfillmentService` and its `Location`. Their ids come from `new_gid`.
 - **Stock** (the levels of the catalog, changed in place): an order that claims stock commits it
   (`available` to `committed`: `orderCreate` with a `DECREMENT_…` behaviour, a completed draft
-  order, units an edit adds); shipping takes units out of `committed` and `on_hand` as far as
-  they were committed; a restock puts them back (`CANCEL` from `committed`, `RETURN` to
-  `on_hand`). `inventory_levels/update` follows each change of a tracked item.
+  order, units an edit adds), and each line item records what it committed, by location, and
+  what of it shipped (`lsfStock`: `{"committed": {"<location GID>": 2}, "shipped": 0}`).
+  Shipping takes units out of `committed` and `on_hand` as far as the line committed them at
+  that location; a restock puts back what the line took (`CANCEL` from what it committed,
+  `RETURN` to `on_hand` as far as its units had shipped from stock); a fulfillment order moved
+  takes the line's commitment along. An order of the store data or of the checkout took nothing,
+  so shipping or restocking it leaves the stock as it is, never moving what another order
+  committed. Each change of a tracked item is followed as an inventory mutation of the catalog
+  follows one (`catalog::after_inventory_change`, then `catalog::product_changed`): the
+  variants' `availableForSale`, `variants/in_stock` or `variants/out_of_stock` when the stock
+  crossed zero, the smart collections of `VARIANT_INVENTORY`, then `inventory_levels/update`.
 - **What a webhook needs beyond the record**, kept on it under `lsf…` keys, which GraphQL never
   reads: the fulfillment order of a `FulfillmentHold` (`fulfillmentOrder`) and the fulfillment
   of a `FulfillmentEvent` (`fulfillment`); the context of a `fulfillment_orders/…` topic on its
@@ -1247,7 +1278,8 @@ Kept here so that nobody invents a field for it; each would need the store data 
   record); an owner of a Function names it in `functionId` (or `shopifyFunction`) and is
   disabled by `enabled: false`.
 - Pages and articles: `isPublished`; metaobjects: `capabilities.publishable.status`; locations:
-  `isActive`.
+  `isActive`, and `isFulfillmentService: false` (a fulfillment service's location is not one of
+  the store data).
 - **Ids**: a record created with an id of the counter keeps it in the store, for the entities
   whose data has an `id` (products, variants, collections, pages, blogs, articles, comments,
   customers and their addresses, companies and their locations, locations, selling plans,

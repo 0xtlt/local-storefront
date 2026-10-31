@@ -207,10 +207,11 @@ fn place_order_numbered(api: &AdminApi, number: u64) -> Option<String> {
     let id = format!("gid://shopify/Order/{number}");
     api.record_order(&PlacedOrder {
         id: Some(&id),
-        number,
+        number: Some(number),
         processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
         result: &result,
         customer_id: Some(jane.id),
+        company_location_id: None,
         email: Some(&jane.email),
         phone: None,
         shipping_address: Some(&address),
@@ -218,6 +219,7 @@ fn place_order_numbered(api: &AdminApi, number: u64) -> Option<String> {
         attributes: &[],
         payment: Some("Credit card"),
     })
+    .map(|recorded| recorded.id)
 }
 
 #[test]
@@ -480,10 +482,11 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
     let order = api
         .record_order(&PlacedOrder {
             id: None,
-            number: 1004,
+            number: Some(1004),
             processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
             result: &result,
             customer_id: None,
+            company_location_id: None,
             email: Some("buyer@example.com"),
             phone: None,
             shipping_address: None,
@@ -491,7 +494,8 @@ fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
             attributes: &[],
             payment: Some("Credit card"),
         })
-        .expect("the order is recorded");
+        .expect("the order is recorded")
+        .id;
 
     let answer = graphql(
         &api,

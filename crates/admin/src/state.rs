@@ -576,6 +576,35 @@ impl ShopState {
         std::mem::take(&mut self.events)
     }
 
+    /// How many events are pending: where the events of what runs next start.
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Merges the events emitted since `start` that repeat a topic and a record into the first
+    /// of them, which keeps its place: one mutation sends one webhook per topic and record (an
+    /// order that commits then ships units of one level, a product and its variant given
+    /// metafields at once), as Shopify does. Its payload is built from the record as the
+    /// mutation left it; the snapshot kept is the first's (the record before the changes), or,
+    /// when the key names no record, the last's (the snapshot is then the state reported).
+    pub fn merge_events_from(&mut self, start: usize) {
+        let mut merged: Vec<Event> = Vec::new();
+        for event in self.events.drain(start.min(self.events.len())..) {
+            match merged
+                .iter_mut()
+                .find(|known| known.topic == event.topic && known.gid == event.gid)
+            {
+                Some(first) => {
+                    if !self.records.contains_key(&event.gid) || first.snapshot.is_none() {
+                        first.snapshot = event.snapshot.or(first.snapshot.take());
+                    }
+                }
+                None => merged.push(event),
+            }
+        }
+        self.events.extend(merged);
+    }
+
     /// What a mutation kept under `key` (see [`ShopState::set_memo`]).
     pub fn memo(&self, key: &str) -> Option<&Value> {
         self.memos.get(key)

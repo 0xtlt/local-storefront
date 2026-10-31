@@ -232,7 +232,7 @@ fn tax_rate_bps(state: &ShopState, order: &Record) -> i64 {
     if subtotal <= 0 {
         0
     } else {
-        field_cents(order, "totalTaxSet") * 10_000 / subtotal
+        model::share(field_cents(order, "totalTaxSet"), 10_000, subtotal)
     }
 }
 
@@ -391,6 +391,18 @@ fn positive_quantity(ctx: &FieldContext<'_>) -> Result<i64, UserError> {
     }
 }
 
+/// Refuses a line whose total would be past the bound of an amount (`value::MAX_MONEY_CENTS`),
+/// so that the edit's sums of them hold. lsf's wording.
+fn bounded_line(unit: i64, quantity: i64) -> Result<(), UserError> {
+    match unit.checked_mul(quantity) {
+        Some(total) if value::money_in_bounds(total) => Ok(()),
+        _ => Err(UserError::new(
+            &["quantity"],
+            value::money_too_large("Total price"),
+        )),
+    }
+}
+
 /// Adds a calculated line item to a calculated order; returns its id.
 fn add_line(state: &mut ShopState, calculated: &str, mut line: Map<String, Value>) -> String {
     let id = state.new_gid("CalculatedLineItem");
@@ -490,6 +502,9 @@ fn add_variant(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         .cloned()
         .unwrap_or_default();
     let currency = model::currency(state);
+    if let Err(error) = bounded_line(field_cents(&variant_record, "price"), quantity) {
+        return failed(error);
+    }
     let variant_title = text(&variant_record, "title").filter(|title| *title != "Default Title");
     let line = added_line(
         &currency,
@@ -540,6 +555,9 @@ fn add_custom_item(
     if price < 0 {
         return failed(UserError::new(&["price"], "Price can't be negative"));
     }
+    if let Err(error) = bounded_line(price, quantity) {
+        return failed(error);
+    }
     let currency = model::currency(mutation.state());
     let line = added_line(
         &currency,
@@ -585,6 +603,12 @@ fn set_quantity(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             &["quantity"],
             "Quantity cannot be less than the quantity that was fulfilled",
         ));
+    }
+    let unit = line
+        .as_object()
+        .map_or(0, |line| cents_of(line, "originalUnitPriceSet"));
+    if let Err(error) = bounded_line(unit, quantity) {
+        return failed(error);
     }
     let restock = ctx.arg_bool("restock").unwrap_or(false);
     let state = mutation.state_mut();
@@ -637,7 +661,7 @@ fn add_line_item_discount(
             json!({"__typename": "PricingPercentageValue", "percentage": percent}),
         ),
         (None, Some(fixed)) if fixed >= 0 => (
-            (fixed * units).min(unit * units),
+            fixed.saturating_mul(units).min(unit * units),
             json!({"__typename": "MoneyV2", "amount": value::decimal(fixed), "currencyCode": currency}),
         ),
         _ => {
@@ -910,12 +934,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     }
                     let location = model::line_location(state, &order, item_id);
                     add_to_fulfillment(state, &order, item_id, delta, location.as_deref());
-                    if let Some(inventory) = state
-                        .get(item_id)
-                        .and_then(|item| model::inventory_item_of(state, item))
-                    {
-                        model::commit_inventory(state, &inventory, location.as_deref(), delta);
-                    }
+                    model::commit_line(state, item_id, location.as_deref(), delta);
                 } else if units < current {
                     removed.push(json!({"id": item_id, "delta": current - units}));
                     let restock = line.get("restocking").and_then(Value::as_bool) == Some(true);
@@ -1013,9 +1032,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     .map(str::to_string)
                     .or_else(|| default_location.clone());
                 add_to_fulfillment(state, &order, &id, units, location.as_deref());
-                if let Some(inventory) = inventory_item {
-                    model::commit_inventory(state, &inventory, location.as_deref(), units);
-                }
+                model::commit_line(state, &id, location.as_deref(), units);
             }
             None => {}
         }

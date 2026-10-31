@@ -8490,3 +8490,66 @@ fn an_order_placed_at_the_checkout_is_an_order_of_the_admin_api() {
     );
     assert_eq!(order["data"]["order"]["name"], payload["name"]);
 }
+
+/// With the Admin API, the checkout's orders and the Admin API's share one numbering: the
+/// shop numbers a checkout order when it records it, and the thank-you page shows that number.
+#[test]
+fn the_checkout_and_the_admin_api_number_orders_as_one() {
+    let state = checkout_server_with(fixture_app(), &[], true, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let created = admin_query(
+        &state,
+        r#"mutation { orderCreate(order: {lineItems: [{title: "Service", quantity: 1, priceSet: {shopMoney: {amount: "5.00", currencyCode: USD}}}]}) { order { name } userErrors { message } } }"#,
+    );
+    assert_eq!(
+        created["data"]["orderCreate"]["order"]["name"], "#1004",
+        "{created}"
+    );
+    // Two sessions after it: each order has a number of its own, after the Admin API's.
+    let a = place_an_order(&state, "numbered-a", json!({}));
+    let b = place_an_order(&state, "numbered-b", json!({}));
+    assert_eq!(a["order"]["number"], "#1005");
+    assert_eq!(b["order"]["number"], "#1006");
+    let recorded = admin_query(
+        &state,
+        &format!(
+            r#"{{ order(id: "{}") {{ name }} }}"#,
+            b["order"]["id"].as_str().unwrap()
+        ),
+    );
+    assert_eq!(recorded["data"]["order"]["name"], "#1006", "{recorded}");
+    // Its id is the Admin API's, of the counter `orderCreate` takes ids from: not its number.
+    assert_ne!(b["order"]["id"], "gid://shopify/Order/1006");
+    let created_id = admin_query(
+        &state,
+        r#"{ orders(first: 1, query: "name:#1004") { nodes { id } } }"#,
+    );
+    let created_id = created_id["data"]["orders"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    let b_id = b["order"]["id"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!(b_id > created_id, "{b_id} after {created_id}");
+    let next = admin_query(
+        &state,
+        r#"mutation { orderCreate(order: {lineItems: [{title: "Service", quantity: 1, priceSet: {shopMoney: {amount: "5.00", currencyCode: USD}}}]}) { order { name } userErrors { message } } }"#,
+    );
+    assert_eq!(next["data"]["orderCreate"]["order"]["name"], "#1007");
+}

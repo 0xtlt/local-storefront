@@ -304,12 +304,7 @@ pub fn register(registry: &mut Registry) {
             )
         })
         .search_field("GiftCard", "status", |r, _item, card| {
-            let today = r
-                .state()
-                .timestamp()
-                .get(..10)
-                .unwrap_or_default()
-                .to_string();
+            let today = super::gift_cards::today(r.state());
             let enabled = card
                 .get("enabled")
                 .and_then(Value::as_bool)

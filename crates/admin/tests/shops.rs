@@ -161,10 +161,11 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
         &mut state,
         &orders::PlacedOrder {
             id: Some("gid://shopify/Order/1004"),
-            number: 1004,
+            number: Some(1004),
             processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
             result: &result,
             customer_id: Some(jane.id),
+            company_location_id: None,
             email: Some(&jane.email),
             phone: None,
             shipping_address: Some(&address),
@@ -173,7 +174,14 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             payment: Some("Credit card"),
         },
     );
-    assert_eq!(order, "gid://shopify/Order/1004");
+    assert_eq!(
+        order,
+        orders::RecordedOrder {
+            id: "gid://shopify/Order/1004".into(),
+            number: 1004
+        }
+    );
+    let order = order.id;
     assert!(!before.contains(&order));
     let record = state.get(&order).unwrap();
     assert_eq!(record["name"], json!("#1004"));
@@ -227,16 +235,16 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
         ["orders/create", "order_transactions/create", "orders/paid"]
     );
 
-    // The checkout numbers the orders of each session on its own: an id that is taken gets a
-    // new one.
+    // An id or a number that is taken gets a new one: no two orders share a name.
     let again = orders::record_placed_order(
         &mut state,
         &orders::PlacedOrder {
             id: Some("gid://shopify/Order/1004"),
-            number: 1004,
+            number: Some(1004),
             processed_at: "2026-05-01T09:31:00Z".parse().unwrap(),
             result: &result,
             customer_id: None,
+            company_location_id: None,
             email: None,
             phone: None,
             shipping_address: None,
@@ -245,6 +253,212 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             payment: None,
         },
     );
-    assert_ne!(again, order);
-    assert_eq!(state.get(&again).unwrap()["customer"], Value::Null);
+    assert_ne!(again.id, order);
+    assert_eq!(again.number, 1005);
+    assert_eq!(state.get(&again.id).unwrap()["name"], json!("#1005"));
+    assert_eq!(state.get(&again.id).unwrap()["customer"], Value::Null);
+
+    // Without a number, the shop gives its next one, as to `orderCreate`'s orders.
+    let next = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:32:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: None,
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    assert_eq!(next.number, 1006);
+    assert_eq!(state.get(&next.id).unwrap()["name"], json!("#1006"));
+    // Its id is of the shop's counter, as `orderCreate`'s, not made of its number.
+    assert_ne!(next.id, gid("Order", 1006));
+    let seeded = store
+        .customers
+        .iter()
+        .flat_map(|customer| customer.orders.iter().map(|order| order.id))
+        .max()
+        .unwrap();
+    assert!(parse_gid(&next.id).unwrap().1 > seeded);
+}
+
+/// An order placed for a company location (a B2B checkout) is the location's: its
+/// `ordersCount` and `totalSpent`, and its company's, count it as the customer's counters do,
+/// and a cancellation takes its total back.
+#[test]
+fn an_order_placed_for_a_company_location_counts_in_its_counters() {
+    let store = support::fixture_store("rich");
+    let mut state = ShopState::seeded(&store, None);
+    let buyer = store
+        .customers
+        .iter()
+        .find(|customer| customer.email == "buyer@acme.example")
+        .unwrap();
+    let company = &store.companies[buyer.company.unwrap()];
+    let lyon = company
+        .locations
+        .iter()
+        .find(|location| location.name == "Acme Lyon")
+        .unwrap();
+    let dress = store.product_by_handle("linen-dress").unwrap();
+    let variant = &dress.variants[0];
+    let result = lsf_checkout::CheckoutResult {
+        lines: vec![lsf_checkout::ResultLine {
+            id: "gid://shopify/CartLine/1".into(),
+            variant_id: variant.id,
+            product_id: dress.id,
+            title: dress.title.clone(),
+            quantity: 1,
+            unit_price: variant.price,
+            subtotal: variant.price,
+            total: variant.price,
+            ..Default::default()
+        }],
+        cost: lsf_checkout::Cost {
+            total: variant.price,
+            due_now: variant.price,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let order = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: Some(buyer.id),
+            company_location_id: Some(lyon.id),
+            email: Some(&buyer.email),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    let total = state.get(&order.id).unwrap()["totalPriceSet"]["shopMoney"]["amount"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let total: f64 = total.parse().unwrap();
+    let location = lsf_admin::state::gid("CompanyLocation", lyon.id);
+    let company_gid = lsf_admin::state::gid("Company", company.id);
+    let spent = |state: &ShopState, key: &str| -> f64 {
+        state.get(key).unwrap()["totalSpent"]["amount"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let record = state.get(&location).unwrap();
+    assert_eq!(record["ordersCount"]["count"], json!(5));
+    assert_eq!(record["orderCount"], json!(5));
+    assert_eq!(spent(&state, &location), 1250.0 + total);
+    assert_eq!(spent(&state, &company_gid), 1250.0 + total);
+    assert_eq!(
+        state.get(&order.id).unwrap()["purchasingEntity"]["__typename"],
+        json!("PurchasingCompany")
+    );
+
+    // Cancelled, it costs nothing, and still counts as an order.
+    let now = state.timestamp();
+    state
+        .get_mut(&order.id)
+        .unwrap()
+        .insert("cancelledAt".into(), json!(now));
+    lsf_admin::domains::orders::model::refresh_order(&mut state, &order.id);
+    assert_eq!(spent(&state, &location), 1250.0);
+    assert_eq!(spent(&state, &company_gid), 1250.0);
+    assert_eq!(
+        state.get(&location).unwrap()["ordersCount"]["count"],
+        json!(5)
+    );
+}
+
+/// A guest checkout whose email is a customer's (in any case) is that customer's order, as
+/// Shopify links it, and the customer's counters count it.
+#[test]
+fn a_guest_order_with_a_customer_s_email_is_that_customer_s() {
+    let store = support::demo_store();
+    let mut state = ShopState::seeded(&store, None);
+    let jane = store
+        .customers
+        .iter()
+        .find(|customer| customer.first_name == "Jane")
+        .unwrap();
+    let customer = customers::customer_gid(jane);
+    let orders_before = state.get(&customer).unwrap()["numberOfOrders"].clone();
+    let tee = store.product_by_handle("organic-cotton-t-shirt").unwrap();
+    let variant = &tee.variants[0];
+    let result = CheckoutResult {
+        lines: vec![ResultLine {
+            id: "gid://shopify/CartLine/1".into(),
+            variant_id: variant.id,
+            product_id: tee.id,
+            title: tee.title.clone(),
+            quantity: 1,
+            unit_price: variant.price,
+            subtotal: variant.price,
+            total: variant.price,
+            ..Default::default()
+        }],
+        cost: Cost {
+            total: variant.price,
+            due_now: variant.price,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let email = jane.email.to_uppercase();
+    let order = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: Some(&email),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    assert_eq!(state.get(&order.id).unwrap()["customer"], json!(customer));
+    let record = state.get(&customer).unwrap();
+    let before: u64 = orders_before.as_str().unwrap().parse().unwrap();
+    assert_eq!(record["numberOfOrders"], json!((before + 1).to_string()));
+    assert_eq!(record["lastOrder"], json!(order.id));
+
+    // An email no customer has stays a guest's.
+    let guest = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:31:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: Some("nobody@example.com"),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    assert_eq!(state.get(&guest.id).unwrap()["customer"], Value::Null);
 }

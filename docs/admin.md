@@ -353,7 +353,11 @@ The full list, field by field, is in the design notes of `lsf-admin`
   Admin API's changes.
 - **An order placed at the checkout** is recorded in the Admin API, and the store is not built
   again for it: orders do not sync (the account pages show it from the checkout, as they do
-  without the Admin API).
+  without the Admin API). The Admin API numbers it, as it numbers the orders of `orderCreate` and
+  of draft orders: no two orders share a name, and the thank-you page shows that number.
+  Without the Admin API, each session numbers its orders after the store data's, as before. A
+  guest whose email is a customer's places the order as that customer, as on Shopify: the
+  customer's `numberOfOrders` and `amountSpent` count it.
 - **When the store data refuses a change** (an email it does not take, two variants with the
   same options, two companies of one name, which Shopify allows), the storefront shows the rest,
   the terminal says what was refused (once), and so does `GET /__lsf/admin`
@@ -384,6 +388,10 @@ The full list, field by field, is in the design notes of `lsf-admin`
   the fields answered with a default because the store data does not give them (and
   `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an
   input it ignored, a search filter it does not read).
+- A money input of ten trillion or more in the currency's unit (`Money`, `MoneyInput.amount`, a
+  discount's amount, …), or a line or an order whose total would be, answers a `userError`
+  ("Price must be less than 10000000000000") and changes nothing. Shopify publishes no limit:
+  this one is lsf's, so that no total overflows.
 - A mutation lsf does not simulate answers an error with `extensions.code: LSF_NOT_SIMULATED`, never
   a silent success. `GET /__lsf/admin` lists those it simulates. The REST Admin API
   (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API only.
@@ -555,7 +563,14 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
 - The local checkout keeps the stock of the store data: its orders commit nothing, so test
   purchases never sell a product out. Orders the backend makes do: `orderCreate` with a
   `DECREMENT_…` `inventoryBehaviour`, a completed draft order, units an edit adds. Shipping
-  takes units from what was committed; a restock puts them back in stock.
+  takes the units the order committed; a restock puts back what the order took. An order that
+  took nothing (of the store data or the checkout) ships and restocks without moving the stock. A variant an order
+  sells out is out of stock as after an inventory mutation: `availableForSale` is `false`,
+  `variants/out_of_stock` is sent, and the storefront shows it sold out.
+- `orderCreate`'s `discountCode` makes a `DiscountCodeApplication` (its `value` as the
+  reference's examples answer it) and the allocations on the lines (an amount off the order is
+  spread over them by their totals) or on the shipping line. Its `allocationMethod`,
+  `targetSelection` and `targetType` are lsf's: Shopify's examples do not show them.
 - `orderCancel` is synchronous (Shopify's runs as a job). `orderCreate` with a
   `financialStatus` and no `transactions` records the transaction the status implies (a sale of
   the total for `PAID`). `fulfillmentCancel` does not put the shipped units back in stock.
@@ -619,6 +634,10 @@ published, Rails' wording otherwise), with their webhooks:
 | `companyLocationCreate`, `companyLocationUpdate`, `companyLocationDelete`, `companyLocationsDelete`, `companyLocationAssignAddress`, `companyAddressDelete`, `companyLocationTaxSettingsUpdate`, `companyLocationAssignTaxExemptions`, `companyLocationRevokeTaxExemptions` | `billingSameAsShipping` (or both address types) gives one address for both. | `company_locations/create`, `/update`, `/delete` |
 | `companyContactCreate`, `companyContactUpdate`, `companyContactDelete`, `companyContactsDelete`, `companyContactRemoveFromCompany`, `companyAssignCustomerAsContact`, `companyAssignMainContact`, `companyRevokeMainContact` | A contact's id is its customer's (the checkout's `purchasingCompany.contact.id`). Deleting a contact keeps its customer. | `company_contacts/create`, `/update`, `/delete`; `companies/update` for the main contact |
 | `companyContactAssignRole(s)`, `companyLocationAssignRoles`, `companyContactRevokeRole(s)`, `companyLocationRevokeRoles` | One role per contact and location; the role and the location must be the contact's company's. | `company_contact_roles/assign`, `/revoke` |
+
+A company location's `ordersCount` and `totalSpent` (and its company's) count the orders placed
+for it at the local checkout by a B2B buyer, on top of what the store data says, as a customer's
+`numberOfOrders` and `amountSpent` count theirs; a cancelled order costs nothing.
 
 Every id that names nothing answers a `userError` (`Customer does not exist`, `Resource requested
 does not exist.`), and a mutation that fails changes nothing. The order of the webhooks of one

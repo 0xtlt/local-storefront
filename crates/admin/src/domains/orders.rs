@@ -372,7 +372,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     let mut subtotal = 0;
     let mut line_discounts = 0;
     let mut quantity = 0;
-    let mut grams = 0;
+    let mut grams: u64 = 0;
     let order_number = crate::state::parse_gid(&order).map_or(0, |(_, id)| id);
     for (position, line) in draft.lines.iter().enumerate() {
         let id = line_item_gid(order_number, position);
@@ -381,7 +381,10 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         subtotal += discounted;
         line_discounts += line.discount;
         quantity += line.quantity;
-        grams += line.grams * u64::from(line.quantity);
+        grams = line
+            .grams
+            .saturating_mul(u64::from(line.quantity))
+            .saturating_add(grams);
         state.insert(line_item_record(
             &id,
             line,
@@ -485,7 +488,11 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             );
             let share = line.unit_price * i64::from(fulfilled[position]);
             let discounted = share
-                - line.discount * i64::from(fulfilled[position]) / i64::from(line.quantity.max(1));
+                - model::share(
+                    line.discount,
+                    i64::from(fulfilled[position]),
+                    i64::from(line.quantity.max(1)),
+                );
             state.insert(value::object(json!({
                 "__typename": "FulfillmentLineItem",
                 "id": id,
@@ -840,7 +847,7 @@ pub fn line_item_record(
         if line.quantity == 0 {
             0
         } else {
-            total * i64::from(unfulfilled) / i64::from(line.quantity)
+            model::share(total, i64::from(unfulfilled), i64::from(line.quantity))
         }
     };
     let name = match &line.variant_title {
@@ -910,16 +917,23 @@ fn same_address(a: &Value, b: &Value) -> bool {
 /// An order placed in the local checkout, as the checkout knows it once the buyer paid: what
 /// the server's `place_order` has. [`record_placed_order`] makes it an order of the shop.
 pub struct PlacedOrder<'a> {
-    /// The id the checkout gave the order (`gid://shopify/Order/1004`), kept when no order of
-    /// the shop has it.
+    /// The id the checkout gave the order, kept when no order of the shop has it. `None`: a new
+    /// id of the shop's counter, as `orderCreate` gives (`gid://shopify/Order/<n>`, a large `n`,
+    /// not the order number).
     pub id: Option<&'a str>,
-    /// The number of the order: `1004` for `#1004`.
-    pub number: u64,
+    /// The number of the order (`1004` for `#1004`), kept when no order of the shop has it.
+    /// `None`: the shop's next one ([`model::next_order_number`]), as `orderCreate` and a
+    /// completed draft order take, so that the checkout and the Admin API share one numbering.
+    pub number: Option<u64>,
     pub processed_at: DateTime<Utc>,
     /// The lines, discounts, delivery and costs.
     pub result: &'a lsf_checkout::CheckoutResult,
     /// The logged-in customer, by their lsf-core id.
     pub customer_id: Option<u64>,
+    /// The company location the buyer ordered for (a B2B checkout), by its lsf-core id: the
+    /// order's `purchasingEntity` is then a `PurchasingCompany`, and the location's counters
+    /// count it.
+    pub company_location_id: Option<u64>,
     pub email: Option<&'a str>,
     pub phone: Option<&'a str>,
     pub shipping_address: Option<&'a lsf_checkout::Address>,
@@ -929,21 +943,54 @@ pub struct PlacedOrder<'a> {
     pub payment: Option<&'a str>,
 }
 
+/// What the shop recorded of an order placed in the local checkout: its GID and its number,
+/// which the checkout shows on its thank-you page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedOrder {
+    pub id: String,
+    pub number: u64,
+}
+
 /// Records an order placed in the local checkout: the order, its lines, its fulfillment order,
 /// the transaction of what was paid now; the customer's counters follow. Emits `orders/create`,
 /// `order_transactions/create` for the payment, then `orders/paid` when paid in full, as Shopify
 /// does for a paid order. The stock is left as it is: the local checkout keeps the stock of the
-/// data, so that test purchases never sell a product out. Returns the GID of the order.
-pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> String {
+/// data, so that test purchases never sell a product out. Returns the GID and the number the
+/// order got: no two orders of the shop share a number.
+pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> RecordedOrder {
     let result = placed.result;
+    let number = placed
+        .number
+        .filter(|number| {
+            !state
+                .all("Order")
+                .any(|order| order.get("number").and_then(Value::as_u64) == Some(*number))
+        })
+        .unwrap_or_else(|| model::next_order_number(state));
     let id = placed
         .id
         .filter(|id| !state.contains(id) && crate::state::gid_type(id) == Some("Order"))
         .map_or_else(|| state.new_gid("Order"), str::to_string);
-    let customer = placed
-        .customer_id
-        .map(|id| gid("Customer", id))
-        .filter(|customer| state.contains(customer));
+    // A guest whose email is a customer's places the order as that customer: Shopify links a
+    // guest checkout to the customer account with the same email (Help Center behaviour, which
+    // shopify.dev does not document). Emails compare ignoring case.
+    let customer = match placed.customer_id {
+        Some(id) => Some(gid("Customer", id)).filter(|customer| state.contains(customer)),
+        None => placed
+            .email
+            .map(str::trim)
+            .filter(|email| !email.is_empty())
+            .and_then(|email| {
+                state.keys("Customer").find(|key| {
+                    state
+                        .get(key)
+                        .and_then(|record| record.get("email"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|known| known.eq_ignore_ascii_case(email))
+                })
+            })
+            .map(str::to_string),
+    };
     let customer_record = customer.as_ref().and_then(|customer| state.get(customer));
     let accepts_marketing = customer_record
         .and_then(|record| record.get("emailMarketingConsent"))
@@ -960,9 +1007,14 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
         .map(|line| {
             let variant = gid("ProductVariant", line.variant_id);
             let variant_record = state.get(&variant);
-            let weight = variant_record
+            // The variant's own item: one the Admin API created has an id of the counter, not
+            // the one lsf-core would derive.
+            let inventory_item = variant_record
                 .and_then(|record| record.get("inventoryItem"))
                 .and_then(Value::as_str)
+                .map(str::to_string);
+            let weight = inventory_item
+                .as_deref()
                 .and_then(|item| state.get(item))
                 .and_then(|item| item.get("measurement"))
                 .and_then(|measurement| measurement.get("weight"))
@@ -970,7 +1022,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
             LineDraft {
                 product: Some(gid("Product", line.product_id)),
                 variant: Some(variant.clone()),
-                inventory_item: Some(catalog::inventory_item_gid(line.variant_id)),
+                inventory_item,
                 title: line.title.clone(),
                 variant_title: line
                     .variant_title
@@ -1056,8 +1108,8 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
     let location = state.keys("Location").next().map(str::to_string);
     let draft = OrderDraft {
         id: id.clone(),
-        name: format!("#{}", placed.number),
-        number: placed.number,
+        name: format!("#{number}"),
+        number,
         created_at: placed.processed_at,
         customer,
         email: placed.email.map(str::to_string),
@@ -1093,6 +1145,31 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
     };
     let order = insert_order(state, &draft);
     record_discounts(state, &order, result);
+    let location = placed
+        .company_location_id
+        .map(|id| gid("CompanyLocation", id))
+        .filter(|location| state.contains(location));
+    if let Some(location) = &location {
+        let company = state
+            .get(location)
+            .and_then(|record| record.get("company"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        // The buyer's contact at the company: `CompanyContact/<customer id>`, the seed's.
+        let contact = draft
+            .customer
+            .as_deref()
+            .and_then(crate::state::parse_gid)
+            .map(|(_, id)| gid("CompanyContact", id))
+            .filter(|contact| state.contains(contact));
+        if let Some(record) = state.get_mut(&order) {
+            record.insert(
+                "purchasingEntity".into(),
+                json!({"__typename": "PurchasingCompany", "company": company, "location": location, "contact": contact}),
+            );
+        }
+        customers::refresh_company_location(state, location);
+    }
     state.emit("orders/create", &order);
     // What Shopify fires for a paid online order: the order, the transaction of the payment,
     // then `orders/paid`.
@@ -1106,7 +1183,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
     if draft.financial == FinancialStatus::Paid {
         state.emit("orders/paid", &order);
     }
-    order
+    RecordedOrder { id: order, number }
 }
 
 /// The discounts of a checkout as its order keeps them: a `DiscountApplication` for each, in the
