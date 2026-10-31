@@ -151,8 +151,9 @@ pub fn create_media(state: &mut ShopState, product: &str, input: &Map<String, Va
         "Video" => json!({
             "filename": file_name,
             "duration": null,
-            "sources": [{"url": source, "mimeType": mime, "format": mime.rsplit('/').next(), "width": null, "height": null}],
-            "originalSource": {"url": source, "mimeType": mime, "format": mime.rsplit('/').next(), "width": null, "height": null},
+            // The size of a video lsf did not download is unknown: left out, reported as defaulted.
+            "sources": [{"url": source, "mimeType": mime, "format": mime.rsplit('/').next()}],
+            "originalSource": {"url": source, "mimeType": mime, "format": mime.rsplit('/').next()},
         }),
         "Model3d" => json!({
             "filename": file_name,

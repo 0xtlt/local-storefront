@@ -93,6 +93,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "app/uninstalled",
     "app_subscriptions/update",
     "bulk_operations/finish",
+    "collection_publications/create",
+    "collection_publications/delete",
+    "collection_publications/update",
     "collections/create",
     "collections/delete",
     "collections/update",
@@ -117,7 +120,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "inventory_levels/connect",
     "inventory_levels/disconnect",
     "inventory_levels/update",
+    "locations/activate",
     "locations/create",
+    "locations/deactivate",
     "locations/delete",
     "locations/update",
     "metaobjects/create",
@@ -130,12 +135,20 @@ pub const BUILT_TOPICS: &[&str] = &[
     "orders/paid",
     "orders/partially_fulfilled",
     "orders/updated",
+    "product_publications/create",
+    "product_publications/delete",
+    "product_publications/update",
     "products/create",
     "products/delete",
     "products/update",
     "refunds/create",
+    "selling_plan_groups/create",
+    "selling_plan_groups/delete",
+    "selling_plan_groups/update",
     "shop/redact",
     "shop/update",
+    "variants/in_stock",
+    "variants/out_of_stock",
 ];
 
 /// Whether lsf builds the payload of a topic.
@@ -160,7 +173,21 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "inventory_items/delete" => catalog::inventory_item_deleted(record),
         "inventory_levels/update" | "inventory_levels/connect" => catalog::inventory_level(record),
         "inventory_levels/disconnect" => catalog::inventory_level_disconnected(record),
-        "locations/create" | "locations/update" => catalog::location(record),
+        "locations/create" | "locations/update" | "locations/activate" | "locations/deactivate" => {
+            catalog::location(record)
+        }
+        "variants/in_stock" | "variants/out_of_stock" => catalog::variant_stock(record),
+        "product_publications/create" | "product_publications/update" => {
+            catalog::resource_publication(record, "product")
+        }
+        "collection_publications/create" | "collection_publications/update" => {
+            catalog::resource_publication(record, "collection")
+        }
+        "product_publications/delete" | "collection_publications/delete" => json!({"id": null}),
+        "selling_plan_groups/create" | "selling_plan_groups/update" => {
+            catalog::selling_plan_group(record, lookup)
+        }
+        "selling_plan_groups/delete" => catalog::selling_plan_group_deleted(record),
         "customers/create" | "customers/update" | "customers/enable" | "customers/disable" => {
             customers::customer(record, lookup)
         }

@@ -113,6 +113,15 @@ const VALUES: &[(&str, &str)] = &[
     ),
     // The compliance examples are of another shop and customer (`{shop}.myshopify.com`), and of
     // a data request lsf has no record of.
+    // The examples of an update and a delete are of other groups than the creation's, which
+    // the sample is; the app that made a group is not in GraphQL's `SellingPlanGroup`.
+    ("selling_plan_groups/update", ".id"),
+    ("selling_plan_groups/update", ".admin_graphql_api_id"),
+    ("selling_plan_groups/delete", "."),
+    ("selling_plan_groups/*", ".admin_graphql_api_app"),
+    // The example of `out_of_stock` is the same variant with no stock; the sample has some.
+    ("variants/out_of_stock", ".inventory_quantity"),
+    ("variants/out_of_stock", ".old_inventory_quantity"),
     ("customers/data_request", "."),
     ("customers/redact", "."),
     ("shop/redact", "."),

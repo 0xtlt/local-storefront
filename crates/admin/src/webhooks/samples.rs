@@ -69,6 +69,16 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "inventory_items" => (inventory_item(), Vec::new()),
         "inventory_levels" => (inventory_level(), Vec::new()),
         "locations" => (location(), Vec::new()),
+        "variants" => (variants().remove(0), Vec::new()),
+        "product_publications" => (
+            resource_publication("gid://shopify/Product/788032119674292922"),
+            Vec::new(),
+        ),
+        "collection_publications" => (
+            resource_publication("gid://shopify/Collection/408372092144951419"),
+            Vec::new(),
+        ),
+        "selling_plan_groups" => (selling_plan_group(), Vec::new()),
         "app" if topic == "app/scopes_update" => (installation(), Vec::new()),
         "app" | "shop" => (shop(), Vec::new()),
         "app_subscriptions" => (app_subscription(), Vec::new()),
@@ -206,6 +216,57 @@ fn collection() -> Value {
         "publishedAt": "2021-12-31T16:00:00-05:00",
         "sortOrder": null,
         "templateSuffix": null,
+    })
+}
+
+/// A product or a collection on a publication, as the publication events snapshot it.
+fn resource_publication(publishable: &str) -> Value {
+    json!({
+        "__typename": "ResourcePublication",
+        "publication": "gid://shopify/Publication/123456",
+        "publishable": publishable,
+        "publishDate": "2021-12-31T19:00:00-05:00",
+        "isPublished": true,
+    })
+}
+
+fn selling_plan_group() -> Value {
+    json!({
+        "__typename": "SellingPlanGroup",
+        "id": "gid://shopify/SellingPlanGroup/1039518918",
+        "name": "Subscribe & Save",
+        "merchantCode": "sub-n-save",
+        "appId": null,
+        "description": null,
+        "options": ["Delivery every"],
+        "position": null,
+        "summary": "1 delivery frequency,  discount",
+        "sellingPlans": [{
+            "__typename": "SellingPlan",
+            "id": "gid://shopify/SellingPlan/1",
+            "name": "Pay every month deliver every month",
+            "options": ["month"],
+            "position": null,
+            "description": null,
+            "billingPolicy": {
+                "__typename": "SellingPlanRecurringBillingPolicy",
+                "interval": "MONTH",
+                "intervalCount": 1,
+                "minCycles": null,
+                "maxCycles": null,
+            },
+            "deliveryPolicy": {
+                "__typename": "SellingPlanRecurringDeliveryPolicy",
+                "interval": "MONTH",
+                "intervalCount": 1,
+                "anchors": [],
+                "cutoff": null,
+                "preAnchorBehavior": "ASAP",
+            },
+            "pricingPolicies": [],
+        }],
+        "productVariants": [],
+        "products": [],
     })
 }
 

@@ -41,6 +41,8 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("inventory_items", _) => &["InventoryItem"],
         ("inventory_levels", _) => &["InventoryLevel"],
         ("locations", _) => &["Location"],
+        ("variants", _) => &["ProductVariant"],
+        ("selling_plan_groups", _) => &["SellingPlanGroup"],
         ("app_subscriptions", _) => &["AppSubscription"],
         ("bulk_operations", _) => &["BulkOperation"],
         ("metaobjects", _) => &["Metaobject"],

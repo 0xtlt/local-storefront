@@ -95,6 +95,27 @@
       "status": "completed",
       "type": "query"
     },
+    "collection_publications/create": {
+      "id": null,
+      "publication_id": 123456,
+      "published_at": "2021-12-31T19:00:00-05:00",
+      "published": true,
+      "created_at": null,
+      "updated_at": null,
+      "collection_id": 408372092144951419
+    },
+    "collection_publications/delete": {
+      "id": null
+    },
+    "collection_publications/update": {
+      "id": null,
+      "publication_id": 123456,
+      "published_at": "2021-12-31T19:00:00-05:00",
+      "published": true,
+      "created_at": null,
+      "updated_at": null,
+      "collection_id": 408372092144951419
+    },
     "collections/create": {
       "id": 408372092144951419,
       "handle": "mynewcollection",
@@ -1453,7 +1474,45 @@
       "updated_at": "2021-12-31T19:00:00-05:00",
       "admin_graphql_api_id": "gid://shopify/InventoryLevel/24826418?inventory_item_id=271878346596884015"
     },
+    "locations/activate": {
+      "id": 866550311766439020,
+      "name": "Example Shop",
+      "address1": "34 Example Street",
+      "address2": "Next to example",
+      "city": "ottawa",
+      "zip": "k1n5t5",
+      "province": "ontario",
+      "country": "CA",
+      "phone": "555-555-5555",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "country_code": "CA",
+      "country_name": "Canada",
+      "province_code": "ON",
+      "legacy": false,
+      "active": true,
+      "admin_graphql_api_id": "gid://shopify/Location/866550311766439020"
+    },
     "locations/create": {
+      "id": 866550311766439020,
+      "name": "Example Shop",
+      "address1": "34 Example Street",
+      "address2": "Next to example",
+      "city": "ottawa",
+      "zip": "k1n5t5",
+      "province": "ontario",
+      "country": "CA",
+      "phone": "555-555-5555",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "country_code": "CA",
+      "country_name": "Canada",
+      "province_code": "ON",
+      "legacy": false,
+      "active": true,
+      "admin_graphql_api_id": "gid://shopify/Location/866550311766439020"
+    },
+    "locations/deactivate": {
       "id": 866550311766439020,
       "name": "Example Shop",
       "address1": "34 Example Street",
@@ -5069,6 +5128,27 @@
       "returns": [],
       "line_item_groups": []
     },
+    "product_publications/create": {
+      "id": null,
+      "publication_id": 123456,
+      "published_at": "2021-12-31T19:00:00-05:00",
+      "published": true,
+      "created_at": null,
+      "updated_at": null,
+      "product_id": 788032119674292922
+    },
+    "product_publications/delete": {
+      "id": null
+    },
+    "product_publications/update": {
+      "id": null,
+      "publication_id": 123456,
+      "published_at": "2021-12-31T19:00:00-05:00",
+      "published": true,
+      "created_at": null,
+      "updated_at": null,
+      "product_id": 788032119674292922
+    },
     "products/create": {
       "admin_graphql_api_id": "gid://shopify/Product/788032119674292922",
       "body_html": "An example T-Shirt",
@@ -5739,6 +5819,90 @@
         }
       ]
     },
+    "selling_plan_groups/create": {
+      "admin_graphql_api_id": "gid://shopify/SellingPlanGroup/1039518918",
+      "id": 1039518918,
+      "name": "Subscribe & Save",
+      "merchant_code": "sub-n-save",
+      "admin_graphql_api_app": "gid://shopify/App/2525000003",
+      "app_id": null,
+      "description": null,
+      "options": [
+        "Delivery every"
+      ],
+      "position": null,
+      "summary": "1 delivery frequency,  discount",
+      "selling_plans": [
+        {
+          "name": "Pay every month deliver every month",
+          "options": [
+            "month"
+          ],
+          "position": null,
+          "description": null,
+          "billing_policy": {
+            "interval": "month",
+            "interval_count": 1,
+            "min_cycles": null,
+            "max_cycles": null
+          },
+          "delivery_policy": {
+            "interval": "month",
+            "interval_count": 1,
+            "anchors": [],
+            "cutoff": null,
+            "pre_anchor_behavior": "asap"
+          },
+          "pricing_policies": []
+        }
+      ],
+      "product_variants": [],
+      "products": []
+    },
+    "selling_plan_groups/delete": {
+      "admin_graphql_api_id": "gid://shopify/SellingPlanGroup/1039518917",
+      "id": 1039518917
+    },
+    "selling_plan_groups/update": {
+      "admin_graphql_api_id": "gid://shopify/SellingPlanGroup/1039518910",
+      "id": 1039518910,
+      "name": "Subscribe & Save",
+      "merchant_code": "sub-n-save",
+      "admin_graphql_api_app": "gid://shopify/App/2525000003",
+      "app_id": null,
+      "description": null,
+      "options": [
+        "Delivery every"
+      ],
+      "position": null,
+      "summary": "1 delivery frequency,  discount",
+      "selling_plans": [
+        {
+          "name": "Pay every month deliver every month",
+          "options": [
+            "month"
+          ],
+          "position": null,
+          "description": null,
+          "billing_policy": {
+            "interval": "month",
+            "interval_count": 1,
+            "min_cycles": null,
+            "max_cycles": null
+          },
+          "delivery_policy": {
+            "interval": "month",
+            "interval_count": 1,
+            "anchors": [],
+            "cutoff": null,
+            "pre_anchor_behavior": "asap"
+          },
+          "pricing_policies": []
+        }
+      ],
+      "product_variants": [],
+      "products": []
+    },
     "shop/redact": {
       "shop_id": 954889,
       "shop_domain": "{shop}.myshopify.com"
@@ -5801,6 +5965,48 @@
       "marketing_sms_consent_enabled_at_checkout": false,
       "marketing_email_consent_enabled_at_checkout": true,
       "transactional_sms_disabled": false
+    },
+    "variants/in_stock": {
+      "id": 642667041472713922,
+      "product_id": 788032119674292922,
+      "title": "Small",
+      "price": "19.99",
+      "position": 1,
+      "inventory_policy": "deny",
+      "compare_at_price": "24.99",
+      "option1": "Small",
+      "option2": null,
+      "option3": null,
+      "created_at": "2021-12-29T19:00:00-05:00",
+      "updated_at": "2021-12-30T19:00:00-05:00",
+      "taxable": true,
+      "barcode": null,
+      "sku": null,
+      "inventory_quantity": 75,
+      "old_inventory_quantity": 75,
+      "admin_graphql_api_id": "gid://shopify/ProductVariant/642667041472713922",
+      "image_id": null
+    },
+    "variants/out_of_stock": {
+      "id": 642667041472713922,
+      "product_id": 788032119674292922,
+      "title": "Small",
+      "price": "19.99",
+      "position": 1,
+      "inventory_policy": "deny",
+      "compare_at_price": "24.99",
+      "option1": "Small",
+      "option2": null,
+      "option3": null,
+      "created_at": "2021-12-29T19:00:00-05:00",
+      "updated_at": "2021-12-30T19:00:00-05:00",
+      "taxable": true,
+      "barcode": null,
+      "sku": null,
+      "inventory_quantity": 0,
+      "old_inventory_quantity": 0,
+      "admin_graphql_api_id": "gid://shopify/ProductVariant/642667041472713922",
+      "image_id": null
     }
   }
 }
