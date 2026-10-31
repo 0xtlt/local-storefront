@@ -1196,3 +1196,98 @@ fn a_feed_follows_the_languages_of_the_shop_and_wrong_input_is_refused() {
     assert_eq!(ok(&deleted, "productFeedDelete")["deletedId"], feed["id"]);
     assert_eq!(shop.count("ProductFeed"), 0);
 }
+
+#[test]
+fn gift_card_product_set_makes_a_gift_card_product_with_its_settings() {
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        r#"mutation { giftCardProductSet(input: {title: "Store credit", issuanceCurrency: CAD, crossCurrencyRedeemable: true,
+            productOptions: [{name: "Denomination", values: [{name: "$25"}, {name: "$50"}]}],
+            variants: [{optionValues: [{optionName: "Denomination", name: "$25"}], price: "25.00"},
+                {optionValues: [{optionName: "Denomination", name: "$50"}], price: "50.00"}]}) {
+            product { id isGiftCard giftCardSettings { issuanceCurrency crossCurrencyRedeemable } variants(first: 5) { nodes { price } } }
+            userErrors { field message code } } }"#,
+    );
+    let card = &ok(&created, "giftCardProductSet")["product"];
+    assert_eq!(card["isGiftCard"], json!(true));
+    assert_eq!(
+        card["giftCardSettings"],
+        json!({"issuanceCurrency": "CAD", "crossCurrencyRedeemable": true})
+    );
+    assert_eq!(
+        card["variants"]["nodes"],
+        json!([{"price": "25.00"}, {"price": "50.00"}])
+    );
+    assert!(topics(&mut shop).contains(&"products/create".to_string()));
+    let id = card["id"].as_str().unwrap().to_string();
+
+    // Its settings can't change; a product that is no gift card is refused; nothing changes.
+    let before = shop.clone();
+    let settings = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardProductSet(identifier: {id: $id}, input: {issuanceCurrency: USD}) { product { id } userErrors { field code } } }"#,
+        json!({"id": id}),
+    );
+    assert_eq!(
+        settings["data"]["giftCardProductSet"]["userErrors"],
+        json!([{"field": ["input", "issuanceCurrency"], "code": "INVALID_INPUT"}])
+    );
+    let mug = product(&shop, "ceramic-mug");
+    let not_gift = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardProductSet(identifier: {id: $id}, input: {title: "Mug"}) { product { id } userErrors { field code } } }"#,
+        json!({"id": mug}),
+    );
+    assert_eq!(
+        not_gift["data"]["giftCardProductSet"]["userErrors"],
+        json!([{"field": ["identifier"], "code": "PRODUCT_MUST_BE_GIFT_CARD"}])
+    );
+    unchanged(&mut shop, &before, &[&id, &mug]);
+}
+
+#[test]
+fn gift_card_notifications_are_logged_and_never_sent() {
+    let mut shop = demo();
+    let cards: Vec<String> = shop.keys("GiftCard").map(str::to_string).collect();
+    let (with_customer, without) = (cards[0].clone(), cards[1].clone());
+    let sent = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardSendNotificationToCustomer(id: $id) { giftCard { id } userErrors { field message code } } }"#,
+        json!({"id": with_customer}),
+    );
+    assert_eq!(
+        ok(&sent, "giftCardSendNotificationToCustomer")["giftCard"]["id"],
+        json!(with_customer)
+    );
+    let log = shop.get(&with_customer).unwrap()["lsfNotifications"].clone();
+    assert_eq!(log[0]["to"], json!("jane.doe@example.com"));
+    // The card has a recipient: the customer gets a purchase confirmation.
+    assert_eq!(log[0]["kind"], json!("purchase confirmation"));
+    let to_recipient = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardSendNotificationToRecipient(id: $id) { giftCard { id } userErrors { message } } }"#,
+        json!({"id": with_customer}),
+    );
+    ok(&to_recipient, "giftCardSendNotificationToRecipient");
+    shop.take_events();
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardSendNotificationToRecipient(id: $id) { giftCard { id } userErrors { field message code } } }"#,
+        json!({"id": without}),
+    );
+    assert_eq!(
+        refused["data"]["giftCardSendNotificationToRecipient"]["userErrors"],
+        json!([{"field": ["id"], "message": "The recipient could not be found.", "code": "RECIPIENT_NOT_FOUND"}])
+    );
+    let missing = run(
+        &mut shop,
+        r#"mutation { giftCardSendNotificationToCustomer(id: "gid://shopify/GiftCard/1") { userErrors { code } } }"#,
+    );
+    assert_eq!(
+        missing["data"]["giftCardSendNotificationToCustomer"]["userErrors"],
+        json!([{"code": "GIFT_CARD_NOT_FOUND"}])
+    );
+    unchanged(&mut shop, &before, &[&without, &with_customer]);
+}

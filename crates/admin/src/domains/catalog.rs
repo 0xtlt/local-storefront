@@ -18,6 +18,7 @@ mod combined_listings;
 #[cfg(test)]
 mod extras_tests;
 pub mod feeds;
+mod gift_card_extras;
 mod gift_cards;
 mod inventory;
 mod legacy_publications;
@@ -1343,6 +1344,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     locations::register(registry);
     selling_plans::register(registry);
     publications::register(registry);
+    gift_card_extras::register(registry);
     gift_cards::register(registry);
     legacy_publications::register(registry);
     queries::register(registry);
