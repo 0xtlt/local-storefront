@@ -14,5 +14,8 @@ indexmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 base64.workspace = true
-# Parses the queries the Admin API is sent, and its schema.
+# Parses the schema of the Admin API (its SDL). The queries have a parser of their own
+# (`graphql::parse`), which keeps what graphql-ruby's errors report: see `docs/design.md`.
 graphql-parser = "0.4"
+# The schema is embedded compressed (`schemas/<version>/admin.graphql.br`).
+brotli = { version = "9", default-features = false, features = ["std"] }

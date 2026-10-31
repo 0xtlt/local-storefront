@@ -2353,6 +2353,7 @@ name = "lsf-admin"
 version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
+ "brotli",
  "chrono",
  "graphql-parser",
  "indexmap 2.14.2",
