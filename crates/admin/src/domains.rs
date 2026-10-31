@@ -6,6 +6,7 @@ pub mod app;
 pub mod catalog;
 pub mod content;
 pub mod customers;
+pub mod logistics;
 pub mod markets;
 pub mod orders;
 pub mod subscriptions;
@@ -22,6 +23,7 @@ pub fn register(registry: &mut Registry) {
     content::register(registry);
     customers::register(registry);
     markets::register(registry);
+    logistics::register(registry);
     orders::register(registry);
     subscriptions::register(registry);
     tags::register(registry);

@@ -11,7 +11,7 @@ use lsf_core::store::{CheckoutMetafield, Image, Metafields};
 use serde_json::Value;
 
 use super::{Clock, Record, ShopState, value};
-use crate::domains::{app, catalog, content, customers, markets, orders, subscriptions};
+use crate::domains::{app, catalog, content, customers, logistics, markets, orders, subscriptions};
 
 /// The records of the store data and of the app. The same data gives the same records, ids and
 /// dates every time (dates the data does not give are fixed ones, never the clock).
@@ -22,6 +22,7 @@ pub fn seed(store: &Store, app: Option<&App>) -> ShopState {
     customers::seed(&mut seed);
     orders::seed(&mut seed);
     subscriptions::seed(&mut seed);
+    logistics::seed(&mut seed);
     content::seed(&mut seed);
     app::seed(&mut seed);
     markets::seed(&mut seed);

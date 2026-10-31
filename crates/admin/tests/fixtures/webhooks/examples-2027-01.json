@@ -955,6 +955,11 @@
         "consent_collected_from": "other"
       }
     },
+    "delivery_promise_settings/update": {
+      "shop_id": "gid://shopify/Shop/548380009",
+      "processing_time": "P2D",
+      "delivery_dates_enabled": true
+    },
     "discounts/create": {
       "admin_graphql_api_id": "gid://shopify/DiscountAutomaticNode/1",
       "title": "Automatic free shipping",
@@ -1494,6 +1499,26 @@
       "order_id": 820982911946154508,
       "admin_graphql_api_id": "gid://shopify/FulfillmentEvent/1234567"
     },
+    "fulfillment_events/delete": {
+      "id": 1234567,
+      "fulfillment_id": 123456,
+      "status": "in_transit",
+      "message": "Item is now in transit",
+      "happened_at": "2021-12-31T19:00:00-05:00",
+      "city": null,
+      "province": null,
+      "country": "CA",
+      "zip": null,
+      "address1": null,
+      "latitude": null,
+      "longitude": null,
+      "shop_id": 548380009,
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "estimated_delivery_at": null,
+      "order_id": 820982911946154508,
+      "admin_graphql_api_id": "gid://shopify/FulfillmentEvent/1234567"
+    },
     "fulfillment_holds/added": {
       "fulfillment_order": {
         "id": "gid://shopify/FulfillmentOrder/1"
@@ -1605,6 +1630,66 @@
         "status": "open"
       }
     },
+    "fulfillment_orders/line_items_prepared_for_local_delivery": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open",
+        "preparable": true,
+        "delivery_method": {
+          "method_type": "local"
+        }
+      }
+    },
+    "fulfillment_orders/line_items_prepared_for_pickup": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open",
+        "preparable": true,
+        "delivery_method": {
+          "method_type": "pickup"
+        }
+      }
+    },
+    "fulfillment_orders/manually_reported_progress_stopped": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open"
+      },
+      "progress_stopped_by_app": {
+        "id": "gid://shopify/App/12345"
+      },
+      "progress_stopped_by_user": {
+        "id": "gid://shopify/StaffMember/12345"
+      }
+    },
+    "fulfillment_orders/merged": {
+      "merge_intents": [
+        {
+          "fulfillment_order_id": 1,
+          "fulfillment_order_line_items": [
+            {
+              "id": 1,
+              "quantity": 1
+            }
+          ]
+        },
+        {
+          "fulfillment_order_id": 2,
+          "fulfillment_order_line_items": [
+            {
+              "id": 2,
+              "quantity": 1
+            }
+          ]
+        }
+      ],
+      "fulfillment_order_merges": {
+        "fulfillment_order": {
+          "id": "gid://shopify/FulfillmentOrder/1",
+          "status": "open"
+        }
+      }
+    },
     "fulfillment_orders/moved": {
       "original_fulfillment_order": {
         "id": "gid://shopify/FulfillmentOrder/1",
@@ -1625,6 +1710,12 @@
       ],
       "source_location": {
         "id": "gid://shopify/Location/0"
+      }
+    },
+    "fulfillment_orders/order_routing_complete": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open"
       }
     },
     "fulfillment_orders/placed_on_hold": {
@@ -1674,6 +1765,22 @@
           "id": "gid://shopify/App/12345"
         }
       }
+    },
+    "fulfillment_orders/progress_reported": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "in_progress"
+      },
+      "progress_report": {
+        "reason_notes": "Items are being prepared for shipment",
+        "progress_reported_by_app": {
+          "id": "gid://shopify/App/12345"
+        },
+        "progress_reported_by_user": {
+          "id": "gid://shopify/StaffMember/12345"
+        }
+      },
+      "initial_status": "open"
     },
     "fulfillment_orders/rescheduled": {
       "fulfillment_order": {
@@ -2379,6 +2486,237 @@
       "available": 10,
       "updated_at": "2021-12-31T19:00:00-05:00",
       "admin_graphql_api_id": "gid://shopify/InventoryLevel/24826418?inventory_item_id=271878346596884015"
+    },
+    "inventory_shipments/add_items": {
+      "id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "items_added": [
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/82243",
+          "quantity": 10
+        },
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/57116",
+          "quantity": 7
+        }
+      ],
+      "happened_at": "2023-09-01T08:19:56-04:00"
+    },
+    "inventory_shipments/create": {
+      "id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "status": "DRAFT",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "tracking": {
+        "arrives_at": "2023-10-02T03:24:44-04:00",
+        "tracking_number": "8375692728",
+        "tracking_url": "https://exampletracking.shopify.com/track/8375692728",
+        "company": "Purolator"
+      },
+      "line_items": [
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/82243",
+          "quantity": 10
+        },
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/57116",
+          "quantity": 7
+        }
+      ]
+    },
+    "inventory_shipments/delete": {
+      "id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00"
+    },
+    "inventory_shipments/mark_in_transit": {
+      "id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "status": "IN_TRANSIT",
+      "happened_at": "2023-09-01T08:19:56-04:00"
+    },
+    "inventory_shipments/receive_items": {
+      "id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "status": "PARTIALLY_RECEIVED",
+      "items_received": [
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/82243",
+          "old_accepted_quantity": 5,
+          "old_rejected_quantity": 2,
+          "old_canceled_quantity": 1,
+          "new_accepted_quantity": 11,
+          "new_rejected_quantity": 3,
+          "new_canceled_quantity": 2,
+          "remaining_quantity_to_receive": 6
+        },
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/57116",
+          "old_accepted_quantity": 21,
+          "old_rejected_quantity": 9,
+          "old_canceled_quantity": 4,
+          "new_accepted_quantity": 37,
+          "new_rejected_quantity": 14,
+          "new_canceled_quantity": 6,
+          "remaining_quantity_to_receive": 16
+        }
+      ],
+      "happened_at": "2023-09-01T08:19:56-04:00"
+    },
+    "inventory_shipments/remove_items": {
+      "id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "items_removed": [
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/82243"
+        },
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/57116"
+        }
+      ],
+      "happened_at": "2023-09-01T08:19:56-04:00"
+    },
+    "inventory_shipments/update_item_quantities": {
+      "id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "items_updated": [
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/82243",
+          "old_quantity": 10,
+          "new_quantity": 23
+        },
+        {
+          "id": "gid://shopify/InventoryShipmentLineItem/57116",
+          "old_quantity": 7,
+          "new_quantity": 42
+        }
+      ],
+      "happened_at": "2023-09-01T08:19:56-04:00"
+    },
+    "inventory_shipments/update_tracking": {
+      "shipment_id": "gid://shopify/InventoryShipment/3921201",
+      "inventory_transfer_id": "gid://shopify/InventoryTransfer/2921201",
+      "updated_tracking": {
+        "tracking_number": "8375692728",
+        "tracking_url": "https://exampletracking.shopify.com/track/8375692728",
+        "company": "Purolator",
+        "arrives_at": "2023-10-02T03:24:44-04:00"
+      },
+      "happened_at": "2023-09-01T08:19:56-04:00"
+    },
+    "inventory_transfers/add_items": {
+      "id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "origin": {
+        "id": "gid://shopify/Location/346779"
+      },
+      "destination": {
+        "id": "gid://shopify/Location/482156"
+      },
+      "items_added": [
+        {
+          "line_item_id": "gid://shopify/InventoryTransferLineItem/72243",
+          "quantity": 14
+        },
+        {
+          "line_item_id": "gid://shopify/InventoryTransferLineItem/81958",
+          "quantity": 22
+        }
+      ]
+    },
+    "inventory_transfers/cancel": {
+      "id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "origin": {
+        "id": "gid://shopify/Location/346779"
+      },
+      "destination": {
+        "id": "gid://shopify/Location/482156"
+      },
+      "status": "CANCELED"
+    },
+    "inventory_transfers/complete": {
+      "id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "origin": {
+        "id": "gid://shopify/Location/346779"
+      },
+      "destination": {
+        "id": "gid://shopify/Location/482156"
+      },
+      "status": "TRANSFERRED"
+    },
+    "inventory_transfers/ready_to_ship": {
+      "id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "origin": {
+        "id": "gid://shopify/Location/346779"
+      },
+      "destination": {
+        "id": "gid://shopify/Location/482156"
+      },
+      "status": "READY_TO_SHIP",
+      "line_items": [
+        {
+          "id": "gid://shopify/InventoryTransferLineItem/72243",
+          "quantity": 10
+        },
+        {
+          "id": "gid://shopify/InventoryTransferLineItem/81958",
+          "quantity": 8
+        }
+      ]
+    },
+    "inventory_transfers/remove_items": {
+      "id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "origin": {
+        "id": "gid://shopify/Location/346779"
+      },
+      "destination": {
+        "id": "gid://shopify/Location/482156"
+      },
+      "items_removed": [
+        {
+          "line_item_id": "gid://shopify/InventoryTransferLineItem/72243"
+        },
+        {
+          "line_item_id": "gid://shopify/InventoryTransferLineItem/81958"
+        }
+      ]
+    },
+    "inventory_transfers/update_item_quantities": {
+      "id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "origin": {
+        "id": "gid://shopify/Location/346779"
+      },
+      "destination": {
+        "id": "gid://shopify/Location/482156"
+      },
+      "status": "IN_PROGRESS",
+      "items_updated": [
+        {
+          "line_item_id": "gid://shopify/InventoryTransferLineItem/72243",
+          "old_quantity": 10,
+          "new_quantity": 23
+        },
+        {
+          "line_item_id": "gid://shopify/InventoryTransferLineItem/81958",
+          "old_quantity": 8,
+          "new_quantity": 15
+        }
+      ]
+    },
+    "inventory_transfers/updated": {
+      "id": "gid://shopify/InventoryTransfer/2921201",
+      "happened_at": "2023-09-01T08:19:56-04:00",
+      "origin": {
+        "id": "gid://shopify/Location/346779"
+      },
+      "destination": {
+        "id": "gid://shopify/Location/482156"
+      }
     },
     "locales/create": {
       "locale": "fr-CA",
@@ -6587,6 +6925,30 @@
       ],
       "has_variants_that_requires_components": false,
       "category": null
+    },
+    "profiles/create": {
+      "id": 1,
+      "admin_graphql_api_id": "gid://shopify/DeliveryProfile/1",
+      "name": "Example Delivery Profile",
+      "default": false,
+      "profile_type": null,
+      "version": 1
+    },
+    "profiles/delete": {
+      "id": 1,
+      "admin_graphql_api_id": "gid://shopify/DeliveryProfile/1",
+      "name": "Example Delivery Profile",
+      "default": false,
+      "profile_type": null,
+      "version": 1
+    },
+    "profiles/update": {
+      "id": 1,
+      "admin_graphql_api_id": "gid://shopify/DeliveryProfile/1",
+      "name": "Example Delivery Profile",
+      "default": false,
+      "profile_type": null,
+      "version": 1
     },
     "refunds/create": {
       "id": 890088186047892319,

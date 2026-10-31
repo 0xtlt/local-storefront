@@ -1133,6 +1133,12 @@ fn open_fulfillment_order(
     let Some(record) = fulfillment_order(mutation.state(), &id) else {
         return failed(UserError::new(&["id"], "Fulfillment order does not exist."));
     };
+    // From 2026-01, an in-progress one with progress reported opens again (logistics family).
+    if let Some(answer) =
+        crate::domains::logistics::fulfillment_orders::stop_progress(mutation, &id)
+    {
+        return Ok(answer);
+    }
     let status = text(&record, "status").unwrap_or("OPEN");
     if status != "SCHEDULED" {
         return failed(UserError::new(

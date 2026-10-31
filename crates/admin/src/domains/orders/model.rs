@@ -277,7 +277,12 @@ pub fn refresh_fulfillment_order(state: &mut ShopState, fulfillment_order: &str)
     let new = match status {
         "CANCELLED" | "INCOMPLETE" => status,
         _ if remaining == 0 => "CLOSED",
-        "OPEN" | "IN_PROGRESS" | "CLOSED" if shipped => "IN_PROGRESS",
+        "OPEN" | "IN_PROGRESS" | "CLOSED"
+            if shipped
+                || crate::domains::logistics::fulfillment_orders::progress_reported(record) =>
+        {
+            "IN_PROGRESS"
+        }
         "OPEN" | "IN_PROGRESS" | "CLOSED" => "OPEN",
         other => other,
     }
@@ -767,7 +772,7 @@ fn inventory_level(state: &ShopState, item: &str, location: Option<&str>) -> Opt
 /// `variants/in_stock` or `variants/out_of_stock` when the stock crossed zero
 /// (`catalog::after_inventory_change`), then `inventory_levels/update`. Returns whether a level
 /// changed.
-fn move_inventory(
+pub fn move_inventory(
     state: &mut ShopState,
     item: &str,
     location: Option<&str>,

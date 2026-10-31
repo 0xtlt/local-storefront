@@ -916,6 +916,7 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | `SellingPlanGroup` | `stable_id("selling_plan_group", lower-case name)` (lsf-core's id is a hexadecimal string, Liquid's) |
 | `Domain` | `stable_id("domain", host)`; `ShopPolicy`: `stable_id("shop_policy", handle)`; `Menu`: `stable_id("menu", handle)` |
 | `CompanyContactRole` | `stable_id("company_contact_role", "<company id>/location-admin" \| "ordering-only")`; assignment: `stable_id("company_contact_role_assignment", "<customer id>/<location id>")` |
+| `DeliveryProfile` (general), its `DeliveryLocationGroup`, `DeliveryZone`, `DeliveryCountry`, `DeliveryMethodDefinition`, `DeliveryRateDefinition` | `stable_id("delivery_profile", "general")`; `stable_id("delivery_location_group", "general")`, `stable_id("delivery_zone" \| "delivery_country", "general/rest-of-world")`, `stable_id("delivery_method_definition" \| "delivery_rate_definition", "general/<rate handle>")` |
 | inline objects with an id | `MailingAddress/<lsf-core address id>?model_name=CustomerAddress` (address book) or `Address` (order); `ImageSource`/`CollectionImage`/`ArticleImage` + lsf-core's image id; `MenuItem`: `stable_id("menu_item", "<menu>/<i>/<j>…")`; `MarketRegionCountry`: `stable_id("market_region", code)`; others `stable_id(<snake type>, …)` |
 
 Every id is a function of the data: the same data gives the same records every run.
@@ -1167,6 +1168,74 @@ orders" in `docs/admin.md`) make and keep:
 - **The tax rate** of draft orders and edits is the store data's `checkout.tax_rate`, which the
   seed keeps in the shop's settings (`ShopState::setting("taxRateBps")`), records having no
   field for it.
+
+### Logistics (`domains/logistics.rs`)
+
+Seeded, so that a shop has what every Shopify shop has:
+
+- **`DeliveryProfile`**, the general one: `name: "General profile"`, `default: true`, `version`,
+  `createdAt`, `profileLocationGroups` (inline `DeliveryProfileLocationGroup`s: the
+  `locationGroup` and its `locationGroupZones`, inline `DeliveryLocationGroupZone`s with their
+  `zone` and `methodDefinitions`). One **`DeliveryLocationGroup`** with every location that is not
+  a fulfillment service's, one **`DeliveryZone`** "Rest of world" *(chosen)* with one
+  **`DeliveryCountry`** (`code.restOfWorld: true`), and a **`DeliveryMethodDefinition`** (with
+  its **`DeliveryRateDefinition`**) per shipping rate of `checkout.shipping_rates`, in order,
+  keeping the rate's handle under `lsfHandle`: the store data offers its rates to every address.
+  Pickup and local delivery rates are the locations' on Shopify, not methods of a profile.
+- **`DeliveryPromiseSetting`** (no id: kept under its type's name): delivery dates off, no
+  processing time.
+- The shop's shipping packages, which have no GraphQL type: a memo (`logistics/shipping-packages`)
+  with Shopify's "Sample box" (`gid://shopify/ShippingPackage/1`, default) *(its size is lsf's)*.
+
+What the mutations make (`domains/logistics/`: `transfers`, `shipments`, `stock`,
+`fulfillment_orders`, `constraint_rules`, `labels`, `carriers`, `profiles`, `delivery`; each
+module's header has the rules and the sources):
+
+- **`InventoryTransfer`** (`name` `#T<n>`, `status`, `origin` and `destination`
+  `LocationSnapshot`s inline, `referenceName`, `note`, `tags`, `dateCreated`, `lineItems`,
+  `shipments`, `totalQuantity`, `receivedQuantity`, `metafields`) and
+  **`InventoryTransferLineItem`** (`inventoryItem`, `title`, `totalQuantity`, `shippedQuantity`,
+  `pickedForShipmentQuantity`, `processableQuantity`, `shippableQuantity`), refreshed from the
+  shipments by `transfers::refresh` after every change. **`InventoryShipment`** (`name`
+  `T<n>-<k>`, `status`, `barcode`, `tracking`, dates, the totals) and
+  **`InventoryShipmentLineItem`** (`quantity`, `acceptedQuantity`, `rejectedQuantity`,
+  `canceledQuantity`, `unreceivedQuantity`). GraphQL has no link from a shipment to its transfer:
+  lsf keeps it under `lsfTransfer` (the webhooks' `inventory_transfer_id`).
+- **Stock** (`logistics::stock`, through `orders::model::move_inventory`, which follows a change
+  as the catalog's inventory mutations do): ready to ship commits at the origin; in transit, the
+  units leave the origin's `committed` (what the transfer committed, kept per line under
+  `lsfCommitted`; a transfer marked ready to ship is `lsfCommits`) or `available`, and `on_hand`,
+  and enter the destination's `incoming` (a level made when the destination did not stock the
+  item, `inventory_levels/connect`); received, accepted units become `available` and `on_hand`.
+  `transfers::settle` keeps what a transfer commits equal to what it has not shipped while it is
+  ready to ship or in progress, and nothing otherwise.
+- **`FulfillmentOrder`**s split, merged, rerouted (the order's committed stock moved with
+  `model::move_line_commitment`), with `fulfillBy`, and `lsfProgress` (the reported progress,
+  which keeps it `IN_PROGRESS`: `model::refresh_fulfillment_order` reads it) and `lsfPrepared`.
+- **`DeliveryProfile`** and its parts (`DeliveryLocationGroup`, `DeliveryZone`,
+  `DeliveryCountry`, `DeliveryProvince`, `DeliveryMethodDefinition`, `DeliveryRateDefinition`,
+  `DeliveryParticipant`, `DeliveryCondition` with its `conditionCriteria` a `MoneyV2` or a
+  `Weight`), the variants of a custom profile under `lsfVariants` (the general profile holds
+  those no other holds). Counts, items and unassigned locations are computed when read.
+- **`DeliveryCarrierService`** (`lsfUpdatedAt` for its `UPDATED_AT` sort key: the type has no
+  `updatedAt`), **`FulfillmentConstraintRule`** (`function` the key of its `ShopifyFunction`,
+  `metafields`), **`DeliveryPromiseProvider`**, **`DeliveryPromiseParticipant`**
+  (`lsfBrandedPromiseHandle`), **`ShippingLabelPurchaseResult`** (done, `PURCHASED`) and
+  **`ShippingLabel`**.
+- **The outbox**: what Shopify would send or buy (a notification, a label) is a memo of the shop
+  (`lsf/outbox`, `logistics::send`), rolled back with a failed mutation, shown by
+  `GET /__lsf/admin` (`outbox`, and `shippingPackages`).
+- **Events**: a topic that says what changed (`inventory_shipments/receive_items`'s quantities
+  before and after, `inventory_transfers/add_items`, `fulfillment_orders/merged`, …) is emitted
+  with its context as the event's snapshot (`logistics::emit_change`: `happenedAt` and
+  `lsfLogistics`), which the payload reads from `__previous`: two changes of a record in one
+  request each keep theirs. Changes without a topic (a transfer created or deleted, a carrier
+  service, a barcode, a deadline, a rule, a package) are emitted under names no subscription
+  can name (`inventory_transfers/create`, `carrier_services/update`, `lsf/changed`, …).
+- **Errors**: shopify.dev documents these mutations' errors by their codes; `logistics::coded`
+  writes the description of the code in the request's schema (the payload's own code enum), the
+  first sentence of it. The payloads without codes (delivery profiles, packages, promise
+  participants) answer messages of lsf's.
 
 ### Content (`domains/content.rs`)
 
@@ -1577,6 +1646,7 @@ the changes. `None` when nothing the store data expresses changed.
 | `localization` | rewritten when a market or a locale changed: the markets declared in the data or created by the Admin API (renamed or not; not a country's market of its own), active and of type `REGION`, with their countries (a country they add is added) and metafields; each country in the currency its active region market sells in (its own with `localCurrencies`, else the market's base currency, a country's own market included); the published `ShopLocale`s as the languages, the primary first |
 | `checkout.discounts` | rewritten when an app discount changed: every `DiscountAutomaticApp` and `DiscountCodeApp` active by the shop's clock (`startsAt` ≤ now < `endsAt`), in id order, with its `id`, the handle of its Function (`appDiscountType.functionId`), title, first code, classes and metafields |
 | `checkout.functions` | the settings of a Function whose owner changed: the metafields of its enabled `CartTransform`, `DeliveryCustomization`, `PaymentCustomization` and `Validation` objects, in creation order, a later one's taking the place of an earlier one's |
+| `checkout.shipping_rates` | rewritten when a delivery profile changed: the rates of the data in their order, each shipping rate replaced by the method definition the seed made of it in the general profile's zones that ship to the rest of the world (left out when gone or inactive), then that zone's other active method definitions with a flat price and no condition, their handle made of their name (`logistics::profiles::checkout_rates`) |
 
 ### What does not sync
 
@@ -1624,8 +1694,12 @@ Kept here so that nobody invents a field for it; each would need the store data 
   (the store data has none of them, and the local checkout charges no saved method). The stock a
   billing attempt's order commits syncs, as any order's.
 - Metafield and metaobject definitions, files (`files/` is on disk), translations, webhooks,
-  publications other than the Online Store, inventory transfers and shipments, fulfillment
-  orders.
+  publications other than the Online Store, inventory transfers and shipments (the stock they
+  move syncs), fulfillment orders, fulfillment constraint rules, shipping labels, carrier
+  services (the checkout does not call them), delivery promises, shipping packages.
+- **Delivery profiles** beyond the general profile's flat rates to the rest of the world: other
+  zones and profiles, conditional rates, carrier services' rates (the store data has one list of
+  rates, offered to every address).
 - The `session` of the data and the scenarios of `checkouts/` are not written: a product,
   variant or customer they name by a key the Admin API changed or removed is reported as unknown
   there.
@@ -1767,9 +1841,7 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
-
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `subscriptions`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |

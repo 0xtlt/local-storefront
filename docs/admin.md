@@ -378,6 +378,8 @@ What the backend changes through the Admin API is what the storefront and the
   customization or a cart transform;
 - an app discount it creates (`discountAutomaticAppCreate`, `discountCodeAppCreate`) runs its
   Function at the checkout, with the metafields it was given, while it is active;
+- the shipping rates of the general delivery profile it changes are the checkout's delivery
+  options (see "Inventory transfers, fulfillment and delivery");
 - the open pages reload, with `--live-reload`.
 
 | Syncs | Does not sync |
@@ -540,7 +542,7 @@ category.
 `productUnpublish`, bundles and combined listings
 (`productBundleCreate`, `productBundleUpdate`, `combinedListingUpdate`,
 `productVariantRelationshipBulkUpdate`), `productFullSync`, `productFeedCreate`,
-`productFeedDelete`, inventory transfers and shipments (`inventoryTransfer…`, `inventoryShipment…`), fulfillment services
+`productFeedDelete`, fulfillment services
 (`fulfillmentServiceCreate`, `…Update`, `…Delete`), `giftCardProductSet`,
 `giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient`. Inputs a simulated
 mutation ignores (`category`, `linkedMetafield`, `combinedListingRole`, a future `publishDate`,
@@ -633,11 +635,7 @@ Not simulated yet (they answer `LSF_NOT_SIMULATED`): `orderCreateManualPayment`,
 `orderAttributionDefinitionDelete`, `orderEditAddShippingLine`, `orderEditUpdateShippingLine`,
 `orderEditRemoveShippingLine`, `orderEditRemoveLineItemDiscount`, `orderEditUpdateDiscount`,
 `requestedOrderEditCreate`, `requestedOrderEditDecline`, `requestedOrderEditResolve`,
-`fulfillmentOrderSplit`, `fulfillmentOrderMerge`, `fulfillmentOrderReportProgress`,
-`fulfillmentOrderLineItemsPreparedForPickup`, `fulfillmentOrdersReroute`,
-`fulfillmentOrdersSetFulfillmentDeadline`, `fulfillmentConstraintRuleCreate`,
-`fulfillmentConstraintRuleUpdate`, `fulfillmentConstraintRuleDelete`, `shippingLabelPurchase`,
-`shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete`, `returnRefund`, `returnLineItemRemoveFromReturn`, `removeFromReturn`,
+`returnRefund`, `returnLineItemRemoveFromReturn`, `removeFromReturn`,
 `reverseDeliveryCreateWithShipping`, `reverseDeliveryShippingUpdate`,
 `reverseFulfillmentOrderDispose`, `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`,
 `draftOrderBulkDelete`, `draftOrderCreateFromOrder`, `draftOrderInvoicePreview`,
@@ -646,6 +644,100 @@ Not simulated yet (they answer `LSF_NOT_SIMULATED`): `orderCreateManualPayment`,
 `Return.suggestedFinancialOutcome`, `requestedOrderEditCalculate`,
 `draftOrderAvailableDeliveryOptions`, exchanges and reverse fulfillment orders of returns,
 duties, store credit refunds, B2B draft orders, payment terms.
+
+### Inventory transfers, fulfillment and delivery
+
+A backend that moves stock between locations, routes and prepares fulfillment orders, buys
+labels or manages shipping settings works against lsf as against a store, the stock following
+end to end.
+
+| Area | Mutations lsf simulates |
+|---|---|
+| Inventory transfers | `inventoryTransferCreate`, `inventoryTransferCreateAsReadyToShip`, `inventoryTransferDuplicate`, `inventoryTransferEdit`, `inventoryTransferSetItems`, `inventoryTransferRemoveItems`, `inventoryTransferMarkAsReadyToShip`, `inventoryTransferCancel`, `inventoryTransferDelete` |
+| Inventory shipments | `inventoryShipmentCreate`, `inventoryShipmentCreateInTransit`, `inventoryShipmentAddItems`, `inventoryShipmentRemoveItems`, `inventoryShipmentUpdateItemQuantities`, `inventoryShipmentMarkInTransit`, `inventoryShipmentReceive`, `inventoryShipmentSetTracking`, `inventoryShipmentSetBarcode`, `inventoryShipmentDelete` |
+| Fulfillment orders | `fulfillmentOrderSplit`, `fulfillmentOrderMerge`, `fulfillmentOrderReportProgress`, `fulfillmentOrderLineItemsPreparedForPickup`, `fulfillmentOrdersReroute`, `fulfillmentOrdersSetFulfillmentDeadline` (and `fulfillmentOrderOpen` stops reported progress, from 2026-01) |
+| Labels and rules | `shippingLabelPurchase`, `fulfillmentConstraintRuleCreate`, `…Update`, `…Delete` |
+| Carriers and delivery | `carrierServiceCreate`, `…Update`, `…Delete`, `deliveryProfileCreate`, `…Update`, `…Remove`, `deliveryPromiseProviderUpsert`, `deliveryPromiseParticipantsUpdate`, `deliverySettingUpdate`, `deliveryShippingOriginAssign`, `shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete` |
+
+How the stock moves, as the Help Center's "Creating and processing inventory transfers"
+describes it:
+
+- **A draft** commits nothing. **Ready to ship** commits the units at the origin (`available` to
+  `committed`). **A shipment in transit** takes them out of the origin (`committed`, else
+  `available`, and `on_hand`) and puts them in `incoming` at the destination, which is stocked
+  with the item if it was not (`inventory_levels/connect`). **Receiving** makes the accepted
+  units `available` there; rejected and cancelled ones only leave `incoming`. **Cancelling** a
+  transfer that is ready to ship gives its units back to `available` at the origin (a transfer
+  with a shipment cannot be cancelled: `SHIPMENT_EXISTS`). Each change is followed as an
+  inventory mutation is: `inventory_levels/update`, `variants/in_stock` or `variants/out_of_stock`,
+  and the storefront's stock (store sync).
+- The transfer follows its shipments: lines `shippedQuantity`, `pickedForShipmentQuantity` (draft
+  shipments), `processableQuantity`; `IN_PROGRESS` once a shipment is in transit, `TRANSFERRED`
+  once every unit shipped and was received (`inventory_transfers/complete`).
+- **Rerouting** and **merging** keep each order line's committed stock right: a fulfillment
+  order rerouted takes what the order committed to its new location; a split or a merge stays at
+  one location, so nothing moves.
+
+What lsf chose where Shopify does not say, or where a local tool must differ:
+
+- `@idempotent` is required from 2026-04 on the transfer and shipment mutations whose reference
+  says so (create, create as ready to ship, duplicate, set items; shipment create, create in
+  transit, add items, receive), optional before; a key reused with other arguments is
+  `IDEMPOTENCY_KEY_PARAMETER_MISMATCH`.
+- A shipment's items must be on its transfer, within what the transfer has left to ship.
+  Transfers are named `#T1`, their shipments `T1-1`.
+- **Nothing leaves the machine.** A pickup's "Ready For Pickup" notification, a label bought, a
+  shipping confirmation are recorded in the shop's **outbox** (`GET /__lsf/admin`, each shop's
+  `outbox`: `kind`, what it is about, the details), never sent. `shippingLabelPurchase` answers a
+  result already `PURCHASED` with a label (its tracking number made from its id, the same every
+  run, from the carrier asked, else USPS, Canada Post or DHL Express by the origin's country), and
+  fulfills the fulfillment order with that tracking, as a label bought in the admin does.
+- Carrier services are recorded, never called: `availableServicesForCountries` is empty (with a
+  note) and the checkout does not ask them for rates.
+- Rerouting follows Shopify's default rule: the first active location that fulfills online
+  orders and has every unit available, within `includedLocationIds`, outside
+  `excludedLocationIds`.
+- `fulfillmentOrderLineItemsPreparedForPickup` prepares local delivery fulfillment orders too
+  (`fulfillment_orders/line_items_prepared_for_local_delivery`): 2026-10 has no other mutation
+  for them.
+- Every shop has the general delivery profile, made from the store data: its locations, the rest
+  of the world, the `checkout.shipping_rates` that are shipping rates (pickup and local delivery
+  are the locations' on Shopify). Shipping packages have no GraphQL type: every shop has
+  Shopify's "Sample box" (`gid://shopify/ShippingPackage/1`), which `GET /__lsf/admin` shows
+  (`shippingPackages`); a label bought without a package uses the default one.
+- A delivery promise provider is a location of the app's fulfillment service
+  (`MUST_BELONG_TO_APP`). `deliveryShippingOriginAssign` answers that single origin shipping is no
+  longer supported, as Shopify retired it. `deliverySettingUpdate` takes no input in 2026-10 and
+  changes nothing.
+
+**Queries**: `inventoryTransfer(s)` (sort keys `CREATED_AT`, `NAME`, `STATUS`, `ORIGIN_NAME`,
+`DESTINATION_NAME`, `EXPECTED_SHIPMENT_ARRIVAL`; filters `status`, `tag`, `origin_id`,
+`destination_id`, `product_id`, `product_variant_id`, `created_at`), `inventoryShipment(s)`
+(`status`, `barcode`, `tracking_number`, `destination_id`), `deliveryProfile(s)` with their
+items, counts and unassigned locations, `ProductVariant.deliveryProfile`,
+`locationsAvailableForDeliveryProfiles(Connection)`, `carrierService(s)`,
+`availableCarrierServices`, `deliveryPromiseProvider`, `deliveryPromiseParticipants`,
+`deliveryPromiseSettings`, `fulfillmentConstraintRules`,
+`FulfillmentOrder.fulfillmentOrdersForMerge` and the `MERGE`, `REPORT_PROGRESS`, `MARK_AS_OPEN`
+actions, `shippingLabel` and the label's `ShippingLabelPurchaseResult` (`node`).
+
+**Webhooks**: `inventory_transfers/add_items`, `/update_item_quantities`, `/remove_items`,
+`/ready_to_ship`, `/cancel`, `/complete`, `/updated`; `inventory_shipments/create`, `/add_items`,
+`/remove_items`, `/update_item_quantities`, `/mark_in_transit`, `/receive_items`,
+`/update_tracking`, `/delete`; `fulfillment_orders/split`, `/merged`, `/moved`,
+`/order_routing_complete`, `/progress_reported`, `/manually_reported_progress_stopped`,
+`/line_items_prepared_for_pickup`, `/line_items_prepared_for_local_delivery`; `profiles/create`,
+`/update`, `/delete`. `fulfillment_events/delete` and `delivery_promise_settings/update` are built
+for `lsf app webhook trigger` (no mutation of 2026-10 deletes a fulfillment event or changes the
+promise settings). `shipping_addresses/create` and `/update` have no example payload in
+Shopify's reference: lsf does not build them.
+
+**Store sync**: the general profile's method definitions that ship to the rest of the world,
+with a flat price and no condition, are the local checkout's shipping rates: a price, a name, a
+description changed, a rate added or deactivated shows at the checkout. The other zones and
+profiles, conditional rates and carrier services' rates have nowhere to go in the store data and
+do not reach it; transfers, shipments, fulfillment orders, rules, labels, promises and packages
+do not sync (the stock they move does).
 
 ### Customers and companies
 

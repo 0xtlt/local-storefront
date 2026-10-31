@@ -96,6 +96,8 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "draft_orders" => (draft_order(), Vec::new()),
         "inventory_items" => (inventory_item(), Vec::new()),
         "inventory_levels" => (inventory_level(), Vec::new()),
+        "inventory_shipments" => inventory_shipment(topic),
+        "inventory_transfers" => (inventory_transfer(topic), Vec::new()),
         "locations" => (location(), Vec::new()),
         "variants" => (variants().remove(0), Vec::new()),
         "product_publications" => (
@@ -107,6 +109,8 @@ pub fn fixed(topic: &str) -> Option<Sample> {
             Vec::new(),
         ),
         "selling_plan_groups" => (selling_plan_group(), Vec::new()),
+        "profiles" => (delivery_profile(), Vec::new()),
+        "delivery_promise_settings" => (delivery_promise_setting(), Vec::new()),
         "app" if topic == "app/scopes_update" => (installation(), Vec::new()),
         "app" | "shop" => (shop(), Vec::new()),
         "app_subscriptions" if topic == "app_subscriptions/approaching_capped_amount" => (
@@ -1105,8 +1109,184 @@ fn fulfillment_order_sample(topic: &str) -> (Value, Vec<Value>) {
             })),
             vec![fulfillment_order(1, "OPEN", 0), fulfillment_order(3, "OPEN", 0)],
         ),
+        "fulfillment_orders/line_items_prepared_for_local_delivery" => (
+            fulfillment_order(1, "OPEN", 0).with("deliveryMethod", json!({"methodType": "LOCAL"})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/line_items_prepared_for_pickup" => (
+            fulfillment_order(1, "OPEN", 0).with("deliveryMethod", json!({"methodType": "PICK_UP"})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/progress_reported" => (
+            fulfillment_order(1, "IN_PROGRESS", 0).with(
+                payload::PREVIOUS,
+                logistics_context(json!({
+                    "reasonNotes": "Items are being prepared for shipment",
+                    "app": "gid://shopify/App/12345",
+                    "user": "gid://shopify/StaffMember/12345",
+                    "initialStatus": "OPEN",
+                })),
+            ),
+            Vec::new(),
+        ),
+        "fulfillment_orders/manually_reported_progress_stopped" => (
+            fulfillment_order(1, "OPEN", 0).with(
+                payload::PREVIOUS,
+                logistics_context(json!({
+                    "app": "gid://shopify/App/12345",
+                    "user": "gid://shopify/StaffMember/12345",
+                })),
+            ),
+            Vec::new(),
+        ),
+        "fulfillment_orders/merged" => (
+            fulfillment_order(1, "OPEN", 0).with(
+                payload::PREVIOUS,
+                logistics_context(json!({"intents": [
+                    {"fulfillmentOrder": "gid://shopify/FulfillmentOrder/1",
+                     "lineItems": [{"id": "gid://shopify/FulfillmentOrderLineItem/1", "quantity": 1}]},
+                    {"fulfillmentOrder": "gid://shopify/FulfillmentOrder/2",
+                     "lineItems": [{"id": "gid://shopify/FulfillmentOrderLineItem/2", "quantity": 1}]},
+                ]})),
+            ),
+            Vec::new(),
+        ),
         _ => (fulfillment_order(1, "OPEN", 0), Vec::new()),
     }
+}
+
+/// The time of the `inventory_*` examples' changes.
+const LOGISTICS_HAPPENED_AT: &str = "2023-09-01T08:19:56-04:00";
+
+/// The event context of a logistics topic (see `domains::logistics::emit_change`), as the
+/// webhooks give it to the builders.
+fn logistics_context(context: Value) -> Value {
+    json!({"happenedAt": LOGISTICS_HAPPENED_AT, payload::LOGISTICS_EVENT: context})
+}
+
+/// The transfer of the `inventory_transfers/*` examples, in the status of the topic and with
+/// the items its change named.
+fn inventory_transfer(topic: &str) -> Value {
+    let line = |id: u64| format!("gid://shopify/InventoryTransferLineItem/{id}");
+    let (status, items) = match topic {
+        "inventory_transfers/add_items" => (
+            "DRAFT",
+            json!([{"line_item_id": line(72243), "quantity": 14}, {"line_item_id": line(81958), "quantity": 22}]),
+        ),
+        "inventory_transfers/cancel" => ("CANCELED", json!([])),
+        "inventory_transfers/complete" => ("TRANSFERRED", json!([])),
+        "inventory_transfers/ready_to_ship" => (
+            "READY_TO_SHIP",
+            json!([{"line_item_id": line(72243), "quantity": 10}, {"line_item_id": line(81958), "quantity": 8}]),
+        ),
+        "inventory_transfers/remove_items" => (
+            "DRAFT",
+            json!([{"line_item_id": line(72243)}, {"line_item_id": line(81958)}]),
+        ),
+        "inventory_transfers/update_item_quantities" => (
+            "IN_PROGRESS",
+            json!([
+                {"line_item_id": line(72243), "old_quantity": 10, "new_quantity": 23},
+                {"line_item_id": line(81958), "old_quantity": 8, "new_quantity": 15},
+            ]),
+        ),
+        _ => ("DRAFT", json!([])),
+    };
+    let snapshot = |location: u64| json!({"name": "", "address": {}, "location": format!("gid://shopify/Location/{location}"), "snapshottedAt": LOGISTICS_HAPPENED_AT});
+    json!({
+        "__typename": "InventoryTransfer",
+        "id": "gid://shopify/InventoryTransfer/2921201",
+        "name": "#T2921201",
+        "status": status,
+        "dateCreated": LOGISTICS_HAPPENED_AT,
+        "origin": snapshot(346779),
+        "destination": snapshot(482156),
+        "lineItems": [line(72243), line(81958)],
+        payload::PREVIOUS: logistics_context(json!({"items": items})),
+    })
+}
+
+/// The shipment of the `inventory_shipments/*` examples, with its line items, in the status of
+/// the topic and with the items its change named.
+fn inventory_shipment(topic: &str) -> (Value, Vec<Value>) {
+    let line = |id: u64| format!("gid://shopify/InventoryShipmentLineItem/{id}");
+    let (status, items) = match topic {
+        "inventory_shipments/add_items" => (
+            "DRAFT",
+            json!([{"id": line(82243), "quantity": 10}, {"id": line(57116), "quantity": 7}]),
+        ),
+        "inventory_shipments/mark_in_transit" => ("IN_TRANSIT", json!([])),
+        "inventory_shipments/receive_items" => (
+            "PARTIALLY_RECEIVED",
+            json!([
+                {"id": line(82243), "old_accepted_quantity": 5, "old_rejected_quantity": 2, "old_canceled_quantity": 1,
+                 "new_accepted_quantity": 11, "new_rejected_quantity": 3, "new_canceled_quantity": 2, "remaining_quantity_to_receive": 6},
+                {"id": line(57116), "old_accepted_quantity": 21, "old_rejected_quantity": 9, "old_canceled_quantity": 4,
+                 "new_accepted_quantity": 37, "new_rejected_quantity": 14, "new_canceled_quantity": 6, "remaining_quantity_to_receive": 16},
+            ]),
+        ),
+        "inventory_shipments/remove_items" => {
+            ("DRAFT", json!([{"id": line(82243)}, {"id": line(57116)}]))
+        }
+        "inventory_shipments/update_item_quantities" => (
+            "DRAFT",
+            json!([
+                {"id": line(82243), "old_quantity": 10, "new_quantity": 23},
+                {"id": line(57116), "old_quantity": 7, "new_quantity": 42},
+            ]),
+        ),
+        _ => ("DRAFT", json!([])),
+    };
+    let shipment_line = |id: u64, quantity: i64| {
+        json!({
+            "__typename": "InventoryShipmentLineItem",
+            "id": line(id),
+            "quantity": quantity,
+            "acceptedQuantity": 0,
+            "rejectedQuantity": 0,
+            "canceledQuantity": 0,
+            "unreceivedQuantity": quantity,
+        })
+    };
+    (
+        json!({
+            "__typename": "InventoryShipment",
+            "id": "gid://shopify/InventoryShipment/3921201",
+            "name": "T2921201-1",
+            "status": status,
+            "dateCreated": LOGISTICS_HAPPENED_AT,
+            "tracking": {
+                "arrivesAt": "2023-10-02T03:24:44-04:00",
+                "company": "Purolator",
+                "trackingNumber": "8375692728",
+                "trackingUrl": "https://exampletracking.shopify.com/track/8375692728",
+            },
+            "lineItems": [line(82243), line(57116)],
+            "lsfTransfer": "gid://shopify/InventoryTransfer/2921201",
+            payload::PREVIOUS: logistics_context(json!({"items": items})),
+        }),
+        vec![shipment_line(82243, 10), shipment_line(57116, 7)],
+    )
+}
+
+/// The delivery profile of the `profiles/*` examples.
+fn delivery_profile() -> Value {
+    json!({
+        "__typename": "DeliveryProfile",
+        "id": "gid://shopify/DeliveryProfile/1",
+        "name": "Example Delivery Profile",
+        "default": false,
+        "version": 1,
+    })
+}
+
+/// The delivery promise settings of the `delivery_promise_settings/update` example.
+fn delivery_promise_setting() -> Value {
+    json!({
+        "__typename": "DeliveryPromiseSetting",
+        "deliveryDatesEnabled": true,
+        "processingTime": "P2D",
+    })
 }
 
 /// The return of the `returns/*` examples, in the status of the topic.

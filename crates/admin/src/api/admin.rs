@@ -819,6 +819,8 @@ impl AdminApi {
                     "counts": counts.into_iter().collect::<IndexMap<_, _>>(),
                     "tokens": grants,
                     "subscriptions": subscriptions,
+                    "outbox": crate::domains::logistics::outbox(&live.state),
+                    "shippingPackages": crate::domains::logistics::delivery::packages(&live.state),
                 })
             })
             .collect();

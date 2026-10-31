@@ -27,9 +27,14 @@ mod selling_plans;
 mod variants;
 
 pub use collections::apply_rules;
+pub use inventory::with_idempotency;
+pub use media::done_job;
 pub use products::{delete_product, tags_of};
 pub use publications::publish_on;
-pub use records::{after_inventory_change, stock_of};
+pub use records::{
+    after_inventory_change, check_metafields, is_active_location, level_at, new_level, quantity,
+    set_metafields, stock_of,
+};
 
 use crate::state::seed::Seed;
 use crate::state::value::{self, date, date_time, money, optional, text};
