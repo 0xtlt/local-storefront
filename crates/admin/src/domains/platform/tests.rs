@@ -269,7 +269,7 @@ fn a_flow_trigger_is_checked_and_written_to_the_outbox() {
             "{answer}"
         );
     }
-    assert!(super::outbox_entries(&shop).is_empty());
+    assert!(crate::outbox::entries(&shop, None).is_empty());
     let answer = run(
         &mut shop,
         FLOW,
@@ -279,11 +279,12 @@ fn a_flow_trigger_is_checked_and_written_to_the_outbox() {
         answer["data"]["flowTriggerReceive"]["userErrors"],
         json!([])
     );
-    let outbox = super::outbox_entries(&shop);
+    let outbox = crate::outbox::entries(&shop, None);
     assert_eq!(outbox.len(), 1);
-    assert_eq!(outbox[0]["service"], "flow");
-    assert_eq!(outbox[0]["payload"]["handle"], "auction-bid-placed");
-    assert_eq!(outbox[0]["payload"]["payload"]["Amount"], "30");
+    assert_eq!(outbox[0]["channel"], "flow");
+    assert_eq!(outbox[0]["what"], "flow_trigger");
+    assert_eq!(outbox[0]["to"], "auction-bid-placed");
+    assert_eq!(outbox[0]["data"]["Amount"], "30");
 }
 
 #[test]

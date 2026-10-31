@@ -1,13 +1,14 @@
 //! The control endpoints of the world outside the shop, which a test drives: the shop's clock
-//! (so that payment schedules come due), the emails lsf records instead of sending them, and
-//! what buyers and Shopify's services do to an order.
+//! (so that payment schedules come due), the outbox of what lsf records instead of sending it,
+//! and what buyers and Shopify's services do to an order.
 //!
 //! | Request | What it does |
 //! |---|---|
 //! | `GET /__lsf/admin/clock?shop=` | The shop's time: `{shop, now, frozen}`. |
 //! | `POST /__lsf/admin/clock` (`{"shop"?, "now"?, "advance"?}`) | Freezes the shop's clock at `now` (RFC 3339), or moves it on by `advance` (seconds, or `"30d"`, `"12h"`, `"15m"`, `"45s"`), then does what the time passing does: the payment schedules that came due fire `payment_schedules/due`. A reset puts the clock of the store data back. |
-//! | `GET /__lsf/admin/emails?shop=` | The emails lsf recorded as sent (payment reminders, invoices, gift cards, store credit): `{count, emails}`, oldest first. |
-//! | `DELETE /__lsf/admin/emails?shop=` | Forgets them. |
+//! | `GET /__lsf/admin/outbox?shop=&channel=` | What lsf recorded instead of sending it ([`crate::outbox`]): `{shop, count, outbox}`, oldest first, of one channel (`email`, `carrier`, `flow`, `pos`, `data_erasure`) or all. |
+//! | `DELETE /__lsf/admin/outbox?shop=&channel=` | Forgets them: `{ok, shop, outbox}`, how many. |
+//! | `GET /__lsf/admin/emails?shop=`, `DELETE …` | The same for `channel=email`, as `{shop, count, emails}` and `{ok, shop, emails}`. |
 //! | `POST /__lsf/admin/orders/protect` (`{"shop"?, "order", "status"?, "eligibility"?}`) | Shopify Protect changes its mind about an order: `Order.shopifyProtect` takes the status (`ACTIVE` by default) and the eligibility (`ELIGIBLE`), and `orders/shopify_protect_eligibility_changed` fires. |
 //! | `POST /__lsf/admin/orders/link-request` (`{"shop"?, "order"}`) | The buyer asks for a new link to the order's status page: the email is recorded in the outbox, `orders/link_requested` fires. |
 //! | `POST /__lsf/admin/disputes` (`{"shop"?, "order", "amount"?, "type"?, "reason"?}`) | The buyer's bank opens a dispute (a `CHARGEBACK` of what the order was paid, `FRAUDULENT`, by default): `disputes/create`. `201` `{ok, shop, dispute}`. |
@@ -17,12 +18,12 @@
 //! The shop is `?shop=` or the body's `shop`, else the default one. No token is needed: these
 //! are lsf's, for the tests on this machine, as the other control endpoints are.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use serde_json::{Value, json};
 
 use super::{AdminApi, HttpRequest, HttpResponse};
 use crate::domains::orders;
-use crate::outbox;
+use crate::outbox::{self, Channel};
 use crate::state::{Clock, ShopState, value};
 
 /// The answer to a request of these endpoints, `None` for another path.
@@ -47,54 +48,61 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Err(error) => return Some(HttpResponse::json(422, &json!({ "error": error }))),
             };
             let moved = api.change_shop(&shop, |state| {
-                let now = target(state.now());
+                let now = target(state.now()).ok_or_else(|| {
+                    "the clock cannot move that far: it stays between the years 1 and 9999"
+                        .to_string()
+                })?;
                 state.set_clock(Clock::Frozen(now));
-                orders::tick(state);
-                // The data erasures the clock made due, with the `customers/redact` payloads they
-                // send, and the checkouts old enough to be deleted.
-                let due = crate::domains::privacy::due_erasures(state);
-                let mut redact = Vec::new();
-                for customer in &due {
-                    if let Ok(payload) =
-                        super::samples::payload_of(state, "customers/redact", Some(customer))
-                    {
-                        redact.push(payload);
-                    }
-                }
-                let erased = crate::domains::privacy::process_due_erasures(state);
-                let deleted = crate::domains::checkouts::delete_expired(state);
+                let ticked = api.tick(state);
+                let erased: Vec<&Value> = ticked
+                    .erased
+                    .iter()
+                    .filter_map(|customer| customer.get("id"))
+                    .collect();
                 let mut answer = clock_json(state);
                 answer["ok"] = json!(true);
                 answer["erased"] = json!(erased);
-                answer["deletedCheckouts"] = json!(deleted);
-                (answer, redact)
+                answer["deletedCheckouts"] = json!(ticked.deleted_checkouts);
+                Ok::<_, String>(answer)
             });
-            let Some((answer, redact)) = moved else {
-                return Some(no_shop());
+            let answer = match moved {
+                None => return Some(no_shop()),
+                Some(Err(error)) => {
+                    return Some(HttpResponse::json(422, &json!({ "error": error })));
+                }
+                Some(Ok(answer)) => answer,
             };
-            for payload in &redact {
-                api.webhooks().trigger(&crate::webhooks::Trigger {
-                    topic: "customers/redact",
-                    shop: &shop,
-                    payload,
-                    address: None,
-                    at: Utc::now(),
-                });
-            }
             HttpResponse::json(200, &answer)
         }
-        ("emails", "GET") => api
-            .change_shop(&shop, |state| {
-                let emails = outbox::emails(state);
-                json!({"shop": state.domain(), "count": emails.len(), "emails": emails})
-            })
-            .map_or_else(no_shop, |answer| HttpResponse::json(200, &answer)),
-        ("emails", "DELETE") => api
-            .change_shop(
-                &shop,
-                |state| json!({"ok": true, "shop": state.domain(), "emails": outbox::clear(state)}),
-            )
-            .map_or_else(no_shop, |answer| HttpResponse::json(200, &answer)),
+        ("outbox" | "emails", "GET" | "DELETE") => {
+            // `/emails` is the outbox of one channel, under the name of its list.
+            let (list, channel) = if area == "emails" {
+                ("emails", Some(Channel::Email))
+            } else {
+                match request.query_param("channel").map(Channel::parse) {
+                    None => ("outbox", None),
+                    Some(Some(channel)) => ("outbox", Some(channel)),
+                    Some(None) => {
+                        let known: Vec<&str> = Channel::ALL.map(Channel::as_str).to_vec();
+                        return Some(HttpResponse::json(
+                            422,
+                            &json!({"error": format!("`channel` is one of {}", known.join(", "))}),
+                        ));
+                    }
+                }
+            };
+            let answer = if method == "GET" {
+                api.with_shop(&shop, |state| {
+                    let entries = outbox::entries(state, channel);
+                    json!({"shop": state.domain(), "count": entries.len(), list: entries})
+                })
+            } else {
+                api.change_shop(&shop, |state| {
+                    json!({"ok": true, "shop": state.domain(), list: outbox::clear(state, channel)})
+                })
+            };
+            answer.map_or_else(no_shop, |answer| HttpResponse::json(200, &answer))
+        }
         ("orders/protect" | "orders/link-request", "POST") => {
             let Some(order) = body
                 .get("order")
@@ -200,12 +208,13 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Some(Err(error)) => HttpResponse::json(409, &json!({ "error": error })),
             }
         }
-        ("clock" | "emails" | "orders/protect" | "orders/link-request" | "disputes", _) => {
-            HttpResponse::json(
-                405,
-                &json!({"error": format!("{method} is not allowed here")}),
-            )
-        }
+        (
+            "clock" | "outbox" | "emails" | "orders/protect" | "orders/link-request" | "disputes",
+            _,
+        ) => HttpResponse::json(
+            405,
+            &json!({"error": format!("{method} is not allowed here")}),
+        ),
         _ => return None,
     })
 }
@@ -219,8 +228,9 @@ fn clock_json(state: &ShopState) -> Value {
     })
 }
 
-/// The time a `POST /__lsf/admin/clock` body asks for, from the shop's time now.
-type Target = Box<dyn Fn(DateTime<Utc>) -> DateTime<Utc>>;
+/// The time a `POST /__lsf/admin/clock` body asks for, from the shop's time now: `None` when it
+/// is past what a date and time can say (RFC 3339: the years 1 to 9999).
+type Target = Box<dyn Fn(DateTime<Utc>) -> Option<DateTime<Utc>>>;
 
 fn target_time(body: &Value) -> Result<Target, String> {
     // `now`, or `at`: the instant to move the clock to.
@@ -232,12 +242,12 @@ fn target_time(body: &Value) -> Result<Target, String> {
         let at = DateTime::parse_from_rfc3339(now)
             .map_err(|_| format!("`now` is not an RFC 3339 date and time: {now}"))?
             .with_timezone(&Utc);
-        return Ok(Box::new(move |_| at));
+        return Ok(Box::new(move |_| Some(at)));
     }
     let advance = match body.get("advance") {
         Some(Value::Number(seconds)) => seconds
             .as_i64()
-            .map(Duration::seconds)
+            .and_then(Duration::try_seconds)
             .ok_or("`advance` is a whole number of seconds")?,
         Some(Value::String(text)) => duration(text).ok_or_else(|| {
             format!("`advance` is seconds or \"30d\", \"12h\", \"15m\", \"45s\": {text}")
@@ -249,10 +259,14 @@ fn target_time(body: &Value) -> Result<Target, String> {
             );
         }
     };
-    Ok(Box::new(move |now| now + advance))
+    Ok(Box::new(move |now| {
+        now.checked_add_signed(advance)
+            .filter(|at| (1..=9999).contains(&at.year()))
+    }))
 }
 
-/// `"30d"`, `"12h"`, `"15m"`, `"45s"`, `"90"` (seconds).
+/// `"30d"`, `"12h"`, `"15m"`, `"45s"`, `"90"` (seconds). `None` for another unit, or for more
+/// than a duration can hold.
 fn duration(text: &str) -> Option<Duration> {
     let text = text.trim();
     let (number, unit) = match text.char_indices().last() {
@@ -260,13 +274,13 @@ fn duration(text: &str) -> Option<Duration> {
         _ => (text, 's'),
     };
     let number: i64 = number.trim().parse().ok()?;
-    Some(match unit {
-        'd' => Duration::days(number),
-        'h' => Duration::hours(number),
-        'm' => Duration::minutes(number),
-        's' => Duration::seconds(number),
-        _ => return None,
-    })
+    match unit {
+        'd' => Duration::try_days(number),
+        'h' => Duration::try_hours(number),
+        'm' => Duration::try_minutes(number),
+        's' => Duration::try_seconds(number),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -280,5 +294,25 @@ mod tests {
         assert_eq!(duration("90"), Some(Duration::seconds(90)));
         assert_eq!(duration("3w"), None);
         assert_eq!(duration("d"), None);
+        // More than a duration holds: refused, not a panic.
+        assert_eq!(duration("9223372036854775807d"), None);
+        assert_eq!(duration("9223372036854775807s"), None);
+    }
+
+    #[test]
+    fn a_target_past_9999_is_refused() {
+        let now = Utc::now();
+        for body in [
+            json!({"advance": "106751991167d"}),
+            json!({"advance": "3000000d"}),
+            json!({"advance": i64::MAX}),
+            json!({"advance": "-800000d"}),
+        ] {
+            if let Ok(target) = target_time(&body) {
+                assert_eq!(target(now), None, "{body}");
+            }
+        }
+        let target = target_time(&json!({"advance": "1d"})).unwrap();
+        assert_eq!(target(now), Some(now + Duration::days(1)));
     }
 }

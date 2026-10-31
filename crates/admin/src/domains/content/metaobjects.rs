@@ -1514,15 +1514,10 @@ fn bulk_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             return Ok(answer(json!({"job": null}), &[error]));
         }
     };
-    let job = json!({
-        "id": format!("gid://shopify/Job/{}", value::uuid(&format!("metaobject-bulk-delete/{}", ids.join(",")))),
-        "done": true,
-    });
-    if !ids.is_empty() {
-        let state = mutation.state_mut();
-        for id in &ids {
-            delete_entry(state, id);
-        }
+    let state = mutation.state_mut();
+    for id in &ids {
+        delete_entry(state, id);
     }
-    Ok(answer(json!({"job": job}), &[]))
+    let job = crate::resolve::done_job(state, "metaobject_bulk_delete");
+    Ok(answer(json!({ "job": job }), &[]))
 }

@@ -60,13 +60,9 @@ pub fn is(state: &ShopState, key: &str, type_name: &str) -> bool {
     state.type_of(key) == Some(type_name)
 }
 
-/// The currency of the shop.
+/// The currency of the shop ([`crate::domains::orders::model::currency`]).
 pub fn currency(state: &ShopState) -> String {
-    state
-        .shop()
-        .and_then(|shop| field(shop, "currencyCode"))
-        .unwrap_or("USD")
-        .to_string()
+    crate::domains::orders::model::currency(state)
 }
 
 /// The origin of the shop's URLs: `https://my-shop.myshopify.com`.

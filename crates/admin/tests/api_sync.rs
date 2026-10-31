@@ -65,7 +65,10 @@ fn changes_of_the_default_shop_are_projected_when_the_server_asks() {
     let synced = api.synced().expect("on");
     assert_eq!((synced.generation, synced.overlay.is_none()), (0, true));
 
-    // A query writes nothing: nothing to count.
+    // The first request does what the clock passed since the seed (the demo store's orders of
+    // past days are paid out), a change like any other. A query then writes nothing: nothing to
+    // count.
+    graphql(&api, &token, "{ shop { name } }");
     let changes = api.store_changes();
     graphql(&api, &token, "{ products(first: 2) { nodes { title } } }");
     assert_eq!(api.store_changes(), changes);
@@ -160,4 +163,86 @@ fn a_reseed_moves_the_projection_to_the_new_files() {
     let synced = api.synced().unwrap();
     assert!(synced.overlay.is_none());
     assert_eq!(synced.generation, 2);
+}
+
+#[test]
+fn moving_the_clock_projects_what_the_time_changes() {
+    let base = Arc::new(support::fixture_store("rich"));
+    let app = support::fixture_app();
+    let function = lsf_admin::domains::app::function_id(Some(&app), "volume-discount");
+    let api = AdminApi::new(
+        &base,
+        AdminOptions {
+            app: Some(app),
+            client_secret: "test-secret".to_string(),
+            token_seed: Some(7),
+            ..AdminOptions::default()
+        },
+    );
+    api.sync_store(base.clone());
+    let shop = api.default_shop();
+    // An app discount that starts after the shop's clock (the data's `now`, 2026-03-15).
+    api.change_shop(&shop, |state| {
+        let id = state.new_gid("DiscountAutomaticNode");
+        state.insert(lsf_admin::state::value::object(json!({
+            "__typename": "DiscountAutomaticNode",
+            "id": id,
+            "automaticDiscount": {
+                "__typename": "DiscountAutomaticApp",
+                "title": "April",
+                "appDiscountType": {"functionId": function},
+                "discountClasses": ["ORDER"],
+                "startsAt": "2026-04-01T00:00:00Z",
+            },
+            "metafields": [],
+        })));
+    });
+    let titles = |api: &AdminApi| -> Vec<String> {
+        let synced = api.synced().expect("on");
+        synced
+            .overlay
+            .as_deref()
+            .and_then(|overlay| overlay.data["checkout"]["discounts"].as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|discount| discount["title"].as_str().map(str::to_string))
+            .collect()
+    };
+    assert!(!titles(&api).contains(&"April".to_string()));
+    assert_eq!(
+        api.with_shop(&shop, lsf_admin::sync::next_moment)
+            .flatten()
+            .map(|at| at.to_rfc3339()),
+        Some("2026-04-01T00:00:00+00:00".to_string())
+    );
+    // The clock moves before the start: what the time passing does since the data's `now` is
+    // done (the past days paid out), and the discount still waits.
+    request(
+        &api,
+        "POST",
+        "/__lsf/admin/clock",
+        None,
+        json!({"now": "2026-03-31T00:00:00Z"}),
+    );
+    assert!(!titles(&api).contains(&"April".to_string()));
+    // Then past its start: no record is written, and the store changes all the same.
+    let revision = api.with_shop(&shop, |state| state.revision()).unwrap();
+    let changes = api.store_changes();
+    request(
+        &api,
+        "POST",
+        "/__lsf/admin/clock",
+        None,
+        json!({"now": "2026-04-02T00:00:00Z"}),
+    );
+    assert_eq!(
+        api.with_shop(&shop, |state| state.revision()),
+        Some(revision)
+    );
+    assert!(api.store_changes() > changes);
+    assert!(titles(&api).contains(&"April".to_string()));
+    assert_eq!(
+        api.with_shop(&shop, lsf_admin::sync::next_moment).flatten(),
+        None
+    );
 }

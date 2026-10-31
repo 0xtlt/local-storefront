@@ -52,7 +52,7 @@ use serde_json::{Map, Value, json};
 use super::model::{self, NewTransaction, field_cents, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
@@ -788,18 +788,6 @@ fn terms_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 
 // --- Payments ---
 
-/// A `MoneyInput` argument: its cents and its currency. `None` when it is not given.
-fn money_input(value: Option<&Value>) -> Option<(i64, Option<String>)> {
-    let value = value.filter(|value| !value.is_null())?;
-    Some((
-        model::cents(Some(value)),
-        value
-            .get("currencyCode")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    ))
-}
-
 /// The amount of a payment: the one given (in the shop's currency, above 0, at most what is
 /// outstanding), else the outstanding amount. The errors are at `field`.
 fn payment_amount(
@@ -884,8 +872,12 @@ fn manual_payment(
             "AMOUNT_EXCEEDS_BALANCE",
         );
     }
-    let amount = match payment_amount(state, money_input(ctx.arg("amount")), outstanding, "amount")
-    {
+    let amount = match payment_amount(
+        state,
+        model::money_input(ctx.arg("amount")),
+        outstanding,
+        "amount",
+    ) {
         Ok(amount) => amount,
         Err((field, message, code)) => {
             let field: Vec<&str> = field.iter().map(String::as_str).collect();
@@ -1084,7 +1076,6 @@ fn collection_details(
 /// `node` reads.
 fn mandate_job(state: &mut ShopState, order: &str, reference: &str) -> Value {
     let result = state.new_gid("OrderCreateMandatePaymentJobResult");
-    let number = parse_gid(&result).map_or(1, |(_, number)| number);
     state.insert(value::object(json!({
         "__typename": "OrderCreateMandatePaymentJobResult",
         "id": result,
@@ -1093,8 +1084,9 @@ fn mandate_job(state: &mut ShopState, order: &str, reference: &str) -> Value {
         "errors": [],
         "order": order,
     })));
+    let job = crate::resolve::done_job(state, "order_create_mandate_payment");
     json!({
-        "job": {"id": gid("Job", number), "done": true, "query": null},
+        "job": job,
         "jobResult": result,
         "paymentReferenceId": reference,
     })
@@ -1195,8 +1187,12 @@ fn mandate_payment(
     if outstanding <= 0 {
         return failed(&["id"], "The order has no outstanding balance to pay");
     }
-    let amount = match payment_amount(state, money_input(ctx.arg("amount")), outstanding, "amount")
-    {
+    let amount = match payment_amount(
+        state,
+        model::money_input(ctx.arg("amount")),
+        outstanding,
+        "amount",
+    ) {
         Ok(amount) => amount,
         Err((field, message, _)) => {
             let field: Vec<&str> = field.iter().map(String::as_str).collect();
@@ -1314,18 +1310,16 @@ fn reminder_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .and_then(|due| parse_time(Some(&json!(due))))
         .map(|due| day_of(state, due));
     let state = mutation.state_mut();
-    outbox::send(
+    let body = match &due {
+        Some(due) => format!("{balance} {currency} is due on {due} for order {name}."),
+        None => format!("{balance} {currency} is due for order {name}."),
+    };
+    outbox::record(
         state,
-        &Email {
-            template: "payment_reminder",
-            to: &email,
-            subject: format!("Payment reminder for order {name}"),
-            body: match &due {
-                Some(due) => format!("{balance} {currency} is due on {due} for order {name}."),
-                None => format!("{balance} {currency} is due for order {name}."),
-            },
-            resource: Some(&id),
-        },
+        Entry::email("payment_reminder", &email)
+            .subject(format!("Payment reminder for order {name}"))
+            .body(body)
+            .about(&id),
     );
     Ok(payload(json!({"success": true}), &[]))
 }

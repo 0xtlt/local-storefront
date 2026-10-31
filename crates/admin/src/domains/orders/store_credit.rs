@@ -38,7 +38,7 @@ use super::model::{self, text};
 use crate::domains::app::CHANGED;
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::search::SearchValue;
 use crate::state::{Record, ShopState, value};
@@ -471,17 +471,6 @@ fn future_date(state: &ShopState, at: &Value) -> Option<String> {
     (at > state.now()).then(|| value::date_time(at))
 }
 
-/// The cents and the currency of a `MoneyInput`.
-fn money(input: Option<&Value>) -> (i64, Option<String>) {
-    (
-        model::cents(input),
-        input
-            .and_then(|money| money.get("currencyCode"))
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    )
-}
-
 /// The owner's email, for a notice of the outbox.
 fn owner_email(state: &ShopState, account: &str) -> Option<String> {
     let owner = state
@@ -504,7 +493,7 @@ fn credit_mutation(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = model::input_of(ctx.arg("creditInput"));
-    let (amount, currency) = money(input.get("creditAmount"));
+    let (amount, currency) = model::money_input(input.get("creditAmount")).unwrap_or_default();
     let currency = currency.unwrap_or_else(|| model::currency(mutation.state()));
     let amount_path = ["creditInput", "creditAmount", "amount"];
     if amount <= 0 {
@@ -581,18 +570,15 @@ fn credit_mutation(
             .unwrap_or_default()
             .to_string();
         let balance = value::decimal(balance(state, &account));
-        outbox::send(
+        outbox::record(
             state,
-            &Email {
-                template: "store_credit_issued",
-                to: &email,
-                subject: format!("You received store credit from {shop}"),
-                body: format!(
+            Entry::email("store_credit_issued", &email)
+                .subject(format!("You received store credit from {shop}"))
+                .body(format!(
                     "{} {currency} of store credit was added to your account: your balance is {balance} {currency}.",
                     value::decimal(amount)
-                ),
-                resource: Some(&transaction),
-            },
+                ))
+                .about(&transaction),
         );
     }
     Ok(payload(
@@ -614,7 +600,7 @@ fn debit_mutation(
     };
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let input = model::input_of(ctx.arg("debitInput"));
-    let (amount, currency) = money(input.get("debitAmount"));
+    let (amount, currency) = model::money_input(input.get("debitAmount")).unwrap_or_default();
     let currency = currency.unwrap_or_else(|| model::currency(mutation.state()));
     let amount_path = ["debitInput", "debitAmount", "amount"];
     if amount <= 0 {

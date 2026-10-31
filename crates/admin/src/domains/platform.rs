@@ -6,8 +6,8 @@
 //! **The outside world.** What Shopify would hand to a service lsf does not run (a Flow
 //! workflow, an Apple or Google app link file, an EventBridge or Pub/Sub endpoint) is never
 //! sent: the state Shopify would show is kept (records), and what would have been sent is
-//! written to the shop's outbox ([`outbox`]), which `GET /__lsf/admin/outbox` lists. A reset
-//! empties it.
+//! written to the shop's outbox ([`crate::outbox`]), which `GET /__lsf/admin/outbox` lists. A
+//! reset empties it.
 //!
 //! **What the token store must know.** A mutation runs on the shop, under its lock; the tokens
 //! are behind another lock, which comes first ("Locks are taken in one order" in
@@ -25,47 +25,10 @@ pub mod mobile;
 pub mod queries;
 pub mod subscriptions;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use crate::state::gid;
 use crate::state::seed::Seed;
-use crate::state::{ShopState, gid};
-
-/// The memo of the shop that holds its outbox.
-pub const OUTBOX: &str = "lsf/outbox";
-
-/// How many entries the outbox keeps: the oldest go first.
-pub const OUTBOX_LIMIT: usize = 1000;
-
-/// Writes to the outbox what lsf would have sent to a service outside: `service` (`flow`,
-/// `apple-app-site-association`, …), `target` (what it would have gone to), `payload`.
-pub fn outbox(state: &mut ShopState, service: &str, target: &str, payload: Value) {
-    let mut entries = state
-        .memo(OUTBOX)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let at = state.timestamp();
-    entries.push(json!({
-        "service": service,
-        "target": target,
-        "payload": payload,
-        "at": at,
-    }));
-    if entries.len() > OUTBOX_LIMIT {
-        let over = entries.len() - OUTBOX_LIMIT;
-        entries.drain(..over);
-    }
-    state.set_memo(OUTBOX, Value::Array(entries));
-}
-
-/// The outbox of a shop, oldest first.
-pub fn outbox_entries(state: &ShopState) -> Vec<Value> {
-    state
-        .memo(OUTBOX)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
 
 /// The GID of lsf's staff member `id` of a shop: the account owner is 1, as the online tokens'
 /// `associated_user` (`auth::tokens::AssociatedUser::local`).

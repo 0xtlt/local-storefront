@@ -614,6 +614,18 @@ impl ShopState {
         self.events.extend(merged);
     }
 
+    /// The memos whose key starts with `prefix`, in no order: for a family that keeps a memo
+    /// per record and must know, cheaply, whether any is there.
+    pub fn memos_with_prefix<'s>(
+        &'s self,
+        prefix: &'s str,
+    ) -> impl Iterator<Item = (&'s str, &'s Value)> + 's {
+        self.memos
+            .iter()
+            .filter(move |(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| (key.as_str(), value))
+    }
+
     /// What a mutation kept under `key` (see [`ShopState::set_memo`]).
     pub fn memo(&self, key: &str) -> Option<&Value> {
         self.memos.get(key)

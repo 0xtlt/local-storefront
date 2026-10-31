@@ -271,10 +271,6 @@ fn instant(value: Option<&Value>) -> Option<DateTime<Utc>> {
         .map(|at| at.with_timezone(&Utc))
 }
 
-fn shop_currency(state: &ShopState) -> String {
-    crate::domains::customers::shop_currency(state)
-}
-
 // --- Carts ---
 
 /// What the webhooks of a cart report of its lines: the variants' prices and details as the
@@ -354,7 +350,7 @@ pub fn record_cart(state: &mut ShopState, cart: &Cart<'_>) {
         "note": cart.note,
         "attributes": cart.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
         "lineItems": cart_lines(state, cart.lines),
-        "currencyCode": shop_currency(state),
+        "currencyCode": crate::domains::orders::model::currency(state),
         "createdAt": created,
         "updatedAt": now,
     }));
@@ -423,7 +419,7 @@ fn mailing_address(address: &lsf_checkout::Address, id: &str) -> Value {
 fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Record {
     let result = checkout.result;
     let currency = if result.cost.currency_code.is_empty() {
-        shop_currency(state)
+        crate::domains::orders::model::currency(state)
     } else {
         result.cost.currency_code.to_ascii_uppercase()
     };

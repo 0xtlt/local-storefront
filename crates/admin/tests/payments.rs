@@ -261,7 +261,20 @@ fn a_b2b_order_on_net_terms_comes_due_and_is_paid() {
     assert_eq!(status, 200);
     assert_eq!(emails["count"], 1);
     assert_eq!(emails["emails"][0]["to"], "buyer@northwind.example");
-    assert_eq!(emails["emails"][0]["template"], "payment_reminder");
+    assert_eq!(emails["emails"][0]["what"], "payment_reminder");
+    assert_eq!(emails["emails"][0]["channel"], "email");
+    // The same entry in the outbox, and in the shop's status.
+    let (_, outbox) = request(&api, "GET", "/__lsf/admin/outbox", Value::Null);
+    assert_eq!(outbox["outbox"], emails["emails"]);
+    let shop = api.default_shop();
+    let status = api.status();
+    let listed = status["shops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|listed| listed["shop"] == json!(shop))
+        .unwrap();
+    assert_eq!(listed["outbox"], emails["emails"]);
 
     // Thirty-one days later, the schedule is due.
     let (status, clock) = request(
@@ -466,7 +479,7 @@ fn what_buyers_and_shopify_do_to_an_order_is_delivered() {
     assert_eq!(topic, "orders/link_requested");
     assert_eq!(link["admin_graphql_api_id"], order);
     let (_, emails) = request(&api, "GET", "/__lsf/admin/emails", Value::Null);
-    assert_eq!(emails["emails"][0]["template"], "order_link_requested");
+    assert_eq!(emails["emails"][0]["what"], "order_link_requested");
     let (status, refused) = request(
         &api,
         "POST",
@@ -600,4 +613,27 @@ fn the_status_lists_every_mutation_of_payments_returns_and_drafts() {
     ] {
         assert!(listed.contains(&mutation), "{mutation} is not simulated");
     }
+}
+
+#[test]
+fn the_clock_refuses_to_move_past_what_a_date_can_say() {
+    let api = api();
+    let (_, before) = request(&api, "GET", "/__lsf/admin/clock", Value::Null);
+    for advance in [
+        json!("9223372036854775807d"),
+        json!("3000000d"),
+        json!(i64::MAX),
+        json!("-800000d"),
+    ] {
+        let (status, answer) = request(
+            &api,
+            "POST",
+            "/__lsf/admin/clock",
+            json!({ "advance": advance }),
+        );
+        assert_eq!(status, 422, "{advance}: {answer}");
+    }
+    // Nothing moved.
+    let (_, after) = request(&api, "GET", "/__lsf/admin/clock", Value::Null);
+    assert_eq!(after, before);
 }

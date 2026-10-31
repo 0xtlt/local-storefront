@@ -19,8 +19,8 @@
 //! | `delivery` | delivery promise providers and participants, `deliveryPromiseSettings`, `deliverySettingUpdate`, `deliveryShippingOriginAssign`, the shipping packages |
 //!
 //! What lsf "sends" or "buys" for the outside world (a pickup notification, a shipping label)
-//! is recorded in the shop's outbox ([`outbox`], shown by `GET /__lsf/admin`): nothing leaves
-//! the machine.
+//! is recorded in the shop's outbox ([`crate::outbox`], `GET /__lsf/admin/outbox`): nothing
+//! leaves the machine.
 
 pub mod carriers;
 pub mod constraint_rules;
@@ -213,31 +213,6 @@ pub fn keys_of(state: &ShopState, record: &str, field: &str) -> Vec<String> {
 /// The app's GID.
 pub fn app_gid(state: &ShopState) -> Option<String> {
     state.keys("App").next().map(str::to_string)
-}
-
-// --- The outbox ---
-
-/// The memo the outbox is kept under.
-const OUTBOX: &str = "lsf/outbox";
-
-/// Records something lsf would have sent or bought (a notification to a customer, a shipping
-/// label): `kind` (`notification`, `shipping_label`), what it is about, and what was in it.
-/// Nothing is sent: the outbox is what a developer reads instead (`GET /__lsf/admin`, each
-/// shop's `outbox`). Kept with the shop, rolled back with a failed mutation, emptied by a reset.
-pub fn send(state: &mut ShopState, kind: &str, about: &str, details: Value) {
-    let mut entries = outbox(state);
-    let at = state.timestamp();
-    entries.push(json!({"at": at, "kind": kind, "about": about, "details": details}));
-    state.set_memo(OUTBOX, Value::Array(entries));
-}
-
-/// What lsf recorded as sent or bought for a shop, oldest first.
-pub fn outbox(state: &ShopState) -> Vec<Value> {
-    state
-        .memo(OUTBOX)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// The event context a payload of the family reads (see `webhooks::payload::logistics`): the

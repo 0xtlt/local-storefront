@@ -344,8 +344,8 @@ fn a_requested_edit_is_declined_with_a_note_to_the_buyer() {
     assert_eq!(edit["status"], "DECLINED");
     assert_eq!(edit["order"]["displayRequestedEditStatus"], "DECLINED");
     assert_eq!(topics(&mut shop), ["requested_order_edit/declined"]);
-    let emails = crate::outbox::emails(&shop);
-    assert_eq!(emails[0]["template"], "requested_order_edit_declined");
+    let emails = crate::outbox::entries(&shop, Some(crate::outbox::Channel::Email));
+    assert_eq!(emails[0]["what"], "requested_order_edit_declined");
     assert!(
         emails[0]["body"]
             .as_str()
@@ -537,7 +537,7 @@ fn a_draft_is_made_from_an_order_and_its_invoice_previewed() {
     );
     assert!(topics(&mut shop).is_empty());
     assert!(
-        crate::outbox::emails(&shop).is_empty(),
+        crate::outbox::entries(&shop, Some(crate::outbox::Channel::Email)).is_empty(),
         "a preview sends nothing"
     );
     // A completed draft cannot be previewed: the reference's message.
@@ -698,7 +698,7 @@ fn a_return_with_an_exchange_and_fees_is_delivered_disposed_and_processed() {
         json!({"label": {"publicFileUrl": "https://example.com/label.pdf"}, "tracking": {"number": "123345345"}})
     );
     assert_eq!(topics(&mut shop), ["reverse_deliveries/attach_deliverable"]);
-    let emails = crate::outbox::emails(&shop);
+    let emails = crate::outbox::entries(&shop, Some(crate::outbox::Channel::Email));
     assert_eq!(emails.len(), 2);
     assert!(emails[1]["body"].as_str().unwrap().contains("label.pdf"));
     // More units than the reverse fulfillment order has are refused.

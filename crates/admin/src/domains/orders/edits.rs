@@ -57,11 +57,6 @@ fn number(id: &str) -> u64 {
     parse_gid(id).map_or(0, |(_, number)| number)
 }
 
-/// The cents of a calculated line item's field.
-fn cents_of(line: &Map<String, Value>, field: &str) -> i64 {
-    field_cents(line, field)
-}
-
 /// `orderEditBegin`.
 fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -281,7 +276,7 @@ pub(super) fn refresh_calculated(state: &mut ShopState, calculated: &str) {
         };
         let units = int(line, "quantity");
         let shipped = int(line, "lsfShipped");
-        let unit = cents_of(line, "originalUnitPriceSet");
+        let unit = field_cents(line, "originalUnitPriceSet");
         let discount = line.get("lsfDiscount").and_then(Value::as_i64).unwrap_or(0);
         let added = line.get("lsfLineItem").is_none_or(Value::is_null);
         let discounted_unit = if added {
@@ -291,7 +286,7 @@ pub(super) fn refresh_calculated(state: &mut ShopState, calculated: &str) {
                 unit - discount / units
             }
         } else {
-            cents_of(line, "discountedUnitPriceSet")
+            field_cents(line, "discountedUnitPriceSet")
         };
         let editable = units - shipped;
         let line_total = if added {
@@ -653,7 +648,7 @@ fn set_quantity(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     }
     let unit = line
         .as_object()
-        .map_or(0, |line| cents_of(line, "originalUnitPriceSet"));
+        .map_or(0, |line| field_cents(line, "originalUnitPriceSet"));
     if let Err(error) = bounded_line(unit, quantity) {
         return failed(error);
     }
@@ -677,7 +672,7 @@ pub(super) fn discount_of(
     let units = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
     let unit = line
         .as_object()
-        .map_or(0, |line| cents_of(line, "originalUnitPriceSet"));
+        .map_or(0, |line| field_cents(line, "originalUnitPriceSet"));
     let percent = discount.get("percentValue").and_then(Value::as_f64);
     let fixed = discount
         .get("fixedValue")
@@ -1039,7 +1034,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                         .and_then(|product| text(product, "vendor"))
                         .map(str::to_string),
                     quantity: units as u32,
-                    unit_price: cents_of(line, "originalUnitPriceSet"),
+                    unit_price: field_cents(line, "originalUnitPriceSet"),
                     discount: line.get("lsfDiscount").and_then(Value::as_i64).unwrap_or(0),
                     requires_shipping: line
                         .get("lsfRequiresShipping")

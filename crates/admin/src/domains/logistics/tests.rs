@@ -662,10 +662,11 @@ fn a_pickup_fulfillment_order_is_prepared_and_its_notification_recorded() {
         payload,
         json!({"fulfillment_order": {"id": fo, "status": "open", "preparable": true, "delivery_method": {"method_type": "pickup"}}})
     );
-    let outbox = super::outbox(&shop);
+    let outbox = crate::outbox::entries(&shop, None);
     assert_eq!(outbox.len(), 1);
-    assert_eq!(outbox[0]["kind"], "notification");
-    assert_eq!(outbox[0]["details"]["template"], "Ready For Pickup");
+    assert_eq!(outbox[0]["channel"], "email");
+    assert_eq!(outbox[0]["what"], "ready_for_pickup");
+    assert_eq!(outbox[0]["about"], json!(fo));
 }
 
 #[test]
@@ -1092,13 +1093,14 @@ fn a_shipping_label_is_purchased_at_once_and_fulfills_the_fulfillment_order() {
         fulfillments["data"]["order"]["fulfillments"][0]["trackingInfo"][0]["number"],
         json!(number)
     );
-    let outbox = super::outbox(&shop);
+    let outbox = crate::outbox::entries(&shop, None);
     let kinds: Vec<&str> = outbox
         .iter()
-        .map(|entry| entry["kind"].as_str().unwrap())
+        .map(|entry| entry["what"].as_str().unwrap())
         .collect();
-    assert_eq!(kinds, ["shipping_label", "notification"]);
-    assert_eq!(outbox[0]["details"]["serviceCode"], "ground");
+    assert_eq!(kinds, ["shipping_label", "shipping_confirmation"]);
+    assert_eq!(outbox[0]["channel"], "carrier");
+    assert_eq!(outbox[0]["data"]["serviceCode"], "ground");
     let read = run(
         &mut shop,
         "query($id: ID!) { node(id: $id) { ... on ShippingLabelPurchaseResult { status } } }",

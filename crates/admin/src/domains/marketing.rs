@@ -775,7 +775,7 @@ fn delete_all_external(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<
     for activity in &external {
         remove_activity(state, activity);
     }
-    let job = crate::domains::catalog::done_job(state, "marketing_activities_delete_all");
+    let job = crate::resolve::done_job(state, "marketing_activities_delete_all");
     state.emit(crate::domains::app::CHANGED, &job);
     Ok(payload(json!({"job": job}), &[]))
 }

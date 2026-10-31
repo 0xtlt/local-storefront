@@ -44,10 +44,9 @@ use serde_json::{Value, json};
 
 use super::files::{self, ThemeFile, check_filename};
 use super::{FILES, LOCAL, is_local, local_theme_gid, theme_name, theme_of};
-use crate::domains::store_admin::done_job;
 use crate::domains::store_admin::redirects::source_bytes;
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
 use crate::state::{ShopState, value};
 
 /// The most files one `themeFilesUpsert` (or copy, or delete) takes.

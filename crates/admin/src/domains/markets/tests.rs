@@ -1919,6 +1919,37 @@ fn a_future_publish_date_on_a_channel_schedules_the_listing() {
 }
 
 #[test]
+fn the_shops_tick_lists_a_scheduled_listing_once_its_date_passed() {
+    let mut shop = demo();
+    let channel = channel(&mut shop);
+    let publication = shop.get(&channel).unwrap()["lsfPublication"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (product, _) = first_variant(&shop);
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication, publishDate: \"2026-11-02T09:00:00Z\"}]) { userErrors { field message } } }",
+        json!({"id": product, "publication": publication}),
+    );
+    ok(&answer, "publishablePublish");
+    shop.take_events();
+    // The clock passes the date, and no mutation runs: the tick lists it.
+    shop.set_clock(Clock::Frozen(at("2026-11-03T00:00:00Z")));
+    crate::domains::tick(&mut shop);
+    assert!(
+        topics(&mut shop).contains(&"product_listings/add".to_string()),
+        "listed by the tick"
+    );
+    let answer = run(
+        &mut shop,
+        "query($id: ID!, $channel: ID!) { product(id: $id) { publishedOnChannel(channelId: $channel) } }",
+        json!({"id": product, "channel": channel}),
+    );
+    assert_eq!(answer["data"]["product"]["publishedOnChannel"], json!(true));
+}
+
+#[test]
 fn records_product_resource_feedback() {
     let mut shop = demo();
     let (product, _) = first_variant(&shop);

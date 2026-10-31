@@ -1176,32 +1176,21 @@ fn bulk(
             attempt(state, &spec);
         }
     }
-    let kind = if charge { "bulk-charge" } else { "bulk-search" };
-    let counter = state.new_gid("Job");
-    let job = format!(
-        "gid://shopify/Job/{}",
-        value::uuid(&format!("subscription-{kind}/{}/{counter}", state.domain()))
-    );
-    let mut record = Record::new();
-    record.insert("__typename".into(), json!("Job"));
-    record.insert("id".into(), json!(job));
-    record.insert("done".into(), json!(true));
-    record.insert("query".into(), Value::Null);
-    record.insert(
-        "lsfBillingCycles".into(),
-        Value::Array(
-            found
-                .iter()
-                .map(|(contract, index)| json!({"contract": contract, "index": index}))
-                .collect(),
-        ),
-    );
-    state.insert_as(job.clone(), record);
+    let kind = if charge {
+        "subscription_billing_cycle_bulk_charge"
+    } else {
+        "subscription_billing_cycle_bulk_search"
+    };
+    let job = crate::resolve::done_job(state, kind);
+    let cycles: Vec<Value> = found
+        .iter()
+        .map(|(contract, index)| json!({"contract": contract, "index": index}))
+        .collect();
+    if let Some(record) = state.get_mut(&job) {
+        record.insert("lsfBillingCycles".into(), Value::Array(cycles));
+    }
     state.emit(crate::domains::app::CHANGED, &job);
-    Ok(payload(
-        json!({"job": {"id": job, "done": true, "query": null}}),
-        &[],
-    ))
+    Ok(payload(json!({ "job": job }), &[]))
 }
 
 /// `subscriptionBillingCycleBulkResults(jobId:)`: the cycles of a bulk job, as they are now.

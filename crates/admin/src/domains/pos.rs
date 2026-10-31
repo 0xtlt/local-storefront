@@ -6,10 +6,10 @@
 //! - **The outside world**: a `PointOfSaleDevice` is a phone or a tablet running Shopify POS,
 //!   which the Admin API cannot make. The seed gives each active location one device
 //!   (`stable_id("point_of_sale_device", <location GID>)` *(chosen)*), so that a backend can
-//!   assign it a drawer and open sessions on it, by the shop's owner (`staff::owner_gid`), as the staff
-//!   member the sessions name. What Shopify would push to the device (a session opened, a drawer
-//!   assigned) is sent nowhere: each is written to the device's log (`lsfDeviceLog`: `{at,
-//!   message}`) and said in `extensions.lsf.notes`.
+//!   assign it a drawer and open sessions on it, by the shop's owner (`staff::owner_gid`), as
+//!   the staff member the sessions name. What Shopify would push to the device (a session
+//!   opened, a drawer assigned) is sent nowhere: each is written to the shop's outbox
+//!   ([`crate::outbox`], channel `pos`, `to` the device) and said in `extensions.lsf.notes`.
 //! - **Reason codes**: Shopify's default codes (`CashManagementDefaultReasonCodeEnum`: cash
 //!   count, payout, pickup, …) and system ones (`FLOAT_SETUP`, the automatic session events),
 //!   seeded, and the custom ones `cashManagementReasonCodeCreate` makes. Only custom codes can be
@@ -40,9 +40,6 @@ use crate::state::{Record, ShopState, gid, value};
 
 /// The record field of a device with the location it is at.
 pub const DEVICE_LOCATION: &str = "lsfLocation";
-
-/// The record field of a device with what lsf would have sent it: `[{"at", "message"}]`.
-pub const DEVICE_LOG: &str = "lsfDeviceLog";
 
 /// The default reason codes, as `CashManagementDefaultReasonCodeEnum` lists them.
 const DEFAULT_CODES: &[&str] = &[
@@ -83,13 +80,8 @@ pub fn device_gid(location: &str) -> String {
     )
 }
 
-/// The GID of the shop owner, whom the staff family seeds (`staff::seed`, before this one).
-pub fn owner_gid() -> String {
-    crate::domains::staff::owner_gid()
-}
-
-/// The devices, the reason codes and the shop owner: see the module's documentation. Runs after
-/// the other families' seeds (it reads the locations, and staff members another family made).
+/// The devices and the reason codes: see the module's documentation. Runs after the other
+/// families' seeds (it reads the locations).
 pub fn seed(seed: &mut Seed) {
     let locations: Vec<String> = seed
         .state
@@ -111,7 +103,6 @@ pub fn seed(seed: &mut Seed) {
             "activePaymentSession": null,
             "fiscalDeviceIdentifier": null,
             DEVICE_LOCATION: location,
-            DEVICE_LOG: [],
         }));
     }
     for (type_name, kind, codes) in [
@@ -134,19 +125,9 @@ pub fn register(registry: &mut Registry) {
     sessions::register(registry);
 }
 
-/// The currency of the shop: every drawer's.
-fn currency(state: &ShopState) -> String {
-    state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string()
-}
-
 /// A `MoneyV2` of the shop's currency.
 fn money(state: &ShopState, cents: i64) -> Value {
-    value::money_v2(cents, &currency(state))
+    value::money_v2(cents, &crate::domains::orders::model::currency(state))
 }
 
 /// The cents of a `MoneyV2` (or a `MoneyInput`).
@@ -154,18 +135,27 @@ fn cents(money: Option<&Value>) -> i64 {
     crate::domains::catalog::cents_of(money.and_then(|money| money.get("amount"))).unwrap_or(0)
 }
 
-/// Writes what lsf would have sent a device to its log, and says so.
-fn tell_device(state: &mut ShopState, device: &str, message: String) -> String {
-    let at = state.timestamp();
-    if let Some(Value::Array(log)) = state
-        .get_mut(device)
-        .and_then(|record| record.get_mut(DEVICE_LOG))
-    {
-        log.push(json!({"at": at, "message": message}));
-    }
-    format!(
-        "lsf sends nothing to POS devices: \"{message}\" is in the log of {device} (`{DEVICE_LOG}`)"
-    )
+/// Writes what lsf would have sent a device to the shop's outbox (`what`, about the record
+/// `about`), and says so.
+fn tell_device(
+    state: &mut ShopState,
+    device: &str,
+    what: &str,
+    about: &str,
+    message: String,
+) -> String {
+    let note = format!(
+        "lsf sends nothing to POS devices: \"{message}\" for {device} is in the shop's outbox \
+         (GET /__lsf/admin/outbox?channel=pos)"
+    );
+    crate::outbox::record(
+        state,
+        crate::outbox::Entry::new(crate::outbox::Channel::Pos, what)
+            .to(device)
+            .about(about)
+            .body(message),
+    );
+    note
 }
 
 /// Whether a record is of one of the reason code types.

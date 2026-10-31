@@ -282,6 +282,21 @@ pub fn query_of(state: &ShopState, id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The query of the saved search `id` names, when it is one of `resource_type` (its
+/// `SearchResultType`: `URL_REDIRECT`, `DRAFT_ORDER`, …): what a bulk mutation's
+/// `savedSearchId` runs.
+pub fn query_for(state: &ShopState, id: &str, resource_type: &str) -> Option<String> {
+    search_of(state, id)
+        .filter(|search| search.get("resourceType").and_then(Value::as_str) == Some(resource_type))
+        .map(|search| {
+            search
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        })
+}
+
 /// `segmentMigrations(savedSearchId:)`: one per customer saved search, none migrated.
 fn segment_migrations(
     r: &ShopResolver<'_>,

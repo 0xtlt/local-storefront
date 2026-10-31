@@ -22,7 +22,7 @@ fn the_seed_gives_each_location_a_device_and_the_shop_its_reason_codes_and_owner
         r#"query($device: ID!, $owner: ID!) { pointOfSaleDevice(id: $device) { id cashDrawer { id } activePaymentSession { id } }
             staffMember(id: $owner) { name isShopOwner }
             cashManagementReasonCodes(first: 20) { nodes { __typename ... on CashManagementDefaultReasonCode { code } } } }"#,
-        json!({"device": device, "owner": super::owner_gid()}),
+        json!({"device": device, "owner": crate::domains::staff::owner_gid()}),
     );
     assert!(read.get("errors").is_none(), "{read}");
     assert_eq!(
@@ -75,15 +75,13 @@ fn drawers_are_created_found_renamed_and_assigned() {
         found["extensions"]["lsf"]["notes"][0]
             .as_str()
             .unwrap()
-            .contains("lsfDeviceLog")
+            .contains("outbox")
     );
-    assert_eq!(
-        shop.get(&device).unwrap()["lsfDeviceLog"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    let told = crate::outbox::entries(&shop, Some(crate::outbox::Channel::Pos));
+    assert_eq!(told.len(), 1);
+    assert_eq!(told[0]["what"], "cash_drawer_assigned");
+    assert_eq!(told[0]["to"], json!(device));
+    assert_eq!(told[0]["about"], json!(drawer));
     let renamed = run_with(
         &mut shop,
         r#"mutation($id: ID!) { cashDrawerUpdate(id: $id, input: {name: "Counter"}) { cashDrawer { name } userErrors { message } } }"#,
@@ -200,7 +198,7 @@ fn reason_codes_are_created_and_only_custom_ones_deleted() {
 fn a_payment_session_counts_adjusts_and_closes_its_drawer() {
     let mut shop = demo();
     let (location, device) = location_and_device(&shop);
-    let owner = super::owner_gid();
+    let owner = crate::domains::staff::owner_gid();
     // Without a drawer, a session cannot open; nothing changes.
     let before = shop.clone();
     let refused = run_with(

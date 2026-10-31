@@ -20,7 +20,7 @@ use serde_json::{Map, Value, json};
 
 use super::gift_cards::{redeemable, today};
 use crate::graphql::{self, FieldContext, FieldError, Request};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, value};
 
@@ -283,19 +283,17 @@ fn notify(
         );
     }
     let (subject, body) = card_text(state, &card, recipient);
-    outbox::send(
+    let what = if recipient {
+        "gift_card_recipient"
+    } else {
+        "gift_card_created"
+    };
+    outbox::record(
         mutation.state_mut(),
-        &Email {
-            template: if recipient {
-                "gift_card_recipient"
-            } else {
-                "gift_card_created"
-            },
-            to: &email,
-            subject,
-            body,
-            resource: Some(&id),
-        },
+        Entry::email(what, &email)
+            .subject(subject)
+            .body(body)
+            .about(&id),
     );
     Ok(payload(json!({"giftCard": id}), &[]))
 }
@@ -473,9 +471,9 @@ mod tests {
             to_recipient["data"]["giftCardSendNotificationToRecipient"]["userErrors"],
             json!([])
         );
-        let emails = crate::outbox::emails(&shop);
-        assert_eq!(emails[0]["template"], "gift_card_created");
-        assert_eq!(emails[1]["template"], "gift_card_recipient");
+        let emails = crate::outbox::entries(&shop, Some(crate::outbox::Channel::Email));
+        assert_eq!(emails[0]["what"], "gift_card_created");
+        assert_eq!(emails[1]["what"], "gift_card_recipient");
         assert!(
             emails[1]["body"]
                 .as_str()
@@ -510,6 +508,9 @@ mod tests {
             missing["data"]["giftCardSendNotificationToRecipient"]["userErrors"][0]["code"],
             "GIFT_CARD_NOT_FOUND"
         );
-        assert_eq!(crate::outbox::emails(&shop).len(), 2);
+        assert_eq!(
+            crate::outbox::entries(&shop, Some(crate::outbox::Channel::Email)).len(),
+            2
+        );
     }
 }

@@ -422,7 +422,7 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         "errors": [],
         "order": order,
     })));
-    let job = json!({"id": gid("Job", number), "done": true, "query": null});
+    let job = crate::resolve::done_job(state, "order_cancel");
     Ok(payload(
         json!({"job": job, "jobResult": result, "orderCancelUserErrors": []}),
         &[],
@@ -750,15 +750,12 @@ fn order_invoice_send(
         body.push('\n');
         body.push_str(message);
     }
-    crate::outbox::send(
+    crate::outbox::record(
         mutation.state_mut(),
-        &crate::outbox::Email {
-            template: "order_invoice",
-            to: &to,
-            subject,
-            body,
-            resource: Some(&order),
-        },
+        crate::outbox::Entry::email("order_invoice", &to)
+            .subject(subject)
+            .body(body)
+            .about(&order),
     );
     Ok(payload(json!({"order": order}), &[]))
 }

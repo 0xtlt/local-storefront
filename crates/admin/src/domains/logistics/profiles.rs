@@ -1360,7 +1360,7 @@ fn bump(state: &mut ShopState, profile: &str, entries: Vec<Map<String, Value>>) 
 /// `deliveryProfileCreate`.
 fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let input = super::input(ctx, "profile");
-    let currency = catalog_currency(mutation.state());
+    let currency = model::currency(mutation.state());
     if text(&input, "name").is_none_or(|name| name.trim().is_empty()) {
         return Ok(payload(
             json!({"profile": null}),
@@ -1394,10 +1394,6 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(payload(json!({"profile": id}), &[]))
 }
 
-fn catalog_currency(state: &ShopState) -> String {
-    model::currency(state)
-}
-
 /// `deliveryProfileUpdate`.
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -1408,7 +1404,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         ));
     }
     let input = super::input(ctx, "profile");
-    let currency = catalog_currency(mutation.state());
+    let currency = model::currency(mutation.state());
     let state = mutation.state_mut();
     let mut build = Build {
         errors: Vec::new(),
@@ -1457,7 +1453,7 @@ fn remove(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         }
     }
     state.remove(&id);
-    let job = catalog::done_job(state, "delivery_profile_remove");
+    let job = crate::resolve::done_job(state, "delivery_profile_remove");
     Ok(payload(json!({"job": job}), &[]))
 }
 

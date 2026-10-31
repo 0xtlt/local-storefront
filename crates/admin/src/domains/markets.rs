@@ -40,7 +40,7 @@ mod publications;
 mod tests;
 mod web_presences;
 
-pub use channels::{LISTING, after_mutation, listed, removing, scheduled};
+pub use channels::{LISTING, after_mutation, listed, publish_due_listings, removing, scheduled};
 pub use price_lists::contextual_price;
 
 use lsf_core::store::reference;
@@ -298,14 +298,9 @@ pub fn is_active(record: &Record) -> bool {
     record.get("status").and_then(Value::as_str) != Some("DRAFT")
 }
 
-/// The shop's currency.
+/// The shop's currency ([`super::orders::model::currency`]).
 pub fn shop_currency(state: &ShopState) -> String {
-    state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string()
+    super::orders::model::currency(state)
 }
 
 /// The market a buyer in a country is in: the first active market of the region whose

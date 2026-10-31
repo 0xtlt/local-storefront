@@ -334,7 +334,7 @@ fn customer_merge(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     };
     let state = m.state_mut();
     merge_into(state, &keep, &gone, &overrides);
-    let job = crate::domains::catalog::done_job(state, "customer_merge");
+    let job = crate::resolve::done_job(state, "customer_merge");
     state.set_memo(
         format!("customer-merge/{job}"),
         json!({"resultingCustomerId": keep, "deletedCustomerId": gone}),

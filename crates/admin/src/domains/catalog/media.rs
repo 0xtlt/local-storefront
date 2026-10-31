@@ -29,7 +29,7 @@ use super::records::{coded, field, is, text};
 use super::{gids, refresh_product};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, gid, value};
+use crate::state::{ShopState, gid, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -506,24 +506,6 @@ fn product_delete_media(
     ))
 }
 
-/// A `Job` that is already done: what lsf answers for the work Shopify does in the background.
-pub fn done_job(state: &mut ShopState, kind: &str) -> String {
-    let id = format!(
-        "gid://shopify/Job/{}",
-        value::uuid(&format!(
-            "job/{}/{kind}/{}",
-            state.domain(),
-            state.count("Job")
-        ))
-    );
-    let mut record = Record::new();
-    record.insert("__typename".into(), json!("Job"));
-    record.insert("id".into(), json!(id));
-    record.insert("done".into(), json!(true));
-    state.insert_as(id.clone(), record);
-    id
-}
-
 /// `productReorderMedia`.
 fn product_reorder_media(
     mutation: &mut Mutation<'_>,
@@ -578,7 +560,7 @@ fn product_reorder_media(
     refresh_images(state, &product);
     state.touch(&product);
     state.emit("products/update", &product);
-    let job = done_job(state, "product_reorder_media");
+    let job = crate::resolve::done_job(state, "product_reorder_media");
     Ok(media_payload(json!({"job": job}), &[]))
 }
 

@@ -591,7 +591,8 @@ pub fn removing(state: &mut ShopState, publishable: &str) {
 /// join the publications with `autoPublish`; a product (or collection) it changed that a
 /// channel lists is `product_listings/update` (`collection_listings/update`,
 /// `scheduled_product_listings/update` when it is scheduled), unless the mutation listed or
-/// unlisted it; and the scheduled listings whose date has passed are listed.
+/// unlisted it; and the scheduled listings whose date has passed are listed
+/// ([`publish_due_listings`]).
 pub fn after_mutation(state: &mut ShopState, start: usize) {
     if state.event_count() <= start {
         return;
@@ -649,9 +650,17 @@ pub fn after_mutation(state: &mut ShopState, start: usize) {
             }
         }
     }
-    // The listings whose date has passed.
+    publish_due_listings(state);
+}
+
+/// Lists the scheduled listings whose date the shop's clock has passed. Run after every
+/// mutation that emitted events, and by the shop's tick (`domains::tick`).
+pub fn publish_due_listings(state: &mut ShopState) {
+    if state.count("Channel") == 0 {
+        return;
+    }
     let now = state.now();
-    for publication in &publications {
+    for publication in &app_publications(state) {
         for entry in scheduled_of(state, publication) {
             let (Some(publishable), Some(date)) = (
                 text(&entry, "publishable").map(str::to_string),

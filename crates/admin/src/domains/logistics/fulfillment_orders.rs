@@ -39,10 +39,11 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{app_gid, coded, emit_change, int, keys_of, objects, push, send, text};
+use super::{app_gid, coded, emit_change, int, keys_of, objects, push, text};
 use crate::domains::catalog::{self, gids};
 use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
+use crate::outbox::{self, Channel, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState};
 use crate::webhooks::payload::FULFILLMENT_ORDER_EVENT;
@@ -629,8 +630,8 @@ fn prepared(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         let customer = order
             .as_deref()
             .and_then(|order| state.get(order))
-            .and_then(|order| order.get("email").cloned())
-            .unwrap_or(Value::Null);
+            .and_then(|order| text(order, "email"))
+            .map(str::to_string);
         if let Some(record) = state.get_mut(&id) {
             record.insert("lsfPrepared".into(), json!(true));
         }
@@ -638,26 +639,27 @@ fn prepared(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         let (topic, notification) = if local {
             (
                 "fulfillment_orders/line_items_prepared_for_local_delivery",
-                "Out for delivery",
+                "out_for_delivery",
             )
         } else {
             (
                 "fulfillment_orders/line_items_prepared_for_pickup",
-                "Ready For Pickup",
+                "ready_for_pickup",
             )
         };
-        send(
-            state,
-            "notification",
-            &id,
-            json!({"template": notification, "to": customer, "order": order}),
-        );
+        let mut email = Entry::new(Channel::Email, notification)
+            .about(&id)
+            .data(json!({"order": order}));
+        if let Some(customer) = customer {
+            email = email.to(customer);
+        }
+        outbox::record(state, email);
         emit_change(state, topic, &id, json!({"preparable": true}));
     }
     if !groups.is_empty() {
         mutation.note(
             "fulfillmentOrderLineItemsPreparedForPickup: lsf sends no email: the notification \
-             is in the shop's outbox (GET /__lsf/admin)",
+             is in the shop's outbox (GET /__lsf/admin/outbox)",
         );
     }
     Ok(payload(json!({}), &[]))

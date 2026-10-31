@@ -115,7 +115,7 @@ fn log(api: &AdminApi, request: &HttpRequest) -> HttpResponse {
     let found = api.change_shop(&shop, |state: &mut ShopState| {
         json!({
             "shop": state.domain(),
-            "emails": state.memo(payment_methods::EMAILS_MEMO).cloned().unwrap_or(json!([])),
+            "emails": payment_methods::emails(state),
             "charges": billing::charges(state),
         })
     });

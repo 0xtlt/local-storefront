@@ -6,7 +6,7 @@
 //! `ShippingLabelPurchaseResult` that starts `PENDING_PURCHASE` and ends `PURCHASED`. lsf buys
 //! nothing: the result is `PURCHASED` at once (`done`, readable with `node`), with a
 //! `ShippingLabel` whose tracking number lsf makes from the label's id (the same every run), and
-//! the purchase is recorded in the shop's outbox (`GET /__lsf/admin`), the carrier and service
+//! the purchase is recorded in the shop's outbox (`GET /__lsf/admin/outbox`), the carrier and service
 //! asked included. The label's document has no URL: there is no PDF.
 //!
 //! The units are then fulfilled with the label's tracking, as a label bought in Shopify's admin
@@ -24,10 +24,11 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{coded, int, objects, send, text};
+use super::{coded, int, objects, text};
 use crate::domains::catalog::gids;
 use crate::domains::orders::model;
 use crate::graphql::{self, FieldContext, FieldError, Request};
+use crate::outbox::{self, Channel, Entry};
 use crate::resolve::{Mutation, Registry, payload};
 use crate::state::{Record, ShopState, value};
 
@@ -233,25 +234,26 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         "errors": [],
         "shippingLabels": [label],
     })));
-    send(
+    outbox::record(
         state,
-        "shipping_label",
-        &label,
-        json!({
-            "fulfillmentOrder": id,
-            "carrier": company,
-            "carrierCode": code,
-            "serviceCode": service,
-            "trackingNumber": number,
-            "weightGrams": weight.round(),
-            "shippingDatetime": shipping_date.map(value::date_time),
-            "package": package.cloned().map(Value::Object).or(default_package),
-        }),
+        Entry::new(Channel::Carrier, "shipping_label")
+            .to(company.as_str())
+            .about(&label)
+            .data(json!({
+                "fulfillmentOrder": id,
+                "carrier": company,
+                "carrierCode": code,
+                "serviceCode": service,
+                "trackingNumber": number,
+                "weightGrams": weight.round(),
+                "shippingDatetime": shipping_date.map(value::date_time),
+                "package": package.cloned().map(Value::Object).or(default_package),
+            })),
     );
     fulfill(mutation, ctx.schema(), &id, &tracking, notify)?;
     mutation.note(
         "shippingLabelPurchase: lsf buys nothing: the label is recorded in the shop's outbox \
-         (GET /__lsf/admin)",
+         (GET /__lsf/admin/outbox)",
     );
     Ok(payload(json!({"shippingLabelPurchaseResult": result}), &[]))
 }
@@ -295,14 +297,15 @@ fn fulfill(
         let email = order
             .as_deref()
             .and_then(|order| state.get(order))
-            .and_then(|order| order.get("email").cloned())
-            .unwrap_or(Value::Null);
-        send(
-            state,
-            "notification",
-            fulfillment_order,
-            json!({"template": "Shipping confirmation", "to": email, "order": order, "tracking": tracking}),
-        );
+            .and_then(|order| text(order, "email"))
+            .map(str::to_string);
+        let mut confirmation = Entry::new(Channel::Email, "shipping_confirmation")
+            .about(fulfillment_order)
+            .data(json!({"order": order, "tracking": tracking}));
+        if let Some(email) = email {
+            confirmation = confirmation.to(email);
+        }
+        outbox::record(state, confirmation);
     }
     Ok(())
 }

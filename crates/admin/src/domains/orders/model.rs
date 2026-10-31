@@ -105,6 +105,18 @@ pub fn share(amount: i64, part: i64, whole: i64) -> i64 {
     i64::try_from(share).unwrap_or(if share < 0 { i64::MIN } else { i64::MAX })
 }
 
+/// A `MoneyInput` argument: its cents and its currency, `None` when it is not given.
+pub fn money_input(value: Option<&Value>) -> Option<(i64, Option<String>)> {
+    let value = value.filter(|value| !value.is_null())?;
+    Some((
+        cents(Some(value)),
+        value
+            .get("currencyCode")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    ))
+}
+
 /// The cents of a field of a record.
 pub fn field_cents(record: &Record, field: &str) -> i64 {
     cents(record.get(field))

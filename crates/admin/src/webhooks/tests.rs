@@ -546,7 +546,11 @@ fn a_filter_is_noted_until_an_evaluator_is_plugged_in() {
     // The evaluator sees the payload after `include_fields`.
     let seen = Arc::new(Mutex::new(Vec::new()));
     let log = Arc::clone(&seen);
-    let evaluator = move |filter: &str, payload: &Value| -> Result<bool, String> {
+    // What `now` the filter counts from: the event's time, by the shop's clock.
+    let times = Arc::new(Mutex::new(Vec::new()));
+    let times_log = Arc::clone(&times);
+    let evaluator = move |filter: &str, payload: &Value, now| -> Result<bool, String> {
+        times_log.lock().unwrap().push(now);
         log.lock()
             .unwrap()
             .push((filter.to_string(), payload.clone()));
@@ -587,6 +591,13 @@ fn a_filter_is_noted_until_an_evaluator_is_plugged_in() {
         ]
     );
     assert!(deliveries[0].notes.is_empty());
+    assert!(
+        times
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|now| *now == event("products/update", "").at)
+    );
     assert_eq!(
         deliveries[1].reason.as_deref(),
         Some("the filter `status:draft` does not match the payload")

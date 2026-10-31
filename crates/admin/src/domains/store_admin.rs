@@ -11,37 +11,14 @@
 //! | `files` | `fileAcknowledgeUpdateFailed` |
 //!
 //! A mutation Shopify answers with a `Job` is done within the request, as the other families
-//! do it: its job is `done` ([`done_job`]), and what it changed is there for the next query.
+//! do it: its job is `done` ([`crate::resolve::done_job`]), and what it changed is there for the next query.
 
 pub mod files;
 pub mod policies;
 pub mod redirects;
-pub mod saved_searches;
 pub mod standard;
 
-use serde_json::json;
-
 use crate::resolve::Registry;
-use crate::state::{Record, ShopState, value};
-
-/// A `Job` that is already done: what lsf answers for the work Shopify does in the background
-/// (a record, so that `node(id:)` and `job(id:)` find it).
-pub fn done_job(state: &mut ShopState, kind: &str) -> String {
-    let id = format!(
-        "gid://shopify/Job/{}",
-        value::uuid(&format!(
-            "job/{}/{kind}/{}",
-            state.domain(),
-            state.count("Job")
-        ))
-    );
-    let mut record = Record::new();
-    record.insert("__typename".into(), json!("Job"));
-    record.insert("id".into(), json!(id));
-    record.insert("done".into(), json!(true));
-    state.insert_as(id.clone(), record);
-    id
-}
 
 pub fn register(registry: &mut Registry) {
     files::register(registry);

@@ -42,7 +42,7 @@ use super::refunds::{self, RefundLine, RefundSpec};
 use super::{LineDraft, TAX_RATE_SETTING};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
 
@@ -712,15 +712,12 @@ fn notify_label(state: &mut ShopState, delivery: &str) {
     if let Some(tracking) = tracking {
         body.push_str(&format!("\nTracking number: {tracking}"));
     }
-    outbox::send(
+    outbox::record(
         state,
-        &Email {
-            template: "return_label",
-            to: &email,
-            subject: format!("Return label for order {name}"),
-            body,
-            resource: Some(delivery),
-        },
+        Entry::email("return_label", &email)
+            .subject(format!("Return label for order {name}"))
+            .body(body)
+            .about(delivery),
     );
 }
 

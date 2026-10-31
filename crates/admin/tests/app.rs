@@ -829,6 +829,75 @@ fn redeem_codes_are_added_in_bulk_each_failing_alone() {
 }
 
 #[test]
+fn bulk_discount_mutations_run_a_saved_search_of_their_resource() {
+    let (_, mut shop) = rich();
+    let saved = |shop: &mut ShopState, name: &str, query: &str, resource: &str| -> String {
+        let made = run(
+            shop,
+            "mutation($input: SavedSearchCreateInput!) { savedSearchCreate(input: $input) { savedSearch { id } userErrors { message } } }",
+            json!({"input": {"name": name, "query": query, "resourceType": resource}}),
+        );
+        data(&made, "savedSearchCreate")["savedSearch"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    shop.take_events();
+    // An empty list of ids removes no code.
+    let none = run(
+        &mut shop,
+        r#"mutation { discountCodeRedeemCodeBulkDelete(discountId: "gid://shopify/DiscountCodeNode/2", ids: []) { job { done } userErrors { message } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        data(&none, "discountCodeRedeemCodeBulkDelete")["userErrors"],
+        json!([])
+    );
+    assert!(topics(&mut shop).is_empty());
+    // A saved search of redeem codes names the codes to remove.
+    let codes = saved(
+        &mut shop,
+        "Welcome",
+        "code:WELCOME10",
+        "DISCOUNT_REDEEM_CODE",
+    );
+    shop.take_events();
+    let removed = run(
+        &mut shop,
+        r#"mutation($saved: ID!) { discountCodeRedeemCodeBulkDelete(discountId: "gid://shopify/DiscountCodeNode/2", savedSearchId: $saved) { job { done } userErrors { message } } }"#,
+        json!({"saved": codes}),
+    );
+    assert_eq!(
+        data(&removed, "discountCodeRedeemCodeBulkDelete")["userErrors"],
+        json!([])
+    );
+    assert_eq!(topics(&mut shop), ["discounts/redeemcode_removed"]);
+    // A saved search of discounts names the discounts; one of customers is refused.
+    let customers = saved(&mut shop, "Everyone", "title:Ten", "CUSTOMER");
+    let refused = run(
+        &mut shop,
+        "mutation($saved: ID!) { discountCodeBulkDelete(savedSearchId: $saved) { job { done } userErrors { field message code } } }",
+        json!({"saved": customers}),
+    );
+    assert_eq!(
+        data(&refused, "discountCodeBulkDelete")["userErrors"],
+        json!([{"field": ["savedSearchId"], "message": "Saved search does not exist", "code": "INVALID"}])
+    );
+    let discounts = saved(&mut shop, "Welcome", "title:Welcome", "PRICE_RULE");
+    shop.take_events();
+    let deleted = run(
+        &mut shop,
+        "mutation($saved: ID!) { discountCodeBulkDelete(savedSearchId: $saved) { job { done } userErrors { field message code } } }",
+        json!({"saved": discounts}),
+    );
+    assert_eq!(
+        data(&deleted, "discountCodeBulkDelete"),
+        &json!({"job": {"done": true}, "userErrors": []})
+    );
+    assert!(topics(&mut shop).contains(&"discounts/delete".to_string()));
+}
+
+#[test]
 fn function_owners_are_created_with_their_function_and_configuration() {
     let (store, mut shop) = rich();
     let functions = run(

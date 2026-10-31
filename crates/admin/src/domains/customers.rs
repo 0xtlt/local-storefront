@@ -273,16 +273,6 @@ pub fn primary_locale(state: &ShopState) -> String {
         .to_string()
 }
 
-/// The shop's currency: what a company location created gets.
-pub fn shop_currency(state: &ShopState) -> String {
-    state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string()
-}
-
 /// The GIDs of an array of a record (`locations`, `contacts`, `roleAssignments`).
 pub fn gids_of(record: Option<&Record>, field: &str) -> Vec<String> {
     record

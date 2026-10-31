@@ -20,7 +20,7 @@ use crate::domains::platform::{self, access::AuthEffect};
 use crate::domains::{app as app_domain, orders};
 use crate::graphql::{self, Bucket, Request};
 use crate::resolve::{Registry, ShopResolver};
-use crate::state::{Event, ShopState, Shops};
+use crate::state::{Clock, Event, ShopState, Shops};
 use crate::throttle::{self, Plan, Throttle};
 use crate::version::{self, AdminPath, ApiVersion, Resolution, Served};
 use crate::webhooks::{AppUrls, DeliveryOptions, Settings, TriggerError, TriggerRequest, Webhooks};
@@ -168,11 +168,12 @@ impl AdminApi {
                 },
             ),
         };
-        let webhooks = webhooks.with_filter(Arc::new(|filter: &str, payload: &Value| {
+        // A relative date of a filter counts from the event, by the shop's clock.
+        let webhooks = webhooks.with_filter(Arc::new(|filter: &str, payload: &Value, now| {
             crate::search::filter::webhook_filter_matches(
                 filter,
                 payload,
-                &crate::search::Options::utc(Utc::now()),
+                &crate::search::Options::utc(now),
             )
             .map_err(|error| error.to_string())
         }));
@@ -329,13 +330,13 @@ impl AdminApi {
     ) -> Option<T> {
         let shop = self.shop(domain)?;
         let mut live = lock(&shop);
-        let revision = live.state.revision();
+        let before = (live.state.revision(), live.state.clock());
         let start = live.state.event_count();
         let result = change(&mut live.state);
         crate::domains::segments::follow(&mut live.state, start, &|topic| {
             self.webhooks.subscribes(domain, topic)
         });
-        self.count_change(&live, revision);
+        self.count_change(&live, before);
         let events = live.state.take_events();
         if !events.is_empty() {
             live.changed = true;
@@ -344,10 +345,35 @@ impl AdminApi {
         Some(result)
     }
 
+    /// Does what the shop's clock passed since the last time (`domains::tick`), while the shop
+    /// is locked, and triggers the `customers/redact` of the data erasures it processed, at the
+    /// shop's time (a compliance topic: triggered, not emitted). The other events it emitted
+    /// are the caller's to take and deliver, with its own.
+    pub(super) fn tick(&self, state: &mut ShopState) -> crate::domains::Ticked {
+        let ticked = crate::domains::tick(state);
+        let lookup = samples::ShopLookup(state);
+        for customer in &ticked.erased {
+            if let Some(payload) =
+                crate::webhooks::payload::payload("customers/redact", customer, &lookup)
+            {
+                self.webhooks.trigger(&crate::webhooks::Trigger {
+                    topic: "customers/redact",
+                    shop: state.domain(),
+                    payload: &payload,
+                    address: None,
+                    at: state.now(),
+                });
+            }
+        }
+        ticked
+    }
+
     /// Counts a change of the default shop for store sync, when a record of it was written since
-    /// `revision`: called while the shop is locked.
-    fn count_change(&self, live: &LiveShop, revision: u64) {
-        if live.default && live.state.revision() != revision {
+    /// `before` (its revision and its clock then), or its clock moved: what the storefront sees
+    /// depends on the time too (an app discount runs between its dates). Called while the shop
+    /// is locked.
+    fn count_change(&self, live: &LiveShop, before: (u64, Clock)) {
+        if live.default && (live.state.revision(), live.state.clock()) != before {
             self.sync.changed();
         }
     }
@@ -673,10 +699,11 @@ impl AdminApi {
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
         let mut live = lock(&shop);
-        // What the shop's clock passed since the last request (a payment schedule that came due).
-        crate::domains::orders::tick(&mut live.state);
+        let before = (live.state.revision(), live.state.clock());
+        // What the shop's clock passed since the last request (a payment schedule that came due,
+        // a data erasure ten days old, a scheduled listing): a change like the request's own.
+        self.tick(&mut live.state);
         let origin = origin_of(request);
-        let revision = live.state.revision();
         let mut resolver = ShopResolver::new(&mut live.state, self.registry)
             .with_version(version)
             .with_grant(&grant)
@@ -689,7 +716,7 @@ impl AdminApi {
         let started = std::time::Instant::now();
         let mut response = graphql::run(version.schema(), &mut resolver, &query, Some(bucket));
         response.extensions.extend(resolver.extensions());
-        self.count_change(&live, revision);
+        self.count_change(&live, before);
         let events = live.state.take_events();
         let effects = platform::access::effects(&events);
         if !events.is_empty() {
@@ -808,25 +835,6 @@ impl AdminApi {
                     Err((status, error)) => HttpResponse::json(status, &json!({ "error": error })),
                 }
             }
-            ("GET", "/__lsf/admin/outbox") => {
-                let domain = request
-                    .query
-                    .iter()
-                    .find(|(name, _)| name == "shop")
-                    .map_or_else(
-                        || self.default_shop(),
-                        |(_, shop)| oauth::normalize_shop(shop),
-                    );
-                match self.outbox(&domain) {
-                    Some(entries) => {
-                        HttpResponse::json(200, &json!({"shop": domain, "outbox": entries}))
-                    }
-                    None => HttpResponse::json(
-                        404,
-                        &json!({"error": format!("there is no shop {domain}")}),
-                    ),
-                }
-            }
             ("POST", "/__lsf/admin/uninstall") => self.uninstall(request),
             ("POST", "/__lsf/admin/install") => self.install(request),
             (
@@ -907,10 +915,7 @@ impl AdminApi {
                     "tokens": grants,
                     "subscriptions": subscriptions,
                     // What Shopify would have sent the outside world, which lsf never sends.
-                    "outbox": crate::domains::outbox::entries(&live.state)
-                        .into_iter()
-                        .chain(crate::domains::logistics::outbox(&live.state))
-                        .collect::<Vec<_>>(),
+                    "outbox": crate::outbox::entries(&live.state, None),
                     "shippingPackages": crate::domains::logistics::delivery::packages(&live.state),
                 })
             })
@@ -1043,15 +1048,6 @@ impl AdminApi {
                 }
             }
         }
-    }
-
-    /// What the app platform's mutations would have sent outside (a Flow trigger, …): the
-    /// outbox of a shop, oldest first (`GET /__lsf/admin/outbox?shop=`). `None` for a shop
-    /// lsf does not have.
-    pub fn outbox(&self, shop: &str) -> Option<Vec<Value>> {
-        let shop = self.shop(shop)?;
-        let live = lock(&shop);
-        Some(platform::outbox_entries(&live.state))
     }
 
     /// The association file the storefront serves at `path` (`/.well-known/assetlinks.json`,
