@@ -1621,6 +1621,7 @@ fn a_billing_attempt_that_succeeds_creates_the_order_and_commits_the_stock() {
     for topic in [
         "orders/create",
         "order_transactions/create",
+        "tender_transactions/create",
         "orders/paid",
         "subscription_billing_attempts/success",
     ] {

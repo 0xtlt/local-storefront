@@ -23,7 +23,8 @@
 //!   at the store data's rate, `sourceName: subscription_contract`, the line items' selling
 //!   plans, a sale of the total through the method's gateway; the stock is committed at the
 //!   shop's first location, as an order that claims inventory does. Then `orders/create`,
-//!   `order_transactions/create`, `orders/paid`, and `subscription_billing_attempts/success`.
+//!   `order_transactions/create` and `tender_transactions/create`, `orders/paid`, and
+//!   `subscription_billing_attempts/success`.
 //!   The contract's `orders` list it, `lastPaymentStatus` is `SUCCEEDED`, each discount that
 //!   applied counts a use (`usageCount`, up to `recurringCycleLimit`).
 //! - **Failure** (`SubscriptionBillingAttemptFailedState` and the deprecated `errorCode`,
@@ -462,6 +463,8 @@ fn create_order(
         .unwrap_or_default()
     {
         state.emit("order_transactions/create", &transaction);
+        // Its tender transaction, as `orderCreate` and the checkout's orders emit it.
+        crate::domains::orders::payments::emit_tender(state, &transaction);
     }
     for line_item in &line_items {
         let quantity = state

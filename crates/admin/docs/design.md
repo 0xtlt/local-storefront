@@ -1668,8 +1668,8 @@ succeeds and as it refuses (the shop left as it was).
   `lsfCycleIndex`, `lsfAnchor` and `lsfMembers` (the contracts a concatenated cycle bills). The
   mutation answers the record pending, inline; the record has the outcome. Its order is made by
   `orders::insert_order` from an `OrderDraft` of the cycle's contract, its stock committed with
-  `orders::model::commit_line`, `orders/create`, `order_transactions/create` and `orders/paid`
-  emitted as `orderCreate` emits them. A contract in a presentment currency (another than the
+  `orders::model::commit_line`, `orders/create`, `order_transactions/create` (with the sale's
+  `tender_transactions/create`) and `orders/paid` emitted as `orderCreate` emits them. A contract in a presentment currency (another than the
   shop's that the shop enables) bills an order presented in it: the draft's amounts are the
   contract's converted to the shop's currency at `markets::rate_bps` (a market's manual rate,
   else 1.0), and the order keeps its currency and rate (`OrderDraft.presentment`,
