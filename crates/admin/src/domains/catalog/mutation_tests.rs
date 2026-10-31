@@ -1303,3 +1303,329 @@ fn inventory_items_are_updated() {
         json!({"inventoryItem": null, "userErrors": [{"field": ["id"], "message": "Inventory item does not exist"}]})
     );
 }
+
+#[test]
+fn products_and_collections_are_published_and_unpublished() {
+    let mut shop = demo();
+    let online_store = super::online_store_publication_gid();
+    let created = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Sun hat"}) { product { id publishedAt onlineStoreUrl } } }"#,
+    );
+    let product = &created["data"]["productCreate"]["product"];
+    assert_eq!(product["publishedAt"], Value::Null);
+    let hat = product["id"].as_str().unwrap().to_string();
+    shop.take_events();
+    let published = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) {
+            publishable { ... on Product { publishedAt onlineStoreUrl publishedOnPublication(publicationId: $publication)
+                resourcePublicationsCount { count } resourcePublications(first: 5) { nodes { isPublished publication { name } } } } }
+            shop { name } userErrors { field message } } }"#,
+        json!({"id": hat, "publication": online_store}),
+    );
+    let publishable = &ok(&published, "publishablePublish")["publishable"];
+    assert_eq!(publishable["publishedAt"], json!(shop.timestamp()));
+    assert_eq!(
+        publishable["onlineStoreUrl"],
+        json!("https://local-supply-co.myshopify.com/products/sun-hat")
+    );
+    assert_eq!(publishable["publishedOnPublication"], json!(true));
+    assert_eq!(publishable["resourcePublicationsCount"]["count"], json!(1));
+    assert_eq!(
+        publishable["resourcePublications"]["nodes"],
+        json!([{"isPublished": true, "publication": {"name": "Online Store"}}])
+    );
+    let events = shop.take_events();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.topic.as_str())
+            .collect::<Vec<_>>(),
+        ["product_publications/create", "products/update"]
+    );
+    // The publication event names the product and the publication, and keeps them.
+    assert!(events[0].gid.starts_with(&format!("{hat}?publication_id=")));
+    assert_eq!(
+        events[0].snapshot.as_ref().unwrap()["publication"],
+        json!(online_store)
+    );
+
+    // Publishing again changes nothing; unpublishing clears `publishedAt`.
+    run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }"#,
+        json!({"id": hat, "publication": online_store}),
+    );
+    assert!(shop.take_events().is_empty());
+    let unpublished = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) { publishableUnpublish(id: $id, input: [{publicationId: $publication}]) {
+            publishable { ... on Product { publishedAt onlineStoreUrl } } userErrors { message } } }"#,
+        json!({"id": hat, "publication": online_store}),
+    );
+    assert_eq!(
+        ok(&unpublished, "publishableUnpublish")["publishable"],
+        json!({"publishedAt": null, "onlineStoreUrl": null})
+    );
+    assert_eq!(
+        topics(&mut shop),
+        ["product_publications/delete", "products/update"]
+    );
+
+    // shopify.dev's examples of what is refused.
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { publishablePublish(id: $id, input: [{publicationId: "gid://shopify/Publication/1"}, {publishDate: "2026-01-01T00:00:00Z"}]) {
+            publishable { __typename } userErrors { field message } } }"#,
+        json!({"id": hat}),
+    );
+    assert_eq!(
+        refused["data"]["publishablePublish"],
+        json!({"publishable": null, "userErrors": [
+            {"field": ["input", "0", "publicationId"], "message": "Publication does not exist or is not publishable"},
+            {"field": ["input", "1", "publicationId"], "message": "PublicationId cannot be empty"},
+        ]})
+    );
+    let unknown = run(
+        &mut shop,
+        r#"mutation { publishablePublish(id: "gid://shopify/Product/1", input: []) { userErrors { field message } } }"#,
+    );
+    assert_eq!(
+        unknown["data"]["publishablePublish"]["userErrors"],
+        json!([{"field": ["id"], "message": "Resource does not exist"}])
+    );
+
+    // A collection.
+    let collection = run(
+        &mut shop,
+        r#"mutation { collectionCreate(input: {title: "New in"}) { collection { id } } }"#,
+    );
+    let new_in = collection["data"]["collectionCreate"]["collection"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+    let published = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) {
+            publishable { ... on Collection { publishedOnPublication(publicationId: $publication) } } userErrors { message } } }"#,
+        json!({"id": new_in, "publication": online_store}),
+    );
+    assert_eq!(
+        ok(&published, "publishablePublish")["publishable"]["publishedOnPublication"],
+        json!(true)
+    );
+    assert_eq!(
+        topics(&mut shop),
+        ["collection_publications/create", "collections/update"]
+    );
+    let has = run_with(
+        &mut shop,
+        r#"query($publication: ID!, $id: ID!) { publication(id: $publication) { hasCollection(id: $id) } }"#,
+        json!({"publication": online_store, "id": new_in}),
+    );
+    assert_eq!(has["data"]["publication"]["hasCollection"], json!(true));
+}
+
+#[test]
+fn selling_plan_groups_are_created_updated_and_linked() {
+    let mut shop = demo();
+    let beanie = product(&shop, "wool-beanie");
+    let navy = variants(&shop, &beanie)[0].clone();
+    let created = run_with(
+        &mut shop,
+        r#"mutation($input: SellingPlanGroupInput!, $resources: SellingPlanGroupResourceInput) {
+            sellingPlanGroupCreate(input: $input, resources: $resources) {
+                sellingPlanGroup { id name merchantCode options summary appliesToProduct(productId: "PRODUCT") productsCount { count }
+                    sellingPlans(first: 5) { nodes { name options category
+                        billingPolicy { ... on SellingPlanRecurringBillingPolicy { interval intervalCount } }
+                        deliveryPolicy { ... on SellingPlanRecurringDeliveryPolicy { interval intervalCount cutoff } }
+                        pricingPolicies { ... on SellingPlanFixedPricingPolicy { adjustmentType adjustmentValue { ... on SellingPlanPricingPolicyPercentageValue { percentage } } } } } } }
+                userErrors { field message code } } }"#
+            .replace("PRODUCT", &beanie)
+            .as_str(),
+        json!({"input": {
+            "name": "Subscribe and save", "merchantCode": "subscribe-and-save", "options": ["Delivery every"],
+            "sellingPlansToCreate": [{
+                "name": "Every month", "options": ["month"], "category": "SUBSCRIPTION",
+                "billingPolicy": {"recurring": {"interval": "MONTH", "intervalCount": 1}},
+                "deliveryPolicy": {"recurring": {"interval": "MONTH", "intervalCount": 1, "cutoff": 5}},
+                "pricingPolicies": [{"fixed": {"adjustmentType": "PERCENTAGE", "adjustmentValue": {"percentage": 10}}}],
+            }],
+        }, "resources": {"productIds": [beanie], "productVariantIds": [navy]}}),
+    );
+    let group = &ok(&created, "sellingPlanGroupCreate")["sellingPlanGroup"];
+    assert_eq!(group["merchantCode"], json!("subscribe-and-save"));
+    assert_eq!(
+        group["summary"],
+        json!("1 delivery frequency, 10% discount")
+    );
+    assert_eq!(group["appliesToProduct"], json!(true));
+    assert_eq!(group["productsCount"]["count"], json!(1));
+    let plan = &group["sellingPlans"]["nodes"][0];
+    assert_eq!(
+        plan["billingPolicy"],
+        json!({"interval": "MONTH", "intervalCount": 1})
+    );
+    assert_eq!(plan["deliveryPolicy"]["cutoff"], json!(5));
+    assert_eq!(
+        plan["pricingPolicies"],
+        json!([{"adjustmentType": "PERCENTAGE", "adjustmentValue": {"percentage": 10.0}}])
+    );
+    let id = group["id"].as_str().unwrap().to_string();
+    assert!(super::gids(shop.get(&beanie).unwrap().get("sellingPlanGroups")).contains(&id));
+    assert!(super::gids(shop.get(&navy).unwrap().get("sellingPlanGroups")).contains(&id));
+    assert_eq!(topics(&mut shop), ["selling_plan_groups/create"]);
+
+    // Policies of two kinds, a duplicate name: refused.
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $input: SellingPlanGroupInput!) { sellingPlanGroupUpdate(id: $id, input: $input) { userErrors { field message code } } }"#,
+        json!({"id": id, "input": {"sellingPlansToCreate": [{
+            "name": "Every month", "options": ["week"],
+            "billingPolicy": {"recurring": {"interval": "WEEK", "intervalCount": 1}},
+            "deliveryPolicy": {"fixed": {"fulfillmentTrigger": "ASAP"}},
+        }]}}),
+    );
+    let codes: Vec<&Value> = refused["data"]["sellingPlanGroupUpdate"]["userErrors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| &error["code"])
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            &json!("BILLING_AND_DELIVERY_POLICY_TYPES_MUST_BE_THE_SAME"),
+            &json!("SELLING_PLAN_DUPLICATE_NAME"),
+        ]
+    );
+    unchanged(&mut shop, &before, &[&id]);
+
+    let updated = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $input: SellingPlanGroupInput!) { sellingPlanGroupUpdate(id: $id, input: $input) {
+            sellingPlanGroup { name sellingPlans(first: 5) { nodes { name } } } userErrors { message } } }"#,
+        json!({"id": id, "input": {"name": "Save more", "sellingPlansToCreate": [{
+            "name": "Every week", "options": ["week"],
+            "billingPolicy": {"recurring": {"interval": "WEEK", "intervalCount": 1}},
+            "deliveryPolicy": {"recurring": {"interval": "WEEK", "intervalCount": 1}},
+        }]}}),
+    );
+    assert_eq!(
+        ok(&updated, "sellingPlanGroupUpdate")["sellingPlanGroup"],
+        json!({"name": "Save more", "sellingPlans": {"nodes": [{"name": "Every month"}, {"name": "Every week"}]}})
+    );
+    let removed = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $products: [ID!]!) { sellingPlanGroupRemoveProducts(id: $id, productIds: $products) { removedProductIds userErrors { message } } }"#,
+        json!({"id": id, "products": [beanie]}),
+    );
+    assert_eq!(
+        ok(&removed, "sellingPlanGroupRemoveProducts")["removedProductIds"],
+        json!([beanie])
+    );
+    assert!(!super::gids(shop.get(&beanie).unwrap().get("sellingPlanGroups")).contains(&id));
+    shop.take_events();
+    let deleted = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { sellingPlanGroupDelete(id: $id) { deletedSellingPlanGroupId userErrors { message } } }"#,
+        json!({"id": id}),
+    );
+    assert_eq!(
+        ok(&deleted, "sellingPlanGroupDelete")["deletedSellingPlanGroupId"],
+        json!(id)
+    );
+    assert!(!super::gids(shop.get(&navy).unwrap().get("sellingPlanGroups")).contains(&id));
+    assert_eq!(topics(&mut shop), ["selling_plan_groups/delete"]);
+}
+
+#[test]
+fn gift_cards_are_issued_credited_debited_and_deactivated() {
+    let mut shop = demo();
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    let created = run_with(
+        &mut shop,
+        r#"mutation($customer: ID!) { giftCardCreate(input: {initialValue: "27.84", customerId: $customer, note: "Refund for Order #1"}) {
+            giftCard { id initialValue { amount } balance { amount } customer { id } note lastCharacters maskedCode isRedeemable enabled }
+            giftCardCode userErrors { field message } } }"#,
+        json!({"customer": customer}),
+    );
+    let payload = ok(&created, "giftCardCreate");
+    let code = payload["giftCardCode"].as_str().unwrap().to_string();
+    assert_eq!(code.len(), 16);
+    let card = &payload["giftCard"];
+    assert_eq!(card["initialValue"]["amount"], json!("27.84"));
+    assert_eq!(card["lastCharacters"], json!(code[12..]));
+    assert_eq!(card["isRedeemable"], json!(true));
+    let id = card["id"].as_str().unwrap().to_string();
+    // The id lsf-core gives a card of this code.
+    assert_eq!(
+        id,
+        crate::state::gid("GiftCard", lsf_core::util::stable_id("gift_card", &code))
+    );
+    assert_eq!(topics(&mut shop), ["gift_cards/create"]);
+
+    let currency = shop.shop().unwrap()["currencyCode"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let credited = run_with(
+        &mut shop,
+        &format!(
+            r#"mutation($id: ID!) {{ giftCardCredit(id: $id, creditInput: {{creditAmount: {{amount: "10", currencyCode: {currency}}}, processedAt: "2024-09-09T12:48:33-04:00", note: "A note."}}) {{
+            giftCardCreditTransaction {{ amount {{ amount }} processedAt note giftCard {{ balance {{ amount }} }} }} userErrors {{ field message code }} }} }}"#
+        ),
+        json!({"id": id}),
+    );
+    let transaction = &ok(&credited, "giftCardCredit")["giftCardCreditTransaction"];
+    assert_eq!(transaction["amount"]["amount"], json!("10.0"));
+    assert_eq!(transaction["processedAt"], json!("2024-09-09T16:48:33Z"));
+    assert_eq!(transaction["giftCard"]["balance"]["amount"], json!("37.84"));
+    shop.take_events();
+    let too_much = run_with(
+        &mut shop,
+        &format!(
+            r#"mutation($id: ID!) {{ giftCardDebit(id: $id, debitInput: {{debitAmount: {{amount: "100", currencyCode: {currency}}}}}) {{ giftCardDebitTransaction {{ id }} userErrors {{ field message code }} }} }}"#
+        ),
+        json!({"id": id}),
+    );
+    assert_eq!(
+        too_much["data"]["giftCardDebit"]["userErrors"],
+        json!([{"field": ["debitInput", "debitAmount"], "message": "The gift card does not have sufficient funds to satisfy the request.", "code": "INSUFFICIENT_FUNDS"}])
+    );
+    let debited = run_with(
+        &mut shop,
+        &format!(
+            r#"mutation($id: ID!) {{ giftCardDebit(id: $id, debitInput: {{debitAmount: {{amount: "7.84", currencyCode: {currency}}}}}) {{ giftCardDebitTransaction {{ amount {{ amount }} giftCard {{ balance {{ amount }} transactions(first: 5) {{ nodes {{ amount {{ amount }} }} }} }} }} userErrors {{ message }} }} }}"#
+        ),
+        json!({"id": id}),
+    );
+    let transaction = &ok(&debited, "giftCardDebit")["giftCardDebitTransaction"];
+    assert_eq!(transaction["amount"]["amount"], json!("-7.84"));
+    assert_eq!(transaction["giftCard"]["balance"]["amount"], json!("30.0"));
+    assert_eq!(
+        transaction["giftCard"]["transactions"]["nodes"],
+        json!([{"amount": {"amount": "10.0"}}, {"amount": {"amount": "-7.84"}}])
+    );
+    let deactivated = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardDeactivate(id: $id) { giftCard { enabled isRedeemable deactivatedAt } userErrors { message } } }"#,
+        json!({"id": id}),
+    );
+    let card = &ok(&deactivated, "giftCardDeactivate")["giftCard"];
+    assert_eq!(card["enabled"], json!(false));
+    assert_eq!(card["isRedeemable"], json!(false));
+    assert_eq!(card["deactivatedAt"], json!(shop.timestamp()));
+    let taken = run_with(
+        &mut shop,
+        r#"mutation($code: String!) { giftCardCreate(input: {initialValue: "5", code: $code}) { giftCard { id } userErrors { field message code } } }"#,
+        json!({"code": code}),
+    );
+    assert_eq!(
+        taken["data"]["giftCardCreate"]["userErrors"],
+        json!([{"field": ["input", "code"], "message": "Code has already been taken", "code": "TAKEN"}])
+    );
+}

@@ -11,6 +11,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
 mod collections;
+mod gift_cards;
 mod inventory;
 mod locations;
 mod media;
@@ -19,7 +20,9 @@ mod mutation_tests;
 mod options;
 mod product_set;
 mod products;
+mod publications;
 mod records;
+mod selling_plans;
 mod variants;
 
 pub use collections::apply_rules;
@@ -861,9 +864,11 @@ fn seed_selling_plan_group(seed: &mut Seed, group: &SellingPlanGroup) {
         "id": id,
         "name": group.name,
         "appId": group.app_id,
+        "merchantCode": lsf_core::util::handleize(&group.name),
         "options": group.options,
         "createdAt": created,
         "products": products,
+        "productVariants": [],
         "sellingPlans": plans,
     }));
 }
@@ -1250,6 +1255,7 @@ pub fn product_changed(state: &mut ShopState, product: &str) {
         }
     }
     refresh_product(state, product);
+    publications::refresh_online_store_url(state, product);
     collections::apply_rules(state, product);
 }
 
@@ -1294,6 +1300,9 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     collections::register(registry);
     inventory::register(registry);
     locations::register(registry);
+    selling_plans::register(registry);
+    publications::register(registry);
+    gift_cards::register(registry);
     registry.field("InventoryLevel", "quantities", level_quantities);
 }
 
