@@ -25,6 +25,8 @@ pub fn seed(store: &Store, app: Option<&App>) -> ShopState {
     app::seed(&mut seed);
     content::seed_files(&mut seed);
     content::infer_metafield_definitions(&mut seed.state);
+    // From here on, a change is one the Admin API made: what the store sync projects.
+    seed.state.track_changes();
     seed.state
 }
 
