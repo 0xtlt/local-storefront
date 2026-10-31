@@ -53,16 +53,16 @@ pub fn function_id(app: Option<&App>, handle: &str) -> String {
 }
 
 /// The GID of the owner of a discount Function: `DiscountCodeNode/<n>` for a discount with a
-/// code, `DiscountAutomaticNode/<n>` otherwise, `n` its position in `checkout.discounts` from 1,
-/// as the checkout's `discount.id` has it. (`DiscountNode/<n>`, which the legacy discount APIs
-/// read, names the same discount.)
-pub fn discount_gid(index: usize, discount: &CheckoutDiscount) -> String {
+/// code, `DiscountAutomaticNode/<n>` otherwise, `n` the discount's `id` in `checkout.discounts`
+/// (its position from 1 by default), as the checkout's `discount.id` has it.
+/// (`DiscountNode/<n>`, which the legacy discount APIs read, names the same discount.)
+pub fn discount_gid(discount: &CheckoutDiscount) -> String {
     let node = if discount.code.is_some() {
         "DiscountCodeNode"
     } else {
         "DiscountAutomaticNode"
     };
-    gid(node, index as u64 + 1)
+    gid(node, discount.id)
 }
 
 /// What a Function owner is in the Admin API, by the target kind the checkout runs it for:
@@ -219,8 +219,8 @@ pub fn seed(seed: &mut Seed) {
 
     // The discounts of the store data, each backed by a Function of the app.
     let store = seed.store;
-    for (index, discount) in store.checkout.discounts.iter().enumerate() {
-        seed_discount(seed, index, discount, &created);
+    for discount in &store.checkout.discounts {
+        seed_discount(seed, discount, &created);
     }
 
     // The cart transforms, customizations and validations: one per Function that has such a
@@ -277,9 +277,9 @@ pub fn seed(seed: &mut Seed) {
     }
 }
 
-fn seed_discount(seed: &mut Seed, index: usize, discount: &CheckoutDiscount, created: &str) {
+fn seed_discount(seed: &mut Seed, discount: &CheckoutDiscount, created: &str) {
     let app = seed.app;
-    let id = discount_gid(index, discount);
+    let id = discount_gid(discount);
     let function = app.and_then(|app| app.function(&discount.function));
     let classes: Vec<&str> = if discount.classes.is_empty() {
         vec!["PRODUCT", "ORDER", "SHIPPING"]

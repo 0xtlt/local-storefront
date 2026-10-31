@@ -918,7 +918,9 @@ impl<'a> Pipeline<'a> {
 
     /// The discounts a Function backs that are active now: automatic ones, and those whose code
     /// the buyer entered.
-    fn active_discounts(&self) -> Vec<(usize, &'a DiscountConfig, Option<String>)> {
+    /// The discounts that run: those of an enabled Function, automatic or with a code the buyer
+    /// entered, with the number of their GID.
+    fn active_discounts(&self) -> Vec<(u64, &'a DiscountConfig, Option<String>)> {
         let config = self.config;
         let state = self.state;
         config
@@ -926,13 +928,16 @@ impl<'a> Pipeline<'a> {
             .iter()
             .enumerate()
             .filter(|(_, discount)| self.enabled.contains(&discount.function))
-            .filter_map(|(index, discount)| match &discount.code {
-                None => Some((index, discount, None)),
-                Some(code) => state
-                    .discount_codes
-                    .iter()
-                    .find(|entered| entered.eq_ignore_ascii_case(code))
-                    .map(|_| (index, discount, Some(code.clone()))),
+            .filter_map(|(index, discount)| {
+                let number = discount.id.unwrap_or(index as u64 + 1);
+                match &discount.code {
+                    None => Some((number, discount, None)),
+                    Some(code) => state
+                        .discount_codes
+                        .iter()
+                        .find(|entered| entered.eq_ignore_ascii_case(code))
+                        .map(|_| (number, discount, Some(code.clone()))),
+                }
             })
             .collect()
     }
@@ -976,7 +981,7 @@ impl<'a> Pipeline<'a> {
             groups: self.groups.clone(),
         });
         let mut collected = Vec::new();
-        for (index, discount, code) in self.active_discounts() {
+        for (number, discount, code) in self.active_discounts() {
             let Some(function) = self.discount_function(discount) else {
                 continue;
             };
@@ -1012,7 +1017,7 @@ impl<'a> Pipeline<'a> {
                 };
                 let owner = OwnerSpec {
                     kind,
-                    id: format!("gid://shopify/{node}/{}", index + 1),
+                    id: format!("gid://shopify/{node}/{number}"),
                     metafields: &discount.metafields,
                     classes: &classes,
                 };
@@ -1377,7 +1382,7 @@ impl<'a> Pipeline<'a> {
             groups: self.groups.clone(),
         });
         let mut collected = Vec::new();
-        for (index, discount, code) in self.active_discounts() {
+        for (number, discount, code) in self.active_discounts() {
             let Some(function) = self.discount_function(discount) else {
                 continue;
             };
@@ -1399,7 +1404,7 @@ impl<'a> Pipeline<'a> {
                 };
                 let owner = OwnerSpec {
                     kind,
-                    id: format!("gid://shopify/{node}/{}", index + 1),
+                    id: format!("gid://shopify/{node}/{number}"),
                     metafields: &discount.metafields,
                     classes: &classes,
                 };

@@ -152,6 +152,11 @@ product with options lists its variants; each gives one value per option:
 - `recommendations` lists the handles returned by product recommendations; by default they are
   other products of the same collections.
 - `template_suffix` selects an alternate template (`templates/product.<suffix>.json`).
+- `status` (`active`, `draft`, `archived`) and `published` (on the Online Store, `true` by
+  default) say whether the product is on the storefront: only an active, published product is.
+  The others have no page, are in no collection, cannot be bought, and what names them (a
+  collection, a menu, an order) leaves them out without an error; the Admin API lists them with
+  their status.
 
 ## Collections
 
@@ -588,7 +593,9 @@ changes nothing for a theme.
 - `discounts`: each one uses a discount Function of the app by its handle. A `code` makes it a
   code discount; without one it is automatic. `classes` (`PRODUCT`, `ORDER`, `SHIPPING`) says
   what it may reduce, all three by default. `metafields` are those of the discount, by
-  `"namespace.key"`, in the same shorthand as other metafields.
+  `"namespace.key"`, in the same shorthand as other metafields. `id` is the number of the id
+  its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`), its position in the list from
+  1 by default.
 - `functions`: the metafields of the other Functions (cart transform, delivery or payment
   customization, validation), by the handle of the Function.
 - `tax_rate`: a percentage, added to the discounted subtotal.

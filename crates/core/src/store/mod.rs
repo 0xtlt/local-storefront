@@ -16,7 +16,7 @@ use chrono_tz::Tz;
 use indexmap::IndexMap;
 use serde_json::Value as Json;
 
-pub use model::{InventoryPolicy, MediaType, SortOrder, VideoHost};
+pub use model::{InventoryPolicy, MediaType, ProductStatus, SortOrder, VideoHost};
 
 #[derive(Clone, Debug)]
 pub struct Image {
@@ -325,9 +325,17 @@ pub struct Product {
     /// Indexes of the selling plan groups the product is sold with.
     pub selling_plan_groups: Vec<usize>,
     pub requires_selling_plan: bool,
+    pub status: ProductStatus,
+    /// Whether the product is published on the Online Store.
+    pub published: bool,
 }
 
 impl Product {
+    /// Whether the product is on the storefront: active and published.
+    pub fn listed(&self) -> bool {
+        self.status == ProductStatus::Active && self.published
+    }
+
     pub fn has_only_default_variant(&self) -> bool {
         self.options.len() == 1
             && self.options[0].name == "Title"
@@ -820,6 +828,8 @@ pub struct CheckoutPaymentMethod {
 
 #[derive(Clone, Debug)]
 pub struct CheckoutDiscount {
+    /// The number of its GID: `gid://shopify/DiscountAutomaticNode/<id>`.
+    pub id: u64,
     pub function: String,
     pub title: String,
     pub code: Option<String>,
@@ -899,7 +909,12 @@ pub struct CheckoutScenario {
 
 pub struct Store {
     pub shop: Shop,
+    /// The products on the storefront: active and published.
     pub products: Vec<Product>,
+    /// The products of the data that are not on the storefront: drafts, archived products and
+    /// those not published on the Online Store. Neither the storefront nor the checkout sees
+    /// them; the Admin API lists them.
+    pub unlisted_products: Vec<Product>,
     pub collections: Vec<Collection>,
     pub pages: Vec<Page>,
     pub blogs: Vec<Blog>,

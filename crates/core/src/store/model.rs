@@ -426,6 +426,30 @@ pub struct VariantInput {
     pub metafields: Metafields,
 }
 
+/// Where a product is in its life, as the Shopify admin shows it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductStatus {
+    /// For sale.
+    #[default]
+    Active,
+    /// Being prepared: not on the storefront yet.
+    Draft,
+    /// No longer sold: not on the storefront.
+    Archived,
+}
+
+impl ProductStatus {
+    /// The value of the Admin API's `ProductStatus` enum: `ACTIVE`, `DRAFT`, `ARCHIVED`.
+    pub fn admin_name(self) -> &'static str {
+        match self {
+            ProductStatus::Active => "ACTIVE",
+            ProductStatus::Draft => "DRAFT",
+            ProductStatus::Archived => "ARCHIVED",
+        }
+    }
+}
+
 /// A product.
 ///
 /// The smallest valid product is `{"title": "Blue shirt", "price": 1999}`: it gets a single
@@ -506,6 +530,16 @@ pub struct ProductInput {
     /// subscription only. Defaults to `false`.
     #[serde(default)]
     pub requires_selling_plan: bool,
+    /// `active`, `draft` or `archived`. Defaults to `active`. Only an active product that is
+    /// published is on the storefront: a draft, an archived product or one that is not
+    /// published has no page, is in no collection, and cannot be bought, but the Admin API
+    /// lists it. What names it (a collection, a menu, an order of the data) leaves it out
+    /// without an error.
+    #[serde(default)]
+    pub status: ProductStatus,
+    /// Whether the product is published on the Online Store. Defaults to `true`.
+    #[serde(default)]
+    pub published: Option<bool>,
 }
 
 /// How a price adjustment of a selling plan changes the price.
@@ -1547,6 +1581,11 @@ pub enum CheckoutDiscountClass {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckoutDiscountInput {
+    /// The number of the discount's id, which its Function reads
+    /// (`gid://shopify/DiscountAutomaticNode/<id>`, or `DiscountCodeNode` with a code) and the
+    /// Admin API gives it. Defaults to its position in the list, from 1.
+    #[serde(default)]
+    pub id: Option<u64>,
     /// The handle of the discount Function in the app.
     pub function: String,
     /// What the buyer sees. Defaults to the handle of the Function.

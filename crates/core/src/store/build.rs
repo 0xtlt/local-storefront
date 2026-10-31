@@ -88,11 +88,20 @@ fn epoch() -> DateTime<Utc> {
         .expect("valid date")
 }
 
+/// The date of an undated product, collection, page or company: one day after
+/// [`epoch`] per entity before it of its kind, so that their order is that of the data.
+pub(super) fn undated(index: usize) -> DateTime<Utc> {
+    epoch() + Duration::days(index as i64)
+}
+
 struct Builder<'a> {
     options: &'a BuildOptions<'a>,
     diagnostics: Diagnostics,
     timezone: Tz,
     files: IndexMap<String, FileMeta>,
+    /// The handles of the products that are not on the storefront: what names one leaves it
+    /// out without an error.
+    unlisted: HashSet<String>,
 }
 
 impl Builder<'_> {
@@ -354,6 +363,7 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
                 )
             })
             .collect(),
+        unlisted: HashSet::new(),
     };
 
     if let Some(timezone) = &shop_input.timezone {
@@ -382,16 +392,30 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
             Some((name.to_lowercase(), swatch))
         })
         .collect();
-    let products = build_products(
+    let built = build_products(
         &mut builder,
         &input.products,
         shop_input.name.as_deref(),
         &locations,
         &swatches,
     );
+    // The products not on the storefront are set apart, with their data: what follows only
+    // sees the others.
+    let (mut products, mut unlisted_products, mut product_inputs) =
+        (Vec::new(), Vec::new(), Vec::new());
+    for (product, product_input) in built.into_iter().zip(input.products) {
+        if product.listed() {
+            products.push(product);
+            product_inputs.push(product_input);
+        } else {
+            builder.unlisted.insert(product.handle.clone());
+            unlisted_products.push(product);
+        }
+    }
     let mut store = Store {
         shop,
         products,
+        unlisted_products,
         collections: Vec::new(),
         pages: Vec::new(),
         blogs: Vec::new(),
@@ -426,14 +450,14 @@ pub fn build(input: MergedInput, options: &BuildOptions<'_>) -> (Store, Diagnost
         &mut builder,
         &mut store,
         &input.collections,
-        &input.products,
+        &product_inputs,
     );
-    build_recommendations(&mut builder, &mut store, &input.products);
+    build_recommendations(&mut builder, &mut store, &product_inputs);
     build_selling_plans(
         &mut builder,
         &mut store,
         &input.selling_plan_groups,
-        &input.products,
+        &product_inputs,
     );
     build_pages(&mut builder, &mut store, &input.pages);
     build_blogs(&mut builder, &mut store, &input.blogs);
@@ -690,7 +714,7 @@ fn build_products(
             origin,
             &mut seen_handles,
         );
-        let created_default = epoch() + Duration::days(index as i64);
+        let created_default = undated(index);
 
         // Media: `images` is shorthand for image-only `media`.
         if !input.images.is_empty() && !input.media.is_empty() {
@@ -1055,6 +1079,8 @@ fn build_products(
             recommendations: Vec::new(),
             selling_plan_groups: Vec::new(),
             requires_selling_plan: input.requires_selling_plan,
+            status: input.status,
+            published: input.published.unwrap_or(true),
             handle,
         });
     }
@@ -1247,6 +1273,7 @@ fn build_collections(
             match store.product_index(product_handle) {
                 Some(product) if !products.contains(&product) => products.push(product),
                 Some(_) => {}
+                None if builder.unlisted.contains(product_handle) => {}
                 None => {
                     let known: Vec<&str> = store
                         .products
@@ -1282,7 +1309,7 @@ fn build_collections(
         let published_at = builder.date(
             &input.published_at,
             &origin.child("published_at"),
-            epoch() + Duration::days(index as i64),
+            undated(index),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), published_at);
         store.collections.push(Collection {
@@ -1391,7 +1418,7 @@ fn build_recommendations(
                 .enumerate()
                 .filter_map(|(position, handle)| {
                     let found = store.product_index(handle);
-                    if found.is_none() {
+                    if found.is_none() && !builder.unlisted.contains(handle) {
                         let known: Vec<&str> = store
                             .products
                             .iter()
@@ -1619,6 +1646,7 @@ fn build_selling_plans(
                         groups.push(group_index);
                     }
                 }
+                None if builder.unlisted.contains(handle) => {}
                 None => {
                     let known: Vec<&str> = store
                         .products
@@ -1724,7 +1752,7 @@ fn build_pages(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
         let published_at = builder.date(
             &input.published_at,
             &origin.child("published_at"),
-            epoch() + Duration::days(index as i64),
+            undated(index),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), published_at);
         store.pages.push(Page {
@@ -1910,6 +1938,9 @@ fn build_link(
     } else if let Some(handle) = &input.product {
         match store.product_index(handle) {
             Some(index) => (format!("/products/{handle}"), LinkTarget::Product(index)),
+            None if builder.unlisted.contains(handle) => {
+                (format!("/products/{handle}"), LinkTarget::Http)
+            }
             None => {
                 unknown(
                     builder,
@@ -2104,6 +2135,24 @@ fn build_menus(
     }
 }
 
+/// Whether a reference names a variant of a product that is not on the storefront, which an
+/// order of the data leaves out without an error.
+fn names_unlisted(store: &Store, reference: &VariantRef) -> bool {
+    store
+        .unlisted_products
+        .iter()
+        .any(|product| match reference {
+            VariantRef::Id(id) => product.variants.iter().any(|variant| variant.id == *id),
+            VariantRef::SkuOrHandle(text) => {
+                product.handle == *text
+                    || product
+                        .variants
+                        .iter()
+                        .any(|variant| !variant.sku.is_empty() && variant.sku == *text)
+            }
+        })
+}
+
 fn resolve_variant(store: &Store, reference: &VariantRef) -> Option<(usize, usize)> {
     match reference {
         VariantRef::Id(id) => store.variant_location(*id),
@@ -2269,7 +2318,7 @@ fn build_companies(
         let created_at = builder.date(
             &input.created_at,
             &origin.child("created_at"),
-            epoch() + Duration::days(store.companies.len() as i64),
+            undated(store.companies.len()),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), created_at);
         let mut names = HashSet::new();
@@ -2489,7 +2538,7 @@ fn build_customers(
                     .enumerate()
                     .filter_map(|(line_position, line)| {
                         let variant = resolve_variant(store, &line.variant);
-                        if variant.is_none() {
+                        if variant.is_none() && !names_unlisted(store, &line.variant) {
                             unknown_variant(
                                 builder,
                                 store,
@@ -2527,7 +2576,7 @@ fn build_customers(
                                     let index = variant.and_then(|variant| {
                                         line_items.iter().position(|item| item.variant == variant)
                                     });
-                                    if index.is_none() {
+                                    if index.is_none() && !names_unlisted(store, &line.variant) {
                                         builder
                                             .error(
                                                 "unknown_return_line",
@@ -2680,7 +2729,7 @@ fn build_gift_cards(
         });
         let product = input.product.as_ref().and_then(|handle| {
             let found = store.product_index(handle);
-            if found.is_none() {
+            if found.is_none() && !builder.unlisted.contains(handle) {
                 let handles: Vec<&str> = store.products.iter().map(|p| p.handle.as_str()).collect();
                 let diagnostic = builder.error(
                     "unknown_product",
@@ -3085,9 +3134,21 @@ fn override_checkout(
     if input.discounts.is_some() {
         settings.discounts = Vec::new();
     }
+    let mut seen_ids = HashSet::new();
     for (position, discount) in input.discounts.iter().flatten().enumerate() {
         let discount_origin = origin.child("discounts").child(position);
+        let id = discount.id.unwrap_or(position as u64 + 1);
+        if !seen_ids.insert(id) {
+            builder
+                .error(
+                    "duplicate_id",
+                    &discount_origin.child("id"),
+                    format!("another discount already has the id {id}"),
+                )
+                .hint("a discount without an id takes its position in the list, from 1");
+        }
         settings.discounts.push(CheckoutDiscount {
+            id,
             function: discount.function.clone(),
             title: discount
                 .title

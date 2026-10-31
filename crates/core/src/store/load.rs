@@ -16,10 +16,12 @@
 
 use std::path::{Path, PathBuf};
 
+use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use super::build::{BuildOptions, MergedInput, MergedScenario, Origin, Sourced, build};
+use super::build::{BuildOptions, MergedInput, MergedScenario, Origin, Sourced, build, undated};
 use super::validate::{FileKind, validate};
 use super::{Store, demo, model};
 use crate::diagnostics::Diagnostics;
@@ -472,11 +474,86 @@ pub struct LoadOptions {
 /// Loads and validates the store. The store is returned even when the data has errors (built
 /// from whatever is valid), together with the diagnostics.
 pub fn load(source: &DataSource, options: &LoadOptions) -> (Store, Diagnostics) {
-    load_with_overlay(source, options, None)
+    load_with_overlays(source, options, &[])
 }
 
 /// The name diagnostics use for data that did not come from a file.
 pub const OVERLAY_FILE: &str = "(request body)";
+
+/// Data applied on top of the files: the entities it removes, then the entities it adds or
+/// replaces. The data of a session (`PUT /__lsf/session`) is one, and so are the changes the
+/// Admin API made to the store (`lsf_admin::sync`), which the session's data then goes on top of.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Overlay {
+    /// What diagnostics name the overlay instead of a file: [`OVERLAY_FILE`] for a session's
+    /// data. Each overlay has its own, so that the problems of one are told apart from those of
+    /// the others and of the files.
+    pub name: String,
+    /// The entities removed, before `data` applies.
+    pub removed: Removals,
+    /// Data in the format of a data file (any of its sections): an entity whose key (the handle
+    /// of a product, the email of a customer, the code of a gift card, …) is that of an entity
+    /// already there replaces it where it is, the others are added after. An entity that gives
+    /// its `id` replaces the one with that id, whatever its key: its handle (or email, or name)
+    /// can change and its place stays. `shop` is merged field by field, `checkout` field by
+    /// field and the settings of its Functions Function by Function; `localization`, `session`
+    /// and `now` replace the files' own.
+    pub data: Json,
+}
+
+impl Overlay {
+    /// An overlay that adds and replaces, and removes nothing.
+    pub fn new(name: impl Into<String>, data: Json) -> Overlay {
+        Overlay {
+            name: name.into(),
+            removed: Removals::default(),
+            data,
+        }
+    }
+}
+
+/// The entities an overlay removes, each by the key an overlay replaces it by. Removing an
+/// entity the data does not have does nothing. The others keep their ids and their dates: an
+/// entity without a date after a removed one keeps the date its position gave it.
+///
+/// What the data that stays says of a removed entity is not changed: a collection that lists a
+/// removed product by its handle reports it as unknown. An overlay that removes an entity
+/// replaces what names it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Removals {
+    /// Handles.
+    pub products: Vec<String>,
+    /// Handles.
+    pub collections: Vec<String>,
+    /// Handles.
+    pub pages: Vec<String>,
+    /// Handles. A blog goes with its articles.
+    pub blogs: Vec<String>,
+    /// Handles.
+    pub menus: Vec<String>,
+    /// Emails, in any case.
+    pub customers: Vec<String>,
+    /// Names, in any case.
+    pub companies: Vec<String>,
+    /// Codes, in any case.
+    pub gift_cards: Vec<String>,
+    /// Names, in any case.
+    pub locations: Vec<String>,
+    /// Names, in any case.
+    pub selling_plan_groups: Vec<String>,
+    /// Handles, by type.
+    pub metaobjects: IndexMap<String, Vec<String>>,
+    /// The metafields of the shop, as `namespace.key`: `shop` is merged field by field, so a
+    /// metafield it no longer has is removed here.
+    pub shop_metafields: Vec<String>,
+}
+
+impl Removals {
+    pub fn is_empty(&self) -> bool {
+        *self == Removals::default()
+    }
+}
 
 fn effective_handle(handle: &Option<String>, title: &str) -> String {
     handle
@@ -496,20 +573,107 @@ fn merge_json(base: &mut Json, patch: &Json) {
     }
 }
 
-/// Applies a data file on top of the merged data: entities with the handle of an existing one
-/// replace it, the others are added, and `shop` is merged field by field.
-fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Diagnostics) {
-    let Some(overlay) = checked(FileKind::Store, OVERLAY_FILE, overlay, "", diagnostics) else {
+/// Removes what an overlay removes from the merged data. The entities without a date that come
+/// after a removed one get the date they had, which their position gives them.
+fn apply_removals(merged: &mut MergedInput, removed: &Removals) {
+    if removed.is_empty() {
+        return;
+    }
+    let listed = |keys: &[String], key: &str| keys.iter().any(|candidate| candidate == key);
+    let listed_any_case = |keys: &[String], key: &str| {
+        keys.iter()
+            .any(|candidate| candidate.to_lowercase() == key.to_lowercase())
+    };
+    let date =
+        |index: usize| Some(undated(index).to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+
+    for (index, product) in merged.products.iter_mut().enumerate() {
+        product.value.created_at = product.value.created_at.take().or_else(|| date(index));
+    }
+    merged.products.retain(|product| {
+        let handle = effective_handle(&product.value.handle, &product.value.title);
+        !listed(&removed.products, &handle)
+    });
+    for (index, collection) in merged.collections.iter_mut().enumerate() {
+        let value = &mut collection.value;
+        value.published_at = value.published_at.take().or_else(|| date(index));
+    }
+    merged.collections.retain(|collection| {
+        let handle = effective_handle(&collection.value.handle, &collection.value.title);
+        !listed(&removed.collections, &handle)
+    });
+    for (index, page) in merged.pages.iter_mut().enumerate() {
+        page.value.published_at = page.value.published_at.take().or_else(|| date(index));
+    }
+    merged.pages.retain(|page| {
+        let handle = effective_handle(&page.value.handle, &page.value.title);
+        !listed(&removed.pages, &handle)
+    });
+    merged.blogs.retain(|blog| {
+        let handle = effective_handle(&blog.value.handle, &blog.value.title);
+        !listed(&removed.blogs, &handle)
+    });
+    merged
+        .menus
+        .retain(|handle, _| !listed(&removed.menus, handle));
+    merged
+        .customers
+        .retain(|customer| !listed_any_case(&removed.customers, &customer.value.email));
+    for (index, company) in merged.companies.iter_mut().enumerate() {
+        company.value.created_at = company.value.created_at.take().or_else(|| date(index));
+    }
+    merged
+        .companies
+        .retain(|company| !listed_any_case(&removed.companies, &company.value.name));
+    merged
+        .gift_cards
+        .retain(|card| !listed_any_case(&removed.gift_cards, &card.value.code));
+    merged
+        .locations
+        .retain(|location| !listed_any_case(&removed.locations, &location.value.name));
+    merged
+        .selling_plan_groups
+        .retain(|group| !listed_any_case(&removed.selling_plan_groups, &group.value.name));
+    merged.metaobjects.retain(|(kind, entry)| {
+        !removed
+            .metaobjects
+            .get(kind)
+            .is_some_and(|handles| listed(handles, &entry.value.handle))
+    });
+    if let Some(shop) = &mut merged.shop {
+        for name in &removed.shop_metafields {
+            let Some((namespace, key)) = name.split_once('.') else {
+                continue;
+            };
+            if let Some(fields) = shop.value.metafields.get_mut(namespace) {
+                fields.shift_remove(key);
+                if fields.is_empty() {
+                    shop.value.metafields.shift_remove(namespace);
+                }
+            }
+        }
+    }
+}
+
+/// Applies the data of an overlay on top of the merged data: entities with the key of an
+/// existing one replace it, the others are added, and `shop` is merged field by field.
+fn apply_overlay(
+    merged: &mut MergedInput,
+    name: &str,
+    overlay: &Json,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(overlay) = checked(FileKind::Store, name, overlay, "", diagnostics) else {
         return;
     };
     let input = match serde_json::from_value::<model::StoreInput>(overlay.clone()) {
         Ok(input) => input,
         Err(error) => {
-            diagnostics.error("invalid_value", OVERLAY_FILE, "", error.to_string());
+            diagnostics.error("invalid_value", name, "", error.to_string());
             return;
         }
     };
-    let origin = |pointer: String| Origin::new(OVERLAY_FILE, pointer);
+    let origin = |pointer: String| Origin::new(name, pointer);
     if let Some(patch) = overlay.get("shop") {
         let mut shop = merged
             .shop
@@ -524,6 +688,8 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
             });
         }
     }
+    // An entity replaces the one with its id when it gives one (an entity whose key changed
+    // stays where it was), the one with its key otherwise.
     macro_rules! upsert {
         ($field:ident, $key:expr) => {
             for (index, value) in input.$field.into_iter().enumerate() {
@@ -542,34 +708,106 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
                 }
             }
         };
+        ($field:ident, $key:expr, $id:expr) => {
+            for (index, value) in input.$field.into_iter().enumerate() {
+                let key = $key(&value);
+                let explicit = value.id.and_then(|_| $id(&value));
+                let sourced = Sourced {
+                    value,
+                    origin: origin(format!("/{}/{index}", stringify!($field))),
+                };
+                let position = explicit
+                    .and_then(|id| {
+                        merged
+                            .$field
+                            .iter()
+                            .position(|existing| $id(&existing.value) == Some(id))
+                    })
+                    .or_else(|| {
+                        merged
+                            .$field
+                            .iter()
+                            .position(|existing| $key(&existing.value) == key)
+                    });
+                match position {
+                    Some(position) => merged.$field[position] = sourced,
+                    None => merged.$field.push(sourced),
+                }
+            }
+        };
     }
-    upsert!(products, |product: &model::ProductInput| effective_handle(
-        &product.handle,
-        &product.title
-    ));
-    upsert!(collections, |collection: &model::CollectionInput| {
-        effective_handle(&collection.handle, &collection.title)
-    });
-    upsert!(pages, |page: &model::PageInput| effective_handle(
-        &page.handle,
-        &page.title
-    ));
-    upsert!(blogs, |blog: &model::BlogInput| effective_handle(
-        &blog.handle,
-        &blog.title
-    ));
-    upsert!(customers, |customer: &model::CustomerInput| customer
-        .email
-        .to_lowercase());
-    upsert!(companies, |company: &model::CompanyInput| company
-        .name
-        .to_lowercase());
+    // The id of an entity, given or derived from its key as the build derives it.
+    let derived = |kind: &str, given: Option<u64>, key: &str| {
+        Some(given.unwrap_or_else(|| crate::util::stable_id(kind, key)))
+    };
+    upsert!(
+        products,
+        |product: &model::ProductInput| effective_handle(&product.handle, &product.title),
+        |product: &model::ProductInput| derived(
+            "product",
+            product.id,
+            &effective_handle(&product.handle, &product.title)
+        )
+    );
+    upsert!(
+        collections,
+        |collection: &model::CollectionInput| {
+            effective_handle(&collection.handle, &collection.title)
+        },
+        |collection: &model::CollectionInput| derived(
+            "collection",
+            collection.id,
+            &effective_handle(&collection.handle, &collection.title)
+        )
+    );
+    upsert!(
+        pages,
+        |page: &model::PageInput| effective_handle(&page.handle, &page.title),
+        |page: &model::PageInput| derived(
+            "page",
+            page.id,
+            &effective_handle(&page.handle, &page.title)
+        )
+    );
+    upsert!(
+        blogs,
+        |blog: &model::BlogInput| effective_handle(&blog.handle, &blog.title),
+        |blog: &model::BlogInput| derived(
+            "blog",
+            blog.id,
+            &effective_handle(&blog.handle, &blog.title)
+        )
+    );
+    upsert!(
+        customers,
+        |customer: &model::CustomerInput| customer.email.to_lowercase(),
+        |customer: &model::CustomerInput| derived(
+            "customer",
+            customer.id,
+            &customer.email.to_lowercase()
+        )
+    );
+    upsert!(
+        companies,
+        |company: &model::CompanyInput| company.name.to_lowercase(),
+        |company: &model::CompanyInput| derived(
+            "company",
+            company.id,
+            &company.name.to_lowercase()
+        )
+    );
     upsert!(gift_cards, |card: &model::GiftCardInput| card
         .code
         .to_uppercase());
-    upsert!(locations, |location: &model::LocationInput| location
-        .name
-        .to_lowercase());
+    upsert!(
+        locations,
+        |location: &model::LocationInput| location.name.to_lowercase(),
+        |location: &model::LocationInput| derived(
+            "location",
+            location.id,
+            &location.name.to_lowercase()
+        )
+    );
     upsert!(
         selling_plan_groups,
         |group: &model::SellingPlanGroupInput| { group.name.to_lowercase() }
@@ -642,11 +880,26 @@ fn apply_overlay(merged: &mut MergedInput, overlay: &Json, diagnostics: &mut Dia
 }
 
 /// Loads the store with extra data applied on top of the files, as tests do to set up the
-/// exact situation they need without touching the shared fixtures.
+/// exact situation they need without touching the shared fixtures. Its problems are reported
+/// under [`OVERLAY_FILE`].
 pub fn load_with_overlay(
     source: &DataSource,
     options: &LoadOptions,
     overlay: Option<&Json>,
+) -> (Store, Diagnostics) {
+    let overlays: Vec<Overlay> = overlay
+        .map(|data| Overlay::new(OVERLAY_FILE, data.clone()))
+        .into_iter()
+        .collect();
+    load_with_overlays(source, options, &overlays)
+}
+
+/// Loads the store with overlays applied on top of the files, one after the other: each removes
+/// what it removes, then adds and replaces, on top of the files and the overlays before it.
+pub fn load_with_overlays(
+    source: &DataSource,
+    options: &LoadOptions,
+    overlays: &[Overlay],
 ) -> (Store, Diagnostics) {
     let mut diagnostics = Diagnostics::new();
     let (files, files_directory) = match source {
@@ -657,8 +910,11 @@ pub fn load_with_overlay(
         DataSource::Demo => (demo_files(), None),
     };
     let mut merged = merge(files, &mut diagnostics);
-    if let Some(overlay) = overlay {
-        apply_overlay(&mut merged, overlay, &mut diagnostics);
+    for overlay in overlays {
+        apply_removals(&mut merged, &overlay.removed);
+        if !overlay.data.is_null() {
+            apply_overlay(&mut merged, &overlay.name, &overlay.data, &mut diagnostics);
+        }
     }
     let probe = |src: &str| -> Option<(u32, u32)> {
         let path = files_directory.as_ref()?.join(src);
@@ -1063,6 +1319,243 @@ mod tests {
         let tote = store.product_by_handle("canvas-tote-bag").expect("tote");
         assert_eq!(tote.variants[0].price, 100);
         assert!(!tote.available());
+    }
+
+    #[test]
+    fn overlays_remove_before_they_add() {
+        let (before, _) = load(&DataSource::Demo, &LoadOptions::default());
+        let mut removed = Removals {
+            products: vec!["scented-candle".to_string()],
+            collections: vec!["empty".to_string()],
+            // The main menu links to the contact page, the gift card belongs to Jane: what
+            // names a removed entity goes with it.
+            pages: vec!["contact".to_string()],
+            menus: vec!["main-menu".to_string()],
+            customers: vec!["JANE.DOE@example.com".to_string()],
+            gift_cards: vec!["wcgx7x97g74jgdgc".to_string(), "missing-code".to_string()],
+            shop_metafields: vec!["custom.announcement".to_string()],
+            ..Removals::default()
+        };
+        removed
+            .metaobjects
+            .insert("designer".to_string(), vec!["nobody".to_string()]);
+        let overlay = Overlay {
+            name: "(admin api)".to_string(),
+            removed,
+            // Removed first, then added again under the same handle: a replacement.
+            data: serde_json::json!({"products": [
+                {"title": "Wool beanie", "handle": "wool-beanie", "price": 100}
+            ]}),
+        };
+        let (store, diagnostics) =
+            load_with_overlays(&DataSource::Demo, &LoadOptions::default(), &[overlay]);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        assert!(store.product_by_handle("scented-candle").is_none());
+        assert_eq!(store.products.len(), before.products.len() - 1);
+        assert!(store.collection_by_handle("empty").is_none());
+        assert!(store.page_index("contact").is_none());
+        // Every store has a main menu: the default one comes back.
+        let main_menu = store.menu("main-menu").expect("main menu");
+        assert_eq!(main_menu.title, "Main menu");
+        assert_eq!(main_menu.links.len(), 2);
+        assert!(store.menu("footer").is_some());
+        assert!(store.customer_by_email("jane.doe@example.com").is_none());
+        assert_eq!(store.gift_cards.len(), 1);
+        assert!(store.shop.metafields.is_empty());
+        assert_eq!(
+            store
+                .product_by_handle("wool-beanie")
+                .expect("beanie")
+                .variants[0]
+                .price,
+            100
+        );
+        // What stays keeps its id, and the products without a date the date they had.
+        for product in &store.products {
+            let old = before.product_by_handle(&product.handle).expect("kept");
+            assert_eq!(product.id, old.id);
+            if product.handle != "wool-beanie" {
+                assert_eq!(product.created_at, old.created_at, "{}", product.handle);
+            }
+        }
+        let tote = store.product_by_handle("canvas-tote-bag").expect("tote");
+        assert_eq!(
+            tote.collections
+                .iter()
+                .map(|index| store.collections[*index].handle.as_str())
+                .collect::<Vec<_>>(),
+            ["frontpage", "accessories"]
+        );
+    }
+
+    #[test]
+    fn overlays_apply_one_after_the_other_under_their_own_names() {
+        let first = Overlay::new(
+            "(admin api)",
+            serde_json::json!({"products": [{"title": "Brand new", "price": 500}]}),
+        );
+        let mut second = Overlay::new(
+            OVERLAY_FILE,
+            serde_json::json!({"products": [{"title": "Brand new", "price": 700, "prise": 1}]}),
+        );
+        second.removed.products.push("canvas-tote-bag".to_string());
+        let (store, diagnostics) =
+            load_with_overlays(&DataSource::Demo, &LoadOptions::default(), &[first, second]);
+        assert_eq!(
+            store
+                .product_by_handle("brand-new")
+                .expect("added")
+                .variants[0]
+                .price,
+            700
+        );
+        // The second overlay's mistake is its own; removing the tote leaves the home page
+        // collection naming a product that is gone.
+        let files: Vec<(&str, &str)> = diagnostics
+            .items
+            .iter()
+            .map(|item| (item.file.as_str(), item.code))
+            .collect();
+        assert!(
+            files.contains(&(OVERLAY_FILE, "unknown_field")),
+            "{files:?}"
+        );
+        assert!(
+            files.contains(&("collections.json", "unknown_product")),
+            "{files:?}"
+        );
+        assert!(
+            !files.iter().any(|(file, _)| *file == "(admin api)"),
+            "{files:?}"
+        );
+    }
+
+    #[test]
+    fn an_entity_with_its_id_replaces_the_one_with_that_id() {
+        let (before, _) = load(&DataSource::Demo, &LoadOptions::default());
+        let candle = before.product_by_handle("scented-candle").expect("candle");
+        let position = before
+            .products
+            .iter()
+            .position(|product| product.id == candle.id);
+        let overlay = Overlay::new(
+            "(admin api)",
+            serde_json::json!({"products": [
+                {"id": candle.id, "title": "Fig candle", "handle": "fig-candle", "price": 1800}
+            ]}),
+        );
+        let (store, diagnostics) =
+            load_with_overlays(&DataSource::Demo, &LoadOptions::default(), &[overlay]);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        assert!(store.product_by_handle("scented-candle").is_none());
+        let renamed = store.product_by_handle("fig-candle").expect("renamed");
+        assert_eq!(renamed.id, candle.id);
+        assert_eq!(
+            store
+                .products
+                .iter()
+                .position(|product| product.id == candle.id),
+            position
+        );
+        assert_eq!(store.products.len(), before.products.len());
+    }
+
+    #[test]
+    fn an_overlay_without_data_only_removes() {
+        let mut overlay = Overlay::new("(admin api)", Json::Null);
+        overlay
+            .removed
+            .companies
+            .push("northwind hotels".to_string());
+        overlay
+            .removed
+            .customers
+            .push("alex.morgan@example.com".to_string());
+        let (store, diagnostics) =
+            load_with_overlays(&DataSource::Demo, &LoadOptions::default(), &[overlay]);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        assert!(store.companies.is_empty());
+        assert!(store.customer_by_email("alex.morgan@example.com").is_none());
+    }
+
+    #[test]
+    fn only_active_published_products_are_on_the_storefront() {
+        let (store, diagnostics) = inline(serde_json::json!({
+            "products": [
+                {"title": "Draft dress", "price": 100, "status": "draft",
+                 "variants": [{"sku": "DRAFT-1"}], "collections": ["frontpage"]},
+                {"title": "Old hat", "price": 100, "status": "archived"},
+                {"title": "Hidden mug", "price": 100, "published": false},
+                {"title": "Live candle", "price": 100, "status": "active", "published": true}
+            ],
+            "collections": [{"title": "Picks", "products": ["draft-dress", "live-candle"]}],
+            "menus": {"picks": {"links": [{"title": "Dress", "product": "draft-dress"}]}},
+            "customers": [{"email": "ann@example.com", "orders": [
+                {"line_items": [{"variant": "DRAFT-1"}, {"variant": "live-candle"}],
+                 "returns": [{"line_items": [{"variant": "draft-dress"}]}]}
+            ]}]
+        }));
+        // What names a product that is not on the storefront leaves it out, without an error.
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let unlisted: Vec<(&str, model::ProductStatus, bool)> = store
+            .unlisted_products
+            .iter()
+            .map(|product| (product.handle.as_str(), product.status, product.published))
+            .collect();
+        assert_eq!(
+            unlisted,
+            [
+                ("draft-dress", model::ProductStatus::Draft, true),
+                ("old-hat", model::ProductStatus::Archived, true),
+                ("hidden-mug", model::ProductStatus::Active, false)
+            ]
+        );
+        assert!(store.product_by_handle("draft-dress").is_none());
+        assert!(store.product_by_handle("live-candle").is_some());
+        let picks = store.collection_by_handle("picks").expect("picks");
+        assert_eq!(picks.products.len(), 1);
+        assert!(
+            !store
+                .collection_by_handle("frontpage")
+                .expect("frontpage")
+                .products
+                .iter()
+                .any(|index| store.products[*index].handle == "draft-dress")
+        );
+        let link = &store.menu("picks").expect("menu").links[0];
+        assert_eq!(
+            (link.url.as_str(), &link.target),
+            ("/products/draft-dress", &crate::store::LinkTarget::Http)
+        );
+        let order = &store
+            .customer_by_email("ann@example.com")
+            .expect("ann")
+            .orders[0];
+        assert_eq!(order.line_items.len(), 1);
+        assert!(order.returns[0].lines.is_empty());
+        // The ids of the products on the storefront are those they would have anyway.
+        assert_eq!(
+            store.product_by_handle("live-candle").expect("candle").id,
+            crate::util::stable_id("product", "live-candle")
+        );
+    }
+
+    #[test]
+    fn discounts_have_ids() {
+        let (store, diagnostics) = inline(serde_json::json!({"checkout": {"discounts": [
+            {"function": "volume-discount"},
+            {"function": "volume-discount", "code": "SAVE", "id": 7},
+            {"function": "volume-discount"}
+        ]}}));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let ids: Vec<u64> = store.checkout.discounts.iter().map(|d| d.id).collect();
+        assert_eq!(ids, [1, 7, 3]);
+        let (_, diagnostics) = inline(serde_json::json!({"checkout": {"discounts": [
+            {"function": "volume-discount"},
+            {"function": "volume-discount", "id": 1}
+        ]}}));
+        assert_eq!(diagnostics.items[0].code, "duplicate_id");
+        assert_eq!(diagnostics.items[0].path, "/checkout/discounts/1/id");
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub mod resolve;
 pub mod schema;
 pub mod search;
 pub mod state;
+pub mod sync;
 pub mod throttle;
 pub mod version;
 pub mod webhooks;

@@ -205,6 +205,8 @@ default variant, like a product without options in the Shopify admin.
 | `recommendations` | array of string | Handles of the products returned by product recommendations for this product. Defaults to other products from the same collections. |
 | `selling_plan_groups` | array of string | Names of the selling plan groups (from `selling_plan_groups`) this product is sold with, in addition to the groups that list it in their own `products`. |
 | `requires_selling_plan` | boolean | Whether the product can only be bought with a selling plan, like a product sold by subscription only. Defaults to `false`. |
+| `status` | [ProductStatus](#productstatus) | `active`, `draft` or `archived`. Defaults to `active`. Only an active product that is published is on the storefront: a draft, an archived product or one that is not published has no page, is in no collection, and cannot be bought, but the Admin API lists it. What names it (a collection, a menu, an order of the data) leaves it out without an error. |
+| `published` | boolean | Whether the product is published on the Online Store. Defaults to `true`. |
 
 ## Option
 
@@ -387,6 +389,16 @@ One file of a video or 3D model.
 Where an external video is hosted.
 
 One of: `"youtube"`, `"vimeo"`.
+
+## ProductStatus
+
+Where a product is in its life, as the Shopify admin shows it.
+
+One of:
+
+- `"active"`: For sale.
+- `"draft"`: Being prepared: not on the storefront yet.
+- `"archived"`: No longer sold: not on the storefront.
 
 ## Collection
 
@@ -937,6 +949,7 @@ A discount backed by a discount Function of the app.
 
 | Field | Type | Description |
 |---|---|---|
+| `id` | integer | The number of the discount's id, which its Function reads (`gid://shopify/DiscountAutomaticNode/<id>`, or `DiscountCodeNode` with a code) and the Admin API gives it. Defaults to its position in the list, from 1. |
 | `function` | string | **Required.** The handle of the discount Function in the app. |
 | `title` | string | What the buyer sees. Defaults to the handle of the Function. |
 | `code` | string | The code that triggers the discount. Without one the discount is automatic. |
