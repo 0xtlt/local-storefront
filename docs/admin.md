@@ -555,14 +555,16 @@ specific webhooks").
   `orderEditRemoveDiscount`, `orderEditRemoveLineItemDiscount`, `orderEditAddShippingLine`,
   `orderEditUpdateShippingLine`, `orderEditRemoveShippingLine`, `orderEditCommit`
   (`orders/edited`, with the lines added and removed); requested edits:
-  `requestedOrderEditCreate`, `requestedOrderEditResolve`, `requestedOrderEditDecline`.
+  `requestedOrderEditCreate`, `requestedOrderEditResolve`, `requestedOrderEditDecline`,
+  `requestedOrderEditCalculate`.
 - **Draft orders**: `draftOrderCreate`, `draftOrderUpdate`, `draftOrderDelete`,
   `draftOrderCalculate`, `draftOrderComplete` (an order, paid unless `paymentPending` or payment
   terms), `draftOrderDuplicate`, `draftOrderInvoiceSend` and `orderInvoiceSend` (the invoice in
   the shop's outbox), `draftOrderInvoicePreview`, `draftOrderCreateFromOrder`,
   `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`, `draftOrderBulkDelete`; B2B drafts
   (`purchasingEntity.purchasingCompany`: the location's addresses and payment terms). Taxes are
-  at the store data's `checkout.tax_rate`.
+  at the store data's `checkout.tax_rate`; `draftOrderAvailableDeliveryOptions` offers its
+  `checkout.shipping_rates` and the locations with local pickup.
 - **Payments**: `paymentTermsCreate`, `paymentTermsUpdate`, `paymentTermsDelete` and a draft's
   `paymentTerms` (the nine templates of `paymentTermsTemplates`; one schedule, due `dueInDays`
   after it is issued, on a fixed date, on receipt or on fulfillment), `orderCreateManualPayment`,
@@ -659,10 +661,10 @@ Not simulated yet (they answer `LSF_NOT_SIMULATED`): `fulfillmentOrderSplit`,
 `fulfillmentOrderLineItemsPreparedForPickup`, `fulfillmentOrdersReroute`,
 `fulfillmentOrdersSetFulfillmentDeadline`, `fulfillmentConstraintRuleCreate`,
 `fulfillmentConstraintRuleUpdate`, `fulfillmentConstraintRuleDelete`, `shippingLabelPurchase`,
-`shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete`. Not computed yet:
-`requestedOrderEditCalculate`, `draftOrderAvailableDeliveryOptions`, duties (lsf's orders have
-none: `currentTotalDutiesSet` is `null`). Not built: the `returns/process` payload (no example
-to build it from), `tax_summaries/create` (not a topic of the 2026-10 enum).
+`shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete`. lsf's orders
+have no duties (`currentTotalDutiesSet` is `null`, as for an order without). Not built: the
+`returns/process` payload (no example to build it from), `tax_summaries/create` (not a topic of
+the 2026-10 enum).
 
 ### Customers and companies
 
