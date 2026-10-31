@@ -521,7 +521,14 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             .map(str::to_string);
         moves.push((amount, gateway, Some(parent.to_string())));
     }
-    if processing.is_empty() && moves.is_empty() && errors.is_empty() {
+    let store_credit = refunds::store_credit_refunds(
+        state,
+        &order_record,
+        &array(&refund, "refundMethods"),
+        &["input", "financialTransfer", "issueRefund", "refundMethods"],
+        &mut errors,
+    );
+    if processing.is_empty() && moves.is_empty() && store_credit.is_empty() && errors.is_empty() {
         errors.push(error(
             &["input", "returnLineItems"],
             "Return line items can't be blank.",
@@ -563,7 +570,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         let Some(line_item) = line_item else {
             continue;
         };
-        if moves.is_empty() {
+        if moves.is_empty() && store_credit.is_empty() {
             // Without a refund, a restocked unit goes back in stock alone.
             if let Some(location) = restock {
                 model::restock_line(state, &line_item, location.as_deref(), *quantity, true);
@@ -583,7 +590,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         }
     }
     let mut refund = None;
-    if !moves.is_empty() {
+    if !moves.is_empty() || !store_credit.is_empty() {
         let order_record = state.get(&order).cloned().unwrap_or_default();
         let remaining_shipping = refunds::refundable_shipping(&order_record);
         let shipping = if shipping_input.get("fullRefund").and_then(Value::as_bool) == Some(true) {
@@ -604,6 +611,8 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
                     .map(str::to_string),
                 processed_at: None,
                 return_id: Some(id.clone()),
+                store_credit,
+                cancellation: false,
             },
         ));
         model::settle_financial_status(state, &order);

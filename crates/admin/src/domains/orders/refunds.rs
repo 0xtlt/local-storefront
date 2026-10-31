@@ -14,6 +14,9 @@
 //!   unit that did not ship leaves its fulfillment order.
 //! - Amounts: a line refunds its price after discounts (the order's discount spread over the
 //!   lines), and its share of the order's tax.
+//! - `refundMethods.storeCreditRefund` gives money back as store credit: a `REFUND` through
+//!   the store credit gateway, against the order's payments, credited to the customer's
+//!   account (`store_credit`).
 //! - Events: `order_transactions/create` for each transaction, `refunds/create` ("whenever a new
 //!   refund is created without errors on an order, independent from the movement of money"),
 //!   then `orders/updated`, which a staff answer on community.shopify.dev says fires with it.
@@ -63,6 +66,12 @@ pub struct RefundSpec {
     pub processed_at: Option<String>,
     /// The return the refund is of.
     pub return_id: Option<String>,
+    /// `(amount, expiresAt)` of each refund to the customer's store credit: a `REFUND` through
+    /// the store credit gateway, against the order's payments, credited to its account.
+    pub store_credit: Vec<(i64, Option<String>)>,
+    /// Whether the refund is of a cancellation: the store credit's event is then
+    /// `ORDER_CANCELLATION`, else `ORDER_REFUND`.
+    pub cancellation: bool,
 }
 
 /// What a line refunds for `quantity` units: `(unit price after all discounts, subtotal, tax)`.
@@ -184,6 +193,36 @@ pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> S
         refunded += amount;
         transactions.push(id);
     }
+    for (amount, expires_at) in &spec.store_credit {
+        // Against the order's payments, as a refund to the original methods is.
+        let parent = state
+            .get(order)
+            .map(|record| model::refundable_payments(state, record))
+            .unwrap_or_default()
+            .into_iter()
+            .find(|(_, left)| *left > 0)
+            .map(|(id, _)| id);
+        let id = model::add_transaction(
+            state,
+            order,
+            &NewTransaction {
+                kind: "REFUND",
+                amount: *amount,
+                gateway: Some(super::store_credit::GATEWAY),
+                parent: parent.as_deref(),
+                manual: false,
+                test: order_record.get("test").and_then(Value::as_bool) == Some(true),
+            },
+        );
+        let event = if spec.cancellation {
+            "ORDER_CANCELLATION"
+        } else {
+            "ORDER_REFUND"
+        };
+        super::store_credit::refund(state, order, &id, *amount, expires_at.as_deref(), event);
+        refunded += amount;
+        transactions.push(id);
+    }
     let id = state.new_gid("Refund");
     state.insert(value::object(json!({
         "__typename": "Refund",
@@ -212,6 +251,30 @@ pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> S
     model::refresh_order(state, order);
     state.emit("refunds/create", &id);
     id
+}
+
+/// The refunds to store credit of `refundMethods` (`[RefundMethodInput]`, each a
+/// `storeCreditRefund`), checked: `(cents, expiresAt)`.
+pub fn store_credit_refunds(
+    state: &ShopState,
+    order: &Record,
+    methods: &[Value],
+    path: &[&str],
+    errors: &mut Vec<UserError>,
+) -> Vec<(i64, Option<String>)> {
+    let mut refunds = Vec::new();
+    for (index, method) in methods.iter().enumerate() {
+        let index = index.to_string();
+        let Some(input) = method.get("storeCreditRefund").and_then(Value::as_object) else {
+            continue;
+        };
+        let at = [path, &[index.as_str(), "storeCreditRefund"]].concat();
+        match super::store_credit::read_refund(state, order, input, &at) {
+            Ok(refund) => refunds.push(refund),
+            Err(error) => errors.push(error),
+        }
+    }
+    refunds
 }
 
 /// The units of a line that may still be refunded, and of those, how many did not ship.
@@ -432,8 +495,22 @@ fn refund_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             .or_else(|| model::payment_gateway(state, order_record));
         moves.push((amount, gateway, parent.map(|(id, _)| id)));
     }
-    if !methods.is_empty() {
-        mutation.note("refundCreate: lsf does not simulate `refundMethods` (store credit) yet: they were ignored");
+    let store_credit = store_credit_refunds(
+        state,
+        order_record,
+        &methods,
+        &["refundMethods"],
+        &mut errors,
+    );
+    let left: i64 = payments.iter().map(|(_, left)| left).sum::<i64>()
+        - moves.iter().map(|(amount, _, _)| amount).sum::<i64>();
+    let credited: i64 = store_credit.iter().map(|(amount, _)| amount).sum();
+    if credited > 0 && !over_refunding && credited > left {
+        // lsf's wording, as the transactions' above.
+        errors.push(UserError::new(
+            &["refundMethods"],
+            "Amount exceeds the refundable amount of the order",
+        ));
     }
     if !duties.is_empty() {
         mutation.note("refundCreate: lsf does not simulate duties: `refundDuties` was ignored");
@@ -454,6 +531,8 @@ fn refund_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
             .and_then(Value::as_str)
             .map(str::to_string),
         return_id: None,
+        store_credit,
+        cancellation: false,
     };
     let state = mutation.state_mut();
     let refund = create_refund(state, &order, &spec);

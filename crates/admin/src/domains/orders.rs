@@ -19,6 +19,7 @@ mod queries;
 mod refunds;
 mod returns;
 mod services;
+mod store_credit;
 
 #[cfg(test)]
 mod payments_tests;
@@ -1313,10 +1314,12 @@ pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
 }
 
 /// What happens when the shop's clock passes a date: the payment schedules that came due fire
-/// `payment_schedules/due` ([`payments::tick`]). Runs before every request of the Admin API,
+/// `payment_schedules/due` ([`payments::tick`]), the store credit that expired leaves its
+/// account ([`store_credit::tick`]). Runs before every request of the Admin API,
 /// and when the clock is moved (`POST /__lsf/admin/clock`).
 pub fn tick(state: &mut ShopState) {
     payments::tick(state);
+    store_credit::tick(state);
 }
 
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a
@@ -1331,4 +1334,5 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     drafts::register(registry);
     services::register(registry);
     payments::register(registry);
+    store_credit::register(registry);
 }

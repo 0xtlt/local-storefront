@@ -714,3 +714,314 @@ fn invoices_are_recorded_in_the_outbox() {
     );
     assert_eq!(outbox::emails(&shop).len(), 1);
 }
+
+const CREDIT: &str = "mutation($id: ID!, $input: StoreCreditAccountCreditInput!) {
+    storeCreditAccountCredit(id: $id, creditInput: $input) {
+      storeCreditAccountTransaction { id amount { amount currencyCode } balanceAfterTransaction { amount }
+        expiresAt remainingAmount { amount } event account { id balance { amount currencyCode } owner { ... on Customer { id } } } }
+      userErrors { field message code } } }";
+
+const DEBIT: &str = "mutation($id: ID!, $input: StoreCreditAccountDebitInput!) {
+    storeCreditAccountDebit(id: $id, debitInput: $input) {
+      storeCreditAccountTransaction { id amount { amount } balanceAfterTransaction { amount } event origin { ... on OrderTransaction { id } } account { balance { amount } } }
+      userErrors { field message code } } }";
+
+fn usd(amount: &str) -> Value {
+    json!({"amount": amount, "currencyCode": "USD"})
+}
+
+#[test]
+fn store_credit_is_credited_debited_by_expiry_and_expires() {
+    let mut shop = demo();
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    let first = run(
+        &mut shop,
+        CREDIT,
+        json!({"id": customer, "input": {"creditAmount": usd("49.99")}}),
+    )["data"]["storeCreditAccountCredit"]
+        .clone();
+    assert_eq!(first["userErrors"], json!([]), "{first}");
+    let transaction = &first["storeCreditAccountTransaction"];
+    assert_eq!(transaction["account"]["owner"]["id"], json!(customer));
+    assert_eq!(transaction["account"]["balance"]["amount"], "49.99");
+    assert_eq!(transaction["event"], "ADJUSTMENT");
+    let account = transaction["account"]["id"].as_str().unwrap().to_string();
+    // By the account's id, a credit that expires.
+    let expiring = run(
+        &mut shop,
+        CREDIT,
+        json!({"id": account, "input": {"creditAmount": usd("20.00"), "expiresAt": "2099-01-01T00:00:00Z", "notify": true}}),
+    )["data"]["storeCreditAccountCredit"]
+        .clone();
+    assert_eq!(
+        expiring["storeCreditAccountTransaction"]["balanceAfterTransaction"]["amount"],
+        "69.99"
+    );
+    assert_eq!(outbox::emails(&shop)[0]["template"], "store_credit_issued");
+    // A debit takes from the credit that expires first.
+    let debited = run(
+        &mut shop,
+        DEBIT,
+        json!({"id": customer, "input": {"debitAmount": usd("25.00")}}),
+    )["data"]["storeCreditAccountDebit"]
+        .clone();
+    assert_eq!(debited["userErrors"], json!([]), "{debited}");
+    assert_eq!(
+        debited["storeCreditAccountTransaction"]["amount"]["amount"],
+        "-25.0"
+    );
+    assert_eq!(
+        debited["storeCreditAccountTransaction"]["account"]["balance"]["amount"],
+        "44.99"
+    );
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { storeCreditAccount(id: $id) { balance { amount }
+            expiring: transactions(first: 5, query: \"type:credit AND expires_at:*\") { nodes { ... on StoreCreditAccountCreditTransaction { remainingAmount { amount } } } }
+            recent: transactions(first: 5, sortKey: CREATED_AT, reverse: true) { nodes { __typename amount { amount } } } } }",
+        json!({"id": account}),
+    );
+    let read = &read["data"]["storeCreditAccount"];
+    assert_eq!(
+        read["expiring"]["nodes"],
+        json!([{"remainingAmount": {"amount": "0.0"}}])
+    );
+    assert_eq!(
+        read["recent"]["nodes"][0]["__typename"],
+        "StoreCreditAccountDebitTransaction"
+    );
+    let accounts = run(
+        &mut shop,
+        "query($id: ID!) { customer(id: $id) { usd: storeCreditAccounts(first: 5, query: \"currency_code:USD\") { nodes { id } }
+            eur: storeCreditAccounts(first: 5, query: \"currency_code:EUR\") { nodes { id } } } }",
+        json!({"id": customer}),
+    );
+    assert_eq!(
+        accounts["data"]["customer"]["usd"]["nodes"][0]["id"],
+        json!(account)
+    );
+    assert_eq!(accounts["data"]["customer"]["eur"]["nodes"], json!([]));
+
+    // What is left of a credit leaves the account when it expires.
+    let credit = run(
+        &mut shop,
+        CREDIT,
+        json!({"id": account, "input": {"creditAmount": usd("10.00"), "expiresAt": "2099-06-01"}}),
+    );
+    assert_eq!(
+        credit["data"]["storeCreditAccountCredit"]["userErrors"],
+        json!([])
+    );
+    shop.set_clock(Clock::Frozen(
+        chrono::DateTime::parse_from_rfc3339("2099-07-01T00:00:00Z")
+            .unwrap()
+            .into(),
+    ));
+    super::tick(&mut shop);
+    let after = run(
+        &mut shop,
+        "query($id: ID!) { storeCreditAccount(id: $id) { balance { amount }
+            transactions(first: 1, sortKey: CREATED_AT, reverse: true) { nodes { __typename amount { amount }
+              ... on StoreCreditAccountExpirationTransaction { creditTransaction { id } } } } } }",
+        json!({"id": account}),
+    );
+    let after = &after["data"]["storeCreditAccount"];
+    assert_eq!(after["balance"]["amount"], "44.99");
+    let expiration = &after["transactions"]["nodes"][0];
+    assert_eq!(
+        expiration["__typename"],
+        "StoreCreditAccountExpirationTransaction"
+    );
+    assert_eq!(expiration["amount"]["amount"], "-10.0");
+}
+
+#[test]
+fn store_credit_is_refused_as_shopify_refuses_it_and_nothing_changes() {
+    let mut shop = demo();
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    let before = shop.get(&customer).cloned();
+    for (amount, message) in [
+        (
+            "-100.00",
+            "A positive amount must be used to credit a store credit account",
+        ),
+        (
+            "100000.00",
+            "The operation would cause the account's credit limit to be exceeded",
+        ),
+    ] {
+        let answer = run(
+            &mut shop,
+            CREDIT,
+            json!({"id": customer, "input": {"creditAmount": usd(amount)}}),
+        );
+        let payload = &answer["data"]["storeCreditAccountCredit"];
+        assert_eq!(payload["storeCreditAccountTransaction"], Value::Null);
+        assert_eq!(payload["userErrors"][0]["message"], message);
+        assert_eq!(
+            payload["userErrors"][0]["field"],
+            json!(["creditInput", "creditAmount", "amount"])
+        );
+    }
+    let past = run(
+        &mut shop,
+        CREDIT,
+        json!({"id": customer, "input": {"creditAmount": usd("1.00"), "expiresAt": "2001-01-01T00:00:00Z"}}),
+    );
+    assert_eq!(
+        past["data"]["storeCreditAccountCredit"]["userErrors"][0]["code"],
+        "EXPIRES_AT_IN_PAST"
+    );
+    let unknown = run(
+        &mut shop,
+        CREDIT,
+        json!({"id": "gid://shopify/Customer/1", "input": {"creditAmount": usd("1.00")}}),
+    );
+    assert_eq!(
+        unknown["data"]["storeCreditAccountCredit"]["userErrors"][0]["code"],
+        "OWNER_NOT_FOUND"
+    );
+    // A refused credit makes no account.
+    assert_eq!(shop.count("StoreCreditAccount"), 0);
+    assert_eq!(shop.get(&customer).cloned(), before);
+    let none = run(
+        &mut shop,
+        DEBIT,
+        json!({"id": customer, "input": {"debitAmount": usd("1.00")}}),
+    );
+    assert_eq!(
+        none["data"]["storeCreditAccountDebit"]["userErrors"][0]["code"],
+        "ACCOUNT_NOT_FOUND"
+    );
+    run(
+        &mut shop,
+        CREDIT,
+        json!({"id": customer, "input": {"creditAmount": usd("5.00")}}),
+    );
+    let account = shop.keys("StoreCreditAccount").next().unwrap().to_string();
+    let account_before = shop.get(&account).cloned();
+    let too_much = run(
+        &mut shop,
+        DEBIT,
+        json!({"id": account, "input": {"debitAmount": usd("9.99")}}),
+    );
+    let payload = &too_much["data"]["storeCreditAccountDebit"];
+    assert_eq!(payload["userErrors"][0]["code"], "INSUFFICIENT_FUNDS");
+    assert_eq!(
+        payload["userErrors"][0]["message"],
+        "The store credit account does not have sufficient funds to satisfy the request"
+    );
+    assert_eq!(shop.get(&account).cloned(), account_before);
+}
+
+#[test]
+fn an_order_is_paid_and_refunded_with_store_credit() {
+    let mut shop = demo();
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    run(
+        &mut shop,
+        CREDIT,
+        json!({"id": customer, "input": {"creditAmount": usd("100.00")}}),
+    );
+    let account = shop.keys("StoreCreditAccount").next().unwrap().to_string();
+    topics(&mut shop);
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let price = shop.get(&variant).unwrap()["price"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let create = "mutation($order: OrderCreateOrderInput!) { orderCreate(order: $order) {
+        order { id displayFinancialStatus transactions { id kind gateway } } userErrors { field message code } } }";
+    let order_input = |amount: &str| {
+        json!({"order": {
+            "lineItems": [{"variantId": variant, "quantity": 1}],
+            "customer": {"toAssociate": {"id": customer}},
+            "transactions": [{"kind": "SALE", "gateway": "shopify_store_credit", "amountSet": {"shopMoney": usd(amount)}}],
+        }})
+    };
+    // More than the balance is refused, and debits nothing.
+    let refused = run(&mut shop, create, order_input("150.00"));
+    assert_eq!(refused["data"]["orderCreate"]["order"], Value::Null);
+    assert_eq!(
+        refused["data"]["orderCreate"]["userErrors"][0]["field"],
+        json!(["order", "transactions"])
+    );
+    assert_eq!(super::store_credit::balance(&shop, &account), 10_000);
+    let answer = run(&mut shop, create, order_input(&price));
+    let order = &answer["data"]["orderCreate"]["order"];
+    assert_eq!(order["displayFinancialStatus"], "PAID", "{answer}");
+    let sale = order["transactions"][0]["id"].as_str().unwrap().to_string();
+    let paid = super::model::parse_cents(&price).unwrap();
+    assert_eq!(super::store_credit::balance(&shop, &account), 10_000 - paid);
+    let debit = shop
+        .all("StoreCreditAccountDebitTransaction")
+        .next()
+        .unwrap()
+        .clone();
+    assert_eq!(debit["event"], "ORDER_PAYMENT");
+    assert_eq!(debit["origin"], json!(sale));
+    // A refund to store credit gives it back.
+    let order_id = order["id"].as_str().unwrap().to_string();
+    let refund = run(
+        &mut shop,
+        "mutation($input: RefundInput!) { refundCreate(input: $input) { refund { totalRefundedSet { shopMoney { amount } } transactions(first: 5) { nodes { gateway kind } } } userErrors { field message } } }",
+        json!({"input": {"orderId": order_id, "refundMethods": [{"storeCreditRefund": {"amount": usd(&price)}}]}}),
+    );
+    let refund = &refund["data"]["refundCreate"];
+    assert_eq!(refund["userErrors"], json!([]), "{refund}");
+    assert_eq!(
+        refund["refund"]["transactions"]["nodes"][0],
+        json!({"gateway": "shopify_store_credit", "kind": "REFUND"})
+    );
+    assert_eq!(super::store_credit::balance(&shop, &account), 10_000);
+    let credit = shop
+        .all("StoreCreditAccountCreditTransaction")
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(credit["event"], "ORDER_REFUND");
+    // Beyond what was paid, a refund to store credit is refused.
+    let over = run(
+        &mut shop,
+        "mutation($input: RefundInput!) { refundCreate(input: $input) { refund { id } userErrors { field message } } }",
+        json!({"input": {"orderId": order_id, "refundMethods": [{"storeCreditRefund": {"amount": usd("1.00")}}]}}),
+    );
+    assert_eq!(
+        over["data"]["refundCreate"]["userErrors"][0]["field"],
+        json!(["refundMethods"])
+    );
+    assert_eq!(super::store_credit::balance(&shop, &account), 10_000);
+}
+
+#[test]
+fn a_cancelled_order_is_refunded_to_store_credit() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1002");
+    let cancel = "mutation($id: ID!, $method: OrderCancelRefundMethodInput) {
+        orderCancel(orderId: $id, reason: CUSTOMER, restock: false, refundMethod: $method) { job { done } orderCancelUserErrors { field message code } } }";
+    let answer = run(
+        &mut shop,
+        cancel,
+        json!({"id": order, "method": {"storeCreditRefund": {"expiresAt": "2099-01-01T00:00:00Z"}}}),
+    );
+    assert_eq!(
+        answer["data"]["orderCancel"]["orderCancelUserErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let record = shop.get(&order).unwrap().clone();
+    let account = shop.get(record["customer"].as_str().unwrap()).unwrap()["storeCreditAccounts"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        super::store_credit::balance(&shop, &account),
+        super::model::field_cents(&record, "totalRefundedSet")
+    );
+    let credit = shop
+        .all("StoreCreditAccountCreditTransaction")
+        .next()
+        .unwrap();
+    assert_eq!(credit["event"], "ORDER_CANCELLATION");
+    assert_eq!(credit["expiresAt"], "2099-01-01T00:00:00Z");
+}

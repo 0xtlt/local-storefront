@@ -322,3 +322,79 @@ fn a_b2b_order_on_net_terms_comes_due_and_is_paid() {
     assert_eq!(payment[1].1["payment_method"], "Bank Deposit");
     assert_eq!(payment[2].1["financial_status"], "paid");
 }
+
+#[test]
+fn an_order_is_paid_with_the_customers_store_credit() {
+    let api = api();
+    let receiver = Receiver::start();
+    subscribe(
+        &api,
+        &receiver,
+        &[
+            "ORDERS_CREATE",
+            "ORDER_TRANSACTIONS_CREATE",
+            "TENDER_TRANSACTIONS_CREATE",
+            "ORDERS_PAID",
+        ],
+    );
+    let data = graphql(
+        &api,
+        "{ customers(first: 1) { nodes { id } } productVariants(first: 1) { nodes { id price } } }",
+        json!({}),
+    );
+    let customer = data["data"]["customers"]["nodes"][0]["id"].clone();
+    let variant = &data["data"]["productVariants"]["nodes"][0];
+    let credited = graphql(
+        &api,
+        "mutation($id: ID!) { storeCreditAccountCredit(id: $id, creditInput: {creditAmount: {amount: \"200.00\", currencyCode: USD}}) {
+            storeCreditAccountTransaction { account { id } } userErrors { message } } }",
+        json!({"id": customer}),
+    );
+    let account = credited["data"]["storeCreditAccountCredit"]["storeCreditAccountTransaction"]
+        ["account"]["id"]
+        .clone();
+    assert!(account.is_string(), "{credited}");
+    let price = variant["price"].as_str().unwrap().to_string();
+    let created = graphql(
+        &api,
+        "mutation($order: OrderCreateOrderInput!) { orderCreate(order: $order) { order { id displayFinancialStatus } userErrors { field message } } }",
+        json!({"order": {
+            "lineItems": [{"variantId": variant["id"], "quantity": 1}],
+            "customer": {"toAssociate": {"id": customer}},
+            "transactions": [{"kind": "SALE", "gateway": "shopify_store_credit",
+                              "amountSet": {"shopMoney": {"amount": price, "currencyCode": "USD"}}}],
+        }}),
+    );
+    let order = &created["data"]["orderCreate"]["order"];
+    assert_eq!(order["displayFinancialStatus"], "PAID", "{created}");
+    let deliveries = receiver.take(4);
+    assert_eq!(
+        topics(&deliveries),
+        [
+            "orders/create",
+            "order_transactions/create",
+            "tender_transactions/create",
+            "orders/paid"
+        ]
+    );
+    assert_eq!(deliveries[1].1["gateway"], "shopify_store_credit");
+    assert_eq!(deliveries[2].1["payment_method"], "shopify_store_credit");
+    assert_eq!(
+        cents(deliveries[2].1["amount"].as_str().unwrap()),
+        cents(&price)
+    );
+    let read = graphql(
+        &api,
+        "query($id: ID!) { storeCreditAccount(id: $id) { balance { amount }
+            transactions(first: 5, query: \"type:debit\") { nodes { amount { amount } event origin { ... on OrderTransaction { order { id } } } } } } }",
+        json!({"id": account}),
+    );
+    let read = &read["data"]["storeCreditAccount"];
+    assert_eq!(
+        cents(read["balance"]["amount"].as_str().unwrap()),
+        20_000 - cents(&price)
+    );
+    let debit = &read["transactions"]["nodes"][0];
+    assert_eq!(debit["event"], "ORDER_PAYMENT");
+    assert_eq!(debit["origin"]["order"]["id"], order["id"]);
+}
