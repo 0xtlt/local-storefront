@@ -13,6 +13,7 @@
 //   (`https://shopify.dev/admin-graphql-direct-proxy/<version>`), which answers introspection
 //   without a token and carries `requiredAccess` too. It is not pinned: the source says when it
 //   was read, and a release candidate read there may differ from the one the next package ships.
+//   `LSF_ADMIN_SOURCE=shopify.dev` reads every version there (a release candidate as it is now).
 //
 // Needs network access, and `npm` for the package.
 import { execFileSync } from "node:child_process";
@@ -85,12 +86,13 @@ export function supportedVersions() {
  * public proxy otherwise.
  */
 export async function introspection(version) {
-  const file = join(devMcp(), "dist/data", `admin_${version}.json.gz`);
   let compressed = null;
-  try {
-    compressed = readFileSync(file);
-  } catch {
-    // Not in the package: read it from shopify.dev.
+  if (process.env.LSF_ADMIN_SOURCE !== "shopify.dev") {
+    try {
+      compressed = readFileSync(join(devMcp(), "dist/data", `admin_${version}.json.gz`));
+    } catch {
+      // Not in the package: read it from shopify.dev.
+    }
   }
   if (compressed) {
     return {
@@ -100,7 +102,7 @@ export async function introspection(version) {
     };
   }
   const url = `${PROXY}/${version}`;
-  console.warn(`${PACKAGE} does not ship the Admin API ${version}: introspecting ${url}`);
+  console.warn(`introspecting the Admin API ${version} at ${url}`);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },

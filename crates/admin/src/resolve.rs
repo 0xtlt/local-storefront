@@ -159,6 +159,9 @@ pub struct ShopResolver<'a> {
     /// The version of the request: its schema, its access table, its search filters, its
     /// adapters.
     version: ApiVersion,
+    /// Adapters a test gives in place of the version's.
+    #[cfg(test)]
+    adapters: Option<&'static [crate::version::Adapter]>,
     /// Where the request reached lsf (`http://127.0.0.1:9292`): the origin of the URLs lsf
     /// answers that point back at itself (a charge's confirmation page, an upload target).
     origin: &'a str,
@@ -181,6 +184,8 @@ impl<'a> ShopResolver<'a> {
             grant: None,
             webhooks: None,
             version: ApiVersion::default_version(),
+            #[cfg(test)]
+            adapters: None,
             origin: DEFAULT_ORIGIN,
             bulk: false,
             report: RefCell::new(Report::default()),
@@ -265,6 +270,25 @@ impl<'a> ShopResolver<'a> {
     /// The schema of the request's version.
     pub fn schema(&self) -> &'static Schema {
         crate::schema::for_version(self.version)
+    }
+
+    /// How the request's version reads the records differently ([`crate::version::adapt`]).
+    fn adapters(&self) -> &'static [crate::version::Adapter] {
+        #[cfg(test)]
+        if let Some(adapters) = self.adapters {
+            return adapters;
+        }
+        self.version.adapters()
+    }
+
+    /// Reads through `adapters` rather than the version's: what a test of the adapters runs.
+    #[cfg(test)]
+    pub(crate) fn with_adapters(
+        mut self,
+        adapters: &'static [crate::version::Adapter],
+    ) -> ShopResolver<'a> {
+        self.adapters = Some(adapters);
+        self
     }
 
     /// What the answer's `extensions` get from this request: `search` (Shopify's warnings of
@@ -370,8 +394,7 @@ impl<'a> ShopResolver<'a> {
             return Ok(output);
         }
         // A field this version shows differently from the records reads through its adapter.
-        let adapted =
-            adapt::field(self.version.adapters(), ctx.parent_type(), name).map(|read| read(map));
+        let adapted = adapt::field(self.adapters(), ctx.parent_type(), name).map(|read| read(map));
         let stored = match &adapted {
             Some(value) => value.as_ref(),
             None => map.get(name),
@@ -960,8 +983,7 @@ impl graphql::Resolver for ShopResolver<'_> {
 
     fn field(&mut self, ctx: &FieldContext<'_>, object: &Obj) -> Result<Output<Obj>, FieldError> {
         // Arguments this version gives in another shape than the resolvers read.
-        if let Some(write) =
-            adapt::arguments(self.version.adapters(), ctx.parent_type(), ctx.field_name())
+        if let Some(write) = adapt::arguments(self.adapters(), ctx.parent_type(), ctx.field_name())
         {
             let mut arguments = ctx.arguments().clone();
             write(&mut arguments);

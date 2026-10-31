@@ -55,13 +55,25 @@ run = [
   "npm run e2e",
 ]
 
+[tasks."admin:version"]
+description = "Write everything a version of the Admin API needs (crates/admin/schemas/<version>, its test fixtures) from the pinned @shopify/dev-mcp package, or shopify.dev for a version it lacks, and print what is left to do: mise run admin:version -- 2027-01"
+run = "node tools/admin/add_version.mjs"
+
 [tasks."admin:schema"]
-description = "Regenerate the schema of the GraphQL Admin API of lsf-admin (crates/admin/schemas) from the pinned @shopify/dev-mcp package"
+description = "Regenerate the schema of a version of the GraphQL Admin API of lsf-admin (crates/admin/schemas/<version>) from the pinned @shopify/dev-mcp package: mise run admin:schema [-- --version 2027-01]"
 run = "node tools/admin/admin_schema.mjs"
 
 [tasks."admin:access-scopes"]
-description = "Regenerate the access scopes each field of the Admin API 2026-10 requires (crates/admin/schemas/2026-10/access.json) from the pinned @shopify/dev-mcp package"
+description = "Regenerate the access scopes and the search filters of a version of the Admin API (crates/admin/schemas/<version>/access.json, search.json) from the pinned @shopify/dev-mcp package: mise run admin:access-scopes [-- --version 2027-01]"
 run = "node tools/admin/access_scopes.mjs"
+
+[tasks."admin:topics"]
+description = "Regenerate the webhook topics of a version of the Admin API (crates/admin/schemas/<version>/topics.json) from the pinned @shopify/dev-mcp package: mise run admin:topics [-- --version 2027-01]"
+run = "node tools/admin/webhook_topics.mjs"
+
+[tasks."admin:webhook-examples"]
+description = "Download Shopify's example webhook payloads of a version (crates/admin/tests/fixtures/webhooks/examples-<version>.json), which the payload tests compare with: mise run admin:webhook-examples [-- --version 2027-01]"
+run = "node tools/admin/webhook_examples.mjs"
 
 [tasks."checkout:packages"]
 description = "Copy the npm packages lsf builds extensions with when an app has no node_modules (crates/checkout/javascript-packages), at the versions of tools/checkout/javascript_packages.mjs"

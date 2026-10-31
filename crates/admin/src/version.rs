@@ -130,12 +130,16 @@ macro_rules! version {
 }
 
 /// How many versions lsf knows: the length of [`KNOWN`].
-pub const COUNT: usize = 1;
+pub const COUNT: usize = 2;
 
 /// Every version lsf knows, oldest first: its name, its status, its files, its adapters. Adding a
 /// version is a line here, once `mise run admin:version -- <version>` wrote its files (see "Add
 /// a version" in `crates/admin/docs/design.md`).
-static KNOWN: [Entry; COUNT] = [version!("2026-10", Stable, &[])];
+static KNOWN: [Entry; COUNT] = [
+    version!("2026-10", Stable, &[]),
+    // The release candidate: served with `--admin-versions 2026-10,2027-01`.
+    version!("2027-01", ReleaseCandidate, adapt::V2027_01),
+];
 
 /// A version of the Admin API lsf knows: a handle on its entry of [`KNOWN`], cheap to copy and
 /// compare. What a request runs in: a resolver asks it with `ShopResolver::version`, a mutation
