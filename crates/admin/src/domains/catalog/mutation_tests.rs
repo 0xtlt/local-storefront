@@ -1861,3 +1861,57 @@ fn products_join_selling_plan_groups_and_locations_offer_pickup() {
     );
     assert_eq!(topics(&mut shop), ["locations/update"]);
 }
+
+#[test]
+fn the_primary_location_is_where_a_new_product_is_stocked() {
+    let mut shop = demo();
+    // The demo store has two locations; `locations` sorts them by name.
+    let answer = run(
+        &mut shop,
+        "{ location { id name isPrimary } locations(first: 5) { nodes { id isPrimary } } }",
+    );
+    let primary = &answer["data"]["location"];
+    assert!(primary["id"].is_string(), "{answer}");
+    assert_eq!(primary["isPrimary"], json!(true));
+    let flags: Vec<bool> = answer["data"]["locations"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["isPrimary"] == json!(true))
+        .collect();
+    assert_eq!(
+        flags.iter().filter(|primary| **primary).count(),
+        1,
+        "{answer}"
+    );
+    assert!(answer["extensions"].get("lsf").is_none(), "{answer}");
+
+    let created = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Stocked"}) {
+            product { variants(first: 1) { nodes { inventoryItem {
+                inventoryLevels(first: 5) { nodes { location { id } } } } } } }
+            userErrors { message } } }"#,
+    );
+    let levels = &ok(&created, "productCreate")["product"]["variants"]["nodes"][0]["inventoryItem"]
+        ["inventoryLevels"]["nodes"];
+    assert_eq!(levels, &json!([{"location": {"id": primary["id"]}}]));
+
+    // With an id, `location` is that location.
+    let other = answer["data"]["locations"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] != primary["id"])
+        .unwrap()["id"]
+        .clone();
+    let by_id = run_with(
+        &mut shop,
+        "query($id: ID!) { location(id: $id) { id isPrimary } }",
+        json!({"id": other}),
+    );
+    assert_eq!(
+        by_id["data"]["location"],
+        json!({"id": other, "isPrimary": false})
+    );
+}

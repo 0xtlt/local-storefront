@@ -247,6 +247,7 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
     assert_eq!(created["financial_status"], json!("paid"));
     assert_eq!(created["fulfillment_status"], Value::Null);
     assert_eq!(created["line_items"][0]["quantity"], json!(2));
+    assert_eq!(created["payment_gateway_names"], json!(["Credit card"]));
     let (_, transaction) = &delivered[1];
     assert_eq!(transaction["kind"], json!("sale"));
     assert_eq!(transaction["gateway"], json!("Credit card"));
@@ -370,4 +371,183 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
         json!([{"id": lsf_admin::state::parse_gid(lines[1]["id"].as_str().unwrap()).unwrap().1, "delta": 1}])
     );
     assert_eq!(delivered[1].1["line_items"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn a_checkout_order_keeps_its_discounts_and_its_gateway() {
+    use lsf_checkout::{
+        AllocationMethod, AppliedDiscount, DiscountAllocation, DiscountClass, DiscountDetails,
+        DiscountTarget, DiscountValue, TargetSelection,
+    };
+    let receiver = Receiver::start();
+    let api = api();
+    subscribe(&api, &receiver, &["ORDERS_CREATE"]);
+    let store = support::demo_store();
+    let mug = store.product_by_handle("ceramic-mug").unwrap();
+    // 20 % off the mugs (an app's automatic discount), and the shipping free with a code.
+    let result = CheckoutResult {
+        lines: vec![ResultLine {
+            id: "gid://shopify/CartLine/1".into(),
+            variant_id: mug.variants[0].id,
+            product_id: mug.id,
+            title: mug.title.clone(),
+            quantity: 2,
+            unit_price: 2000,
+            subtotal: 4000,
+            total: 3200,
+            requires_shipping: true,
+            discount_allocations: vec![DiscountAllocation {
+                title: "20% off".into(),
+                code: None,
+                amount: 800,
+                class: DiscountClass::Product,
+                discount: 0,
+            }],
+            ..ResultLine::default()
+        }],
+        discounts: vec![
+            AppliedDiscount {
+                title: "20% off".into(),
+                code: None,
+                class: DiscountClass::Product,
+                amount: 800,
+                function: "discount-tag-percentage".into(),
+                details: DiscountDetails {
+                    allocation_method: AllocationMethod::Across,
+                    target_selection: TargetSelection::Explicit,
+                    target_type: DiscountTarget::LineItem,
+                    value: DiscountValue::Percentage(20.0),
+                    metafields: Vec::new(),
+                },
+            },
+            AppliedDiscount {
+                title: "Free shipping".into(),
+                code: Some("FREESHIP".into()),
+                class: DiscountClass::Shipping,
+                amount: 500,
+                function: "discount-free-shipping".into(),
+                details: DiscountDetails {
+                    allocation_method: AllocationMethod::Each,
+                    target_selection: TargetSelection::All,
+                    target_type: DiscountTarget::ShippingLine,
+                    value: DiscountValue::Fixed(500),
+                    metafields: Vec::new(),
+                },
+            },
+        ],
+        discount_codes: vec![lsf_checkout::DiscountCodeStatus {
+            code: "FREESHIP".into(),
+            applicable: true,
+        }],
+        delivery_groups: vec![DeliveryGroup {
+            handle: "group-1".into(),
+            line_ids: vec!["gid://shopify/CartLine/1".into()],
+            options: vec![DeliveryOption {
+                handle: "standard".into(),
+                title: "Standard".into(),
+                description: None,
+                kind: Default::default(),
+                original_cost: 500,
+                cost: 0,
+            }],
+            selected: Some("standard".into()),
+            discount_allocations: vec![DiscountAllocation {
+                title: "Free shipping".into(),
+                code: Some("FREESHIP".into()),
+                amount: 500,
+                class: DiscountClass::Shipping,
+                discount: 1,
+            }],
+        }],
+        cost: Cost {
+            subtotal: 4000,
+            discounts: 1300,
+            shipping: 0,
+            tax: 0,
+            total: 3200,
+            due_now: 3200,
+            due_later: 0,
+            checkout_charge_amount: 4000,
+            currency_code: "USD".into(),
+        },
+        ..CheckoutResult::default()
+    };
+    let order = api
+        .record_order(&PlacedOrder {
+            id: None,
+            number: 1004,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            email: Some("buyer@example.com"),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: Some("Credit card"),
+        })
+        .expect("the order is recorded");
+
+    let answer = graphql(
+        &api,
+        r#"query($id: ID!) { order(id: $id) {
+            paymentGatewayNames
+            discountApplications(first: 5) { nodes {
+                __typename index allocationMethod targetSelection targetType
+                value { __typename ... on PricingPercentageValue { percentage } ... on MoneyV2 { amount } }
+                ... on AutomaticDiscountApplication { title }
+                ... on DiscountCodeApplication { code } } }
+            lineItems(first: 1) { nodes { discountAllocations {
+                allocatedAmountSet { shopMoney { amount } } discountApplication { index } } } }
+            shippingLines(first: 1) { nodes { discountAllocations {
+                allocatedAmountSet { shopMoney { amount } } discountApplication { index } } } } } }"#,
+        json!({"id": order}),
+    );
+    let order_data = &answer["data"]["order"];
+    assert_eq!(
+        order_data["paymentGatewayNames"],
+        json!(["Credit card"]),
+        "{answer}"
+    );
+    assert_eq!(
+        order_data["discountApplications"]["nodes"],
+        json!([
+            {"__typename": "AutomaticDiscountApplication", "index": 0, "allocationMethod": "ACROSS",
+             "targetSelection": "EXPLICIT", "targetType": "LINE_ITEM",
+             "value": {"__typename": "PricingPercentageValue", "percentage": 20.0}, "title": "20% off"},
+            {"__typename": "DiscountCodeApplication", "index": 1, "allocationMethod": "EACH",
+             "targetSelection": "ALL", "targetType": "SHIPPING_LINE",
+             "value": {"__typename": "MoneyV2", "amount": "5.0"}, "code": "FREESHIP"},
+        ]),
+        "{answer}"
+    );
+    assert_eq!(
+        order_data["lineItems"]["nodes"][0]["discountAllocations"],
+        json!([{"allocatedAmountSet": {"shopMoney": {"amount": "8.0"}}, "discountApplication": {"index": 0}}])
+    );
+    assert_eq!(
+        order_data["shippingLines"]["nodes"][0]["discountAllocations"],
+        json!([{"allocatedAmountSet": {"shopMoney": {"amount": "5.0"}}, "discountApplication": {"index": 1}}])
+    );
+
+    // The webhook says the same, as REST writes it.
+    let (topic, created) = receiver.next();
+    assert_eq!(topic, "orders/create");
+    assert_eq!(created["payment_gateway_names"], json!(["Credit card"]));
+    let applications = created["discount_applications"].as_array().unwrap();
+    assert_eq!(applications.len(), 2, "{created}");
+    assert_eq!(applications[0]["type"], json!("automatic"));
+    assert_eq!(applications[0]["value"], json!("20.0"));
+    assert_eq!(applications[0]["value_type"], json!("percentage"));
+    assert_eq!(applications[1]["type"], json!("discount_code"));
+    assert_eq!(applications[1]["code"], json!("FREESHIP"));
+    let allocation = &created["line_items"][0]["discount_allocations"][0];
+    assert_eq!(allocation["amount"], json!("8.00"));
+    assert_eq!(allocation["discount_application_index"], json!(0));
+    assert_eq!(
+        created["shipping_lines"][0]["discount_allocations"][0]["discount_application_index"],
+        json!(1)
+    );
+    assert_eq!(created["discount_codes"][0]["code"], json!("FREESHIP"));
+    assert_eq!(created["discount_codes"][0]["amount"], json!("5.00"));
 }
