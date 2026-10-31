@@ -552,3 +552,24 @@ fn tags_and_mutations_lsf_does_not_simulate() {
         json!("LSF_NOT_SIMULATED")
     );
 }
+
+#[test]
+fn inventory_quantities_are_those_asked() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        r#"{ productByHandle(handle: "wool-beanie") { variants(first: 1) { nodes { inventoryItem { inventoryLevels(first: 1) { nodes {
+            quantities(names: ["on_hand", "available", "nope"]) { name quantity }
+        } } } } } } }"#,
+    );
+    let quantities = &answer["data"]["productByHandle"]["variants"]["nodes"][0]["inventoryItem"]["inventoryLevels"]
+        ["nodes"][0]["quantities"];
+    let names: Vec<&str> = quantities
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|quantity| quantity["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["on_hand", "available"]);
+    assert_eq!(quantities[0]["quantity"], quantities[1]["quantity"]);
+}

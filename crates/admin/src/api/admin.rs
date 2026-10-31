@@ -88,6 +88,9 @@ pub struct Reseeded {
 
 /// The Admin API of a server: its shops (each behind a lock), the tokens, the webhooks of the
 /// app, the throttle, and [`AdminApi::handle`], which answers the HTTP requests of all of it.
+///
+/// Locks are taken in one order: the seed, the tokens, the map of the shops, a shop, the
+/// registry of the webhooks. None is taken while one that comes after it is held.
 pub struct AdminApi {
     registry: &'static Registry,
     /// The seed every shop is made from.
@@ -311,12 +314,6 @@ impl AdminApi {
             shops.insert(new_default.clone(), shop);
             let last = shops.len() - 1;
             shops.move_index(last, 0);
-            lock(&self.tokens).install(
-                &new_default,
-                &self.auth.client_id,
-                &self.scopes,
-                Utc::now(),
-            );
         }
         for (domain, shop) in shops.iter() {
             if *domain == new_default && new_default != old_default {
@@ -328,6 +325,16 @@ impl AdminApi {
             }
             seed.reset_shop(&mut live.state);
             live.changed = false;
+        }
+        drop(shops);
+        drop(seed);
+        if new_default != old_default {
+            lock(&self.tokens).install(
+                &new_default,
+                &self.auth.client_id,
+                &self.scopes,
+                Utc::now(),
+            );
         }
         Reseeded { dropped }
     }
@@ -357,20 +364,23 @@ impl AdminApi {
             .new_shop(name)
             .map_err(|error| (422, error))?;
         let domain = shop.domain().to_string();
-        let mut shops = self
-            .shops
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if shops.contains_key(&domain) {
-            return Err((409, format!("the shop {domain} already exists")));
+        {
+            let mut shops = self
+                .shops
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if shops.contains_key(&domain) {
+                return Err((409, format!("the shop {domain} already exists")));
+            }
+            shops.insert(
+                domain.clone(),
+                Arc::new(Mutex::new(LiveShop {
+                    state: shop,
+                    changed: false,
+                })),
+            );
         }
-        shops.insert(
-            domain.clone(),
-            Arc::new(Mutex::new(LiveShop {
-                state: shop,
-                changed: false,
-            })),
-        );
+        // The map of the shops is released before the tokens are locked (see `AdminApi`).
         let token =
             lock(&self.tokens).install(&domain, &self.auth.client_id, &self.scopes, Utc::now());
         Ok((domain, token))
