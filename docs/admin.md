@@ -926,7 +926,7 @@ what Shopify would send to the outside world is recorded in an outbox, never sen
 `segmentFilterSuggestions`, `segmentValueSuggestions`):
 
 - The query language of shopify.dev's "Segment query language reference": clauses joined by
-  `AND` (tighter) and `OR`, parentheses, `=`, `!=`, `>`, `>=`, `<`, `<=`, `BETWEEN … AND …`,
+  `AND` (tighter) and `OR`, parentheses (100 deep at most, lsf's bound), `=`, `!=`, `>`, `>=`, `<`, `<=`, `BETWEEN … AND …`,
   `CONTAINS`, `NOT CONTAINS`, `IS NULL`, `IS NOT NULL`, `MATCHES (…)` and `NOT MATCHES (…)`;
   quoted strings, numbers, dates, date-times, offsets (`-7d`, `-2w`, `-1m`, `+1y`, at most
   10,000 years either way: lsf's bound, past it the value is not valid), `today`, `yesterday`,
@@ -1010,8 +1010,9 @@ currency). `shopifyqlQuery` answers `FROM sales` over the shop's orders and refu
 `net_items_sold`, `customers`, `new_customers`, `returning_customers`, … and the dimensions of
 time, order, customer, product and address; a column it does not know is the reference's
 `Column Not Found: Column 'total_sale' not found`. `VISUALIZE` and `COMPARE TO` are ignored, with
-a note; another schema than `sales` is a parse error, and so is an offset past 10,000 years
-(`Syntax Error: '-99999999999d' is not a date`, lsf's bound).
+a note; another schema than `sales` is a parse error, and so are an offset past 10,000 years
+(`Syntax Error: '-99999999999d' is not a date`) and parentheses nested more than 100 deep in a
+condition (lsf's bounds).
 
 **Privacy**: `consentPolicyUpdate` (once `privacyFeaturesDisable([COOKIE_BANNER])` turned
 Shopify's banner off, as Shopify requires), `consentPolicy`, `consentPolicyRegions`;

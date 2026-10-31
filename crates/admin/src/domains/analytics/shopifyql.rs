@@ -326,13 +326,21 @@ fn lex(text: &str) -> Result<Vec<Tok>, String> {
 
 // --- The query ---
 
+/// A `WHERE` condition. `AND` and `OR` hold their operands in a list, and a chain of `NOT` is
+/// counted, so that only parentheses nest the tree ([`MAX_DEPTH`] deep at most): a long query
+/// is wide, never deep, for the recursion that reads it and the one that drops it.
 #[derive(Clone, Debug, PartialEq)]
 enum Cond {
-    And(Box<Cond>, Box<Cond>),
-    Or(Box<Cond>, Box<Cond>),
+    And(Vec<Cond>),
+    Or(Vec<Cond>),
     Not(Box<Cond>),
     Compare(String, String, Vec<Tok>),
 }
+
+/// How deep parentheses nest in a condition. The reference publishes no bound; lsf's is the
+/// search syntax's (`search::syntax::MAX_DEPTH`), as the parser recurses once per `(` on the
+/// request's stack, which 400,000 of them overflowed.
+pub const MAX_DEPTH: usize = 100;
 
 #[derive(Clone, Debug, Default)]
 struct Ql {
@@ -375,6 +383,8 @@ fn is_clause(token: &Tok) -> bool {
 struct Parser {
     tokens: Vec<Tok>,
     at: usize,
+    /// How many parentheses of the condition are open.
+    depth: usize,
 }
 
 impl Parser {
@@ -433,31 +443,57 @@ impl Parser {
     }
 
     fn condition(&mut self) -> Result<Cond, String> {
-        let mut left = self.conjunction()?;
+        let mut parts = vec![self.conjunction()?];
         while self.peek().is_some_and(|token| token.is_keyword("OR")) {
             self.next();
-            left = Cond::Or(Box::new(left), Box::new(self.conjunction()?));
+            parts.push(self.conjunction()?);
         }
-        Ok(left)
+        Ok(if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            Cond::Or(parts)
+        })
     }
 
     fn conjunction(&mut self) -> Result<Cond, String> {
-        let mut left = self.negation()?;
+        let mut parts = vec![self.negation()?];
         while self.peek().is_some_and(|token| token.is_keyword("AND")) {
             self.next();
-            left = Cond::And(Box::new(left), Box::new(self.negation()?));
+            parts.push(self.negation()?);
         }
-        Ok(left)
+        Ok(if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            Cond::And(parts)
+        })
     }
 
+    /// A comparison or a group, after the `NOT`s before it: counted (`NOT NOT x` is `x`).
     fn negation(&mut self) -> Result<Cond, String> {
-        if self.peek().is_some_and(|token| token.is_keyword("NOT")) {
+        let mut negated = false;
+        while self.peek().is_some_and(|token| token.is_keyword("NOT")) {
             self.next();
-            return Ok(Cond::Not(Box::new(self.negation()?)));
+            negated = !negated;
         }
+        let operand = self.operand()?;
+        Ok(if negated {
+            Cond::Not(Box::new(operand))
+        } else {
+            operand
+        })
+    }
+
+    fn operand(&mut self) -> Result<Cond, String> {
         if self.peek() == Some(&Tok::Symbol("(".into())) {
             self.next();
+            self.depth += 1;
+            if self.depth > MAX_DEPTH {
+                return Err(format!(
+                    "Syntax Error: parentheses nest more than {MAX_DEPTH} deep"
+                ));
+            }
             let inner = self.condition()?;
+            self.depth -= 1;
             match self.next() {
                 Some(Tok::Symbol(close)) if close == ")" => return Ok(inner),
                 other => return Err(Self::unexpected(other.as_ref())),
@@ -505,6 +541,7 @@ fn parse(text: &str) -> Result<Ql, String> {
     let mut parser = Parser {
         tokens: lex(text)?,
         at: 0,
+        depth: 0,
     };
     let mut query = Ql::default();
     if !parser.peek().is_some_and(|token| token.is_keyword("FROM")) {
@@ -600,6 +637,7 @@ pub fn check_condition(text: &str) -> Result<(), String> {
     let mut parser = Parser {
         tokens: lex(text)?,
         at: 0,
+        depth: 0,
     };
     let condition = parser.condition()?;
     if let Some(token) = parser.peek() {
@@ -610,10 +648,7 @@ pub fn check_condition(text: &str) -> Result<(), String> {
 
 fn check_fields(condition: &Cond) -> Result<(), String> {
     match condition {
-        Cond::And(a, b) | Cond::Or(a, b) => {
-            check_fields(a)?;
-            check_fields(b)
-        }
+        Cond::And(parts) | Cond::Or(parts) => parts.iter().try_for_each(check_fields),
         Cond::Not(inner) => check_fields(inner),
         Cond::Compare(field, _, _) => {
             if dimension(field).is_some() {
@@ -1145,8 +1180,8 @@ fn dim_value(sale: &Sale, name: &str, clock: &Clock) -> Value {
 /// Whether a row passes a condition.
 fn passes(condition: &Cond, sale: &Sale, clock: &Clock) -> bool {
     match condition {
-        Cond::And(a, b) => passes(a, sale, clock) && passes(b, sale, clock),
-        Cond::Or(a, b) => passes(a, sale, clock) || passes(b, sale, clock),
+        Cond::And(parts) => parts.iter().all(|part| passes(part, sale, clock)),
+        Cond::Or(parts) => parts.iter().any(|part| passes(part, sale, clock)),
         Cond::Not(inner) => !passes(inner, sale, clock),
         Cond::Compare(field, operator, values) => {
             let value = dim_value(sale, field, clock);
@@ -1608,6 +1643,37 @@ mod tests {
             check_condition("channel = 'x'").unwrap_err(),
             "Column Not Found: Column 'channel' not found"
         );
+    }
+
+    #[test]
+    fn a_long_or_deep_condition_is_read_or_refused_without_overflowing() {
+        // Wide: a long chain of `AND` and `OR`, and of `NOT` (counted: an even number is none).
+        let wide = vec!["sales_channel = 'Online Store'"; 100_000].join(" AND ");
+        assert!(check_condition(&wide).is_ok());
+        let alternatives = vec!["currency = 'EUR'"; 100_000].join(" OR ");
+        assert!(check_condition(&alternatives).is_ok());
+        let negated = format!("{}currency = 'EUR'", "NOT ".repeat(400_000));
+        assert!(check_condition(&negated).is_ok());
+        let mut parser = Parser {
+            tokens: lex(&format!("{}currency = 'EUR'", "NOT ".repeat(3))).unwrap(),
+            at: 0,
+            depth: 0,
+        };
+        assert!(
+            matches!(parser.condition(), Ok(Cond::Not(inner)) if matches!(*inner, Cond::Compare(..)))
+        );
+        // Deep: parentheses, a hundred at most.
+        let nested =
+            |depth: usize| format!("{}currency = 'EUR'{}", "(".repeat(depth), ")".repeat(depth));
+        assert!(check_condition(&nested(MAX_DEPTH)).is_ok());
+        let refused = "Syntax Error: parentheses nest more than 100 deep";
+        assert_eq!(
+            check_condition(&nested(MAX_DEPTH + 1)).unwrap_err(),
+            refused
+        );
+        assert_eq!(check_condition(&"(".repeat(400_000)).unwrap_err(), refused);
+        let query = format!("FROM sales SHOW orders WHERE {}", "(".repeat(400_000));
+        assert_eq!(parse(&query).unwrap_err(), refused);
     }
 
     #[test]
