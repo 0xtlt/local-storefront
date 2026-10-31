@@ -1399,6 +1399,9 @@ fn build_collections(
     }
 }
 
+/// How many products a product recommends when the data does not say which.
+const RECOMMENDATIONS: usize = 10;
+
 fn build_recommendations(
     builder: &mut Builder<'_>,
     store: &mut Store,
@@ -1436,22 +1439,24 @@ fn build_recommendations(
                     found
                 })
                 .collect(),
-            // By default: the other products of the same collections, then everything else.
+            // By default: the other products of the same collections, then everything else, ten
+            // at most. Looking no further than the tenth keeps a store of thousands of products
+            // from comparing each with all the others.
             None => {
-                let mut related: Vec<usize> = Vec::new();
-                for &collection in &store.products[index].collections {
-                    for &product in &store.collections[collection].products {
-                        if product != index && !related.contains(&product) {
-                            related.push(product);
-                        }
+                let candidates = store.products[index]
+                    .collections
+                    .iter()
+                    .flat_map(|&collection| store.collections[collection].products.iter().copied())
+                    .chain(0..store.products.len());
+                let mut related: Vec<usize> = Vec::with_capacity(RECOMMENDATIONS);
+                for product in candidates {
+                    if related.len() == RECOMMENDATIONS {
+                        break;
                     }
-                }
-                for product in 0..store.products.len() {
                     if product != index && !related.contains(&product) {
                         related.push(product);
                     }
                 }
-                related.truncate(10);
                 related
             }
         };

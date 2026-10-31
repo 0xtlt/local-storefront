@@ -2100,4 +2100,40 @@ mod tests {
         assert!(diagnostics.has_errors());
         assert_eq!(diagnostics.items[0].file, OVERLAY_FILE);
     }
+
+    #[test]
+    fn a_product_recommends_the_products_of_its_collections_first_ten_at_most() {
+        // Twelve more products than the demo store has, so that ten is fewer than all of them.
+        let extra: Vec<Json> = (0..12)
+            .map(|index| serde_json::json!({"title": format!("Extra {index}"), "price": 100}))
+            .collect();
+        let overlay = serde_json::json!({ "products": extra });
+        let (store, diagnostics) =
+            load_with_overlay(&DataSource::Demo, &LoadOptions::default(), Some(&overlay));
+        assert!(!diagnostics.has_errors(), "{diagnostics}");
+        assert_eq!(store.products.len(), 20);
+        // The other products of its collections in their order, then every other product.
+        let expected = |index: usize| {
+            let mut related: Vec<usize> = Vec::new();
+            let members = store.products[index]
+                .collections
+                .iter()
+                .flat_map(|&collection| store.collections[collection].products.iter().copied());
+            for product in members.chain(0..store.products.len()) {
+                if product != index && !related.contains(&product) {
+                    related.push(product);
+                }
+            }
+            related.truncate(10);
+            related
+        };
+        for (index, product) in store.products.iter().enumerate() {
+            assert_eq!(
+                product.recommendations,
+                expected(index),
+                "{}",
+                product.handle
+            );
+        }
+    }
 }
