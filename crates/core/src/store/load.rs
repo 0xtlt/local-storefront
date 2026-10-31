@@ -635,10 +635,9 @@ fn apply_removals(merged: &mut MergedInput, removed: &Removals) {
         .selling_plan_groups
         .retain(|group| !listed_any_case(&removed.selling_plan_groups, &group.value.name));
     merged.metaobjects.retain(|(kind, entry)| {
-        !removed
-            .metaobjects
-            .get(kind)
-            .is_some_and(|handles| listed(handles, &entry.value.handle))
+        !removed.metaobjects.iter().any(|(removed_kind, handles)| {
+            super::same_metaobject_type(removed_kind, kind) && listed(handles, &entry.value.handle)
+        })
     });
     if let Some(shop) = &mut merged.shop {
         for name in &removed.shop_metafields {
@@ -822,7 +821,7 @@ fn apply_overlay(
     }
     for (kind, entries) in input.metaobjects {
         merged.metaobjects.retain(|(existing, entry)| {
-            *existing != kind
+            !super::same_metaobject_type(existing, &kind)
                 || !entries
                     .iter()
                     .any(|replacement| replacement.handle == entry.value.handle)

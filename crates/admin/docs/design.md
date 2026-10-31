@@ -633,7 +633,7 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | `MediaImage`, `Video`, `GenericFile` of `files/` | `stable_id("image" \| "video" \| "file", path)`, by extension (the ids Liquid gives a `file_reference`) |
 | `CompanyContact` | the customer's id (the checkout's `purchasingCompany.contact.id`) |
 | `Market` | `stable_id("market", handle)` of a declared market, `stable_id("market", "FR")` (upper-case code) of a country in none (the checkout's) |
-| `Metaobject` | `stable_id("metaobject", "<type>/<handle>")` (the checkout's, lsf-core's `metaobject_by_reference`) |
+| `Metaobject` | `stable_id("metaobject", "<type>/<handle>")` (the checkout's, lsf-core's `metaobject_by_reference`), the type as the store data writes it (`$app:author` for the app's `app--<id>--author`: `content::data_type`) |
 | `DiscountAutomaticNode`, `DiscountCodeNode` | `id` of the discount in `checkout.discounts`, its position from 1 by default (the checkout's `discount.id`; `DiscountNode/<n>` of the legacy APIs is the same discount) |
 | `CartTransform`, `DeliveryCustomization`, `PaymentCustomization`, `Validation` | position of the Function in the app from 1 (the checkout's owner ids) |
 | `ShopifyFunction` | no GID: a UUID made of the client id and the handle (`app::function_id`), also its key |
@@ -910,8 +910,9 @@ orders" in `docs/admin.md`) make and keep:
   `metafieldsCount`. None for the app's reserved namespaces: their definitions come from the
   app's configuration, which lsf does not read. Being definitions, they check what
   `metafieldsSet` writes to the same owner type, namespace and key (the type must be theirs).
-- **`Metaobject`**: `type`, `handle`, `displayName` (its `name` or `title` field, else the
-  handle humanized), `definition`, `fields` (inline `MetaobjectField`s: `key`, `type`, `value`,
+- **`Metaobject`**: `type` (an app's own type, `$app:author` in the store data, is
+  `app--<app id>--author`, as Shopify writes it; store sync writes it back as `$app:author`),
+  `handle`, `displayName` (its `name` or `title` field, else the handle humanized), `definition`, `fields` (inline `MetaobjectField`s: `key`, `type`, `value`,
   `jsonValue`, `reference(s)`, `definition`), `capabilities` (published, its template suffix),
   dates. **`MetaobjectDefinition`**, inferred from the entries of a type: `type`, `name`,
   `displayNameKey`, `fieldDefinitions` (every key the entries have, in order, not required),
@@ -1151,7 +1152,7 @@ changes. `None` when nothing the store data expresses changed.
 | `menus` | `Menu` (title, items): an item names its resource by its key when the resource is on the storefront, its URL otherwise |
 | `locations` | `Location` (name, address, coordinates, pickup and its time), its metafields. A deactivated location is removed. |
 | `gift_cards` | the cards of the data: balance, initial value, currency, expiry, enabled, customer, recipient, message |
-| `metaobjects` | `Metaobject` (type, handle, fields, template suffix). A draft entry is removed. |
+| `metaobjects` | `Metaobject` (type, handle, fields, template suffix). A draft entry is removed. An app's own type is `$app:<type>`, as its namespaces are; lsf-core finds it by that name and by `app--<any id>--<type>`, the one a theme uses. |
 | `selling_plan_groups` | `SellingPlanGroup` (name, app id, options, products) with its `SellingPlan`s (name, description, options, pricing policies, recurring or not, checkout charge) |
 | metafields | of every owner above, of variants and company locations, of the shop and of the declared markets: the namespace of the app (`app--<id>--config`) as `$app:config`, references as the keys the data names them by (handle, `blog/article`, `type/handle`, path of `files/`, variant id, email, company name), JSON types as JSON |
 | `shop` | name, email, description, the five policies of the data, metafields (merged field by field; a metafield removed is in `removed.shop_metafields`) |

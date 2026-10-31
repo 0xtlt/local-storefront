@@ -602,10 +602,10 @@ fn creates_metaobject_definitions_and_entries() {
         json!({"book": product, "full_name": "Jane Austen", "year": 1811})
     );
     assert_eq!(entry["year"], json!({"value": "1811", "jsonValue": 1811}));
-    // The id lsf-core gives the metaobject of the store data.
+    // The id lsf-core gives the metaobject of the store data, which writes the type `$app:author`.
     assert_eq!(
         entry["id"],
-        json!(super::metaobject_gid(&app_type, "jane-austen"))
+        json!(super::metaobject_gid("$app:author", "jane-austen"))
     );
     assert_eq!(topics(&mut shop), ["metaobjects/create"]);
 

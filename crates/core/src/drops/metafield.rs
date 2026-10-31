@@ -554,7 +554,7 @@ impl Object for MetaobjectsDrop {
             .store
             .metaobjects
             .iter()
-            .any(|entry| entry.kind == key)
+            .any(|entry| entry.is_of(key))
             .then(|| {
                 Value::object(MetaobjectTypeDrop {
                     site: self.site.clone(),
@@ -579,7 +579,7 @@ impl Object for MetaobjectTypeDrop {
                 .store
                 .metaobjects
                 .iter()
-                .filter(|entry| entry.kind == self.kind)
+                .filter(|entry| entry.is_of(&self.kind))
         };
         match key {
             "values" => Some(Value::array(

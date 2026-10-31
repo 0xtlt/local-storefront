@@ -620,7 +620,12 @@ entries), `metaobjectCreate`, `metaobjectUpdate`, `metaobjectUpsert`, `metaobjec
 and `query` (`fields.<key>:value`), `metaobjectByHandle`, `metaobjectDefinitionByType`,
 `Metaobject.field(key:)` and `values`.
 
-- `$app:author` is the app's type. Field values are checked against the field definitions as
+- `$app:author` is the app's type (`app--<app id>--author` in the answers, as on Shopify). Its
+  entries reach the storefront: the theme reads them as `metaobjects['app--<app id>--author']`
+  (with its real app id, which lsf does not need to know) or, in the app's extension,
+  `metaobjects['$app:author']`; a Function as `shop.metaobject(handle: {type: "$app:author", …})`.
+  The store data writes the type `$app:author`.
+- Field values are checked against the field definitions as
   metafield values are; required fields must have one; `fields` patches, `values` replaces.
 - A handle left out is made from the display name (`Jane Austen` → `jane-austen`, then
   `jane-austen-1`).

@@ -8,6 +8,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use lsf_admin::domains::{app, catalog, content, customers};
+use lsf_admin::graphql::{self, Request};
+use lsf_admin::resolve::{Registry, ShopResolver};
 use lsf_admin::state::{Record, ShopState, value};
 use lsf_admin::sync;
 use lsf_core::Store;
@@ -1035,4 +1037,127 @@ fn a_deleted_product_that_records_still_name_leaves_no_error() {
         dress.metafields["custom"]["related"].value,
         json!(["gift-card"])
     );
+}
+
+/// A request to the Admin API on the shop, which must answer neither an error nor a user error.
+fn mutate(state: &mut ShopState, query: &str, variables: Value) -> Value {
+    let mut resolver = ShopResolver::new(state, Registry::standard());
+    let mut request = Request::new(query);
+    if let Value::Object(variables) = variables {
+        request.variables = variables;
+    }
+    let answer = graphql::run(lsf_admin::schema::admin(), &mut resolver, &request, None).to_json();
+    assert!(answer.get("errors").is_none(), "{answer}");
+    for payload in answer["data"]
+        .as_object()
+        .into_iter()
+        .flat_map(|data| data.values())
+    {
+        if let Some(errors) = payload.get("userErrors") {
+            assert_eq!(errors, &json!([]), "{answer}");
+        }
+    }
+    answer
+}
+
+#[test]
+fn the_metaobjects_of_an_app_type_reach_the_storefront_and_the_functions() {
+    let (base, mut state) = rich();
+    let app_id = content::app_id(&state);
+    // The backend makes its own type and an entry of it, and points a product at the entry.
+    mutate(
+        &mut state,
+        r#"mutation { metaobjectDefinitionCreate(definition: {type: "$app:author", name: "Author",
+            fieldDefinitions: [{key: "name", type: "single_line_text_field"}],
+            capabilities: {publishable: {enabled: false}}}) { userErrors { message } } }"#,
+        Value::Null,
+    );
+    let created = mutate(
+        &mut state,
+        r#"mutation { metaobjectCreate(metaobject: {type: "$app:author", handle: "jane",
+            fields: [{key: "name", value: "Jane Austen"}]}) { metaobject { id type } userErrors { message } } }"#,
+        Value::Null,
+    );
+    let entry = &created["data"]["metaobjectCreate"]["metaobject"];
+    // Shopify writes the type in full; the id is the one lsf-core gives the store data's entry.
+    assert_eq!(entry["type"], json!(format!("app--{app_id}--author")));
+    assert_eq!(
+        entry["id"],
+        json!(content::metaobject_gid("$app:author", "jane"))
+    );
+    let dress = product_gid(&base, "linen-dress");
+    mutate(
+        &mut state,
+        r#"mutation($owner: ID!, $entry: String!) { metafieldsSet(metafields: [{ownerId: $owner,
+            namespace: "custom", key: "author", type: "metaobject_reference", value: $entry}]) { userErrors { message } } }"#,
+        json!({"owner": dress, "entry": entry["id"]}),
+    );
+
+    // The store data writes the app's type as it writes its namespaces: `$app:author`.
+    let (store, overlay) = synced(&state, &base);
+    assert!(
+        overlay.data["metaobjects"].get("$app:author").is_some(),
+        "{overlay:#?}"
+    );
+    let jane = store.metaobject("$app:author", "jane").expect("synced");
+    assert_eq!(jane.fields["name"].value, json!("Jane Austen"));
+    let product = store.product_by_handle("linen-dress").unwrap();
+    assert_eq!(
+        product.metafields["custom"]["author"].value,
+        json!("$app:author/jane")
+    );
+    // A theme names the type with the app's id (its real one, which lsf does not know), an
+    // app's extension with `$app`: both find the entry.
+    let store = Arc::new(store);
+    let renderer = renderer();
+    assert_eq!(
+        liquid(
+            &renderer,
+            &store,
+            "/products/linen-dress",
+            "{{ metaobjects['app--123456--author'].jane.name }}|{% for author in metaobjects['$app:author'].values %}{{ author.name }}{% endfor %}|{{ product.metafields.custom.author.value.name }}",
+        ),
+        "Jane Austen|Jane Austen|Jane Austen"
+    );
+    // A Function's input query names it by `$app:author`.
+    let input = function_input(
+        &store,
+        "linen-dress",
+        r#"query { shop { metaobject(handle: {type: "$app:author", handle: "jane"}) { handle field(key: "name") { value } } } }"#,
+    );
+    assert_eq!(
+        input["shop"]["metaobject"],
+        json!({"handle": "jane", "field": {"value": "Jane Austen"}})
+    );
+
+    // Seeded from that store data, the shop has the entry under the Admin API's type, with the
+    // same id; changed, it is written back in place, not twice.
+    let mut seeded = ShopState::seeded(&store, Some(&support::fixture_app()));
+    let read = mutate(
+        &mut seeded,
+        r#"{ metaobjects(type: "$app:author", first: 5) { nodes { id type handle } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        read["data"]["metaobjects"]["nodes"],
+        json!([{"id": entry["id"], "type": format!("app--{app_id}--author"), "handle": "jane"}])
+    );
+    mutate(
+        &mut seeded,
+        r#"mutation($id: ID!) { metaobjectUpdate(id: $id, metaobject: {fields: [{key: "name", value: "J. Austen"}]}) { userErrors { message } } }"#,
+        json!({"id": entry["id"]}),
+    );
+    let overlay = sync::overlay(&seeded, &store).expect("a change");
+    let (again, _) = load_with_overlays(
+        &DataSource::Directory(support::fixture("rich")),
+        &LoadOptions::default(),
+        &[overlay],
+    );
+    let authors: Vec<_> = again
+        .metaobjects
+        .iter()
+        .filter(|entry| entry.is_of("$app:author"))
+        .collect();
+    assert_eq!(authors.len(), 1);
+    assert_eq!(authors[0].fields["name"].value, json!("J. Austen"));
 }
