@@ -1593,7 +1593,9 @@ of what they make and what syncs.
   (`[{variant, minimum, maximum, increment}]`), `lsfPriceBreaks` (the `QuantityPriceBreak`
   records: `minimumQuantity`, `price`, `priceList`, `variant`). `PriceList.prices` lists every
   variant, fixed or relative; contextual pricing is computed when it is read
-  (`price_lists::contextual_price`).
+  (`price_lists::contextual_price`). A deleted variant leaves every price list
+  (`markets::removing_variants`, run by `delete_product` and `remove_variant`): its fixed price,
+  its rule and its price breaks go, `fixedPricesCount` is counted again, `price_lists/update`.
 - **`Channel`** (`channelCreate`): its account, specification, handle, `activeRegions` (the
   countries of the active region markets), `app`, and its own `Publication` (`lsfChannel` names
   the channel back, `supportsFuturePublishing: true`, `lsfScheduled` its scheduled listings) and
