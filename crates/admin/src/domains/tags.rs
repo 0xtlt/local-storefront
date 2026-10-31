@@ -91,6 +91,9 @@ fn change(
         return Ok(payload(json!({"node": null}), &[error]));
     }
     let state = mutation.state_mut();
+    // The customer's tag topics say which tags changed: their payload compares with the record
+    // as it was.
+    let previous = customer_topics.and_then(|_| state.get(&id).cloned());
     let Some(record) = state.get_mut(&id) else {
         return Ok(payload(json!({"node": null}), &[]));
     };
@@ -110,8 +113,8 @@ fn change(
     if changed {
         state.touch(&id);
         state.emit(topic, &id);
-        if let Some((added, removed)) = customer_topics {
-            state.emit(if add { added } else { removed }, &id);
+        if let (Some((added, removed)), Some(previous)) = (customer_topics, previous) {
+            state.emit_with(if add { added } else { removed }, &id, previous);
         }
     }
     Ok(payload(json!({"node": id}), &[]))

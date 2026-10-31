@@ -87,6 +87,12 @@ pub const DELETED_AT: &str = "deletedAt";
 /// set it from the event's snapshot, the installation as it was.
 pub const PREVIOUS_ACCESS_SCOPES: &str = "previousAccessScopes";
 
+/// The record field the builders of a topic that says what changed read the record before the
+/// change from (`customer.tags_added`: the tags it did not have): the webhooks set it from the
+/// event's snapshot ([`crate::state::ShopState::emit_with`]). Without it, the payload reports
+/// the record as it is (the tags it has), as a webhook triggered on demand does.
+pub const PREVIOUS: &str = "__previous";
+
 /// The topics lsf builds a payload for.
 pub const BUILT_TOPICS: &[&str] = &[
     "app/scopes_update",
@@ -96,6 +102,19 @@ pub const BUILT_TOPICS: &[&str] = &[
     "collections/create",
     "collections/delete",
     "collections/update",
+    "companies/create",
+    "companies/delete",
+    "companies/update",
+    "company_contact_roles/assign",
+    "company_contact_roles/revoke",
+    "company_contacts/create",
+    "company_contacts/delete",
+    "company_contacts/update",
+    "company_locations/create",
+    "company_locations/delete",
+    "company_locations/update",
+    "customer.tags_added",
+    "customer.tags_removed",
     "customers/create",
     "customers/data_request",
     "customers/delete",
@@ -103,6 +122,8 @@ pub const BUILT_TOPICS: &[&str] = &[
     "customers/enable",
     "customers/redact",
     "customers/update",
+    "customers_email_marketing_consent/update",
+    "customers_marketing_consent/update",
     "discounts/create",
     "discounts/delete",
     "discounts/update",
@@ -165,6 +186,20 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
             customers::customer(record, lookup)
         }
         "customers/delete" => customers::deleted(record),
+        "customer.tags_added" => customers::tags_changed(record, true),
+        "customer.tags_removed" => customers::tags_changed(record, false),
+        "customers_email_marketing_consent/update" => customers::email_consent_update(record),
+        "customers_marketing_consent/update" => customers::sms_consent_update(record),
+        "companies/create" | "companies/update" | "companies/delete" => customers::company(record),
+        "company_locations/create" | "company_locations/update" | "company_locations/delete" => {
+            customers::company_location(record, lookup)
+        }
+        "company_contacts/create" | "company_contacts/update" | "company_contacts/delete" => {
+            customers::company_contact(record, lookup)
+        }
+        "company_contact_roles/assign" | "company_contact_roles/revoke" => {
+            customers::role_assignment(record, lookup)
+        }
         "orders/create"
         | "orders/updated"
         | "orders/paid"

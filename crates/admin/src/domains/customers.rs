@@ -1,16 +1,37 @@
 //! Customers, and the companies they buy for (B2B): companies, their locations, contacts and
 //! contact roles.
 //!
-//! The records and their ids: the "Records" section of `crates/admin/docs/design.md`.
+//! The records and their ids: the "Records" section of `crates/admin/docs/design.md`. The
+//! mutations, by what they change:
+//!
+//! - [`customer`]: `customerCreate`, `customerUpdate`, `customerSet`, `customerDelete`, the
+//!   account invitation and activation URL, tax exemptions;
+//! - [`addresses`]: a customer's address book;
+//! - [`consent`]: email and SMS marketing consent;
+//! - [`companies`]: companies and their locations, addresses and tax settings;
+//! - [`contacts`]: company contacts, the main contact, and the roles contacts have at locations.
+//!
+//! [`queries`] has the custom resolvers, sort keys and search filters of the family.
+
+pub mod addresses;
+pub mod companies;
+pub mod consent;
+pub mod contacts;
+pub mod customer;
+mod metafields;
+mod queries;
+#[cfg(test)]
+mod tests;
 
 use lsf_core::store::{Address, Company, CompanyLocation, Customer};
 use lsf_core::util::stable_id;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::catalog::cents_of;
+use crate::resolve::Registry;
 use crate::state::seed::Seed;
 use crate::state::value::{self, date_time, text};
-use crate::state::{ShopState, gid};
+use crate::state::{Record, ShopState, gid};
 
 /// The roles every company has on Shopify, with the key of their ids: buyers order with the
 /// second, the default one.
@@ -39,9 +60,15 @@ pub fn company_contact_gid(customer: &Customer) -> String {
 
 /// One of the [`CONTACT_ROLES`] of a company.
 pub fn contact_role_gid(company: &Company, role: &str) -> String {
+    contact_role_gid_of(company.id, role)
+}
+
+/// One of the [`CONTACT_ROLES`] of the company of numeric id `company`: the seed's ids, which a
+/// company the Admin API creates gets too.
+pub fn contact_role_gid_of(company: u64, role: &str) -> String {
     gid(
         "CompanyContactRole",
-        stable_id("company_contact_role", &format!("{}/{role}", company.id)),
+        stable_id("company_contact_role", &format!("{company}/{role}")),
     )
 }
 
@@ -91,10 +118,6 @@ fn seed_customer(seed: &mut Seed, customer: &Customer) {
         .iter()
         .map(|address| value::mailing_address(address, "CustomerAddress"))
         .collect();
-    let display_name = match value::full_name(&customer.first_name, &customer.last_name) {
-        Value::String(name) => name,
-        _ => customer.email.clone(),
-    };
     let marketing_state = if customer.accepts_marketing {
         "SUBSCRIBED"
     } else {
@@ -103,29 +126,13 @@ fn seed_customer(seed: &mut Seed, customer: &Customer) {
     // Every buyer of a company is one of its contacts, as in the checkout.
     let contact = customer.company.map(|_| company_contact_gid(customer));
     let metafields = seed.metafields(&id, "CUSTOMER", &created, &customer.metafields);
-    seed.insert(json!({
+    let mut record = value::object(json!({
         "__typename": "Customer",
         "id": id,
         "firstName": text(&customer.first_name),
         "lastName": text(&customer.last_name),
-        "displayName": display_name,
         "email": text(&customer.email),
         "phone": text(&customer.phone),
-        "defaultEmailAddress": (!customer.email.is_empty()).then(|| json!({
-            "emailAddress": customer.email,
-            "marketingState": marketing_state,
-            "marketingOptInLevel": "SINGLE_OPT_IN",
-            "marketingUpdatedAt": null,
-            "validFormat": customer.email.contains('@'),
-        })),
-        "defaultPhoneNumber": (!customer.phone.is_empty()).then(|| json!({
-            "phoneNumber": customer.phone,
-            "smsMarketingConsent": {
-                "state": "NEVER_SUBSCRIBED",
-                "optInLevel": "SINGLE_OPT_IN",
-                "updatedAt": null,
-            },
-        })),
         "emailMarketingConsent": (!customer.email.is_empty()).then(|| json!({
             "marketingState": marketing_state,
             "marketingOptInLevel": "SINGLE_OPT_IN",
@@ -152,6 +159,151 @@ fn seed_customer(seed: &mut Seed, customer: &Customer) {
         "updatedAt": created,
         "metafields": metafields,
     }));
+    contact_fields(&mut record);
+    seed.insert_record(record);
+}
+
+/// Derives what a customer's names, email, phone and consents give, which the seed and every
+/// mutation that changes them share: `displayName` ("based on the values for first_name and
+/// last_name. If [they] are not available, then this falls back to the customer's email address,
+/// and if that is not available, the customer's phone number", the schema),
+/// `defaultEmailAddress` and `defaultPhoneNumber` (the same consents, in the shapes of the
+/// fields that replace the deprecated ones), and no consent without the email or the phone it is
+/// about.
+pub fn contact_fields(record: &mut Record) {
+    let get = |record: &Record, field: &str| {
+        record
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let email = get(record, "email");
+    let phone = get(record, "phone");
+    let display = match value::full_name(
+        &get(record, "firstName").unwrap_or_default(),
+        &get(record, "lastName").unwrap_or_default(),
+    ) {
+        Value::String(name) => name,
+        _ => email.clone().or_else(|| phone.clone()).unwrap_or_default(),
+    };
+    record.insert("displayName".into(), json!(display));
+
+    let email_consent = email.as_ref().map(|_| {
+        record
+            .get("emailMarketingConsent")
+            .filter(|consent| consent.is_object())
+            .cloned()
+            .unwrap_or_else(consent::default_email_consent)
+    });
+    let default_email = email
+        .as_ref()
+        .zip(email_consent.as_ref())
+        .map(|(email, consent)| {
+            let state = match consent.get("marketingState").and_then(Value::as_str) {
+                // `CustomerEmailAddressMarketingState` has no `REDACTED`.
+                Some("REDACTED") | None => "NOT_SUBSCRIBED",
+                Some(state) => state,
+            };
+            json!({
+                "emailAddress": email,
+                "marketingState": state,
+                "marketingOptInLevel": consent.get("marketingOptInLevel"),
+                "marketingUpdatedAt": consent.get("consentUpdatedAt"),
+                "sourceLocation": consent.get("sourceLocation"),
+                "validFormat": customer::is_email(email),
+            })
+        });
+    record.insert("emailMarketingConsent".into(), json!(email_consent));
+    record.insert("defaultEmailAddress".into(), json!(default_email));
+
+    let sms_consent = phone.as_ref().map(|_| {
+        record
+            .get("smsMarketingConsent")
+            .filter(|consent| consent.is_object())
+            .cloned()
+            .unwrap_or_else(consent::default_sms_consent)
+    });
+    let default_phone = phone
+        .as_ref()
+        .zip(sms_consent.as_ref())
+        .map(|(phone, consent)| {
+            let field = |name: &str| consent.get(name).cloned().unwrap_or(Value::Null);
+            // `CustomerMarketingConsentState` says `NEVER_SUBSCRIBED` where the SMS state says
+            // `NOT_SUBSCRIBED`.
+            let state = match consent.get("marketingState").and_then(Value::as_str) {
+                Some("NOT_SUBSCRIBED") | None => "NEVER_SUBSCRIBED",
+                Some(state) => state,
+            };
+            json!({
+                "phoneNumber": phone,
+                "marketingState": field("marketingState"),
+                "marketingOptInLevel": field("marketingOptInLevel"),
+                "marketingUpdatedAt": field("consentUpdatedAt"),
+                "marketingCollectedFrom": field("consentCollectedFrom"),
+                "sourceLocation": field("sourceLocation"),
+                "smsMarketingConsent": {
+                    "state": state,
+                    "optInLevel": field("marketingOptInLevel"),
+                    "updatedAt": field("consentUpdatedAt"),
+                    "collectedFrom": field("consentCollectedFrom"),
+                    "sourceLocation": field("sourceLocation"),
+                },
+            })
+        });
+    record.insert("smsMarketingConsent".into(), json!(sms_consent));
+    record.insert("defaultPhoneNumber".into(), json!(default_phone));
+}
+
+/// The locale of the shop's primary language: what a customer or a contact created without one
+/// gets.
+pub fn primary_locale(state: &ShopState) -> String {
+    state
+        .all("ShopLocale")
+        .find(|locale| locale.get("primary").and_then(Value::as_bool) == Some(true))
+        .and_then(|locale| locale.get("locale").and_then(Value::as_str))
+        .unwrap_or("en")
+        .to_string()
+}
+
+/// The shop's currency: what a company location created gets.
+pub fn shop_currency(state: &ShopState) -> String {
+    state
+        .shop()
+        .and_then(|shop| shop.get("currencyCode"))
+        .and_then(Value::as_str)
+        .unwrap_or("USD")
+        .to_string()
+}
+
+/// The GIDs of an array of a record (`locations`, `contacts`, `roleAssignments`).
+pub fn gids_of(record: Option<&Record>, field: &str) -> Vec<String> {
+    record
+        .and_then(|record| record.get(field))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The path of `field` in an input at `path`: what a user error names.
+pub fn field_path<'a>(path: &[&'a str], field: &'a str) -> Vec<&'a str> {
+    path.iter().copied().chain([field]).collect()
+}
+
+/// A string of an input object: `None` when it is not given, `Some(None)` when it is given as
+/// `null` or blank (to clear the field), `Some(Some(text))` trimmed otherwise.
+pub fn given_text(input: &Map<String, Value>, field: &str) -> Option<Option<String>> {
+    let value = input.get(field)?;
+    Some(
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string),
+    )
 }
 
 fn seed_company(seed: &mut Seed, company: &Company) {
@@ -378,6 +530,14 @@ pub fn refresh_customer(state: &mut ShopState, customer: &str) {
     record.insert("canDelete".to_string(), json!(ids.is_empty()));
     record.insert("orders".to_string(), json!(ids));
 }
-/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
-/// a mutation" in `crates/admin/docs/design.md`.
-pub fn register(_registry: &mut crate::resolve::Registry) {}
+
+/// The custom resolvers and the mutations of this family: see "Writing a resolver or a mutation"
+/// in `crates/admin/docs/design.md`.
+pub fn register(registry: &mut Registry) {
+    customer::register(registry);
+    addresses::register(registry);
+    consent::register(registry);
+    companies::register(registry);
+    contacts::register(registry);
+    queries::register(registry);
+}

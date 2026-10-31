@@ -350,7 +350,9 @@ storefront, the checkout and the Function inputs already use.
   `onlineStoreUrl` is `https://my-shop.myshopify.com/products/<handle>`, files are
   `https://<domain>/cdn/shop/files/<path>?v=<version>`, the path the storefront serves them at.
 - Events: `ShopState::emit(topic, gid)` records `{topic, shop, gid, at, id}` (a `…/delete` event
-  keeps a copy of the record: emit before removing, or use `ShopState::delete`);
+  keeps a copy of the record: emit before removing, or use `ShopState::delete`;
+  `ShopState::emit_with` gives the copy, the record before the change for a topic that says
+  what changed);
   `take_events` hands them over. Event ids are UUIDs made of the shop and a sequence that a reset
   does not restart, so a receiver never sees one twice.
 - **Shops** (`Shops`): the default shop is the store data's (`shop.permanent_domain`); `create`
@@ -547,7 +549,8 @@ simulate answers a GraphQL error with `extensions.code = "LSF_NOT_SIMULATED"`, n
 success; `GET /__lsf/admin` lists those it simulates. Simulated so far, as references:
 `productCreate`, `productUpdate`, `productDelete`, `tagsAdd`, `tagsRemove`,
 `webhookSubscriptionCreate`, `webhookSubscriptionUpdate`, `webhookSubscriptionDelete` (and the
-`webhookSubscription`, `webhookSubscriptions`, `webhookSubscriptionsCount` queries).
+`webhookSubscription`, `webhookSubscriptions`, `webhookSubscriptionsCount` queries). The
+families' mutations are listed in the user guide (`docs/admin.md`, "What lsf simulates").
 
 ## The HTTP side (`api`)
 
@@ -681,10 +684,12 @@ Every id is a function of the data: the same data gives the same records every r
   is a `Customer!`: the message and nickname of a card for someone else are not kept),
   `templateSuffix`, dates.
 
-### Customers (`domains/customers.rs`)
+### Customers (`domains/customers.rs` and `domains/customers/`)
 
-- **`Customer`**: `firstName`, `lastName`, `displayName` (the name, else the email), `email`,
-  `phone`, `defaultEmailAddress`, `defaultPhoneNumber`, `emailMarketingConsent`,
+- **`Customer`**: `firstName`, `lastName`, `displayName` (the name, else the email, else the
+  phone, as the schema describes it), `email`, `phone`, `defaultEmailAddress`,
+  `defaultPhoneNumber` (both derived from the consents by `customers::contact_fields`, which the
+  seed and the mutations share), `emailMarketingConsent`,
   `smsMarketingConsent` (subscribed when `accepts_marketing`; opt-in level `SINGLE_OPT_IN`
   *(chosen: Shopify's default setting)*), `addresses` and `addressesV2` (inline
   `MailingAddress`es), `defaultAddress` (the first), `state` (`ENABLED` with an account,
@@ -705,6 +710,30 @@ Every id is a function of the data: the same data gives the same records every r
 - **`CompanyContact`**: `company`, `customer`, `title`, `locale`, `isMainContact`,
   `roleAssignments`, dates. **`CompanyContactRoleAssignment`**: one per location the buyer can
   order for, with the default role *(chosen)*.
+
+**Mutations** (`domains/customers/`: `customer`, `addresses`, `consent`, `companies`,
+`contacts`; the user guide's "Customers and companies" lists them with their webhooks). What
+they create has the seed's shape, so that store sync writes it back:
+
+- A customer gets a `Customer` id of the counter, `state: DISABLED`, `verifiedEmail: true`, the
+  primary locale, the default consents (`NOT_SUBSCRIBED`, `SINGLE_OPT_IN`), and what
+  `refresh_customer` derives. An address is inline, `MailingAddress/<n>?model_name=
+  CustomerAddress` with `n` from the shop's `MailingAddress` counter, built by
+  `value::mailing_address` as the seed's; the default first in `addresses` and `addressesV2`,
+  copied in `defaultAddress`.
+- A company gets its two roles with the seed's ids (`contact_role_gid_of(<company id>, …)`), a
+  location, and its contact. A contact's id is its customer's number (`CompanyContact/<customer
+  id>`, the seed's and the checkout's), a new one of the counter when a customer is a contact of
+  a second company. Addresses of a location are inline `CompanyAddress`es with an id of the
+  counter; `billingSameAsShipping` gives both the same one, as the webhook examples show.
+- Validation follows Shopify where it is published (the examples of the reference, the REST
+  reference of the same resource, the Help Center), Rails' wording otherwise; each message's
+  source is in a comment where it is written.
+- Events whose payload says what changed keep the record before it
+  (`ShopState::emit_with`): `customer.tags_added` and `customer.tags_removed` name the tags that
+  changed, not all of them. A deletion that goes with its company's (`companyDelete`) embeds the
+  company in its snapshot: the payloads of `company_contacts/delete` and
+  `company_locations/delete` name it though it is gone.
 
 ### Orders (`domains/orders.rs`)
 
@@ -856,7 +885,9 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   (Shopify builds it when it delivers, usually within a second; the two differ only when another
   change comes first). The worker then needs nothing of the state, and holds no lock on it. A
   `…/delete` topic (and `inventory_levels/disconnect`) is built from the event's `snapshot`;
-  `app/scopes_update` reads the scopes before the change from the snapshot of the installation.
+  `app/scopes_update` reads the scopes before the change from the snapshot of the installation;
+  another topic whose event has a snapshot gets it as `payload::PREVIOUS` (`customer.tags_added`
+  names the tags the record did not have).
 - **Filter**: evaluated on the payload after `include_fields` (Shopify requires the fields of the
   filter to be included), through `webhooks::PayloadFilter`, where `search` plugs in. Filters
   differ from searches: `:` is equality, case counts, a field the payload does not have sends
