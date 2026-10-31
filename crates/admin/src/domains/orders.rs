@@ -9,6 +9,7 @@
 //! derive from one another, the money and the inventory they move), [`queries`] (the search
 //! filters, sort keys and resolvers of the family), and one module per group of mutations.
 
+mod deprecated;
 mod drafts;
 mod edits;
 mod fulfillments;
@@ -1299,6 +1300,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     refunds::register(registry);
     returns::register(registry);
     edits::register(registry);
+    deprecated::register(registry);
     drafts::register(registry);
     services::register(registry);
 }
