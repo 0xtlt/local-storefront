@@ -33,10 +33,9 @@ pub fn verify_webhook_hmac(secret: &str, body: &[u8], header: &str) -> bool {
 /// form-encoded and joined with `&`: `code=0907…&shop=some-shop.myshopify.com&state=…`.
 ///
 /// `params` are decoded, in any order. A name given more than once has its values joined with
-/// `,`, as `@shopify/shopify-api` does before it signs. Values are encoded as `URLSearchParams`
-/// encodes them, a space as `%20`, which is what that library signs; the `shopify_api` gem
-/// encodes a space as `+`, so the two only agree on values without one, as every value Shopify
-/// sends is (hex codes, domains, base64 hosts, timestamps).
+/// `,`, as `@shopify/shopify-api` does before it signs. Values are form-encoded, a space as `+`:
+/// what `URLSearchParams` writes (`@shopify/shopify-api`) and `URI.encode_www_form` (the
+/// `shopify_api` gem).
 pub fn query_hmac<K, V>(secret: &str, params: impl IntoIterator<Item = (K, V)>) -> String
 where
     K: AsRef<str>,
@@ -140,12 +139,11 @@ where
     joined.into_iter().collect()
 }
 
-/// A query value encoded as `URLSearchParams` encodes it, a space as `%20`
-/// (`ProcessedQuery#stringify` of `@shopify/shopify-api`).
+/// A query value encoded as `URLSearchParams` encodes it (`ProcessedQuery#stringify` of
+/// `@shopify/shopify-api`): a space as `+`, `*-._` and alphanumerics as they are, the rest
+/// percent-encoded.
 fn form_encode(value: &str) -> String {
-    form_urlencoded::byte_serialize(value.as_bytes())
-        .collect::<String>()
-        .replace('+', "%20")
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// HMAC-SHA256 of `data` keyed with `key`.
@@ -219,9 +217,11 @@ mod tests {
             query_hmac("s", [("shop", "a.myshopify.com"), ("host", "YWJj/def+=")]),
             hex(&hmac_sha256(b"s", encoded.as_bytes()))
         );
+        // A space is signed `+`, as `new URLSearchParams({state: "a b"}).toString()` and Ruby's
+        // `URI.encode_www_form` write it; `~` and `!` are percent-encoded by both.
         assert_eq!(
-            query_hmac("s", [("state", "a b")]),
-            hex(&hmac_sha256(b"s", b"state=a%20b"))
+            query_hmac("s", [("state", "a b~!*")]),
+            hex(&hmac_sha256(b"s", b"state=a+b%7E%21*"))
         );
         // A repeated name is signed once, its values joined with commas.
         assert_eq!(
