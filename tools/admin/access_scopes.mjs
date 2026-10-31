@@ -117,7 +117,9 @@ function filterTable(description) {
   const rows = [];
   for (const line of description.split("\n")) {
     const cells = line.split("|").map((cell) => cell.trim());
-    if (cells.length < 7 || cells[1] === "name" || cells[1].startsWith("--")) continue;
+    // The header row (`| name | type | …`), not a filter called `name`, which many tables have.
+    const header = cells[1] === "name" && cells[2] === "type";
+    if (cells.length < 7 || header || cells[1].startsWith("--")) continue;
     rows.push([cells[1], cells[2]]);
   }
   return rows;
