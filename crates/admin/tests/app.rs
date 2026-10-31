@@ -1173,3 +1173,180 @@ fn a_bulk_mutation_runs_once_per_line_of_its_staged_upload() {
         json!("NO_SUCH_FILE")
     );
 }
+
+#[test]
+fn the_app_and_its_installation_are_read() {
+    let (_, mut shop) = rich();
+    let answer = run(
+        &mut shop,
+        r#"{ app { title handle apiKey } appByHandle(handle: "admin-fixtures") { title }
+            appByKey(apiKey: "11111111111111111111111111111111") { handle } other: appByKey(apiKey: "x") { handle }
+            currentAppInstallation { launchUrl accessScopes { handle } app { title } activeSubscriptions { id } }
+            appInstallations(first: 5) { nodes { app { apiKey } } } }"#,
+        Value::Null,
+    );
+    let data = &answer["data"];
+    assert_eq!(
+        data["app"],
+        json!({"title": "Admin fixtures", "handle": "admin-fixtures", "apiKey": "11111111111111111111111111111111"})
+    );
+    assert_eq!(data["appByHandle"]["title"], json!("Admin fixtures"));
+    assert_eq!(data["appByKey"]["handle"], json!("admin-fixtures"));
+    assert_eq!(data["other"], Value::Null);
+    let installation = &data["currentAppInstallation"];
+    assert_eq!(installation["app"]["title"], json!("Admin fixtures"));
+    assert_eq!(installation["activeSubscriptions"], json!([]));
+    assert_eq!(
+        installation["accessScopes"][0]["handle"],
+        json!("read_products")
+    );
+    assert_eq!(
+        data["appInstallations"]["nodes"],
+        json!([{"app": {"apiKey": "11111111111111111111111111111111"}}])
+    );
+}
+
+#[test]
+fn delivery_customizations_validations_and_cart_transforms_change_and_go() {
+    let (_, mut shop) = rich();
+    let created = run(
+        &mut shop,
+        r#"mutation { deliveryCustomizationCreate(deliveryCustomization: {functionHandle: "delivery-rules", title: "Rename express", enabled: true}) {
+            deliveryCustomization { id title enabled functionId } userErrors { field message code } } }"#,
+        Value::Null,
+    );
+    let customization = &data(&created, "deliveryCustomizationCreate")["deliveryCustomization"];
+    let id = customization["id"].as_str().unwrap().to_string();
+    let updated = run(
+        &mut shop,
+        &format!(
+            r#"mutation {{ deliveryCustomizationUpdate(id: "{id}", deliveryCustomization: {{title: "Rename", functionHandle: "payment-rules"}}) {{ deliveryCustomization {{ title }} userErrors {{ field message code }} }} }}"#
+        ),
+        Value::Null,
+    );
+    assert_eq!(
+        data(&updated, "deliveryCustomizationUpdate")["userErrors"],
+        json!([{"field": ["deliveryCustomization", "functionHandle"], "message": "Function does not implement the required interface for this delivery customization.", "code": "FUNCTION_DOES_NOT_IMPLEMENT"}])
+    );
+    let renamed = run(
+        &mut shop,
+        &format!(
+            r#"mutation {{ deliveryCustomizationUpdate(id: "{id}", deliveryCustomization: {{title: "Rename"}}) {{ deliveryCustomization {{ title enabled }} userErrors {{ code }} }} }}"#
+        ),
+        Value::Null,
+    );
+    assert_eq!(
+        data(&renamed, "deliveryCustomizationUpdate"),
+        &json!({"deliveryCustomization": {"title": "Rename", "enabled": true}, "userErrors": []})
+    );
+    let missing = run(
+        &mut shop,
+        r#"mutation { deliveryCustomizationDelete(id: "gid://shopify/DeliveryCustomization/999") { deletedId userErrors { field message code } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        data(&missing, "deliveryCustomizationDelete"),
+        &json!({"deletedId": null, "userErrors": [{"field": ["id"], "message": "Delivery customization not found.", "code": "DELIVERY_CUSTOMIZATION_NOT_FOUND"}]})
+    );
+
+    // A validation's `enable` defaults to false, on an update too (2026-10's input).
+    let validation = shop.keys("Validation").next().unwrap().to_string();
+    let disabled = run(
+        &mut shop,
+        &format!(
+            r#"mutation {{ validationUpdate(id: "{validation}", validation: {{title: "Max 5"}}) {{ validation {{ title enabled }} userErrors {{ code }} }} }}"#
+        ),
+        Value::Null,
+    );
+    assert_eq!(
+        data(&disabled, "validationUpdate")["validation"],
+        json!({"title": "Max 5", "enabled": false})
+    );
+    let deleted = run(
+        &mut shop,
+        &format!(r#"mutation {{ validationDelete(id: "{validation}") {{ deletedId }} }}"#),
+        Value::Null,
+    );
+    assert_eq!(
+        data(&deleted, "validationDelete")["deletedId"],
+        json!(validation)
+    );
+
+    let transform = shop.keys("CartTransform").next().unwrap().to_string();
+    let gone = run(
+        &mut shop,
+        &format!(
+            r#"mutation {{ cartTransformDelete(id: "{transform}") {{ deletedId userErrors {{ code }} }} }}"#
+        ),
+        Value::Null,
+    );
+    assert_eq!(
+        data(&gone, "cartTransformDelete")["deletedId"],
+        json!(transform)
+    );
+    let again = run(
+        &mut shop,
+        r#"mutation { cartTransformCreate(functionHandle: "bundles", blockOnFailure: true) { cartTransform { functionId blockOnFailure } userErrors { code } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        data(&again, "cartTransformCreate")["cartTransform"]["blockOnFailure"],
+        json!(true)
+    );
+}
+
+#[test]
+fn buy_x_get_y_and_free_shipping_discounts_are_records() {
+    let (_, mut shop) = rich();
+    let unknown = run(
+        &mut shop,
+        r#"mutation { discountCodeBxgyCreate(bxgyCodeDiscount: {title: "2 for 1", code: "TWOFORONE",
+            customerBuys: {value: {quantity: "2"}, items: {products: {productsToAdd: ["gid://shopify/Product/1"]}}}}) {
+            codeDiscountNode { id } userErrors { field message code } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        data(&unknown, "discountCodeBxgyCreate")["userErrors"],
+        json!([{"field": ["bxgyCodeDiscount", "customerBuys", "items", "products", "productsToAdd"],
+            "message": "Product gid://shopify/Product/1 does not exist", "code": "INVALID"}])
+    );
+    let product = shop.keys("Product").next().unwrap().to_string();
+    let bxgy = run(
+        &mut shop,
+        &r#"mutation { discountCodeBxgyCreate(bxgyCodeDiscount: {title: "2 for 1", code: "TWOFORONE",
+            customerBuys: {value: {quantity: "2"}, items: {products: {productsToAdd: ["PRODUCT"]}}},
+            customerGets: {value: {discountOnQuantity: {quantity: "1", effect: {percentage: 1.0}}}, items: {all: true}}, usesPerOrderLimit: 1}) {
+            codeDiscountNode { codeDiscount { ... on DiscountCodeBxgy { title discountClasses status
+              customerBuys { value { ... on DiscountQuantity { quantity } } items { ... on DiscountProducts { products(first: 1) { nodes { id } } } } }
+              customerGets { value { ... on DiscountOnQuantity { quantity { quantity } effect { ... on DiscountPercentage { percentage } } } } } } } }
+            userErrors { field message } } }"#
+            .replace("PRODUCT", &product),
+        Value::Null,
+    );
+    let discount = &data(&bxgy, "discountCodeBxgyCreate")["codeDiscountNode"]["codeDiscount"];
+    assert_eq!(
+        discount["customerBuys"]["items"]["products"]["nodes"],
+        json!([{"id": product}])
+    );
+    assert_eq!(discount["discountClasses"], json!(["PRODUCT"]));
+    assert_eq!(discount["customerBuys"]["value"]["quantity"], json!("2"));
+    assert_eq!(
+        discount["customerGets"]["value"],
+        json!({"quantity": {"quantity": "1"}, "effect": {"percentage": 1.0}})
+    );
+    let shipping = run(
+        &mut shop,
+        r#"mutation { discountCodeFreeShippingCreate(freeShippingCodeDiscount: {title: "Ship free", code: "SHIPFREE",
+            destination: {countries: {add: [FR, DE]}}, maximumShippingPrice: "10.00", appliesOncePerCustomer: true}) {
+            codeDiscountNode { codeDiscount { ... on DiscountCodeFreeShipping { discountClasses appliesOncePerCustomer
+              maximumShippingPrice { amount } destinationSelection { ... on DiscountCountries { countries } } } } }
+            userErrors { field message } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        data(&shipping, "discountCodeFreeShippingCreate")["codeDiscountNode"]["codeDiscount"],
+        json!({"discountClasses": ["SHIPPING"], "appliesOncePerCustomer": true,
+            "maximumShippingPrice": {"amount": "10.0"}, "destinationSelection": {"countries": ["FR", "DE"]}})
+    );
+    assert_eq!(topics(&mut shop), ["discounts/create", "discounts/create"]);
+}

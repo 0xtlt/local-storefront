@@ -1090,6 +1090,34 @@ fn check_common(
             );
         }
     }
+    // The products, variants and collections the discount names must exist: a connection of
+    // them would otherwise name a record that is not there.
+    for part in ["customerGets", "customerBuys"] {
+        let Some(items) = input.get(part).and_then(|part| part.get("items")) else {
+            continue;
+        };
+        for (group, field, type_name) in [
+            ("products", "productsToAdd", "Product"),
+            ("products", "productVariantsToAdd", "ProductVariant"),
+            ("collections", "add", "Collection"),
+        ] {
+            let ids = items
+                .get(group)
+                .and_then(|group| group.get(field))
+                .and_then(Value::as_array);
+            for id in ids.into_iter().flatten().filter_map(Value::as_str) {
+                if state.type_of(id) != Some(type_name) {
+                    errors.push(
+                        UserError::new(
+                            &[kind.input, part, "items", group, field],
+                            format!("{type_name} {id} does not exist"),
+                        )
+                        .code("INVALID"),
+                    );
+                }
+            }
+        }
+    }
     if tags_of(input.get("tags")).len() > MAX_TAGS {
         errors.push(
             UserError::new(&at("tags"), "The number of tags exceeds the maximum of 5.")
