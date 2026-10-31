@@ -1088,3 +1088,238 @@ fn marketing_activities(
         .collect();
     r.connection(ctx, items)
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use crate::domains::segments::tests::{data, demo, run};
+
+    const UPSERT: &str = "mutation($input: MarketingActivityUpsertExternalInput!) {
+        marketingActivityUpsertExternal(input: $input) {
+            marketingActivity { id title status statusLabel isExternal tactic marketingChannelType sourceAndMedium
+                utmParameters { campaign medium source } adSpend { amount currencyCode } budget { budgetType total { amount } }
+                marketingEvent { id type remoteId manageUrl previewUrl utmCampaign utmSource sourceAndMedium startedAt } }
+            userErrors { field message code } } }";
+
+    fn input(remote: &str) -> Value {
+        json!({
+            "remoteId": remote,
+            "title": "Summer ad",
+            "status": "ACTIVE",
+            "remoteUrl": "https://ads.example.com/campaigns/1",
+            "remotePreviewImageUrl": "https://ads.example.com/preview.png",
+            "tactic": "AD",
+            "marketingChannelType": "SOCIAL",
+            "utm": {"campaign": "summer", "medium": "cpc", "source": "facebook"},
+            "budget": {"budgetType": "DAILY", "total": {"amount": "10.00", "currencyCode": "USD"}},
+            "start": "2026-10-01T00:00:00Z",
+        })
+    }
+
+    #[test]
+    fn an_external_activity_is_upserted_updated_and_deleted() {
+        let mut shop = demo();
+        let created = run(&mut shop, UPSERT, json!({"input": input("ad-1")}));
+        let payload = data(&created, "marketingActivityUpsertExternal");
+        assert_eq!(payload["userErrors"], json!([]), "{created}");
+        let activity = &payload["marketingActivity"];
+        assert_eq!(activity["title"], "Summer ad");
+        assert_eq!(activity["statusLabel"], "Active");
+        assert_eq!(activity["isExternal"], true);
+        assert_eq!(activity["sourceAndMedium"], "Facebook ad");
+        assert_eq!(activity["marketingEvent"]["remoteId"], "ad-1");
+        assert_eq!(
+            activity["marketingEvent"]["manageUrl"],
+            "https://ads.example.com/campaigns/1"
+        );
+        assert_eq!(activity["marketingEvent"]["utmCampaign"], "summer");
+        let id = activity["id"].as_str().unwrap().to_string();
+
+        // The same remote id updates it; what the input leaves out is removed.
+        let mut again = input("ad-1");
+        again["title"] = json!("Summer ad, round 2");
+        again.as_object_mut().unwrap().remove("budget");
+        let upserted = run(&mut shop, UPSERT, json!({"input": again}));
+        let activity = &data(&upserted, "marketingActivityUpsertExternal")["marketingActivity"];
+        assert_eq!(activity["id"], json!(id));
+        assert_eq!(activity["title"], "Summer ad, round 2");
+        assert_eq!(activity["budget"], Value::Null);
+
+        let updated = run(
+            &mut shop,
+            "mutation { marketingActivityUpdateExternal(remoteId: \"ad-1\", input: {status: PAUSED}) {
+                marketingActivity { status statusLabel } userErrors { code } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&updated, "marketingActivityUpdateExternal")["marketingActivity"],
+            json!({"status": "PAUSED", "statusLabel": "Paused"})
+        );
+        let listed = run(
+            &mut shop,
+            "{ marketingActivities(first: 5, remoteIds: [\"ad-1\"]) { nodes { id } }
+               byUtm: marketingActivities(first: 5, utm: {campaign: \"summer\", medium: \"cpc\", source: \"facebook\"}) { nodes { id } }
+               marketingEvents(first: 5, query: \"type:AD\") { nodes { remoteId type } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&listed, "marketingActivities")["nodes"],
+            json!([{"id": id}])
+        );
+        assert_eq!(listed["data"]["byUtm"]["nodes"], json!([{"id": id}]));
+        assert_eq!(
+            data(&listed, "marketingEvents")["nodes"],
+            json!([{"remoteId": "ad-1", "type": "AD"}])
+        );
+
+        let deleted = run(
+            &mut shop,
+            "mutation { marketingActivityDeleteExternal(remoteId: \"ad-1\") { deletedMarketingActivityId userErrors { code } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&deleted, "marketingActivityDeleteExternal")["deletedMarketingActivityId"],
+            json!(id)
+        );
+        assert_eq!(shop.count("MarketingActivity"), 0);
+        assert_eq!(shop.count("MarketingEvent"), 0);
+    }
+
+    #[test]
+    fn a_bad_external_activity_changes_nothing() {
+        let mut shop = demo();
+        run(&mut shop, UPSERT, json!({"input": input("ad-1")}));
+        let before = shop.picture();
+        // Another remote id with the same UTM campaign.
+        let taken = run(&mut shop, UPSERT, json!({"input": input("ad-2")}));
+        assert_eq!(
+            data(&taken, "marketingActivityUpsertExternal")["userErrors"][0]["code"],
+            "MARKETING_ACTIVITY_WITH_UTM_CAMPAIGN_ALREADY_EXISTS"
+        );
+        // Neither a hierarchy nor a UTM or URL parameter.
+        let mut bare = input("ad-3");
+        bare.as_object_mut().unwrap().remove("utm");
+        let refused = run(&mut shop, UPSERT, json!({"input": bare}));
+        assert_eq!(
+            data(&refused, "marketingActivityUpsertExternal")["userErrors"][0]["code"],
+            "NON_HIERARCHIAL_REQUIRES_UTM_URL_PARAMETER"
+        );
+        // The UTM of an activity does not change.
+        let mut moved = input("ad-1");
+        moved["utm"]["campaign"] = json!("winter");
+        let immutable = run(&mut shop, UPSERT, json!({"input": moved}));
+        assert_eq!(
+            data(&immutable, "marketingActivityUpsertExternal")["userErrors"][0]["code"],
+            "IMMUTABLE_UTM_PARAMETERS"
+        );
+        let missing = run(
+            &mut shop,
+            "mutation { marketingActivityUpdateExternal(remoteId: \"nope\", input: {title: \"x\"}) { userErrors { message code } } }",
+            json!({}),
+        );
+        let error = &data(&missing, "marketingActivityUpdateExternal")["userErrors"][0];
+        assert_eq!(error["code"], "MARKETING_ACTIVITY_DOES_NOT_EXIST");
+        assert!(!error["message"].as_str().unwrap().is_empty());
+        let both = run(
+            &mut shop,
+            "mutation { marketingActivityDeleteExternal { userErrors { code } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&both, "marketingActivityDeleteExternal")["userErrors"][0]["code"],
+            "INVALID_DELETE_ACTIVITY_EXTERNAL_ARGUMENTS"
+        );
+        assert_eq!(shop.picture(), before);
+    }
+
+    #[test]
+    fn engagements_add_up_and_activities_go_all_at_once() {
+        let mut shop = demo();
+        run(&mut shop, UPSERT, json!({"input": input("ad-1")}));
+        let engage = "mutation($engagement: MarketingEngagementInput!) {
+            marketingEngagementCreate(remoteId: \"ad-1\", marketingEngagement: $engagement) {
+                marketingEngagement { occurredOn clicksCount adSpend { amount currencyCode } orders marketingActivity { title } }
+                userErrors { code } } }";
+        let engagement = json!({"occurredOn": "2026-10-30", "utcOffset": "+00:00", "clicksCount": 40,
+            "adSpend": {"amount": "19.90", "currencyCode": "USD"}, "orders": "8"});
+        let answer = run(&mut shop, engage, json!({"engagement": engagement}));
+        assert_eq!(
+            data(&answer, "marketingEngagementCreate")["marketingEngagement"],
+            json!({"occurredOn": "2026-10-30", "clicksCount": 40, "adSpend": {"amount": "19.9", "currencyCode": "USD"}, "orders": "8.0", "marketingActivity": {"title": "Summer ad"}})
+        );
+        run(&mut shop, engage, json!({"engagement": engagement}));
+        let spent = run(
+            &mut shop,
+            "{ marketingActivities(first: 1) { nodes { adSpend { amount } } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&spent, "marketingActivities")["nodes"][0]["adSpend"]["amount"],
+            "39.8"
+        );
+        let none = run(
+            &mut shop,
+            "mutation($engagement: MarketingEngagementInput!) { marketingEngagementCreate(marketingEngagement: $engagement) { userErrors { code } } }",
+            json!({"engagement": engagement}),
+        );
+        assert_eq!(
+            data(&none, "marketingEngagementCreate")["userErrors"][0]["code"],
+            "INVALID_MARKETING_ENGAGEMENT_ARGUMENT_MISSING"
+        );
+        let channel = run(
+            &mut shop,
+            "mutation { marketingEngagementsDelete(channelHandle: \"my-channel-handle\") { result userErrors { code } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&channel, "marketingEngagementsDelete")["result"],
+            "Engagement data associated to channel handle 'my-channel-handle' marked for deletion"
+        );
+        let all = run(
+            &mut shop,
+            "mutation { marketingActivitiesDeleteAllExternal { job { id done } userErrors { code } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&all, "marketingActivitiesDeleteAllExternal")["job"]["done"],
+            true
+        );
+        assert_eq!(shop.count("MarketingActivity"), 0);
+    }
+
+    #[test]
+    fn an_extension_activity_is_created_and_updated() {
+        let mut shop = demo();
+        let created = run(
+            &mut shop,
+            "mutation { marketingActivityCreate(input: {marketingActivityExtensionId: \"gid://shopify/MarketingActivityExtension/1\", marketingActivityTitle: \"Draft Marketing Activity\", status: DRAFT}) {
+                marketingActivity { id title status isExternal } redirectPath userErrors { message } } }",
+            json!({}),
+        );
+        let activity = &data(&created, "marketingActivityCreate")["marketingActivity"];
+        assert_eq!(activity["status"], "DRAFT");
+        assert_eq!(activity["isExternal"], false);
+        let id = activity["id"].clone();
+        let updated = run(
+            &mut shop,
+            "mutation($id: ID!) { marketingActivityUpdate(input: {id: $id, status: ACTIVE, title: \"Live\"}) { marketingActivity { title status } userErrors { message } } }",
+            json!({"id": id}),
+        );
+        assert_eq!(
+            data(&updated, "marketingActivityUpdate")["marketingActivity"],
+            json!({"title": "Live", "status": "ACTIVE"})
+        );
+        let before = shop.picture();
+        let refused = run(
+            &mut shop,
+            "mutation { marketingActivityCreate(input: {marketingActivityExtensionId: \"gid://shopify/Product/1\", status: DRAFT}) { userErrors { field message } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&refused, "marketingActivityCreate")["userErrors"][0]["field"],
+            json!(["input", "marketingActivityExtensionId"])
+        );
+        assert_eq!(shop.picture(), before);
+    }
+}

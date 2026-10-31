@@ -732,3 +732,156 @@ pub fn follow_purchases(state: &mut ShopState, start: usize, customers: &[String
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use crate::domains::segments::tests::{customer, data, demo, run, topics};
+
+    #[test]
+    fn two_customers_merge_into_the_one_with_an_account_or_an_email() {
+        let mut shop = demo();
+        let camille = customer(&shop, "camille.martin@example.com");
+        let new = customer(&shop, "new.customer@example.com");
+        let preview = run(
+            &mut shop,
+            "query($one: ID!, $two: ID!) { customerMergePreview(customerOneId: $one, customerTwoId: $two) {
+                resultingCustomerId customerMergeErrors { message }
+                defaultFields { tags orderCount email { emailAddress } }
+                alternateFields { firstName } blockingFields { tags } } }",
+            json!({"one": new, "two": camille}),
+        );
+        let previewed = data(&preview, "customerMergePreview");
+        assert_eq!(previewed["customerMergeErrors"], json!([]), "{preview}");
+        // Both have an email, no account and the same consent: `customerTwoId` is kept.
+        assert_eq!(previewed["resultingCustomerId"], json!(camille));
+        assert_eq!(previewed["defaultFields"]["tags"], json!(["newsletter"]));
+        assert_eq!(previewed["defaultFields"]["orderCount"], "1");
+        assert_eq!(
+            previewed["defaultFields"]["email"]["emailAddress"],
+            "camille.martin@example.com"
+        );
+
+        let merged = run(
+            &mut shop,
+            "mutation($one: ID!, $two: ID!) { customerMerge(customerOneId: $one, customerTwoId: $two,
+                overrideFields: {tags: [\"merged\"], note: \"Two profiles\"}) {
+                resultingCustomerId job { id done } userErrors { field message code } } }",
+            json!({"one": new, "two": camille}),
+        );
+        let payload = data(&merged, "customerMerge");
+        assert_eq!(payload["userErrors"], json!([]), "{merged}");
+        assert_eq!(payload["resultingCustomerId"], json!(camille));
+        assert_eq!(payload["job"]["done"], true);
+        let kept = shop.get(&camille).unwrap();
+        assert_eq!(kept["tags"], json!(["merged"]));
+        assert_eq!(kept["note"], "Two profiles");
+        assert_eq!(kept["numberOfOrders"], "1");
+        assert!(shop.get(&new).is_none());
+        let fired = topics(&mut shop);
+        assert_eq!(
+            &fired[..3],
+            ["customers/update", "customers/delete", "customers/merge"]
+        );
+        let status = run(
+            &mut shop,
+            "query($job: ID!) { customerMergeJobStatus(jobId: $job) { status resultingCustomerId customerMergeErrors { message } } }",
+            json!({"job": payload["job"]["id"]}),
+        );
+        assert_eq!(
+            data(&status, "customerMergeJobStatus"),
+            &json!({"status": "COMPLETED", "resultingCustomerId": camille, "customerMergeErrors": []})
+        );
+    }
+
+    #[test]
+    fn a_merge_that_cannot_happen_changes_nothing() {
+        let mut shop = demo();
+        let jane = customer(&shop, "jane.doe@example.com");
+        let camille = customer(&shop, "camille.martin@example.com");
+        let before = shop.picture();
+        let merge = "mutation($one: ID!, $two: ID!) { customerMerge(customerOneId: $one, customerTwoId: $two) {
+            resultingCustomerId userErrors { field message code } } }";
+        // Jane has gift cards.
+        let blocked = run(&mut shop, merge, json!({"one": jane, "two": camille}));
+        assert_eq!(
+            data(&blocked, "customerMerge")["userErrors"],
+            json!([{"field": ["customerOneId"], "message": "Jane Doe has gift cards.", "code": "CUSTOMER_HAS_GIFT_CARDS"}])
+        );
+        let missing = run(
+            &mut shop,
+            merge,
+            json!({"one": camille, "two": "gid://shopify/Customer/1"}),
+        );
+        assert_eq!(
+            data(&missing, "customerMerge")["userErrors"],
+            json!([{"field": ["customerTwoId"], "message": "The customer ID is invalid.", "code": "INVALID_CUSTOMER_ID"}])
+        );
+        let itself = run(&mut shop, merge, json!({"one": camille, "two": camille}));
+        assert_eq!(
+            data(&itself, "customerMerge")["userErrors"][0]["code"],
+            "INVALID_CUSTOMER"
+        );
+        assert_eq!(
+            data(&itself, "customerMerge")["resultingCustomerId"],
+            Value::Null
+        );
+        assert_eq!(shop.picture(), before);
+        let mergeable = run(
+            &mut shop,
+            "query($jane: ID!, $camille: ID!) { jane: customer(id: $jane) { mergeable { isMergeable errorFields reason } }
+                camille: customer(id: $camille) { mergeable { isMergeable errorFields reason } } }",
+            json!({"jane": jane, "camille": camille}),
+        );
+        assert_eq!(
+            mergeable["data"]["jane"]["mergeable"],
+            json!({"isMergeable": false, "errorFields": ["GIFT_CARDS"], "reason": "Jane Doe has gift cards."})
+        );
+        assert_eq!(
+            mergeable["data"]["camille"]["mergeable"],
+            json!({"isMergeable": true, "errorFields": [], "reason": null})
+        );
+    }
+
+    #[test]
+    fn a_change_of_sales_is_a_purchasing_summary_when_asked_for() {
+        let mut shop = demo();
+        let jane = customer(&shop, "jane.doe@example.com");
+        let order = shop
+            .all("Order")
+            .find(|order| order["customer"] == json!(jane))
+            .and_then(|order| order["id"].as_str())
+            .unwrap()
+            .to_string();
+        let start = shop.event_count();
+        let snapshot = shop.get(&order).cloned().unwrap();
+        shop.emit_with("orders/cancelled", &order, snapshot);
+        // The summary is unchanged: no webhook.
+        crate::domains::segments::follow(&mut shop, start, &|_| true);
+        assert!(
+            topics(&mut shop)
+                .iter()
+                .all(|topic| topic != "customers/purchasing_summary")
+        );
+        let start = shop.event_count();
+        if let Some(record) = shop.get_mut(&jane) {
+            record.insert("numberOfOrders".into(), json!("1"));
+        }
+        shop.emit("orders/cancelled", &order);
+        crate::domains::segments::follow(&mut shop, start, &|_| true);
+        let events = shop.take_events();
+        let summary = events
+            .iter()
+            .find(|event| event.topic == "customers/purchasing_summary")
+            .unwrap();
+        let payload = crate::webhooks::payload::payload(
+            "customers/purchasing_summary",
+            summary.snapshot.as_ref().unwrap(),
+            &crate::api::samples::ShopLookup(&shop),
+        )
+        .unwrap();
+        assert_eq!(payload["customerId"], json!(jane));
+        assert_eq!(payload["numberOfOrders"], 1);
+    }
+}

@@ -924,4 +924,4 @@ pub fn follow(state: &mut ShopState, start: usize, subscribed: &dyn Fn(&str) -> 
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -558,3 +558,209 @@ fn presentment_expected_value(
     value.insert("currencyCode".into(), json!(currency));
     Ok(Output::Object(Obj::built("MoneyV2", value)))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use crate::domains::segments::tests::{data, demo, run};
+
+    #[test]
+    fn annotations_are_the_apps_and_typed() {
+        let mut shop = demo();
+        let create = "mutation($input: AnalyticsAnnotationCreateInput!) { analyticsAnnotationCreate(input: $input) {
+            analyticsAnnotation { id type title startedAt endedAt description source } userErrors { field message code } } }";
+        let created = run(
+            &mut shop,
+            create,
+            json!({"input": {"type": "campaign", "title": "BFCM cadence", "startedAt": "2026-11-28T00:00:00-05:00",
+                "endedAt": "2026-12-01T00:00:00Z", "description": "12 emails"}}),
+        );
+        let annotation = &data(&created, "analyticsAnnotationCreate")["analyticsAnnotation"];
+        assert_eq!(annotation["startedAt"], "2026-11-28T05:00:00Z");
+        assert_eq!(annotation["source"], "APP");
+        let id = annotation["id"].clone();
+        let listed = run(
+            &mut shop,
+            "{ shop { analyticsAnnotations(first: 5, query: \"type:campaign\") { nodes { title } } } }",
+            json!({}),
+        );
+        assert_eq!(
+            listed["data"]["shop"]["analyticsAnnotations"]["nodes"],
+            json!([{"title": "BFCM cadence"}])
+        );
+        let updated = run(
+            &mut shop,
+            "mutation($id: ID!) { analyticsAnnotationUpdate(id: $id, input: {title: \"Renamed\", endedAt: null}) { analyticsAnnotation { title endedAt } userErrors { code } } }",
+            json!({"id": id}),
+        );
+        assert_eq!(
+            data(&updated, "analyticsAnnotationUpdate")["analyticsAnnotation"],
+            json!({"title": "Renamed", "endedAt": null})
+        );
+        let before = shop.picture();
+        let refused = run(
+            &mut shop,
+            create,
+            json!({"input": {"type": "app_installed", "title": "x", "startedAt": "2026-11-28T00:00:00Z"}}),
+        );
+        assert_eq!(
+            data(&refused, "analyticsAnnotationCreate")["userErrors"][0]["code"],
+            "INVALID"
+        );
+        let missing = run(
+            &mut shop,
+            "mutation { analyticsAnnotationDelete(id: \"gid://shopify/AnalyticsAnnotation/9\") { deletedId userErrors { code } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&missing, "analyticsAnnotationDelete")["userErrors"][0]["code"],
+            "NOT_FOUND"
+        );
+        assert_eq!(shop.picture(), before);
+        let deleted = run(
+            &mut shop,
+            "mutation($id: ID!) { analyticsAnnotationDelete(id: $id) { deletedId } }",
+            json!({"id": id}),
+        );
+        assert_eq!(data(&deleted, "analyticsAnnotationDelete")["deletedId"], id);
+    }
+
+    #[test]
+    fn targets_are_unique_and_measured_by_their_query() {
+        let mut shop = demo();
+        let create = "mutation($input: AnalyticsTargetCreateInput!) { analyticsTargetCreate(input: $input) {
+            analyticsTarget { id name metric expectedValue currencyCode startDate endDate shopifyqlQuery
+                presentmentExpectedValue(currencyCode: USD) { amount currencyCode } } userErrors { field message code } } }";
+        let target = json!({"input": {"name": "Q4", "metric": "total_sales", "expectedValue": "50000",
+            "startDate": "2026-10-01", "endDate": "2026-12-31"}});
+        let created = run(&mut shop, create, target.clone());
+        let made = &data(&created, "analyticsTargetCreate")["analyticsTarget"];
+        assert_eq!(made["expectedValue"], "50000.0");
+        assert_eq!(made["currencyCode"], "USD");
+        assert_eq!(
+            made["shopifyqlQuery"],
+            "FROM sales SHOW total_sales SINCE 2026-10-01 UNTIL 2026-12-31"
+        );
+        assert_eq!(made["presentmentExpectedValue"]["amount"], "50000.0");
+        let query = made["shopifyqlQuery"].as_str().unwrap().to_string();
+        let measured = run(
+            &mut shop,
+            "query($q: String!) { shopifyqlQuery(query: $q) { analyticsTargets { name } parseErrors tableData { rows } } }",
+            json!({"q": query}),
+        );
+        assert_eq!(
+            data(&measured, "shopifyqlQuery")["analyticsTargets"],
+            json!([{"name": "Q4"}])
+        );
+        let before = shop.picture();
+        let taken = run(&mut shop, create, target);
+        assert_eq!(
+            data(&taken, "analyticsTargetCreate")["userErrors"][0]["code"],
+            "TAKEN"
+        );
+        let metric = run(
+            &mut shop,
+            create,
+            json!({"input": {"name": "x", "metric": "sessions", "expectedValue": "1", "startDate": "2026-10-01", "endDate": "2026-10-31"}}),
+        );
+        assert_eq!(
+            data(&metric, "analyticsTargetCreate")["userErrors"][0]["code"],
+            "INVALID_METRIC"
+        );
+        assert_eq!(shop.picture(), before);
+        let id = made["id"].clone();
+        let updated = run(
+            &mut shop,
+            "mutation($id: ID!) { analyticsTargetUpdate(id: $id, input: {expectedValue: \"60000\"}) { analyticsTarget { expectedValue } userErrors { code } } }",
+            json!({"id": id}),
+        );
+        assert_eq!(
+            data(&updated, "analyticsTargetUpdate")["analyticsTarget"]["expectedValue"],
+            "60000.0"
+        );
+        // One found, one not: the found one is deleted all the same.
+        let deleted = run(
+            &mut shop,
+            "mutation($ids: [ID!]!) { analyticsTargetsDelete(ids: $ids) { deletedIds userErrors { field code } } }",
+            json!({"ids": [id, "gid://shopify/AnalyticsTarget/99"]}),
+        );
+        assert_eq!(
+            data(&deleted, "analyticsTargetsDelete"),
+            &json!({"deletedIds": [id], "userErrors": [{"field": ["ids", "1"], "code": "NOT_FOUND"}]})
+        );
+        assert_eq!(shop.count("AnalyticsTarget"), 0);
+    }
+
+    #[test]
+    fn shopifyql_answers_the_sales_of_the_orders() {
+        let mut shop = demo();
+        let ql = |shop: &mut crate::state::ShopState, query: &str| {
+            let answer = run(
+                shop,
+                "query($q: String!) { shopifyqlQuery(query: $q) { parseErrors parseWarnings
+                    tableData { columns { name dataType displayName } rows } } }",
+                json!({"q": query}),
+            );
+            data(&answer, "shopifyqlQuery").clone()
+        };
+        // Every order of the demo store, at once.
+        let all = ql(
+            &mut shop,
+            "FROM sales SHOW orders, gross_sales, total_sales WITH TOTALS",
+        );
+        assert_eq!(all["parseErrors"], json!([]), "{all}");
+        let orders = shop.count("Order") as i64;
+        assert_eq!(all["tableData"]["rows"][0]["orders"], orders);
+        assert_eq!(
+            all["tableData"]["columns"][0],
+            json!({"name": "orders", "dataType": "INTEGER", "displayName": "Orders"})
+        );
+        // The sales of each order add up to the orders' totals.
+        let total: f64 = shop
+            .all("Order")
+            .map(|order| {
+                order["totalPriceSet"]["shopMoney"]["amount"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap()
+            })
+            .sum();
+        let reported: f64 = all["tableData"]["rows"][0]["total_sales"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let refunded: f64 = shop.all("Refund").count() as f64;
+        assert!(
+            refunded > 0.0 || (reported - total).abs() < 0.01,
+            "{reported} {total}"
+        );
+        // By month over the year of the demo orders, every month filled in.
+        let monthly = ql(
+            &mut shop,
+            "FROM sales SHOW total_sales TIMESERIES month SINCE 2024-01-01 UNTIL 2024-12-31 ORDER BY month",
+        );
+        let rows = monthly["tableData"]["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 12, "{monthly}");
+        assert_eq!(rows[0]["month"], "2024-01-01");
+        assert_eq!(
+            monthly["tableData"]["columns"][0],
+            json!({"name": "month", "dataType": "MONTH_TIMESTAMP", "displayName": "Month"})
+        );
+        // By product, ranked.
+        let products = ql(
+            &mut shop,
+            "FROM sales SHOW net_sales GROUP BY product_title SINCE 2020-01-01 ORDER BY net_sales DESC LIMIT 2",
+        );
+        assert_eq!(products["tableData"]["rows"].as_array().unwrap().len(), 2);
+        // The reference's error.
+        let error = ql(&mut shop, "FROM sales SHOW total_sale");
+        assert_eq!(error["tableData"], Value::Null);
+        assert_eq!(
+            error["parseErrors"],
+            json!(["Column Not Found: Column 'total_sale' not found"])
+        );
+    }
+}

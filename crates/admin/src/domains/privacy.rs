@@ -594,3 +594,219 @@ fn consent_policy_regions(
         .collect();
     Ok(Output::List(regions))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use crate::domains::segments::tests::{customer, data, demo, run, topics};
+
+    #[test]
+    fn a_data_erasure_waits_ten_days_and_can_be_cancelled() {
+        let mut shop = demo();
+        let alex = customer(&shop, "alex.morgan@example.com");
+        let request = "mutation($id: ID!) { customerRequestDataErasure(customerId: $id) { customerId userErrors { field message code } } }";
+        let answer = run(&mut shop, request, json!({"id": alex}));
+        assert_eq!(
+            data(&answer, "customerRequestDataErasure"),
+            &json!({"customerId": alex, "userErrors": []})
+        );
+        assert!(super::erasure_pending(&shop, &alex));
+        let outbox = crate::domains::outbox::entries(&shop);
+        assert_eq!(outbox[0]["channel"], "data_erasure");
+        assert!(outbox[0]["what"].as_str().unwrap().contains("2026-11-10"));
+        // A second request, and nothing changes.
+        let before = shop.picture();
+        let again = run(&mut shop, request, json!({"id": alex}));
+        assert_eq!(
+            data(&again, "customerRequestDataErasure")["userErrors"][0]["code"],
+            "FAILED_TO_REQUEST"
+        );
+        assert_eq!(shop.picture(), before);
+        // Not yet due: nothing is erased.
+        assert!(super::process_due_erasures(&mut shop).is_empty());
+
+        let cancel = "mutation($id: ID!) { customerCancelDataErasure(customerId: $id) { customerId userErrors { field message code } } }";
+        let cancelled = run(&mut shop, cancel, json!({"id": alex}));
+        assert_eq!(
+            data(&cancelled, "customerCancelDataErasure")["customerId"],
+            json!(alex)
+        );
+        assert!(!super::erasure_pending(&shop, &alex));
+        let nothing = run(&mut shop, cancel, json!({"id": alex}));
+        assert_eq!(
+            data(&nothing, "customerCancelDataErasure")["userErrors"][0]["code"],
+            "NOT_BEING_ERASED"
+        );
+
+        // Requested again, then ten days later: the personal data is gone.
+        run(&mut shop, request, json!({"id": alex}));
+        let later = shop.now() + chrono::Duration::days(11);
+        shop.set_clock(crate::state::Clock::Frozen(later));
+        shop.take_events();
+        assert_eq!(super::process_due_erasures(&mut shop), std::slice::from_ref(&alex));
+        let record = shop.get(&alex).unwrap();
+        assert_eq!(record["email"], Value::Null);
+        assert_eq!(record["emailMarketingConsent"], Value::Null);
+        assert_eq!(topics(&mut shop), ["customers/update"]);
+        let missing = run(
+            &mut shop,
+            request,
+            json!({"id": "gid://shopify/Customer/1"}),
+        );
+        assert_eq!(
+            data(&missing, "customerRequestDataErasure")["userErrors"],
+            json!([{"field": ["customerId"], "message": "Customer does not exist", "code": "DOES_NOT_EXIST"}])
+        );
+    }
+
+    #[test]
+    fn data_sale_opt_out_marks_or_makes_the_customer() {
+        let mut shop = demo();
+        let opt_out = "mutation($email: String!) { dataSaleOptOut(email: $email) { customerId userErrors { field message code } } }";
+        let jane = customer(&shop, "jane.doe@example.com");
+        let answer = run(&mut shop, opt_out, json!({"email": "JANE.DOE@example.com"}));
+        assert_eq!(data(&answer, "dataSaleOptOut")["customerId"], json!(jane));
+        assert_eq!(shop.get(&jane).unwrap()["dataSaleOptOut"], true);
+        assert_eq!(topics(&mut shop), ["customers/update"]);
+        let created = run(&mut shop, opt_out, json!({"email": "someone@example.com"}));
+        let id = data(&created, "dataSaleOptOut")["customerId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let read = run(
+            &mut shop,
+            "query($id: ID!) { customer(id: $id) { email dataSaleOptOut state } }",
+            json!({"id": id}),
+        );
+        assert_eq!(
+            data(&read, "customer"),
+            &json!({"email": "someone@example.com", "dataSaleOptOut": true, "state": "DISABLED"})
+        );
+        assert_eq!(topics(&mut shop), ["customers/create"]);
+        let before = shop.picture();
+        let refused = run(&mut shop, opt_out, json!({"email": "not an email"}));
+        assert_eq!(
+            data(&refused, "dataSaleOptOut")["userErrors"][0]["code"],
+            "FAILED"
+        );
+        assert_eq!(shop.picture(), before);
+    }
+
+    #[test]
+    fn the_whatsapp_consent_is_the_phone_numbers() {
+        let mut shop = demo();
+        let jane = customer(&shop, "jane.doe@example.com");
+        let update = "mutation($input: CustomerWhatsAppMarketingConsentUpdateInput!) {
+            customerWhatsAppMarketingConsentUpdate(input: $input) {
+                customerPhoneNumber { phoneNumber whatsAppMarketingConsent { state optInLevel updatedAt collectedFrom } }
+                userErrors { field message code } } }";
+        let answer = run(
+            &mut shop,
+            update,
+            json!({"input": {"customerId": jane, "whatsAppMarketingConsent": {"state": "SUBSCRIBED"}}}),
+        );
+        assert_eq!(
+            data(&answer, "customerWhatsAppMarketingConsentUpdate")["customerPhoneNumber"]["whatsAppMarketingConsent"],
+            json!({"state": "SUBSCRIBED", "optInLevel": "SINGLE_OPT_IN", "updatedAt": "2026-10-31T12:00:00Z", "collectedFrom": "OTHER"})
+        );
+        assert_eq!(
+            topics(&mut shop),
+            [
+                "customers/update",
+                "customers_whats_app_marketing_consent/update"
+            ]
+        );
+        let payload = crate::webhooks::payload::payload(
+            "customers_whats_app_marketing_consent/update",
+            shop.get(&jane).unwrap(),
+            &crate::api::samples::ShopLookup(&shop),
+        )
+        .unwrap();
+        assert_eq!(
+            payload["whats_app_marketing_consent"]["state"],
+            "subscribed"
+        );
+        // No phone, and a state the mutation does not set: nothing changes.
+        let alex = customer(&shop, "alex.morgan@example.com");
+        let before = shop.picture();
+        let refused = run(
+            &mut shop,
+            update,
+            json!({"input": {"customerId": alex, "whatsAppMarketingConsent": {"state": "REDACTED"}}}),
+        );
+        let codes: Vec<Value> =
+            data(&refused, "customerWhatsAppMarketingConsentUpdate")["userErrors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|error| error["code"].clone())
+                .collect();
+        assert_eq!(codes, [json!("MISSING_ARGUMENT"), json!("INCLUSION")]);
+        assert_eq!(shop.picture(), before);
+    }
+
+    #[test]
+    fn consent_policies_need_the_cookie_banner_off() {
+        let mut shop = demo();
+        let update = "mutation($policies: [ConsentPolicyInput!]!) { consentPolicyUpdate(consentPolicies: $policies) {
+            updatedPolicies { id countryCode regionCode consentRequired dataSaleOptOutRequired shopId } userErrors { field message code } } }";
+        let policies = json!({"policies": [{"countryCode": "FR", "consentRequired": true, "dataSaleOptOutRequired": false}]});
+        let before = shop.picture();
+        let refused = run(&mut shop, update, policies.clone());
+        assert_eq!(
+            data(&refused, "consentPolicyUpdate")["userErrors"][0]["code"],
+            "SHOPIFY_COOKIE_BANNER_NOT_DISABLED"
+        );
+        assert_eq!(shop.picture(), before);
+        let disabled = run(
+            &mut shop,
+            "mutation { privacyFeaturesDisable(featuresToDisable: [COOKIE_BANNER]) { featuresDisabled userErrors { message } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&disabled, "privacyFeaturesDisable")["featuresDisabled"],
+            json!(["COOKIE_BANNER"])
+        );
+        let settings = run(
+            &mut shop,
+            "{ privacySettings { banner { enabled autoManaged } dataSaleOptOutPage { autoManaged } privacyPolicy { autoManaged supportedLocales } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&settings, "privacySettings")["banner"],
+            json!({"enabled": false, "autoManaged": false})
+        );
+        assert!(settings["extensions"].get("lsf").is_none(), "{settings}");
+        let updated = run(&mut shop, update, policies);
+        let policy = &data(&updated, "consentPolicyUpdate")["updatedPolicies"][0];
+        assert_eq!(policy["countryCode"], "FR");
+        assert_eq!(policy["consentRequired"], true);
+        assert_eq!(policy["shopId"], json!(shop.shop_gid()));
+        let listed = run(
+            &mut shop,
+            "{ consentPolicy(countryCode: FR) { countryCode } all: consentPolicy { id } consentPolicyRegions { countryCode } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&listed, "consentPolicy"),
+            &json!([{"countryCode": "FR"}])
+        );
+        assert!(
+            listed["data"]["consentPolicyRegions"]
+                .as_array()
+                .unwrap()
+                .len()
+                > 200
+        );
+        let missing = run(
+            &mut shop,
+            update,
+            json!({"policies": [{"consentRequired": true}]}),
+        );
+        assert_eq!(
+            data(&missing, "consentPolicyUpdate")["userErrors"][0]["code"],
+            "COUNTRY_CODE_REQUIRED"
+        );
+    }
+}

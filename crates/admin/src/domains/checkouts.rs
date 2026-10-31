@@ -965,3 +965,242 @@ fn update_delivery_statuses(
     state.emit(crate::domains::app::CHANGED, &abandonment);
     Ok(payload(json!({"abandonment": abandonment}), &[]))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::{Cart, CartLine, Checkout};
+    use crate::domains::segments::tests::{customer, data, demo, run, topics};
+    use crate::state::{Clock, ShopState, parse_gid};
+
+    /// A line of the result of a checkout, for the first variant of the demo store.
+    fn result(shop: &ShopState) -> lsf_checkout::CheckoutResult {
+        let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+        let record = shop.get(&variant).unwrap();
+        let product = record["product"].as_str().unwrap();
+        let price = crate::domains::catalog::cents_of(record.get("price")).unwrap();
+        lsf_checkout::CheckoutResult {
+            lines: vec![lsf_checkout::ResultLine {
+                id: "gid://shopify/CartLine/1".into(),
+                variant_id: parse_gid(&variant).unwrap().1,
+                product_id: parse_gid(product).unwrap().1,
+                title: "Demo product".into(),
+                quantity: 2,
+                unit_price: price,
+                subtotal: price * 2,
+                total: price * 2,
+                ..Default::default()
+            }],
+            cost: lsf_checkout::Cost {
+                subtotal: price * 2,
+                total: price * 2,
+                due_now: price * 2,
+                currency_code: "USD".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn later(shop: &mut ShopState, minutes: i64) {
+        let at = shop.now() + chrono::Duration::minutes(minutes);
+        shop.set_clock(Clock::Frozen(at));
+    }
+
+    #[test]
+    fn a_cart_is_created_then_updated() {
+        let mut shop = demo();
+        let variant = parse_gid(shop.keys("ProductVariant").next().unwrap())
+            .unwrap()
+            .1;
+        let empty = Cart {
+            token: "c1",
+            note: "",
+            attributes: &[],
+            lines: &[],
+        };
+        super::record_cart(&mut shop, &empty);
+        assert!(topics(&mut shop).is_empty());
+        let lines = [CartLine {
+            variant_id: variant,
+            quantity: 3,
+            properties: vec![("Engraving".into(), "Hi".into())],
+            key: format!("{variant}:abc"),
+        }];
+        let cart = Cart {
+            lines: &lines,
+            ..empty.clone()
+        };
+        super::record_cart(&mut shop, &cart);
+        let events = shop.take_events();
+        assert_eq!(events[0].topic, "carts/create");
+        let payload = crate::webhooks::payload::payload(
+            "carts/create",
+            events[0].snapshot.as_ref().unwrap(),
+            &crate::api::samples::ShopLookup(&shop),
+        )
+        .unwrap();
+        assert_eq!(payload["token"], "c1");
+        assert_eq!(payload["line_items"][0]["quantity"], 3);
+        assert_eq!(
+            payload["line_items"][0]["properties"],
+            json!({"Engraving": "Hi"})
+        );
+        let price = &payload["line_items"][0]["price"];
+        assert!(price.as_str().unwrap().contains('.'), "{payload}");
+        super::record_cart(&mut shop, &empty);
+        assert_eq!(topics(&mut shop), ["carts/update"]);
+    }
+
+    #[test]
+    fn a_checkout_is_abandoned_ten_minutes_after_its_contact() {
+        let mut shop = demo();
+        let result = result(&shop);
+        let jane = customer(&shop, "jane.doe@example.com");
+        let mut checkout = Checkout {
+            cart_token: "c1",
+            generation: 0,
+            result: &result,
+            customer_id: None,
+            email: None,
+            phone: None,
+            shipping_address: None,
+            note: "",
+            attributes: &[],
+            payment: None,
+            locale: None,
+        };
+        let id = super::record_checkout(&mut shop, &checkout).unwrap();
+        assert_eq!(topics(&mut shop), ["checkouts/create"]);
+        // The same checkout again: nothing changed, no webhook.
+        super::record_checkout(&mut shop, &checkout);
+        assert!(topics(&mut shop).is_empty());
+        let query = "{ abandonedCheckouts(first: 5) { nodes { id name customer { email } totalPriceSet { shopMoney { amount } }
+                lineItems(first: 5) { nodes { quantity title variant { id } } } abandonedCheckoutUrl } }
+            abandonedCheckoutsCount { count } }";
+        // Without contact information, it is never abandoned.
+        later(&mut shop, 30);
+        let none = run(&mut shop, query, json!({}));
+        assert_eq!(data(&none, "abandonedCheckoutsCount")["count"], 0);
+
+        checkout.email = Some("JANE.DOE@example.com");
+        super::record_checkout(&mut shop, &checkout);
+        let events = shop.take_events();
+        assert_eq!(events[0].topic, "checkouts/update");
+        let payload = crate::webhooks::payload::payload(
+            "checkouts/update",
+            shop.get(&id).unwrap(),
+            &crate::api::samples::ShopLookup(&shop),
+        )
+        .unwrap();
+        assert_eq!(payload["email"], "JANE.DOE@example.com");
+        assert_eq!(payload["customer"]["admin_graphql_api_id"], json!(jane));
+        assert_eq!(payload["cart_token"], "c1");
+        // Nine minutes later: not yet. Eleven: abandoned, with its abandonment.
+        later(&mut shop, 9);
+        assert_eq!(
+            data(&run(&mut shop, query, json!({})), "abandonedCheckoutsCount")["count"],
+            0
+        );
+        later(&mut shop, 2);
+        let listed = run(&mut shop, query, json!({}));
+        assert!(listed["extensions"].get("lsf").is_none(), "{listed}");
+        let node = &data(&listed, "abandonedCheckouts")["nodes"][0];
+        assert_eq!(node["id"], json!(id));
+        assert_eq!(node["customer"]["email"], "jane.doe@example.com");
+        assert_eq!(node["lineItems"]["nodes"][0]["quantity"], 2);
+        let abandonment = run(
+            &mut shop,
+            "query($id: ID!) { abandonmentByAbandonedCheckoutId(abandonedCheckoutId: $id) {
+                id abandonmentType customer { email } emailState customerHasNoOrderSinceAbandonment
+                inventoryAvailable isMostSignificantAbandonment hoursSinceLastAbandonedCheckout
+                lastCheckoutAbandonmentDate productsAddedToCart(first: 5) { nodes { quantity } }
+                abandonedCheckoutPayload { id } } }",
+            json!({"id": id}),
+        );
+        let found = data(&abandonment, "abandonmentByAbandonedCheckoutId").clone();
+        assert_eq!(found["abandonmentType"], "CHECKOUT");
+        assert_eq!(found["customer"]["email"], "jane.doe@example.com");
+        assert_eq!(found["customerHasNoOrderSinceAbandonment"], true);
+        assert_eq!(found["isMostSignificantAbandonment"], true);
+        assert_eq!(found["emailState"], Value::Null);
+        assert_eq!(found["productsAddedToCart"]["nodes"][0]["quantity"], 2);
+        // The segment filter reads it.
+        let members = run(
+            &mut shop,
+            "{ customerSegmentMembers(first: 5, query: \"abandoned_checkout_date = today\") { totalCount } }",
+            json!({}),
+        );
+        assert_eq!(data(&members, "customerSegmentMembers")["totalCount"], 1);
+
+        // An email the app sent for it.
+        let activity = run(
+            &mut shop,
+            "mutation { marketingActivityUpsertExternal(input: {remoteId: \"mail-1\", title: \"Come back\", remoteUrl: \"https://mail.example.com\",
+                tactic: ABANDONED_CART, marketingChannelType: EMAIL, status: ACTIVE, urlParameterValue: \"come-back\"}) { marketingActivity { id } } }",
+            json!({}),
+        );
+        let activity =
+            data(&activity, "marketingActivityUpsertExternal")["marketingActivity"]["id"].clone();
+        let update = "mutation($abandonment: ID!, $activity: ID!) { abandonmentUpdateActivitiesDeliveryStatuses(
+                abandonmentId: $abandonment, marketingActivityId: $activity, deliveryStatus: SENT, deliveredAt: \"2026-10-31T12:20:00Z\") {
+                abandonment { emailState emailSentAt } userErrors { field code } } }";
+        let sent = run(
+            &mut shop,
+            update,
+            json!({"abandonment": found["id"], "activity": activity}),
+        );
+        assert_eq!(
+            data(&sent, "abandonmentUpdateActivitiesDeliveryStatuses")["abandonment"],
+            json!({"emailState": "SENT", "emailSentAt": "2026-10-31T12:20:00Z"})
+        );
+        let before = shop.picture();
+        let refused = run(
+            &mut shop,
+            update,
+            json!({"abandonment": "gid://shopify/Abandonment/999", "activity": "gid://shopify/MarketingActivity/999"}),
+        );
+        let codes: Vec<Value> =
+            data(&refused, "abandonmentUpdateActivitiesDeliveryStatuses")["userErrors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|error| error["code"].clone())
+                .collect();
+        assert_eq!(
+            codes,
+            [
+                json!("ABANDONMENT_NOT_FOUND"),
+                json!("MARKETING_ACTIVITY_NOT_FOUND")
+            ]
+        );
+        assert_eq!(shop.picture(), before);
+
+        // Completed after it was abandoned: recovered, still listed, closed.
+        super::complete_checkout(&mut shop, "c1", 0);
+        assert_eq!(topics(&mut shop), ["checkouts/update"]);
+        let recovered = run(
+            &mut shop,
+            "{ abandonedCheckouts(first: 5, query: \"recovery_state:recovered status:closed\") { nodes { completedAt } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&recovered, "abandonedCheckouts")["nodes"][0]["completedAt"],
+            json!(shop.timestamp())
+        );
+        // Three months on, the admin deletes it.
+        later(&mut shop, 91 * 24 * 60);
+        assert_eq!(super::delete_expired(&mut shop), 1);
+        let events = shop.take_events();
+        assert_eq!(events[0].topic, "checkouts/delete");
+        let payload = crate::webhooks::payload::payload(
+            "checkouts/delete",
+            events[0].snapshot.as_ref().unwrap(),
+            &crate::api::samples::ShopLookup(&shop),
+        )
+        .unwrap();
+        assert_eq!(payload, json!({"id": parse_gid(&id).unwrap().1}));
+        assert_eq!(shop.count("Abandonment"), 0);
+    }
+}

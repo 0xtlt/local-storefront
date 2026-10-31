@@ -202,3 +202,80 @@ fn remove_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         &[],
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::domains::segments::tests::{data, demo, run};
+
+    fn location(shop: &mut crate::state::ShopState) -> String {
+        let created = run(
+            shop,
+            "mutation { companyCreate(input: {company: {name: \"Acme B2B\"}, companyLocation: {name: \"HQ\"}}) {
+                company { locations(first: 1) { nodes { id } } } userErrors { message } } }",
+            json!({}),
+        );
+        data(&created, "companyCreate")["company"]["locations"]["nodes"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn staff_members_are_assigned_to_a_location_and_removed() {
+        let mut shop = demo();
+        let owner = run(
+            &mut shop,
+            "{ shop { accountOwner { id isShopOwner email } } }",
+            json!({}),
+        );
+        let owner = data(&owner, "shop")["accountOwner"].clone();
+        assert_eq!(owner["isShopOwner"], true);
+        let location = location(&mut shop);
+        let assign = "mutation($location: ID!, $staff: [ID!]!) { companyLocationAssignStaffMembers(companyLocationId: $location, staffMemberIds: $staff) {
+            companyLocationStaffMemberAssignments { id staffMember { id } companyLocation { name } } userErrors { field message code } } }";
+        let assigned = run(
+            &mut shop,
+            assign,
+            json!({"location": location, "staff": [owner["id"]]}),
+        );
+        let assignment = &data(&assigned, "companyLocationAssignStaffMembers")["companyLocationStaffMemberAssignments"]
+            [0];
+        assert_eq!(assignment["staffMember"]["id"], owner["id"]);
+        assert_eq!(assignment["companyLocation"]["name"], "HQ");
+        let read = run(
+            &mut shop,
+            "query($id: ID!) { companyLocation(id: $id) { staffMemberAssignments(first: 5) { nodes { id } } } }",
+            json!({"id": location}),
+        );
+        assert_eq!(
+            data(&read, "companyLocation")["staffMemberAssignments"]["nodes"][0]["id"],
+            assignment["id"]
+        );
+        let before = shop.picture();
+        let again = run(
+            &mut shop,
+            assign,
+            json!({"location": location, "staff": [owner["id"], "gid://shopify/StaffMember/1"]}),
+        );
+        let codes: Vec<&str> = data(&again, "companyLocationAssignStaffMembers")["userErrors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|error| error["code"].as_str().unwrap())
+            .collect();
+        assert_eq!(codes, ["TAKEN", "RESOURCE_NOT_FOUND"]);
+        assert_eq!(shop.picture(), before);
+        let removed = run(
+            &mut shop,
+            "mutation($ids: [ID!]!) { companyLocationRemoveStaffMembers(companyLocationStaffMemberAssignmentIds: $ids) { deletedCompanyLocationStaffMemberAssignmentIds userErrors { code } } }",
+            json!({"ids": [assignment["id"]]}),
+        );
+        assert_eq!(
+            data(&removed, "companyLocationRemoveStaffMembers")["deletedCompanyLocationStaffMemberAssignmentIds"],
+            json!([assignment["id"]])
+        );
+        assert_eq!(shop.count("CompanyLocationStaffMemberAssignment"), 0);
+    }
+}
