@@ -10,8 +10,17 @@ use lsf_core::store::{
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
+mod collections;
+mod media;
+#[cfg(test)]
+mod mutation_tests;
+mod options;
+mod product_set;
 mod products;
+mod records;
+mod variants;
 
+pub use collections::apply_rules;
 pub use products::{delete_product, tags_of};
 
 use crate::state::seed::Seed;
@@ -1165,6 +1174,83 @@ pub fn refresh_product(state: &mut ShopState, product: &str) {
     }
 }
 
+/// What a mutation runs after it changed a product's variants, options, media or fields: the
+/// variants' positions, titles and display names, whether each option value has variants, what
+/// [`refresh_product`] derives, and the product's membership of the smart collections.
+pub fn product_changed(state: &mut ShopState, product: &str) {
+    let Some(record) = state.get(product) else {
+        return;
+    };
+    let title = record
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let variants = gids(record.get("variants"));
+    let options = gids(record.get("options"));
+    let mut used: Vec<String> = Vec::new();
+    for (index, variant) in variants.iter().enumerate() {
+        let Some(record) = state.get(variant) else {
+            continue;
+        };
+        let selected: Vec<(String, Option<String>)> = record
+            .get("selectedOptions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|option| {
+                (
+                    option
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    option
+                        .get("optionValue")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                )
+            })
+            .collect();
+        used.extend(selected.iter().filter_map(|(_, value)| value.clone()));
+        let variant_title = selected
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let display = format!("{title} - {variant_title}");
+        let position = index as i64 + 1;
+        let unchanged = record.get("position").and_then(Value::as_i64) == Some(position)
+            && record.get("title").and_then(Value::as_str) == Some(variant_title.as_str())
+            && record.get("displayName").and_then(Value::as_str) == Some(display.as_str());
+        if !unchanged && let Some(record) = state.get_mut(variant) {
+            record.insert("position".into(), json!(position));
+            record.insert("title".into(), json!(variant_title));
+            record.insert("displayName".into(), json!(display));
+        }
+    }
+    for option in &options {
+        for value in state
+            .get(option)
+            .map(|record| gids(record.get("optionValues")))
+            .unwrap_or_default()
+        {
+            let has = used.contains(&value);
+            let known = state
+                .get(&value)
+                .and_then(|record| record.get("hasVariants"))
+                .and_then(Value::as_bool);
+            if known != Some(has)
+                && let Some(record) = state.get_mut(&value)
+            {
+                record.insert("hasVariants".into(), json!(has));
+            }
+        }
+    }
+    refresh_product(state, product);
+    collections::apply_rules(state, product);
+}
+
 /// The `available` quantity of an inventory level record.
 pub fn available_of(level: &Record) -> i64 {
     level
@@ -1199,6 +1285,11 @@ pub fn cents_of(value: Option<&Value>) -> Option<i64> {
 /// in `crates/admin/docs/design.md`.
 pub fn register(registry: &mut crate::resolve::Registry) {
     products::register(registry);
+    product_set::register(registry);
+    variants::register(registry);
+    options::register(registry);
+    media::register(registry);
+    collections::register(registry);
     registry.field("InventoryLevel", "quantities", level_quantities);
 }
 

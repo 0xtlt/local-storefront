@@ -135,6 +135,10 @@ pub struct ShopState {
     /// record that did not exist), once [`ShopState::track_changes`] turned tracking on: what
     /// the store sync projects, and what it compares with to drop the changes that were undone.
     originals: Option<IndexMap<String, Option<Record>>>,
+    /// What a mutation keeps for the requests that follow and that is not a record, by key: the
+    /// idempotency keys of the `@idempotent` mutations and what they answered. A failed mutation
+    /// puts them back with the shop; a reset forgets them.
+    memos: HashMap<String, Value>,
 }
 
 impl ShopState {
@@ -149,6 +153,7 @@ impl ShopState {
             events: Vec::new(),
             emitted: 0,
             originals: None,
+            memos: HashMap::new(),
         }
     }
 
@@ -352,13 +357,20 @@ impl ShopState {
         }
     }
 
-    /// Records that `topic` happened to a record. A `…/delete` event keeps a copy of the record:
-    /// emit it before removing the record (or use [`ShopState::delete`]).
+    /// Records that `topic` happened to a record. A `…/delete` event (and
+    /// `inventory_levels/disconnect`, whose level goes too) keeps a copy of the record: emit it
+    /// before removing the record (or use [`ShopState::delete`]).
     pub fn emit(&mut self, topic: &str, gid: &str) -> &Event {
-        let snapshot = topic
-            .ends_with("/delete")
+        let snapshot = (topic.ends_with("/delete") || topic == "inventory_levels/disconnect")
             .then(|| self.get(gid).cloned())
             .flatten();
+        self.emit_with(topic, gid, snapshot)
+    }
+
+    /// Records that `topic` happened, with the record its payload is built from when `gid` is
+    /// not the key of one: `product_publications/create` is about a product on a publication,
+    /// which is no record (`gid` names the product and the publication, `snapshot` holds both).
+    pub fn emit_with(&mut self, topic: &str, gid: &str, snapshot: Option<Record>) -> &Event {
         self.emitted += 1;
         let event = Event {
             topic: topic.to_string(),
@@ -380,6 +392,18 @@ impl ShopState {
     /// Takes the events emitted since the last call.
     pub fn take_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
+    }
+
+    /// What a mutation kept under `key` (see [`ShopState::set_memo`]).
+    pub fn memo(&self, key: &str) -> Option<&Value> {
+        self.memos.get(key)
+    }
+
+    /// Keeps `value` under `key` for the requests that follow: what is not a record, such as an
+    /// idempotency key and the answer it gave. Not a change of the records: the store sync does
+    /// not see it.
+    pub fn set_memo(&mut self, key: impl Into<String>, value: Value) {
+        self.memos.insert(key.into(), value);
     }
 
     /// Starts tracking the changes made to the records from now on, forgetting those tracked so

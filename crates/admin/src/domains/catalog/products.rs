@@ -11,18 +11,29 @@
 //!   (quantities 0). The product is created unpublished ("The `productCreate` mutation creates
 //!   products in an unpublished state by default"), `ACTIVE` unless `status` says otherwise. A
 //!   handle not given is made from the title, with a suffix when it is taken (`hat`, `hat-1`).
-//!   Events: `products/create`, `inventory_items/create`, `inventory_levels/connect`.
-//! - `productUpdate` changes the fields given (`tags` replaces the tags): `products/update`.
+//!   `media` (a `CreateMediaInput` each, see [`super::media`]) and `metafields` are created with
+//!   it. Events: `products/create`, `inventory_items/create`, `inventory_levels/connect`.
+//! - `productUpdate` changes the fields given (`tags` replaces the tags), adds the `media`
+//!   given and sets the `metafields` given: `products/update`.
 //! - `productDelete` removes the product, its options, variants, inventory and media, and the
 //!   references of its collections: `products/delete`, `inventory_items/delete`.
+//! - `productDuplicate` copies a product with its options, variants (their prices, SKUs,
+//!   barcodes, inventory items, not their stock: Shopify's copy starts at 0), metafields, tags
+//!   and collections; its images only with `includeImages`. The copy has `newTitle`, a handle
+//!   made from it, the status `newStatus` (else the original's), and is unpublished. With
+//!   `synchronous: false` it answers an operation that is already complete. Events:
+//!   `products/create`, `inventory_items/create`, `inventory_levels/connect`.
+//! - `productChangeStatus` (deprecated for `productUpdate`) sets the status: `products/update`.
 //!
 //! The messages are Shopify's (Rails validations: "Title can't be blank"); where shopify.dev does
-//! not show them, they follow the same form. Inputs lsf does not simulate yet (`media`,
-//! `metafields`, `category`, …) are said in `extensions.lsf.notes`, never silently dropped.
+//! not show them, they follow the same form. Inputs lsf does not simulate yet (`category`,
+//! `combinedListingRole`, …) are said in `extensions.lsf.notes`, never silently dropped.
 
 use serde_json::{Map, Value, json};
 
-use super::{QUANTITY_NAMES, gids, refresh_product};
+use super::records::{self, default_location, item_of, objects};
+use super::variants::{self, Choice};
+use super::{gids, media, product_changed};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -31,7 +42,9 @@ pub fn register(registry: &mut Registry) {
     registry
         .mutation("productCreate", product_create)
         .mutation("productUpdate", product_update)
-        .mutation("productDelete", product_delete);
+        .mutation("productDelete", product_delete)
+        .mutation("productDuplicate", product_duplicate)
+        .mutation("productChangeStatus", product_change_status);
 }
 
 /// The inputs of the product mutations that lsf does not simulate yet.
@@ -39,7 +52,6 @@ const NOT_SIMULATED: &[&str] = &[
     "category",
     "claimOwnership",
     "combinedListingRole",
-    "metafields",
     "redirectNewHandle",
     "deleteConflictingConstrainedMetafields",
 ];
@@ -56,9 +68,7 @@ fn product_input<'c>(ctx: &FieldContext<'c>) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
-fn text<'i>(input: &'i Map<String, Value>, field: &str) -> Option<&'i str> {
-    input.get(field).and_then(Value::as_str)
-}
+use super::records::text;
 
 /// The tags of an input: trimmed, a comma-separated item split, repeated ones (ignoring case)
 /// dropped, in their order.
@@ -76,7 +86,7 @@ pub fn tags_of(value: Option<&Value>) -> Vec<String> {
 }
 
 /// Whether a product other than `except` has `handle`.
-fn handle_taken(state: &ShopState, handle: &str, except: Option<&str>) -> bool {
+pub fn handle_taken(state: &ShopState, handle: &str, except: Option<&str>) -> bool {
     state.keys("Product").any(|key| {
         Some(key) != except
             && state
@@ -88,7 +98,7 @@ fn handle_taken(state: &ShopState, handle: &str, except: Option<&str>) -> bool {
 }
 
 /// A free handle made from `base`: itself, else with `-1`, `-2`, … appended.
-fn free_handle(state: &ShopState, base: &str) -> String {
+pub fn free_handle(state: &ShopState, base: &str) -> String {
     let base = match lsf_core::util::handleize(base) {
         handle if handle.is_empty() => "product".to_string(),
         handle => handle,
@@ -103,7 +113,7 @@ fn free_handle(state: &ShopState, base: &str) -> String {
 }
 
 /// The checks of a title.
-fn check_title(title: &str, errors: &mut Vec<UserError>) {
+pub fn check_title(title: &str, errors: &mut Vec<UserError>) {
     if title.trim().is_empty() {
         errors.push(UserError::new(&["title"], "Title can't be blank").code("BLANK"));
     } else if title.chars().count() > TITLE_LENGTH {
@@ -115,7 +125,7 @@ fn check_title(title: &str, errors: &mut Vec<UserError>) {
 }
 
 /// The collections of `collectionsToJoin` (or `collectionsToLeave`), each checked to exist.
-fn collections(
+pub fn collections(
     state: &ShopState,
     input: &Map<String, Value>,
     field: &str,
@@ -141,21 +151,20 @@ fn note_ignored(
     ctx: &FieldContext<'_>,
 ) {
     for field in NOT_SIMULATED {
-        if input.get(*field).is_some_and(|value| !value.is_null()) {
+        if input
+            .get(*field)
+            .is_some_and(|value| !value.is_null() && value != &Value::Bool(false))
+        {
             mutation.note(format!(
                 "{name}: lsf does not simulate `{field}` yet: it was ignored"
             ));
         }
     }
-    if ctx.arg("media").is_some() {
-        mutation.note(format!(
-            "{name}: lsf does not simulate `media` yet: it was ignored"
-        ));
-    }
+    let _ = (name, ctx);
 }
 
 /// Sets the plain fields of a product from an input: those given, and only those.
-fn apply_fields(record: &mut Record, input: &Map<String, Value>) {
+pub fn apply_fields(record: &mut Record, input: &Map<String, Value>) {
     if let Some(title) = text(input, "title") {
         record.insert("title".into(), json!(title.trim()));
     }
@@ -192,27 +201,16 @@ fn apply_fields(record: &mut Record, input: &Map<String, Value>) {
     }
 }
 
-/// Adds the product to the collections (and the collections to the product), or takes it out.
-fn join_collections(state: &mut ShopState, product: &str, join: &[String], leave: &[String]) {
+/// Adds the product to the collections (and the collections to the product), or takes it out:
+/// a product already in a collection it joins keeps its place. Smart collections are left to
+/// their rules.
+pub fn join_collections(state: &mut ShopState, product: &str, join: &[String], leave: &[String]) {
     for collection in join.iter().chain(leave) {
-        let joining = join.contains(collection);
-        if let Some(Value::Array(products)) = state
-            .get_mut(collection)
-            .and_then(|record| record.get_mut("products"))
-        {
-            products.retain(|item| item.as_str() != Some(product));
-            if joining {
-                products.push(json!(product));
-            }
-        }
-        if let Some(Value::Array(collections)) = state
-            .get_mut(product)
-            .and_then(|record| record.get_mut("collections"))
-        {
-            collections.retain(|item| item.as_str() != Some(collection.as_str()));
-            if joining {
-                collections.push(json!(collection));
-            }
+        let smart = state
+            .get(collection)
+            .is_some_and(super::collections::is_smart);
+        if !smart {
+            records::link_collection(state, collection, product, join.contains(collection));
         }
     }
 }
@@ -295,131 +293,29 @@ fn product_create(
     };
     let options = options_of(&input, &mut errors);
     let join = collections(state, &input, "collectionsToJoin", &mut errors);
+    let metafields = objects(&input, "metafields");
+    errors.extend(records::check_metafields(
+        state,
+        None,
+        &metafields,
+        &["metafields"],
+    ));
+    let media_inputs = media::media_arg(ctx);
+    let (media_errors, _) = media::check_media(&media_inputs, &["media"]);
+    errors.extend(media_errors);
     if !errors.is_empty() {
         return Ok(payload(json!({"product": null}), &errors));
     }
 
     let state = mutation.state_mut();
     let now = state.timestamp();
-    let shop = state.shop().cloned().unwrap_or_default();
-    let shop_text = |field: &str| {
-        shop.get(field)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    let origin = shop_text("url");
+    let shop_name = state
+        .shop()
+        .and_then(|shop| records::field(shop, "name"))
+        .unwrap_or_default()
+        .to_string();
+    let origin = records::origin(state);
     let product = state.new_gid("Product");
-
-    let mut option_ids = Vec::new();
-    let mut selected = Vec::new();
-    for (position, (name, values)) in options.iter().enumerate() {
-        let option = state.new_gid("ProductOption");
-        let mut value_ids = Vec::new();
-        for (index, value) in values.iter().enumerate() {
-            let id = state.new_gid("ProductOptionValue");
-            state.insert(value::object(json!({
-                "__typename": "ProductOptionValue",
-                "id": id,
-                "name": value,
-                "hasVariants": index == 0,
-                "swatch": null,
-            })));
-            if index == 0 {
-                selected.push(json!({"name": name, "value": value, "optionValue": id}));
-            }
-            value_ids.push(id);
-        }
-        state.insert(value::object(json!({
-            "__typename": "ProductOption",
-            "id": option,
-            "name": name,
-            "position": position + 1,
-            "values": values,
-            "optionValues": value_ids,
-            "createdAt": now,
-        })));
-        option_ids.push(option);
-    }
-    let variant_title = options
-        .iter()
-        .filter_map(|(_, values)| values.first().cloned())
-        .collect::<Vec<_>>()
-        .join(" / ");
-
-    let variant = state.new_gid("ProductVariant");
-    let item = state.new_gid("InventoryItem");
-    let location = state.keys("Location").next().map(str::to_string);
-    let level = location.as_ref().map(|location| {
-        let level = state.new_gid("InventoryLevel");
-        let quantities: Vec<Value> = QUANTITY_NAMES
-            .iter()
-            .map(|name| json!({"name": name, "quantity": 0, "updatedAt": now}))
-            .collect();
-        state.insert(value::object(json!({
-            "__typename": "InventoryLevel",
-            "id": level,
-            "item": item,
-            "location": location,
-            "quantities": quantities,
-            "isActive": true,
-            "canDeactivate": true,
-            "createdAt": now,
-            "updatedAt": now,
-        })));
-        if let Some(Value::Array(levels)) = state
-            .get_mut(location)
-            .and_then(|record| record.get_mut("inventoryLevels"))
-        {
-            levels.push(json!(level));
-        }
-        level
-    });
-    state.insert(value::object(json!({
-        "__typename": "InventoryItem",
-        "id": item,
-        "sku": null,
-        "tracked": false,
-        "requiresShipping": true,
-        "measurement": {"weight": {"unit": match shop_text("weightUnit").as_str() {
-            "" => "KILOGRAMS".to_string(),
-            unit => unit.to_string(),
-        }, "value": 0.0}},
-        "inventoryLevels": level.iter().collect::<Vec<_>>(),
-        "variant": variant,
-        "variants": [variant],
-        "createdAt": now,
-        "updatedAt": now,
-    })));
-    state.insert(value::object(json!({
-        "__typename": "ProductVariant",
-        "id": variant,
-        "title": variant_title,
-        "displayName": format!("{title} - {variant_title}"),
-        "sku": null,
-        "barcode": null,
-        "barcodes": [],
-        "price": "0.00",
-        "compareAtPrice": null,
-        "position": 1,
-        "selectedOptions": selected,
-        "inventoryItem": item,
-        "inventoryPolicy": "DENY",
-        "inventoryQuantity": 0,
-        "availableForSale": true,
-        "taxable": true,
-        "requiresComponents": false,
-        "product": product,
-        "media": [],
-        "image": null,
-        "unitPrice": null,
-        "showUnitPrice": false,
-        "sellingPlanGroups": [],
-        "createdAt": now,
-        "updatedAt": now,
-        "metafields": [],
-    })));
-
     let mut record = value::object(json!({
         "__typename": "Product",
         "id": product,
@@ -428,7 +324,7 @@ fn product_create(
         "descriptionHtml": "",
         "bodyHtml": "",
         "description": "",
-        "vendor": shop_text("name"),
+        "vendor": shop_name,
         "productType": "",
         "tags": [],
         "status": "ACTIVE",
@@ -440,8 +336,8 @@ fn product_create(
         "isGiftCard": input.get("giftCard").and_then(Value::as_bool).unwrap_or(false),
         "requiresSellingPlan": false,
         "hasVariantsThatRequiresComponents": false,
-        "options": option_ids,
-        "variants": [variant],
+        "options": [],
+        "variants": [],
         "media": [],
         "images": [],
         "seo": {"title": null, "description": null},
@@ -453,15 +349,75 @@ fn product_create(
     }));
     apply_fields(&mut record, &input);
     state.insert(record);
+    let choices = create_options(state, &product, &options);
+    for input in &media_inputs {
+        media::create_media(state, &product, input);
+    }
+    let stock = default_location(state)
+        .map(|location| vec![(location, 0)])
+        .unwrap_or_default();
+    let variant = variants::insert_variant(state, &product, &choices, &Map::new(), &stock);
+    records::set_metafields(state, &product, "PRODUCT", &metafields);
     join_collections(state, &product, &join, &[]);
-    refresh_product(state, &product);
+    product_changed(state, &product);
 
     state.emit("products/create", &product);
-    state.emit("inventory_items/create", &item);
-    if let Some(level) = &level {
-        state.emit("inventory_levels/connect", level);
-    }
+    emit_new_inventory(state, &variant);
     Ok(payload(json!({"product": product}), &[]))
+}
+
+/// Creates the options of a new product, each value a `ProductOptionValue`: the first value of
+/// each option is the one its first variant selects. Returns those choices.
+pub fn create_options(
+    state: &mut ShopState,
+    product: &str,
+    options: &[(String, Vec<String>)],
+) -> Vec<Choice> {
+    let now = state.timestamp();
+    let mut option_ids = Vec::new();
+    let mut choices = Vec::new();
+    for (position, (name, values)) in options.iter().enumerate() {
+        let option = state.new_gid("ProductOption");
+        state.insert(value::object(json!({
+            "__typename": "ProductOption",
+            "id": option,
+            "name": name,
+            "position": position + 1,
+            "values": [],
+            "optionValues": [],
+            "createdAt": now,
+        })));
+        for (index, value) in values.iter().enumerate() {
+            let id = variants::add_value(state, &option, value);
+            if index == 0 {
+                choices.push(Choice {
+                    option: option.clone(),
+                    name: value.clone(),
+                    value: Some(id),
+                });
+            }
+        }
+        option_ids.push(option);
+    }
+    if let Some(record) = state.get_mut(product) {
+        record.insert("options".into(), json!(option_ids));
+    }
+    choices
+}
+
+/// Emits `inventory_items/create` and `inventory_levels/connect` for a new variant.
+pub fn emit_new_inventory(state: &mut ShopState, variant: &str) {
+    let Some(item) = item_of(state, variant) else {
+        return;
+    };
+    let levels = state
+        .get(&item)
+        .map(|record| gids(record.get("inventoryLevels")))
+        .unwrap_or_default();
+    state.emit("inventory_items/create", &item);
+    for level in levels {
+        state.emit("inventory_levels/connect", &level);
+    }
 }
 
 /// The product a `productUpdate` names: `product.id`, else `identifier` (`id`, `handle`).
@@ -474,6 +430,9 @@ fn product_to_update(
     let id = text(input, "id").or_else(|| identifier.and_then(|identifier| text(identifier, "id")));
     if let Some(id) = id {
         return (state.type_of(id) == Some("Product")).then(|| id.to_string());
+    }
+    if let Some(custom) = identifier.and_then(|identifier| identifier.get("customId")) {
+        return product_by_custom_id(state, custom);
     }
     let handle = identifier.and_then(|identifier| text(identifier, "handle"))?;
     state
@@ -488,6 +447,32 @@ fn product_to_update(
         .map(str::to_string)
 }
 
+/// The product that owns the metafield of a `UniqueMetafieldValueInput` (`{namespace, key,
+/// value}`; the namespace defaults to the app's), as `customId` finds it.
+pub fn product_by_custom_id(state: &ShopState, custom: &Value) -> Option<String> {
+    let namespace = crate::domains::content::admin_namespace(
+        records::app_id(state),
+        custom
+            .get("namespace")
+            .and_then(Value::as_str)
+            .unwrap_or("$app"),
+    );
+    let key = custom.get("key").and_then(Value::as_str)?;
+    let wanted = custom.get("value").and_then(Value::as_str)?;
+    state.keys("Product").find_map(|product| {
+        let record = state.get(product)?;
+        gids(record.get("metafields"))
+            .iter()
+            .filter_map(|metafield| state.get(metafield))
+            .any(|metafield| {
+                records::field(metafield, "namespace") == Some(namespace.as_str())
+                    && records::field(metafield, "key") == Some(key)
+                    && records::field(metafield, "value") == Some(wanted)
+            })
+            .then(|| product.to_string())
+    })
+}
+
 /// `productUpdate`.
 fn product_update(
     mutation: &mut Mutation<'_>,
@@ -495,13 +480,6 @@ fn product_update(
 ) -> Result<Value, FieldError> {
     let input = product_input(ctx);
     note_ignored(mutation, "productUpdate", &input, ctx);
-    if ctx
-        .arg("identifier")
-        .and_then(|identifier| identifier.get("customId"))
-        .is_some()
-    {
-        mutation.note("productUpdate: lsf does not find a product by `customId` yet");
-    }
     let state = mutation.state();
     let Some(product) = product_to_update(state, ctx, &input) else {
         let error =
@@ -526,17 +504,22 @@ fn product_update(
     }
     let join = collections(state, &input, "collectionsToJoin", &mut errors);
     let leave = collections(state, &input, "collectionsToLeave", &mut errors);
+    let metafields = objects(&input, "metafields");
+    errors.extend(records::check_metafields(
+        state,
+        Some(&product),
+        &metafields,
+        &["metafields"],
+    ));
+    let media_inputs = media::media_arg(ctx);
+    let (media_errors, _) = media::check_media(&media_inputs, &["media"]);
+    errors.extend(media_errors);
     if !errors.is_empty() {
         return Ok(payload(json!({"product": null}), &errors));
     }
 
     let state = mutation.state_mut();
-    let origin = state
-        .shop()
-        .and_then(|shop| shop.get("url"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let origin = records::origin(state);
     let Some(record) = state.get_mut(&product) else {
         return Ok(payload(json!({"product": null}), &[]));
     };
@@ -552,27 +535,13 @@ fn product_update(
         }
         record.insert("onlineStorePreviewUrl".into(), json!(url));
     }
-    let title = record
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let variants = gids(record.get("variants"));
-    if input.contains_key("title") {
-        for variant in &variants {
-            if let Some(variant) = state.get_mut(variant) {
-                let variant_title = variant
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let display = format!("{title} - {variant_title}");
-                variant.insert("displayName".into(), json!(display));
-            }
-        }
+    for input in &media_inputs {
+        media::create_media(state, &product, input);
     }
+    records::set_metafields(state, &product, "PRODUCT", &metafields);
     join_collections(state, &product, &join, &leave);
     state.touch(&product);
-    refresh_product(state, &product);
+    product_changed(state, &product);
     state.emit("products/update", &product);
     Ok(payload(json!({"product": product}), &[]))
 }
@@ -602,6 +571,281 @@ fn product_delete(
         json!({"deletedProductId": id, "productDeleteOperation": null}),
         &[],
     ))
+}
+
+/// `productDuplicate`.
+fn product_duplicate(
+    mutation: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let empty = json!({"newProduct": null, "imageJob": null, "productDuplicateOperation": null});
+    let state = mutation.state();
+    let original = ctx.arg_str("productId").unwrap_or_default().to_string();
+    if !records::is(state, &original, "Product") {
+        let error = UserError::new(&["productId"], "Product does not exist");
+        return Ok(payload(empty, &[error]));
+    }
+    let title = ctx
+        .arg_str("newTitle")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let mut errors = Vec::new();
+    check_title(&title, &mut errors);
+    if !errors.is_empty() {
+        for error in &mut errors {
+            error.field = Some(vec!["newTitle".to_string()]);
+        }
+        return Ok(payload(empty, &errors));
+    }
+    let include_images = ctx.arg_bool("includeImages").unwrap_or(false);
+    if ctx.arg_bool("includeTranslations") == Some(true) {
+        mutation.note("productDuplicate: lsf does not simulate translations: `includeTranslations` was ignored");
+    }
+    let state = mutation.state_mut();
+    let copy = duplicate(
+        state,
+        &original,
+        &title,
+        ctx.arg_str("newStatus"),
+        include_images,
+    );
+    let image_job = include_images.then(|| media::done_job(state, "product_duplicate_images"));
+    if ctx.arg_bool("synchronous") == Some(false) {
+        let operation = state.new_gid("ProductDuplicateOperation");
+        state.insert(value::object(json!({
+            "__typename": "ProductDuplicateOperation",
+            "id": operation,
+            "product": original,
+            "newProduct": copy,
+            "status": "COMPLETE",
+            "userErrors": [],
+        })));
+        return Ok(payload(
+            json!({"newProduct": null, "imageJob": image_job, "productDuplicateOperation": operation}),
+            &[],
+        ));
+    }
+    Ok(payload(
+        json!({"newProduct": copy, "imageJob": image_job, "productDuplicateOperation": null}),
+        &[],
+    ))
+}
+
+/// Copies a product (see the module's documentation). Emits the events of the copy; returns its
+/// GID.
+fn duplicate(
+    state: &mut ShopState,
+    original: &str,
+    title: &str,
+    status: Option<&str>,
+    include_images: bool,
+) -> String {
+    let Some(source) = state.get(original).cloned() else {
+        return String::new();
+    };
+    let now = state.timestamp();
+    let product = state.new_gid("Product");
+    let handle = free_handle(state, title);
+    let origin = records::origin(state);
+    let mut record = source.clone();
+    for (name, value) in [
+        ("id", json!(product)),
+        ("title", json!(title)),
+        ("handle", json!(handle)),
+        ("createdAt", json!(now)),
+        ("updatedAt", json!(now)),
+        ("publishedAt", Value::Null),
+        ("onlineStoreUrl", Value::Null),
+        (
+            "onlineStorePreviewUrl",
+            json!(format!("{origin}/products/{handle}")),
+        ),
+        ("options", json!([])),
+        ("variants", json!([])),
+        ("media", json!([])),
+        ("images", json!([])),
+        ("collections", json!([])),
+        ("sellingPlanGroups", json!([])),
+        ("metafields", json!([])),
+    ] {
+        record.insert(name.into(), value);
+    }
+    if let Some(status) = status {
+        record.insert("status".into(), json!(status));
+    }
+    state.insert(record);
+    // The options and their values, the choices of each variant mapped to the copies.
+    let mut value_map: Vec<(String, String, String)> = Vec::new();
+    let options: Vec<(String, Vec<String>)> = gids(source.get("options"))
+        .iter()
+        .filter_map(|option| {
+            let record = state.get(option)?;
+            let name = records::field(record, "name")?.to_string();
+            let values = gids(record.get("optionValues"))
+                .iter()
+                .filter_map(|value| Some(records::field(state.get(value)?, "name")?.to_string()))
+                .collect();
+            Some((name, values))
+        })
+        .collect();
+    create_options(state, &product, &options);
+    let new_options = variants::options_of(state, &product);
+    for option in &new_options {
+        for (id, name) in &option.values {
+            value_map.push((option.name.clone(), name.clone(), id.clone()));
+        }
+    }
+    if include_images {
+        for medium in gids(source.get("media")) {
+            let Some(record) = state.get(&medium) else {
+                continue;
+            };
+            if records::field(record, "__typename") != Some("MediaImage") {
+                continue;
+            }
+            let url = record
+                .get("image")
+                .and_then(|image| image.get("url"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let alt = record.get("alt").cloned().unwrap_or(Value::Null);
+            let input = value::object(
+                json!({"originalSource": url, "alt": alt, "mediaContentType": "IMAGE"}),
+            );
+            media::create_media(state, &product, &input);
+        }
+    }
+    let mut created = Vec::new();
+    for variant in gids(source.get("variants")) {
+        let Some(record) = state.get(&variant).cloned() else {
+            continue;
+        };
+        let choices: Vec<Choice> = record
+            .get("selectedOptions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|selected| {
+                let option = selected.get("name")?.as_str()?;
+                let name = selected.get("value")?.as_str()?;
+                let option_id = new_options
+                    .iter()
+                    .find(|known| known.name == option)?
+                    .id
+                    .clone();
+                let value = value_map
+                    .iter()
+                    .find(|(known_option, known_name, _)| {
+                        known_option == option && known_name == name
+                    })
+                    .map(|(_, _, id)| id.clone());
+                Some(Choice {
+                    option: option_id,
+                    name: name.to_string(),
+                    value,
+                })
+            })
+            .collect();
+        let item = item_of(state, &variant).and_then(|item| state.get(&item).cloned());
+        let mut input = Map::new();
+        for name in [
+            "price",
+            "compareAtPrice",
+            "inventoryPolicy",
+            "taxable",
+            "showUnitPrice",
+        ] {
+            if let Some(value) = record.get(name).filter(|value| !value.is_null()) {
+                input.insert(name.into(), value.clone());
+            }
+        }
+        if let Some(barcodes) = record.get("barcodes").filter(|value| value.is_array()) {
+            input.insert("barcodes".into(), barcodes.clone());
+        }
+        if let Some(item) = &item {
+            let mut item_input = Map::new();
+            for name in [
+                "sku",
+                "tracked",
+                "requiresShipping",
+                "countryCodeOfOrigin",
+                "provinceCodeOfOrigin",
+                "harmonizedSystemCode",
+            ] {
+                if let Some(value) = item.get(name).filter(|value| !value.is_null()) {
+                    item_input.insert(name.into(), value.clone());
+                }
+            }
+            if let Some(weight) = item.get("measurement").and_then(|m| m.get("weight")) {
+                item_input.insert("measurement".into(), json!({"weight": weight}));
+            }
+            input.insert("inventoryItem".into(), Value::Object(item_input));
+        }
+        // The copy is stocked where the original is, with nothing.
+        let stock: variants::Stock = item
+            .map(|item| gids(item.get("inventoryLevels")))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|level| records::field(state.get(level)?, "location").map(str::to_string))
+            .map(|location| (location, 0))
+            .collect();
+        let copy = variants::insert_variant(state, &product, &choices, &input, &stock);
+        let unit = record.get("unitPriceMeasurement").cloned();
+        if let Some(copy_record) = state.get_mut(&copy)
+            && let Some(unit) = unit
+        {
+            copy_record.insert("unitPriceMeasurement".into(), unit);
+        }
+        created.push(copy);
+    }
+    // Metafields and collections.
+    let metafields: Vec<Map<String, Value>> = gids(source.get("metafields"))
+        .iter()
+        .filter_map(|metafield| state.get(metafield))
+        .map(|metafield| {
+            value::object(json!({
+                "namespace": metafield.get("namespace"),
+                "key": metafield.get("key"),
+                "type": metafield.get("type"),
+                "value": metafield.get("value"),
+            }))
+        })
+        .collect();
+    let metafields: Vec<&Map<String, Value>> = metafields.iter().collect();
+    records::set_metafields(state, &product, "PRODUCT", &metafields);
+    let collections = gids(source.get("collections"));
+    join_collections(state, &product, &collections, &[]);
+    product_changed(state, &product);
+    state.emit("products/create", &product);
+    for variant in &created {
+        emit_new_inventory(state, variant);
+    }
+    product
+}
+
+/// `productChangeStatus` (deprecated: `productUpdate` sets `status`).
+fn product_change_status(
+    mutation: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let product = ctx.arg_str("productId").unwrap_or_default().to_string();
+    if !records::is(mutation.state(), &product, "Product") {
+        // shopify.dev's example.
+        let error =
+            UserError::new(&["productId"], "Product does not exist").code("PRODUCT_NOT_FOUND");
+        return Ok(payload(json!({"product": null}), &[error]));
+    }
+    let status = ctx.arg_str("status").unwrap_or("ACTIVE").to_string();
+    let state = mutation.state_mut();
+    if let Some(record) = state.get_mut(&product) {
+        record.insert("status".into(), json!(status));
+    }
+    state.touch(&product);
+    product_changed(state, &product);
+    state.emit("products/update", &product);
+    Ok(payload(json!({"product": product}), &[]))
 }
 
 /// Removes a product and what is its alone (options, variants, inventory, media, metafields),
