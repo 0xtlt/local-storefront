@@ -66,9 +66,11 @@ const ENTITIES: [&str; 11] = [
 ];
 
 /// The types of the records that are a part of a section of the store data: the shop, the
-/// markets of `localization`, the discounts and the settings of the Functions of `checkout`.
-const SECTIONS: [&str; 8] = [
+/// markets and languages of `localization`, the discounts and the settings of the Functions of
+/// `checkout`.
+const SECTIONS: [&str; 9] = [
     "Market",
+    "ShopLocale",
     "Shop",
     "DiscountAutomaticNode",
     "DiscountCodeNode",
@@ -502,7 +504,7 @@ impl<'s> Sync<'s> {
                 }
                 match type_name {
                     "Shop" => self.shop(&mut shop_patch, &mut removals),
-                    "Market" => markets = true,
+                    "Market" | "ShopLocale" => markets = true,
                     "DiscountAutomaticNode" | "DiscountCodeNode" => discounts = true,
                     owner if FUNCTION_OWNERS.contains(&owner) => {
                         for era in [Era::Now, Era::Seed] {
@@ -2033,26 +2035,33 @@ impl<'s> Sync<'s> {
     }
 
     /// The countries and languages of the data, with the markets as the Admin API has them: those
-    /// declared in the data and those it created, with their countries and metafields. A
-    /// country's market of its own is not declared: what the Admin API changes of it does not
-    /// sync.
+    /// declared in the data and those it created (renamed or not), with their countries and
+    /// metafields; each country in the currency its active region market sells in (its own with
+    /// `localCurrencies`, else the market's base currency); the shop's published locales, the
+    /// primary first. A country's market of its own is not declared: its currency syncs, the
+    /// rest of what the Admin API changes of it does not.
     fn localization(&self) -> Option<model::LocalizationInput> {
         let removed = self.removed_of(&["Market"]);
+        // The markets the seed made of the countries in no market of the data.
+        let own: HashSet<String> = self
+            .store
+            .countries
+            .iter()
+            .filter(|country| self.store.market_of(&country.iso_code).is_none())
+            .map(|country| content::market_gid(&country.iso_code.to_ascii_uppercase()))
+            .collect();
+        let enabled = |record: &Record| {
+            flag(record, "enabled") != Some(false)
+                && text(record, "status").is_none_or(|status| status == "ACTIVE")
+        };
         let markets = |view: &View<'s>| -> Vec<model::MarketInput> {
             view.keys("Market", &removed)
                 .into_iter()
                 .filter_map(|key| Some((key, view.get(key)?)))
                 .filter(|(key, record)| {
-                    let handle = text(record, "handle").unwrap_or_default();
-                    let declared = *key == content::market_gid(handle)
-                        || self
-                            .store
-                            .markets
-                            .iter()
-                            .any(|market| content::market_gid(&market.handle) == *key);
-                    let enabled = flag(record, "enabled") != Some(false)
-                        && text(record, "status").is_none_or(|status| status == "ACTIVE");
-                    declared && enabled
+                    let declared = !own.contains(*key)
+                        && text(record, "type").is_none_or(|kind| kind == "REGION");
+                    declared && enabled(record)
                 })
                 .filter_map(|(key, record)| {
                     Some(model::MarketInput {
@@ -2070,10 +2079,85 @@ impl<'s> Sync<'s> {
                 })
                 .collect()
         };
+        // The currency of each country of an active region market.
+        let currencies = |view: &View<'s>| -> Vec<(String, String)> {
+            let mut currencies: Vec<(String, String)> = Vec::new();
+            for key in view.keys("Market", &removed) {
+                let Some(record) = view.get(key) else {
+                    continue;
+                };
+                if !enabled(record) || text(record, "type").is_some_and(|kind| kind != "REGION") {
+                    continue;
+                }
+                let settings = record.get("currencySettings");
+                let local = settings
+                    .and_then(|settings| settings.get("localCurrencies"))
+                    .and_then(Value::as_bool)
+                    == Some(true);
+                let base = settings
+                    .and_then(|settings| settings.pointer("/baseCurrency/currencyCode"))
+                    .and_then(Value::as_str);
+                for region in record
+                    .get("regions")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let (Some(code), own) = (
+                        region.get("code").and_then(Value::as_str),
+                        region
+                            .pointer("/currency/currencyCode")
+                            .and_then(Value::as_str),
+                    ) else {
+                        continue;
+                    };
+                    let currency = if local { own.or(base) } else { base.or(own) };
+                    if let Some(currency) = currency
+                        && !currencies.iter().any(|(known, _)| known == code)
+                    {
+                        currencies.push((code.to_string(), currency.to_string()));
+                    }
+                }
+            }
+            currencies
+        };
+        // The published locales, the primary first.
+        let removed_locales = self.removed_of(&["ShopLocale"]);
+        let languages = |view: &View<'s>| -> Vec<(String, String)> {
+            let mut locales: Vec<(bool, String, String)> = view
+                .keys("ShopLocale", &removed_locales)
+                .into_iter()
+                .filter_map(|key| view.get(key))
+                .filter(|record| flag(record, "published") != Some(false))
+                .filter_map(|record| {
+                    Some((
+                        flag(record, "primary") != Some(true),
+                        text(record, "locale")?.to_string(),
+                        text(record, "name").unwrap_or_default().to_string(),
+                    ))
+                })
+                .collect();
+            locales.sort_by_key(|(secondary, _, _)| *secondary);
+            locales
+                .into_iter()
+                .map(|(_, locale, name)| (locale, name))
+                .collect()
+        };
         let now = markets(&self.now);
-        if serde_json::to_value(&now).ok() == serde_json::to_value(markets(&self.seed)).ok() {
+        let currencies_now = currencies(&self.now);
+        let languages_now = languages(&self.now);
+        if serde_json::to_value(&now).ok() == serde_json::to_value(markets(&self.seed)).ok()
+            && currencies_now == currencies(&self.seed)
+            && languages_now == languages(&self.seed)
+        {
             return None;
         }
+        let currency_of = |code: &str| {
+            currencies_now
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(code))
+                .map(|(_, currency)| currency.clone())
+        };
         let mut countries: Vec<model::CountryInput> = self
             .store
             .countries
@@ -2081,7 +2165,9 @@ impl<'s> Sync<'s> {
             .map(|country| model::CountryInput {
                 iso_code: country.iso_code.clone(),
                 name: Some(country.name.clone()),
-                currency: Some(country.currency.clone()),
+                currency: Some(
+                    currency_of(&country.iso_code).unwrap_or_else(|| country.currency.clone()),
+                ),
                 unit_system: Some(country.unit_system.clone()),
                 popular: country.popular,
             })
@@ -2095,24 +2181,33 @@ impl<'s> Sync<'s> {
                 countries.push(model::CountryInput {
                     iso_code: code.clone(),
                     name: None,
-                    currency: None,
+                    currency: currency_of(code),
                     unit_system: None,
                     popular: false,
                 });
             }
         }
+        let languages = languages_now
+            .into_iter()
+            .map(|(locale, name)| {
+                let known = self
+                    .store
+                    .languages
+                    .iter()
+                    .find(|language| language.iso_code.eq_ignore_ascii_case(&locale));
+                model::LanguageInput {
+                    name: Some(known.map_or(name, |language| language.name.clone())),
+                    endonym_name: Some(known.map_or_else(
+                        || lsf_core::store::reference::language_endonym(&locale),
+                        |language| language.endonym_name.clone(),
+                    )),
+                    iso_code: known.map_or(locale, |language| language.iso_code.clone()),
+                }
+            })
+            .collect();
         Some(model::LocalizationInput {
             countries,
-            languages: self
-                .store
-                .languages
-                .iter()
-                .map(|language| model::LanguageInput {
-                    iso_code: language.iso_code.clone(),
-                    name: Some(language.name.clone()),
-                    endonym_name: Some(language.endonym_name.clone()),
-                })
-                .collect(),
+            languages,
             markets: now,
         })
     }
