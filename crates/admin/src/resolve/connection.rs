@@ -106,7 +106,16 @@ pub(super) fn page(
     items: Vec<Value>,
     reported: bool,
 ) -> Result<Output<Obj>, FieldError> {
-    let (first, last) = check_arguments(ctx)?;
+    let (first, last) = if resolver.is_bulk() {
+        // A bulk operation pages for the client: every item, whatever the size.
+        let size = |name: &str| {
+            ctx.arg_i64(name)
+                .map(|n| usize::try_from(n.max(0)).unwrap_or(0))
+        };
+        (size("first"), size("last"))
+    } else {
+        check_arguments(ctx)?
+    };
     let schema = ctx.schema();
     let connection_type = ctx.ty().named();
     let node_type = schema.connection_node(connection_type).unwrap_or_default();

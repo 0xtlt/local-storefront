@@ -135,6 +135,28 @@ pub struct ShopState {
     /// record that did not exist), once [`ShopState::track_changes`] turned tracking on: what
     /// the store sync projects, and what it compares with to drop the changes that were undone.
     originals: Option<IndexMap<String, Option<Record>>>,
+    /// The files the shop keeps beside its records, by key: the bytes of a staged upload, the
+    /// result of a bulk operation. Not records: no GraphQL type, no event, no sync.
+    blobs: HashMap<String, Blob>,
+}
+
+/// A file a shop keeps beside its records ([`ShopState::put_blob`]): what a client uploaded to a
+/// staged upload target, or what a bulk operation wrote. Cloning it is cheap, so that copying a
+/// shop (a mutation's snapshot) does not copy the bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Blob {
+    pub bytes: std::sync::Arc<[u8]>,
+    /// The MIME type it was uploaded or written with: `text/jsonl`, `image/png`.
+    pub content_type: String,
+}
+
+impl Blob {
+    pub fn new(bytes: impl Into<Vec<u8>>, content_type: impl Into<String>) -> Blob {
+        Blob {
+            bytes: std::sync::Arc::from(bytes.into()),
+            content_type: content_type.into(),
+        }
+    }
 }
 
 impl ShopState {
@@ -149,7 +171,19 @@ impl ShopState {
             events: Vec::new(),
             emitted: 0,
             originals: None,
+            blobs: HashMap::new(),
         }
+    }
+
+    /// Keeps a file beside the records, under `key` (replacing the one there). A reset forgets
+    /// it, as it forgets what the Admin API changed.
+    pub fn put_blob(&mut self, key: impl Into<String>, blob: Blob) {
+        self.blobs.insert(key.into(), blob);
+    }
+
+    /// The file kept under `key`.
+    pub fn blob(&self, key: &str) -> Option<&Blob> {
+        self.blobs.get(key)
     }
 
     /// A shop seeded from the store data and the app: see [`seed::seed`].
@@ -370,6 +404,15 @@ impl ShopState {
         };
         self.events.push(event);
         &self.events[self.events.len() - 1]
+    }
+
+    /// Records that `topic` happened to something that is not a record of its own (a redeem
+    /// code of a discount): `gid` is its id, and `snapshot` the record its payload is built from.
+    pub fn emit_about(&mut self, topic: &str, gid: &str, snapshot: Record) -> &Event {
+        self.emit(topic, gid);
+        let last = self.events.len() - 1;
+        self.events[last].snapshot = Some(snapshot);
+        &self.events[last]
     }
 
     /// The events not taken yet, in the order they happened.

@@ -156,8 +156,18 @@ pub struct ShopResolver<'a> {
     webhooks: Option<&'a Webhooks>,
     /// The version of the request: `2026-10`.
     api_version: &'a str,
+    /// Where the request reached lsf (`http://127.0.0.1:9292`): the origin of the URLs lsf
+    /// answers that point back at itself (a charge's confirmation page, an upload target).
+    origin: &'a str,
+    /// Whether the request is the query of a bulk operation: its connections take every item
+    /// when they are given neither `first` nor `last`, and no limit of 250.
+    bulk: bool,
     report: RefCell<Report>,
 }
+
+/// The origin lsf's URLs take when the request does not say where it reached lsf (a resolver
+/// run alone): the address `lsf` serves on by default.
+pub const DEFAULT_ORIGIN: &str = "http://127.0.0.1:9292";
 
 impl<'a> ShopResolver<'a> {
     /// A resolver over a shop, with every scope, without webhooks.
@@ -168,8 +178,33 @@ impl<'a> ShopResolver<'a> {
             grant: None,
             webhooks: None,
             api_version: crate::version::ADMIN_2026_10,
+            origin: DEFAULT_ORIGIN,
+            bulk: false,
             report: RefCell::new(Report::default()),
         }
+    }
+
+    /// Says where the request reached lsf: `http://127.0.0.1:9292`.
+    pub fn with_origin(mut self, origin: &'a str) -> ShopResolver<'a> {
+        self.origin = origin;
+        self
+    }
+
+    /// Runs the query of a bulk operation: connections without `first` or `last` take every
+    /// item, and neither is limited to 250 (shopify.dev, "Perform bulk operations").
+    pub fn with_bulk(mut self) -> ShopResolver<'a> {
+        self.bulk = true;
+        self
+    }
+
+    /// Where the request reached lsf: the origin of the URLs that point back at it.
+    pub fn origin(&self) -> &str {
+        self.origin
+    }
+
+    /// Whether this is the query of a bulk operation.
+    pub fn is_bulk(&self) -> bool {
+        self.bulk
     }
 
     /// Checks the fields against what a token grants.
