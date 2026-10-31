@@ -8609,3 +8609,208 @@ fn the_checkout_and_the_admin_api_number_orders_as_one() {
     );
     assert_eq!(next["data"]["orderCreate"]["order"]["name"], "#1007");
 }
+
+/// The storefront's cart and the local checkout fire the webhooks of carts and checkouts, and a
+/// checkout left without an order is an abandoned checkout the backend reads, once the shop's
+/// clock is ten minutes past the buyer's contact.
+#[test]
+fn the_cart_and_the_checkout_fire_their_webhooks_and_abandon() {
+    let (url, received) = webhook_receiver();
+    let state = checkout_server_with(
+        fixture_app(),
+        &[],
+        false,
+        None,
+        Some(super::admin::AdminSettings {
+            app_url: Some(url.clone()),
+            ..Default::default()
+        }),
+    );
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders,read_customers"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    for topic in [
+        "CARTS_CREATE",
+        "CARTS_UPDATE",
+        "CHECKOUTS_CREATE",
+        "CHECKOUTS_UPDATE",
+    ] {
+        let subscribed = admin_query(
+            &state,
+            &format!(
+                r#"mutation {{ webhookSubscriptionCreate(topic: {topic}, webhookSubscription: {{uri: "{url}/webhooks"}}) {{ userErrors {{ message }} }} }}"#
+            ),
+        );
+        assert_eq!(
+            subscribed["data"]["webhookSubscriptionCreate"]["userErrors"],
+            json!([]),
+            "{subscribed}"
+        );
+    }
+    let next = || {
+        let (_, headers, body) = received
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a webhook was delivered");
+        let payload: Json = serde_json::from_slice(&body).unwrap();
+        (headers["x-shopify-topic"].clone(), payload)
+    };
+
+    // Add to cart: the cart is created; a change of it is an update.
+    let tote = variant_id(&state, "TOTE-NAT");
+    let added = post(
+        &state,
+        "/cart/add.js",
+        json!({"id": tote, "quantity": 2}),
+        "abandon",
+    );
+    assert_eq!(added.status, 200, "{}", text(&added));
+    let (topic, cart) = next();
+    assert_eq!(topic, "carts/create");
+    assert_eq!(cart["line_items"][0]["variant_id"], tote);
+    assert_eq!(cart["line_items"][0]["quantity"], 2);
+    let token = cart["token"].as_str().unwrap().to_string();
+    assert_eq!(
+        body_json(&get(&state, "/cart.js", "abandon"))["token"],
+        json!(token)
+    );
+    post(
+        &state,
+        "/cart/change.js",
+        json!({"line": 1, "quantity": 3}),
+        "abandon",
+    );
+    let (topic, cart) = next();
+    assert_eq!(topic, "carts/update");
+    assert_eq!(cart["line_items"][0]["quantity"], 3);
+
+    // The checkout's steps: created when it opens, updated when the buyer fills it in.
+    let reply = get(&state, "/checkout", "abandon");
+    assert_eq!(reply.status, 302);
+    let path = header(&reply, "location").unwrap().to_string();
+    assert_eq!(get(&state, &path, "abandon").status, 200);
+    let (topic, checkout) = next();
+    assert_eq!(topic, "checkouts/create");
+    assert_eq!(checkout["cart_token"], json!(token));
+    assert_eq!(checkout["line_items"][0]["quantity"], 3);
+    assert_eq!(checkout["email"], Json::Null);
+    let reply = operations(
+        &state,
+        &path,
+        "abandon",
+        json!([{"type": "email", "value": "jane.doe@example.com"}]),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let (topic, checkout) = next();
+    assert_eq!(topic, "checkouts/update");
+    assert_eq!(checkout["email"], "jane.doe@example.com");
+    assert_eq!(checkout["customer"]["email"], "jane.doe@example.com");
+    // Reading it again changes nothing: no webhook.
+    assert_eq!(get(&state, &format!("{path}.json"), "abandon").status, 200);
+
+    // No order: not abandoned yet, then abandoned once the clock is ten minutes on.
+    let abandoned = |state: &ServerState| {
+        admin_query(
+            state,
+            r#"{ abandonedCheckouts(first: 5) { nodes { id completedAt customer { email }
+                lineItems(first: 5) { nodes { quantity } } } } abandonedCheckoutsCount { count } }"#,
+        )
+    };
+    assert_eq!(
+        abandoned(&state)["data"]["abandonedCheckoutsCount"]["count"],
+        0
+    );
+    let moved = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/clock",
+        r#"{"advance": "11m"}"#,
+    );
+    assert_eq!(moved.status, 200, "{}", text(&moved));
+    let answer = abandoned(&state);
+    assert_eq!(
+        answer["data"]["abandonedCheckoutsCount"]["count"], 1,
+        "{answer}"
+    );
+    let node = &answer["data"]["abandonedCheckouts"]["nodes"][0];
+    assert_eq!(node["customer"]["email"], "jane.doe@example.com");
+    assert_eq!(node["lineItems"]["nodes"][0]["quantity"], 3);
+    let abandonment = admin_query(
+        &state,
+        &format!(
+            r#"{{ abandonmentByAbandonedCheckoutId(abandonedCheckoutId: "{}") {{ abandonmentType customer {{ email }} customerHasNoOrderSinceAbandonment }} }}"#,
+            node["id"].as_str().unwrap()
+        ),
+    );
+    assert_eq!(
+        abandonment["data"]["abandonmentByAbandonedCheckoutId"],
+        json!({"abandonmentType": "CHECKOUT", "customer": {"email": "jane.doe@example.com"}, "customerHasNoOrderSinceAbandonment": true})
+    );
+    assert!(received.try_recv().is_err(), "no other webhook");
+    // The status lists the mutations of the area, and each shop's outbox.
+    let status = body_json(&admin_request(&state, "GET", "/__lsf/admin", ""));
+    let mutations: Vec<&str> = status["mutations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Json::as_str)
+        .collect();
+    for mutation in [
+        "abandonmentUpdateActivitiesDeliveryStatuses",
+        "customerMerge",
+        "customerSegmentMembersQueryCreate",
+        "marketingActivityUpsertExternal",
+        "segmentCreate",
+        "shopifyqlQuery",
+    ] {
+        assert_eq!(
+            mutations.contains(&mutation),
+            mutation != "shopifyqlQuery",
+            "{mutation}"
+        );
+    }
+    assert!(status["shops"][0]["outbox"].is_array(), "{status}");
+}
+
+/// An order placed at the checkout completes its checkout: `checkouts/update` with
+/// `completed_at`, and a checkout completed before it was abandoned is not listed.
+#[test]
+fn placing_the_order_completes_the_checkout() {
+    let state = checkout_server_with(fixture_app(), &[], false, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "read_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    let path = start_checkout(
+        &state,
+        "completed",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(&state, &path, "completed", buyer_details()).status,
+        200
+    );
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "completed");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let admin = state.admin.as_ref().unwrap();
+    let completed = admin
+        .api
+        .with_default_shop(|shop| {
+            shop.all("AbandonedCheckout")
+                .map(|checkout| checkout["completedAt"].clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(completed.len(), 1);
+    assert!(completed[0].is_string(), "{completed:?}");
+    admin_request(&state, "POST", "/__lsf/admin/clock", r#"{"advance": "1h"}"#);
+    let answer = admin_query(&state, "{ abandonedCheckoutsCount { count } }");
+    assert_eq!(answer["data"]["abandonedCheckoutsCount"]["count"], 0);
+}

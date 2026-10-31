@@ -279,8 +279,8 @@ fn what_cannot_be_sent_is_refused_with_why() {
         "is not one lsf builds webhooks for: lsf knows 2026-10",
     );
     refuse(
-        &[&base[..], &["--topic", "carts/create"]].concat(),
-        "does not build the payload of `carts/create`",
+        &[&base[..], &["--topic", "channels/delete"]].concat(),
+        "does not build the payload of `channels/delete`",
     );
     refuse(
         &[

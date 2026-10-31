@@ -517,3 +517,148 @@ fn saved_searches_are_kept_by_resource_and_filter_connections() {
     );
     assert_eq!(topics(&mut shop), ["customer_groups/delete"]);
 }
+
+/// On the demo store, the root fields of segments, marketing, analytics, privacy, merges and
+/// abandoned checkouts answer their fields from what lsf keeps or computes: none is a default.
+#[test]
+fn the_queries_of_the_area_answer_without_defaults() {
+    let mut shop = demo();
+    let jane = customer(&shop, "jane.doe@example.com");
+    let camille = customer(&shop, "camille.martin@example.com");
+    run(
+        &mut shop,
+        CREATE,
+        json!({"name": "Buyers", "query": "number_of_orders >= 1"}),
+    );
+    let segment = shop.keys("Segment").next().unwrap().to_string();
+    run(
+        &mut shop,
+        "mutation { savedSearchCreate(input: {name: \"VIP\", query: \"tag:vip\", resourceType: CUSTOMER}) { userErrors { message } } }",
+        json!({}),
+    );
+    let query = run(
+        &mut shop,
+        "mutation { customerSegmentMembersQueryCreate(input: {query: \"number_of_orders = 0\"}) { customerSegmentMembersQuery { id } } }",
+        json!({}),
+    );
+    let members_query =
+        data(&query, "customerSegmentMembersQueryCreate")["customerSegmentMembersQuery"]["id"]
+            .clone();
+    run(
+        &mut shop,
+        "mutation { marketingActivityUpsertExternal(input: {remoteId: \"ad-1\", title: \"Ad\", remoteUrl: \"https://ads.example.com\",
+            tactic: AD, marketingChannelType: SOCIAL, status: ACTIVE, utm: {campaign: \"c\", medium: \"m\", source: \"s\"},
+            budget: {budgetType: DAILY, total: {amount: \"5\", currencyCode: USD}}, adSpend: {amount: \"1\", currencyCode: USD}}) { userErrors { message } } }",
+        json!({}),
+    );
+    let activity = shop.keys("MarketingActivity").next().unwrap().to_string();
+    let event = shop.keys("MarketingEvent").next().unwrap().to_string();
+    run(
+        &mut shop,
+        "mutation { analyticsTargetCreate(input: {name: \"Q4\", metric: \"orders\", expectedValue: \"10\", startDate: \"2026-10-01\", endDate: \"2026-12-31\"}) { userErrors { message } }
+            analyticsAnnotationCreate(input: {type: \"campaign\", title: \"Launch\", startedAt: \"2026-10-01T00:00:00Z\"}) { userErrors { message } } }",
+        json!({}),
+    );
+    let new = customer(&shop, "new.customer@example.com");
+    let merged = run(
+        &mut shop,
+        "mutation($one: ID!, $two: ID!) { customerMerge(customerOneId: $one, customerTwoId: $two) { job { id } } }",
+        json!({"one": new, "two": camille}),
+    );
+    let job = data(&merged, "customerMerge")["job"]["id"].clone();
+    // An abandoned checkout of Jane's.
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let product = shop.get(&variant).unwrap()["product"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let result = lsf_checkout::CheckoutResult {
+        lines: vec![lsf_checkout::ResultLine {
+            variant_id: crate::state::parse_gid(&variant).unwrap().1,
+            product_id: crate::state::parse_gid(&product).unwrap().1,
+            title: "Line".into(),
+            quantity: 1,
+            unit_price: 1000,
+            subtotal: 1000,
+            total: 1000,
+            ..Default::default()
+        }],
+        cost: lsf_checkout::Cost {
+            subtotal: 1000,
+            total: 1000,
+            currency_code: "USD".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let checkout = crate::domains::checkouts::record_checkout(
+        &mut shop,
+        &crate::domains::checkouts::Checkout {
+            cart_token: "c1",
+            generation: 0,
+            result: &result,
+            customer_id: None,
+            email: Some("jane.doe@example.com"),
+            phone: None,
+            shipping_address: None,
+            note: "",
+            attributes: &[],
+            payment: None,
+            locale: Some("en"),
+        },
+    )
+    .unwrap();
+    let later = shop.now() + chrono::Duration::minutes(11);
+    shop.set_clock(Clock::Frozen(later));
+    let abandonment = shop.get(&checkout).unwrap()["lsfAbandonment"].clone();
+
+    let answer = run(
+        &mut shop,
+        "query($segment: ID!, $customer: ID!, $query: ID!, $activity: ID!, $event: ID!, $abandonment: ID!, $checkout: ID!, $job: ID!, $other: ID!) {
+          segments(first: 5) { nodes { id name query creationDate lastEditDate } }
+          segment(id: $segment) { id name query }
+          segmentsCount { count precision }
+          customerSegmentMembers(first: 5, segmentId: $segment) { totalCount statistics { attributeStatistics(attributeName: \"amount_spent\") { average sum } }
+            nodes: edges { node { id displayName firstName lastName amountSpent { amount } numberOfOrders lastOrderId note
+              defaultEmailAddress { emailAddress marketingState } mergeable { isMergeable errorFields reason } } } }
+          customerSegmentMembership(customerId: $customer, segmentIds: [$segment]) { memberships { segmentId isMember } }
+          customerSegmentMembersQuery(id: $query) { id currentCount done }
+          segmentFilters(first: 5) { nodes { localizedName queryName multiValue } }
+          segmentFilterSuggestions(first: 5, search: \"order\") { nodes { localizedName queryName } }
+          segmentValueSuggestions(first: 5, search: \"\", filterQueryName: \"customer_countries\") { nodes { localizedValue queryName } }
+          segmentMigrations(first: 5) { nodes { id savedSearchId segmentId } }
+          customerSavedSearches(first: 5) { nodes { id name query resourceType searchTerms filters { key value } legacyResourceId } }
+          marketingActivities(first: 5) { nodes { id title status statusLabel statusBadgeTypeV2 tactic marketingChannelType sourceAndMedium
+            isExternal inMainWorkflowVersion createdAt updatedAt app { id } budget { budgetType total { amount } } adSpend { amount }
+            utmParameters { campaign medium source } hierarchyLevel parentActivityId urlParameterValue } }
+          marketingActivity(id: $activity) { id title marketingEvent { id } }
+          marketingEvent(id: $event) { id type remoteId startedAt manageUrl utmCampaign utmMedium utmSource sourceAndMedium marketingChannelType app { id } description }
+          marketingEvents(first: 5) { nodes { id type } }
+          abandonedCheckouts(first: 5) { nodes { id name abandonedCheckoutUrl createdAt updatedAt completedAt note taxesIncluded discountCodes
+            customAttributes { key value } customer { id } subtotalPriceSet { shopMoney { amount } } totalPriceSet { shopMoney { amount } }
+            totalLineItemsPriceSet { shopMoney { amount } } totalDiscountSet { shopMoney { amount } } totalTaxSet { shopMoney { amount } }
+            lineItems(first: 5) { nodes { id title quantity sku product { id } variant { id } originalUnitPriceSet { shopMoney { amount } }
+              originalTotalPriceSet { shopMoney { amount } } discountedTotalPriceSet { shopMoney { amount } } customAttributes { key } } } } }
+          abandonedCheckoutsCount { count }
+          abandonment(id: $abandonment) { id abandonmentType mostRecentStep createdAt customer { id } app { id } emailState emailSentAt
+            customerHasNoOrderSinceAbandonment customerHasNoDraftOrderSinceAbandonment daysSinceLastAbandonmentEmail
+            hoursSinceLastAbandonedCheckout inventoryAvailable isFromOnlineStore isFromShopApp isFromShopPay isFromCustomStorefront
+            isMostSignificantAbandonment lastBrowseAbandonmentDate lastCartAbandonmentDate lastCheckoutAbandonmentDate
+            abandonedCheckoutPayload { id } productsAddedToCart(first: 5) { nodes { quantity product { id } } } }
+          abandonmentByAbandonedCheckoutId(abandonedCheckoutId: $checkout) { id }
+          customerMergePreview(customerOneId: $other, customerTwoId: $customer) { resultingCustomerId customerMergeErrors { message } }
+          customerMergeJobStatus(jobId: $job) { jobId status resultingCustomerId customerMergeErrors { message } }
+          analyticsTargets(first: 5) { nodes { id name metric expectedValue currencyCode startDate endDate filters shopifyqlQuery createdAt updatedAt } }
+          shop { analyticsAnnotations(first: 5) { nodes { id type title startedAt endedAt description source createdAt updatedAt createdByApp { id } } } }
+          shopifyqlQuery(query: \"FROM sales SHOW total_sales, orders TIMESERIES month SINCE -3m\") { parseErrors parseWarnings analyticsTargets { id }
+            tableData { columns { name dataType displayName columnOrigin } rows rowMetadata { rawResourceIds } } }
+          consentPolicy { id } consentPolicyRegions { countryCode }
+          privacySettings { banner { enabled autoManaged } dataSaleOptOutPage { autoManaged } privacyPolicy { autoManaged supportedLocales } }
+        }",
+        json!({"segment": segment, "customer": jane, "query": members_query, "activity": activity, "event": event,
+            "abandonment": abandonment, "checkout": checkout, "job": job, "other": camille}),
+    );
+    assert!(answer.get("errors").is_none(), "{answer}");
+    assert_eq!(answer["extensions"].get("lsf"), None, "{answer}");
+    assert_eq!(answer["data"]["abandonedCheckoutsCount"]["count"], 1);
+}
