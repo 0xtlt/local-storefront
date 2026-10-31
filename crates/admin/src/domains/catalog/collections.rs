@@ -24,9 +24,10 @@
 //!   `collectionReorderProducts` (asynchronous on Shopify: lsf's job is already done) work on
 //!   custom collections only ("Can't manually remove products from a smart collection",
 //!   "Can't reorder products unless collection is manually sorted", the reference's examples).
-//! - The new collection model of 2026-10 (`collection.sources`, `sourcesToCreate`, …) is not
-//!   simulated yet: a collection created with `collection` and no sources is a custom
-//!   collection; sources are ignored, and said in `extensions.lsf.notes`.
+//! - The collection model of 2026-10 (`collection.sources`, `sourcesToCreate`,
+//!   `sourcesToUpdate`, `sourcesToDelete`): a collection made of sources is the union of their
+//!   members ([`super::collection_sources`]), kept as a smart collection's are; a collection
+//!   created with `collection` and no sources is a custom collection.
 //! - Events: `collections/create`, `collections/update` (also when its products change),
 //!   `collections/delete`.
 //!
@@ -35,6 +36,7 @@
 
 use serde_json::{Map, Value, json};
 
+use super::collection_sources as sources;
 use super::media::done_job;
 use super::records::{
     self, arg_objects, coded, field, input, is, link_collection, objects, origin, text,
@@ -73,6 +75,18 @@ fn has_product(
 /// Whether a collection is a smart one (it has a rule set).
 pub fn is_smart(record: &Record) -> bool {
     record.get("ruleSet").is_some_and(|rules| !rules.is_null())
+        || super::collection_sources::has_sources(record)
+}
+
+/// Whether a product is a member of a smart collection: of its sources (the 2026-10 model), else
+/// of its rule set.
+fn computed_member(state: &ShopState, collection: &Record, product: &Record) -> bool {
+    if super::collection_sources::has_sources(collection) {
+        return super::collection_sources::member(state, collection, product);
+    }
+    collection
+        .get("ruleSet")
+        .is_some_and(|rule_set| matches(state, product, rule_set))
 }
 
 /// The columns lsf evaluates.
@@ -258,40 +272,62 @@ pub fn apply_rules(state: &mut ShopState, product: &str) {
     let Some(record) = state.get(product).cloned() else {
         return;
     };
-    let smart: Vec<(String, bool)> = state
-        .keys("Collection")
-        .filter_map(|collection| {
-            let collection_record = state.get(collection)?;
-            is_smart(collection_record).then(|| {
-                let rule_set = collection_record
-                    .get("ruleSet")
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                (collection.to_string(), matches(state, &record, &rule_set))
+    // The collections whose sources read other collections follow them: they come second.
+    for following in [false, true] {
+        let smart: Vec<(String, bool)> = state
+            .keys("Collection")
+            .filter_map(|collection| {
+                let collection_record = state.get(collection)?;
+                (is_smart(collection_record)
+                    && super::collection_sources::reads_collections(state, collection_record)
+                        == following)
+                    .then(|| {
+                        (
+                            collection.to_string(),
+                            computed_member(state, collection_record, &record),
+                        )
+                    })
             })
-        })
-        .collect();
-    for (collection, member) in smart {
-        if link_collection(state, &collection, product, member) {
-            sort_smart(state, &collection);
+            .collect();
+        for (collection, member) in smart {
+            if link_collection(state, &collection, product, member) {
+                sort_smart(state, &collection);
+            }
         }
     }
 }
 
-/// Every product of the shop matched against a smart collection's rules again.
-fn evaluate(state: &mut ShopState, collection: &str) {
-    let Some(rule_set) = state
+/// Matches every product against a smart collection again, with `collections/update` when its
+/// products changed: what a change of a source it links does.
+pub fn reevaluate(state: &mut ShopState, collection: &str) {
+    let before = state
         .get(collection)
-        .and_then(|record| record.get("ruleSet"))
-        .cloned()
-    else {
+        .map(|record| gids(record.get("products")));
+    evaluate(state, collection);
+    let after = state
+        .get(collection)
+        .map(|record| gids(record.get("products")));
+    if before != after {
+        state.touch(collection);
+        state.emit("collections/update", collection);
+    }
+}
+
+/// Every product of the shop matched against a smart collection's rules again.
+pub(super) fn evaluate(state: &mut ShopState, collection: &str) {
+    let Some(record) = state.get(collection).cloned() else {
         return;
     };
+    // A collection whose last source went has no member: its membership is the union of none.
+    let sourceless = record.get("sources") == Some(&json!([])) && !is_smart(&record);
+    if !is_smart(&record) && !sourceless {
+        return;
+    }
     let products: Vec<String> = state.keys("Product").map(str::to_string).collect();
     for product in products {
         let member = state
             .get(&product)
-            .is_some_and(|record| matches(state, record, &rule_set));
+            .is_some_and(|product| computed_member(state, &record, product));
         link_collection(state, collection, &product, member);
     }
     sort_smart(state, collection);
@@ -441,14 +477,7 @@ fn collection_input(ctx: &FieldContext<'_>) -> (Map<String, Value>, bool) {
 
 /// Notes the inputs of a collection mutation lsf does not simulate.
 fn note_ignored(mutation: &mut Mutation<'_>, name: &str, input: &Map<String, Value>) {
-    for field in [
-        "sources",
-        "sourcesToCreate",
-        "sourcesToUpdate",
-        "sourcesToDelete",
-        "publications",
-        "redirectNewHandle",
-    ] {
+    for field in ["publications", "redirectNewHandle"] {
         if input
             .get(field)
             .is_some_and(|value| !value.is_null() && value != &json!([]) && value != &json!(false))
@@ -535,6 +564,17 @@ fn collection_create(
     check_title(text(&input, "title"), true, &mut errors);
     let rule_set = rule_set_of(&input, &mut errors);
     let state = mutation.state();
+    let sources = objects(&input, "sources");
+    sources::check_targets(state, &sources, "sources", None, &mut errors);
+    if sources.len() > sources::MAX_SOURCES {
+        errors.push(UserError::new(
+            &["sources"],
+            format!(
+                "A collection can have at most {} sources",
+                sources::MAX_SOURCES
+            ),
+        ));
+    }
     let products = gids(input.get("products"));
     for (index, product) in products.iter().enumerate() {
         if !is(state, product, "Product") {
@@ -557,6 +597,7 @@ fn collection_create(
         return Ok(payload(json!({"collection": null}), &errors));
     }
     note_rules(mutation, "collectionCreate", rule_set.as_ref());
+    sources::note_inputs(mutation, "collectionCreate", &json!(sources));
     if rule_set.is_some() && !products.is_empty() {
         mutation.note("collectionCreate: a smart collection's products are those its rules match: `products` was ignored");
     }
@@ -583,7 +624,13 @@ fn collection_create(
         "metafields": [],
     })));
     apply_fields(state, &id, &input);
-    if rule_set.is_some() {
+    let linked = sources::create_targets(state, &id, &sources);
+    if !linked.is_empty()
+        && let Some(record) = state.get_mut(&id)
+    {
+        record.insert("sources".into(), json!(linked));
+    }
+    if rule_set.is_some() || !linked.is_empty() {
         evaluate(state, &id);
     } else {
         for product in &products {
@@ -612,6 +659,7 @@ fn collection_update(
     let mut errors = Vec::new();
     check_title(text(&input, "title"), false, &mut errors);
     let rule_set = rule_set_of(&input, &mut errors);
+    sources::check_update(state, &id, &input, &mut errors);
     if rule_set.is_some() && !smart {
         // shopify.dev's example.
         errors.push(UserError::new(
@@ -641,8 +689,14 @@ fn collection_update(
         mutation.note("collectionUpdate: `products` is for collectionCreate (use collectionAddProducts): it was ignored");
     }
     note_rules(mutation, "collectionUpdate", rule_set.as_ref());
+    for field in ["sourcesToCreate", "sourcesToUpdate"] {
+        if let Some(value) = input.get(field) {
+            sources::note_inputs(mutation, "collectionUpdate", value);
+        }
+    }
     let state = mutation.state_mut();
     apply_fields(state, &id, &input);
+    let resourced = sources::apply_update(state, &id, &input);
     if let Some(handle) = handle
         && let Some(record) = state.get_mut(&id)
     {
@@ -653,6 +707,9 @@ fn collection_update(
         if let Some(record) = state.get_mut(&id) {
             record.insert("ruleSet".into(), rule_set);
         }
+        evaluate(state, &id);
+        Some(done_job(state, "collection_update"))
+    } else if resourced {
         evaluate(state, &id);
         Some(done_job(state, "collection_update"))
     } else {
@@ -721,6 +778,7 @@ pub fn delete_collection(state: &mut ShopState, collection: &str) {
     for metafield in gids(record.get("metafields")) {
         state.remove(&metafield);
     }
+    sources::delete_owned(state, collection);
     state.delete(collection, "collections/delete");
 }
 
