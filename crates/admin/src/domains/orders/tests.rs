@@ -1102,3 +1102,182 @@ fn an_order_edit_adds_removes_and_discounts_line_items() {
         json!([{"field": ["quantity"], "message": "Quantity cannot be less than the quantity that was fulfilled"}])
     );
 }
+
+const DRAFT_FIELDS: &str = "id name status email note2 tags invoiceSentAt completedAt order { id name displayFinancialStatus }
+    lineItems(first: 5) { nodes { title quantity custom sku originalUnitPriceSet { shopMoney { amount } }
+      discountedTotalSet { shopMoney { amount } } appliedDiscount { valueType value amountSet { shopMoney { amount } } } } }
+    lineItemsSubtotalPrice { shopMoney { amount } } subtotalPriceSet { shopMoney { amount } }
+    totalDiscountsSet { shopMoney { amount } } totalShippingPriceSet { shopMoney { amount } }
+    totalTaxSet { shopMoney { amount } } totalPriceSet { shopMoney { amount } } totalQuantityOfLineItems
+    taxLines { title rate priceSet { shopMoney { amount } } } shippingLine { title custom }";
+
+#[test]
+fn draft_orders_are_created_calculated_updated_and_completed() {
+    let mut shop = demo();
+    shop.set_setting(super::TAX_RATE_SETTING, json!(2000));
+    let (variant, item) = first_variant(&shop);
+    let price = crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    let input = json!({
+        "lineItems": [
+            {"variantId": variant, "quantity": 2},
+            {"title": "Gift wrap", "quantity": 1, "originalUnitPriceWithCurrency": {"amount": "10.00", "currencyCode": "EUR"},
+             "appliedDiscount": {"valueType": "PERCENTAGE", "value": 50.0, "title": "Half"}, "taxable": false},
+        ],
+        "purchasingEntity": {"customerId": customer},
+        "appliedDiscount": {"valueType": "FIXED_AMOUNT", "value": 1.0, "amountWithCurrency": {"amount": "1.00", "currencyCode": "EUR"}},
+        "shippingLine": {"title": "Express", "priceWithCurrency": {"amount": "7.50", "currencyCode": "EUR"}},
+        "note": "Call first",
+        "tags": ["wholesale"],
+    });
+    let calculated = run(
+        &mut shop,
+        "mutation($input: DraftOrderInput!) { draftOrderCalculate(input: $input) { calculatedDraftOrder {
+            subtotalPriceSet { shopMoney { amount } } totalTaxSet { shopMoney { amount } } totalPriceSet { shopMoney { amount } }
+            lineItems { title quantity } } userErrors { field message } } }",
+        json!({"input": input}),
+    );
+    let calculation = &calculated["data"]["draftOrderCalculate"]["calculatedDraftOrder"];
+    assert_eq!(calculated["data"]["draftOrderCalculate"]["userErrors"], json!([]), "{calculated}");
+    assert!(shop.take_events().is_empty());
+    let created = run(
+        &mut shop,
+        &format!("mutation($input: DraftOrderInput!) {{ draftOrderCreate(input: $input) {{ draftOrder {{ {DRAFT_FIELDS} }} userErrors {{ field message }} }} }}"),
+        json!({"input": input}),
+    );
+    let draft = created["data"]["draftOrderCreate"]["draftOrder"].clone();
+    assert_eq!(created["data"]["draftOrderCreate"]["userErrors"], json!([]), "{created}");
+    assert_eq!(draft["name"], json!("#D1"));
+    assert_eq!(draft["status"], json!("OPEN"));
+    assert_eq!(draft["note2"], json!("Call first"));
+    assert_eq!(draft["email"], shop.get(&customer).unwrap()["email"]);
+    assert_eq!(draft["lineItems"]["nodes"][1]["custom"], json!(true));
+    assert_eq!(
+        draft["lineItems"]["nodes"][1]["discountedTotalSet"]["shopMoney"]["amount"],
+        json!("5.0")
+    );
+    // Lines 2 × price + 5.00, less 1.00; tax 20 % of the taxable part; shipping 7.50.
+    let subtotal = 2 * price + 500 - 100;
+    let taxable = 2 * price - 100 * (2 * price) / (2 * price + 500);
+    let tax = (taxable as f64 * 0.2).round() as i64;
+    let decimal = crate::state::value::decimal;
+    assert_eq!(amount(&draft["subtotalPriceSet"]), decimal(subtotal));
+    assert_eq!(amount(&draft["totalTaxSet"]), decimal(tax));
+    assert_eq!(amount(&draft["totalPriceSet"]), decimal(subtotal + 750 + tax));
+    assert_eq!(draft["taxLines"][0]["rate"], json!(0.2));
+    assert_eq!(calculation["totalPriceSet"], draft["totalPriceSet"]);
+    assert_eq!(calculation["lineItems"][0]["quantity"], json!(2));
+    assert_eq!(draft["shippingLine"], json!({"title": "Express", "custom": true}));
+    let id = draft["id"].as_str().unwrap().to_string();
+    assert_eq!(events(&mut shop), [("draft_orders/create".to_string(), id.clone())]);
+
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderUpdate(id: $id, input: {note: \"Leave at the door\", email: \"buyer@example.com\"}) { draftOrder { note2 email totalPriceSet { shopMoney { amount } } } userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        updated["data"]["draftOrderUpdate"]["draftOrder"],
+        json!({"note2": "Leave at the door", "email": "buyer@example.com", "totalPriceSet": draft["totalPriceSet"]})
+    );
+    let sent = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderInvoiceSend(id: $id) { draftOrder { status invoiceSentAt } userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(sent["data"]["draftOrderInvoiceSend"]["draftOrder"]["status"], json!("INVOICE_SENT"));
+    let copy = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderDuplicate(id: $id) { draftOrder { id name status totalPriceSet { shopMoney { amount } } } userErrors { message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(copy["data"]["draftOrderDuplicate"]["draftOrder"]["name"], json!("#D2"));
+    assert_eq!(copy["data"]["draftOrderDuplicate"]["draftOrder"]["status"], json!("OPEN"));
+    assert_eq!(copy["data"]["draftOrderDuplicate"]["draftOrder"]["totalPriceSet"], draft["totalPriceSet"]);
+    assert_eq!(
+        topics(&mut shop),
+        ["draft_orders/update", "draft_orders/update", "draft_orders/create"]
+    );
+
+    let available_before = available(&shop, &item);
+    let completed = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { status completedAt order { id name displayFinancialStatus sourceName
+            totalPriceSet { shopMoney { amount } } tags } } userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    let done = &completed["data"]["draftOrderComplete"]["draftOrder"];
+    assert_eq!(completed["data"]["draftOrderComplete"]["userErrors"], json!([]), "{completed}");
+    assert_eq!(done["status"], json!("COMPLETED"));
+    assert_eq!(done["order"]["name"], json!("#1004"));
+    assert_eq!(done["order"]["displayFinancialStatus"], json!("PAID"));
+    assert_eq!(done["order"]["sourceName"], json!("shopify_draft_order"));
+    assert_eq!(done["order"]["totalPriceSet"], draft["totalPriceSet"]);
+    assert_eq!(done["order"]["tags"], json!(["wholesale"]));
+    if line_is_tracked(&shop, &item) {
+        assert_eq!(available(&shop, &item), available_before - 2);
+    }
+    let fired = topics(&mut shop);
+    assert_eq!(fired[0], "orders/create");
+    assert_eq!(fired[1], "order_transactions/create");
+    assert_eq!(&fired[fired.len() - 2..], ["orders/paid", "draft_orders/update"]);
+    let again = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id } userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        again["data"]["draftOrderComplete"]["userErrors"],
+        json!([{"field": null, "message": "This draft order has already been completed"}])
+    );
+}
+
+#[test]
+fn draft_orders_answer_shopifys_errors_and_are_deleted() {
+    let mut shop = demo();
+    let empty = run(
+        &mut shop,
+        "mutation { draftOrderCreate(input: {note: \"x\"}) { draftOrder { id } userErrors { field message } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        empty["data"]["draftOrderCreate"],
+        json!({"draftOrder": null, "userErrors": [{"field": null, "message": "Add at least 1 product"}]})
+    );
+    let missing = run(
+        &mut shop,
+        "mutation { draftOrderUpdate(id: \"gid://shopify/DraftOrder/1\", input: {note: \"x\"}) { draftOrder { id } userErrors { field message } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        missing["data"]["draftOrderUpdate"],
+        json!({"draftOrder": null, "userErrors": [{"field": null, "message": "Draft order not found"}]})
+    );
+    let custom = run(
+        &mut shop,
+        "mutation { draftOrderCreate(input: {lineItems: [{title: \"Service\", quantity: 1, originalUnitPriceWithCurrency: {amount: \"30\", currencyCode: EUR}}]}) { draftOrder { id } userErrors { message } } }",
+        Value::Null,
+    );
+    let id = custom["data"]["draftOrderCreate"]["draftOrder"]["id"].clone();
+    let no_email = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderInvoiceSend(id: $id) { draftOrder { id status } userErrors { field message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        no_email["data"]["draftOrderInvoiceSend"],
+        json!({"draftOrder": {"id": id, "status": "OPEN"}, "userErrors": [{"field": null, "message": "To is invalid"}]})
+    );
+    events(&mut shop);
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { draftOrderDelete(input: {id: $id}) { deletedId userErrors { message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(deleted["data"]["draftOrderDelete"], json!({"deletedId": id, "userErrors": []}));
+    let fired = shop.take_events();
+    assert_eq!(fired.len(), 1);
+    assert_eq!(fired[0].topic, "draft_orders/delete");
+    assert!(fired[0].snapshot.is_some());
+    assert_eq!(shop.count("DraftOrderLineItem"), 0);
+}
