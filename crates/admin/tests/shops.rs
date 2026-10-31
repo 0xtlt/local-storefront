@@ -232,7 +232,12 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
         .collect();
     assert_eq!(
         topics,
-        ["orders/create", "order_transactions/create", "orders/paid"]
+        [
+            "orders/create",
+            "order_transactions/create",
+            "tender_transactions/create",
+            "orders/paid"
+        ]
     );
 
     // An id or a number that is taken gets a new one: no two orders share a name.

@@ -1,0 +1,324 @@
+//! The money of an order end to end, through `AdminApi::handle`: a B2B draft order with net 30
+//! payment terms becomes an order with a payment schedule, which comes due when the shop's
+//! clock passes it and is paid by a manual payment; a store credit account pays an order. Each
+//! change is delivered as Shopify delivers it, signed, to a listener of the test.
+
+mod support;
+
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
+use std::sync::mpsc;
+use std::time::Duration;
+
+use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
+use lsf_admin::auth::signing::verify_webhook_hmac;
+use lsf_admin::webhooks::DeliveryOptions;
+use serde_json::{Value, json};
+
+const SECRET: &str = "test-secret";
+const GRAPHQL: &str = "/admin/api/2026-10/graphql.json";
+
+fn api() -> AdminApi {
+    AdminApi::new(
+        &support::demo_store(),
+        AdminOptions {
+            app: None,
+            client_secret: SECRET.to_string(),
+            app_url: None,
+            throttle: ThrottleSetting::Store,
+            delivery: DeliveryOptions {
+                timeout: Duration::from_secs(3),
+                retry_delays: Vec::new(),
+                ..DeliveryOptions::default()
+            },
+            token_seed: Some(7),
+        },
+    )
+}
+
+/// A request to the API.
+fn request(api: &AdminApi, method: &str, path: &str, body: Value) -> (u16, Value) {
+    let token = api.token(&api.default_shop());
+    let response = api
+        .handle(&HttpRequest {
+            method: method.into(),
+            path: path.into(),
+            query: Vec::new(),
+            headers: HashMap::from([
+                ("content-type".to_string(), "application/json".to_string()),
+                ("x-shopify-access-token".to_string(), token),
+            ]),
+            body: body.to_string().into_bytes(),
+        })
+        .expect("the path is routed");
+    (
+        response.status,
+        serde_json::from_slice(&response.body).unwrap_or(Value::Null),
+    )
+}
+
+/// The answer to a GraphQL request with the default token.
+fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
+    let (status, answer) = request(
+        api,
+        "POST",
+        GRAPHQL,
+        json!({"query": query, "variables": variables}),
+    );
+    assert_eq!(status, 200);
+    answer
+}
+
+/// A webhook receiver: an HTTP listener that answers `200` and hands over each request.
+struct Receiver {
+    url: String,
+    requests: mpsc::Receiver<(HashMap<String, String>, Vec<u8>)>,
+}
+
+impl Receiver {
+    fn start() -> Receiver {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (sender, requests) = mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut headers = HashMap::new();
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    let trimmed = line.trim_end();
+                    if trimmed.is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = trimmed.split_once(':') {
+                        headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+                    }
+                }
+                let length: usize = headers
+                    .get("content-length")
+                    .and_then(|length| length.parse().ok())
+                    .unwrap_or(0);
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+                if sender.send((headers, body)).is_err() {
+                    break;
+                }
+            }
+        });
+        Receiver { url, requests }
+    }
+
+    /// The next delivery: its topic and its payload, its signature checked.
+    fn next(&self) -> (String, Value) {
+        let (headers, body) = self
+            .requests
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a webhook was delivered");
+        assert!(verify_webhook_hmac(
+            SECRET,
+            &body,
+            &headers["x-shopify-hmac-sha256"]
+        ));
+        (
+            headers["x-shopify-topic"].clone(),
+            serde_json::from_slice(&body).unwrap(),
+        )
+    }
+
+    /// The next `count` deliveries.
+    fn take(&self, count: usize) -> Vec<(String, Value)> {
+        (0..count).map(|_| self.next()).collect()
+    }
+}
+
+fn subscribe(api: &AdminApi, receiver: &Receiver, topics: &[&str]) {
+    for topic in topics {
+        let answer = graphql(
+            api,
+            "mutation($topic: WebhookSubscriptionTopic!, $uri: String!) { webhookSubscriptionCreate(topic: $topic, webhookSubscription: {uri: $uri}) { userErrors { message } } }",
+            json!({"topic": topic, "uri": format!("{}/webhooks", receiver.url)}),
+        );
+        assert_eq!(
+            answer["data"]["webhookSubscriptionCreate"]["userErrors"],
+            json!([]),
+            "{answer}"
+        );
+    }
+}
+
+/// The cents of an amount (`"12.5"`, `"12.50"`).
+fn cents(amount: &str) -> i64 {
+    lsf_admin::domains::orders::model::parse_cents(amount).expect("an amount")
+}
+
+fn topics(deliveries: &[(String, Value)]) -> Vec<&str> {
+    deliveries.iter().map(|(topic, _)| topic.as_str()).collect()
+}
+
+#[test]
+fn a_b2b_order_on_net_terms_comes_due_and_is_paid() {
+    let api = api();
+    let receiver = Receiver::start();
+    subscribe(
+        &api,
+        &receiver,
+        &[
+            "DRAFT_ORDERS_CREATE",
+            "PAYMENT_TERMS_CREATE",
+            "PAYMENT_TERMS_UPDATE",
+            "ORDERS_CREATE",
+            "PAYMENT_SCHEDULES_DUE",
+            "ORDER_TRANSACTIONS_CREATE",
+            "TENDER_TRANSACTIONS_CREATE",
+            "ORDERS_PAID",
+        ],
+    );
+    // The company of the demo store, its location and its contact.
+    let company = graphql(
+        &api,
+        "{ companies(first: 1) { nodes { id locations(first: 1) { nodes { id } } contacts(first: 1) { nodes { id } } } } productVariants(first: 1) { nodes { id } } }",
+        json!({}),
+    );
+    let data = &company["data"];
+    let company = &data["companies"]["nodes"][0];
+    let draft = graphql(
+        &api,
+        "mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } userErrors { field message } } }",
+        json!({"input": {
+            "lineItems": [{"variantId": data["productVariants"]["nodes"][0]["id"], "quantity": 4}],
+            "email": "buyer@northwind.example",
+            "purchasingEntity": {"purchasingCompany": {
+                "companyId": company["id"],
+                "companyLocationId": company["locations"]["nodes"][0]["id"],
+                "companyContactId": company["contacts"]["nodes"][0]["id"],
+            }},
+            "paymentTerms": {"paymentTermsTemplateId": "gid://shopify/PaymentTermsTemplate/4"},
+        }}),
+    );
+    assert_eq!(
+        draft["data"]["draftOrderCreate"]["userErrors"],
+        json!([]),
+        "{draft}"
+    );
+    let draft = draft["data"]["draftOrderCreate"]["draftOrder"]["id"].clone();
+    let created = receiver.take(2);
+    assert_eq!(
+        topics(&created),
+        ["draft_orders/create", "payment_terms/create"]
+    );
+    assert_eq!(
+        created[0].1["payment_terms"]["payment_terms_name"],
+        "Net 30"
+    );
+    assert_eq!(created[1].1["payment_terms_type"], "net");
+    assert_eq!(created[1].1["due_in_days"], 30);
+
+    let completed = graphql(
+        &api,
+        "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { order { id name displayFinancialStatus
+            totalOutstandingSet { shopMoney { amount } }
+            paymentTerms { paymentSchedules(first: 1) { nodes { id dueAt } } } } } userErrors { message } } }",
+        json!({"id": draft}),
+    );
+    let order = completed["data"]["draftOrderComplete"]["draftOrder"]["order"].clone();
+    assert_eq!(order["displayFinancialStatus"], "PENDING", "{completed}");
+    let schedule = order["paymentTerms"]["paymentSchedules"]["nodes"][0].clone();
+    let total = order["totalOutstandingSet"]["shopMoney"]["amount"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let made = receiver.take(2);
+    assert_eq!(topics(&made), ["orders/create", "payment_terms/update"]);
+    assert_eq!(
+        made[0].1["payment_terms"]["payment_terms_name"], "Net 30",
+        "the order's payload has its terms"
+    );
+    assert_eq!(
+        made[1].1["payment_schedules"][0]["due_at"],
+        schedule["dueAt"]
+    );
+
+    // A reminder before it is due: recorded in the outbox, nothing sent.
+    let reminded = graphql(
+        &api,
+        "mutation($id: ID!) { paymentReminderSend(paymentScheduleId: $id) { success userErrors { message } } }",
+        json!({"id": schedule["id"]}),
+    );
+    assert_eq!(reminded["data"]["paymentReminderSend"]["success"], true);
+    let (status, emails) = request(&api, "GET", "/__lsf/admin/emails", Value::Null);
+    assert_eq!(status, 200);
+    assert_eq!(emails["count"], 1);
+    assert_eq!(emails["emails"][0]["to"], "buyer@northwind.example");
+    assert_eq!(emails["emails"][0]["template"], "payment_reminder");
+
+    // Thirty-one days later, the schedule is due.
+    let (status, clock) = request(
+        &api,
+        "POST",
+        "/__lsf/admin/clock",
+        json!({"advance": "31d"}),
+    );
+    assert_eq!(status, 200, "{clock}");
+    assert_eq!(clock["frozen"], true);
+    let (topic, due) = receiver.next();
+    assert_eq!(topic, "payment_schedules/due");
+    assert_eq!(due["admin_graphql_api_id"], schedule["id"]);
+    assert_eq!(
+        cents(due["balance_due"].as_str().unwrap()),
+        cents(&total),
+        "{due}"
+    );
+    let terms = graphql(
+        &api,
+        "query($id: ID!) { order(id: $id) { paymentTerms { due overdue } } }",
+        json!({"id": order["id"]}),
+    );
+    assert_eq!(
+        terms["data"]["order"]["paymentTerms"],
+        json!({"due": true, "overdue": true})
+    );
+
+    // The buyer pays by bank transfer: a manual payment of the balance.
+    let paid = graphql(
+        &api,
+        "mutation($id: ID!) { orderCreateManualPayment(id: $id, paymentMethodName: \"Bank Deposit\") {
+            order { displayFinancialStatus totalOutstandingSet { shopMoney { amount } }
+              paymentTerms { due paymentSchedules(first: 1) { nodes { completedAt balanceDue { amount } } } } }
+            userErrors { field message code } } }",
+        json!({"id": order["id"]}),
+    );
+    let paid = &paid["data"]["orderCreateManualPayment"];
+    assert_eq!(paid["userErrors"], json!([]), "{paid}");
+    assert_eq!(paid["order"]["displayFinancialStatus"], "PAID");
+    assert_eq!(
+        paid["order"]["totalOutstandingSet"]["shopMoney"]["amount"],
+        "0.0"
+    );
+    assert_eq!(paid["order"]["paymentTerms"]["due"], false);
+    let schedule = &paid["order"]["paymentTerms"]["paymentSchedules"]["nodes"][0];
+    assert!(schedule["completedAt"].is_string());
+    assert_eq!(schedule["balanceDue"]["amount"], "0.0");
+    let payment = receiver.take(3);
+    assert_eq!(
+        topics(&payment),
+        [
+            "order_transactions/create",
+            "tender_transactions/create",
+            "orders/paid"
+        ]
+    );
+    assert_eq!(
+        cents(payment[1].1["amount"].as_str().unwrap()),
+        cents(&total)
+    );
+    assert_eq!(payment[1].1["payment_method"], "Bank Deposit");
+    assert_eq!(payment[2].1["financial_status"], "paid");
+}

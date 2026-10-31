@@ -1,0 +1,101 @@
+//! The payloads of the payments of orders: payment terms and their schedules, tender
+//! transactions, in the key order of the examples of the reference of 2026-10.
+
+use serde_json::{Map, Value, json};
+
+use super::{Lookup, field, first, id, lower, money_amount, records, ref_id, text, time};
+
+/// The dates of payment terms and schedules, which their GraphQL types do not have: lsf keeps
+/// them under these keys (`domains::orders::payments`), a sample under the GraphQL-like ones.
+fn created(record: &Map<String, Value>) -> Value {
+    time(first(record, &["lsfCreatedAt", "createdAt"]))
+}
+
+fn updated(record: &Map<String, Value>) -> Value {
+    time(first(record, &["lsfUpdatedAt", "updatedAt"]))
+}
+
+/// `payment_schedules/due`, and each schedule of `payment_terms/…`: a `PaymentSchedule`.
+pub(super) fn payment_schedule(schedule: &Map<String, Value>) -> Value {
+    let amount = field(schedule, "amount");
+    let currency = amount.get("currencyCode").cloned().unwrap_or(Value::Null);
+    json!({
+        "amount": or_zero(money_amount(amount)),
+        "balance_due": or_zero(money_amount(field(schedule, "balanceDue"))),
+        "completed_at": time(field(schedule, "completedAt")),
+        "created_at": created(schedule),
+        "currency": currency,
+        "due_at": time(field(schedule, "dueAt")),
+        "id": id(schedule),
+        "issued_at": time(field(schedule, "issuedAt")),
+        "payment_terms_id": ref_id(field(schedule, "paymentTerms")),
+        "presentment_currency": currency,
+        "total_balance": or_zero(money_amount(field(schedule, "totalBalance"))),
+        "total_price": or_zero(money_amount(amount)),
+        "updated_at": updated(schedule),
+        "admin_graphql_api_id": text(schedule, "id"),
+    })
+}
+
+fn or_zero(price: Value) -> Value {
+    match price {
+        Value::Null => json!("0.00"),
+        price => price,
+    }
+}
+
+/// `payment_terms/create` and `…/update`: `PaymentTerms` with their schedules. REST names the
+/// terms by the class Shopify keeps them in (`PaymentsPaymentFlexibilityPaymentTermsPaymentTerms`),
+/// as the examples' `admin_graphql_api_id` shows, where GraphQL names them `PaymentTerms`.
+pub(super) fn payment_terms(terms: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let terms_id = id(terms);
+    json!({
+        "id": terms_id,
+        "payment_terms_name": text(terms, "paymentTermsName"),
+        "payment_terms_type": lower(field(terms, "paymentTermsType")),
+        "due_in_days": field(terms, "dueInDays"),
+        "created_at": created(terms),
+        "updated_at": updated(terms),
+        "payment_schedules": records(field(terms, "paymentSchedules"), lookup)
+            .iter()
+            .map(payment_schedule)
+            .collect::<Vec<_>>(),
+        "admin_graphql_api_id": match terms_id {
+            Value::Null => Value::Null,
+            id => json!(format!("gid://shopify/PaymentsPaymentFlexibilityPaymentTermsPaymentTerms/{id}")),
+        },
+    })
+}
+
+/// `payment_terms/delete`: the id alone.
+pub(super) fn payment_terms_deleted(terms: &Map<String, Value>) -> Value {
+    json!({"id": id(terms)})
+}
+
+/// `tender_transactions/create`: a `TenderTransaction`. Its amount is negative for a refund;
+/// REST names its payment method `unknown` when the record has none.
+pub(super) fn tender_transaction(tender: &Map<String, Value>) -> Value {
+    let amount = field(tender, "amount");
+    let details = match field(tender, "transactionDetails") {
+        Value::Object(details) => json!({
+            "credit_card_number": text(details, "creditCardNumber"),
+            "credit_card_company": text(details, "creditCardCompany"),
+        }),
+        _ => Value::Null,
+    };
+    json!({
+        "id": id(tender),
+        "order_id": ref_id(field(tender, "order")),
+        "amount": money_amount(amount),
+        "currency": amount.get("currencyCode").cloned().unwrap_or(Value::Null),
+        "user_id": ref_id(field(tender, "user")),
+        "test": field(tender, "test").as_bool().unwrap_or(false),
+        "processed_at": time(field(tender, "processedAt")),
+        "remote_reference": text(tender, "remoteReference"),
+        "payment_details": details,
+        "payment_method": match text(tender, "paymentMethod") {
+            Value::Null => json!("unknown"),
+            method => method,
+        },
+    })
+}

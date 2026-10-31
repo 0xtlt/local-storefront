@@ -6079,6 +6079,79 @@
       "returns": [],
       "line_item_groups": []
     },
+    "payment_schedules/due": {
+      "amount": "0.00",
+      "balance_due": "0.00",
+      "completed_at": null,
+      "created_at": "2021-01-01T00:00:00-05:00",
+      "currency": "USD",
+      "due_at": "2022-01-07T19:00:00-05:00",
+      "id": 606405506930370084,
+      "issued_at": "2021-01-01T00:00:00-05:00",
+      "payment_terms_id": 706405506930370084,
+      "presentment_currency": "USD",
+      "total_balance": "0.00",
+      "total_price": "0.00",
+      "updated_at": "2021-01-01T00:00:01-05:00",
+      "admin_graphql_api_id": "gid://shopify/PaymentSchedule/606405506930370084"
+    },
+    "payment_terms/create": {
+      "id": 706405506930370084,
+      "payment_terms_name": "Net 7",
+      "payment_terms_type": "net",
+      "due_in_days": 7,
+      "created_at": "2021-01-01T00:00:00-05:00",
+      "updated_at": "2021-01-01T00:00:01-05:00",
+      "payment_schedules": [
+        {
+          "amount": "0.00",
+          "balance_due": "0.00",
+          "completed_at": null,
+          "created_at": "2021-01-01T00:00:00-05:00",
+          "currency": "USD",
+          "due_at": "2022-01-07T19:00:00-05:00",
+          "id": 606405506930370084,
+          "issued_at": "2021-01-01T00:00:00-05:00",
+          "payment_terms_id": 706405506930370084,
+          "presentment_currency": "USD",
+          "total_balance": "0.00",
+          "total_price": "0.00",
+          "updated_at": "2021-01-01T00:00:01-05:00",
+          "admin_graphql_api_id": "gid://shopify/PaymentSchedule/606405506930370084"
+        }
+      ],
+      "admin_graphql_api_id": "gid://shopify/PaymentsPaymentFlexibilityPaymentTermsPaymentTerms/706405506930370084"
+    },
+    "payment_terms/delete": {
+      "id": 706405506930370084
+    },
+    "payment_terms/update": {
+      "id": 706405506930370084,
+      "payment_terms_name": "Net 7",
+      "payment_terms_type": "net",
+      "due_in_days": 7,
+      "created_at": "2021-01-01T00:00:00-05:00",
+      "updated_at": "2021-01-01T00:00:01-05:00",
+      "payment_schedules": [
+        {
+          "amount": "0.00",
+          "balance_due": "0.00",
+          "completed_at": null,
+          "created_at": "2021-01-01T00:00:00-05:00",
+          "currency": "USD",
+          "due_at": "2022-01-07T19:00:00-05:00",
+          "id": 606405506930370084,
+          "issued_at": "2021-01-01T00:00:00-05:00",
+          "payment_terms_id": 706405506930370084,
+          "presentment_currency": "USD",
+          "total_balance": "0.00",
+          "total_price": "0.00",
+          "updated_at": "2021-01-01T00:00:01-05:00",
+          "admin_graphql_api_id": "gid://shopify/PaymentSchedule/606405506930370084"
+        }
+      ],
+      "admin_graphql_api_id": "gid://shopify/PaymentsPaymentFlexibilityPaymentTermsPaymentTerms/706405506930370084"
+    },
     "product_publications/create": {
       "id": null,
       "publication_id": 123456,
@@ -7000,6 +7073,18 @@
       "marketing_sms_consent_enabled_at_checkout": false,
       "marketing_email_consent_enabled_at_checkout": true,
       "transactional_sms_disabled": false
+    },
+    "tender_transactions/create": {
+      "id": 220982911946154508,
+      "order_id": 820982911946154508,
+      "amount": "419.95",
+      "currency": "USD",
+      "user_id": null,
+      "test": false,
+      "processed_at": null,
+      "remote_reference": "1001",
+      "payment_details": null,
+      "payment_method": "unknown"
     },
     "variants/in_stock": {
       "id": 642667041472713922,

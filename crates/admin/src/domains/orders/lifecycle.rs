@@ -1,6 +1,6 @@
 //! The life of an order: `orderCreate`, `orderUpdate`, `orderCancel`, `orderClose`, `orderOpen`,
 //! `orderMarkAsPaid`, `orderCapture`, `transactionVoid`, `orderCustomerSet`,
-//! `orderCustomerRemove`, `orderInvoiceSend`, `orderDelete`.
+//! `orderCustomerRemove`, `orderInvoiceSend` (its email in the shop's outbox), `orderDelete`.
 //!
 //! As shopify.dev's reference of 2026-10 describes them (`mutations/<name>`), with what the
 //! topics of `WebhookSubscriptionTopic` say they fire on; Shopify documents no order between
@@ -678,7 +678,8 @@ fn set_customer(state: &mut ShopState, order: &str, customer: Option<&str>) {
     model::order_updated(state, order);
 }
 
-/// `orderInvoiceSend`: lsf sends no email; the order is answered as it is.
+/// `orderInvoiceSend`: the invoice is put in the shop's outbox (`crate::outbox`), to the
+/// email given, else the order's; lsf sends nothing. The order is answered as it is.
 fn order_invoice_send(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -686,7 +687,50 @@ fn order_invoice_send(
     let Some(order) = find_order(mutation.state(), ctx.arg_str("id").unwrap_or_default()) else {
         return Ok(payload(json!({"order": null}), &[no_order(&["id"])]));
     };
-    mutation.note("orderInvoiceSend: lsf sends no email; nothing was recorded");
+    let record = mutation.state().get(&order).cloned().unwrap_or_default();
+    let email = model::input_of(ctx.arg("email"));
+    let Some(to) = email
+        .get("to")
+        .and_then(Value::as_str)
+        .or_else(|| text(&record, "email"))
+        .filter(|to| to.contains('@'))
+        .map(str::to_string)
+    else {
+        // lsf's wording, as `draftOrderInvoiceSend`'s "To is invalid".
+        return Ok(payload(
+            json!({"order": null}),
+            &[UserError::new(&["email", "to"], "To is invalid")
+                .code("ORDER_INVOICE_SEND_UNSUCCESSFUL")],
+        ));
+    };
+    let name = text(&record, "name").unwrap_or_default().to_string();
+    let subject = email
+        .get("subject")
+        .and_then(Value::as_str)
+        .map_or_else(|| format!("Invoice for order {name}"), str::to_string);
+    let mut body = format!(
+        "Order {name}: {} {} outstanding.",
+        record
+            .get("totalOutstandingSet")
+            .and_then(|bag| bag.pointer("/shopMoney/amount"))
+            .and_then(Value::as_str)
+            .unwrap_or("0.0"),
+        model::currency(mutation.state())
+    );
+    if let Some(message) = email.get("customMessage").and_then(Value::as_str) {
+        body.push('\n');
+        body.push_str(message);
+    }
+    crate::outbox::send(
+        mutation.state_mut(),
+        &crate::outbox::Email {
+            template: "order_invoice",
+            to: &to,
+            subject,
+            body,
+            resource: Some(&order),
+        },
+    );
     Ok(payload(json!({"order": order}), &[]))
 }
 
@@ -1384,6 +1428,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .unwrap_or_default();
     for transaction in made {
         state.emit("order_transactions/create", &transaction);
+        super::payments::emit_tender(state, &transaction);
     }
     for transaction in &transactions {
         let amount = model::cents(
@@ -1400,7 +1445,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .and_then(Value::as_str)
             .unwrap_or("SUCCESS");
         let gateway = transaction.get("gateway").and_then(Value::as_str);
-        let created = model::add_transaction(
+        let created = model::add_transaction_with_status(
             state,
             &order,
             &NewTransaction {
@@ -1411,9 +1456,9 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 manual: gateway.is_none_or(|gateway| gateway == "manual"),
                 test: transaction.get("test").and_then(Value::as_bool) == Some(true) || test,
             },
+            status,
         );
         if let Some(record) = state.get_mut(&created) {
-            record.insert("status".into(), json!(status));
             for (from, to) in [
                 ("authorizationCode", "authorizationCode"),
                 ("processedAt", "processedAt"),
@@ -1422,6 +1467,9 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                     record.insert(to.into(), value.clone());
                 }
             }
+        }
+        if let Some(at) = transaction.get("processedAt").and_then(Value::as_str) {
+            super::payments::set_processed_at(state, &created, at);
         }
     }
     if !transactions.is_empty() {

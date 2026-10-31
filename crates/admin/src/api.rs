@@ -7,6 +7,7 @@
 mod admin;
 mod app;
 pub mod samples;
+mod simulate;
 mod sync;
 #[cfg(test)]
 mod tests;

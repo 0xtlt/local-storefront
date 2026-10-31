@@ -16,14 +16,19 @@
 //!   paid through a manual sale unless `paymentPending`, its units committed in stock; the draft
 //!   is `COMPLETED` with its `order`. Events: `orders/create`, `order_transactions/create`,
 //!   `orders/paid`, `draft_orders/update`.
-//! - `draftOrderInvoiceSend` records the invoice as sent (`INVOICE_SENT`, `invoiceSentAt`): lsf
-//!   sends no email. `draftOrderDuplicate` copies a draft as a new open one.
+//! - `draftOrderInvoiceSend` records the invoice as sent (`INVOICE_SENT`, `invoiceSentAt`) and
+//!   puts the email in the shop's outbox (`crate::outbox`): lsf sends nothing.
+//!   `draftOrderDuplicate` copies a draft as a new open one.
+//! - B2B drafts (`purchasingEntity.purchasingCompany`) are the contact's customer's, for the
+//!   company location, with its addresses and payment terms unless the input gives its own;
+//!   their order is the location's (`purchasingEntity`), pending until paid when it has payment
+//!   terms. `paymentTerms` makes or changes the draft's terms (`payments`), which the order
+//!   takes when the draft is completed.
 //! - Events: `draft_orders/create`, `draft_orders/update`, `draft_orders/delete`.
 //!
 //! Messages: "Add at least 1 product", "Draft order not found", "Invalid payment gateway" and
 //! "To is invalid" are the reference's examples; the others are Rails' wording or lsf's. Not
-//! simulated (said in `extensions.lsf.notes`): B2B purchasing companies, payment terms,
-//! deposits, discount codes and automatic discounts, metafields, the shipping rates of
+//! simulated (said in `extensions.lsf.notes`): deposits, discount codes and automatic discounts, metafields, the shipping rates of
 //! `availableShippingRates`.
 
 use lsf_core::util::stable_id;
@@ -50,7 +55,6 @@ pub fn register(registry: &mut Registry) {
 
 /// The inputs of `DraftOrderInput` lsf does not simulate yet.
 const NOT_SIMULATED: &[(&str, &str)] = &[
-    ("paymentTerms", "payment terms"),
     ("deposit", "deposits"),
     ("metafields", "metafields"),
     ("discountCodes", "discount codes"),
@@ -463,20 +467,28 @@ fn read_input(
     };
     let mut fields = Map::new();
     let purchasing = model::input_of(input.get("purchasingEntity"));
-    if purchasing
-        .get("purchasingCompany")
-        .is_some_and(|company| !company.is_null())
-    {
-        mutation.note(format!(
-            "{name}: lsf does not simulate B2B draft orders yet: `purchasingCompany` was ignored"
-        ));
-    }
     let state = mutation.state();
+    let company = model::input_of(purchasing.get("purchasingCompany"));
+    if !company.is_empty() {
+        purchasing_company(state, &company, input, &mut fields, errors);
+    }
+    if let Some(terms) = input.get("paymentTerms").filter(|terms| !terms.is_null()) {
+        let terms = model::input_of(Some(terms));
+        let base = base
+            .and_then(|base| text(base, "paymentTerms"))
+            .and_then(|terms| state.get(terms));
+        match super::payments::read_terms(state, &terms, &["paymentTerms"], "INVALID", base) {
+            Ok(_) => {
+                fields.insert(TERMS_INPUT.into(), Value::Object(terms));
+            }
+            Err(error) => errors.push(error),
+        }
+    }
     let customer = purchasing
         .get("customerId")
         .or_else(|| input.get("customerId"))
         .filter(|id| !id.is_null());
-    if let Some(customer) = customer {
+    if let Some(customer) = customer.filter(|_| company.is_empty()) {
         let id = customer.as_str().unwrap_or_default();
         if state.type_of(id) == Some("Customer") {
             fields.insert("customer".into(), json!(id));
@@ -598,9 +610,153 @@ fn read_input(
     Some(Draft { lines, fields })
 }
 
+/// The field of a draft's fields that holds its `paymentTerms` input until the draft is
+/// written: [`apply_terms`] makes or changes its payment terms from it.
+const TERMS_INPUT: &str = "lsfPaymentTermsInput";
+
+/// Reads a `PurchasingCompanyInput`: the company, one of its locations and one of its contacts.
+/// The draft is the contact's customer's, for the location, with the location's addresses and
+/// its payment terms unless the input gives its own (Shopify's B2B drafts take the location's
+/// buyer experience).
+fn purchasing_company(
+    state: &ShopState,
+    company: &Map<String, Value>,
+    input: &Map<String, Value>,
+    fields: &mut Map<String, Value>,
+    errors: &mut Vec<UserError>,
+) {
+    let path = |field: &'static str| ["purchasingEntity", "purchasingCompany", field];
+    let id = |field: &str| {
+        company
+            .get(field)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let (company_id, location, contact) = (
+        id("companyId"),
+        id("companyLocationId"),
+        id("companyContactId"),
+    );
+    if state.type_of(&company_id) != Some("Company") {
+        // lsf's wording, as every message of the B2B inputs: shopify.dev shows none.
+        errors.push(UserError::new(&path("companyId"), "Company does not exist"));
+        return;
+    }
+    let of_company = |key: &str, kind: &str| {
+        state
+            .get(key)
+            .filter(|_| state.type_of(key) == Some(kind))
+            .filter(|record| text(record, "company") == Some(company_id.as_str()))
+    };
+    let Some(location_record) = of_company(&location, "CompanyLocation") else {
+        errors.push(UserError::new(
+            &path("companyLocationId"),
+            "Company location does not exist for this company",
+        ));
+        return;
+    };
+    let Some(contact_record) = of_company(&contact, "CompanyContact") else {
+        errors.push(UserError::new(
+            &path("companyContactId"),
+            "Company contact does not exist for this company",
+        ));
+        return;
+    };
+    fields.insert(
+        "purchasingEntity".into(),
+        json!({"__typename": "PurchasingCompany", "company": company_id, "location": location, "contact": contact}),
+    );
+    if let Some(customer) = text(contact_record, "customer") {
+        fields.insert("customer".into(), json!(customer));
+    }
+    for (field, from) in [
+        ("shippingAddress", "shippingAddress"),
+        ("billingAddress", "billingAddress"),
+    ] {
+        if input.contains_key(field) {
+            continue;
+        }
+        let address = location_record
+            .get(from)
+            .filter(|address| !address.is_null())
+            .or_else(|| location_record.get("shippingAddress"))
+            .and_then(Value::as_object);
+        if let Some(address) = address {
+            let address_input = json!({
+                "firstName": address.get("firstName"),
+                "lastName": address.get("lastName"),
+                "company": address.get("companyName"),
+                "address1": address.get("address1"),
+                "address2": address.get("address2"),
+                "city": address.get("city"),
+                "province": address.get("province"),
+                "provinceCode": address.get("zoneCode"),
+                "countryCode": address.get("countryCode"),
+                "zip": address.get("zip"),
+                "phone": address.get("phone"),
+            });
+            let address_id = address
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if let Some(address) = model::mailing_address(&address_input, &address_id) {
+                fields.insert(field.into(), address);
+            }
+        }
+    }
+    if !input.contains_key("paymentTerms")
+        && let Some(template) = location_record
+            .get("buyerExperienceConfiguration")
+            .and_then(|configuration| configuration.get("paymentTermsTemplate"))
+            .and_then(Value::as_str)
+    {
+        fields.insert(
+            TERMS_INPUT.into(),
+            json!({"paymentTermsTemplateId": template}),
+        );
+    }
+}
+
+/// Makes or changes a draft's payment terms from the `paymentTerms` input its fields kept
+/// (`payment_terms/create` or `…/update`), and keeps their amounts with the draft's total.
+fn apply_terms(state: &mut ShopState, id: &str, input: Option<&Value>) {
+    let existing = state
+        .get(id)
+        .and_then(|record| text(record, "paymentTerms"))
+        .map(str::to_string);
+    if let Some(input) = input.and_then(Value::as_object) {
+        let base = existing.as_deref().and_then(|terms| state.get(terms));
+        let Ok(spec) =
+            super::payments::read_terms(state, input, &["paymentTerms"], "INVALID", base)
+        else {
+            return;
+        };
+        match &existing {
+            Some(terms) => {
+                super::payments::update_terms(state, terms, &spec);
+                state.emit("payment_terms/update", terms);
+            }
+            None => {
+                let terms = super::payments::create_terms(state, "draftOrder", id, &spec);
+                state.emit("payment_terms/create", &terms);
+            }
+        }
+    } else if let Some(terms) = &existing {
+        super::payments::refresh_terms(state, terms);
+    }
+}
+
 /// Writes a draft's line items (replacing its old ones) and its fields and totals into its
-/// record.
-fn write_draft(state: &mut ShopState, id: &str, draft: &Draft, replace_lines: bool) {
+/// record. Returns the `paymentTerms` input the draft was given, which the caller applies with
+/// [`apply_terms`] once it emitted the draft's event.
+fn write_draft(
+    state: &mut ShopState,
+    id: &str,
+    draft: &Draft,
+    replace_lines: bool,
+) -> Option<Value> {
     let currency = model::currency(state);
     let mut line_ids = Vec::new();
     if replace_lines {
@@ -626,10 +782,10 @@ fn write_draft(state: &mut ShopState, id: &str, draft: &Draft, replace_lines: bo
             line_ids.push(line_id);
         }
     }
-    let Some(mut record) = state.get(id).cloned() else {
-        return;
-    };
-    record.extend(draft.fields.clone());
+    let mut record = state.get(id).cloned()?;
+    let mut fields = draft.fields.clone();
+    let terms = fields.remove(TERMS_INPUT);
+    record.extend(fields);
     if replace_lines {
         record.insert("lineItems".into(), json!(line_ids));
     }
@@ -671,6 +827,7 @@ fn write_draft(state: &mut ShopState, id: &str, draft: &Draft, replace_lines: bo
     );
     state.insert(record);
     state.touch(id);
+    terms
 }
 
 /// The numeric part of draft names: one above the highest.
@@ -764,8 +921,9 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     }
     let state = mutation.state_mut();
     let id = new_draft(state);
-    write_draft(state, &id, &draft, true);
+    let terms = write_draft(state, &id, &draft, true);
     state.emit("draft_orders/create", &id);
+    apply_terms(state, &id, terms.as_ref());
     Ok(payload(json!({"draftOrder": id}), &[]))
 }
 
@@ -808,8 +966,9 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         return Ok(payload(json!({"draftOrder": null}), &errors));
     }
     let state = mutation.state_mut();
-    write_draft(state, &id, &draft, input.contains_key("lineItems"));
+    let terms = write_draft(state, &id, &draft, input.contains_key("lineItems"));
     state.emit("draft_orders/update", &id);
+    apply_terms(state, &id, terms.as_ref());
     Ok(payload(json!({"draftOrder": id}), &[]))
 }
 
@@ -826,11 +985,53 @@ fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         Err(error) => return Ok(payload(json!({"deletedId": null}), &[error])),
     };
     let state = mutation.state_mut();
-    state.delete(&id, "draft_orders/delete");
+    remove_draft(state, &id, &record);
+    Ok(payload(json!({"deletedId": id}), &[]))
+}
+
+/// Deletes a draft order with its line items and its payment terms: `draft_orders/delete`, and
+/// `payment_terms/delete` for terms the draft still owned.
+pub(super) fn remove_draft(state: &mut ShopState, id: &str, record: &Record) {
+    if let Some(terms) = text(record, "paymentTerms")
+        && state
+            .get(terms)
+            .is_some_and(|terms| text(terms, "order").is_none())
+    {
+        super::payments::delete_terms(state, terms);
+    }
+    state.delete(id, "draft_orders/delete");
     for line in gids(record.get("lineItems")) {
         state.remove(&line);
     }
-    Ok(payload(json!({"deletedId": id}), &[]))
+}
+
+/// The subject and the text of a draft order's invoice email: the email's own when given, else
+/// lsf's wording of Shopify's template ("Invoice #D1 from <shop>", as `draftOrderInvoicePreview`'s
+/// example shows it).
+pub(super) fn invoice_text(
+    state: &ShopState,
+    record: &Record,
+    email: &Map<String, Value>,
+) -> (String, String) {
+    let name = text(record, "name").unwrap_or_default();
+    let shop = state
+        .shop()
+        .and_then(|shop| text(shop, "name"))
+        .unwrap_or_default();
+    let subject = email
+        .get("subject")
+        .and_then(Value::as_str)
+        .map_or_else(|| format!("Draft Order {name}"), str::to_string);
+    let mut body = format!("Invoice {name} from {shop}");
+    if let Some(message) = email.get("customMessage").and_then(Value::as_str) {
+        body.push('\n');
+        body.push_str(message);
+    }
+    if let Some(url) = text(record, "invoiceUrl") {
+        body.push('\n');
+        body.push_str(url);
+    }
+    (subject, body)
 }
 
 /// `draftOrderCalculate`: the totals of a draft order input, without making a draft.
@@ -851,6 +1052,7 @@ fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     let tax_exempt = draft.fields.get("taxExempt").and_then(Value::as_bool) == Some(true);
     let mut calculated = draft.fields.clone();
     let applied = calculated.remove("lsfAppliedDiscount");
+    calculated.remove(TERMS_INPUT);
     calculated.extend(totals(
         state,
         &draft.lines,
@@ -920,7 +1122,9 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             &[UserError::new(&[], "Add at least 1 product")],
         ));
     }
-    let pending = ctx.arg_bool("paymentPending") == Some(true);
+    // An order of payment terms is paid later: it is pending, as `paymentPending` makes it.
+    let terms = text(&record, "paymentTerms").map(str::to_string);
+    let pending = ctx.arg_bool("paymentPending") == Some(true) || terms.is_some();
     let source = ctx
         .arg_str("sourceName")
         .unwrap_or("shopify_draft_order")
@@ -1063,6 +1267,12 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             record.get("poNumber").cloned().unwrap_or(Value::Null),
         );
         order_record.insert("closed".into(), json!(false));
+        if let Some(entity) = record
+            .get("purchasingEntity")
+            .filter(|entity| entity.is_object())
+        {
+            order_record.insert("purchasingEntity".into(), entity.clone());
+        }
         if included {
             order_record.insert(
                 "totalTaxSet".into(),
@@ -1071,7 +1281,17 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             order_record.insert("taxesIncluded".into(), json!(true));
         }
     }
+    if let Some(location) = record
+        .get("purchasingEntity")
+        .and_then(|entity| entity.get("location"))
+        .and_then(Value::as_str)
+    {
+        crate::domains::customers::refresh_company_location(state, location);
+    }
     state.emit("orders/create", &order);
+    if let Some(terms) = &terms {
+        super::payments::attach_to_order(state, terms, &order);
+    }
     if !pending {
         let total = state
             .get(&order)
@@ -1176,7 +1396,8 @@ fn duplicate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
             line
         })
         .collect();
-    write_draft(state, &copy, &Draft { lines, fields }, true);
+    let terms = write_draft(state, &copy, &Draft { lines, fields }, true);
+    apply_terms(state, &copy, terms.as_ref());
     state.emit("draft_orders/create", &copy);
     Ok(payload(json!({"draftOrder": copy}), &[]))
 }
@@ -1204,7 +1425,7 @@ fn invoice_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             &[UserError::new(&[], "To is invalid")],
         ));
     }
-    mutation.note("draftOrderInvoiceSend: lsf sends no email: the invoice was recorded as sent");
+    let (subject, body) = invoice_text(mutation.state(), &record, &email);
     let now = mutation.timestamp();
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&id) {
@@ -1212,6 +1433,22 @@ fn invoice_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         record.insert("invoiceSentAt".into(), json!(now));
     }
     state.touch(&id);
+    // Net terms are issued with the invoice: their due date counts from it.
+    if let Some(terms) = text(&record, "paymentTerms") {
+        super::payments::issue_terms(state, terms);
+        super::payments::refresh_terms(state, terms);
+    }
+    let to = to.unwrap_or_default();
+    crate::outbox::send(
+        state,
+        &crate::outbox::Email {
+            template: "draft_order_invoice",
+            to: &to,
+            subject,
+            body,
+            resource: Some(&id),
+        },
+    );
     state.emit("draft_orders/update", &id);
     Ok(payload(json!({"draftOrder": id}), &[]))
 }

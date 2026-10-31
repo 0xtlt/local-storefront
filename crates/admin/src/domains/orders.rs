@@ -14,11 +14,14 @@ mod edits;
 mod fulfillments;
 mod lifecycle;
 pub mod model;
+pub mod payments;
 mod queries;
 mod refunds;
 mod returns;
 mod services;
 
+#[cfg(test)]
+mod payments_tests;
 #[cfg(test)]
 mod tests;
 
@@ -220,6 +223,7 @@ pub fn seed(seed: &mut Seed) {
     let store = seed.store;
     seed.state
         .set_setting(TAX_RATE_SETTING, json!(store.checkout.tax_rate_bps));
+    payments::seed(&mut seed.state);
     let location = catalog::locations(store).first().map(catalog::location_gid);
     for customer in &store.customers {
         for order in &customer.orders {
@@ -621,6 +625,10 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         }
         _ => {}
     }
+    // The tender transactions of the money they moved; the caller emits their events.
+    for made in &transactions {
+        payments::record_tender(state, made);
+    }
 
     // The returns. A line that was fulfilled comes back as a `ReturnLineItem` of its
     // fulfillment; one that was not, as an `UnverifiedReturnLineItem`.
@@ -817,6 +825,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         "refunds": [],
         "discountApplications": [],
         "metafields": [],
+        "paymentTerms": null,
     })));
     state.insert(record);
     if let Some(customer) = &draft.customer {
@@ -1179,9 +1188,22 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         .unwrap_or_default()
     {
         state.emit("order_transactions/create", &transaction);
+        payments::emit_tender(state, &transaction);
     }
     if draft.financial == FinancialStatus::Paid {
         state.emit("orders/paid", &order);
+    }
+    // What is left to pay later (a deposit) is charged to the card the buyer paid with.
+    if result.cost.due_later > 0 {
+        let name = draft
+            .customer
+            .as_deref()
+            .and_then(|customer| state.get(customer))
+            .and_then(|customer| customer.get("displayName"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        payments::vault_checkout_card(state, &order, &name);
     }
     RecordedOrder { id: order, number }
 }
@@ -1290,6 +1312,13 @@ pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// What happens when the shop's clock passes a date: the payment schedules that came due fire
+/// `payment_schedules/due` ([`payments::tick`]). Runs before every request of the Admin API,
+/// and when the clock is moved (`POST /__lsf/admin/clock`).
+pub fn tick(state: &mut ShopState) {
+    payments::tick(state);
+}
+
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a
 /// mutation" in `crates/admin/docs/design.md`.
 pub fn register(registry: &mut crate::resolve::Registry) {
@@ -1301,4 +1330,5 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     edits::register(registry);
     drafts::register(registry);
     services::register(registry);
+    payments::register(registry);
 }

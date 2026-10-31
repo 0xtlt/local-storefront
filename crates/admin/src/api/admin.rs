@@ -568,6 +568,8 @@ impl AdminApi {
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
         let mut live = lock(&shop);
+        // What the shop's clock passed since the last request (a payment schedule that came due).
+        crate::domains::orders::tick(&mut live.state);
         let origin = origin_of(request);
         let revision = live.state.revision();
         let mut resolver = ShopResolver::new(&mut live.state, self.registry)
@@ -638,6 +640,9 @@ impl AdminApi {
     /// The control endpoints under `/__lsf/admin`.
     fn control(&self, request: &HttpRequest, path: &str) -> HttpResponse {
         if let Some(response) = super::app::handle(self, request, path) {
+            return response;
+        }
+        if let Some(response) = super::simulate::handle(self, request, path) {
             return response;
         }
         let method = request.method.to_ascii_uppercase();

@@ -87,6 +87,9 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "orders" if topic == "orders/edited" => (order_edit(), Vec::new()),
         "orders" => (order(), order_parts(false)),
         "order_transactions" => (order_transaction(), vec![order()]),
+        "payment_schedules" => (payment_schedule(), Vec::new()),
+        "payment_terms" => (payment_terms(), vec![payment_schedule()]),
+        "tender_transactions" => (tender_transaction(), Vec::new()),
         "fulfillment_events" => (fulfillment_event(), vec![fulfillment()]),
         "fulfillment_holds" => (fulfillment_hold(topic), Vec::new()),
         "fulfillment_orders" => fulfillment_order_sample(topic),
@@ -929,6 +932,53 @@ fn order_transaction() -> Value {
             "shopMoney": {"amount": "419.95", "currencyCode": "USD"},
         },
         "manualPaymentGateway": true,
+    })
+}
+
+/// The schedule of the `payment_schedules/due` and `payment_terms/…` examples.
+fn payment_schedule() -> Value {
+    json!({
+        "__typename": "PaymentSchedule",
+        "id": "gid://shopify/PaymentSchedule/606405506930370084",
+        "paymentTerms": "gid://shopify/PaymentTerms/706405506930370084",
+        "amount": money("0.00"),
+        "balanceDue": money("0.00"),
+        "totalBalance": money("0.00"),
+        "completedAt": null,
+        "issuedAt": "2021-01-01T00:00:00-05:00",
+        "dueAt": "2022-01-07T19:00:00-05:00",
+        "createdAt": "2021-01-01T00:00:00-05:00",
+        "updatedAt": "2021-01-01T00:00:01-05:00",
+    })
+}
+
+/// The net terms of the `payment_terms/…` examples.
+fn payment_terms() -> Value {
+    json!({
+        "__typename": "PaymentTerms",
+        "id": "gid://shopify/PaymentTerms/706405506930370084",
+        "paymentTermsName": "Net 7",
+        "paymentTermsType": "NET",
+        "dueInDays": 7,
+        "paymentSchedules": ["gid://shopify/PaymentSchedule/606405506930370084"],
+        "createdAt": "2021-01-01T00:00:00-05:00",
+        "updatedAt": "2021-01-01T00:00:01-05:00",
+    })
+}
+
+/// The tender transaction of `tender_transactions/create`'s example.
+fn tender_transaction() -> Value {
+    json!({
+        "__typename": "TenderTransaction",
+        "id": "gid://shopify/TenderTransaction/220982911946154508",
+        "order": "gid://shopify/Order/820982911946154508",
+        "amount": money("419.95"),
+        "paymentMethod": null,
+        "processedAt": null,
+        "remoteReference": "1001",
+        "test": false,
+        "transactionDetails": null,
+        "user": null,
     })
 }
 

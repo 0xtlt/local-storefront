@@ -18,6 +18,7 @@ mod catalog;
 mod content;
 mod customers;
 mod orders;
+mod payments;
 mod shop;
 
 pub use orders::{
@@ -188,6 +189,10 @@ pub const BUILT_TOPICS: &[&str] = &[
     "orders/paid",
     "orders/partially_fulfilled",
     "orders/updated",
+    "payment_schedules/due",
+    "payment_terms/create",
+    "payment_terms/delete",
+    "payment_terms/update",
     "product_publications/create",
     "product_publications/delete",
     "product_publications/update",
@@ -206,6 +211,7 @@ pub const BUILT_TOPICS: &[&str] = &[
     "selling_plan_groups/update",
     "shop/redact",
     "shop/update",
+    "tender_transactions/create",
     "variants/in_stock",
     "variants/out_of_stock",
 ];
@@ -294,6 +300,10 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         | "fulfillment_orders/rescheduled"
         | "fulfillment_orders/scheduled_fulfillment_order_ready"
         | "fulfillment_orders/split" => orders::fulfillment_order_event(topic, record, lookup),
+        "payment_schedules/due" => payments::payment_schedule(record),
+        "payment_terms/create" | "payment_terms/update" => payments::payment_terms(record, lookup),
+        "payment_terms/delete" => payments::payment_terms_deleted(record),
+        "tender_transactions/create" => payments::tender_transaction(record),
         "returns/approve" | "returns/cancel" | "returns/close" | "returns/decline"
         | "returns/reopen" | "returns/request" => orders::return_event(topic, record),
         "app/uninstalled" | "shop/update" => shop::shop(record, lookup),

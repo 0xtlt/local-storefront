@@ -7,7 +7,7 @@ use crate::graphql::{self, Request};
 use crate::resolve::{Registry, ShopResolver};
 use crate::state::ShopState;
 
-fn demo() -> ShopState {
+pub(super) fn demo() -> ShopState {
     let (store, _) = lsf_core::store::load::load(
         &lsf_core::store::load::DataSource::Demo,
         &Default::default(),
@@ -15,7 +15,7 @@ fn demo() -> ShopState {
     ShopState::seeded(&store, None)
 }
 
-fn rich() -> ShopState {
+pub(super) fn rich() -> ShopState {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
     let (store, _) = lsf_core::store::load::load(
         &lsf_core::store::load::DataSource::Directory(path),
@@ -55,7 +55,7 @@ fn refreshing_a_seeded_order_changes_nothing() {
 }
 
 /// Runs a request on the shop: its answer (`extensions` without `cost`).
-fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
+pub(super) fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
     let mut resolver = ShopResolver::new(shop, Registry::standard());
     let mut answer = graphql::run(
         crate::schema::admin(),
@@ -69,20 +69,20 @@ fn run(shop: &mut ShopState, query: &str, variables: Value) -> Value {
 }
 
 /// The topics of the events emitted since the last call, with the GIDs they are about.
-fn events(shop: &mut ShopState) -> Vec<(String, String)> {
+pub(super) fn events(shop: &mut ShopState) -> Vec<(String, String)> {
     shop.take_events()
         .into_iter()
         .map(|event| (event.topic, event.gid))
         .collect()
 }
 
-fn topics(shop: &mut ShopState) -> Vec<String> {
+pub(super) fn topics(shop: &mut ShopState) -> Vec<String> {
     events(shop).into_iter().map(|(topic, _)| topic).collect()
 }
 
 /// The orders of the demo store: `#1001` (paid, fulfilled), `#1002` and `#1003` (paid,
 /// unfulfilled).
-fn order_named(shop: &ShopState, name: &str) -> String {
+pub(super) fn order_named(shop: &ShopState, name: &str) -> String {
     shop.keys("Order")
         .find(|key| shop.get(key).unwrap()["name"] == json!(name))
         .unwrap()
@@ -90,7 +90,7 @@ fn order_named(shop: &ShopState, name: &str) -> String {
 }
 
 /// An order of the demo store by its name, as [`ORDER_FIELDS`] reads it.
-fn named(shop: &mut ShopState, name: &str) -> Value {
+pub(super) fn named(shop: &mut ShopState, name: &str) -> Value {
     let id = order_named(shop, name);
     order(shop, &id)
 }
@@ -103,11 +103,11 @@ fn available(shop: &ShopState, item: &str) -> i64 {
         .sum()
 }
 
-fn amount(value: &Value) -> &str {
+pub(super) fn amount(value: &Value) -> &str {
     value["shopMoney"]["amount"].as_str().unwrap()
 }
 
-const ORDER_FIELDS: &str = "id name displayFinancialStatus displayFulfillmentStatus closed closedAt cancelledAt cancelReason
+pub(super) const ORDER_FIELDS: &str = "id name displayFinancialStatus displayFulfillmentStatus closed closedAt cancelledAt cancelReason
     currentSubtotalPriceSet { shopMoney { amount } } currentTotalPriceSet { shopMoney { amount } }
     totalReceivedSet { shopMoney { amount } } totalRefundedSet { shopMoney { amount } }
     totalOutstandingSet { shopMoney { amount } } totalCapturableSet { shopMoney { amount } }
@@ -119,7 +119,7 @@ const ORDER_FIELDS: &str = "id name displayFinancialStatus displayFulfillmentSta
     transactions { id kind status gateway amountSet { shopMoney { amount } } parentTransaction { id } }
     refunds { id totalRefundedSet { shopMoney { amount } } }";
 
-fn order(shop: &mut ShopState, id: &str) -> Value {
+pub(super) fn order(shop: &mut ShopState, id: &str) -> Value {
     let answer = run(
         shop,
         &format!("query($id: ID!) {{ order(id: $id) {{ {ORDER_FIELDS} }} }}"),
@@ -553,6 +553,7 @@ fn order_cancel_voids_refunds_and_restocks() {
         topics(&mut shop),
         [
             "order_transactions/create",
+            "tender_transactions/create",
             "refunds/create",
             "fulfillment_orders/cancelled",
             "orders/cancelled",
@@ -770,7 +771,12 @@ fn order_create_imports_an_order_with_its_money_and_stock() {
     );
     assert_eq!(
         topics(&mut shop),
-        ["orders/create", "order_transactions/create", "orders/paid"]
+        [
+            "orders/create",
+            "order_transactions/create",
+            "tender_transactions/create",
+            "orders/paid"
+        ]
     );
 
     let wrong = run(
@@ -817,7 +823,12 @@ fn pending_orders_are_marked_as_paid_and_authorizations_captured_or_voided() {
     assert_eq!(amount(&paid["totalOutstandingSet"]), "0.0");
     assert_eq!(
         topics(&mut shop),
-        ["order_transactions/create", "orders/paid", "orders/updated"]
+        [
+            "order_transactions/create",
+            "tender_transactions/create",
+            "orders/paid",
+            "orders/updated"
+        ]
     );
     let again = run(&mut shop, mark, json!({"id": pending}));
     assert_eq!(
@@ -859,7 +870,12 @@ fn pending_orders_are_marked_as_paid_and_authorizations_captured_or_voided() {
     );
     assert_eq!(
         topics(&mut shop),
-        ["order_transactions/create", "orders/paid", "orders/updated"]
+        [
+            "order_transactions/create",
+            "tender_transactions/create",
+            "orders/paid",
+            "orders/updated"
+        ]
     );
 
     let voidable = create(&mut shop, "AUTHORIZED");
