@@ -9,6 +9,7 @@
 
 pub mod billing;
 pub mod bulk;
+mod discount_tags;
 pub mod discounts;
 pub mod functions;
 pub mod metafields;
@@ -384,6 +385,7 @@ pub const CHANGED: &str = "lsf/changed";
 pub fn register(registry: &mut crate::resolve::Registry) {
     billing::register(registry);
     bulk::register(registry);
+    discount_tags::register(registry);
     discounts::register(registry);
     functions::register(registry);
     uploads::register(registry);

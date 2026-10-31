@@ -21,7 +21,7 @@ mod legacy_publications;
 mod locations;
 mod media;
 #[cfg(test)]
-mod mutation_tests;
+pub(crate) mod mutation_tests;
 mod options;
 mod product_set;
 mod products;
