@@ -7,6 +7,8 @@
 mod metafield_definitions;
 pub mod metafields;
 mod metaobjects;
+pub mod navigation;
+mod online_store;
 #[cfg(test)]
 mod tests;
 pub mod types;
@@ -1180,6 +1182,23 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     metafields::register(registry);
     metafield_definitions::register(registry);
     metaobjects::register(registry);
+    online_store::register(registry);
+    navigation::register(registry);
+}
+
+/// A code of a user error as the error type's code enum has it: itself when the enum has it,
+/// else `INVALID` when the enum has that, else none (the checks of metafield inputs, shared by
+/// the mutations of several types, have codes some of their enums lack).
+pub fn fit_code(code: Option<&str>, code_enum: &str) -> Option<String> {
+    let values = &crate::schema::admin().get(code_enum)?.enum_values;
+    let code = code?;
+    if values.contains_key(code) {
+        Some(code.to_string())
+    } else {
+        values
+            .contains_key("INVALID")
+            .then(|| "INVALID".to_string())
+    }
 }
 
 #[cfg(test)]

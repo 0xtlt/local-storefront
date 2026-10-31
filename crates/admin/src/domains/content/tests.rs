@@ -818,3 +818,378 @@ fn updates_and_deletes_metaobject_definitions() {
         ["metaobjects/delete", "metaobject_definitions/delete"]
     );
 }
+
+#[test]
+fn creates_updates_and_deletes_pages() {
+    let mut shop = rich();
+    shop.take_events();
+    let created = run(
+        &mut shop,
+        "mutation { pageCreate(page: {title: \"About us\", body: \"<p>Hello</p>\",
+            metafields: [{namespace: \"custom\", key: \"tagline\", type: \"single_line_text_field\", value: \"Hi\"}]}) {
+            page { id title handle body isPublished publishedAt templateSuffix tagline: metafield(namespace: \"custom\", key: \"tagline\") { value } }
+            userErrors { field message code } } }",
+        Value::Null,
+    );
+    let page = &created["data"]["pageCreate"]["page"];
+    assert_eq!(
+        created["data"]["pageCreate"]["userErrors"],
+        json!([]),
+        "{created}"
+    );
+    assert_eq!(page["handle"], "about-us");
+    assert_eq!(page["isPublished"], json!(true));
+    assert_eq!(page["publishedAt"], json!(shop.timestamp()));
+    assert_eq!(page["templateSuffix"], Value::Null);
+    assert_eq!(page["tagline"]["value"], "Hi");
+    assert_eq!(topics(&mut shop), ["pages/create"]);
+    let id = page["id"].as_str().unwrap().to_string();
+
+    let taken = run(
+        &mut shop,
+        "mutation { pageCreate(page: {title: \"x\", handle: \"about-us\"}) { page { id } userErrors { field message code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        taken["data"]["pageCreate"]["userErrors"],
+        json!([{"field": ["page", "handle"], "message": "Handle has already been taken", "code": "TAKEN"}])
+    );
+    let blank = run(
+        &mut shop,
+        "mutation { pageCreate(page: {title: \" \", isPublished: true, publishDate: \"2999-01-01T00:00:00Z\"}) { userErrors { field code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        blank["data"]["pageCreate"]["userErrors"],
+        json!([{"field": ["page", "title"], "code": "BLANK"}, {"field": ["page", "publishDate"], "code": "INVALID_PUBLISH_DATE"}])
+    );
+    // A metafield check's code the page's enum lacks is its INVALID.
+    let short = run(
+        &mut shop,
+        "mutation { pageCreate(page: {title: \"x\", metafields: [{namespace: \"ab\", key: \"cd\", type: \"boolean\", value: \"true\"}]}) { userErrors { field code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        short["data"]["pageCreate"]["userErrors"],
+        json!([{"field": ["page", "metafields", "0", "namespace"], "code": "INVALID"}])
+    );
+
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { pageUpdate(id: $id, page: {handle: \"about-the-shop\", isPublished: false, redirectNewHandle: true}) {
+            page { handle isPublished publishedAt } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        updated["data"]["pageUpdate"]["page"],
+        json!({"handle": "about-the-shop", "isPublished": false, "publishedAt": null}),
+        "{updated}"
+    );
+    let redirects = run(
+        &mut shop,
+        "{ urlRedirects(first: 5) { nodes { path target } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        redirects["data"]["urlRedirects"]["nodes"],
+        json!([{"path": "/pages/about-us", "target": "/pages/about-the-shop"}])
+    );
+    assert_eq!(topics(&mut shop), ["url_redirects/create", "pages/update"]);
+
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { pageDelete(id: $id) { deletedPageId userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(deleted["data"]["pageDelete"]["deletedPageId"], json!(id));
+    assert!(shop.get(&id).is_none());
+    assert_eq!(
+        shop.count("Metafield"),
+        rich().count("Metafield"),
+        "its metafields are gone"
+    );
+    let missing = run(
+        &mut shop,
+        "mutation($id: ID!) { pageDelete(id: $id) { deletedPageId userErrors { field code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        missing["data"]["pageDelete"]["userErrors"],
+        json!([{"field": ["id"], "code": "NOT_FOUND"}])
+    );
+}
+
+#[test]
+fn creates_articles_in_blogs_and_moderates_comments() {
+    let mut shop = rich();
+    shop.take_events();
+    let created = run(
+        &mut shop,
+        "mutation { articleCreate(blog: {title: \"Dispatches\"}, article: {title: \"Spring\", author: {name: \"Ann\"},
+            body: \"<p>New</p>\", tags: [\"linen, summer\"], image: {url: \"https://cdn.example/a.jpg\", altText: \"A\"}}) {
+            article { id handle author { name } tags image { url altText } blog { title handle tags commentPolicy } }
+            userErrors { field message code } } }",
+        Value::Null,
+    );
+    let article = &created["data"]["articleCreate"]["article"];
+    assert_eq!(
+        created["data"]["articleCreate"]["userErrors"],
+        json!([]),
+        "{created}"
+    );
+    assert_eq!(article["handle"], "spring");
+    assert_eq!(article["author"]["name"], "Ann");
+    assert_eq!(article["tags"], json!(["linen", "summer"]));
+    assert_eq!(article["image"]["altText"], "A");
+    assert_eq!(
+        article["blog"],
+        json!({"title": "Dispatches", "handle": "dispatches", "tags": ["linen", "summer"], "commentPolicy": "CLOSED"})
+    );
+    assert_eq!(topics(&mut shop), ["blogs/create", "articles/create"]);
+    let blog = find(&shop, "Blog", "handle", "dispatches");
+
+    let errors = run(
+        &mut shop,
+        "mutation($blog: ID!) { articleCreate(article: {title: \"Spring\", blogId: $blog, author: {}}) { userErrors { field code } }
+            again: articleCreate(article: {title: \"x\", author: {name: \"A\"}}) { userErrors { field code } }
+            both: articleCreate(blog: {title: \"B\"}, article: {title: \"x\", blogId: $blog, author: {name: \"A\"}}) { userErrors { code } } }",
+        json!({"blog": blog}),
+    );
+    assert_eq!(
+        errors["data"]["articleCreate"]["userErrors"],
+        json!([{"field": ["article", "author"], "code": "AUTHOR_FIELD_REQUIRED"}])
+    );
+    assert_eq!(
+        errors["data"]["again"]["userErrors"],
+        json!([{"field": ["article"], "code": "BLOG_REFERENCE_REQUIRED"}])
+    );
+    assert_eq!(
+        errors["data"]["both"]["userErrors"][0]["code"],
+        "AMBIGUOUS_BLOG"
+    );
+
+    let id = article["id"].as_str().unwrap().to_string();
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { articleUpdate(id: $id, article: {title: \"Summer\", tags: [\"sun\"]}) {
+            article { title tags blog { tags } } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        updated["data"]["articleUpdate"]["article"],
+        json!({"title": "Summer", "tags": ["sun"], "blog": {"tags": ["sun"]}}),
+        "{updated}"
+    );
+
+    // The rich fixture's comments.
+    let comment = shop.keys("Comment").next().unwrap().to_string();
+    let spam = run(
+        &mut shop,
+        "mutation($id: ID!) { commentSpam(id: $id) { comment { status isPublished } userErrors { code } } }",
+        json!({"id": comment}),
+    );
+    assert_eq!(
+        spam["data"]["commentSpam"]["comment"],
+        json!({"status": "SPAM", "isPublished": false})
+    );
+    let approved = run(
+        &mut shop,
+        "mutation($id: ID!) { commentApprove(id: $id) { comment { status isPublished } } }",
+        json!({"id": comment}),
+    );
+    assert_eq!(
+        approved["data"]["commentApprove"]["comment"],
+        json!({"status": "PUBLISHED", "isPublished": true})
+    );
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { commentDelete(id: $id) { deletedCommentId } }",
+        json!({"id": comment}),
+    );
+    assert_eq!(
+        deleted["data"]["commentDelete"]["deletedCommentId"],
+        json!(comment)
+    );
+
+    shop.take_events();
+    let gone = run(
+        &mut shop,
+        "mutation($id: ID!) { blogDelete(id: $id) { deletedBlogId userErrors { code } } }",
+        json!({"id": blog}),
+    );
+    assert_eq!(gone["data"]["blogDelete"]["deletedBlogId"], json!(blog));
+    assert!(shop.get(&id).is_none(), "its articles are gone");
+    assert_eq!(topics(&mut shop), ["articles/delete", "blogs/delete"]);
+}
+
+#[test]
+fn creates_menus_and_redirects() {
+    let mut shop = rich();
+    shop.take_events();
+    let page = shop.keys("Page").next().unwrap().to_string();
+    let page_handle = shop.get(&page).unwrap()["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let created = run(
+        &mut shop,
+        "mutation($page: ID!) { menuCreate(title: \"Sidebar\", handle: \"sidebar\", items: [
+            {title: \"Products\", type: CATALOG, items: [{title: \"About\", type: PAGE, resourceId: $page}]},
+            {title: \"Shopify\", type: HTTP, url: \"https://shopify.com\"}]) {
+            menu { id handle isDefault items { title type url items { title url resourceId } } } userErrors { field message code } } }",
+        json!({"page": page}),
+    );
+    let menu = &created["data"]["menuCreate"]["menu"];
+    assert_eq!(
+        created["data"]["menuCreate"]["userErrors"],
+        json!([]),
+        "{created}"
+    );
+    assert_eq!(menu["id"], json!(super::menu_gid("sidebar")));
+    assert_eq!(menu["items"][0]["url"], "/collections/all");
+    assert_eq!(
+        menu["items"][0]["items"][0],
+        json!({"title": "About", "url": format!("/pages/{page_handle}"), "resourceId": page})
+    );
+    assert_eq!(topics(&mut shop), ["menus/create"]);
+
+    let deep = run(
+        &mut shop,
+        "mutation { menuCreate(title: \"Deep\", handle: \"deep\", items: [{title: \"a\", type: FRONTPAGE, items: [{title: \"b\", type: FRONTPAGE, items: [{title: \"c\", type: FRONTPAGE, items: [{title: \"d\", type: FRONTPAGE}]}]}]}]) { userErrors { field code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        deep["data"]["menuCreate"]["userErrors"],
+        json!([{"field": ["items", "0", "items", "0", "items", "0", "items", "0"], "code": "NESTING_TOO_DEEP"}])
+    );
+    let main = find(&shop, "Menu", "handle", "main-menu");
+    let default = run(
+        &mut shop,
+        "mutation($id: ID!) { menuDelete(id: $id) { deletedMenuId userErrors { code } } }",
+        json!({"id": main}),
+    );
+    assert_eq!(
+        default["data"]["menuDelete"]["userErrors"][0]["code"],
+        "UNABLE_TO_DELETE_DEFAULT_MENU"
+    );
+    let id = menu["id"].as_str().unwrap().to_string();
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { menuUpdate(id: $id, title: \"Side\", handle: \"side\", items: [{title: \"Home\", type: FRONTPAGE}]) {
+            menu { title handle items { title url } } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        updated["data"]["menuUpdate"]["menu"],
+        json!({"title": "Side", "handle": "side", "items": [{"title": "Home", "url": "/"}]})
+    );
+
+    let redirect = run(
+        &mut shop,
+        "mutation { urlRedirectCreate(urlRedirect: {path: \"old\", target: \"/new\"}) { urlRedirect { id path target } userErrors { field message code } } }",
+        Value::Null,
+    );
+    let redirect = &redirect["data"]["urlRedirectCreate"];
+    assert_eq!(redirect["urlRedirect"]["path"], "/old", "{redirect}");
+    let again = run(
+        &mut shop,
+        "mutation { urlRedirectCreate(urlRedirect: {path: \"/old\", target: \"/other\"}) { userErrors { field message code } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        again["data"]["urlRedirectCreate"]["userErrors"],
+        json!([{"field": ["urlRedirect", "path"], "message": "Path has already been taken", "code": "CREATE_FAILED"}])
+    );
+    let redirect_id = redirect["urlRedirect"]["id"].as_str().unwrap().to_string();
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { urlRedirectUpdate(id: $id, urlRedirect: {target: \"https://example.com\"}) { urlRedirect { path target } } }",
+        json!({"id": redirect_id}),
+    );
+    assert_eq!(
+        updated["data"]["urlRedirectUpdate"]["urlRedirect"],
+        json!({"path": "/old", "target": "https://example.com"})
+    );
+    let searched = run(
+        &mut shop,
+        "{ urlRedirects(first: 5, query: \"old\") { nodes { path } } urlRedirectsCount { count } }",
+        Value::Null,
+    );
+    assert_eq!(
+        searched["data"]["urlRedirects"]["nodes"],
+        json!([{"path": "/old"}])
+    );
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { urlRedirectDelete(id: $id) { deletedUrlRedirectId } menuDelete(id: \"gid://shopify/Menu/1\") { userErrors { code } } }",
+        json!({"id": redirect_id}),
+    );
+    assert_eq!(
+        deleted["data"]["urlRedirectDelete"]["deletedUrlRedirectId"],
+        json!(redirect_id)
+    );
+    assert_eq!(
+        deleted["data"]["menuDelete"]["userErrors"][0]["code"],
+        "MENU_DOES_NOT_EXIST"
+    );
+}
+
+/// What the content mutations create is in the store the storefront and the checkout read, as
+/// store sync projects it: a page, a menu, an active metaobject, a product's metafields.
+#[test]
+fn what_the_content_mutations_create_syncs_to_the_store() {
+    use lsf_core::store::load::{DataSource, load, load_with_overlays};
+    let source = DataSource::Directory(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich"),
+    );
+    let options = Default::default();
+    let (base, _) = load(&source, &options);
+    let mut shop = ShopState::seeded(&base, None);
+    let product = find(&shop, "Product", "handle", "linen-dress");
+    let answer = run(
+        &mut shop,
+        "mutation($product: ID!) {
+            page: pageCreate(page: {title: \"Shipping\", body: \"<p>Fast</p>\"}) { userErrors { message } }
+            menu: menuCreate(title: \"Legal\", handle: \"legal\", items: [{title: \"Search\", type: SEARCH}]) { userErrors { message } }
+            type: metaobjectDefinitionCreate(definition: {type: \"badge\", fieldDefinitions: [{key: \"label\", type: \"single_line_text_field\"}]}) { userErrors { message } }
+            entry: metaobjectCreate(metaobject: {type: \"badge\", handle: \"eco\", fields: [{key: \"label\", value: \"Eco\"}]}) { userErrors { message } }
+            set: metafieldsSet(metafields: [
+                {ownerId: $product, namespace: \"custom\", key: \"badge\", type: \"metaobject_reference\", value: \"gid://shopify/Metaobject/0\"}
+            ]) { userErrors { message } }
+        }",
+        json!({"product": product}),
+    );
+    // The reference names a metaobject that does not exist: refused, nothing else changed by it.
+    assert_eq!(
+        answer["data"]["set"]["userErrors"][0]["message"],
+        "Value references non-existent resource gid://shopify/Metaobject/0."
+    );
+    let entry = super::metaobject_gid("badge", "eco");
+    let set = run(
+        &mut shop,
+        "mutation($product: ID!, $entry: String!) { metafieldsSet(metafields: [
+            {ownerId: $product, namespace: \"custom\", key: \"badge\", type: \"metaobject_reference\", value: $entry},
+            {ownerId: $product, namespace: \"custom\", key: \"weight_kg\", type: \"number_decimal\", value: \"1.25\"}
+        ]) { userErrors { message } } }",
+        json!({"product": product, "entry": entry}),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    let overlay = crate::sync::overlay(&shop, &base).expect("the shop changed");
+    let (store, diagnostics) = load_with_overlays(&source, &options, &[overlay]);
+    assert!(!diagnostics.has_errors(), "{diagnostics:?}");
+    assert!(store.page_index("shipping").is_some(), "the page");
+    assert!(store.menu("legal").is_some(), "the menu");
+    // The type is not publishable: the entry has no status, and is on the storefront.
+    let badge = store.metaobject("badge", "eco").expect("the metaobject");
+    assert_eq!(badge.fields["label"].value, json!("Eco"));
+    let linen = store.product_by_handle("linen-dress").unwrap();
+    assert_eq!(
+        linen.metafields["custom"]["badge"].value,
+        json!("badge/eco")
+    );
+    assert_eq!(linen.metafields["custom"]["weight_kg"].value, json!("1.25"));
+}

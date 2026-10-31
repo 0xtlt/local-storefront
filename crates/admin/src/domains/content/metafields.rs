@@ -621,13 +621,205 @@ fn owner_of(state: &ShopState, id: &str) -> Result<Option<(String, &'static str)
     }))
 }
 
-fn set_error(index: usize, field: &str, message: impl Into<String>, code: &str) -> UserError {
-    let index = index.to_string();
-    let mut path = vec!["metafields", index.as_str()];
+/// An error about the field `field` of the input at `path` (`["metafields", "0"]`).
+fn input_error(path: &[&str], field: &str, message: impl Into<String>, code: &str) -> UserError {
+    let mut path = path.to_vec();
     if !field.is_empty() {
         path.push(field);
     }
     UserError::new(&path, message).code(code)
+}
+
+/// What an input checked sets: the namespace as stored, the type, the value.
+pub struct Checked {
+    pub namespace: String,
+    pub key: String,
+    pub kind: String,
+    pub checked: types::Checked,
+}
+
+/// Checks an input that sets a metafield of an owner of `owner_type` (`owner` when it exists
+/// already): `namespace` (omitted, the app's), `key`, `type` (else the definition's), `value`
+/// against the type and the definition's validations, `compareDigest` when the input has the
+/// field. The errors are about the fields of the input at `path`.
+pub fn check_input(
+    state: &ShopState,
+    owner: Option<&str>,
+    owner_type: &str,
+    input: &Map<String, Value>,
+    path: &[&str],
+    errors: &mut Vec<UserError>,
+) -> Option<Checked> {
+    let get = |name: &str| input.get(name).and_then(Value::as_str);
+    let key = get("key").unwrap_or_default();
+    let given_namespace = get("namespace");
+    let before = errors.len();
+    check_namespace_and_key(given_namespace, key, path, errors, "INVALID");
+    if errors.len() > before {
+        return None;
+    }
+    let namespace = stored_namespace(state, given_namespace);
+    if other_apps(state, &namespace) {
+        errors.push(input_error(
+            path,
+            "namespace",
+            "Access to this namespace and key on Metafields for this resource type is not allowed.",
+            "APP_NOT_AUTHORIZED",
+        ));
+        return None;
+    }
+    let definition = find_definition(state, owner_type, &namespace, key);
+    let defined_kind = definition
+        .as_deref()
+        .and_then(|definition| definition_kind(state, definition));
+    let kind = match (get("type"), &defined_kind) {
+        (Some(kind), Some(defined)) if kind != defined => {
+            // lsf's wording: Shopify's message is not published.
+            errors.push(input_error(
+                path,
+                "type",
+                format!(
+                    "Type '{kind}' must be consistent with the definition's type: '{defined}'."
+                ),
+                "INVALID_TYPE",
+            ));
+            return None;
+        }
+        (Some(kind), _) => kind.to_string(),
+        (None, Some(defined)) => defined.clone(),
+        (None, None) => {
+            errors.push(input_error(path, "type", "Type can't be blank", "BLANK"));
+            return None;
+        }
+    };
+    if !types::is_type(&kind) {
+        errors.push(input_error(
+            path,
+            "type",
+            format!("Type '{kind}' is not a valid type."),
+            "INVALID_TYPE",
+        ));
+        return None;
+    }
+    let existing = owner.and_then(|owner| find(state, owner, &namespace, key));
+    if let Some(digest) = input.get("compareDigest") {
+        let current = existing
+            .as_deref()
+            .and_then(|id| state.get(id))
+            .map(compare_digest);
+        let malformed = digest
+            .as_str()
+            .is_some_and(|digest| !digest.chars().all(|c| c.is_ascii_hexdigit()));
+        if malformed {
+            errors.push(input_error(
+                path,
+                "compareDigest",
+                "The compareDigest is invalid.",
+                "INVALID_COMPARE_DIGEST",
+            ));
+            return None;
+        }
+        let stale = match (digest, &current) {
+            (Value::Null, None) => false,
+            (Value::String(digest), Some(current)) => digest != current,
+            _ => true,
+        };
+        if stale {
+            // lsf's wording: Shopify's message is not published.
+            errors.push(input_error(
+                path,
+                "compareDigest",
+                "The metafield has been modified since it was loaded: query its compareDigest \
+                 again.",
+                "STALE_OBJECT",
+            ));
+            return None;
+        }
+    }
+    let validations = validations_of(state, definition.as_deref());
+    let currency = shop_currency(state);
+    let cx = Context {
+        state,
+        currency: &currency,
+        validations: &validations,
+    };
+    match types::check(&kind, get("value").unwrap_or_default(), &cx) {
+        Ok(checked) => Some(Checked {
+            namespace,
+            key: key.to_string(),
+            kind,
+            checked,
+        }),
+        Err(invalid) => {
+            errors.push(input_error(path, "value", invalid.message, invalid.code));
+            None
+        }
+    }
+}
+
+/// The `metafields` (`[MetafieldInput]`) of a page, a blog or an article, checked: an input with
+/// an `id` names a metafield of the owner (its namespace and key), the others a namespace and
+/// a key. `path` is the input's path to `metafields`.
+pub fn check_owned_inputs(
+    state: &ShopState,
+    owner: Option<&str>,
+    owner_type: &str,
+    inputs: Option<&Value>,
+    path: &[&str],
+    errors: &mut Vec<UserError>,
+) -> Vec<Checked> {
+    let mut checked = Vec::new();
+    for (index, input) in inputs
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let Some(mut input) = input.as_object().cloned() else {
+            continue;
+        };
+        let index = index.to_string();
+        let mut at = path.to_vec();
+        at.push(&index);
+        if let Some(id) = input.get("id").and_then(Value::as_str) {
+            let found = state
+                .get(id)
+                .filter(|metafield| owner.is_some_and(|owner| text(metafield, "owner") == owner));
+            let Some(metafield) = found else {
+                errors.push(input_error(
+                    &at,
+                    "id",
+                    "Metafield does not exist.",
+                    "INVALID",
+                ));
+                continue;
+            };
+            input.insert("namespace".into(), json!(text(metafield, "namespace")));
+            input.insert("key".into(), json!(text(metafield, "key")));
+        }
+        if input.get("value").is_none_or(Value::is_null) {
+            errors.push(input_error(&at, "value", "Value can't be blank", "BLANK"));
+            continue;
+        }
+        if let Some(found) = check_input(state, owner, owner_type, &input, &at, errors) {
+            checked.push(found);
+        }
+    }
+    checked
+}
+
+/// Sets the metafields an owner's own mutation checked: the owner's event says the change.
+pub fn set_owned(state: &mut ShopState, owner: &str, checked: &[Checked]) {
+    for metafield in checked {
+        set(
+            state,
+            owner,
+            &metafield.namespace,
+            &metafield.key,
+            &metafield.kind,
+            &metafield.checked,
+        );
+    }
 }
 
 /// `metafieldsSet`.
@@ -652,133 +844,42 @@ fn metafields_set(
         return Ok(payload(json!({"metafields": null}), &[error]));
     }
     let state = mutation.state();
-    let currency = shop_currency(state);
     let mut errors = Vec::new();
     let mut planned = Vec::new();
     for (index, input) in inputs.iter().enumerate() {
-        let get = |name: &str| input.get(name).and_then(Value::as_str);
-        let owner_id = get("ownerId").unwrap_or_default();
+        let owner_id = input
+            .get("ownerId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let owner = owner_of(state, owner_id)?;
         if let Some(type_name) = gid_type(owner_id) {
             check_owner_access(mutation, type_name, ctx.field_name())?;
         }
-        let key = get("key").unwrap_or_default();
-        let given_namespace = get("namespace");
-        let before = errors.len();
-        let index_text = index.to_string();
-        check_namespace_and_key(
-            given_namespace,
-            key,
-            &["metafields", &index_text],
-            &mut errors,
-            "INVALID",
-        );
+        let index = index.to_string();
+        let path = ["metafields", index.as_str()];
         let Some((owner, owner_type)) = owner else {
-            errors.push(set_error(
-                index,
+            // The namespace and the key are checked first.
+            let key = input.get("key").and_then(Value::as_str).unwrap_or_default();
+            let namespace = input.get("namespace").and_then(Value::as_str);
+            check_namespace_and_key(namespace, key, &path, &mut errors, "INVALID");
+            errors.push(input_error(
+                &path,
                 "ownerId",
                 "Owner does not exist.",
                 "INVALID",
             ));
             continue;
         };
-        if errors.len() > before {
-            continue;
-        }
-        let namespace = stored_namespace(state, given_namespace);
-        if other_apps(state, &namespace) {
-            errors.push(set_error(
-                index,
-                "namespace",
-                "Access to this namespace and key on Metafields for this resource type is not allowed.",
-                "APP_NOT_AUTHORIZED",
-            ));
-            continue;
-        }
-        let definition = find_definition(state, owner_type, &namespace, key);
-        let defined_kind = definition
-            .as_deref()
-            .and_then(|definition| definition_kind(state, definition));
-        let kind = match (get("type"), &defined_kind) {
-            (Some(kind), Some(defined)) if kind != defined => {
-                // lsf's wording: Shopify's message is not published.
-                errors.push(set_error(
-                    index,
-                    "type",
-                    format!(
-                        "Type '{kind}' must be consistent with the definition's type: '{defined}'."
-                    ),
-                    "INVALID_TYPE",
-                ));
-                continue;
-            }
-            (Some(kind), _) => kind.to_string(),
-            (None, Some(defined)) => defined.clone(),
-            (None, None) => {
-                errors.push(set_error(index, "type", "Type can't be blank", "BLANK"));
-                continue;
-            }
-        };
-        if !types::is_type(&kind) {
-            errors.push(set_error(
-                index,
-                "type",
-                format!("Type '{kind}' is not a valid type."),
-                "INVALID_TYPE",
-            ));
-            continue;
-        }
-        let existing = find(state, &owner, &namespace, key);
-        if let Some(digest) = input.get("compareDigest") {
-            let current = existing
-                .as_deref()
-                .and_then(|id| state.get(id))
-                .map(compare_digest);
-            let stale = match (digest, &current) {
-                (Value::Null, None) => false,
-                (Value::String(digest), Some(current)) => digest != current,
-                _ => true,
-            };
-            let malformed = digest
-                .as_str()
-                .is_some_and(|digest| !digest.chars().all(|c| c.is_ascii_hexdigit()));
-            if malformed {
-                errors.push(set_error(
-                    index,
-                    "compareDigest",
-                    "The compareDigest is invalid.",
-                    "INVALID_COMPARE_DIGEST",
-                ));
-                continue;
-            }
-            if stale {
-                // lsf's wording: Shopify's message is not published.
-                errors.push(set_error(
-                    index,
-                    "compareDigest",
-                    "The metafield has been modified since it was loaded: query its \
-                     compareDigest again.",
-                    "STALE_OBJECT",
-                ));
-                continue;
-            }
-        }
-        let validations = validations_of(state, definition.as_deref());
-        let cx = Context {
-            state,
-            currency: &currency,
-            validations: &validations,
-        };
-        let raw = get("value").unwrap_or_default();
-        match types::check(&kind, raw, &cx) {
-            Ok(checked) => planned.push(Planned {
+        if let Some(checked) =
+            check_input(state, Some(&owner), owner_type, input, &path, &mut errors)
+        {
+            planned.push(Planned {
                 owner,
-                namespace,
-                key: key.to_string(),
-                kind,
-                checked,
-            }),
-            Err(invalid) => errors.push(set_error(index, "value", invalid.message, invalid.code)),
+                namespace: checked.namespace,
+                key: checked.key,
+                kind: checked.kind,
+                checked: checked.checked,
+            });
         }
     }
     if !errors.is_empty() {

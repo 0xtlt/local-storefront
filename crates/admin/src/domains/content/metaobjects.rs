@@ -250,7 +250,14 @@ impl MetaobjectError {
 
 /// A payload with `MetaobjectUserError`s.
 fn answer(fields: Value, errors: &[MetaobjectError]) -> Value {
-    let plain: Vec<UserError> = errors.iter().map(|error| error.error.clone()).collect();
+    let plain: Vec<UserError> = errors
+        .iter()
+        .map(|error| {
+            let mut plain = error.error.clone();
+            plain.code = super::fit_code(plain.code.as_deref(), "MetaobjectUserErrorCode");
+            plain
+        })
+        .collect();
     let mut answer = payload(fields, &plain);
     if let Some(Value::Array(list)) = answer.get_mut("userErrors") {
         for (entry, error) in list.iter_mut().zip(errors) {
