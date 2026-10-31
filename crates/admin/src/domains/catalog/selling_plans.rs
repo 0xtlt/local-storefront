@@ -614,6 +614,27 @@ fn link(
     changed
 }
 
+/// The `metafields` of a plan input (`path` its place), checked as `metafieldsSet` checks them
+/// ([`records::check_metafields`]).
+fn check_plan_metafields(
+    state: &ShopState,
+    plan_id: Option<&str>,
+    plan: &Map<String, Value>,
+    path: &[String],
+    errors: &mut Vec<UserError>,
+) {
+    let mut at: Vec<&str> = path.iter().map(String::as_str).collect();
+    at.push("metafields");
+    errors.extend(records::check_metafields(
+        state,
+        plan_id,
+        "SELLING_PLAN",
+        &objects(plan, "metafields"),
+        &at,
+        Some("SellingPlanGroupUserErrorCode"),
+    ));
+}
+
 /// The checks of a group's input: its name and options, its plans.
 fn check_group(
     state: &ShopState,
@@ -663,6 +684,7 @@ fn check_group(
             index.to_string(),
         ];
         check_plan(plan, options, true, &path, errors);
+        check_plan_metafields(state, None, plan, &path, errors);
     }
     for (index, plan) in to_update.iter().enumerate() {
         let path = vec![
@@ -681,7 +703,10 @@ fn check_group(
                 "Selling plan does not exist.",
                 "PLAN_DOES_NOT_EXIST",
             )),
-            Some(_) => check_plan(plan, options, false, &path, errors),
+            Some(id) => {
+                check_plan(plan, options, false, &path, errors);
+                check_plan_metafields(state, Some(id), plan, &path, errors);
+            }
         }
     }
     for (index, id) in to_delete.iter().enumerate() {

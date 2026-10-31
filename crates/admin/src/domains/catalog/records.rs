@@ -6,6 +6,7 @@
 use serde_json::{Map, Value, json};
 
 use super::{QUANTITY_NAMES, gids, refresh_product};
+use crate::domains::content;
 use crate::graphql::FieldContext;
 use crate::resolve::UserError;
 use crate::state::{Record, ShopState, gid, parse_gid, value};
@@ -472,164 +473,83 @@ pub fn after_inventory_change(
     }
 }
 
-/// Validates the `metafields` input of a resource (`owner`, `None` for one being created): each
-/// needs a key, a value, and a type unless the owner has it already. The errors' `field` starts
-/// with `path`.
+/// Checks the `metafields` input of a resource as `metafieldsSet` checks it, with the content
+/// family's rules ([`content::metafields::check_owned_inputs`]): the namespace and the key (`$app`
+/// and `$app:x` the app's reserved namespaces, another app's refused), the type (else the
+/// definition's of `owner_type`, the namespace and the key), the value against its type and the
+/// definition's validations. `owner` is the resource, `None` for one being created; an input with
+/// an `id` names one of its metafields. The errors' `field` starts with `path` (`["metafields",
+/// "0", "value"]`), and their `code` is fitted to `code_enum`, the code enum of the payload's
+/// error type (`None` for an error type without one: `UserError`).
 pub fn check_metafields(
     state: &ShopState,
     owner: Option<&str>,
+    owner_type: &str,
     inputs: &[&Map<String, Value>],
     path: &[&str],
+    code_enum: Option<&str>,
 ) -> Vec<UserError> {
-    let app = app_id(state);
-    let owned: Vec<(String, String)> = owner
-        .and_then(|owner| state.get(owner))
-        .map(|record| super::gids(record.get("metafields")))
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|metafield| {
-            let record = state.get(metafield)?;
-            Some((
-                field(record, "namespace")?.to_string(),
-                field(record, "key")?.to_string(),
-            ))
-        })
-        .collect();
     let mut errors = Vec::new();
-    for (index, input) in inputs.iter().enumerate() {
-        let position = index.to_string();
-        let at = |name: &str| -> Vec<String> {
-            path.iter()
-                .map(|part| part.to_string())
-                .chain([position.clone(), name.to_string()])
-                .collect()
-        };
-        let error = |name: &str, message: &str| UserError {
-            field: Some(at(name)),
-            message: message.to_string(),
-            code: None,
-        };
-        if input.get("id").is_some() {
-            continue;
-        }
-        // Rails' presence validations of a metafield, as Shopify words them.
-        if text(input, "key").is_none_or(|key| key.trim().is_empty()) {
-            errors.push(error("key", "Key can't be blank"));
-        } else if text(input, "key").is_some_and(|key| key.trim().chars().count() < 2) {
-            errors.push(error("key", "Key is too short (minimum is 2 characters)"));
-        }
-        if text(input, "namespace").is_some_and(|namespace| {
-            let namespace = namespace.trim();
-            !namespace.starts_with('$') && namespace.chars().count() < 2
-        }) {
-            errors.push(error(
-                "namespace",
-                "Namespace is too short (minimum is 2 characters)",
-            ));
-        }
-        if text(input, "value").is_none() {
-            errors.push(error("value", "Value can't be blank"));
-        }
-        let namespace = crate::domains::content::admin_namespace(
-            app,
-            text(input, "namespace").unwrap_or("$app").trim(),
-        );
-        let key = text(input, "key").unwrap_or_default().trim().to_string();
-        let exists = owned.contains(&(namespace, key));
-        if !exists && text(input, "type").is_none_or(|kind| kind.trim().is_empty()) {
-            errors.push(error("type", "Type can't be blank"));
-        }
+    content::metafields::check_owned_inputs(
+        state,
+        owner,
+        owner_type,
+        Some(&as_array(inputs)),
+        path,
+        &mut errors,
+    );
+    for error in &mut errors {
+        error.code =
+            code_enum.and_then(|code_enum| content::fit_code(error.code.as_deref(), code_enum));
     }
     errors
 }
 
-/// Sets the metafields of a `metafields` input on an owner (a product, a variant, a
-/// collection): created, or changed when the owner has one of that namespace and key (or of
-/// that `id`). The namespace defaults to the app's reserved one, as on Shopify. Returns the
-/// metafields set.
+/// Sets the metafields of a `metafields` input on an owner (a product, a variant, a collection,
+/// …) of `owner_type`, normalised as `metafieldsSet` keeps them: created, or changed when the
+/// owner has one of that namespace and key (or of that `id`), and linked to a definition when
+/// there is one ([`content::metafields::set`]). The namespace defaults to the app's reserved one,
+/// as on Shopify. The inputs are those [`check_metafields`] let through; one that does not pass
+/// the checks is left out. Returns the metafields set.
 pub fn set_metafields(
     state: &mut ShopState,
     owner: &str,
     owner_type: &str,
     inputs: &[&Map<String, Value>],
 ) -> Vec<String> {
-    let now = state.timestamp();
-    let app = app_id(state);
-    let mut set = Vec::new();
-    for input in inputs {
-        let existing = text(input, "id").filter(|id| is(state, id, "Metafield"));
-        let (namespace, key) = match existing.and_then(|id| state.get(id)) {
-            Some(record) => (
-                field(record, "namespace").unwrap_or_default().to_string(),
-                field(record, "key").unwrap_or_default().to_string(),
-            ),
-            None => (
-                crate::domains::content::admin_namespace(
-                    app,
-                    text(input, "namespace").unwrap_or("$app").trim(),
-                ),
-                text(input, "key").unwrap_or_default().trim().to_string(),
-            ),
-        };
-        let id = existing
-            .map(str::to_string)
-            .unwrap_or_else(|| crate::domains::content::metafield_gid(owner, &namespace, &key));
-        let previous = state.get(&id).cloned();
-        let kind = text(input, "type")
-            .map(str::to_string)
-            .or_else(|| {
-                previous
-                    .as_ref()
-                    .and_then(|record| field(record, "type"))
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| "single_line_text_field".to_string());
-        let raw = text(input, "value").unwrap_or_default().to_string();
-        let mut record = value::object(json!({
-            "__typename": "Metafield",
-            "id": id,
-            "namespace": namespace,
-            "key": key,
-            "type": kind,
-            "value": raw,
-            "jsonValue": crate::domains::content::json_value(&kind, &raw),
-            "owner": owner,
-            "ownerType": owner_type,
-            "definition": null,
-            "sizeInBytes": raw.len(),
-            "createdAt": previous
-                .as_ref()
-                .and_then(|record| record.get("createdAt").cloned())
-                .unwrap_or_else(|| json!(now)),
-            "updatedAt": now,
-        }));
-        if kind.ends_with("_reference") {
-            if kind.starts_with("list.") {
-                let references: Vec<String> = serde_json::from_str::<Vec<String>>(&raw)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|reference| state.contains(reference))
-                    .collect();
-                record.insert("references".into(), json!(references));
-            } else {
-                let reference = state.contains(&raw).then_some(raw.clone());
-                record.insert("reference".into(), json!(reference));
-            }
-        }
-        state.insert(record);
-        crate::domains::content::attach_definition(state, &id);
-        if let Some(Value::Array(owned)) = state
-            .get_mut(owner)
-            .and_then(|record| record.get_mut("metafields"))
-            && !owned
-                .iter()
-                .any(|known| known.as_str() == Some(id.as_str()))
-        {
-            owned.push(json!(id));
-        }
-        set.push(id);
-    }
-    set
+    let mut errors = Vec::new();
+    let checked = content::metafields::check_owned_inputs(
+        state,
+        Some(owner),
+        owner_type,
+        Some(&as_array(inputs)),
+        &[],
+        &mut errors,
+    );
+    checked
+        .iter()
+        .map(|metafield| {
+            content::metafields::set(
+                state,
+                owner,
+                &metafield.namespace,
+                &metafield.key,
+                &metafield.kind,
+                &metafield.checked,
+            )
+            .0
+        })
+        .collect()
+}
+
+/// Inputs as the JSON array the content family's checks read.
+fn as_array(inputs: &[&Map<String, Value>]) -> Value {
+    Value::Array(
+        inputs
+            .iter()
+            .map(|input| Value::Object((*input).clone()))
+            .collect(),
+    )
 }
 
 /// Adds the product to a collection's `products` (at the end) and the collection to the

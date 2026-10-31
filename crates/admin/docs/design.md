@@ -731,6 +731,13 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
   right for every product a mutation changes: the store sync reads `Collection.products` only.
 - **`@idempotent`**: `inventory::with_idempotency` keeps each key with the arguments' fingerprint
   and the answer (`ShopState::set_memo`), so a retry answers the first answer again.
+- **Metafields** of the catalog's inputs (`productCreate`, `productUpdate`, `productSet` and its
+  variants, `productVariantsBulkCreate`/`Update`, collections, locations, selling plans) are
+  checked and kept as `metafieldsSet` checks and keeps them: `records::check_metafields` and
+  `records::set_metafields` run the content family's `content::metafields::check_owned_inputs`
+  and `content::metafields::set` (types, definitions and their validations, the app's
+  namespaces), with the errors at the input's path and their codes fitted to the payload's code
+  enum (`productSet`'s are `INVALID_METAFIELD`). Like `metafieldsSet`, they create no definition.
 - **Partial updates** (`allowPartialUpdates`, `productCreateMedia`) call `m.keep_changes()`.
 - **Publication events** name no record: `emit_with` with the product (or collection) and the
   publication as snapshot (`publications.rs`).

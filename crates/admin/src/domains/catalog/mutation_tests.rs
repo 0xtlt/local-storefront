@@ -597,9 +597,21 @@ fn product_create_and_update_take_media_and_metafields() {
         )
     );
     shop.take_events();
-    let updated = run_with(
+    // Without a definition, the type is required to update a metafield too ("Required when
+    // creating or updating a metafield without a definition").
+    let untyped = run_with(
         &mut shop,
         r#"mutation($id: ID!) { productUpdate(product: {id: $id, metafields: [{namespace: "custom", key: "material", value: "Kevlar"}]}) {
+            userErrors { field message } } }"#,
+        json!({"id": id}),
+    );
+    assert_eq!(
+        untyped["data"]["productUpdate"]["userErrors"],
+        json!([{"field": ["metafields", "0", "type"], "message": "Type can't be blank"}])
+    );
+    let updated = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productUpdate(product: {id: $id, metafields: [{namespace: "custom", key: "material", type: "single_line_text_field", value: "Kevlar"}]}) {
             product { metafield(namespace: "custom", key: "material") { value } } userErrors { message } } }"#,
         json!({"id": id}),
     );
@@ -614,7 +626,113 @@ fn product_create_and_update_take_media_and_metafields() {
     );
     assert_eq!(
         blank["data"]["productUpdate"]["userErrors"],
-        json!([{"field": ["metafields", "0", "key"], "message": "Key can't be blank"}])
+        json!([{"field": ["metafields", "0", "key"], "message": "Key is too short (minimum is 2 characters)"}])
+    );
+}
+
+#[test]
+fn product_metafields_are_checked_as_metafields_set_checks_them() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let app = shop.keys("App").next().unwrap().to_string();
+    let app_id = crate::state::parse_gid(&app).unwrap().1;
+    // A value its type refuses, and another app's namespace: the product mutation's errors,
+    // with its paths, and nothing created.
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($product: ProductCreateInput!) { productCreate(product: $product) { product { id } userErrors { field message } } }"#,
+        json!({"product": {"title": "Scale", "metafields": [
+            {"namespace": "custom", "key": "grams", "type": "number_integer", "value": "330\n"},
+            {"namespace": "app--999", "key": "secret", "type": "single_line_text_field", "value": "x"},
+        ]}}),
+    );
+    assert_eq!(
+        refused["data"]["productCreate"],
+        json!({"product": null, "userErrors": [
+            {"field": ["metafields", "0", "value"], "message": "Value must be an integer."},
+            {"field": ["metafields", "1", "namespace"], "message": "Access to this namespace and key on Metafields for this resource type is not allowed."},
+        ]})
+    );
+    assert!(
+        shop.all("Product")
+            .all(|record| record["title"] != json!("Scale"))
+    );
+    assert!(topics(&mut shop).is_empty());
+
+    // `$app` is the app's reserved namespace, and the value is kept as `metafieldsSet` keeps it.
+    let created = run_with(
+        &mut shop,
+        r#"mutation($product: ProductCreateInput!) { productCreate(product: $product) {
+            product { app: metafield(namespace: "$app", key: "weight") { namespace value jsonValue type } } userErrors { field message } } }"#,
+        json!({"product": {"title": "Scale", "metafields": [
+            {"namespace": "$app", "key": "weight", "type": "weight", "value": "{\"value\": 2.5, \"unit\": \"KILOGRAMS\"}"},
+        ]}}),
+    );
+    assert_eq!(
+        ok(&created, "productCreate")["product"]["app"],
+        json!({
+            "namespace": format!("app--{app_id}"),
+            "value": "{\"value\":2.5,\"unit\":\"kilograms\"}",
+            "jsonValue": {"value": 2.5, "unit": "kilograms"},
+            "type": "weight",
+        })
+    );
+
+    // A definition's validations apply, and give the type an input leaves out.
+    let defined = run(
+        &mut shop,
+        r#"mutation { metafieldDefinitionCreate(definition: {name: "Mugs", namespace: "custom", key: "capacity", ownerType: PRODUCT, type: "number_integer", validations: [{name: "max", value: "500"}]}) { userErrors { message } } }"#,
+    );
+    ok(&defined, "metafieldDefinitionCreate");
+    let too_big = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productUpdate(product: {id: $id, metafields: [{namespace: "custom", key: "capacity", value: "750"}]}) { userErrors { field message } } }"#,
+        json!({"id": mug}),
+    );
+    assert_eq!(
+        too_big["data"]["productUpdate"]["userErrors"],
+        json!([{"field": ["metafields", "0", "value"], "message": "Value 750 must be less than or equal to 500."}])
+    );
+    let fits = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productUpdate(product: {id: $id, metafields: [{namespace: "custom", key: "capacity", value: "350"}]}) {
+            product { metafield(namespace: "custom", key: "capacity") { type value definition { name } } } userErrors { message } } }"#,
+        json!({"id": mug}),
+    );
+    assert_eq!(
+        ok(&fits, "productUpdate")["product"]["metafield"],
+        json!({"type": "number_integer", "value": "350", "definition": {"name": "Mugs"}})
+    );
+
+    // `productSet` keeps its error type: `INVALID_METAFIELD`, for the product's metafields and
+    // its variants'.
+    let set = run_with(
+        &mut shop,
+        r#"mutation($input: ProductSetInput!) { productSet(input: $input) { product { id } userErrors { field message code } } }"#,
+        json!({"input": {"title": "Jug",
+            "metafields": [{"namespace": "custom", "key": "capacity", "value": "900"}],
+            "productOptions": [{"name": "Size", "values": [{"name": "L"}]}],
+            "variants": [{"optionValues": [{"optionName": "Size", "name": "L"}],
+                "metafields": [{"namespace": "custom", "key": "on", "type": "boolean", "value": "yes"}]}],
+        }}),
+    );
+    assert_eq!(
+        set["data"]["productSet"]["userErrors"],
+        json!([
+            {"field": ["input", "metafields", "0", "value"], "message": "Value 900 must be less than or equal to 500.", "code": "INVALID_METAFIELD"},
+            {"field": ["input", "variants", "0", "metafields", "0", "value"], "message": "Value must be true or false.", "code": "INVALID_METAFIELD"},
+        ])
+    );
+    // And the variant mutations check theirs, with their codes.
+    let variant = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productVariantsBulkCreate(productId: $id, variants: [{optionValues: [{optionName: "Glaze", name: "Ash"}], metafields: [{namespace: "custom", key: "on", type: "boolean", value: "yes"}]}]) {
+            userErrors { field message code } } }"#,
+        json!({"id": mug}),
+    );
+    assert_eq!(
+        variant["data"]["productVariantsBulkCreate"]["userErrors"],
+        json!([{"field": ["variants", "0", "metafields", "0", "value"], "message": "Value must be true or false.", "code": "INVALID"}])
     );
 }
 

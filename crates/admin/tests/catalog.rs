@@ -302,7 +302,7 @@ fn exercise(shop: &mut ShopState) -> String {
                      "inventoryItem": {"tracked": true}, "inventoryQuantities": [{"locationId": location, "name": "available", "quantity": 6}]},
                     {"optionValues": [{"optionName": "Color", "name": "Rust"}], "price": "32.00", "sku": "APRON-RST"},
                 ],
-                "metafields": [{"namespace": "custom", "key": "care", "type": "single_line_text_field", "value": "Wash cold"}],
+                "metafields": [{"namespace": "custom", "key": "care", "type": "multi_line_text_field", "value": "Wash cold"}],
                 "files": [{"originalSource": "https://cdn.example.com/apron.jpg", "alt": "Apron", "contentType": "IMAGE"}],
             }}),
         ),

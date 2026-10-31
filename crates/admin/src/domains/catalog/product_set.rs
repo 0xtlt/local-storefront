@@ -132,8 +132,10 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     for mut found in records::check_metafields(
         state,
         existing.as_deref(),
+        "PRODUCT",
         &metafields,
         &["input", "metafields"],
+        None,
     ) {
         found.code = Some("INVALID_METAFIELD".into());
         errors.push(found);
@@ -186,6 +188,21 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         Some(inputs) => plan_variants(state, &planned_options, inputs, &own_variants, &mut errors),
         None => Vec::new(),
     };
+    for (index, variant) in variant_inputs.iter().flatten().enumerate() {
+        let index = index.to_string();
+        let own = text(variant, "id").filter(|id| own_variants.iter().any(|own| own == id));
+        for mut found in records::check_metafields(
+            state,
+            own,
+            "PRODUCTVARIANT",
+            &objects(variant, "metafields"),
+            &["input", "variants", &index, "metafields"],
+            None,
+        ) {
+            found.code = Some("INVALID_METAFIELD".into());
+            errors.push(found);
+        }
+    }
     if option_inputs.is_some() && variant_inputs.is_none() && existing.is_some() {
         errors.push(error(
             &["variants"],

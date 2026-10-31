@@ -363,6 +363,11 @@ How they behave, as shopify.dev documents it:
   remove products from a smart collection", "The location cannot be deleted while it is
   active.", … Where Shopify documents an error by its code only, the message is the code's
   description in the 2026-10 schema.
+- **Metafields** given to `productCreate`, `productUpdate`, `productSet`, the variant
+  mutations, collections, locations and selling plans are checked as `metafieldsSet` checks them
+  (see "Metafields, metaobjects and content"): the type and the value, a definition's type and
+  validations, `$app` and another app's namespaces. The errors are the mutation's, at the path of
+  the input (`["metafields", "0", "value"]`; `productSet`'s with the code `INVALID_METAFIELD`).
 - **Derived values follow**: price ranges, `totalInventory`, `hasOnlyDefaultVariant`,
   `featuredMedia`, a variant's `title`, `displayName`, `position` and `inventoryQuantity`, an
   option value's `hasVariants`, a variant's `availableForSale` after an inventory change.

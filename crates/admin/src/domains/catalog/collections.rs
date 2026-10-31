@@ -548,8 +548,10 @@ fn collection_create(
     errors.extend(records::check_metafields(
         state,
         None,
+        "COLLECTION",
         &metafields,
         &["metafields"],
+        None,
     ));
     if !errors.is_empty() {
         return Ok(payload(json!({"collection": null}), &errors));
@@ -627,8 +629,10 @@ fn collection_update(
     errors.extend(records::check_metafields(
         state,
         Some(&id),
+        "COLLECTION",
         &metafields,
         &["metafields"],
+        None,
     ));
     if !errors.is_empty() {
         return Ok(payload(json!({"collection": null, "job": null}), &errors));
