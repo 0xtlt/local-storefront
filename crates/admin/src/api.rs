@@ -6,12 +6,14 @@
 
 mod admin;
 pub mod samples;
+mod sync;
 #[cfg(test)]
 mod tests;
 
 use std::collections::HashMap;
 
 pub use admin::{AdminApi, AdminOptions, INVALID_TOKEN, Reseeded, ThrottleSetting};
+pub use sync::Synced;
 
 /// A request, as `lsf` decoded it.
 #[derive(Clone, Debug, Default)]

@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::samples::{self, SampleError, ShopLookup};
+use super::sync::{StoreSync, Synced};
 use super::{HttpRequest, HttpResponse};
 use crate::auth::oauth::{self, AppAuth};
 use crate::auth::scopes::{self, ALL_SCOPES};
@@ -76,6 +77,9 @@ struct LiveShop {
     state: ShopState,
     /// Whether the Admin API changed it since it was seeded: a change emits an event.
     changed: bool,
+    /// Whether it is the default shop, the one store sync projects. It stays the default one
+    /// when a reseed moves it to another domain.
+    default: bool,
 }
 
 /// What a reseed dropped, for the server to say.
@@ -104,6 +108,8 @@ pub struct AdminApi {
     /// The scopes the app is installed with: `[access_scopes] scopes`, every scope without an
     /// app.
     scopes: Vec<String>,
+    /// Store sync of the default shop, once the server turns it on ([`AdminApi::sync_store`]).
+    sync: StoreSync,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -184,6 +190,7 @@ impl AdminApi {
             Arc::new(Mutex::new(LiveShop {
                 state: default,
                 changed: false,
+                default: true,
             })),
         );
         AdminApi {
@@ -196,6 +203,7 @@ impl AdminApi {
             auth,
             app,
             scopes,
+            sync: StoreSync::default(),
         }
     }
 
@@ -260,7 +268,7 @@ impl AdminApi {
     }
 
     /// Changes a shop, then delivers the webhooks of what it emitted, the payloads built from the
-    /// shop as the change left it.
+    /// shop as the change left it. A change of the default shop is counted for store sync.
     pub fn change_shop<T>(
         &self,
         domain: &str,
@@ -268,13 +276,65 @@ impl AdminApi {
     ) -> Option<T> {
         let shop = self.shop(domain)?;
         let mut live = lock(&shop);
+        let revision = live.state.revision();
         let result = change(&mut live.state);
+        self.count_change(&live, revision);
         let events = live.state.take_events();
         if !events.is_empty() {
             live.changed = true;
             self.emit(&live.state, &events);
         }
         Some(result)
+    }
+
+    /// Counts a change of the default shop for store sync, when a record of it was written since
+    /// `revision`: called while the shop is locked.
+    fn count_change(&self, live: &LiveShop, revision: u64) {
+        if live.default && live.state.revision() != revision {
+            self.sync.changed();
+        }
+    }
+
+    /// Turns store sync on: from now on, what the Admin API changes in the default shop is
+    /// projected onto `base`, the store the shops were seeded from (the files, without any
+    /// overlay), when [`AdminApi::synced`] asks for it. A server calls it once the API is made,
+    /// and again after each [`AdminApi::reseed`], with the store it reseeded from.
+    pub fn sync_store(&self, base: Arc<Store>) {
+        let Some(shop) = self.shop(&self.default_shop()) else {
+            return;
+        };
+        let _live = lock(&shop);
+        self.sync.start(base);
+    }
+
+    /// How many times the default shop changed (an Admin API request or a recorded order that
+    /// wrote a record, a reset, a reseed): cheap, so that a server can ask it on every request,
+    /// and call [`AdminApi::synced`] only when it moved.
+    pub fn store_changes(&self) -> u64 {
+        self.sync.changes()
+    }
+
+    /// What the Admin API changed in the default shop, as an overlay of the store data, made
+    /// again (while the shop is locked) when the shop changed since it was last made. `None`
+    /// while store sync is off. The other shops never sync: they isolate tests.
+    pub fn synced(&self) -> Option<Synced> {
+        if !self.sync.is_on() {
+            return None;
+        }
+        let shop = self.shop(&self.default_shop())?;
+        let live = lock(&shop);
+        self.sync.update(&live.state)
+    }
+
+    /// Notes what the server built with the overlay of `generation`, for `GET /__lsf/admin`: how
+    /// long it took, and what the store data said of the overlay.
+    pub fn sync_built(
+        &self,
+        generation: u64,
+        took: std::time::Duration,
+        diagnostics: &lsf_core::diagnostics::Diagnostics,
+    ) {
+        self.sync.built(generation, took, diagnostics);
     }
 
     /// Records an order placed in the local checkout in the default shop, and delivers its
@@ -346,6 +406,9 @@ impl AdminApi {
             let mut live = lock(&shop);
             seed.reset_shop(&mut live.state);
             live.changed = false;
+            if live.default {
+                self.sync.changed();
+            }
             tokens.revoke_shop(&domain);
             tokens.install(&domain, &self.auth.client_id, &self.scopes, Utc::now());
             domains.push(domain);
@@ -374,6 +437,7 @@ impl AdminApi {
                 Arc::new(Mutex::new(LiveShop {
                     state: shop,
                     changed: false,
+                    default: false,
                 })),
             );
         }
@@ -484,6 +548,7 @@ impl AdminApi {
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
         let mut live = lock(&shop);
+        let revision = live.state.revision();
         let mut resolver = ShopResolver::new(&mut live.state, self.registry)
             .with_grant(&grant)
             .with_webhooks(&self.webhooks);
@@ -494,6 +559,7 @@ impl AdminApi {
         let mut response =
             graphql::run(crate::schema::admin(), &mut resolver, &query, Some(bucket));
         response.extensions.extend(resolver.extensions());
+        self.count_change(&live, revision);
         let events = live.state.take_events();
         if !events.is_empty() {
             live.changed = true;
@@ -663,6 +729,7 @@ impl AdminApi {
                 "deliveries": self.webhooks.deliveries().list(&Default::default()).len(),
             },
             "mutations": self.registry.mutations(),
+            "storeSync": self.sync.status(),
             "shops": shops,
         })
     }
