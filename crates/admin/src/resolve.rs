@@ -165,6 +165,9 @@ pub struct ShopResolver<'a> {
     /// Where the request reached lsf (`http://127.0.0.1:9292`): the origin of the URLs lsf
     /// answers that point back at itself (a charge's confirmation page, an upload target).
     origin: &'a str,
+    /// What the request's sources gave, fetched before the shop was locked
+    /// ([`crate::sources`]).
+    fetched: Option<&'a crate::sources::Fetched>,
     /// Whether the request is the query of a bulk operation: its connections take every item
     /// when they are given neither `first` nor `last`, and no limit of 250.
     bulk: bool,
@@ -187,6 +190,7 @@ impl<'a> ShopResolver<'a> {
             #[cfg(test)]
             adapters: None,
             origin: DEFAULT_ORIGIN,
+            fetched: None,
             bulk: false,
             report: RefCell::new(Report::default()),
         }
@@ -202,6 +206,12 @@ impl<'a> ShopResolver<'a> {
     /// Says where the request reached lsf: `http://127.0.0.1:9292`.
     pub fn with_origin(mut self, origin: &'a str) -> ShopResolver<'a> {
         self.origin = origin;
+        self
+    }
+
+    /// Gives the mutations what the request's sources gave, fetched before the shop was locked.
+    pub fn with_fetched(mut self, fetched: &'a crate::sources::Fetched) -> ShopResolver<'a> {
+        self.fetched = Some(fetched);
         self
     }
 

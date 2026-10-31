@@ -708,9 +708,10 @@ impl AdminApi {
             )
             .header("x-lsf-reason", reason)
         };
-        if let Err(reason) = self.grant_of(request) {
-            return unauthorized(reason);
-        }
+        let first = match self.grant_of(request) {
+            Ok(grant) => grant,
+            Err(reason) => return unauthorized(reason),
+        };
         let query = match graphql_request(request) {
             Ok(query) => query,
             Err(reason) => {
@@ -724,6 +725,14 @@ impl AdminApi {
                 .header("x-lsf-reason", reason);
             }
         };
+        // The URLs its mutations read, fetched now: no shop is locked while they download.
+        let access = crate::auth::scopes::for_version(version);
+        let may_run = |field: &str| {
+            access
+                .required_access(crate::auth::scopes::Root::Mutation, field)
+                .is_none_or(|required| first.allows(&required))
+        };
+        let fetched = crate::sources::prefetch(&crate::sources::urls(&query, &may_run));
         let ((grant, generation), shop) = match self.authorized(request) {
             Ok(authorized) => authorized,
             Err(reason) => return unauthorized(reason),
@@ -750,7 +759,8 @@ impl AdminApi {
             .with_version(version)
             .with_grant(&grant)
             .with_webhooks(&self.webhooks)
-            .with_origin(&origin);
+            .with_origin(&origin)
+            .with_fetched(&fetched);
         let bucket = Bucket {
             throttle: &self.throttle,
             key: &key,

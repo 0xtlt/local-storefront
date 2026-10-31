@@ -1734,9 +1734,19 @@ never written to.**
   `sync_theme`): its id and name while another theme is published, the name `themeUpdate` gave
   the local theme. `schema_name` stays the files' `theme_info`. Without either, the directory:
   id 1, the name its files give.
-- *What does not follow*: a `URL` body of `themeFilesUpsert` and a `themeCreate` from a URL are downloaded within the
-  request (10 s), where Shopify processes them in the background (`processing: true` until done):
-  lsf's are done when the mutation answers.
+- *Sources from a URL* (`crate::sources`): the `source` of `themeCreate`, the `URL` bodies of
+  `themeFilesUpsert` and the `url` of `urlRedirectImportCreate` are found in the parsed request
+  (its query and variables, through fragments; only for the fields the token may run; a query
+  that names none of the three is not parsed again) and fetched by the api layer before it locks
+  the shop: 8 at a time, 10 s each, 30 s for all of them. The mutation reads them from the
+  request's `Fetched` (`ShopResolver::with_fetched`, `Mutation::fetched`). A download within the
+  mutation held the shop, and every request waiting on it (carts and checkouts recorded by the
+  storefront too), for as long as it took: 500 s for 50 slow bodies, and a URL to lsf itself
+  waited on itself until the timeout. lsf's own upload URLs (`/__lsf/admin/uploads/…`) are read
+  from the shop's blobs, never fetched; a URL that was not prefetched (a line of a bulk
+  operation) is refused, and says why.
+- *What does not follow*: Shopify processes a theme from a URL in the background
+  (`processing: true` until done): lsf's are done when the mutation answers.
 
 ### The online store and the app platform (`domains/storefront.rs`, `store_admin.rs`, `platform.rs`)
 

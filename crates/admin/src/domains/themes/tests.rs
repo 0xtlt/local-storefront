@@ -525,9 +525,9 @@ pub(crate) fn serve_bytes(size: usize) -> String {
 /// and a large file body was stored truncated.
 #[test]
 fn a_source_over_50_mb_is_refused_not_cut() {
-    let limit = crate::domains::store_admin::redirects::MAX_SOURCE_BYTES;
+    let limit = crate::sources::MAX_SOURCE_BYTES;
     let read = |size: usize, limit: usize| {
-        crate::domains::store_admin::redirects::read_at_most(&vec![0u8; size][..], limit)
+        crate::sources::read_at_most(&vec![0u8; size][..], limit)
             .unwrap()
             .map(|bytes| bytes.len())
     };
@@ -536,12 +536,12 @@ fn a_source_over_50_mb_is_refused_not_cut() {
 
     let mut shop = shop();
     let url = serve_bytes(limit + 1);
-    let answer = run(&mut shop, CREATE, json!({"source": url}));
+    let answer = run_fetching(&mut shop, CREATE, json!({"source": url}));
     assert_eq!(
         answer["data"]["themeCreate"]["userErrors"][0]["code"], "ZIP_TOO_LARGE",
         "{answer}"
     );
-    let answer = run(
+    let answer = run_fetching(
         &mut shop,
         "mutation($url: String!) { themeFilesUpsert(themeId: \"gid://shopify/OnlineStoreTheme/1\", files: [{filename: \"assets/big.bin\", body: {type: URL, value: $url}}]) { upsertedThemeFiles { filename } userErrors { code message filename } } }",
         json!({"url": url}),
@@ -730,4 +730,17 @@ fn the_overlay_of_a_published_theme_shares_its_bytes() {
     ));
     assert!(second.files.contains_key("snippets/new.liquid"));
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// [`run`], the request's sources fetched first, as the api layer fetches them.
+pub(crate) fn run_fetching(shop: &mut ShopState, query: &str, variables: Value) -> Value {
+    let mut request = crate::graphql::Request::new(query);
+    if let Value::Object(variables) = variables {
+        request.variables = variables;
+    }
+    let fetched = crate::sources::prefetch(&crate::sources::urls(&request, &|_| true));
+    let mut resolver =
+        crate::resolve::ShopResolver::new(shop, crate::resolve::Registry::standard())
+            .with_fetched(&fetched);
+    crate::graphql::run(crate::schema::admin(), &mut resolver, &request, None).to_json()
 }

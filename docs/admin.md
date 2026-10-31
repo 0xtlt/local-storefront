@@ -1436,8 +1436,8 @@ the connection's `userErrors` (`NOT_FOUND`).
   `themeFilesDelete` on the main theme are kept in memory and served by the storefront on top of
   the directory: a backend that writes `templates/index.json` sees its page on the storefront,
   and your files stay yours. `DELETE /__lsf/admin` drops what it wrote.
-- `themeCreate` from a ZIP (a staged upload of `stagedUploadsCreate`, or a URL lsf downloads,
-  50 MB at most; `INVALID_ZIP`, `ZIP_IS_EMPTY`, `ZIP_TOO_LARGE`; roles `UNPUBLISHED` and
+- `themeCreate` from a ZIP (a staged upload of `stagedUploadsCreate`, or a URL lsf downloads:
+  see "Sources from a URL"; 50 MB at most; `INVALID_ZIP`, `ZIP_IS_EMPTY`, `ZIP_TOO_LARGE`; roles `UNPUBLISHED` and
   `DEVELOPMENT`), `themeDuplicate` (all the files, "Copy of …"), `themeUpdate` (the name, 50
   characters), `themeDelete` (not the main theme, and never the local theme, even once another
   is published: it is the directory, which would be gone until a reset), `themePublish`. A
@@ -1454,6 +1454,14 @@ the connection's `userErrors` (`NOT_FOUND`).
   `layout/theme.liquid` cannot be deleted.
 - Webhooks: `themes/create`, `themes/update`, `themes/publish`, `themes/delete` (none for files,
   as on Shopify).
+
+**Sources from a URL.** The `source` of `themeCreate`, the `URL` bodies of `themeFilesUpsert`
+and the `url` of `urlRedirectImportCreate` are read from lsf's staged uploads when they are
+one (`/__lsf/admin/uploads/…`, never over HTTP), and otherwise downloaded before the request
+locks the shop: a slow source holds up no other request of the shop (the storefront's carts and
+checkouts included). 8 are fetched at a time, each within 10 s, all of a request's within 30 s;
+one over 50 MB is refused. A URL that only a line of a bulk operation names is not fetched, and
+the line says so.
 
 **Script tags.** `scriptTagCreate`, `scriptTagUpdate`, `scriptTagDelete`; `scriptTag`,
 `scriptTags(src:, query:)`. A script tag shown on the online store (`ONLINE_STORE`, or the

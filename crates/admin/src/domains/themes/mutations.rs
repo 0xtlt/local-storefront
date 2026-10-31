@@ -48,9 +48,9 @@ use serde_json::{Value, json};
 use super::files::{self, ThemeFile, check_filename};
 use super::{FILES, LOCAL, is_local, local_theme_gid, theme_name, theme_of};
 use crate::domains::store_admin::done_job;
-use crate::domains::store_admin::redirects::{SourceError, source_bytes};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::sources::{self, SourceError};
 use crate::state::{ShopState, value};
 
 /// The most files one `themeFilesUpsert` (or copy, or delete) takes.
@@ -117,7 +117,7 @@ fn theme_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         );
     }
     let source = ctx.arg_str("source").unwrap_or_default().trim().to_string();
-    let bytes = match source_bytes(m.state(), &source) {
+    let bytes = match sources::bytes(m, &source) {
         Ok(bytes) => bytes,
         Err(SourceError::TooLarge) => {
             return refuse(
@@ -457,7 +457,7 @@ fn files_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
                 base64::Engine::decode(&base64::engine::general_purpose::STANDARD, given.trim())
                     .map_err(|_| format!("The body of {filename} is not Base64"))
             }
-            "URL" => source_bytes(m.state(), given).map_err(|error| match error {
+            "URL" => sources::bytes(m, given).map_err(|error| match error {
                 SourceError::TooLarge => {
                     format!("The body of {filename} at {given} is bigger than 50MB")
                 }

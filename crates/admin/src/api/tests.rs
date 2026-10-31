@@ -261,3 +261,90 @@ fn a_request_waits_for_the_tokens_a_request_before_it_changed() {
         .expect("the late request answers");
     assert_eq!(status, 401, "{answer}");
 }
+
+/// A server on the loopback that answers each request with `body` after `delay`: its URL.
+fn slow_source(delay: std::time::Duration, body: &'static str) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/slow.css", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|read| read > 2) {
+                    line.clear();
+                }
+                std::thread::sleep(delay);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    url
+}
+
+/// A `URL` body of `themeFilesUpsert` was downloaded within the mutation, under the shop's lock:
+/// every request on the shop waited for it (50 of them, 500 s). It is fetched before the lock.
+#[test]
+fn a_source_downloads_while_the_shop_serves_other_requests() {
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+    );
+    let api = std::sync::Arc::new(super::AdminApi::new(
+        &store,
+        super::AdminOptions {
+            throttle: ThrottleSetting::Off,
+            token_seed: Some(6),
+            ..Default::default()
+        },
+    ));
+    let token = api.token(&api.default_shop());
+    let delay = std::time::Duration::from_millis(1500);
+    let url = slow_source(delay, "body { color: red }");
+    let upserting = {
+        let (api, token) = (api.clone(), token.clone());
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let answer = graphql(
+                &api,
+                &token,
+                &format!(
+                    r#"mutation {{ themeFilesUpsert(themeId: "gid://shopify/OnlineStoreTheme/1", files: [{{filename: "assets/slow.css", body: {{type: URL, value: "{url}"}}}}]) {{ job {{ done }} userErrors {{ message }} }} }}"#
+                ),
+            );
+            (answer, started.elapsed())
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let started = std::time::Instant::now();
+    let (status, shop) = graphql(&api, &token, "{ shop { name } }");
+    let waited = started.elapsed();
+    assert_eq!(status, 200, "{shop}");
+    assert!(
+        waited < std::time::Duration::from_millis(700),
+        "a read of the shop waited {waited:?} on the download"
+    );
+    let ((status, answer), took) = upserting.join().unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(
+        answer["data"]["themeFilesUpsert"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    assert_eq!(answer["data"]["themeFilesUpsert"]["job"]["done"], true);
+    assert!(took >= delay, "the source was downloaded: {took:?}");
+    let body = api
+        .with_default_shop(|state| {
+            let theme = state.get("gid://shopify/OnlineStoreTheme/1").cloned()?;
+            crate::domains::themes::files::read(state, &theme, "assets/slow.css")
+        })
+        .flatten()
+        .expect("the file was written");
+    assert_eq!(&body.bytes[..], b"body { color: red }");
+}
