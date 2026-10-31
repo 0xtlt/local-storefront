@@ -570,7 +570,8 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 storefront, the checkout and the control API, records the orders `place_order` places
 (`AdminApi::record_order`), and reseeds it when the store data reloads (`AdminApi::reseed`:
 what the Admin API changed is dropped and the terminal says so; the subscriptions the backend made
-stay, as the app's setup of the shop). `lsf app webhook trigger` builds its payloads with
+stay, as the app's setup of the shop). It turns store sync on (`AdminApi::sync_store`): see
+"Server wiring" under "Store sync". `lsf app webhook trigger` builds its payloads with
 `api::samples::ShopSamples` over the shop seeded from the store data.
 
 ## Records
@@ -914,7 +915,8 @@ changes. `None` when nothing the store data expresses changed.
   removed (a change undone, or a record read through `get_mut` and left as it was, is not one),
   `original(key)` gives the seed's record. One copy per record changed; nothing at all for a shop
   nothing changed (`touched()` is false, and `overlay` returns at once). Moving a shop to its
-  domain is not a change; a reset or a reseed forgets them.
+  domain is not a change; a reset or a reseed forgets them. `revision()` grows with every write
+  and is never reset: the server tells a request that wrote from one that only read by it.
 - **What is projected**: the entity of the store data each changed record belongs to (a variant,
   an option, a medium, an inventory item or level belongs to its product; a metafield to its
   owner; an article and its comments to their blog; a company location to its company; a
@@ -1038,34 +1040,75 @@ changed, every entity it writes carries its id, a renamed entity stays where it 
 removal keeps the ids and the dates of the others (an undated entity after a removed one keeps
 the date its position gave it). Sessions and carts that name variants by id keep working.
 
-### Server wiring (the next wave)
+### Server wiring (done)
 
-1. **At start**, load the store from the files (`load`, no overlay) and keep it as the *base*:
-   it seeds the shops (`Shops::new(&base, app)`) and every projection reads it. The store the
-   storefront sees starts as the base.
-2. **After a request that changed the default shop** (an Admin API mutation, a webhook trigger
-   that changes records, an order placed at the checkout recorded with
-   `record_placed_order`), compute `sync::overlay(default_shop, &base)` while the shop is
-   locked (cheap), and compare it with the last one (`Overlay` is `PartialEq`). Only when it
-   differs, mark the store stale; rebuild it lazily, on the next request that reads the store,
-   with `load_with_overlays(&source, &options, &[overlay])`, outside the shop's lock, and swap
-   it into `Loaded` as `reload` does (sessions keep their carts and customers). The base and the
-   files' fingerprint do not change. Print the diagnostics whose `file` is `sync::OVERLAY_NAME`
-   (there should be none): they are lsf's mistakes, not the user's.
-3. **Sessions with their own data** (`PUT /__lsf/session` with data): their store is
-   `load_with_overlays(&source, &options, &[sync_overlay, Overlay::new(OVERLAY_FILE, data)])`,
-   the session's data on top of the Admin API's, its diagnostics told apart by name as now. Keep
-   the session's data in its entry (today only its built store is kept) so that its store is
-   rebuilt when the sync overlay changes.
-4. **Live reload**: a rebuild with a new overlay changes the token live reload watches, so open
-   pages reload as when the data changes on disk.
-5. **The files change** (`--watch`): load the new base, `Shops::reseed(&base, app)` (the Admin
-   API's changes are dropped, and the terminal says so), and the store is the new base: the
-   overlay is `None`. `DELETE /__lsf/admin` resets the shops: the overlay is `None`, the store
-   the base.
-6. The checkout's configuration comes from the store (`config_from_store`): with the synced
+The plan was to project after each change, under the shop's lock, and to build the store lazily.
+The projection is lazy too: on the store of 3,000 products of the timing below it takes 70 ms,
+which every mutation would have paid on the Admin request's path, ten times for a burst of ten.
+
+1. **At start** (`ServerState::new`), the store of the files is loaded once and kept as the
+   *base* (`Loaded::base`): it seeds the shops (`AdminApi::new`) and turns sync on
+   (`AdminApi::sync_store(base)`). The store the storefront sees starts as the base.
+2. **A change of the default shop is counted, not projected.** `ShopState::revision` grows with
+   every write (`insert`, `insert_as`, `remove`, `get_mut`, `touch`, a reset), so `graphql` and
+   `change_shop` (an order the checkout records goes through it) tell a request that wrote from
+   one that only read by comparing it before and after, and count the first kind
+   (`AdminApi::store_changes`, an atomic counter) while the shop is still locked. A reset
+   (`DELETE /__lsf/admin`) counts too. Only the default shop's `LiveShop` (`default: true`, kept
+   through a reseed that moves it) counts: the other shops never sync. A change that does not go
+   through `graphql` or `change_shop` must count itself the same way (`AdminApi::install` writes
+   only the installation's scopes, which do not sync, and does not).
+3. **The next request that reads the store** (`dispatch`, after the Admin API's own paths, and
+   `observe_changes`, which live reload calls) compares the count with the one its store was
+   built at (`ServerState::admin_changes`): equal, it goes on (one atomic read). Different, it
+   takes the build lock (`ServerState::rebuilding`, which `reload` takes too) and asks
+   `AdminApi::synced`, which projects the shop under its lock when the count moved since the
+   last projection (`api::sync::StoreSync::update`), keeps the overlay when it is the same
+   (`Overlay: PartialEq`), and moves the generation on only when it is not. A new generation is
+   built (`load_with_overlays(&source, &options, &[overlay])`, or the base itself for no
+   overlay) outside the shop's lock, and swapped into `Loaded` whole: a page rendered meanwhile
+   has the `Arc<Loaded>` it started with. A burst of mutations is projected and built once, by
+   the first request that follows it; an order recorded at the checkout makes the same overlay
+   and builds nothing (`an_order_placed_at_the_checkout_does_not_build_the_store_again`).
+4. **Sessions with their own data** keep it (`SessionEntry::data`, with the generation their
+   store was built at). Their store is `[sync_overlay, Overlay::new(OVERLAY_FILE, data)]`
+   (`ServerState::session_store`, which `PUT /__lsf/session` uses too), built again on the
+   session's next request when the generation moved. A session named only by
+   `GET /__lsf/checkout?session=` sees its store as of its own last request.
+5. **Live reload**: the token has the generation of the store built (`Loaded::synced`), and
+   `observe_changes` builds before it computes the token: the pages reload once the store is
+   built, and find it so.
+6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` loads the new base, reseeds
+   (`AdminApi::reseed`; the terminal says what was dropped), moves sync to the new base
+   (`sync_store`, which counts a change), and builds from `synced()`: the store is the new base,
+   unless the backend changed the shop in between.
+7. **What the store data refuses** of the overlay: the problems of the store built with it that
+   the files alone do not have (`Applied::diagnostics`) are printed when they differ from the
+   last build's, and given to `AdminApi::sync_built`, which `GET /__lsf/admin` shows in
+   `storeSync.built`. The store is built from what is valid, as from files with errors.
+8. The checkout's configuration comes from the store (`config_from_store`): with the synced
    store, it has the discounts and the settings of the Functions the Admin API changed, and a
    scenario's `checkout` still goes on top of them.
+
+`GET /__lsf/admin` gives `storeSync`: `enabled`, `generation`, `pending` (counted, not projected
+yet), `overlay` (`written`: entities by section; `removed`: their keys), `built` (`generation`,
+`ms`, `diagnostics`).
+
+**What a mutation costs** (release build, through the handlers, the fixture theme):
+
+| Store | Records | Mutation (Admin request) | Next page: projection and build | Page without a change |
+|---|---|---|---|---|
+| Demo (8 products) | 251 | 0.5 ms | 0.5 to 1.3 ms | 0.1 ms |
+| 3,000 products of 12 variants | 198,000 | 400 ms | 290 to 370 ms (projection 70 ms, build 250 to 300 ms) | 0.1 ms |
+
+- The build was cubic before: a product's default recommendations checked every product against
+  the list so far before keeping ten. 2,000 products took 1.2 to 2 s to load, 3,000 products 5 to
+  6 s; now 180 ms and 300 to 370 ms (`lsf-core`, `build_recommendations`).
+- The 400 ms of a mutation on the large store are not sync's: the mutation framework clones the
+  whole shop before the first write of a mutation, to undo it on `userErrors`
+  (`resolve::mutation`, `snapshot`). An undo log of the records written (what change tracking
+  keeps already) would make it as cheap as on the demo store.
+- Seeding 3,000 products takes 1.7 to 3.4 s, at start and on each reseed, not on a mutation.
 
 ## Crate layout
 
@@ -1086,4 +1129,4 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |
 | `throttle` | The cost bucket of each shop and app. |
-| `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. |
+| `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. `api::sync`: store sync as a server runs it (the count of changes, the overlay made when asked). |

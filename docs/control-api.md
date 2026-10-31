@@ -63,7 +63,7 @@ curl -H 'x-lsf-session: my-test' http://127.0.0.1:9292/cart.js
 | `company_location` | For a B2B customer, the location they buy for. |
 | `cart` | `items`, `note`, `attributes`. Each item has a `variant` (a SKU, an id, or a product handle for its first variant), and optionally a `quantity`, `properties` and a `selling_plan`. See [Cart](data-reference.md#cart). |
 | `country` | The country the visitor shops from, by ISO code. |
-| `data` | Store data for this session only, applied over the files. See [testing](testing.md#data-for-one-test-only). |
+| `data` | Store data for this session only, applied over the files and over what the [Admin API](admin.md#what-the-storefront-and-the-checkout-see) changed. See [testing](testing.md#data-for-one-test-only). |
 | `throttle` | Delays for this session only. See [testing](testing.md#simulating-a-slow-network). |
 
 A wrong body answers `422`, with the diagnostics `npx local-storefront validate --format json`
@@ -117,6 +117,7 @@ A test runner can wait on this URL to know the server is up.
 | `throttle` | `enabled`, `maximumAvailable`, `restoreRate`. |
 | `webhooks` | `summary`, `appSubscriptions` (those of `shopify.app.toml`), `deliveries` (how many the log has). |
 | `mutations` | The mutations lsf simulates. Another answers `LSF_NOT_SIMULATED`. |
+| `storeSync` | [What the storefront sees](admin.md#what-the-storefront-and-the-checkout-see) of the default shop's changes: `enabled`, `generation` (moves when the overlay does; `0` is the files), `pending` (a change waits for the next page), `overlay` (`written`: entities by section, `removed`: their keys; `null` while the storefront is the files), `built` (`generation`, `ms`, `diagnostics`: what the store data refused). |
 | `shops` | Per shop: `shop`, `installed`, `scopes`, `token` (the default one), `changed` (whether the Admin API changed it), `records`, `counts` (records by type), `tokens` (every valid token: `mode`, `source`, `scopes`, `expiresAt`, `user`), `subscriptions` (those the backend made). |
 
 A delivery of `GET /__lsf/webhooks`: `id`, `webhookId`, `eventId`, `topic`, `shop`,
