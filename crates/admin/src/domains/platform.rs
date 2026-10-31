@@ -24,6 +24,7 @@ pub mod feedback;
 pub mod flow;
 pub mod mobile;
 pub mod queries;
+pub mod subscriptions;
 
 use serde_json::{Value, json};
 
@@ -109,6 +110,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     flow::register(registry);
     mobile::register(registry);
     queries::register(registry);
+    subscriptions::register(registry);
 }
 
 #[cfg(test)]

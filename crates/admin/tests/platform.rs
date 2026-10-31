@@ -215,3 +215,128 @@ fn the_outbox_lists_what_flow_would_have_received() {
         "{outbox}"
     );
 }
+
+#[test]
+fn eventbridge_and_pubsub_subscriptions_are_made_and_their_deliveries_logged_not_sent() {
+    // Without an app, every scope: `productCreate` may run.
+    let api = AdminApi::new(
+        &support::demo_store(),
+        AdminOptions {
+            app: None,
+            client_secret: "test-secret".to_string(),
+            app_url: None,
+            throttle: ThrottleSetting::Off,
+            delivery: DeliveryOptions::default(),
+            token_seed: Some(12),
+        },
+    );
+    let token = api.token(&api.default_shop());
+    let arn =
+        "arn:aws:events:us-east-1::event-source/aws.partner/shopify.com/1830279/test-event-source";
+    let (_, bridge) = graphql(
+        &api,
+        &token,
+        &format!(
+            "mutation {{ eventBridgeWebhookSubscriptionCreate(topic: PRODUCTS_CREATE, webhookSubscription: {{arn: \"{arn}\", format: JSON}}) {{ webhookSubscription {{ id topic format endpoint {{ __typename ... on WebhookEventBridgeEndpoint {{ arn }} }} }} userErrors {{ field message }} }} }}"
+        ),
+    );
+    let subscription =
+        &bridge["data"]["eventBridgeWebhookSubscriptionCreate"]["webhookSubscription"];
+    assert_eq!(
+        subscription["endpoint"],
+        json!({"__typename": "WebhookEventBridgeEndpoint", "arn": arn}),
+        "{bridge}"
+    );
+    let bridge_id = subscription["id"].as_str().unwrap().to_string();
+    let (_, pubsub) = graphql(
+        &api,
+        &token,
+        "mutation { pubSubWebhookSubscriptionCreate(topic: PRODUCTS_CREATE, webhookSubscription: {pubSubProject: \"my-gcp-project\", pubSubTopic: \"my-gcp-topic\", format: JSON}) { webhookSubscription { id endpoint { __typename ... on WebhookPubSubEndpoint { pubSubProject pubSubTopic } } } userErrors { field message code } } }",
+    );
+    let pubsub_subscription =
+        &pubsub["data"]["pubSubWebhookSubscriptionCreate"]["webhookSubscription"];
+    assert_eq!(
+        pubsub_subscription["endpoint"],
+        json!({"__typename": "WebhookPubSubEndpoint", "pubSubProject": "my-gcp-project", "pubSubTopic": "my-gcp-topic"}),
+        "{pubsub}"
+    );
+    let pubsub_id = pubsub_subscription["id"].as_str().unwrap().to_string();
+
+    // The same address twice is taken; a blank project is refused; nothing more is made.
+    let (_, taken) = graphql(
+        &api,
+        &token,
+        "mutation { pubSubWebhookSubscriptionCreate(topic: PRODUCTS_CREATE, webhookSubscription: {pubSubProject: \"my-gcp-project\", pubSubTopic: \"my-gcp-topic\"}) { webhookSubscription { id } userErrors { field code } } }",
+    );
+    assert_eq!(
+        taken["data"]["pubSubWebhookSubscriptionCreate"]["userErrors"][0]["code"], "TAKEN",
+        "{taken}"
+    );
+    let (_, blank) = graphql(
+        &api,
+        &token,
+        "mutation { pubSubWebhookSubscriptionCreate(topic: ORDERS_CREATE, webhookSubscription: {pubSubProject: \" \", pubSubTopic: \"t\"}) { webhookSubscription { id } userErrors { field code } } }",
+    );
+    assert_eq!(
+        blank["data"]["pubSubWebhookSubscriptionCreate"]["userErrors"][0],
+        json!({"field": ["webhookSubscription", "pubSubProject"], "code": "INVALID_PARAMETERS"}),
+        "{blank}"
+    );
+    let shop = api.default_shop();
+    assert_eq!(api.webhooks().registry().list(&shop).len(), 2);
+
+    let (_, updated) = graphql(
+        &api,
+        &token,
+        &format!(
+            "mutation {{ pubSubWebhookSubscriptionUpdate(id: \"{pubsub_id}\", webhookSubscription: {{pubSubProject: \"other-project\", pubSubTopic: \"other-topic\"}}) {{ webhookSubscription {{ endpoint {{ ... on WebhookPubSubEndpoint {{ pubSubProject }} }} }} userErrors {{ code }} }} }}"
+        ),
+    );
+    assert_eq!(
+        updated["data"]["pubSubWebhookSubscriptionUpdate"]["webhookSubscription"]["endpoint"]["pubSubProject"],
+        "other-project",
+        "{updated}"
+    );
+    let (_, bridged) = graphql(
+        &api,
+        &token,
+        &format!(
+            "mutation {{ eventBridgeWebhookSubscriptionUpdate(id: \"{bridge_id}\", webhookSubscription: {{includeFields: [\"id\"]}}) {{ webhookSubscription {{ includeFields endpoint {{ ... on WebhookEventBridgeEndpoint {{ arn }} }} }} userErrors {{ message }} }} }}"
+        ),
+    );
+    assert_eq!(
+        bridged["data"]["eventBridgeWebhookSubscriptionUpdate"]["webhookSubscription"]["endpoint"]
+            ["arn"],
+        arn,
+        "the ARN left out stays: {bridged}"
+    );
+
+    // A product created: both deliveries are logged, not sent.
+    let (_, product) = graphql(
+        &api,
+        &token,
+        "mutation { productCreate(product: {title: \"Delivered nowhere\"}) { product { id } userErrors { message } } }",
+    );
+    assert!(
+        product["data"]["productCreate"]["product"]["id"].is_string(),
+        "{product}"
+    );
+    let log = send(
+        &api,
+        "GET",
+        "/__lsf/webhooks?topic=products/create&wait=2&timeout=3000",
+        None,
+        Value::Null,
+    );
+    let log: Value = serde_json::from_slice(&log.body).unwrap();
+    let deliveries = log["deliveries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{log}"));
+    assert_eq!(deliveries.len(), 2, "{log}");
+    assert!(
+        deliveries
+            .iter()
+            .all(|delivery| delivery["state"] == "not_sent"),
+        "{log}"
+    );
+}
