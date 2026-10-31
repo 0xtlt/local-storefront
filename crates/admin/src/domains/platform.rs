@@ -84,6 +84,7 @@ pub fn seed(seed: &mut Seed) {
         &created,
     ));
     checkout::seed(seed, &created);
+    super::store_admin::standard::seed(seed);
     if let Some(app) = seed.app {
         let read = extensions::read(&app.root);
         if let Some(pixel) = read.web_pixel {
