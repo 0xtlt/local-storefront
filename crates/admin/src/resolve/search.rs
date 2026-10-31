@@ -15,6 +15,7 @@
 //! | a number | the number (or the decimal string) in the camelCase field |
 //! | a `string` | the camelCase field (or its plural), tokenized text for `title`, `name`, `body`, `description`, `note`, a whole keyword otherwise |
 //! | `metafields.{namespace}.{key}` | the `value` of the record's metafield |
+//! | `fields.{key}` | the `value` of the record's field (a metaobject's) |
 //! | `default` (a term without a field) | the title, name, handle, email, vendor, product type, SKU and tags |
 //!
 //! A domain registers what does not follow (`sku` of a product is in its variants):
@@ -257,6 +258,22 @@ fn generic(
                     && metafield.get("key").and_then(Value::as_str) == Some(key)
             })
             .and_then(|metafield| metafield.get("value").and_then(Value::as_str));
+        return Some(
+            value
+                .map(|value| SearchValue::Keyword(value.to_string()))
+                .into_iter()
+                .collect(),
+        );
+    }
+    // `fields.{key}` of `metaobjects`: the `value` of the entry's field.
+    if let Some(key) = field.strip_prefix("fields.") {
+        let value = record
+            .get("fields")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|entry| entry.get("key").and_then(Value::as_str) == Some(key))
+            .and_then(|entry| entry.get("value").and_then(Value::as_str));
         return Some(
             value
                 .map(|value| SearchValue::Keyword(value.to_string()))

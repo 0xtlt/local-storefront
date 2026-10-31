@@ -50,6 +50,7 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("locations", _) => &["Location"],
         ("app_subscriptions", _) => &["AppSubscription"],
         ("bulk_operations", _) => &["BulkOperation"],
+        ("metafield_definitions", _) => &["MetafieldDefinition"],
         ("metaobjects", _) => &["Metaobject"],
         ("discounts", _) => &["DiscountAutomaticNode", "DiscountCodeNode"],
         _ => &[],

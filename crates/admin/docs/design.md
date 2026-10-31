@@ -344,8 +344,10 @@ storefront, the checkout and the Function inputs already use.
   and the mutations share: `catalog::refresh_product` (price ranges, `totalInventory`,
   `tracksInventory`, `hasOutOfStockVariants`, `hasOnlyDefaultVariant`, `featuredMedia`, the
   variants' `inventoryQuantity`), `customers::refresh_customer` (`orders`, `numberOfOrders`,
-  `amountSpent`, `lastOrder`, `canDelete`), `content::attach_definition` (a metafield's
-  `definition`, the definition's `metafields` and `metafieldsCount`).
+  `amountSpent`, `lastOrder`, `canDelete`), `content::attach_definition` (the seed's: a
+  metafield's `definition`, created when there is none, the definition's `metafields` and
+  `metafieldsCount`; the mutations link a metafield to an existing definition only, with
+  `content::metafields::link_definition`, as Shopify keeps metafields without one).
 - URLs are on the shop's primary domain (`https://<shop.domain or permanent_domain>`):
   `onlineStoreUrl` is `https://my-shop.myshopify.com/products/<handle>`, files are
   `https://<domain>/cdn/shop/files/<path>?v=<version>`, the path the storefront serves them at.
@@ -434,7 +436,8 @@ documented type: `id`; `<x>_id` from the GID in `x` or the GIDs in `xs`; `tag` f
 (`tag_not:x` is `NOT tag:x`, for any `<f>_not` whose `<f>` is documented); dates, booleans
 (`gift_card` → `giftCard`, else `isGiftCard`) and numbers from the camelCase field; strings from it
 or its plural, tokenized for `title`, `name`, `body`, `description`, `note`, `display_name`, whole
-otherwise; `metafields.{namespace}.{key}` from the owner's metafield. A free term searches the
+otherwise; `metafields.{namespace}.{key}` from the owner's metafield, `fields.{key}` from a
+metaobject's field. A free term searches the
 title, name, handle, email, vendor, product type, SKU and tags. A field the connection does not
 document is ignored with Shopify's warning in `extensions.search` (`path`, `query`, `parsed`,
 `warnings`, the keys and order of shopify.dev's example); a documented one lsf cannot read is
@@ -498,8 +501,9 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    with user errors (`userErrors` or `…UserErrors` not empty) or an error puts back. Validating
    first costs no copy on failure; a mutation that finds a problem halfway can still answer it.
 3. **Keep derived values right** with the domain's functions the seed uses (`refresh_product`,
-   `refresh_customer`, `attach_definition`), `touch` what changed (`updatedAt`), and use
-   `new_gid` for new records.
+   `refresh_customer`; for metafields `content::metafields::set`, which links the definition),
+   `touch` what changed (`updatedAt`), and use `new_gid` for new records (or the id lsf-core
+   derives, for what store sync writes back without an id: see "Store sync").
 4. **Emit the events of what changed**: `state_mut().emit("products/update", &gid)`; a deletion
    with `state_mut().delete(&gid, "products/delete")`, which keeps the record for the payload. A
    change always emits an event: that is also how the api layer knows a shop changed.
@@ -802,9 +806,12 @@ records, so both are the same shape.
   something names gets a file record.
 - **`MetafieldDefinition`**, inferred: one per owner type, namespace and key that has
   metafields, with the type of the first (`validationStatus: SOME_INVALID` when another differs),
-  `name` (the key, humanized), `type` (`name`, `category`), `validations: []`, `metafields`,
+  `name` (the key, humanized), `type` (`content::types::definition_type`: `name`, `category`,
+  `supportedValidations`, …), `validations: []`, `access` (public in the admin and on the
+  storefront *(chosen: the theme reads them)*), `capabilities` (none enabled), `metafields`,
   `metafieldsCount`. None for the app's reserved namespaces: their definitions come from the
-  app's configuration, which lsf does not read.
+  app's configuration, which lsf does not read. Being definitions, they check what
+  `metafieldsSet` writes to the same owner type, namespace and key (the type must be theirs).
 - **`Metaobject`**: `type`, `handle`, `displayName` (its `name` or `title` field, else the
   handle humanized), `definition`, `fields` (inline `MetaobjectField`s: `key`, `type`, `value`,
   `jsonValue`, `reference(s)`, `definition`), `capabilities` (published, its template suffix),
@@ -826,6 +833,28 @@ records, so both are the same shape.
 - **Files**: `MediaImage`, `Video` or `GenericFile` for each path of `files` and each path
   something refers to, by extension: `alt`, `image` or `sources` or `url`, `mimeType`, statuses
   `READY`, dates.
+
+**Mutations and queries of the family** (`domains/content/`; each module's documentation has the
+rules and the sources):
+
+| Module | What |
+|---|---|
+| `types` | The metafield types of 2026-10: categories, supported validations (`metafieldDefinitionTypes`, Shopify's example order), and `check`: a value checked against its type and a definition's validations, kept as the seed keeps it (`value`, `jsonValue`, `reference(s)`), which store sync projects back. |
+| `metafields` | `metafieldsSet` (25 at most, atomic, `compareDigest`, the app's namespaces, the owner's write access), `metafieldsDelete`, `Metafield.compareDigest` (SHA-256 of the value, as Shopify's digests of translatable content: Shopify does not say how this one is made) and `translatable`. A metafield created gets the seed's GID (`metafield_gid`). |
+| `metafield_definitions` | `metafieldDefinitionCreate`, `Update`, `Delete`, `Pin`, `Unpin`; `metafieldDefinitions`, `metafieldDefinition`, `metafieldDefinitionTypes`. |
+| `metaobjects` | `metaobjectDefinitionCreate`, `Update`, `Delete`; `metaobjectCreate`, `Update`, `Upsert`, `Delete`, `BulkDelete`; `metaobjects(type:)`, `metaobjectByHandle`, `metaobjectDefinitionByType`, `Metaobject.field`, `Metaobject.values`. An entry created gets `metaobject_gid(type, handle)` (lsf-core's id), else a new one when a renamed entry holds it. |
+| `online_store` | `page*`, `blog*`, `article*` (create, update, delete), `commentApprove`, `commentSpam`, `commentNotSpam`, `commentDelete`. |
+| `navigation` | `menuCreate`, `Update`, `Delete` (a menu created gets `menu_gid(handle)`), `urlRedirectCreate`, `Update`, `Delete` (and `add_redirect`, for `redirectNewHandle`). |
+| `translations` | `translationsRegister`, `translationsRemove`; `translatableResource(s)`, `translatableResourcesByIds`, the resources' `translations(locale:)`. A resource's translations are a `TranslatableResource` record (`resourceId`, `translations`) kept under `translations/<resource GID>`: not store data. |
+| `files` | `fileCreate`, `fileUpdate`, `fileDelete`; `files`' sort keys and search text. The staged uploads are the app family's: its upload endpoint records an upload with `files::record_staged_upload(resource_url, StagedUpload {filename, mime_type, size})`, which `fileCreate` reads (`files::staged_upload`). |
+
+Error codes the checks of metafield inputs share (`TOO_SHORT`, `APP_NOT_AUTHORIZED`, …) are fitted
+to the code enum of each payload (`content::fit_code`: the code, else `INVALID`), since the
+executor refuses an enum value the type does not have. Events without a webhook topic in 2026-10
+(pages, blogs, articles, comments, menus, redirects, files, translations, metaobject definitions, the
+metafields of owners other than products and variants) are emitted under a topic no
+subscription can name (`pages/create`, `metafields/update`, …): the server still knows the shop
+changed.
 
 ### App (`domains/app.rs`)
 

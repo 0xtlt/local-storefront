@@ -118,6 +118,10 @@ const VALUES: &[(&str, &str)] = &[
         "company_contact_roles/*",
         ".company_location.tax_settings.tax_exempt",
     ),
+    // The example's definition has no id (nor dates): lsf sends the id of the definition, which
+    // `metafield_definitions/delete` names by its GID.
+    ("metafield_definitions/create", ".id"),
+    ("metafield_definitions/update", ".id"),
     // The compliance examples are of another shop and customer (`{shop}.myshopify.com`), and of
     // a data request lsf has no record of.
     ("customers/data_request", "."),

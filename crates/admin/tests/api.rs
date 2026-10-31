@@ -691,3 +691,120 @@ fn reports_its_status_and_triggers_webhooks_from_the_shop() {
     );
     assert_eq!(missing.status, 404);
 }
+
+#[test]
+fn delivers_the_webhooks_of_metafields_and_metaobjects() {
+    let receiver = Receiver::start();
+    let api = demo_api();
+    let token = default_token(&api);
+    for topic in [
+        "METAFIELD_DEFINITIONS_CREATE",
+        "PRODUCTS_UPDATE",
+        "METAOBJECTS_CREATE",
+    ] {
+        let (_, subscribed) = graphql(
+            &api,
+            &token,
+            "mutation($topic: WebhookSubscriptionTopic!, $uri: String!) { webhookSubscriptionCreate(topic: $topic, webhookSubscription: {uri: $uri}) { userErrors { message } } }",
+            json!({"topic": topic, "uri": format!("{}/webhooks", receiver.url)}),
+        );
+        assert_eq!(
+            subscribed["data"]["webhookSubscriptionCreate"]["userErrors"],
+            json!([]),
+            "{subscribed}"
+        );
+    }
+    let (_, products) = graphql(
+        &api,
+        &token,
+        "{ products(first: 1) { nodes { id } } }",
+        Value::Null,
+    );
+    let product = products["data"]["products"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A definition, then a value it checks, on a product.
+    let (_, defined) = graphql(
+        &api,
+        &token,
+        "mutation { metafieldDefinitionCreate(definition: {name: \"Care\", namespace: \"$app\", key: \"care\", ownerType: PRODUCT, type: \"multi_line_text_field\"}) {
+            createdDefinition { id namespace } userErrors { field message code } } }",
+        Value::Null,
+    );
+    let definition = &defined["data"]["metafieldDefinitionCreate"]["createdDefinition"];
+    assert!(
+        definition["namespace"]
+            .as_str()
+            .unwrap()
+            .starts_with("app--"),
+        "{defined}"
+    );
+    let (_, set) = graphql(
+        &api,
+        &token,
+        "mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) {
+            metafields { key value definition { id } } userErrors { field message code } } }",
+        json!({"metafields": [{"ownerId": product, "namespace": "$app", "key": "care", "value": "Wash cold."}]}),
+    );
+    let set = &set["data"]["metafieldsSet"];
+    assert_eq!(set["userErrors"], json!([]));
+    assert_eq!(set["metafields"][0]["definition"]["id"], definition["id"]);
+    let (_, read) = graphql(
+        &api,
+        &token,
+        "query($id: ID!) { product(id: $id) { metafield(namespace: \"$app\", key: \"care\") { value } } }",
+        json!({"id": product}),
+    );
+    assert_eq!(read["data"]["product"]["metafield"]["value"], "Wash cold.");
+
+    // A metaobject type and an entry.
+    let (_, created) = graphql(
+        &api,
+        &token,
+        "mutation { metaobjectDefinitionCreate(definition: {type: \"$app:badge\", fieldDefinitions: [{key: \"label\", type: \"single_line_text_field\"}]}) { userErrors { message } }
+            metaobjectCreate(metaobject: {type: \"$app:badge\", handle: \"eco\", fields: [{key: \"label\", value: \"Eco\"}]}) {
+            metaobject { id handle } userErrors { message } } }",
+        Value::Null,
+    );
+    let entry = &created["data"]["metaobjectCreate"]["metaobject"];
+    assert_eq!(entry["handle"], "eco", "{created}");
+
+    let mut deliveries = Vec::new();
+    for _ in 0..3 {
+        let (headers, body) = receiver.next();
+        assert!(verify_webhook_hmac(
+            SECRET,
+            &body,
+            &headers["x-shopify-hmac-sha256"]
+        ));
+        let payload: Value = serde_json::from_slice(&body).unwrap();
+        deliveries.push((headers["x-shopify-topic"].clone(), payload));
+    }
+    let topics: Vec<&str> = deliveries.iter().map(|(topic, _)| topic.as_str()).collect();
+    assert_eq!(
+        topics,
+        [
+            "metafield_definitions/create",
+            "products/update",
+            "metaobjects/create"
+        ]
+    );
+    let (_, definition_payload) = &deliveries[0];
+    assert_eq!(definition_payload["key"], "care");
+    assert_eq!(definition_payload["owner_type"], "Product");
+    assert_eq!(definition_payload["type_name"], "multi_line_text_field");
+    let (_, product_payload) = &deliveries[1];
+    assert_eq!(product_payload["admin_graphql_api_id"], json!(product));
+    let (_, metaobject_payload) = &deliveries[2];
+    assert_eq!(metaobject_payload["id"], entry["id"]);
+    assert_eq!(metaobject_payload["handle"], "eco");
+    assert_eq!(metaobject_payload["fields"], json!({"label": "Eco"}));
+    assert!(
+        metaobject_payload["type"]
+            .as_str()
+            .unwrap()
+            .ends_with("--badge")
+    );
+}
