@@ -1,0 +1,594 @@
+//! Sending webhooks, and the log of what was sent.
+//!
+//! Deliveries are sent by worker threads of their own, never by the thread of the request that
+//! caused them: the handler of the backend may call the Admin API back while it answers. A `2xx`
+//! within the timeout (5 seconds, as Shopify) is a success. Anything else (another status, a
+//! redirect, a timeout, a connection that fails) is retried after each delay of
+//! [`DeliveryOptions::retry_delays`], then marked failed: Shopify retries 8 times over 4 hours,
+//! which a test cannot wait for.
+//!
+//! Deliveries go out one at a time by default, in the order they were made: Shopify promises no
+//! order, but a log read in the order things happened is easier to follow. A delivery waiting for
+//! its retry does not hold the others back.
+
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, VecDeque};
+use std::io::Read;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
+use serde::Serialize;
+
+use super::sign::USER_AGENT;
+use super::subscriptions::Subscription;
+
+/// How deliveries are sent.
+#[derive(Clone, Debug)]
+pub struct DeliveryOptions {
+    /// How long a delivery may take, from connecting to the end of the answer: 5 seconds, as
+    /// Shopify.
+    pub timeout: Duration,
+    /// How long connecting may take: 1 second, as Shopify.
+    pub connect_timeout: Duration,
+    /// The delay before each retry: as many retries as delays. 1, 5 and 15 seconds by default;
+    /// none in tests.
+    pub retry_delays: Vec<Duration>,
+    /// How many deliveries are sent at once. 1 by default: in order.
+    pub workers: usize,
+    /// How many deliveries the log keeps; the oldest are forgotten first.
+    pub keep: usize,
+}
+
+impl Default for DeliveryOptions {
+    fn default() -> DeliveryOptions {
+        DeliveryOptions {
+            timeout: Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(1),
+            retry_delays: vec![
+                Duration::from_secs(1),
+                Duration::from_secs(5),
+                Duration::from_secs(15),
+            ],
+            workers: 1,
+            keep: 1000,
+        }
+    }
+}
+
+/// Where a delivery is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryState {
+    /// Waiting to be sent, being sent, or waiting for a retry.
+    Pending,
+    /// Answered with a `2xx`.
+    Delivered,
+    /// Every attempt failed.
+    Failed,
+    /// Never sent, for the reason the delivery gives: a topic whose payload lsf does not build,
+    /// a filter that does not match, an address lsf cannot deliver to.
+    NotSent,
+}
+
+impl DeliveryState {
+    pub fn parse(text: &str) -> Option<DeliveryState> {
+        match text {
+            "pending" => Some(DeliveryState::Pending),
+            "delivered" => Some(DeliveryState::Delivered),
+            "failed" => Some(DeliveryState::Failed),
+            "not_sent" | "not-sent" => Some(DeliveryState::NotSent),
+            _ => None,
+        }
+    }
+}
+
+/// The subscription a delivery is for.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionRef {
+    pub id: String,
+    pub name: Option<String>,
+    /// The `uri` as the subscription gives it.
+    pub uri: String,
+}
+
+impl SubscriptionRef {
+    pub fn of(subscription: &Subscription) -> SubscriptionRef {
+        SubscriptionRef {
+            id: subscription.id.clone(),
+            name: subscription.name.clone(),
+            uri: subscription.uri.clone(),
+        }
+    }
+}
+
+/// The request of a delivery, as sent.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Request {
+    /// As Shopify writes their names.
+    pub headers: IndexMap<String, String>,
+    /// The raw body, the bytes the signature is of.
+    pub body: String,
+}
+
+/// One try at sending a delivery.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attempt {
+    pub started_at: DateTime<Utc>,
+    pub duration_ms: u64,
+    /// The status of the answer, when there was one.
+    pub status: Option<u16>,
+    /// The start of the body of the answer.
+    pub response: Option<String>,
+    /// What went wrong: a status out of `2xx`, a timeout, a connection refused.
+    pub error: Option<String>,
+}
+
+/// A webhook delivery: one event, one subscription (or one address).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Delivery {
+    /// The position of the delivery in the log, from 1.
+    pub id: u64,
+    /// `X-Shopify-Webhook-Id`.
+    pub webhook_id: String,
+    /// `X-Shopify-Event-Id`.
+    pub event_id: String,
+    pub topic: String,
+    pub shop: String,
+    /// `None` for a delivery to an address given explicitly (`lsf app webhook trigger
+    /// --address`).
+    pub subscription: Option<SubscriptionRef>,
+    /// Where it is sent; `None` when the subscription's `uri` is not an HTTP address.
+    pub url: Option<String>,
+    pub api_version: String,
+    /// `X-Shopify-Triggered-At`.
+    pub triggered_at: DateTime<Utc>,
+    /// The request, when there is a body to send.
+    pub request: Option<Request>,
+    pub attempts: Vec<Attempt>,
+    pub state: DeliveryState,
+    /// Why it was not sent, or why it failed.
+    pub reason: Option<String>,
+    /// What lsf did differently from Shopify for it: a filter it did not evaluate, the API
+    /// version of the payload.
+    pub notes: Vec<String>,
+}
+
+/// A delivery about to be logged: everything but its id and its outcome.
+#[derive(Clone, Debug)]
+pub struct NewDelivery {
+    pub webhook_id: String,
+    pub event_id: String,
+    pub topic: String,
+    pub shop: String,
+    pub subscription: Option<SubscriptionRef>,
+    pub url: Option<String>,
+    pub api_version: String,
+    pub triggered_at: DateTime<Utc>,
+    pub request: Option<Request>,
+    pub notes: Vec<String>,
+}
+
+/// Which deliveries a listing or a wait is about. Every field left `None` matches all.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DeliveryFilter {
+    pub topic: Option<String>,
+    pub shop: Option<String>,
+    pub state: Option<DeliveryState>,
+    /// Only these deliveries, by id.
+    pub ids: Option<Vec<u64>>,
+}
+
+impl DeliveryFilter {
+    pub fn matches(&self, delivery: &Delivery) -> bool {
+        self.topic
+            .as_ref()
+            .is_none_or(|topic| *topic == delivery.topic)
+            && self.shop.as_ref().is_none_or(|shop| *shop == delivery.shop)
+            && self.state.is_none_or(|state| state == delivery.state)
+            && self
+                .ids
+                .as_ref()
+                .is_none_or(|ids| ids.contains(&delivery.id))
+    }
+
+    /// Whether a delivery that matches counts as done for a wait: one that is not pending, or
+    /// any when the filter asks for pending ones.
+    fn done(&self, delivery: &Delivery) -> bool {
+        self.matches(delivery)
+            && (delivery.state != DeliveryState::Pending
+                || self.state == Some(DeliveryState::Pending))
+    }
+}
+
+/// What a wait found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Waited {
+    /// The deliveries that match, done or not, in the order of the log.
+    pub deliveries: Vec<Delivery>,
+    /// Whether as many as were waited for were done before the timeout.
+    pub complete: bool,
+}
+
+struct Log {
+    entries: VecDeque<Delivery>,
+    /// The deliveries due to be sent, soonest first: when, and their id.
+    queue: BinaryHeap<Reverse<(Instant, u64)>>,
+    last_id: u64,
+    shutdown: bool,
+}
+
+struct Shared {
+    log: Mutex<Log>,
+    /// Wakes the workers: a delivery to send, or the end.
+    work: Condvar,
+    /// Wakes the waiters: a delivery changed.
+    changed: Condvar,
+    options: DeliveryOptions,
+}
+
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, Log> {
+        // A worker that panicked leaves the log as it was: still worth reading.
+        self.log
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// The log of deliveries, and the workers that send them. Dropping it stops the workers (one in
+/// the middle of a request finishes it first).
+pub struct Deliveries {
+    shared: Arc<Shared>,
+}
+
+impl Deliveries {
+    /// Starts the workers.
+    pub fn new(options: DeliveryOptions) -> Deliveries {
+        let workers = options.workers.max(1);
+        let shared = Arc::new(Shared {
+            log: Mutex::new(Log {
+                entries: VecDeque::new(),
+                queue: BinaryHeap::new(),
+                last_id: 0,
+                shutdown: false,
+            }),
+            work: Condvar::new(),
+            changed: Condvar::new(),
+            options,
+        });
+        let agent = agent(&shared.options);
+        for index in 0..workers {
+            let shared = Arc::clone(&shared);
+            let agent = agent.clone();
+            // A worker that cannot start leaves the deliveries pending: the log says so.
+            let _ = std::thread::Builder::new()
+                .name(format!("lsf-webhooks-{index}"))
+                .spawn(move || work(&shared, &agent));
+        }
+        Deliveries { shared }
+    }
+
+    pub fn options(&self) -> &DeliveryOptions {
+        &self.shared.options
+    }
+
+    /// Logs a delivery and queues it to be sent at once. Its id.
+    pub fn send(&self, delivery: NewDelivery) -> u64 {
+        let mut log = self.shared.lock();
+        let id = push(
+            &mut log,
+            delivery,
+            DeliveryState::Pending,
+            None,
+            self.shared.options.keep,
+        );
+        log.queue.push(Reverse((Instant::now(), id)));
+        drop(log);
+        self.shared.work.notify_one();
+        self.shared.changed.notify_all();
+        id
+    }
+
+    /// Logs a delivery that is not sent, and why. Its id.
+    pub fn not_sent(&self, delivery: NewDelivery, reason: String) -> u64 {
+        let mut log = self.shared.lock();
+        let id = push(
+            &mut log,
+            delivery,
+            DeliveryState::NotSent,
+            Some(reason),
+            self.shared.options.keep,
+        );
+        drop(log);
+        self.shared.changed.notify_all();
+        id
+    }
+
+    /// The deliveries that match, in the order of the log.
+    pub fn list(&self, filter: &DeliveryFilter) -> Vec<Delivery> {
+        self.shared
+            .lock()
+            .entries
+            .iter()
+            .filter(|delivery| filter.matches(delivery))
+            .cloned()
+            .collect()
+    }
+
+    pub fn get(&self, id: u64) -> Option<Delivery> {
+        self.shared
+            .lock()
+            .entries
+            .iter()
+            .find(|delivery| delivery.id == id)
+            .cloned()
+    }
+
+    /// Forgets every delivery, those still pending included (they are not sent). How many there
+    /// were.
+    pub fn clear(&self) -> usize {
+        let mut log = self.shared.lock();
+        let count = log.entries.len();
+        log.entries.clear();
+        log.queue.clear();
+        drop(log);
+        self.shared.changed.notify_all();
+        count
+    }
+
+    /// Waits until `count` deliveries that match are done (delivered, failed or not sent), or
+    /// until `timeout`.
+    pub fn wait(&self, filter: &DeliveryFilter, count: usize, timeout: Duration) -> Waited {
+        let deadline = Instant::now() + timeout;
+        let mut log = self.shared.lock();
+        loop {
+            let done = log
+                .entries
+                .iter()
+                .filter(|delivery| filter.done(delivery))
+                .count();
+            let now = Instant::now();
+            if done >= count || now >= deadline || log.shutdown {
+                let deliveries = log
+                    .entries
+                    .iter()
+                    .filter(|delivery| filter.matches(delivery))
+                    .cloned()
+                    .collect();
+                return Waited {
+                    deliveries,
+                    complete: done >= count,
+                };
+            }
+            log = self
+                .shared
+                .changed
+                .wait_timeout(log, deadline - now)
+                .map_or_else(|poisoned| poisoned.into_inner().0, |(log, _)| log);
+        }
+    }
+}
+
+impl Drop for Deliveries {
+    fn drop(&mut self) {
+        self.shared.lock().shutdown = true;
+        self.shared.work.notify_all();
+        self.shared.changed.notify_all();
+    }
+}
+
+fn push(
+    log: &mut Log,
+    delivery: NewDelivery,
+    state: DeliveryState,
+    reason: Option<String>,
+    keep: usize,
+) -> u64 {
+    log.last_id += 1;
+    let id = log.last_id;
+    log.entries.push_back(Delivery {
+        id,
+        webhook_id: delivery.webhook_id,
+        event_id: delivery.event_id,
+        topic: delivery.topic,
+        shop: delivery.shop,
+        subscription: delivery.subscription,
+        url: delivery.url,
+        api_version: delivery.api_version,
+        triggered_at: delivery.triggered_at,
+        request: delivery.request,
+        attempts: Vec::new(),
+        state,
+        reason,
+        notes: delivery.notes,
+    });
+    while log.entries.len() > keep.max(1) {
+        log.entries.pop_front();
+    }
+    id
+}
+
+/// The HTTP client of the workers: no redirect is followed (Shopify takes a `3xx` for a failure),
+/// a status out of `2xx` is an answer, not an error.
+fn agent(options: &DeliveryOptions) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(options.timeout))
+        .timeout_connect(Some(options.connect_timeout))
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .user_agent(USER_AGENT)
+        .build()
+        .into()
+}
+
+/// A worker: sends the deliveries that are due, until the log is dropped.
+fn work(shared: &Shared, agent: &ureq::Agent) {
+    loop {
+        let job = {
+            let mut log = shared.lock();
+            loop {
+                if log.shutdown {
+                    return;
+                }
+                let now = Instant::now();
+                match log.queue.peek().copied() {
+                    Some(Reverse((due, id))) if due <= now => {
+                        log.queue.pop();
+                        // A delivery cleared from the log is not sent.
+                        let job = log
+                            .entries
+                            .iter()
+                            .find(|delivery| delivery.id == id)
+                            .and_then(|delivery| {
+                                Some((id, delivery.url.clone()?, delivery.request.clone()?))
+                            });
+                        if let Some(job) = job {
+                            break job;
+                        }
+                    }
+                    Some(Reverse((due, _))) => {
+                        log = shared
+                            .work
+                            .wait_timeout(log, due - now)
+                            .map_or_else(|poisoned| poisoned.into_inner().0, |(log, _)| log);
+                    }
+                    None => {
+                        log = shared
+                            .work
+                            .wait(log)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                }
+            }
+        };
+        let (id, url, request) = job;
+        let attempt = attempt(agent, &url, &request, &shared.options);
+        let mut log = shared.lock();
+        let retries = shared.options.retry_delays.len();
+        let Some(delivery) = log.entries.iter_mut().find(|delivery| delivery.id == id) else {
+            continue;
+        };
+        let succeeded = attempt.error.is_none();
+        let error = attempt.error.clone();
+        delivery.attempts.push(attempt);
+        let tried = delivery.attempts.len();
+        let retry = if succeeded {
+            delivery.state = DeliveryState::Delivered;
+            delivery.reason = None;
+            None
+        } else if tried <= retries {
+            delivery.reason = error;
+            Some(shared.options.retry_delays[tried - 1])
+        } else {
+            delivery.state = DeliveryState::Failed;
+            delivery.reason = error.map(|error| {
+                format!(
+                    "{error} ({tried} attempt{})",
+                    if tried == 1 { "" } else { "s" }
+                )
+            });
+            None
+        };
+        if let Some(delay) = retry {
+            log.queue.push(Reverse((Instant::now() + delay, id)));
+            shared.work.notify_one();
+        }
+        drop(log);
+        shared.changed.notify_all();
+    }
+}
+
+/// How much of the answer the log keeps.
+const RESPONSE_START: usize = 1024;
+
+/// Sends a delivery once.
+fn attempt(
+    agent: &ureq::Agent,
+    url: &str,
+    request: &Request,
+    options: &DeliveryOptions,
+) -> Attempt {
+    let started_at = Utc::now();
+    let start = Instant::now();
+    let outcome = post(agent, url, request);
+    let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    match outcome {
+        Ok((status, response)) => Attempt {
+            started_at,
+            duration_ms,
+            status: Some(status),
+            response: Some(response),
+            error: (!(200..300).contains(&status)).then(|| {
+                if (300..400).contains(&status) {
+                    format!("answered {status}: a redirect is a failure, as on Shopify")
+                } else {
+                    format!("answered {status}")
+                }
+            }),
+        },
+        Err(error) => Attempt {
+            started_at,
+            duration_ms,
+            status: None,
+            response: None,
+            error: Some(describe(&error, url, options)),
+        },
+    }
+}
+
+fn post(agent: &ureq::Agent, url: &str, request: &Request) -> Result<(u16, String), ureq::Error> {
+    let mut builder = ureq::http::Request::builder().method("POST").uri(url);
+    for (name, value) in &request.headers {
+        builder = builder.header(name.as_str(), value.as_str());
+    }
+    let http_request = builder
+        .body(request.body.clone())
+        .map_err(ureq::Error::Http)?;
+    let response = agent.run(http_request)?;
+    let status = response.status().as_u16();
+    let mut body = response.into_body();
+    let mut bytes = Vec::new();
+    // The start of the answer is kept; the rest is read, up to a limit, so that the connection
+    // can serve the next delivery.
+    let mut reader = body.as_reader();
+    reader
+        .by_ref()
+        .take(RESPONSE_START as u64)
+        .read_to_end(&mut bytes)?;
+    let _ = std::io::copy(&mut reader.take(1 << 20), &mut std::io::sink());
+    Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// What went wrong, in words a developer acts on.
+fn describe(error: &ureq::Error, url: &str, options: &DeliveryOptions) -> String {
+    use ureq::Error;
+    let timed_out = |kind: std::io::ErrorKind| {
+        matches!(
+            kind,
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        )
+    };
+    match error {
+        Error::Timeout(_) => format!(
+            "no answer within {} s: Shopify takes that for a failure",
+            options.timeout.as_secs_f64()
+        ),
+        Error::Io(io) if timed_out(io.kind()) => format!(
+            "no answer within {} s: Shopify takes that for a failure",
+            options.timeout.as_secs_f64()
+        ),
+        Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => {
+            format!("connection refused: is the backend of the app listening on {url}?")
+        }
+        Error::ConnectionFailed => {
+            format!("connection failed: is the backend of the app listening on {url}?")
+        }
+        Error::HostNotFound => format!("the host of {url} was not found"),
+        other => other.to_string(),
+    }
+}
