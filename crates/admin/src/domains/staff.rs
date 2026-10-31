@@ -2,10 +2,11 @@
 //! `companyLocationAssignStaffMembers`, `companyLocationRemoveStaffMembers`, and
 //! `CompanyLocation.staffMemberAssignments`.
 //!
-//! The store data has no staff: a shop has its owner, a `StaffMember` made from the shop (its
-//! email, its name; `isShopOwner: true`, `accountType: REGULAR`, `active`), which
-//! `Shop.accountOwner` names *(chosen: every Shopify shop has an owner)*. When another family
-//! seeds staff members first, they are kept and none is added.
+//! The store data has no staff: a shop has its owner, `StaffMember/1` ([`owner_gid`]), the user
+//! of the shop's online and session tokens (`AssociatedUser::local`: "Shop Owner",
+//! `owner@<shop>`; `isShopOwner: true`, `accountType: REGULAR`, `active`), which
+//! `Shop.accountOwner` names *(chosen: every Shopify shop has an owner)*. The platform family
+//! seeds its record; this completes it (`initials`, `privateData`).
 //!
 //! As shopify.dev's reference of 2026-10 describes them: `companyLocationAssignStaffMembers`
 //! "creates one or more mappings between a staff member at a shop and a company location" (a
@@ -52,10 +53,9 @@ pub fn owner_gid() -> String {
 
 /// The shop's owner, the shop's `accountOwner` and the staff member point of sale opens sessions
 /// with. The platform family seeds its record (the tokens' user, run before this one); this
-/// completes it with what the Admin reads of an owner (`initials`, `privateData`), or makes it
-/// when it is missing.
+/// completes it with what the Admin reads of an owner (`initials`, `privateData`), and makes the
+/// same record when it is missing.
 pub fn seed(seed: &mut Seed) {
-    let shop = &seed.store.shop;
     let id = owner_gid();
     let handle = seed
         .state
@@ -69,6 +69,16 @@ pub fn seed(seed: &mut Seed) {
         "createdAt": Seed::epoch_string(),
         "permissions": [],
     });
+    // The platform family seeds the owner, as the tokens' user; the same record otherwise, so
+    // that there is one owner, whoever seeds it.
+    if !seed.state.contains(&id) {
+        let domain = seed.state.domain().to_string();
+        seed.insert(crate::domains::platform::queries::staff_record(
+            &crate::auth::tokens::AssociatedUser::local(&domain, 1),
+            &domain,
+            &Seed::epoch_string(),
+        ));
+    }
     if let Some(record) = seed.state.get_mut(&id) {
         let initials: Vec<Value> = ["firstName", "lastName"]
             .iter()
@@ -77,29 +87,6 @@ pub fn seed(seed: &mut Seed) {
             .collect();
         record.entry("initials").or_insert(Value::Array(initials));
         record.entry("privateData").or_insert(private);
-    } else {
-        let name = if shop.name.is_empty() {
-            "Shop owner".to_string()
-        } else {
-            format!("{} owner", shop.name)
-        };
-        let locale = seed.store.primary_language().iso_code.clone();
-        seed.insert(json!({
-            "__typename": "StaffMember",
-            "id": id,
-            "name": name,
-            "firstName": null,
-            "lastName": null,
-            "email": shop.email,
-            "phone": null,
-            "isShopOwner": true,
-            "active": true,
-            "exists": true,
-            "accountType": "REGULAR",
-            "locale": locale,
-            "initials": [name.chars().next().map(|c| c.to_string()).unwrap_or_default()],
-            "privateData": private,
-        }));
     }
     if let Some(shop_gid) = seed.state.shop_gid().map(str::to_string)
         && let Some(record) = seed.state.get_mut(&shop_gid)

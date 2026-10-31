@@ -6,10 +6,10 @@
 //! - **The outside world**: a `PointOfSaleDevice` is a phone or a tablet running Shopify POS,
 //!   which the Admin API cannot make. The seed gives each active location one device
 //!   (`stable_id("point_of_sale_device", <location GID>)` *(chosen)*), so that a backend can
-//!   assign it a drawer and open sessions on it, by the shop's owner (`staff::owner_gid`), as the staff
-//!   member the sessions name. What Shopify would push to the device (a session opened, a drawer
-//!   assigned) is sent nowhere: each is written to the shop's outbox ([`crate::outbox`],
-//!   channel `pos`, `to` the device) and said in `extensions.lsf.notes`.
+//!   assign it a drawer and open sessions on it, by the shop's owner (`staff::owner_gid`), as
+//!   the staff member the sessions name. What Shopify would push to the device (a session
+//!   opened, a drawer assigned) is sent nowhere: each is written to the shop's outbox
+//!   ([`crate::outbox`], channel `pos`, `to` the device) and said in `extensions.lsf.notes`.
 //! - **Reason codes**: Shopify's default codes (`CashManagementDefaultReasonCodeEnum`: cash
 //!   count, payout, pickup, …) and system ones (`FLOAT_SETUP`, the automatic session events),
 //!   seeded, and the custom ones `cashManagementReasonCodeCreate` makes. Only custom codes can be
@@ -80,13 +80,8 @@ pub fn device_gid(location: &str) -> String {
     )
 }
 
-/// The GID of the shop owner, whom the staff family seeds (`staff::seed`, before this one).
-pub fn owner_gid() -> String {
-    crate::domains::staff::owner_gid()
-}
-
-/// The devices, the reason codes and the shop owner: see the module's documentation. Runs after
-/// the other families' seeds (it reads the locations, and staff members another family made).
+/// The devices and the reason codes: see the module's documentation. Runs after the other
+/// families' seeds (it reads the locations).
 pub fn seed(seed: &mut Seed) {
     let locations: Vec<String> = seed
         .state

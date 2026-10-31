@@ -1140,7 +1140,7 @@ Each in a module of its own, whose header has the rules and their sources:
 | `privacy` | Data erasure (a memo per customer: pending 10 days, then redacted by `process_due_erasures`), `dataSaleOptOut`, the WhatsApp consent (on the customer, copied to `defaultPhoneNumber` by `customers::contact_fields`), `ConsentPolicy` records, the privacy features (a memo). |
 | `marketing` | `MarketingActivity` and `MarketingEvent` records (the app's remote id, channel handle and engagements under `lsf…` keys), the errors of `MarketingActivityUserErrorCode` with the code's description as message. |
 | `analytics` | `AnalyticsAnnotation`, `AnalyticsTarget` records; `analytics::shopifyql`, a ShopifyQL subset (`FROM sales`) over a row per line sold, per order (its shipping and taxes) and per refund. |
-| `staff` | The shop's owner (`StaffMember`, seeded last, when no family seeded staff), `CompanyLocationStaffMemberAssignment` records, and the deprecated tax registration mutations on the companies family's `change_tax_settings`. |
+| `staff` | The shop's owner, `StaffMember/1` (`staff::owner_gid`; the platform family seeds the record, the tokens' user, and `staff::seed` completes it), `CompanyLocationStaffMemberAssignment` records, and the deprecated tax registration mutations on the companies family's `change_tax_settings`. |
 | `checkouts` | `AbandonedCheckout` records of the local checkout (one per cart token and order generation, a memo naming it), `Abandonment` records for checkouts of customers, the cart events (no record: the event's snapshot), what is abandoned when read (`is_listed`: contact, and more than ten minutes since the last change by the shop's clock), the three-month cleanup. |
 
 **What follows a change** (`segments::follow`): the mutation framework calls it after each
@@ -1641,15 +1641,15 @@ succeeds and as it refuses (the shop left as it was).
 
 ### Point of sale (`domains/pos.rs`)
 
-The seed runs last (`pos::seed`): it reads the locations and the staff another family made.
+The seed runs last (`pos::seed`): it reads the locations another family made.
 
 - **`PointOfSaleDevice`**, one per active location that is no fulfillment service:
   `stable_id("point_of_sale_device", <location GID>)` *(chosen: the Admin API cannot make one)*,
   `cashDrawer`, `activePaymentSession`, `fiscalDeviceIdentifier: null`, the location under
   `lsfLocation`. What lsf would have pushed to the POS app, which it never sends, is in the
   shop's outbox (see "The outbox", channel `pos`).
-- **`StaffMember`**, the shop owner, `stable_id("staff_member", "owner")`, when no family seeded
-  staff: `name` "Shop owner" *(chosen)*, the shop's email, `isShopOwner: true`, the primary locale.
+- **The staff member** the sessions name is the shop's owner, `StaffMember/1`
+  (`staff::owner_gid`, seeded by the platform family).
 - **Reason codes**: a `CashManagementDefaultReasonCode` per value of its enum and a
   `CashManagementSystemReasonCode` per system value (`stable_id("cash_management_reason_code",
   "default/<CODE>" | "system/<CODE>")`); the custom ones the mutation makes.
