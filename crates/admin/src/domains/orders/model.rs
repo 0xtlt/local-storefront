@@ -42,6 +42,166 @@ pub fn currency(state: &ShopState) -> String {
         .to_string()
 }
 
+/// The key of an order presented in another currency than the shop's ([`Presentment`]).
+pub const PRESENTMENT: &str = "lsfPresentment";
+
+/// The currency an order is presented in, when it is not the shop's (an order a subscription
+/// contract in a presentment currency bills), and the rate from the shop's currency to it in
+/// basis points (`markets::rate_bps`: a market's manual rate, else 1.0). The family computes
+/// every amount in the shop's currency, as `shopMoney`; `presentmentMoney` is that amount
+/// converted at the rate ([`apply_presentment`]). Kept on the order under [`PRESENTMENT`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Presentment {
+    pub currency: String,
+    pub rate_bps: i64,
+}
+
+impl Presentment {
+    /// The presentment of an order, `None` for an order in the shop's currency.
+    pub fn of(order: &Record) -> Option<Presentment> {
+        let kept = order.get(PRESENTMENT)?;
+        Some(Presentment {
+            currency: kept.get("currency")?.as_str()?.to_string(),
+            rate_bps: kept.get("rateBps")?.as_i64().filter(|rate| *rate > 0)?,
+        })
+    }
+
+    pub fn to_value(&self) -> Value {
+        json!({"currency": self.currency, "rateBps": self.rate_bps})
+    }
+
+    /// An amount of the presentment currency in the shop's, in cents, rounded half away from
+    /// zero.
+    pub fn to_shop(&self, cents: i64) -> i64 {
+        rounded_ratio(i128::from(cents) * 10_000, i128::from(self.rate_bps.max(1)))
+    }
+
+    /// An amount of the shop's currency in the presentment currency, in cents.
+    pub fn from_shop(&self, cents: i64) -> i64 {
+        rounded_ratio(i128::from(cents) * i128::from(self.rate_bps), 10_000)
+    }
+}
+
+/// `numerator / denominator` (positive), rounded half away from zero, within `i64`.
+fn rounded_ratio(numerator: i128, denominator: i128) -> i64 {
+    let rounded = (numerator + numerator.signum() * denominator / 2) / denominator;
+    i64::try_from(rounded).unwrap_or(if rounded < 0 { i64::MIN } else { i64::MAX })
+}
+
+/// Rewrites the `presentmentMoney` of every `MoneyBag` of an order presented in another
+/// currency ([`Presentment`]) from its `shopMoney`: on the order and on the records it holds
+/// (its line items, transactions, refunds and their lines, fulfillments, fulfillment orders,
+/// returns, …, followed from the order two records deep). [`refresh_order`] runs it, so that
+/// every flow of the family, which builds its amounts in the shop's currency, leaves the order
+/// in its presentment currency. Writes only what differs; nothing for an order in the shop's
+/// currency.
+pub fn apply_presentment(state: &mut ShopState, order: &str) {
+    let Some(presentment) = state.get(order).and_then(Presentment::of) else {
+        return;
+    };
+    fn present(value: &mut Value, presentment: &Presentment) -> bool {
+        match value {
+            Value::Object(map) => {
+                if let (Some(shop), true) =
+                    (map.get("shopMoney"), map.contains_key("presentmentMoney"))
+                {
+                    let cents = cents(shop.get("amount"));
+                    let converted =
+                        value::money_v2(presentment.from_shop(cents), &presentment.currency);
+                    if map.get("presentmentMoney") != Some(&converted) {
+                        map.insert("presentmentMoney".into(), converted);
+                        return true;
+                    }
+                    return false;
+                }
+                let mut changed = false;
+                for value in map.values_mut() {
+                    changed |= present(value, presentment);
+                }
+                changed
+            }
+            Value::Array(values) => {
+                let mut changed = false;
+                for value in values {
+                    changed |= present(value, presentment);
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+    fn references(record: &Record, into: &mut Vec<String>) {
+        fn walk(value: &Value, into: &mut Vec<String>) {
+            match value {
+                Value::String(text) if text.starts_with("gid://shopify/") => {
+                    if !into.contains(text) {
+                        into.push(text.clone());
+                    }
+                }
+                Value::Array(values) => values.iter().for_each(|value| walk(value, into)),
+                _ => {}
+            }
+        }
+        for (key, value) in record {
+            // What the order holds, not what it points at (its customer, its location).
+            if !matches!(key.as_str(), "customer" | "purchasingEntity" | "app" | "id") {
+                walk(value, into);
+            }
+        }
+    }
+    let mut keys = vec![order.to_string()];
+    let mut depth = 0;
+    let mut frontier = vec![order.to_string()];
+    while depth < 2 && !frontier.is_empty() {
+        let mut next = Vec::new();
+        for key in &frontier {
+            if let Some(record) = state.get(key) {
+                references(record, &mut next);
+            }
+        }
+        next.retain(|key| {
+            !keys.contains(key)
+                && state.get(key).is_some_and(|record| {
+                    // A record of the order: its own (`order`), or one of its line items'.
+                    text(record, "order") == Some(order)
+                        || matches!(
+                            state.type_of(key),
+                            Some(
+                                "LineItem"
+                                    | "RefundLineItem"
+                                    | "FulfillmentLineItem"
+                                    | "FulfillmentOrderLineItem"
+                                    | "ReturnLineItem"
+                                    | "UnverifiedReturnLineItem"
+                                    | "OrderTransaction"
+                                    | "Refund"
+                                    | "Fulfillment"
+                                    | "FulfillmentOrder"
+                                    | "Return"
+                            )
+                        )
+                })
+        });
+        keys.extend(next.iter().cloned());
+        frontier = next;
+        depth += 1;
+    }
+    for key in keys {
+        let Some(mut record) = state.get(&key).cloned() else {
+            continue;
+        };
+        let mut changed = false;
+        for (field, value) in record.iter_mut() {
+            if !field.starts_with("lsf") {
+                changed |= present(value, &presentment);
+            }
+        }
+        if changed && let Some(target) = state.get_mut(&key) {
+            *target = record;
+        }
+    }
+}
+
 /// A decimal amount (`"19.99"`, `"20"`, `"0.125"`) in cents, rounded half away from zero.
 /// `None` when it is not a number.
 pub fn parse_cents(text: &str) -> Option<i64> {
@@ -630,6 +790,7 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     {
         super::payments::refresh_terms(state, &terms);
     }
+    apply_presentment(state, order);
 }
 
 /// Recomputes `displayFinancialStatus` from the money of an order, after a change of money (a
@@ -787,26 +948,28 @@ pub fn refundable_payments(state: &ShopState, order: &Record) -> Vec<(String, i6
         .collect()
 }
 
-/// The inventory level of an item at a location (its first level when it has none there).
+/// The inventory level of an item at a location, `None` when it is not stocked there; its first
+/// level when no location is given. A location given is never another: the units of an order
+/// or a transfer at a location move there or nowhere.
 fn inventory_level(state: &ShopState, item: &str, location: Option<&str>) -> Option<String> {
     let levels = gids(state.get(item)?.get("inventoryLevels"));
+    let Some(location) = location else {
+        return levels.first().cloned();
+    };
     levels
-        .iter()
-        .find(|level| {
-            location.is_some()
-                && state
-                    .get(level)
-                    .and_then(|level| level.get("location"))
-                    .and_then(Value::as_str)
-                    == location
-        })
-        .or_else(|| levels.first())
-        .cloned()
+        .into_iter()
+        .find(|level| text_of(state, level, "location") == Some(location))
+}
+
+/// A text field of a record, by key.
+fn text_of<'s>(state: &'s ShopState, key: &str, field: &str) -> Option<&'s str> {
+    state.get(key).and_then(|record| text(record, field))
 }
 
 /// Changes the quantities of an inventory item at a location (`[("available", -2),
 /// ("committed", 2)]`), as an order that commits, ships or restocks units does: a tracked item
-/// only, at its level at that location (else its first). What an inventory mutation of the
+/// only, at its level at that location (its first when none is given; nothing when it is not
+/// stocked there). What an inventory mutation of the
 /// catalog runs follows: the level's `updatedAt`, the product's derived fields and smart
 /// collections (`catalog::product_changed`), the variants' `availableForSale` and
 /// `variants/in_stock` or `variants/out_of_stock` when the stock crossed zero
@@ -837,7 +1000,8 @@ pub fn move_inventory(
         .and_then(|variant| variant.get("product"))
         .and_then(Value::as_str)
         .map(str::to_string);
-    let products: Vec<String> = product.into_iter().collect();
+    // A bundle's quantity is its components': their bundles follow.
+    let products = catalog::with_parents(state, product.into_iter().collect());
     let before = catalog::stock_of(state, &products);
     let now = state.timestamp();
     let Some(record) = state.get_mut(&level) else {
@@ -888,24 +1052,191 @@ pub fn inventory_quantity(
 
 /// What a line item took from the stock, kept on it under this key, which GraphQL never reads:
 /// `{"committed": {"<location GID>": units}, "shipped": units}`, the units it committed at each
-/// location and those that shipped from them. Shipping and restocking a line move what it took,
-/// never what other orders committed: an order of the store data or of the local checkout took
-/// nothing (they keep the stock of the data), so shipping or restocking it leaves the stock as
-/// it is.
+/// location and those that shipped from them. A line of a bundle (a variant with components,
+/// `requiresComponents`) takes its components' units instead, kept per component item:
+/// `{"parts": {"<item GID>": {"variant", "perUnit", "committed", "shipped"}}}`. Shipping and
+/// restocking a line move what it took, never what other orders committed: an order of the
+/// store data or of the local checkout took nothing (they keep the stock of the data), so
+/// shipping or restocking it leaves the stock as it is.
 pub const LINE_STOCK: &str = "lsfStock";
 
-/// The location of an item's level at a location (its first level when it has none there): the
-/// key a line's commitments are kept under.
+/// What one unit of a variant takes from the stock: an inventory item, so many times.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StockPart {
+    /// The variant whose item it is: the variant itself, or a component of a bundle.
+    pub variant: String,
+    pub item: String,
+    /// The units of the item one unit of the variant takes (the bundle's quantity of it).
+    pub per_unit: i64,
+    /// Whether it is a component of a bundle (kept under `parts` in [`LINE_STOCK`]).
+    pub component: bool,
+}
+
+/// What one unit of a variant takes from the stock: its own inventory item, or, for a bundle,
+/// each component's item times the quantity the bundle takes of it, as shopify.dev says "the
+/// bundle's inventory is determined by the inventory of its component variants" (the parent's
+/// own item is not tracked).
+pub fn stock_parts(state: &ShopState, variant: &str) -> Vec<StockPart> {
+    let components = catalog::components_of(state, variant);
+    if !components.is_empty() {
+        return components
+            .into_iter()
+            .filter_map(|(component, per_unit)| {
+                let item = text(state.get(&component)?, "inventoryItem")?.to_string();
+                Some(StockPart {
+                    variant: component,
+                    item,
+                    per_unit: per_unit.max(1),
+                    component: true,
+                })
+            })
+            .collect();
+    }
+    state
+        .get(variant)
+        .and_then(|record| text(record, "inventoryItem"))
+        .map(|item| {
+            vec![StockPart {
+                variant: variant.to_string(),
+                item: item.to_string(),
+                per_unit: 1,
+                component: false,
+            }]
+        })
+        .unwrap_or_default()
+}
+
+/// The parts of `units` of a variant that a location cannot give: those whose item is tracked
+/// and whose variant does not sell when out of stock (`inventoryPolicy` other than `CONTINUE`),
+/// with fewer units available there than the variant takes. What `DECREMENT_OBEYING_POLICY` and
+/// a billing attempt that respects the inventory policy refuse.
+pub fn short_parts(
+    state: &ShopState,
+    variant: &str,
+    location: Option<&str>,
+    units: i64,
+) -> Vec<StockPart> {
+    stock_parts(state, variant)
+        .into_iter()
+        .filter(|part| {
+            let tracked = state
+                .get(&part.item)
+                .and_then(|item| item.get("tracked"))
+                .and_then(Value::as_bool)
+                == Some(true);
+            let continues = state
+                .get(&part.variant)
+                .and_then(|record| text(record, "inventoryPolicy"))
+                == Some("CONTINUE");
+            tracked
+                && !continues
+                && inventory_quantity(state, &part.item, location, "available")
+                    < units.saturating_mul(part.per_unit)
+        })
+        .collect()
+}
+
+/// The location an order fulfills from when it names none: `orderCreate` without
+/// `fulfillment.locationId`, a draft order completed, a subscription's billing. Shopify
+/// documents no rule for these orders (its order routing is the checkout's): lsf takes the
+/// shop's primary location (`location` without an id: the first active one) when it can give
+/// every line its units, else the first active location that can, else the primary one (where
+/// `DECREMENT_OBEYING_POLICY` and billing then find the stock short). A location can give a
+/// line when it stocks each tracked part of it ([`stock_parts`]) and has the units of those that
+/// do not sell when out of stock ([`short_parts`]). Fulfillment services' locations come last.
+pub fn fulfilling_location(state: &ShopState, lines: &[(String, i64)]) -> Option<String> {
+    let primary = catalog::default_location(state);
+    let mut candidates: Vec<String> = primary.iter().cloned().collect();
+    let mut services = Vec::new();
+    for location in state.keys("Location") {
+        if Some(location) == primary.as_deref() || !catalog::is_active_location(state, location) {
+            continue;
+        }
+        let service = text_of_bool(state, location, "isFulfillmentService");
+        if service {
+            services.push(location.to_string());
+        } else {
+            candidates.push(location.to_string());
+        }
+    }
+    candidates.extend(services);
+    let gives = |location: &str| {
+        lines.iter().all(|(variant, units)| {
+            stock_parts(state, variant).iter().all(|part| {
+                let tracked = text_of_bool(state, &part.item, "tracked");
+                !tracked || inventory_level(state, &part.item, Some(location)).is_some()
+            }) && short_parts(state, variant, Some(location), *units).is_empty()
+        })
+    };
+    candidates
+        .iter()
+        .find(|location| gives(location))
+        .cloned()
+        .or(primary)
+}
+
+/// A boolean field of a record, by key (`false` when absent).
+fn text_of_bool(state: &ShopState, key: &str, field: &str) -> bool {
+    state
+        .get(key)
+        .and_then(|record| record.get(field))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// The parts a line item takes from the stock: those it recorded (a bundle's components when
+/// it committed them), else what its variant takes now.
+fn line_parts(state: &ShopState, line: &str) -> Vec<StockPart> {
+    let Some(record) = state.get(line) else {
+        return Vec::new();
+    };
+    let recorded: Vec<StockPart> = record
+        .get(LINE_STOCK)
+        .and_then(|stock| stock.get("parts"))
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(item, part)| {
+            Some(StockPart {
+                variant: part.get("variant")?.as_str()?.to_string(),
+                item: item.clone(),
+                per_unit: part
+                    .get("perUnit")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(1)
+                    .max(1),
+                component: true,
+            })
+        })
+        .collect();
+    if !recorded.is_empty() {
+        return recorded;
+    }
+    text(record, "variant")
+        .map(|variant| stock_parts(state, variant))
+        .unwrap_or_default()
+}
+
+/// The location of an item's level at a location (its first level when none is given): the key
+/// a line's commitments are kept under.
 fn level_location(state: &ShopState, item: &str, location: Option<&str>) -> Option<String> {
     let level = inventory_level(state, item, location)?;
     text(state.get(&level)?, "location").map(str::to_string)
 }
 
-/// The units a line item committed, by location, in the order it committed them.
-fn line_commitments(state: &ShopState, line: &str) -> Vec<(String, i64)> {
-    state
-        .get(line)
-        .and_then(|record| record.get(LINE_STOCK))
+/// What a line item recorded of a part ([`LINE_STOCK`]).
+fn part_stock<'a>(state: &'a ShopState, line: &str, part: &StockPart) -> Option<&'a Value> {
+    let stock = state.get(line)?.get(LINE_STOCK)?;
+    if part.component {
+        stock.get("parts")?.get(&part.item)
+    } else {
+        Some(stock)
+    }
+}
+
+/// The units of a part a line item committed, by location, in the order it committed them.
+fn line_commitments(state: &ShopState, line: &str, part: &StockPart) -> Vec<(String, i64)> {
+    part_stock(state, line, part)
         .and_then(|stock| stock.get("committed"))
         .and_then(Value::as_object)
         .into_iter()
@@ -915,20 +1246,19 @@ fn line_commitments(state: &ShopState, line: &str) -> Vec<(String, i64)> {
         .collect()
 }
 
-/// The units of a line item that shipped from what it committed.
-fn line_shipped(state: &ShopState, line: &str) -> i64 {
-    state
-        .get(line)
-        .and_then(|record| record.get(LINE_STOCK))
+/// The units of a part of a line item that shipped from what it committed.
+fn line_shipped(state: &ShopState, line: &str, part: &StockPart) -> i64 {
+    part_stock(state, line, part)
         .and_then(|stock| stock.get("shipped"))
         .and_then(Value::as_i64)
         .unwrap_or(0)
 }
 
-/// Adds to what a line item committed at a location, and to what shipped of it.
+/// Adds to what a line item committed of a part at a location, and to what shipped of it.
 fn record_line_stock(
     state: &mut ShopState,
     line: &str,
+    part: &StockPart,
     location: &str,
     committed: i64,
     shipped: i64,
@@ -936,9 +1266,19 @@ fn record_line_stock(
     let Some(record) = state.get_mut(line) else {
         return;
     };
-    let stock = record.entry(LINE_STOCK).or_insert_with(|| json!({}));
+    let mut stock = record.entry(LINE_STOCK).or_insert_with(|| json!({}));
     if !stock.is_object() {
         *stock = json!({});
+    }
+    if part.component {
+        if !stock.get("parts").is_some_and(Value::is_object) {
+            stock["parts"] = json!({});
+        }
+        let parts = &mut stock["parts"];
+        if !parts.get(&part.item).is_some_and(Value::is_object) {
+            parts[&part.item] = json!({"variant": part.variant, "perUnit": part.per_unit});
+        }
+        stock = &mut parts[&part.item];
     }
     let committed = stock
         .get("committed")
@@ -954,56 +1294,78 @@ fn record_line_stock(
     stock["shipped"] = json!(shipped.max(0));
 }
 
-/// Commits units of a line item (`available` to `committed`), as Shopify does when an order that
-/// claims inventory is created or edited, and records them on the line ([`LINE_STOCK`]).
-pub fn commit_line(state: &mut ShopState, line: &str, location: Option<&str>, units: i64) {
-    let Some(item) = state
-        .get(line)
-        .and_then(|record| inventory_item_of(state, record))
-    else {
-        return;
-    };
-    let Some(at) = level_location(state, &item, location) else {
+/// Commits units of a part at a location (`available` to `committed`) for a line item, and
+/// records them on it.
+fn commit_part(
+    state: &mut ShopState,
+    line: &str,
+    part: &StockPart,
+    location: Option<&str>,
+    units: i64,
+) {
+    let Some(at) = level_location(state, &part.item, location) else {
         return;
     };
     if units > 0
         && move_inventory(
             state,
-            &item,
+            &part.item,
             Some(&at),
             &[("available", -units), ("committed", units)],
         )
     {
-        record_line_stock(state, line, &at, units, 0);
+        record_line_stock(state, line, part, &at, units, 0);
+    }
+}
+
+/// Commits units of a line item (`available` to `committed`), as Shopify does when an order that
+/// claims inventory is created or edited, and records them on the line ([`LINE_STOCK`]): a
+/// bundle's line commits its components' units ([`stock_parts`]).
+pub fn commit_line(state: &mut ShopState, line: &str, location: Option<&str>, units: i64) {
+    if units <= 0 {
+        return;
+    }
+    let Some(variant) = state
+        .get(line)
+        .and_then(|record| text(record, "variant"))
+        .map(str::to_string)
+    else {
+        return;
+    };
+    for part in stock_parts(state, &variant) {
+        commit_part(
+            state,
+            line,
+            &part,
+            location,
+            units.saturating_mul(part.per_unit),
+        );
     }
 }
 
 /// Ships units of a line item from a location: as many as the line committed there leave
-/// `committed` and `on_hand`. Units it never committed leave the stock as it is.
+/// `committed` and `on_hand` (for a bundle, its components' units). Units it never committed
+/// leave the stock as it is.
 pub fn ship_line(state: &mut ShopState, line: &str, location: Option<&str>, units: i64) {
-    let Some(item) = state
-        .get(line)
-        .and_then(|record| inventory_item_of(state, record))
-    else {
-        return;
-    };
-    let Some(at) = level_location(state, &item, location) else {
-        return;
-    };
-    let committed = line_commitments(state, line)
-        .into_iter()
-        .find(|(known, _)| *known == at)
-        .map_or(0, |(_, units)| units);
-    let units = units.min(committed);
-    if units > 0
-        && move_inventory(
-            state,
-            &item,
-            Some(&at),
-            &[("committed", -units), ("on_hand", -units)],
-        )
-    {
-        record_line_stock(state, line, &at, -units, units);
+    for part in line_parts(state, line) {
+        let Some(at) = level_location(state, &part.item, location) else {
+            continue;
+        };
+        let committed = line_commitments(state, line, &part)
+            .into_iter()
+            .find(|(known, _)| *known == at)
+            .map_or(0, |(_, units)| units);
+        let units = units.saturating_mul(part.per_unit).min(committed);
+        if units > 0
+            && move_inventory(
+                state,
+                &part.item,
+                Some(&at),
+                &[("committed", -units), ("on_hand", -units)],
+            )
+        {
+            record_line_stock(state, line, &part, &at, -units, units);
+        }
     }
 }
 
@@ -1016,37 +1378,34 @@ pub fn move_line_commitment(
     to: &str,
     units: i64,
 ) {
-    let Some(item) = state
-        .get(line)
-        .and_then(|record| inventory_item_of(state, record))
-    else {
-        return;
-    };
-    let Some(at) = level_location(state, &item, from) else {
-        return;
-    };
-    let committed = line_commitments(state, line)
-        .into_iter()
-        .find(|(known, _)| *known == at)
-        .map_or(0, |(_, units)| units);
-    let units = units.min(committed);
-    if units > 0
-        && move_inventory(
-            state,
-            &item,
-            Some(&at),
-            &[("committed", -units), ("available", units)],
-        )
-    {
-        record_line_stock(state, line, &at, -units, 0);
-        commit_line(state, line, Some(to), units);
+    for part in line_parts(state, line) {
+        let Some(at) = level_location(state, &part.item, from) else {
+            continue;
+        };
+        let committed = line_commitments(state, line, &part)
+            .into_iter()
+            .find(|(known, _)| *known == at)
+            .map_or(0, |(_, units)| units);
+        let units = units.saturating_mul(part.per_unit).min(committed);
+        if units > 0
+            && move_inventory(
+                state,
+                &part.item,
+                Some(&at),
+                &[("committed", -units), ("available", units)],
+            )
+        {
+            record_line_stock(state, line, &part, &at, -units, 0);
+            commit_part(state, line, &part, Some(to), units);
+        }
     }
 }
 
-/// Puts units of a line item back in stock, as far as the line took them: units that had not
-/// shipped leave what it committed for `available` (at the location given first, then where
-/// else it committed them); shipped units that had left the stock come back to `available` and
-/// `on_hand` at the location given. Units the line never took leave the stock as it is.
+/// Puts units of a line item back in stock, as far as the line took them (for a bundle, its
+/// components' units): units that had not shipped leave what it committed for `available` (at
+/// the location given first, then where else it committed them); shipped units that had left
+/// the stock come back to `available` and `on_hand` at the location given. Units the line never
+/// took leave the stock as it is.
 pub fn restock_line(
     state: &mut ShopState,
     line: &str,
@@ -1054,45 +1413,42 @@ pub fn restock_line(
     units: i64,
     shipped: bool,
 ) {
-    let Some(item) = state
-        .get(line)
-        .and_then(|record| inventory_item_of(state, record))
-    else {
-        return;
-    };
-    let Some(at) = level_location(state, &item, location) else {
-        return;
-    };
-    if shipped {
-        let units = units.min(line_shipped(state, line));
-        if units > 0
-            && move_inventory(
+    for part in line_parts(state, line) {
+        let Some(at) = level_location(state, &part.item, location) else {
+            continue;
+        };
+        let units = units.saturating_mul(part.per_unit);
+        if shipped {
+            let units = units.min(line_shipped(state, line, &part));
+            if units > 0
+                && move_inventory(
+                    state,
+                    &part.item,
+                    Some(&at),
+                    &[("available", units), ("on_hand", units)],
+                )
+            {
+                record_line_stock(state, line, &part, &at, 0, -units);
+            }
+            continue;
+        }
+        let mut commitments = line_commitments(state, line, &part);
+        commitments.sort_by_key(|(known, _)| *known != at);
+        let mut left = units;
+        for (known, committed) in commitments {
+            let units = left.min(committed);
+            if units <= 0 {
+                break;
+            }
+            if move_inventory(
                 state,
-                &item,
-                Some(&at),
-                &[("available", units), ("on_hand", units)],
-            )
-        {
-            record_line_stock(state, line, &at, 0, -units);
-        }
-        return;
-    }
-    let mut commitments = line_commitments(state, line);
-    commitments.sort_by_key(|(known, _)| *known != at);
-    let mut left = units;
-    for (known, committed) in commitments {
-        let units = left.min(committed);
-        if units <= 0 {
-            break;
-        }
-        if move_inventory(
-            state,
-            &item,
-            Some(&known),
-            &[("committed", -units), ("available", units)],
-        ) {
-            record_line_stock(state, line, &known, -units, 0);
-            left -= units;
+                &part.item,
+                Some(&known),
+                &[("committed", -units), ("available", units)],
+            ) {
+                record_line_stock(state, line, &part, &known, -units, 0);
+                left -= units;
+            }
         }
     }
 }

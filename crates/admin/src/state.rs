@@ -226,6 +226,9 @@ enum Undo {
 #[must_use = "a savepoint is closed by `rollback` or `release`"]
 pub struct Savepoint {
     steps: usize,
+    /// How many savepoints were open before this one: what a rollback after a panic closes
+    /// the inner ones it left open down to.
+    depth: usize,
     events: usize,
     emitted: u64,
     revision: u64,
@@ -596,19 +599,24 @@ impl ShopState {
     /// metafields at once), as Shopify does. Its payload is built from the record as the
     /// mutation left it; the snapshot kept is the first's (the record before the changes), or,
     /// when the key names no record, the last's (the snapshot is then the state reported).
+    /// The first of each topic and record is found through a map, so that a mutation that emits
+    /// many events (an import of 100,000 redirects) merges them in one pass.
     pub fn merge_events_from(&mut self, start: usize) {
         let mut merged: Vec<Event> = Vec::new();
+        let mut firsts: HashMap<(String, String), usize> = HashMap::new();
         for event in self.events.drain(start.min(self.events.len())..) {
-            match merged
-                .iter_mut()
-                .find(|known| known.topic == event.topic && known.gid == event.gid)
-            {
-                Some(first) => {
+            let key = (event.topic.clone(), event.gid.clone());
+            match firsts.get(&key) {
+                Some(&index) => {
+                    let first = &mut merged[index];
                     if !self.records.contains_key(&event.gid) || first.snapshot.is_none() {
                         first.snapshot = event.snapshot.or(first.snapshot.take());
                     }
                 }
-                None => merged.push(event),
+                None => {
+                    firsts.insert(key, merged.len());
+                    merged.push(event);
+                }
             }
         }
         self.events.extend(merged);
@@ -650,9 +658,11 @@ impl ShopState {
     /// ([`ShopState::take_events`]) are not put back, nor what a reset or [`Shops`] does.
     pub fn savepoint(&mut self) -> Savepoint {
         let journal = self.journal.get_or_insert_with(Journal::default);
+        let depth = journal.starts.len();
         journal.starts.push(journal.steps.len());
         Savepoint {
             steps: journal.steps.len(),
+            depth,
             events: self.events.len(),
             emitted: self.emitted,
             revision: self.revision,
@@ -709,6 +719,35 @@ impl ShopState {
             (None, Some(_)) => {}
         }
         self.clock = savepoint.clock;
+    }
+
+    /// [`ShopState::rollback`] after a panic: the savepoints opened after `savepoint` that the
+    /// panic left open are closed first, and undone with it.
+    pub fn rollback_unwound(&mut self, savepoint: Savepoint) {
+        if let Some(journal) = &mut self.journal {
+            journal.starts.truncate(savepoint.depth + 1);
+        }
+        self.rollback(savepoint);
+    }
+
+    /// Runs `change` on the shop and, when it panics, puts the shop back as it was before it
+    /// (see [`ShopState::savepoint`]) and answers the panic: a bug in a mutation, or in what
+    /// follows one, then leaves no half-made change behind for every later request to trip on.
+    pub fn unwinding<T>(
+        &mut self,
+        change: impl FnOnce(&mut ShopState) -> T,
+    ) -> Result<T, Box<dyn std::any::Any + Send>> {
+        let savepoint = self.savepoint();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| change(self))) {
+            Ok(value) => {
+                self.release(savepoint);
+                Ok(value)
+            }
+            Err(panic) => {
+                self.rollback_unwound(savepoint);
+                Err(panic)
+            }
+        }
     }
 
     /// Adds a step to the journal, when a savepoint is open.

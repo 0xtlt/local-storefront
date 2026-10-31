@@ -119,8 +119,9 @@ fn scale(cents: i64, bps: i64) -> i64 {
 
 /// The rate from the shop's currency to `currency`, in basis points: 1.0 for the shop's own,
 /// else the manual rate of a market that sells in it. `None` when lsf has no rate (1.0 is
-/// used).
-fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
+/// used). What every conversion of lsf uses: prices of price lists, contextual prices, the
+/// orders a subscription bills in its currency.
+pub fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
     if currency == shop_currency(state) {
         return Some(10_000);
     }
@@ -777,6 +778,60 @@ fn supports_quantity(state: &ShopState, list: &str) -> bool {
         .and_then(Value::as_str)
         .and_then(|catalog| state.type_of(catalog))
         .is_none_or(|type_name| type_name == "CompanyLocationCatalog")
+}
+
+/// What deleting variants runs: the price lists no longer hold their fixed prices, quantity
+/// rules nor price breaks, and count their fixed prices again (`fixedPricesCount`), with
+/// `price_lists/update` for each list that changed. Nothing for a shop without price lists.
+pub fn removing_variants(state: &mut ShopState, variants: &[String]) {
+    let gone = |variant: Option<&Value>| {
+        variant
+            .and_then(Value::as_str)
+            .is_some_and(|variant| variants.iter().any(|known| known == variant))
+    };
+    let lists: Vec<String> = state.keys("PriceList").map(str::to_string).collect();
+    for list in lists {
+        let Some(record) = state.get(&list) else {
+            continue;
+        };
+        let holds = |field: &str| {
+            record
+                .get(field)
+                .and_then(Value::as_array)
+                .is_some_and(|entries| entries.iter().any(|entry| gone(entry.get("variant"))))
+        };
+        let breaks: Vec<String> = gids(record.get("lsfPriceBreaks"))
+            .into_iter()
+            .filter(|price_break| {
+                state
+                    .get(price_break)
+                    .is_some_and(|known| gone(known.get("variant")))
+            })
+            .collect();
+        if !holds("lsfFixedPrices") && !holds("lsfQuantityRules") && breaks.is_empty() {
+            continue;
+        }
+        if let Some(record) = state.get_mut(&list) {
+            for field in ["lsfFixedPrices", "lsfQuantityRules"] {
+                if let Some(Value::Array(entries)) = record.get_mut(field) {
+                    entries.retain(|entry| !gone(entry.get("variant")));
+                }
+            }
+            if let Some(Value::Array(listed)) = record.get_mut("lsfPriceBreaks") {
+                listed.retain(|known| {
+                    !known
+                        .as_str()
+                        .is_some_and(|id| breaks.iter().any(|gone| gone == id))
+                });
+            }
+        }
+        for price_break in &breaks {
+            state.remove(price_break);
+        }
+        refresh(state, &list);
+        state.touch(&list);
+        state.emit("price_lists/update", &list);
+    }
 }
 
 /// Removes a price list, its price breaks, and its catalog's link to it.

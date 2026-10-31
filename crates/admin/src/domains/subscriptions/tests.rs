@@ -1185,6 +1185,73 @@ fn cycles_follow_the_billing_policy_from_the_contract_creation() {
 }
 
 #[test]
+fn a_cycle_past_the_calendar_is_out_of_range() {
+    let mut shop = shop();
+    // Daily, without `maxCycles`: cycle 2,000,000,000 would start millions of years ahead.
+    let mut input = atomic_input(&shop, None);
+    input["contract"]["billingPolicy"] = json!({"interval": "DAY", "intervalCount": 1});
+    input["contract"]["deliveryPolicy"] = json!({"interval": "DAY", "intervalCount": 1});
+    let answer = run(&mut shop, ATOMIC, json!({"input": input}));
+    let daily = data(&answer, "subscriptionContractAtomicCreate")["contract"]["id"].clone();
+    // Every 2^31 - 1 weeks: its first cycle ends on the last midnight lsf computes.
+    let mut input = atomic_input(&shop, None);
+    input["contract"]["billingPolicy"] = json!({"interval": "WEEK", "intervalCount": i32::MAX});
+    input["contract"]["deliveryPolicy"] = json!({"interval": "WEEK", "intervalCount": i32::MAX});
+    let answer = run(&mut shop, ATOMIC, json!({"input": input}));
+    let created = data(&answer, "subscriptionContractAtomicCreate");
+    assert_eq!(created["userErrors"], json!([]), "{created:#}");
+    let sparse = created["contract"]["id"].clone();
+
+    let one = r#"query($input: SubscriptionBillingCycleInput!) { subscriptionBillingCycle(billingCycleInput: $input) { cycleIndex cycleEndAt } }"#;
+    for (id, index) in [
+        (&daily, 2_000_000_000i64),
+        (&sparse, 2),
+        (&sparse, 2_000_000_000),
+    ] {
+        let selector = json!({"contractId": id, "selector": {"index": index}});
+        let answer = run(&mut shop, one, json!({"input": selector}));
+        assert_eq!(
+            answer["data"]["subscriptionBillingCycle"],
+            Value::Null,
+            "{answer}"
+        );
+        let errors = refused(
+            &mut shop,
+            SKIP,
+            json!({"input": selector}),
+            "subscriptionBillingCycleSkip",
+        );
+        assert_eq!(errors[0]["code"], json!("INVALID"), "{errors}");
+        let answer = run(
+            &mut shop,
+            ATTEMPT,
+            json!({"id": id, "input": {"idempotencyKey": format!("far-{index}"), "billingCycleSelector": {"index": index}}}),
+        );
+        let made = data(&answer, "subscriptionBillingAttemptCreate");
+        assert_eq!(
+            made["userErrors"][0]["code"],
+            json!("CYCLE_INDEX_OUT_OF_RANGE"),
+            "{made:#}"
+        );
+    }
+    let answer = run(
+        &mut shop,
+        one,
+        json!({"input": {"contractId": sparse, "selector": {"index": 1}}}),
+    );
+    assert_eq!(
+        answer["data"]["subscriptionBillingCycle"],
+        json!({"cycleIndex": 1, "cycleEndAt": "9999-12-30T05:00:00Z"})
+    );
+    let answer = run(
+        &mut shop,
+        CYCLES,
+        json!({"id": daily, "range": {"startIndex": 1999999990, "endIndex": 2000000000}}),
+    );
+    assert!(answer.get("errors").is_none(), "{answer}");
+}
+
+#[test]
 fn anchored_cycles_end_at_midnight_on_the_anchor_day_in_the_shops_zone() {
     let mut shop = shop();
     let mut input = atomic_input(&shop, None);
@@ -1442,6 +1509,73 @@ fn available(shop: &ShopState, variant: &str) -> i64 {
     crate::domains::orders::model::inventory_quantity(shop, &item, Some(&location), "available")
 }
 
+/// A contract in a presentment currency bills an order presented in it: the amounts in the
+/// shop's currency at the market's manual rate, `presentmentMoney` in the contract's, through
+/// what the order goes through next (a refund).
+#[test]
+fn a_contract_in_a_presentment_currency_bills_an_order_in_it() {
+    let mut shop = shop();
+    let shop_gid = shop.shop_gid().unwrap().to_string();
+    if let Some(record) = shop.get_mut(&shop_gid) {
+        record.insert("enabledPresentmentCurrencies".into(), json!(["USD", "CAD"]));
+    }
+    // 1 USD = 1.25 CAD.
+    shop.insert(value::object(json!({
+        "__typename": "Market",
+        "name": "Canada",
+        "currencySettings": {"baseCurrency": {"currencyCode": "CAD", "manualRate": "1.25"}, "localCurrencies": false},
+    })));
+    let method = card(&mut shop, "4242424242424242");
+    let mut input = atomic_input(&shop, Some(&method));
+    input["currencyCode"] = json!("CAD");
+    let answer = run(&mut shop, ATOMIC, json!({"input": input}));
+    let created = data(&answer, "subscriptionContractAtomicCreate");
+    assert_eq!(created["userErrors"], json!([]), "{created:#}");
+    let id = created["contract"]["id"].as_str().unwrap().to_string();
+    at(&mut shop, "2026-02-15T12:00:00Z");
+    let (_, attempt) = bill(&mut shop, &id, "cycle-1");
+    let order_id = attempt["order"]["id"].clone();
+    let read = run(
+        &mut shop,
+        r#"query($id: ID!) { order(id: $id) { currencyCode presentmentCurrencyCode
+            totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            lineItems(first: 1) { nodes { id originalUnitPriceSet { shopMoney { amount } presentmentMoney { amount currencyCode } } } }
+            transactions { kind amountSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } } } } }"#,
+        json!({"id": order_id}),
+    );
+    let order = &read["data"]["order"];
+    assert_eq!(order["currencyCode"], json!("USD"), "{read}");
+    assert_eq!(order["presentmentCurrencyCode"], json!("CAD"));
+    // Two pairs at 10.00 CAD and 5.00 CAD of delivery: 25.00 CAD, 20.00 USD.
+    assert_eq!(
+        order["totalPriceSet"],
+        json!({"shopMoney": {"amount": "20.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "25.0", "currencyCode": "CAD"}})
+    );
+    let line = &order["lineItems"]["nodes"][0];
+    assert_eq!(
+        line["originalUnitPriceSet"],
+        json!({"shopMoney": {"amount": "8.0"}, "presentmentMoney": {"amount": "10.0", "currencyCode": "CAD"}})
+    );
+    assert_eq!(
+        order["transactions"][0]["amountSet"],
+        json!({"shopMoney": {"amount": "20.0", "currencyCode": "USD"}, "presentmentMoney": {"amount": "25.0", "currencyCode": "CAD"}})
+    );
+    // A refund of one pair, built by the orders family in the shop's currency, reads in CAD.
+    let refunded = run(
+        &mut shop,
+        r#"mutation($input: RefundInput!) { refundCreate(input: $input) {
+            refund { refundLineItems(first: 1) { nodes { subtotalSet { shopMoney { amount } presentmentMoney { amount currencyCode } } } } }
+            userErrors { field message } } }"#,
+        json!({"input": {"orderId": order_id, "refundLineItems": [{"lineItemId": line["id"], "quantity": 1, "restockType": "NO_RESTOCK"}]}}),
+    );
+    let refund = &refunded["data"]["refundCreate"];
+    assert_eq!(refund["userErrors"], json!([]), "{refunded}");
+    assert_eq!(
+        refund["refund"]["refundLineItems"]["nodes"][0]["subtotalSet"]["presentmentMoney"]["currencyCode"],
+        json!("CAD")
+    );
+}
+
 #[test]
 fn a_billing_attempt_that_succeeds_creates_the_order_and_commits_the_stock() {
     let mut shop = shop();
@@ -1485,6 +1619,7 @@ fn a_billing_attempt_that_succeeds_creates_the_order_and_commits_the_stock() {
     for topic in [
         "orders/create",
         "order_transactions/create",
+        "tender_transactions/create",
         "orders/paid",
         "subscription_billing_attempts/success",
     ] {
@@ -1587,28 +1722,25 @@ fn a_variant_short_of_stock_fails_the_attempt_unless_overselling() {
         .as_str()
         .unwrap()
         .to_string();
-    let location = shop.keys("Location").next().unwrap().to_string();
-    let level = crate::domains::catalog::gids(shop.get(&item).unwrap().get("inventoryLevels"))
-        .into_iter()
-        .find(|level| shop.get(level).unwrap()["location"] == json!(location))
-        .unwrap();
-    // One left where the order would commit two.
-    let quantities = shop.get(&level).unwrap()["quantities"].clone();
-    let one: Vec<Value> = quantities
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|quantity| {
-            let mut quantity = quantity.clone();
-            if ["available", "on_hand"].contains(&quantity["name"].as_str().unwrap()) {
-                quantity["quantity"] = json!(1);
-            }
-            quantity
-        })
-        .collect();
-    shop.get_mut(&level)
-        .unwrap()
-        .insert("quantities".into(), json!(one));
+    // One left at every location, where the order would commit two.
+    for level in crate::domains::catalog::gids(shop.get(&item).unwrap().get("inventoryLevels")) {
+        let quantities = shop.get(&level).unwrap()["quantities"].clone();
+        let one: Vec<Value> = quantities
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|quantity| {
+                let mut quantity = quantity.clone();
+                if ["available", "on_hand"].contains(&quantity["name"].as_str().unwrap()) {
+                    quantity["quantity"] = json!(1);
+                }
+                quantity
+            })
+            .collect();
+        shop.get_mut(&level)
+            .unwrap()
+            .insert("quantities".into(), json!(one));
+    }
     shop.get_mut(&item)
         .unwrap()
         .insert("tracked".into(), json!(true));
@@ -1636,6 +1768,76 @@ fn a_variant_short_of_stock_fails_the_attempt_unless_overselling() {
     assert_eq!(
         read["data"]["subscriptionBillingAttempt"]["state"]["__typename"],
         json!("SubscriptionBillingAttemptSuccessState")
+    );
+}
+
+/// Billing takes the stock where it is: the primary location has none of the variant, another
+/// active location has it, and the attempt succeeds and commits there.
+#[test]
+fn a_billing_attempt_commits_at_the_location_that_has_the_stock() {
+    let mut shop = shop();
+    let method = card(&mut shop, "4242424242424242");
+    let id = contract(&mut shop, Some(&method));
+    let variant = variant(&shop);
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.get_mut(&item)
+        .unwrap()
+        .insert("tracked".into(), json!(true));
+    shop.get_mut(&variant)
+        .unwrap()
+        .insert("inventoryPolicy".into(), json!("DENY"));
+    let primary = crate::domains::catalog::default_location(&shop).unwrap();
+    let levels = crate::domains::catalog::gids(shop.get(&item).unwrap().get("inventoryLevels"));
+    let location_of = |shop: &ShopState, level: &str| shop.get(level).unwrap()["location"].clone();
+    let (empty, stocked): (Vec<String>, Vec<String>) = levels
+        .into_iter()
+        .partition(|level| location_of(&shop, level) == json!(primary));
+    assert!(!empty.is_empty() && !stocked.is_empty(), "two levels");
+    let other = location_of(&shop, &stocked[0])
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (level, units) in [(&empty[0], 0), (&stocked[0], 30)] {
+        let quantities: Vec<Value> = shop.get(level).unwrap()["quantities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|quantity| {
+                let mut quantity = quantity.clone();
+                if ["available", "on_hand"].contains(&quantity["name"].as_str().unwrap()) {
+                    quantity["quantity"] = json!(units);
+                }
+                quantity
+            })
+            .collect();
+        shop.get_mut(level)
+            .unwrap()
+            .insert("quantities".into(), json!(quantities));
+    }
+    at(&mut shop, "2026-02-15T12:00:00Z");
+    let (_, attempt) = bill(&mut shop, &id, "stocked");
+    assert_eq!(
+        attempt["state"]["__typename"],
+        json!("SubscriptionBillingAttemptSuccessState"),
+        "{attempt:#}"
+    );
+    let quantity = |shop: &ShopState, location: &str, name: &str| {
+        crate::domains::orders::model::inventory_quantity(shop, &item, Some(location), name)
+    };
+    assert_eq!(quantity(&shop, &other, "committed"), 2);
+    assert_eq!(quantity(&shop, &other, "available"), 28);
+    assert_eq!(quantity(&shop, &primary, "available"), 0);
+    let order = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 1) { nodes { assignedLocation { location { id } } } } } }",
+        json!({"id": attempt["order"]["id"]}),
+    );
+    assert_eq!(
+        order["data"]["order"]["fulfillmentOrders"]["nodes"][0]["assignedLocation"]["location"]["id"],
+        json!(other)
     );
 }
 

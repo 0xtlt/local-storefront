@@ -1325,6 +1325,62 @@ fn adds_and_deletes_quantity_rules() {
 
 const QUANTITY_PRICING: &str = "mutation($id: ID!, $input: QuantityPricingByVariantUpdateInput!, $location: ID!) { quantityPricingByVariantUpdate(priceListId: $id, input: $input) { productVariants { id contextualPricing(context: {companyLocationId: $location}) { price { amount currencyCode } quantityPriceBreaks(first: 1) { nodes { minimumQuantity price { amount currencyCode } } } quantityRule { minimum maximum increment } } } userErrors { message code field } } }";
 
+/// A deleted variant leaves the price lists: its fixed price (`fixedPricesCount` counts again),
+/// its quantity rule and its price breaks.
+#[test]
+fn a_deleted_variant_leaves_the_price_lists() {
+    let mut shop = rich();
+    let (list, location) = b2b_price_list(&mut shop);
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let product = shop.get(&variant).unwrap()["product"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let answer = run(
+        &mut shop,
+        QUANTITY_PRICING,
+        json!({"id": list, "location": location, "input": {
+            "quantityPriceBreaksToAdd": [{"variantId": variant, "price": {"amount": "35", "currencyCode": "EUR"}, "minimumQuantity": 10}],
+            "quantityPriceBreaksToDelete": [],
+            "quantityRulesToAdd": [{"variantId": variant, "minimum": 10, "maximum": 100, "increment": 5}],
+            "quantityRulesToDeleteByVariantId": [],
+            "pricesToAdd": [{"price": {"amount": "40", "currencyCode": "EUR"}, "variantId": variant}],
+            "pricesToDeleteByVariantId": [],
+        }}),
+    );
+    ok(&answer, "quantityPricingByVariantUpdate");
+    let read = |shop: &mut ShopState| {
+        run(
+            shop,
+            "query($id: ID!) { priceList(id: $id) { fixedPricesCount quantityRules(first: 5) { nodes { minimum } } } }",
+            json!({"id": list}),
+        )["data"]["priceList"]
+            .clone()
+    };
+    assert_eq!(
+        read(&mut shop),
+        json!({"fixedPricesCount": 1, "quantityRules": {"nodes": [{"minimum": 10}]}})
+    );
+    assert_eq!(shop.count("QuantityPriceBreak"), 1);
+    shop.take_events();
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { productDelete(input: {id: $id}) { deletedProductId userErrors { field message } } }",
+        json!({"id": product}),
+    );
+    ok(&deleted, "productDelete");
+    assert_eq!(
+        read(&mut shop),
+        json!({"fixedPricesCount": 0, "quantityRules": {"nodes": []}})
+    );
+    assert_eq!(shop.count("QuantityPriceBreak"), 0);
+    assert!(
+        topics(&mut shop)
+            .iter()
+            .any(|topic| topic == "price_lists/update")
+    );
+}
+
 #[test]
 fn updates_quantity_pricing_and_prices_a_company_location() {
     let mut shop = rich();

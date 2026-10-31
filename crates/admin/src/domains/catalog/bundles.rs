@@ -177,6 +177,23 @@ fn parents_of_variants(state: &ShopState, variants: &[String]) -> Vec<String> {
     parents
 }
 
+/// `products` and the products of the bundles their variants are components of: what an
+/// inventory change of a component refreshes and compares, since a bundle's quantity is its
+/// components'. `products` as given for a shop without bundles.
+pub fn with_parents(state: &ShopState, mut products: Vec<String>) -> Vec<String> {
+    if state.count(COMPONENT) == 0 {
+        return products;
+    }
+    for product in products.clone() {
+        for parent in parents_of_product(state, &product) {
+            if !products.contains(&parent) {
+                products.push(parent);
+            }
+        }
+    }
+    products
+}
+
 /// What `refresh_product` runs for a product: the products of which its variants are components
 /// derive their inventory again. Nothing for a shop without bundles.
 pub fn refresh_parents(state: &mut ShopState, product: &str) {
@@ -191,6 +208,63 @@ pub fn refresh_parents(state: &mut ShopState, product: &str) {
 }
 
 // --- Writing ---
+
+/// What deleting variants runs before they go: their own components go with them (a bundle
+/// deleted), and every other variant that had one of them as a component loses it, as a
+/// component that no longer exists can be no part of a bundle; the products of those bundles
+/// are refreshed (their quantity, `requiresComponents` when none is left) and emit
+/// `products/update`. Nothing for a shop without bundles.
+pub fn removing_variants(state: &mut ShopState, variants: &[String]) {
+    if state.count(COMPONENT) == 0 {
+        return;
+    }
+    for variant in variants {
+        let own = state
+            .get(variant)
+            .map(|record| gids(record.get(COMPONENTS)))
+            .unwrap_or_default();
+        for component in own {
+            state.remove(&component);
+        }
+    }
+    let parents: Vec<(String, Components)> = state
+        .all("ProductVariant")
+        .filter_map(|parent| {
+            let id = field(parent, "id")?.to_string();
+            if variants.contains(&id) {
+                return None;
+            }
+            let components = components_of(state, &id);
+            components
+                .iter()
+                .any(|(component, _)| variants.contains(component))
+                .then(|| {
+                    let kept = components
+                        .into_iter()
+                        .filter(|(component, _)| !variants.contains(component))
+                        .collect();
+                    (id, kept)
+                })
+        })
+        .collect();
+    let mut products: Vec<String> = Vec::new();
+    for (parent, kept) in parents {
+        set_components(state, &parent, &kept);
+        if let Some(product) = state
+            .get(&parent)
+            .and_then(|record| field(record, "product"))
+            .map(str::to_string)
+            && !products.contains(&product)
+        {
+            products.push(product);
+        }
+    }
+    for product in products {
+        state.touch(&product);
+        product_changed(state, &product);
+        state.emit("products/update", &product);
+    }
+}
 
 /// Sets the components of a variant (`(component variant, quantity)`), reusing its component
 /// records where it has them, with `requiresComponents` and the product's

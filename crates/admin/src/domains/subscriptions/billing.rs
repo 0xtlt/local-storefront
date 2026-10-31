@@ -22,8 +22,10 @@
 //!   discount allocations, the delivery method's address and price less its discounts, the tax
 //!   at the store data's rate, `sourceName: subscription_contract`, the line items' selling
 //!   plans, a sale of the total through the method's gateway; the stock is committed at the
-//!   shop's first location, as an order that claims inventory does. Then `orders/create`,
-//!   `order_transactions/create`, `orders/paid`, and `subscription_billing_attempts/success`.
+//!   location that can give every line (`orders::model::fulfilling_location`), as an order that
+//!   claims inventory does. Then `orders/create`,
+//!   `order_transactions/create` and `tender_transactions/create`, `orders/paid`, and
+//!   `subscription_billing_attempts/success`.
 //!   The contract's `orders` list it, `lastPaymentStatus` is `SUCCEEDED`, each discount that
 //!   applied counts a use (`usageCount`, up to `recurringCycleLimit`).
 //! - **Failure** (`SubscriptionBillingAttemptFailedState` and the deprecated `errorCode`,
@@ -158,20 +160,31 @@ fn billed_contract(
     (contract.to_string(), index, billed, members)
 }
 
+/// Where the order of a billed contract is fulfilled from: where every line can come from
+/// (`orders::model::fulfilling_location`).
+fn location_for(state: &ShopState, billed: &Record) -> Option<String> {
+    let wanted: Vec<(String, i64)> = lines(billed)
+        .iter()
+        .filter_map(|line| {
+            Some((
+                line.get("variantId")?.as_str()?.to_string(),
+                line.get("quantity").and_then(Value::as_i64).unwrap_or(0),
+            ))
+        })
+        .collect();
+    orders_model::fulfilling_location(state, &wanted)
+}
+
 /// The variants of the lines that lack stock: tracked, not sold when out of stock, and with
-/// less available at the shop's location than the line takes.
+/// less available at the attempt's location than the line takes (a bundle: one of its components,
+/// `orders::model::short_parts`).
 fn short_variants(state: &ShopState, billed: &Record, location: Option<&str>) -> Vec<String> {
     lines(billed)
         .iter()
         .filter_map(|line| {
             let variant = line.get("variantId")?.as_str()?;
-            let record = state.get(variant)?;
-            let item = text(record, "inventoryItem")?;
-            let tracked = state.get(item)?.get("tracked").and_then(Value::as_bool) == Some(true);
             let quantity = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
-            let short = tracked
-                && text(record, "inventoryPolicy") != Some("CONTINUE")
-                && orders_model::inventory_quantity(state, item, location, "available") < quantity;
+            let short = !orders_model::short_parts(state, variant, location, quantity).is_empty();
             short.then(|| variant.to_string())
         })
         .collect()
@@ -239,7 +252,27 @@ fn create_order(
     location: Option<&str>,
 ) -> String {
     let currency_lines = lines(billed);
+    // A contract in another currency than the shop's bills an order presented in it: its
+    // amounts in the shop's currency at lsf's rate (a market's manual rate, else 1.0).
+    let currency = text(billed, "currencyCode").unwrap_or_default().to_string();
+    let presentment =
+        (!currency.is_empty() && currency != orders_model::currency(state)).then(|| {
+            orders_model::Presentment {
+                rate_bps: crate::domains::markets::rate_bps(state, &currency).unwrap_or(10_000),
+                currency: currency.clone(),
+            }
+        });
+    let shop_cents = |cents: i64| {
+        presentment
+            .as_ref()
+            .map_or(cents, |presentment| presentment.to_shop(cents))
+    };
     let (_, _, delivery, delivery_discounts, tax, _) = model::amounts(state, billed);
+    let (delivery, delivery_discounts, tax) = (
+        shop_cents(delivery),
+        shop_cents(delivery_discounts),
+        shop_cents(tax),
+    );
     let customer = text(billed, "customer").map(str::to_string);
     let customer_record = customer
         .as_deref()
@@ -251,8 +284,8 @@ fn create_order(
         .iter()
         .map(|line| {
             let quantity = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
-            let unit = orders_model::cents(line.get("currentPrice"));
-            let discounted = orders_model::cents(line.get("lineDiscountedPrice"));
+            let unit = shop_cents(orders_model::cents(line.get("currentPrice")));
+            let discounted = shop_cents(orders_model::cents(line.get("lineDiscountedPrice")));
             let variant = line
                 .get("variantId")
                 .and_then(Value::as_str)
@@ -415,6 +448,7 @@ fn create_order(
         source_name: Some("subscription_contract".to_string()),
         returns: Vec::new(),
         location: location.map(str::to_string),
+        presentment,
     };
     let order = orders::insert_order(state, &draft);
     let now = state.timestamp();
@@ -445,6 +479,8 @@ fn create_order(
         .unwrap_or_default()
     {
         state.emit("order_transactions/create", &transaction);
+        // Its tender transaction, as `orderCreate` and the checkout's orders emit it.
+        crate::domains::orders::payments::emit_tender(state, &transaction);
     }
     for line_item in &line_items {
         let quantity = state
@@ -545,7 +581,7 @@ pub fn attempt(state: &mut ShopState, spec: &AttemptSpec<'_>) -> String {
         "lsfMembers": members.iter().map(|(contract, index)| json!({"contract": contract, "index": index})).collect::<Vec<_>>(),
         "lsfOversell": spec.oversell,
     }));
-    let location = state.keys("Location").next().map(str::to_string);
+    let location = location_for(state, &billed);
     let short = if spec.oversell {
         Vec::new()
     } else {
@@ -789,7 +825,7 @@ pub fn complete_challenge(
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let (_, _, billed, _) = billed_contract(state, &anchor, index);
-        let location = state.keys("Location").next().map(str::to_string);
+        let location = location_for(state, &billed);
         let oversell = record
             .get("lsfOversell")
             .and_then(Value::as_bool)

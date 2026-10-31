@@ -473,6 +473,11 @@ The full list, field by field, is in the design notes of `lsf-admin`
   `extensions.code: LSF_NOT_SIMULATED` (no mutation of the versions it serves does). The REST
   Admin API (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API
   only.
+- A bug of lsf while a mutation runs (a panic, in the mutation or in what follows it: segments,
+  listings, product feeds) answers Shopify's internal error: `Internal error. Looks like
+  something went wrong on our end.` with `extensions.code: INTERNAL_SERVER_ERROR`, a
+  `requestId`, and what went wrong in `extensions.lsf.panic`. The shop is put back as it was
+  before the mutation, so the next request finds it intact; the terminal shows the panic.
 
 ## What lsf simulates
 
@@ -564,7 +569,14 @@ How they behave, as shopify.dev documents it:
   `ProductBundleOperation` already `COMPLETE` (`productOperation` reads it). A bundle's inventory
   is the bundles its components make ("the minimum of the component's inventory quantities",
   each divided by the quantity it takes), and it sells while they do: it follows every change of
-  their stock. `Product.bundleComponents`, `productComponents`, `productParents` and
+  their stock. Selling a bundle takes its components' units: an order that claims stock
+  (`orderCreate` with `DECREMENT_…`, a completed draft, an edit, a subscription's billing)
+  commits each component's quantity times the bundle's, `DECREMENT_OBEYING_POLICY` and billing
+  attempts check the components, and fulfilling, cancelling with a restock or refunding with a
+  restock move the components' units; the bundle's quantity, `availableForSale` and
+  `variants/in_stock` / `variants/out_of_stock` follow. A component deleted (its variant or its
+  product) leaves its bundles (`products/update`); one with none left no longer
+  `requiresComponents`. `Product.bundleComponents`, `productComponents`, `productParents` and
   `ProductVariant.productParents` read the relation both ways. Nested bundles, more than 30
   components or 3 options are refused, as Shopify documents.
 - **Combined listings**: a product created with `combinedListingRole: PARENT` takes children
@@ -749,6 +761,11 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
   took nothing (of the store data or the checkout) ships and restocks without moving the stock. A variant an order
   sells out is out of stock as after an inventory mutation: `availableForSale` is `false`,
   `variants/out_of_stock` is sent, and the storefront shows it sold out.
+- Where an order that names no location fulfills from (`orderCreate` without
+  `fulfillment.locationId`, a completed draft order, a subscription's billing): Shopify does not
+  document it for these orders. lsf takes the shop's primary location (`location` without an id)
+  when it can give every line, else the first active location that can, else the primary one,
+  where `DECREMENT_OBEYING_POLICY` and billing then find the stock short.
 - `orderCreate`'s `discountCode` makes a `DiscountCodeApplication` (its `value` as the
   reference's examples answer it) and the allocations on the lines (an amount off the order is
   spread over them by their totals) or on the shipping line. Its `allocationMethod`,
@@ -812,6 +829,9 @@ describes it:
 - The transfer follows its shipments: lines `shippedQuantity`, `pickedForShipmentQuantity` (draft
   shipments), `processableQuantity`; `IN_PROGRESS` once a shipment is in transit, `TRANSFERRED`
   once every unit shipped and was received (`inventory_transfers/complete`).
+- **Deactivating a location** with a `destinationLocationId` moves its stock there, and the open
+  transfers that start or end at it too: a shipment in transit to it is received at the
+  destination, and the inactive location stocks nothing.
 - **Rerouting** and **merging** keep each order line's committed stock right: a fulfillment
   order rerouted takes what the order committed to its new location; a split or a merge stays at
   one location, so nothing moves.
@@ -941,10 +961,11 @@ sent.
 `segmentFilterSuggestions`, `segmentValueSuggestions`):
 
 - The query language of shopify.dev's "Segment query language reference": clauses joined by
-  `AND` (tighter) and `OR`, parentheses, `=`, `!=`, `>`, `>=`, `<`, `<=`, `BETWEEN … AND …`,
+  `AND` (tighter) and `OR`, parentheses (100 deep at most, lsf's bound), `=`, `!=`, `>`, `>=`, `<`, `<=`, `BETWEEN … AND …`,
   `CONTAINS`, `NOT CONTAINS`, `IS NULL`, `IS NOT NULL`, `MATCHES (…)` and `NOT MATCHES (…)`;
-  quoted strings, numbers, dates, date-times, offsets (`-7d`, `-2w`, `-1m`, `+1y`), `today`,
-  `yesterday`, the deprecated `30_days_ago`; at most 10 clauses. Dates are whole days in the
+  quoted strings, numbers, dates, date-times, offsets (`-7d`, `-2w`, `-1m`, `+1y`, at most
+  10,000 years either way: lsf's bound, past it the value is not valid), `today`, `yesterday`,
+  the deprecated `30_days_ago`; at most 10 clauses. Dates are whole days in the
   shop's time zone (`customerSegmentMembers(timezone:)` for that query, UTC by default).
 - The filters: `amount_spent`, `number_of_orders`, `customer_added_date`, `first_order_date`,
   `last_order_date`, `abandoned_checkout_date` (the local checkout's), `customer_account_status`,
@@ -1024,7 +1045,9 @@ currency). `shopifyqlQuery` answers `FROM sales` over the shop's orders and refu
 `net_items_sold`, `customers`, `new_customers`, `returning_customers`, … and the dimensions of
 time, order, customer, product and address; a column it does not know is the reference's
 `Column Not Found: Column 'total_sale' not found`. `VISUALIZE` and `COMPARE TO` are ignored, with
-a note; another schema than `sales` is a parse error.
+a note; another schema than `sales` is a parse error, and so are an offset past 10,000 years
+(`Syntax Error: '-99999999999d' is not a date`) and parentheses nested more than 100 deep in a
+condition (lsf's bounds).
 
 **Privacy**: `consentPolicyUpdate` (once `privacyFeaturesDisable([COOKIE_BANNER])` turned
 Shopify's banner off, as Shopify requires), `consentPolicy`, `consentPolicyRegions`;
@@ -1075,7 +1098,8 @@ How they behave, as shopify.dev documents it:
 - **Billing cycles** are computed from the billing policy and the shop's clock: cycle 1 starts
   when the contract is created, each is billed at its end (`billingAttemptExpectedDate`, unless a
   schedule edit moves it within the cycle), anchors (`MONTHDAY`, `WEEKDAY`, `YEARDAY`) end the
-  cycles at midnight in the shop's time zone, `maxCycles` ends them; a new billing interval keeps
+  cycles at midnight in the shop's time zone, `maxCycles` ends them, and so does the year 9999
+  (lsf's bound: a cycle past it is `CYCLE_INDEX_OUT_OF_RANGE`); a new billing interval keeps
   the current cycle's start and never ends it in the past. Edits are per cycle: a skip, a billing
   date, a contract edit (one cycle bills other lines without changing the contract), a
   concatenation (one order bills the cycles of several contracts of the customer).
@@ -1083,7 +1107,10 @@ How they behave, as shopify.dev documents it:
   before the answer: the next query reads its outcome. A success creates the order as the orders
   family does (the cycle's lines, discounts, delivery, tax at the store data's rate, a sale of the
   total, `sourceName: subscription_contract`) and commits its stock; the contract lists it and is
-  `lastPaymentStatus: SUCCEEDED`. A failure has Shopify's codes (`CARD_DECLINED`,
+  `lastPaymentStatus: SUCCEEDED`. A contract in a presentment currency bills an order presented
+  in it (`presentmentCurrencyCode`, every `presentmentMoney` in the contract's currency), its
+  `shopMoney` the contract's amounts at a market's manual rate (`baseCurrencyManualRate`), else
+  at 1.0: lsf has no exchange rates. A failure has Shopify's codes (`CARD_DECLINED`,
   `INSUFFICIENT_FUNDS`, `INSUFFICIENT_INVENTORY` with the variants short of stock unless
   `ALLOW_OVERSELLING`, `PAYMENT_METHOD_NOT_SPECIFIED`, `EXPIRED_CARD`, …) in its `state` and the
   deprecated `errorCode`; the contract's status is the app's to change (dunning). The same
@@ -1485,8 +1512,9 @@ one per app, `CONNECTED` once it has an endpoint; nothing is sent to it.
 `urlRedirectBulkDeleteBySearch` (the `query` of `urlRedirects`; a field it does not have is
 refused rather than deleting every redirect), `urlRedirectBulkDeleteBySavedSearch` (a [saved
 search](#segments-marketing-analytics-and-privacy) of redirects), each done at once (its `job`
-done). `urlRedirectImportCreate` reads a redirect CSV (`Redirect from,Redirect
-to`) from a staged upload or a URL (`count`, `previewRedirects`); `urlRedirectImportSubmit`
+done). `urlRedirectImportCreate` reads a redirect CSV (`Redirect from,Redirect to`, RFC 4180:
+quoted cells may hold commas and line breaks) from a staged upload or a URL (`count`,
+`previewRedirects`); `urlRedirectImportSubmit`
 creates and updates the redirects (`createdCount`, `updatedCount`, `failedCount`, `finished`;
 twice is `ALREADY_IMPORTED`); `urlRedirectImport`.
 

@@ -36,13 +36,14 @@ mod records;
 mod selling_plans;
 mod variants;
 
+pub use bundles::{components_of, with_parents};
 pub use collections::apply_rules;
 pub use inventory::with_idempotency;
 pub use products::{delete_product, tags_of};
 pub use publications::publish_on;
 pub use records::{
-    after_inventory_change, check_metafields, is_active_location, level_at, new_level, quantity,
-    set_metafields, stock_of,
+    after_inventory_change, check_metafields, default_location, is_active_location, level_at,
+    new_level, quantity, set_metafields, stock_of,
 };
 
 use crate::state::seed::Seed;

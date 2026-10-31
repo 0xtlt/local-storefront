@@ -434,3 +434,89 @@ fn a_failed_file_is_acknowledged_back_to_ready() {
     );
     assert_eq!(shop.get(&file).unwrap()["fileErrors"], Value::Array(vec![]));
 }
+
+/// Imports a CSV from a staged upload: `(createdCount, updatedCount, failedCount)`.
+fn import(shop: &mut ShopState, name: &str, csv: String) -> (Value, Value, Value) {
+    let key = format!("tmp/1/redirects/{name}/redirects.csv");
+    shop.put_blob(&key, Blob::new(csv, "text/csv"));
+    let created = run(
+        shop,
+        "mutation($url: URL!) { urlRedirectImportCreate(url: $url) { urlRedirectImport { id } userErrors { code } } }",
+        json!({"url": format!("https://shopify-staged-uploads.storage.googleapis.com/{key}")}),
+    );
+    let id = created["data"]["urlRedirectImportCreate"]["urlRedirectImport"]["id"].clone();
+    assert!(id.is_string(), "{created}");
+    let submitted = run(
+        shop,
+        "mutation($id: ID!) { urlRedirectImportSubmit(id: $id) { job { done } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        submitted["data"]["urlRedirectImportSubmit"]["job"]["done"], true,
+        "{submitted}"
+    );
+    let read = run(
+        shop,
+        "query($id: ID!) { urlRedirectImport(id: $id) { createdCount updatedCount failedCount } }",
+        json!({"id": id}),
+    );
+    let import = &read["data"]["urlRedirectImport"];
+    (
+        import["createdCount"].clone(),
+        import["updatedCount"].clone(),
+        import["failedCount"].clone(),
+    )
+}
+
+/// A redirect CSV is read as RFC 4180 has it: a quoted cell holds commas, line breaks and
+/// doubled quotes, lines end in `\r\n` or `\n`, and a path given twice is created then updated.
+#[test]
+fn a_redirect_csv_is_read_as_rfc_4180_has_it() {
+    let mut shop = shop();
+    let csv = "\u{feff}Redirect to,Redirect from\r\n\"/search?q=a,b\",/commas\r\n\"/a\nb\",/broken-line\n\"/say \"\"hi\"\"\",\"/quotes\"\n/first,/twice\n/second,/twice\n";
+    assert_eq!(
+        import(&mut shop, "rfc", csv.to_string()),
+        (json!(4), json!(1), json!(0))
+    );
+    let target = |shop: &ShopState, path: &str| {
+        shop.all("UrlRedirect")
+            .find(|redirect| redirect["path"] == json!(path))
+            .map(|redirect| redirect["target"].clone())
+    };
+    assert_eq!(target(&shop, "/commas"), Some(json!("/search?q=a,b")));
+    assert_eq!(target(&shop, "/broken-line"), Some(json!("/a\nb")));
+    assert_eq!(target(&shop, "/quotes"), Some(json!("/say \"hi\"")));
+    assert_eq!(target(&shop, "/twice"), Some(json!("/second")));
+}
+
+/// A large import looks its paths up in a map: 20,000 rows, half of them already redirected,
+/// took 69 s when each row scanned every redirect (and the mutation's events were merged by a
+/// scan); a fraction of a second now.
+#[test]
+fn a_large_redirect_import_takes_linear_time() {
+    let mut shop = shop();
+    let mut csv = String::from("Redirect from,Redirect to\n");
+    for n in 0..10_000 {
+        csv.push_str(&format!("/old/{n},/products/{n}\n"));
+    }
+    assert_eq!(
+        import(&mut shop, "first", csv),
+        (json!(10_000), json!(0), json!(0))
+    );
+    let mut csv = String::from("Redirect from,Redirect to\n");
+    for n in 5_000..25_000 {
+        csv.push_str(&format!("/old/{n},/collections/{n}\n"));
+    }
+    let started = std::time::Instant::now();
+    assert_eq!(
+        import(&mut shop, "second", csv),
+        (json!(15_000), json!(5_000), json!(0))
+    );
+    // Generous: the quadratic import took minutes at this size.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(shop.count("UrlRedirect") >= 25_000);
+}

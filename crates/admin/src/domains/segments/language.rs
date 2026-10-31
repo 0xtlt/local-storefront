@@ -31,6 +31,27 @@ use super::filters::{self, Filter, Kind, ParamKind};
 /// The most clauses a segment query has: shopify.dev's reference shows a query of 11 as invalid.
 pub const MAX_CLAUSES: usize = 10;
 
+/// How deep parentheses nest: Shopify publishes no bound; lsf's is the search syntax's
+/// (`search::syntax::MAX_DEPTH`), as the parser recurses once per `(` on the request's stack,
+/// which 400,000 of them overflowed.
+pub const MAX_DEPTH: usize = 100;
+
+/// The furthest a date offset (`-7d`, `+1y`) reaches, in years either way. Shopify publishes no
+/// bound; lsf's keeps every date it computes within what a date holds: `-99999999999d` is not
+/// a valid value.
+pub const MAX_OFFSET_YEARS: i64 = 10_000;
+
+/// Whether `n` units from today stay within [`MAX_OFFSET_YEARS`].
+pub fn offset_in_range(n: i64, unit: Unit) -> bool {
+    let most = match unit {
+        Unit::Day => MAX_OFFSET_YEARS * 366,
+        Unit::Week => MAX_OFFSET_YEARS * 53,
+        Unit::Month => MAX_OFFSET_YEARS * 12,
+        Unit::Year => MAX_OFFSET_YEARS,
+    };
+    n.unsigned_abs() <= most.unsigned_abs()
+}
+
 /// A query, parsed and checked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Query {
@@ -227,6 +248,7 @@ pub fn parse(text: &str) -> Result<Query, Error> {
         tokens,
         position: 0,
         clauses: 0,
+        depth: 0,
         end: end_position(text),
     };
     if parser.peek().is_none() {
@@ -491,7 +513,7 @@ fn number_or_date(word: &str) -> Option<Value> {
                 'm' => Unit::Month,
                 _ => Unit::Year,
             };
-            return Some(Value::Date(DateValue::Offset(n, unit)));
+            return offset_in_range(n, unit).then_some(Value::Date(DateValue::Offset(n, unit)));
         }
         return None;
     }
@@ -519,6 +541,8 @@ struct Parser {
     tokens: Vec<Token>,
     position: usize,
     clauses: usize,
+    /// How many parentheses are open.
+    depth: usize,
     end: At,
 }
 
@@ -587,8 +611,18 @@ impl Parser {
                 tok: Tok::Open, at, ..
             }) => {
                 self.next();
+                self.depth += 1;
+                if self.depth > MAX_DEPTH {
+                    return Err(Error {
+                        line: at.line,
+                        column: at.column,
+                        // lsf's words: Shopify publishes no bound.
+                        problem: format!("parentheses nest more than {MAX_DEPTH} deep."),
+                    });
+                }
                 let inner = self.or()?;
                 self.expect(&Tok::Close, at)?;
+                self.depth -= 1;
                 Ok(inner)
             }
             Some(Token {
@@ -1008,6 +1042,25 @@ mod tests {
             Expr::Clause(clause) => clause,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn parentheses_nest_a_hundred_deep_at_most() {
+        let nested = |depth: usize| {
+            format!(
+                "{}number_of_orders = 1{}",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            )
+        };
+        assert!(parse(&nested(MAX_DEPTH)).is_ok());
+        assert_eq!(
+            parse(&nested(MAX_DEPTH + 1)).unwrap_err().to_string(),
+            "Query Line 1 Column 100: parentheses nest more than 100 deep."
+        );
+        // Deep enough to overflow the stack of a request's thread before the bound.
+        let error = parse(&"(".repeat(400_000)).unwrap_err();
+        assert_eq!(error.problem, "parentheses nest more than 100 deep.");
     }
 
     #[test]

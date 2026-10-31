@@ -75,6 +75,11 @@ const UPCOMING_LIMIT_DAYS: i64 = 366;
 /// The most cycles lsf walks to find one (daily cycles over more than a year).
 const MAX_WALK: i64 = 2000;
 
+/// The last year a cycle reaches, in UTC: a cycle that would start or end after it is out of range
+/// (`CYCLE_INDEX_OUT_OF_RANGE`), whatever its index or its policy's `intervalCount`. Shopify
+/// publishes no bound; lsf's keeps the date arithmetic within what a date holds.
+const LAST_YEAR: i32 = 9999;
+
 /// One billing cycle of a contract.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cycle {
@@ -133,7 +138,7 @@ fn instant(zone: Tz, local: NaiveDateTime) -> DateTime<Utc> {
     zone.from_local_datetime(&local)
         .earliest()
         .or_else(|| {
-            zone.from_local_datetime(&(local + Duration::hours(1)))
+            zone.from_local_datetime(&local.checked_add_signed(Duration::hours(1))?)
                 .earliest()
         })
         .map_or_else(
@@ -153,15 +158,16 @@ fn days_in_month(year: i32, month: u32) -> u32 {
         .map_or(28, |last| last.day())
 }
 
-/// The date `months` months after `date`, on `day` (or the last day of a shorter month).
-fn add_months(date: NaiveDate, months: i64, day: u32) -> NaiveDate {
-    let total = i64::from(date.year()) * 12 + i64::from(date.month0()) + months;
+/// The date `months` months after `date`, on `day` (or the last day of a shorter month);
+/// `None` before year 1 or after [`LAST_YEAR`].
+fn add_months(date: NaiveDate, months: i64, day: u32) -> Option<NaiveDate> {
+    let total = (i64::from(date.year()) * 12 + i64::from(date.month0())).checked_add(months)?;
     let year = i32::try_from(total.div_euclid(12))
-        .unwrap_or(9999)
-        .clamp(1, 9999);
+        .ok()
+        .filter(|year| (1..=LAST_YEAR).contains(year))?;
     let month = u32::try_from(total.rem_euclid(12)).unwrap_or(0) + 1;
     let day = day.clamp(1, days_in_month(year, month));
-    NaiveDate::from_ymd_opt(year, month, day).unwrap_or(date)
+    NaiveDate::from_ymd_opt(year, month, day)
 }
 
 /// A segment of a schedule: the cycles from `fromIndex` on, the first starting at `start` and
@@ -215,32 +221,40 @@ impl Segment {
     }
 
     /// The boundary `k` of the segment: its start for 0, its first end for 1, then an interval
-    /// at a time.
-    fn boundary(&self, zone: Tz, k: i64) -> DateTime<Utc> {
+    /// at a time; `None` past [`LAST_YEAR`].
+    fn boundary(&self, zone: Tz, k: i64) -> Option<DateTime<Utc>> {
         match k {
-            0 => self.start,
-            1 => self.first_end,
+            0 => Some(self.start),
+            1 => Some(self.first_end),
             _ => step(
                 zone,
                 self.first_end,
                 &self.interval,
-                self.count * (k - 1),
+                self.count.checked_mul(k - 1)?,
                 self.day,
             ),
         }
     }
 }
 
-/// `at` moved by `units` of `interval` in the shop's time zone, the months to `day`.
-fn step(zone: Tz, at: DateTime<Utc>, interval: &str, units: i64, day: u32) -> DateTime<Utc> {
+/// `at` moved by `units` of `interval` in the shop's time zone, the months to `day`; `None`
+/// past [`LAST_YEAR`].
+fn step(
+    zone: Tz,
+    at: DateTime<Utc>,
+    interval: &str,
+    units: i64,
+    day: u32,
+) -> Option<DateTime<Utc>> {
     let local = at.with_timezone(&zone).naive_local();
     let moved = match interval {
-        "DAY" => local + Duration::days(units),
-        "WEEK" => local + Duration::weeks(units),
-        "YEAR" => add_months(local.date(), units * 12, day).and_time(local.time()),
-        _ => add_months(local.date(), units, day).and_time(local.time()),
+        "DAY" => local.checked_add_signed(Duration::try_days(units)?)?,
+        "WEEK" => local.checked_add_signed(Duration::try_weeks(units)?)?,
+        "YEAR" => add_months(local.date(), units.checked_mul(12)?, day)?.and_time(local.time()),
+        _ => add_months(local.date(), units, day)?.and_time(local.time()),
     };
-    instant(zone, moved)
+    let at = instant(zone, moved);
+    (1..=LAST_YEAR).contains(&at.year()).then_some(at)
 }
 
 /// The first date of an anchor strictly after `after`, at midnight in the shop's zone.
@@ -263,12 +277,11 @@ fn next_anchor(zone: Tz, after: DateTime<Utc>, anchor: &Value) -> DateTime<Utc> 
                     .unwrap_or(local.date());
             midnight(date)
         }
-        _ => midnight(add_months(
-            NaiveDate::from_ymd_opt(local.date().year(), local.date().month(), 1)
-                .unwrap_or(local.date()),
-            0,
-            day,
-        )),
+        _ => {
+            let first = NaiveDate::from_ymd_opt(local.date().year(), local.date().month(), 1)
+                .unwrap_or(local.date());
+            midnight(add_months(first, 0, day).unwrap_or(first))
+        }
     };
     let unit = match anchor.get("type").and_then(Value::as_str) {
         Some("WEEKDAY") => "WEEK",
@@ -277,7 +290,10 @@ fn next_anchor(zone: Tz, after: DateTime<Utc>, anchor: &Value) -> DateTime<Utc> 
     };
     let mut guard = 0;
     while candidate <= after && guard < 1000 {
-        candidate = step(zone, candidate, unit, 1, day);
+        let Some(next) = step(zone, candidate, unit, 1, day) else {
+            break;
+        };
+        candidate = next;
         guard += 1;
     }
     candidate
@@ -320,7 +336,13 @@ fn segment(
         }
         None => {
             let day = start.with_timezone(&zone).day();
-            let mut end = step(zone, start, &interval, count, day);
+            // An interval past `LAST_YEAR` ends the cycle on the last midnight lsf computes in
+            // every zone (December 30, so that it is in that year in UTC too).
+            let last = || {
+                NaiveDate::from_ymd_opt(LAST_YEAR, 12, 30)
+                    .map_or(start, |date| instant(zone, date.and_time(NaiveTime::MIN)))
+            };
+            let mut end = step(zone, start, &interval, count, day).unwrap_or_else(last);
             if let Some(not_before) = not_before
                 && end <= not_before
             {
@@ -328,7 +350,7 @@ fn segment(
                 return Segment {
                     from_index,
                     start,
-                    first_end: step(zone, not_before, &interval, count, day),
+                    first_end: step(zone, not_before, &interval, count, day).unwrap_or_else(last),
                     interval,
                     count,
                     day,
@@ -415,7 +437,7 @@ fn last_index(contract: &Record) -> Option<i64> {
         .filter(|max| *max > 0)
 }
 
-/// The cycle of an index, `None` below 1 or past `maxCycles`.
+/// The cycle of an index, `None` below 1, past `maxCycles`, or past [`LAST_YEAR`].
 pub fn cycle(state: &ShopState, contract: &Record, index: i64) -> Option<Cycle> {
     if index < 1 || last_index(contract).is_some_and(|last| index > last) {
         return None;
@@ -430,8 +452,8 @@ pub fn cycle(state: &ShopState, contract: &Record, index: i64) -> Option<Cycle> 
     let k = index - segment.from_index;
     Some(Cycle {
         index,
-        start: segment.boundary(zone, k),
-        end: segment.boundary(zone, k + 1),
+        start: segment.boundary(zone, k)?,
+        end: segment.boundary(zone, k.checked_add(1)?)?,
     })
 }
 

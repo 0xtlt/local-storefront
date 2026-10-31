@@ -609,7 +609,8 @@ storefront, the checkout and the Function inputs already use.
   `ShopState::emit_with` gives the copy, the record before the change for a topic that says
   what changed);
   `take_events` hands them over. One mutation emits one event per topic and record: the resolver
-  merges the repeats of a mutation into the first (`ShopState::merge_events_from`), whose
+  merges the repeats of a mutation into the first (`ShopState::merge_events_from`, one pass
+  through a map of the topics and records), whose
   payload is built from the record as the mutation left it (an order created fulfilled that
   commits then ships a level's units reports the level once). Event ids are UUIDs made of the shop and a sequence that a reset
   does not restart, so a receiver never sees one twice.
@@ -816,7 +817,12 @@ search syntax (shopify.dev, "Search query syntax"): terms, `field:value`, compar
 (`field:*`), backslash escapes. Dates are what the reference documents: `now`, a year, a month,
 a day, a time with or without a zone, and ranges (`2021-01-01..2021-01-02`), each a period
 (`created_at:<=2024` is up to the end of 2024), in the shop's time zone. Shopify documents no
-relative date (`-7d`) for search; lsf has none.
+relative date (`-7d`) for search; lsf has none. That zone (`search::Options::of`: the shop's
+clock and `timezoneOffsetMinutes`) is also how every input or record that gives a day without a
+time is read (`day_start`, `day_end`, `day_of`, `instant`): a gift card's `expiresOn` and an
+analytics target's dates as search values, a store credit's `expiresAt` given as a date, a
+shipping label's date (`SHIPPING_DATE_IN_THE_PAST` compares days of the shop), the point of
+sale's `startDate`/`endDate`.
 
 `search` parses a query into a tree (`Query::parse`, never an error: a malformed query is read
 as far as it goes, with warnings, each given once) and matches a record through the `Searchable` trait, which
@@ -852,7 +858,17 @@ record removed or retyped (put back at its positions among the records and among
 type), a counter's value, a blob's, a memo's, a setting's. A failure replays the log backwards,
 then truncates the events and the changes tracked for the store sync to their length at the
 savepoint, and puts back the event sequence, the revision and the clock: the shop is as it was,
-the order of every map included. Savepoints nest: a bulk operation's mutation per line opens its
+the order of every map included. **A panic** (a bug of lsf) is a failure too: `mutation::run`
+catches it, rolls back (`ShopState::rollback_unwound`, which also closes the savepoints the
+panic left open) and answers Shopify's internal error (`mutation::internal_error`: its message,
+`extensions.code = "INTERNAL_SERVER_ERROR"`, a `requestId`, and the panic's message in
+`extensions.lsf.panic`). The resolver runs the mutation and what follows it
+(`markets::after_mutation`, `segments::follow`, `catalog::after_mutation`) within one more
+savepoint, so that a panic in a follow-up undoes the mutation as well; `AdminApi::change_shop`
+does the same for its change (`ShopState::unwinding`), then lets the panic go on. Without this,
+a mutation that panicked after its first write kept it, and a follow-up that panicked on what a
+mutation stored (a segment whose date overflowed) failed every later request. The shop lock's
+poisoning is still recovered (`api::admin::lock`). Savepoints nest: a bulk operation's mutation per line opens its
 own, which an outer failure still undoes once released. A success closes the log. The cost is
 what the mutation wrote: a copy of the shop, as it was done first, took 180 to 400 ms on 198,000
 records, before every mutation's first write.
@@ -1065,7 +1081,18 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
   bundle variant's `inventoryQuantity` (the fewest bundles its tracked components make) and
   `availableForSale` (every component sells), and then refreshes the products of which the
   product's variants are components (`bundles::refresh_parents`): every change of a component's
-  stock reaches its bundles. The parent's own inventory item is not tracked.
+  stock reaches its bundles. The parent's own inventory item is not tracked: an order's line of
+  a bundle takes its components' stock instead (`orders::model::stock_parts`: each component's
+  item, its quantity per bundle), committed, shipped, moved and restocked part by part, and kept
+  on the line per component item (`lsfStock.parts.<item> = {variant, perUnit, committed,
+  shipped}`); `short_parts` is what `DECREMENT_OBEYING_POLICY` and billing attempts check. An
+  inventory change of a component refreshes and compares its bundles' products too
+  (`bundles::with_parents`, in `move_inventory` and the inventory mutations), and a bundle is in
+  stock while its components make one, so it gets its own `variants/in_stock` and
+  `variants/out_of_stock`. A deleted variant (`remove_variant`, `delete_product`) leaves the
+  bundles it was a component of first (`bundles::removing_variants`: their component lists, then
+  their products refreshed, with `products/update`), and a deleted bundle takes its
+  `ProductVariantComponent`s along, so that no component names a variant that is gone.
 - **Combined listings** (`combined_listings.rs`): `combinedListingRole` on the products, the
   parent's children under `lsfCombinedListing` (`[{product, parentVariant}]`), a child's parent
   under `lsfCombinedListingParent`.
@@ -1140,12 +1167,12 @@ Each in a module of its own, whose header has the rules and their sources:
 
 | Module | What |
 |---|---|
-| `segments` | `Segment` records (ids of the counter); `segments::language` parses the segment query language (a lexer and a recursive parser, errors `Query Line L Column C: …` at the clause at fault), `segments::filters` lists the 33 filters of the reference (type, enum values, function parameters), `segments::evaluate` reads them on a customer (`Facts`: computed once per customer and request, from the customer, their addresses, orders and line items, company contacts, store credit accounts, abandoned checkouts and metafields; dates as whole days in the shop's zone). `customerSegmentMembers` pages the generic connection without its `query`, `sortKey` and `reverse` (they are the segment's), then adds `totalCount` and `statistics`. |
+| `segments` | `Segment` records (ids of the counter); `segments::language` parses the segment query language (a lexer and a recursive parser, errors `Query Line L Column C: …` at the clause at fault; parentheses nest 100 deep at most, `MAX_DEPTH`, as in the search syntax, since the parser recurses once per `(`; an offset reaches 10,000 years at most, `MAX_OFFSET_YEARS`, and the evaluator's date arithmetic is checked: a date past chrono's matches nothing), `segments::filters` lists the 33 filters of the reference (type, enum values, function parameters), `segments::evaluate` reads them on a customer (`Facts`: computed once per customer and request, from the customer, their addresses, orders and line items, company contacts, store credit accounts, abandoned checkouts and metafields; dates as whole days in the shop's zone). `customerSegmentMembers` pages the generic connection without its `query`, `sortKey` and `reverse` (they are the segment's), then adds `totalCount` and `statistics`. |
 | `segments::saved_searches` | `SavedSearch` records (`searchTerms` and `filters` split from the query by `search::Query`); `resolve::search` applies the query of a connection's `savedSearchId` under the connection's own (`(saved) AND (query)`); `resolve::selection` reads the `ids` \| `search` \| `savedSearchId` of a bulk mutation (a saved search of the mutation's resource, `query_for`). |
 | `customer_merge` | `customerMerge` (the kept customer by shopify.dev's rules; the other's orders, draft orders, addresses, metafields, tags and note moved, then deleted), `customerMergePreview`, `customerMergeJobStatus` (a memo per job), `Customer.mergeable`; `customers/purchasing_summary`. |
 | `privacy` | Data erasure (a memo per customer: pending 10 days, then redacted by `process_due_erasures`), `dataSaleOptOut`, the WhatsApp consent (on the customer, copied to `defaultPhoneNumber` by `customers::contact_fields`), `ConsentPolicy` records, the privacy features (a memo). |
 | `marketing` | `MarketingActivity` and `MarketingEvent` records (the app's remote id, channel handle and engagements under `lsf…` keys), the errors of `MarketingActivityUserErrorCode` with the code's description as message. |
-| `analytics` | `AnalyticsAnnotation`, `AnalyticsTarget` records; `analytics::shopifyql`, a ShopifyQL subset (`FROM sales`) over a row per line sold, per order (its shipping and taxes) and per refund. |
+| `analytics` | `AnalyticsAnnotation`, `AnalyticsTarget` records; `analytics::shopifyql`, a ShopifyQL subset (`FROM sales`) over a row per line sold, per order (its shipping and taxes) and per refund; a condition's `AND` and `OR` hold their operands in a list and a chain of `NOT` is counted, so that only parentheses nest it, 100 deep at most (`MAX_DEPTH`); offsets within 10,000 years (`MAX_OFFSET_YEARS`), the date arithmetic checked (a date past chrono's is `Syntax Error: '…' is not a date`). |
 | `staff` | The shop's owner, `StaffMember/1` (`staff::owner_gid`; the platform family seeds the record, the tokens' user, and `staff::seed` completes it), `CompanyLocationStaffMemberAssignment` records, and the deprecated tax registration mutations on the companies family's `change_tax_settings`. |
 | `checkouts` | `AbandonedCheckout` records of the local checkout (one per cart token and order generation, a memo naming it), `Abandonment` records for checkouts of customers, the cart events (no record: the event's snapshot), what is abandoned when read (`is_listed`: contact, and more than ten minutes since the last change by the shop's clock), the three-month cleanup. |
 
@@ -1179,7 +1206,8 @@ records, so both are the same shape.
 - **`Order`**: `name`, `number` (1001 for `#1001`), `createdAt`, `processedAt`, `updatedAt`,
   `cancelledAt` (the creation date of a cancelled order, the only date the data has) with
   `cancelReason: OTHER` *(chosen)*, `confirmed`, `test: false`, `email`, `phone`, `customer`,
-  `purchasingEntity`, `customerAcceptsMarketing`, `currencyCode`, `presentmentCurrencyCode`,
+  `purchasingEntity`, `customerAcceptsMarketing`, `currencyCode`, `presentmentCurrencyCode` (the
+  shop's currency, unless the order is presented in another: `lsfPresentment`, see below),
   `taxesIncluded`, `taxExempt`, `note`, `tags: []`, `customAttributes`, `discountCode(s)`,
   `sourceName` (`web` for the checkout's), `lineItems`, `shippingAddress`, `billingAddress`,
   `displayAddress`, `billingAddressMatchesShippingAddress`, `shippingLine`/`shippingLines` (the
@@ -1195,7 +1223,9 @@ records, so both are the same shape.
   `MoneyBag`s before and after discounts, `requiresShipping`, `taxable`, `isGiftCard`,
   `product`, `variant`, `image`, `weight`, `customAttributes`. The price is the variant's in the
   data (it has no price of its own for an order).
-- **`FulfillmentOrder`** (every order has one, at the first location): `status` (`OPEN`,
+- **`FulfillmentOrder`** (every order has one, at the order's location: for the seed's, the
+  first; for an order the Admin API makes without one, `model::fulfilling_location`, the primary
+  location when it can give every line, else the first active one that can): `status` (`OPEN`,
   `IN_PROGRESS` when partly fulfilled, `CLOSED`, `CANCELLED`), `requestStatus: UNSUBMITTED`,
   `assignedLocation`, `destination` (the shipping address), `deliveryMethod`, `lineItems`
   (`FulfillmentOrderLineItem`: `totalQuantity`, `remainingQuantity`, …), `fulfillments`.
@@ -1249,10 +1279,19 @@ orders" in `docs/admin.md`) make and keep:
   `ReturnLineItem`, `CalculatedOrder` (its `CalculatedLineItem`s inline) and `OrderEditSession`
   of the same number, `OrderCancelJobResult`, `DraftOrder` (`#D1`) and `DraftOrderLineItem`,
   `FulfillmentService` and its `Location`. Their ids come from `new_gid`.
+- **Presentment** (`model::Presentment`, an order a subscription contract in another currency
+  bills): the family computes every amount in the shop's currency, as `shopMoney`;
+  `model::apply_presentment`, which `insert_order` and `refresh_order` run, rewrites the
+  `presentmentMoney` of every `MoneyBag` of the order and of the records it holds (two records
+  deep: line items, transactions, refunds and their lines, fulfillments, fulfillment orders,
+  returns) as the shop amount at the order's rate, rounded per amount. A flow that builds its
+  amounts in the shop's currency (a refund, an edit, a return) therefore leaves the order in its
+  presentment currency once it refreshes it. Orders in the shop's currency are untouched.
 - **Stock** (the levels of the catalog, changed in place): an order that claims stock commits it
   (`available` to `committed`: `orderCreate` with a `DECREMENT_…` behaviour, a completed draft
   order, units an edit adds), and each line item records what it committed, by location, and
-  what of it shipped (`lsfStock`: `{"committed": {"<location GID>": 2}, "shipped": 0}`).
+  what of it shipped (`lsfStock`: `{"committed": {"<location GID>": 2}, "shipped": 0}`; a
+  bundle's line, its components', under `parts`: see "Bundles").
   Shipping takes units out of `committed` and `on_hand` as far as the line committed them at
   that location; a restock puts back what the line took (`CANCEL` from what it committed,
   `RETURN` to `on_hand` as far as its units had shipped from stock); a fulfillment order moved
@@ -1365,7 +1404,13 @@ module's header has the rules and the sources):
   and enter the destination's `incoming` (a level made when the destination did not stock the
   item, `inventory_levels/connect`); received, accepted units become `available` and `on_hand`.
   `transfers::settle` keeps what a transfer commits equal to what it has not shipped while it is
-  ready to ship or in progress, and nothing otherwise.
+  ready to ship or in progress, and nothing otherwise. A move at a location the item is not
+  stocked at moves nothing (`model::move_inventory` never falls back to another level when a
+  location is given), and no level is made at an inactive location. `locationDeactivate` with a
+  `destinationLocationId` moves the levels there, then the open transfers that start or end at
+  the location (`transfers::relocate`: their snapshot names the destination,
+  `inventory_transfers/updated`), so that a shipment in transit is received where its incoming
+  units went, as Shopify relocates "incoming movements".
 - **`FulfillmentOrder`**s split, merged, rerouted (the order's committed stock moved with
   `model::move_line_commitment`), with `fulfillBy`, and `lsfProgress` (the reported progress,
   which keeps it `IN_PROGRESS`: `model::refresh_fulfillment_order` reads it) and `lsfPrepared`.
@@ -1560,7 +1605,9 @@ of what they make and what syncs.
   (`[{variant, minimum, maximum, increment}]`), `lsfPriceBreaks` (the `QuantityPriceBreak`
   records: `minimumQuantity`, `price`, `priceList`, `variant`). `PriceList.prices` lists every
   variant, fixed or relative; contextual pricing is computed when it is read
-  (`price_lists::contextual_price`).
+  (`price_lists::contextual_price`). A deleted variant leaves every price list
+  (`markets::removing_variants`, run by `delete_product` and `remove_variant`): its fixed price,
+  its rule and its price breaks go, `fixedPricesCount` is counted again, `price_lists/update`.
 - **`Channel`** (`channelCreate`): its account, specification, handle, `activeRegions` (the
   countries of the active region markets), `app`, and its own `Publication` (`lsfChannel` names
   the channel back, `supportsFuturePublishing: true`, `lsfScheduled` its scheduled listings) and
@@ -1615,7 +1662,10 @@ succeeds and as it refuses (the shop left as it was).
   (segments `{fromIndex, start, firstEnd, interval, count, day, anchored}`: a new billing policy
   starts a segment at the current cycle) in the shop's time zone, and keeps their edits in
   `lsfCycleEdits` (`{"<index>": {skipped, billingAttemptExpectedDate, reason, contract,
-  concatenated, concatenatedInto}}`). The events of a cycle are keyed
+  concatenated, concatenatedInto}}`). Its date arithmetic is checked: a cycle that would start
+  or end after 9999 in UTC (`LAST_YEAR`, lsf's bound) does not exist, so a huge index answers
+  `CYCLE_INDEX_OUT_OF_RANGE`, and a first interval past it (an `intervalCount` of 2^31 − 1 weeks)
+  ends on December 30, 9999 at midnight in the shop's zone. The events of a cycle are keyed
   `gid://shopify/SubscriptionBillingCycle/<contract n>?index=<i>`, which names no record: their
   payload is built from the snapshot, the cycle as `to_value` answers it.
 - **`SubscriptionDraft`** (`new_gid`): a contract-like record, with `originalContract`,
@@ -1634,8 +1684,12 @@ succeeds and as it refuses (the shop left as it was).
   `lsfCycleIndex`, `lsfAnchor` and `lsfMembers` (the contracts a concatenated cycle bills). The
   mutation answers the record pending, inline; the record has the outcome. Its order is made by
   `orders::insert_order` from an `OrderDraft` of the cycle's contract, its stock committed with
-  `orders::model::commit_line`, `orders/create`, `order_transactions/create` and `orders/paid`
-  emitted as `orderCreate` emits them.
+  `orders::model::commit_line`, `orders/create`, `order_transactions/create` (with the sale's
+  `tender_transactions/create`) and `orders/paid` emitted as `orderCreate` emits them. A contract in a presentment currency (another than the
+  shop's that the shop enables) bills an order presented in it: the draft's amounts are the
+  contract's converted to the shop's currency at `markets::rate_bps` (a market's manual rate,
+  else 1.0), and the order keeps its currency and rate (`OrderDraft.presentment`,
+  `lsfPresentment: {currency, rateBps}`, `presentmentCurrencyCode`).
 - **`Job`** of a bulk charge or search: done, the cycles it found under `lsfBillingCycles`.
 - **The emails** lsf does not send are in the shop's outbox (see "The outbox"):
   `GET /__lsf/admin/subscriptions` lists them (`payment_methods::emails`) with the charges (the
@@ -1722,6 +1776,11 @@ never written to.**
 | `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
 | `platform` | `StaffMember/1` (the shop owner, seeded), `CheckoutProfile/1` and `CheckoutAndAccountsConfiguration/1` (seeded), `AndroidApplication`/`AppleApplication` (ids of `MobilePlatformApplication`, the type by platform, as the reference's), `DelegateAccessToken` (key `delegate-access-token/<hash>`, never the token). `FulfillmentConstraintRule` is the logistics family's, `ProductResourceFeedback` the markets family's (`feedback/<product>/<channel>`) | the counter |
 
+- **Redirect imports** (`store_admin::redirects`): the CSV is read as RFC 4180 has it (a quoted
+  cell holds commas, line breaks and `""`), and a submit looks each row's path up in a map of
+  the shop's redirects made once (`navigation::set_redirect`, which `add_redirect` runs after its
+  own lookup): 100,000 rows take about half a second, where a scan per row took longer than a
+  quarter of an hour, the shop locked.
 - **App extensions** lsf-checkout lists without reading (`App::other`): the web pixel extension's
   `[settings.fields]` and the Flow triggers' `[[settings.fields]]` are read from their
   `shopify.extension.toml` at seed (`platform::extensions`, `[settings]` of the file when it is

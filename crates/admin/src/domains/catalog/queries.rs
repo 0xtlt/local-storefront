@@ -323,12 +323,13 @@ pub fn register(registry: &mut Registry) {
                     .collect(),
             )
         })
-        .search_field("GiftCard", "expires_on", |_r, _item, card| {
+        // The day the card expires starts at the shop's midnight, as the query's day does.
+        .search_field("GiftCard", "expires_on", |r, _item, card| {
+            let zone = r.search_options();
             Some(
                 field(card, "expiresOn")
                     .and_then(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
-                    .and_then(|date| date.and_hms_opt(0, 0, 0))
-                    .map(|date| SearchValue::Date(date.and_utc()))
+                    .map(|date| SearchValue::Date(zone.day_start(date)))
                     .into_iter()
                     .collect(),
             )

@@ -2160,3 +2160,32 @@ fn gift_cards_expire_by_the_shop_s_day() {
         .insert("expiresOn".into(), json!("2026-03-16"));
     assert_eq!(read(&mut shop), json!(true));
 }
+
+/// A gift card's `expires_on` is a day of the shop: searching that day finds the card, in a shop
+/// west of UTC too (its midnight in UTC is the day before, there).
+#[test]
+fn a_gift_card_is_found_by_the_day_it_expires_in_the_shop() {
+    let mut shop = demo();
+    let shop_gid = shop.shop_gid().unwrap().to_string();
+    let record = shop.get_mut(&shop_gid).unwrap();
+    record.insert("timezoneOffsetMinutes".into(), json!(-240));
+    let created = run_with(
+        &mut shop,
+        r#"mutation { giftCardCreate(input: {initialValue: "10", expiresOn: "2030-06-01"}) { giftCard { id expiresOn } userErrors { field message } } }"#,
+        json!({}),
+    );
+    let card = ok(&created, "giftCardCreate")["giftCard"]["id"].clone();
+    let found = |shop: &mut crate::state::ShopState, query: &str| {
+        run_with(
+            shop,
+            "query($q: String!) { giftCards(first: 5, query: $q) { nodes { id } } }",
+            json!({"q": query}),
+        )["data"]["giftCards"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["id"] == card)
+    };
+    assert!(found(&mut shop, "expires_on:2030-06-01"));
+    assert!(!found(&mut shop, "expires_on:2030-05-31"));
+}

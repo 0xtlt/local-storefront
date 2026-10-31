@@ -846,7 +846,8 @@ pub fn delete_order(state: &mut ShopState, order: &str) {
 /// - `options.inventoryBehaviour`: `BYPASS` (the default) leaves the stock alone; the two
 ///   `DECREMENT_…` commit the units, `DECREMENT_OBEYING_POLICY` refusing a tracked variant that
 ///   does not have them at the order's location (the level it commits from) and does not sell
-///   when out of stock (`INVENTORY_CLAIM_FAILED`).
+///   when out of stock (`INVENTORY_CLAIM_FAILED`). A bundle's line commits and checks its
+///   components' units (`model::stock_parts`).
 /// - Order-level `taxLines`, one `discountCode`, the first shipping line (others are said in
 ///   the notes) make the amounts; line-level tax lines add to the order's tax.
 fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -886,7 +887,19 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             );
             None
         }
-        None => state.keys("Location").next().map(str::to_string),
+        // Where every line can come from (`model::fulfilling_location`).
+        None => {
+            let lines: Vec<(String, i64)> = array(&input, "lineItems")
+                .iter()
+                .filter_map(|item| {
+                    Some((
+                        item.get("variantId")?.as_str()?.to_string(),
+                        item.get("quantity")?.as_i64()?,
+                    ))
+                })
+                .collect();
+            model::fulfilling_location(state, &lines)
+        }
     };
 
     // The lines.
@@ -1002,17 +1015,11 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 .and_then(|product| product.get("isGiftCard"))
                 .and_then(Value::as_bool)
                 == Some(true);
+            // The level the order commits from, at its location (whether Shopify routes an
+            // order across locations is not documented: lsf checks the one it commits at); a
+            // bundle's components (`model::short_parts`).
             if behaviour == "DECREMENT_OBEYING_POLICY"
-                && let Some(item_gid) = &item_gid
-                && inventory
-                    .and_then(|item| item.get("tracked"))
-                    .and_then(Value::as_bool)
-                    == Some(true)
-                && text(variant_record, "inventoryPolicy") != Some("CONTINUE")
-                // The level the order commits from, at its location (whether Shopify routes an
-                // order across locations is not documented: lsf checks the one it commits at).
-                && model::inventory_quantity(state, item_gid, location.as_deref(), "available")
-                    < quantity
+                && !model::short_parts(state, variant, location.as_deref(), quantity).is_empty()
             {
                 // lsf's wording.
                 errors.push(
@@ -1431,6 +1438,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .map(str::to_string),
         returns: Vec::new(),
         location: location.clone(),
+        presentment: None,
     };
     let order = super::insert_order(state, &draft);
     if let Some(applied) = &applied_code {

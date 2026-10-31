@@ -585,8 +585,12 @@ pub fn set_choices(state: &mut ShopState, variant: &str, choices: &[Choice]) {
 }
 
 /// Removes a variant of a product, with its inventory item and levels: emits
-/// `inventory_items/delete`.
+/// `inventory_items/delete`. The bundles it was a component of no longer list it, nor the
+/// price lists.
 pub fn remove_variant(state: &mut ShopState, product: &str, variant: &str) {
+    let removed = [variant.to_string()];
+    super::bundles::removing_variants(state, &removed);
+    crate::domains::markets::removing_variants(state, &removed);
     if let Some(item) = item_of(state, variant) {
         let levels = state
             .get(&item)

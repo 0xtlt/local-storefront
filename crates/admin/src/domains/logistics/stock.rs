@@ -99,9 +99,9 @@ pub fn tracked(state: &ShopState, item: &str) -> bool {
 }
 
 /// Stocks an item at a location that does not stock it yet: a new level, at nothing, with
-/// `inventory_levels/connect`.
+/// `inventory_levels/connect`. Not at an inactive location, which stocks nothing.
 fn ensure_level(state: &mut ShopState, item: &str, location: &str) {
-    if !stocked(state, item, location) && state.contains(location) {
+    if !stocked(state, item, location) && catalog::is_active_location(state, location) {
         let level = catalog::new_level(state, item, location, 0);
         state.emit("inventory_levels/connect", &level);
     }

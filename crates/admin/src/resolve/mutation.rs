@@ -229,6 +229,33 @@ pub fn not_simulated(mutation: &str) -> FieldError {
     .with_code(LSF_NOT_SIMULATED)
 }
 
+/// The `extensions.code` of an error lsf hit while running a mutation, as Shopify answers its
+/// own internal errors.
+pub const INTERNAL_SERVER_ERROR: &str = "INTERNAL_SERVER_ERROR";
+
+/// The error of a mutation that panicked: Shopify's answer to an internal error (its message,
+/// `extensions.code` and `requestId`, as shopify.dev's "Status and error codes" shows them),
+/// with what went wrong in `extensions.lsf.panic`. The shop is put back as it was before the
+/// mutation.
+pub fn internal_error(panic: &(dyn std::any::Any + Send)) -> FieldError {
+    let what = panic
+        .downcast_ref::<&str>()
+        .map(|text| text.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a panic".to_string());
+    let id = crate::webhooks::sign::new_id();
+    FieldError::new(format!(
+        "Internal error. Looks like something went wrong on our end.\nRequest ID: {id} \
+         (include this in support requests)."
+    ))
+    .with_code(INTERNAL_SERVER_ERROR)
+    .with_extension("requestId", id)
+    .with_extension(
+        "lsf",
+        json!({"panic": what, "note": "lsf hit a bug running this mutation: nothing was changed."}),
+    )
+}
+
 /// Whether a payload reports user errors: a non-empty `userErrors` (or `…UserErrors`, as
 /// `customerUserErrors`).
 fn has_user_errors(payload: &Value) -> bool {
@@ -261,7 +288,13 @@ pub(super) fn run(
         notes: Vec::new(),
         keep: false,
     };
-    let result = run(&mut mutation, ctx);
+    // A panic is a bug of lsf: the shop goes back as it was, and the answer is Shopify's
+    // internal error, rather than a half-made change every later request trips on.
+    let (result, panicked) =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut mutation, ctx))) {
+            Ok(result) => (result, false),
+            Err(panic) => (Err(internal_error(&*panic)), true),
+        };
     let Mutation {
         savepoint,
         notes,
@@ -273,7 +306,9 @@ pub(super) fn run(
         Err(_) => true,
     };
     if let Some(savepoint) = savepoint {
-        if failed {
+        if panicked {
+            resolver.state.rollback_unwound(savepoint);
+        } else if failed {
             resolver.state.rollback(savepoint);
         } else {
             resolver.state.release(savepoint);
@@ -369,6 +404,7 @@ mod tests {
                 m.keep_changes();
                 Err(FieldError::new("Broken"))
             }
+            "panic" => panic!("a bug halfway through"),
             _ => Ok(payload(json!({"product": null}), &[])),
         }
     }
@@ -426,6 +462,72 @@ mod tests {
             .filter(|event| event.topic == "products/create")
             .count();
         assert_eq!(created, 200);
+    }
+
+    #[test]
+    fn a_mutation_that_panics_answers_an_internal_error_and_changes_nothing() {
+        let (store, _) = lsf_core::store::load::load(
+            &lsf_core::store::load::DataSource::Demo,
+            &Default::default(),
+        );
+        let mut shop = ShopState::seeded(&store, None);
+        let mut registry = Registry::new();
+        registry.mutation("productCreate", writes_then_answers);
+        let before = shop.picture();
+
+        let answer = run_titled(&mut shop, &registry, &["panic"]);
+        let error = &answer["errors"][0];
+        assert_eq!(
+            error["extensions"]["code"], "INTERNAL_SERVER_ERROR",
+            "{answer}"
+        );
+        let id = error["extensions"]["requestId"].as_str().unwrap();
+        assert_eq!(
+            error["message"],
+            format!(
+                "Internal error. Looks like something went wrong on our end.\nRequest ID: {id} \
+                 (include this in support requests)."
+            )
+        );
+        assert_eq!(error["extensions"]["lsf"]["panic"], "a bug halfway through");
+        assert_eq!(answer["data"]["panic"], Value::Null);
+        assert_eq!(shop.picture(), before);
+        assert!(shop.events().is_empty());
+
+        // The shop takes the next mutation as usual, and a panic among others undoes only its
+        // own.
+        let answer = run_titled(&mut shop, &registry, &["ok", "panic"]);
+        assert_eq!(answer["data"]["ok"]["userErrors"], json!([]));
+        assert_eq!(shop.memo("memo/ok"), Some(&json!("ok")));
+        assert_eq!(shop.memo("memo/panic"), None);
+    }
+
+    #[test]
+    fn a_change_that_panics_is_undone() {
+        let (store, _) = lsf_core::store::load::load(
+            &lsf_core::store::load::DataSource::Demo,
+            &Default::default(),
+        );
+        let mut shop = ShopState::seeded(&store, None);
+        let before = shop.picture();
+        let product = shop.keys("Product").next().unwrap().to_string();
+        let outcome = shop.unwinding(|state| {
+            // A savepoint left open by the panic is closed with the one around it.
+            let _inner = state.savepoint();
+            if let Some(record) = state.get_mut(&product) {
+                record.insert("title".into(), json!("Half made"));
+            }
+            state.emit("products/update", &product);
+            state.set_memo("memo/half", json!(true));
+            panic!("a bug in what follows a mutation");
+        });
+        assert!(outcome.is_err());
+        assert_eq!(shop.picture(), before);
+        assert!(shop.events().is_empty());
+        assert_eq!(
+            shop.unwinding(|state| state.count("Product")).ok(),
+            Some(shop.count("Product"))
+        );
     }
 
     #[test]

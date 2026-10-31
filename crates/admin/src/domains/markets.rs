@@ -41,7 +41,7 @@ mod tests;
 mod web_presences;
 
 pub use channels::{LISTING, after_mutation, listed, publish_due_listings, removing, scheduled};
-pub use price_lists::contextual_price;
+pub use price_lists::{contextual_price, rate_bps, removing_variants};
 
 use lsf_core::store::reference;
 use lsf_core::util::stable_id;

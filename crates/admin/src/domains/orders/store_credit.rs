@@ -456,18 +456,10 @@ pub fn read_refund(
     Ok((amount, expires_at))
 }
 
-/// A `DateTime` (or a `Date`, at midnight UTC) after the shop's time now, as a `DateTime`.
+/// A `DateTime` (or a `Date`, at the start of that day in the shop's time zone,
+/// `search::Options::instant`) after the shop's time now, as a `DateTime`.
 fn future_date(state: &ShopState, at: &Value) -> Option<String> {
-    let text = at.as_str()?;
-    let at = DateTime::parse_from_rfc3339(text)
-        .map(|at| at.with_timezone(&Utc))
-        .ok()
-        .or_else(|| {
-            chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
-                .ok()
-                .and_then(|day| day.and_hms_opt(0, 0, 0))
-                .map(|at| at.and_utc())
-        })?;
+    let at = crate::search::Options::of(state).instant(at.as_str()?)?;
     (at > state.now()).then(|| value::date_time(at))
 }
 

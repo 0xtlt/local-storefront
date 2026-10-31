@@ -265,6 +265,83 @@ fn a_transfer_ships_and_is_received_with_the_stock_following() {
     assert_eq!(shop.get(&transfer).unwrap()["receivedQuantity"], 3);
 }
 
+/// Deactivating a location relocates the transfers under way with its stock: a shipment in
+/// transit to it is received where its stock went, and the inactive location stocks nothing.
+#[test]
+fn deactivating_a_location_relocates_its_transfers_under_way() {
+    let mut shop = rich();
+    let (paris, berlin) = locations(&shop);
+    let item = item_of(&shop, "DRESS-S-RED");
+    let answer = run(
+        &mut shop,
+        "mutation($input: InventoryTransferCreateAsReadyToShipInput!) {
+          inventoryTransferCreateAsReadyToShip(input: $input) @idempotent(key: \"ready-1\") {
+            inventoryTransfer { id } userErrors { field message code } } }",
+        json!({"input": {"originLocationId": paris, "destinationLocationId": berlin,
+            "lineItems": [{"inventoryItemId": item, "quantity": 3}]}}),
+    );
+    let created = &answer["data"]["inventoryTransferCreateAsReadyToShip"];
+    assert_eq!(created["userErrors"], json!([]), "{answer}");
+    let transfer = created["inventoryTransfer"]["id"].clone();
+    let answer = run(
+        &mut shop,
+        "mutation($input: InventoryShipmentCreateInput!) {
+          inventoryShipmentCreateInTransit(input: $input) @idempotent(key: \"ship-1\") {
+            inventoryShipment { id } userErrors { field message code } } }",
+        json!({"input": {"movementId": transfer, "lineItems": [{"inventoryItemId": item, "quantity": 3}]}}),
+    );
+    let shipped = &answer["data"]["inventoryShipmentCreateInTransit"];
+    assert_eq!(shipped["userErrors"], json!([]), "{answer}");
+    let shipment = shipped["inventoryShipment"]["id"].clone();
+    assert_eq!(levels(&shop, &item, &paris), [1, 0, 0, 1]);
+    assert_eq!(levels(&shop, &item, &berlin), [3, 0, 3, 3]);
+    shop.take_events();
+
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!, $to: ID!) { locationDeactivate(locationId: $id, destinationLocationId: $to) @idempotent(key: \"off-1\") {
+            location { isActive } locationDeactivateUserErrors { field message code } } }",
+        json!({"id": berlin, "to": paris}),
+    );
+    let deactivated = &answer["data"]["locationDeactivate"];
+    assert_eq!(
+        deactivated["locationDeactivateUserErrors"],
+        json!([]),
+        "{answer}"
+    );
+    // Berlin's stock and what is coming to it are Paris's now; so is the transfer.
+    assert_eq!(levels(&shop, &item, &paris), [4, 0, 3, 4]);
+    assert!(!super::stock::stocked(&shop, &item, &berlin));
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { inventoryTransfer(id: $id) { origin { location { id } } destination { name location { id } } } }",
+        json!({"id": transfer}),
+    );
+    assert_eq!(
+        read["data"]["inventoryTransfer"]["destination"]["location"]["id"],
+        json!(paris),
+        "{read}"
+    );
+    assert!(
+        topics(&mut shop)
+            .iter()
+            .any(|topic| topic == "inventory_transfers/updated")
+    );
+
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { inventoryShipmentReceive(id: $id, bulkReceiveAction: ACCEPTED) @idempotent(key: \"in-1\") {
+            inventoryShipment { status } userErrors { field message code } } }",
+        json!({"id": shipment}),
+    );
+    assert_eq!(
+        answer["data"]["inventoryShipmentReceive"]["inventoryShipment"]["status"], "RECEIVED",
+        "{answer}"
+    );
+    assert_eq!(levels(&shop, &item, &paris), [7, 0, 0, 7]);
+    assert!(!super::stock::stocked(&shop, &item, &berlin));
+}
+
 #[test]
 fn cancelling_a_ready_to_ship_transfer_makes_its_units_available_again() {
     let mut shop = rich();
@@ -1039,6 +1116,37 @@ fn a_fulfillment_constraint_rule_runs_a_function_of_the_api() {
         true
     );
     assert!(shop.get(&id).is_none());
+}
+
+/// A shipping date is a day of the shop: at 01:30 in Paris, 00:10 the same day has not passed,
+/// though it is the day before in UTC; 23:50 the evening before has.
+#[test]
+fn a_shipping_date_is_a_day_of_the_shop() {
+    let mut shop = rich();
+    let (_, fo) = order_with_stock(&mut shop);
+    let now = chrono::DateTime::parse_from_rfc3339("2026-03-16T00:30:00Z").unwrap();
+    shop.set_clock(crate::state::Clock::Frozen(now.with_timezone(&chrono::Utc)));
+    let purchase = "mutation($input: ShippingLabelPurchaseInput!) { shippingLabelPurchase(shippingLabelPurchase: $input) {
+        shippingLabelPurchaseResult { status } userErrors { code } } }";
+    let answer = run(
+        &mut shop,
+        purchase,
+        json!({"input": {"fulfillmentOrderId": fo, "shippingDatetime": "2026-03-15T23:50:00+01:00"}}),
+    );
+    assert_eq!(
+        answer["data"]["shippingLabelPurchase"]["userErrors"],
+        json!([{"code": "SHIPPING_DATE_IN_THE_PAST"}])
+    );
+    let answer = run(
+        &mut shop,
+        purchase,
+        json!({"input": {"fulfillmentOrderId": fo, "shippingDatetime": "2026-03-16T00:10:00+01:00"}}),
+    );
+    assert_eq!(
+        answer["data"]["shippingLabelPurchase"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
 }
 
 #[test]
