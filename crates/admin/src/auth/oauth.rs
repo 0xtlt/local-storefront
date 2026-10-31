@@ -252,6 +252,13 @@ pub fn authorize(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) -> Ht
         .iter()
         .any(|(name, value)| name.starts_with("grant_options") && value == "per-user");
     let user = online.then(|| cx.shops.user(&shop, DEFAULT_USER)).flatten();
+    if online && user.is_none() {
+        return page(
+            400,
+            "There is no user to approve this",
+            &format!("{shop} has no user {DEFAULT_USER} to give an online token to."),
+        );
+    }
     let code = tokens.create_code(Code {
         shop: shop.clone(),
         client_id: client_id.to_string(),
@@ -274,7 +281,15 @@ pub fn authorize(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) -> Ht
         params.push(("state".to_string(), state.to_string()));
     }
     params.push(("timestamp".to_string(), cx.now.timestamp().to_string()));
-    let hmac = query_hmac(&cx.app.client_secret, params.iter().cloned());
+    // A backend verifies the hmac over the whole query of its callback, that of `redirect_uri`
+    // included.
+    let own_query = redirect_uri
+        .split_once('?')
+        .map_or("", |(_, query)| query.split('#').next().unwrap_or(query));
+    let signed = form_urlencoded::parse(own_query.as_bytes())
+        .into_owned()
+        .chain(params.iter().cloned());
+    let hmac = query_hmac(&cx.app.client_secret, signed);
     params.insert(1, ("hmac".to_string(), hmac));
     HttpResponse::redirect(&with_query(redirect_uri, &params))
 }
@@ -332,9 +347,14 @@ pub fn access_token(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) ->
     let expiring = param("expiring").is_some_and(truthy);
     match grant_type {
         "authorization_code" => {
+            // A code sent to another shop is not found there, and stays good on its own.
             let Some(code) = param("code")
+                .filter(|code| {
+                    explicit
+                        .as_deref()
+                        .is_none_or(|shop| tokens.code_shop(code) == Some(shop))
+                })
                 .and_then(|code| tokens.redeem_code(code, client_id, cx.now))
-                .filter(|code| explicit.as_ref().is_none_or(|shop| *shop == code.shop))
             else {
                 return oauth_error(
                     400,
@@ -343,6 +363,13 @@ pub fn access_token(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) ->
                     "a code is good once, for ten minutes, on the shop it was given for",
                 );
             };
+            // Approving installs the app, with the scopes approved; an online grant leaves an
+            // installation as it is.
+            if code.mode == AccessMode::Offline
+                || tokens.installed_scopes(&code.shop, client_id).is_none()
+            {
+                tokens.install(&code.shop, client_id, &code.scopes, cx.now);
+            }
             let issued = match (code.mode, code.user) {
                 (AccessMode::Online, Some(user)) => tokens.issue_online(
                     &code.shop,
@@ -352,45 +379,45 @@ pub fn access_token(request: &HttpRequest, cx: &Context, tokens: &mut Tokens) ->
                     GrantSource::AuthorizationCode,
                     cx.now,
                 ),
-                _ => {
-                    tokens.install(&code.shop, client_id, &code.scopes, cx.now);
-                    tokens.issue_offline(
-                        &code.shop,
-                        client_id,
-                        &code.scopes,
-                        expiring,
-                        GrantSource::AuthorizationCode,
-                        cx.now,
-                    )
-                }
+                _ => tokens.issue_offline(
+                    &code.shop,
+                    client_id,
+                    &code.scopes,
+                    expiring,
+                    GrantSource::AuthorizationCode,
+                    cx.now,
+                ),
             };
             HttpResponse::json(200, &issued.response(cx.now))
         }
         TOKEN_EXCHANGE => token_exchange(&param, explicit.as_deref(), expiring, cx, tokens),
         "refresh_token" => {
             let refresh_token = param("refresh_token").unwrap_or_default();
-            match tokens.refresh(refresh_token, client_id, cx.now) {
-                Ok(issued)
-                    if explicit
-                        .as_ref()
-                        .is_none_or(|shop| *shop == issued.grant.shop) =>
+            let result = match explicit.as_deref() {
+                Some(shop)
+                    if tokens
+                        .refresh_token_shop(refresh_token)
+                        .is_some_and(|own| own != shop) =>
                 {
-                    HttpResponse::json(200, &issued.response(cx.now))
+                    Err(RefreshError::Unknown)
                 }
-                result => oauth_error(
+                _ => tokens.refresh(refresh_token, client_id, cx.now),
+            };
+            match result {
+                Ok(issued) => HttpResponse::json(200, &issued.response(cx.now)),
+                Err(error) => oauth_error(
                     401,
                     "invalid_request",
                     "This request requires an active refresh_token",
-                    match result {
-                        Err(RefreshError::Retired) => {
+                    match error {
+                        RefreshError::Retired => {
                             "the refresh token was replaced by a newer one the app used, or by a new grant"
                         }
-                        Err(RefreshError::Expired) => {
+                        RefreshError::Expired => {
                             "the refresh token expired (90 days, or 30 days after its first use)"
                         }
-                        Err(RefreshError::OtherClient) => "the refresh token is another app's",
-                        Ok(_) => "the refresh token is another shop's",
-                        Err(RefreshError::Unknown) => "lsf never issued this refresh token",
+                        RefreshError::OtherClient => "the refresh token is another app's",
+                        RefreshError::Unknown => "lsf issued no such refresh token for this shop",
                     },
                 ),
             }
@@ -1200,6 +1227,27 @@ mod tests {
                 .unwrap()
                 .contains("replaced")
         );
+        // Sent to another shop, a refresh token is unknown there, and stays good on its own.
+        let newest = tokens
+            .issue_offline(
+                SHOP,
+                CLIENT_ID,
+                &app.scopes,
+                true,
+                GrantSource::TokenExchange,
+                now(),
+            )
+            .refresh_token
+            .unwrap();
+        let mut elsewhere = refresh(&newest);
+        elsewhere
+            .query
+            .push(("shop".to_string(), "test-1".to_string()));
+        assert_eq!(access_token(&elsewhere, &later, &mut tokens).status, 401);
+        assert_eq!(
+            access_token(&refresh(&newest), &later, &mut tokens).status,
+            200
+        );
         assert_eq!(
             access_token(&refresh("shprt_unknown"), &later, &mut tokens).status,
             401
@@ -1551,6 +1599,13 @@ mod tests {
             .query
             .push(("shop".to_string(), "test-1".to_string()));
         assert_eq!(access_token(&elsewhere, &cx, &mut tokens).status, 400);
+        let mine = json!({"client_id": CLIENT_ID, "client_secret": SECRET, "code": code});
+        let response = access_token(
+            &post_json("/admin/oauth/access_token", mine),
+            &cx,
+            &mut tokens,
+        );
+        assert_eq!(response.status, 200);
         let response = access_token(
             &post_json(
                 "/admin/oauth/access_token",
@@ -1563,6 +1618,51 @@ mod tests {
         let mut garbage = post_json("/admin/oauth/access_token", json!({}));
         garbage.body = b"{not json".to_vec();
         assert_eq!(access_token(&garbage, &cx, &mut tokens).status, 400);
+    }
+
+    #[test]
+    fn signs_the_query_a_redirect_uri_already_has() {
+        let app = AppAuth {
+            redirect_urls: None,
+            ..app()
+        };
+        let cx = Context {
+            app: &app,
+            shops: &TestShops,
+            now: now(),
+        };
+        let mut tokens = Tokens::with_seed(1);
+        let mut query = authorize_query(&[]);
+        query[2].1 = "http://localhost:3000/auth/callback?app=1";
+        let (url, query) = location(&authorize(
+            &get("/admin/oauth/authorize", &query),
+            &cx,
+            &mut tokens,
+        ));
+        assert_eq!(url, "http://localhost:3000/auth/callback");
+        assert_eq!(value(&query, "app"), "1");
+        assert!(verify_query_hmac(SECRET, query.iter().cloned()));
+        // The online grant of a shop where the app is not installed yet installs it.
+        let online = authorize_query(&[("grant_options[]", "per-user"), ("shop", "test-1")]);
+        let (_, query) = location(&authorize(
+            &get("/admin/oauth/authorize", &online),
+            &cx,
+            &mut tokens,
+        ));
+        let response = access_token(
+            &post_json(
+                "/admin/oauth/access_token",
+                json!({"client_id": CLIENT_ID, "client_secret": SECRET, "code": value(&query, "code")}),
+            ),
+            &cx,
+            &mut tokens,
+        );
+        assert_eq!(response.status, 200);
+        assert!(
+            tokens
+                .installed_scopes("test-1.myshopify.com", CLIENT_ID)
+                .is_some()
+        );
     }
 
     #[test]

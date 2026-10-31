@@ -438,6 +438,18 @@ impl Tokens {
         value
     }
 
+    /// The shop of an authorization code, without using it.
+    pub fn code_shop(&self, code: &str) -> Option<&str> {
+        self.codes.get(code).map(|code| code.shop.as_str())
+    }
+
+    /// The shop of a refresh token, without using it.
+    pub fn refresh_token_shop(&self, refresh_token: &str) -> Option<&str> {
+        self.refresh
+            .get(refresh_token)
+            .map(|entry| entry.shop.as_str())
+    }
+
     /// The grant of an authorization code of `client_id`, which can no longer be used after
     /// this call. `None` when it is unknown, used, expired or another app's.
     pub fn redeem_code(&mut self, code: &str, client_id: &str, now: DateTime<Utc>) -> Option<Code> {
