@@ -18,7 +18,7 @@
 //! The shop is `?shop=` or the body's `shop`, else the default one. No token is needed: these
 //! are lsf's, for the tests on this machine, as the other control endpoints are.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use serde_json::{Value, json};
 
 use super::{AdminApi, HttpRequest, HttpResponse};
@@ -48,7 +48,10 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Err(error) => return Some(HttpResponse::json(422, &json!({ "error": error }))),
             };
             let moved = api.change_shop(&shop, |state| {
-                let now = target(state.now());
+                let now = target(state.now()).ok_or_else(|| {
+                    "the clock cannot move that far: it stays between the years 1 and 9999"
+                        .to_string()
+                })?;
                 state.set_clock(Clock::Frozen(now));
                 orders::tick(state);
                 // The data erasures the clock made due, with the `customers/redact` payloads they
@@ -68,10 +71,14 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 answer["ok"] = json!(true);
                 answer["erased"] = json!(erased);
                 answer["deletedCheckouts"] = json!(deleted);
-                (answer, redact)
+                Ok::<_, String>((answer, redact))
             });
-            let Some((answer, redact)) = moved else {
-                return Some(no_shop());
+            let (answer, redact) = match moved {
+                None => return Some(no_shop()),
+                Some(Err(error)) => {
+                    return Some(HttpResponse::json(422, &json!({ "error": error })));
+                }
+                Some(Ok(moved)) => moved,
             };
             for payload in &redact {
                 api.webhooks().trigger(&crate::webhooks::Trigger {
@@ -238,8 +245,9 @@ fn clock_json(state: &ShopState) -> Value {
     })
 }
 
-/// The time a `POST /__lsf/admin/clock` body asks for, from the shop's time now.
-type Target = Box<dyn Fn(DateTime<Utc>) -> DateTime<Utc>>;
+/// The time a `POST /__lsf/admin/clock` body asks for, from the shop's time now: `None` when it
+/// is past what a date and time can say (RFC 3339: the years 1 to 9999).
+type Target = Box<dyn Fn(DateTime<Utc>) -> Option<DateTime<Utc>>>;
 
 fn target_time(body: &Value) -> Result<Target, String> {
     // `now`, or `at`: the instant to move the clock to.
@@ -251,12 +259,12 @@ fn target_time(body: &Value) -> Result<Target, String> {
         let at = DateTime::parse_from_rfc3339(now)
             .map_err(|_| format!("`now` is not an RFC 3339 date and time: {now}"))?
             .with_timezone(&Utc);
-        return Ok(Box::new(move |_| at));
+        return Ok(Box::new(move |_| Some(at)));
     }
     let advance = match body.get("advance") {
         Some(Value::Number(seconds)) => seconds
             .as_i64()
-            .map(Duration::seconds)
+            .and_then(Duration::try_seconds)
             .ok_or("`advance` is a whole number of seconds")?,
         Some(Value::String(text)) => duration(text).ok_or_else(|| {
             format!("`advance` is seconds or \"30d\", \"12h\", \"15m\", \"45s\": {text}")
@@ -268,10 +276,14 @@ fn target_time(body: &Value) -> Result<Target, String> {
             );
         }
     };
-    Ok(Box::new(move |now| now + advance))
+    Ok(Box::new(move |now| {
+        now.checked_add_signed(advance)
+            .filter(|at| (1..=9999).contains(&at.year()))
+    }))
 }
 
-/// `"30d"`, `"12h"`, `"15m"`, `"45s"`, `"90"` (seconds).
+/// `"30d"`, `"12h"`, `"15m"`, `"45s"`, `"90"` (seconds). `None` for another unit, or for more
+/// than a duration can hold.
 fn duration(text: &str) -> Option<Duration> {
     let text = text.trim();
     let (number, unit) = match text.char_indices().last() {
@@ -279,13 +291,13 @@ fn duration(text: &str) -> Option<Duration> {
         _ => (text, 's'),
     };
     let number: i64 = number.trim().parse().ok()?;
-    Some(match unit {
-        'd' => Duration::days(number),
-        'h' => Duration::hours(number),
-        'm' => Duration::minutes(number),
-        's' => Duration::seconds(number),
-        _ => return None,
-    })
+    match unit {
+        'd' => Duration::try_days(number),
+        'h' => Duration::try_hours(number),
+        'm' => Duration::try_minutes(number),
+        's' => Duration::try_seconds(number),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -299,5 +311,25 @@ mod tests {
         assert_eq!(duration("90"), Some(Duration::seconds(90)));
         assert_eq!(duration("3w"), None);
         assert_eq!(duration("d"), None);
+        // More than a duration holds: refused, not a panic.
+        assert_eq!(duration("9223372036854775807d"), None);
+        assert_eq!(duration("9223372036854775807s"), None);
+    }
+
+    #[test]
+    fn a_target_past_9999_is_refused() {
+        let now = Utc::now();
+        for body in [
+            json!({"advance": "106751991167d"}),
+            json!({"advance": "3000000d"}),
+            json!({"advance": i64::MAX}),
+            json!({"advance": "-800000d"}),
+        ] {
+            if let Ok(target) = target_time(&body) {
+                assert_eq!(target(now), None, "{body}");
+            }
+        }
+        let target = target_time(&json!({"advance": "1d"})).unwrap();
+        assert_eq!(target(now), Some(now + Duration::days(1)));
     }
 }

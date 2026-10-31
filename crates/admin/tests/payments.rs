@@ -614,3 +614,26 @@ fn the_status_lists_every_mutation_of_payments_returns_and_drafts() {
         assert!(listed.contains(&mutation), "{mutation} is not simulated");
     }
 }
+
+#[test]
+fn the_clock_refuses_to_move_past_what_a_date_can_say() {
+    let api = api();
+    let (_, before) = request(&api, "GET", "/__lsf/admin/clock", Value::Null);
+    for advance in [
+        json!("9223372036854775807d"),
+        json!("3000000d"),
+        json!(i64::MAX),
+        json!("-800000d"),
+    ] {
+        let (status, answer) = request(
+            &api,
+            "POST",
+            "/__lsf/admin/clock",
+            json!({ "advance": advance }),
+        );
+        assert_eq!(status, 422, "{advance}: {answer}");
+    }
+    // Nothing moved.
+    let (_, after) = request(&api, "GET", "/__lsf/admin/clock", Value::Null);
+    assert_eq!(after, before);
+}
