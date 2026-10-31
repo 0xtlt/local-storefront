@@ -688,26 +688,35 @@ fn apply_overlay(
         }
     }
     // An entity replaces the one with its id when it gives one (an entity whose key changed
-    // stays where it was), the one with its key otherwise.
+    // stays where it was), the one with its key otherwise, unless this overlay wrote that one:
+    // two entities of one key in an overlay (two companies of one name, which Shopify allows)
+    // are both kept, for the build to say that the store data cannot have both.
     macro_rules! upsert {
         ($field:ident, $key:expr) => {
+            let mut written = std::collections::HashSet::new();
             for (index, value) in input.$field.into_iter().enumerate() {
                 let key = $key(&value);
                 let sourced = Sourced {
                     value,
                     origin: origin(format!("/{}/{index}", stringify!($field))),
                 };
-                match merged
-                    .$field
-                    .iter()
-                    .position(|existing| $key(&existing.value) == key)
-                {
-                    Some(position) => merged.$field[position] = sourced,
-                    None => merged.$field.push(sourced),
+                let position = merged.$field.iter().enumerate().position(|(at, existing)| {
+                    !written.contains(&at) && $key(&existing.value) == key
+                });
+                match position {
+                    Some(position) => {
+                        merged.$field[position] = sourced;
+                        written.insert(position);
+                    }
+                    None => {
+                        written.insert(merged.$field.len());
+                        merged.$field.push(sourced);
+                    }
                 }
             }
         };
         ($field:ident, $key:expr, $id:expr) => {
+            let mut written = std::collections::HashSet::new();
             for (index, value) in input.$field.into_iter().enumerate() {
                 let key = $key(&value);
                 let explicit = value.id.and_then(|_| $id(&value));
@@ -723,14 +732,19 @@ fn apply_overlay(
                             .position(|existing| $id(&existing.value) == Some(id))
                     })
                     .or_else(|| {
-                        merged
-                            .$field
-                            .iter()
-                            .position(|existing| $key(&existing.value) == key)
+                        merged.$field.iter().enumerate().position(|(at, existing)| {
+                            !written.contains(&at) && $key(&existing.value) == key
+                        })
                     });
                 match position {
-                    Some(position) => merged.$field[position] = sourced,
-                    None => merged.$field.push(sourced),
+                    Some(position) => {
+                        merged.$field[position] = sourced;
+                        written.insert(position);
+                    }
+                    None => {
+                        written.insert(merged.$field.len());
+                        merged.$field.push(sourced);
+                    }
                 }
             }
         };

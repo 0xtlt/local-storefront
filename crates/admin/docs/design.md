@@ -1283,7 +1283,11 @@ which every mutation would have paid on the Admin request's path, ten times for 
 7. **What the store data refuses** of the overlay: the problems of the store built with it that
    the files alone do not have (`Applied::diagnostics`) are printed when they differ from the
    last build's, and given to `AdminApi::sync_built`, which `GET /__lsf/admin` shows in
-   `storeSync.built`. The store is built from what is valid, as from files with errors.
+   `storeSync.built`. The store is built from what is valid, as from files with errors. Two
+   entities of one key in the overlay (two companies of one name, which Shopify allows and the
+   store data, keyed by name, does not) are both written, so that the build says so: an
+   overlay entity replaces one of its key only when the overlay did not write that one
+   (`lsf_core::store::load`).
 8. The checkout's configuration comes from the store (`config_from_store`): with the synced
    store, it has the discounts and the settings of the Functions the Admin API changed, and a
    scenario's `checkout` still goes on top of them.

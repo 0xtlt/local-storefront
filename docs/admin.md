@@ -304,8 +304,9 @@ The full list, field by field, is in the design notes of `lsf-admin`
   again for it: orders do not sync (the account pages show it from the checkout, as they do
   without the Admin API).
 - **When the store data refuses a change** (an email it does not take, two variants with the
-  same options), the storefront shows the rest, the terminal says what was refused (once), and so
-  does `GET /__lsf/admin` (`storeSync.built.diagnostics`).
+  same options, two companies of one name, which Shopify allows), the storefront shows the rest,
+  the terminal says what was refused (once), and so does `GET /__lsf/admin`
+  (`storeSync.built.diagnostics`).
 - **What it costs**: a request of the backend only counts the change. The next request that
   reads the store builds it again, once for a burst of mutations: under 2 ms on the demo store,
   about 0.3 s for 3,000 products of 12 variants. Pages served without a change in between cost
