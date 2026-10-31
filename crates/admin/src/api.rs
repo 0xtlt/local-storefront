@@ -6,6 +6,8 @@
 
 mod admin;
 mod app;
+mod audit;
+mod clock;
 pub mod samples;
 mod sync;
 #[cfg(test)]

@@ -104,6 +104,7 @@ pub struct Checkout<'a> {
 
 pub fn register(registry: &mut Registry) {
     registry
+        .mutation("abandonmentEmailStateUpdate", email_state_update)
         .mutation(
             "abandonmentUpdateActivitiesDeliveryStatuses",
             update_delivery_statuses,
@@ -900,6 +901,55 @@ fn last_abandonment_date(
     Ok(Output::value(at))
 }
 
+/// Sets the email state of an abandonment (`SENT` with when it was sent), and keeps the
+/// delivery a marketing activity reported.
+fn set_email_state(
+    state: &mut ShopState,
+    abandonment: &str,
+    status: &str,
+    sent_at: Option<String>,
+    delivery: Option<Value>,
+) {
+    if let Some(record) = state.get_mut(abandonment) {
+        if let Some(delivery) = delivery {
+            let activity = delivery.get("marketingActivity").cloned();
+            let mut deliveries: Vec<Value> = record
+                .get("lsfDeliveries")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|known| known.get("marketingActivity") != activity.as_ref())
+                .cloned()
+                .collect();
+            deliveries.push(delivery);
+            record.insert("lsfDeliveries".into(), json!(deliveries));
+        }
+        record.insert("emailState".into(), json!(status));
+        if status == "SENT" {
+            record.insert("emailSentAt".into(), json!(sent_at));
+        }
+    }
+    state.emit(crate::domains::app::CHANGED, abandonment);
+}
+
+/// `abandonmentEmailStateUpdate`, deprecated for `abandonmentUpdateActivitiesDeliveryStatuses`:
+/// the email state of the abandonment, without a marketing activity.
+fn email_state_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
+    let abandonment = ctx.arg_str("id").unwrap_or_default().to_string();
+    if m.state().type_of(&abandonment) != Some("Abandonment") {
+        // lsf's words for the code `ABANDONMENT_NOT_FOUND`.
+        let error = UserError::new(&["id"], "Abandonment not found").code("ABANDONMENT_NOT_FOUND");
+        return Ok(payload(json!({"abandonment": null}), &[error]));
+    }
+    let status = ctx.arg_str("emailState").unwrap_or("NOT_SENT").to_string();
+    let sent_at = ctx
+        .arg_str("emailSentAt")
+        .map(str::to_string)
+        .or_else(|| (status == "SENT").then(|| m.timestamp()));
+    set_email_state(m.state_mut(), &abandonment, &status, sent_at, None);
+    Ok(payload(json!({"abandonment": abandonment}), &[]))
+}
+
 /// `abandonmentUpdateActivitiesDeliveryStatuses`.
 fn update_delivery_statuses(
     m: &mut Mutation<'_>,
@@ -938,31 +988,19 @@ fn update_delivery_statuses(
     let reason = ctx
         .arg_str("deliveryStatusChangeReason")
         .map(str::to_string);
-    let state = m.state_mut();
-    if let Some(record) = state.get_mut(&abandonment) {
-        let mut deliveries: Vec<Value> = record
-            .get("lsfDeliveries")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|delivery| {
-                delivery.get("marketingActivity").and_then(Value::as_str) != Some(activity.as_str())
-            })
-            .cloned()
-            .collect();
-        deliveries.push(json!({
-            "marketingActivity": activity,
-            "deliveryStatus": status,
-            "deliveredAt": delivered,
-            "reason": reason,
-        }));
-        record.insert("lsfDeliveries".into(), json!(deliveries));
-        record.insert("emailState".into(), json!(status));
-        if status == "SENT" {
-            record.insert("emailSentAt".into(), json!(delivered));
-        }
-    }
-    state.emit(crate::domains::app::CHANGED, &abandonment);
+    let delivery = json!({
+        "marketingActivity": activity,
+        "deliveryStatus": status,
+        "deliveredAt": delivered,
+        "reason": reason,
+    });
+    set_email_state(
+        m.state_mut(),
+        &abandonment,
+        &status,
+        delivered.clone(),
+        Some(delivery),
+    );
     Ok(payload(json!({"abandonment": abandonment}), &[]))
 }
 
@@ -1202,5 +1240,45 @@ mod tests {
         .unwrap();
         assert_eq!(payload, json!({"id": parse_gid(&id).unwrap().1}));
         assert_eq!(shop.count("Abandonment"), 0);
+    }
+
+    #[test]
+    fn the_deprecated_email_state_update_sets_the_abandonments_email_state() {
+        let mut shop = demo();
+        let result = result(&shop);
+        let checkout = Checkout {
+            cart_token: "c1",
+            generation: 0,
+            result: &result,
+            customer_id: None,
+            email: Some("jane.doe@example.com"),
+            phone: None,
+            shipping_address: None,
+            note: "",
+            attributes: &[],
+            payment: None,
+            locale: None,
+        };
+        let checkout_id = super::record_checkout(&mut shop, &checkout).unwrap();
+        let abandonment = shop.get(&checkout_id).unwrap()["lsfAbandonment"].clone();
+        later(&mut shop, 11);
+        let update = "mutation($id: ID!) { abandonmentEmailStateUpdate(id: $id, emailState: SENT) {
+            abandonment { emailState emailSentAt } userErrors { field code } } }";
+        let sent = run(&mut shop, update, json!({"id": abandonment}));
+        assert_eq!(
+            data(&sent, "abandonmentEmailStateUpdate")["abandonment"],
+            json!({"emailState": "SENT", "emailSentAt": shop.timestamp()})
+        );
+        let before = shop.picture();
+        let refused = run(
+            &mut shop,
+            update,
+            json!({"id": "gid://shopify/Abandonment/999"}),
+        );
+        assert_eq!(
+            data(&refused, "abandonmentEmailStateUpdate")["userErrors"],
+            json!([{"field": ["id"], "code": "ABANDONMENT_NOT_FOUND"}])
+        );
+        assert_eq!(shop.picture(), before);
     }
 }

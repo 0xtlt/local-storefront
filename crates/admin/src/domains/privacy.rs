@@ -157,12 +157,10 @@ fn cancel_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(payload(json!({"customerId": customer}), &[]))
 }
 
-/// Processes the data erasures whose 10 days passed by the shop's clock: the customers'
-/// personal data is redacted. Answers the customers erased, for the `customers/redact` the
-/// server sends.
-pub fn process_due_erasures(state: &mut ShopState) -> Vec<String> {
+/// The customers whose data erasure is due by the shop's clock.
+pub fn due_erasures(state: &ShopState) -> Vec<String> {
     let now = state.now();
-    let due: Vec<String> = state
+    state
         .keys("Customer")
         .filter(|customer| {
             state
@@ -173,7 +171,15 @@ pub fn process_due_erasures(state: &mut ShopState) -> Vec<String> {
                 .is_some_and(|at| at <= now)
         })
         .map(str::to_string)
-        .collect();
+        .collect()
+}
+
+/// Processes the data erasures whose 10 days passed by the shop's clock: the customers'
+/// personal data is redacted. Answers the customers erased, for the `customers/redact` the
+/// server sends.
+pub fn process_due_erasures(state: &mut ShopState) -> Vec<String> {
+    let now = state.now();
+    let due = due_erasures(state);
     for customer in &due {
         let email = state
             .get(customer)
@@ -644,7 +650,10 @@ mod tests {
         let later = shop.now() + chrono::Duration::days(11);
         shop.set_clock(crate::state::Clock::Frozen(later));
         shop.take_events();
-        assert_eq!(super::process_due_erasures(&mut shop), std::slice::from_ref(&alex));
+        assert_eq!(
+            super::process_due_erasures(&mut shop),
+            std::slice::from_ref(&alex)
+        );
         let record = shop.get(&alex).unwrap();
         assert_eq!(record["email"], Value::Null);
         assert_eq!(record["emailMarketingConsent"], Value::Null);

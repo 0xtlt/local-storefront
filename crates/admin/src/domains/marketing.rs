@@ -54,6 +54,7 @@ use crate::state::{Record, ShopState};
 
 pub fn register(registry: &mut Registry) {
     registry
+        .mutation("marketingActivityCreateExternal", create_external_mutation)
         .mutation("marketingActivityUpsertExternal", upsert_external)
         .mutation("marketingActivityUpdateExternal", update_external)
         .mutation("marketingActivityDeleteExternal", delete_external)
@@ -557,18 +558,9 @@ fn input_of(ctx: &FieldContext<'_>) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
-fn upsert_external(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let input = input_of(ctx);
-    let remote = input
-        .get("remoteId")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let existing = by_remote_id(m.state(), &remote);
-    let mut errors = Vec::new();
-    if remote.trim().is_empty() {
-        errors.push(error(m, &["input", "remoteId"], "INVALID_REMOTE_ID"));
-    }
+/// What an external activity's input must hold, created or upserted: a hierarchy, or UTM
+/// parameters or a URL parameter; one currency.
+fn check_external(m: &Mutation<'_>, input: &Map<String, Value>, errors: &mut Vec<UserError>) {
     let hierarchical = input
         .get("hierarchyLevel")
         .is_some_and(|level| !level.is_null());
@@ -583,7 +575,58 @@ fn upsert_external(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             "NON_HIERARCHIAL_REQUIRES_UTM_URL_PARAMETER",
         ));
     }
-    check_currencies(m, &input, &mut errors);
+    check_currencies(m, input, errors);
+}
+
+/// `marketingActivityCreateExternal`, deprecated for `marketingActivityUpsertExternal`: the
+/// same activity, created only (a remote id another activity has is
+/// `MARKETING_ACTIVITY_WITH_REMOTE_ID_ALREADY_EXISTS`); its input's deprecated `channel` is read
+/// when `marketingChannelType` is not given.
+fn create_external_mutation(
+    m: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let mut input = input_of(ctx);
+    if input.get("marketingChannelType").is_none_or(Value::is_null)
+        && let Some(channel) = input.get("channel").cloned()
+    {
+        input.insert("marketingChannelType".into(), channel);
+    }
+    let mut errors = Vec::new();
+    if let Some(remote) = input.get("remoteId").and_then(Value::as_str)
+        && by_remote_id(m.state(), remote).is_some()
+    {
+        errors.push(error(
+            m,
+            &["input", "remoteId"],
+            "MARKETING_ACTIVITY_WITH_REMOTE_ID_ALREADY_EXISTS",
+        ));
+    }
+    check_external(m, &input, &mut errors);
+    taken(m, &input, None, &mut errors);
+    if !errors.is_empty() {
+        return Ok(payload(json!({"marketingActivity": null}), &errors));
+    }
+    let now = m.timestamp();
+    let state = m.state_mut();
+    let activity = create_external(state, &input, &now);
+    state.emit(crate::domains::app::CHANGED, &activity);
+    Ok(payload(json!({"marketingActivity": activity}), &[]))
+}
+
+fn upsert_external(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
+    let input = input_of(ctx);
+    let remote = input
+        .get("remoteId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let existing = by_remote_id(m.state(), &remote);
+    let mut errors = Vec::new();
+    if remote.trim().is_empty() {
+        errors.push(error(m, &["input", "remoteId"], "INVALID_REMOTE_ID"));
+    }
+    check_external(m, &input, &mut errors);
     if let Some(existing) = &existing
         && let Some(record) = m.state().get(existing)
     {
@@ -1319,6 +1362,29 @@ mod tests {
         assert_eq!(
             data(&refused, "marketingActivityCreate")["userErrors"][0]["field"],
             json!(["input", "marketingActivityExtensionId"])
+        );
+        assert_eq!(shop.picture(), before);
+    }
+
+    #[test]
+    fn the_deprecated_create_external_makes_a_new_activity_only() {
+        let mut shop = demo();
+        let create = "mutation($input: MarketingActivityCreateExternalInput!) { marketingActivityCreateExternal(input: $input) {
+            marketingActivity { title marketingChannelType tactic marketingEvent { remoteId } } userErrors { field code } } }";
+        let mut legacy = input("ad-1");
+        legacy["marketingChannelType"] = json!("SEARCH");
+        let created = run(&mut shop, create, json!({"input": legacy}));
+        assert_eq!(
+            data(&created, "marketingActivityCreateExternal")["marketingActivity"],
+            json!({"title": "Summer ad", "marketingChannelType": "SEARCH", "tactic": "AD", "marketingEvent": {"remoteId": "ad-1"}})
+        );
+        let before = shop.picture();
+        let mut again = input("ad-1");
+        again["utm"]["campaign"] = json!("other");
+        let refused = run(&mut shop, create, json!({"input": again}));
+        assert_eq!(
+            data(&refused, "marketingActivityCreateExternal")["userErrors"],
+            json!([{"field": ["input", "remoteId"], "code": "MARKETING_ACTIVITY_WITH_REMOTE_ID_ALREADY_EXISTS"}])
         );
         assert_eq!(shop.picture(), before);
     }

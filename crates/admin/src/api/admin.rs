@@ -284,7 +284,12 @@ impl AdminApi {
 
     /// Reads the default shop.
     pub fn with_default_shop<T>(&self, read: impl FnOnce(&ShopState) -> T) -> Option<T> {
-        let shop = self.shop(&self.default_shop())?;
+        self.with_shop(&self.default_shop(), read)
+    }
+
+    /// Reads a shop.
+    pub fn with_shop<T>(&self, domain: &str, read: impl FnOnce(&ShopState) -> T) -> Option<T> {
+        let shop = self.shop(domain)?;
         let live = lock(&shop);
         Some(read(&live.state))
     }
@@ -643,6 +648,7 @@ impl AdminApi {
             throttle: &self.throttle,
             key: &key,
         };
+        let started = std::time::Instant::now();
         let mut response = graphql::run(version.schema(), &mut resolver, &query, Some(bucket));
         response.extensions.extend(resolver.extensions());
         self.count_change(&live, revision);
@@ -653,8 +659,28 @@ impl AdminApi {
             // waits on the backend while the shop is locked.
             self.emit(&live.state, &events);
         }
+        let app = live.state.all("App").next().map(|app| {
+            let text = |field: &str| {
+                app.get(field)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            (text("id"), text("title"))
+        });
         drop(live);
-        Self::api_headers(HttpResponse::json(200, &response.to_json()), version)
+        let answer = response.to_json();
+        super::audit::record(
+            self,
+            request,
+            &grant,
+            &query,
+            &answer,
+            version,
+            started.elapsed(),
+            app,
+        );
+        Self::api_headers(HttpResponse::json(200, &answer), version)
     }
 
     /// What the request's `X-Shopify-Access-Token` grants, or why it grants nothing.
@@ -702,6 +728,9 @@ impl AdminApi {
     /// The control endpoints under `/__lsf/admin`.
     fn control(&self, request: &HttpRequest, path: &str) -> HttpResponse {
         if let Some(response) = super::app::handle(self, request, path) {
+            return response;
+        }
+        if let Some(response) = super::clock::handle(self, request, path) {
             return response;
         }
         let method = request.method.to_ascii_uppercase();
@@ -813,6 +842,8 @@ impl AdminApi {
                     "counts": counts.into_iter().collect::<IndexMap<_, _>>(),
                     "tokens": grants,
                     "subscriptions": subscriptions,
+                    // What Shopify would have sent the outside world, which lsf never sends.
+                    "outbox": crate::domains::outbox::entries(&live.state),
                 })
             })
             .collect();

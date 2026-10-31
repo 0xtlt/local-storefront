@@ -794,6 +794,36 @@ fn compute(
                 .collect(),
         ),
     );
+    // The checkout as the buyer sees it, for the Admin API: `checkouts/create`, then
+    // `checkouts/update` when it changes.
+    let payment = checkout.selected_payment.as_ref().and_then(|handle| {
+        result
+            .payment_methods
+            .iter()
+            .find(|method| &method.handle == handle)
+            .map(|method| method.name.clone())
+    });
+    let attributes: Vec<(String, String)> = session
+        .cart_attributes
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    super::admin::record_checkout(
+        state,
+        &lsf_admin::domains::checkouts::Checkout {
+            cart_token: &session.cart_token,
+            generation: basis.placed,
+            result: &result,
+            customer_id: session.customer_id,
+            email: checkout.email.as_deref(),
+            phone: checkout.phone.as_deref(),
+            shipping_address: checkout.shipping_address.as_ref(),
+            note: &session.cart_note,
+            attributes: &attributes,
+            payment: payment.as_deref(),
+            locale: Some(language.iso_code.as_str()),
+        },
+    );
     Ok(Computed {
         json,
         result,
@@ -1755,6 +1785,7 @@ pub(super) fn place_order(
         true
     });
     if taken {
+        super::admin::complete_checkout(state, token, computed.basis.placed);
         return redirect_to_thanks(state, incoming, id, token);
     }
     // Another request placed the order meanwhile.

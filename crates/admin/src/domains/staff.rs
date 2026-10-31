@@ -14,6 +14,14 @@
 //! ("Resource requested does not exist.", the message the companies family answers), a staff
 //! member already assigned to the location `TAKEN` (lsf's message). No webhook topic covers the
 //! assignments: they emit `lsf/changed`. They are not store data: they do not sync.
+//!
+//! The deprecated tax registration mutations of a company location are here too, on the logic
+//! of `companyLocationTaxSettingsUpdate` that replaced them (`domains::customers::companies`):
+//! `companyLocationCreateTaxRegistration(locationId:, taxId:)` sets the location's
+//! `taxSettings.taxRegistrationId` (a blank id is `BLANK`, Rails' "Tax ID can't be blank"),
+//! `companyLocationRevokeTaxRegistration(companyLocationId:)` clears it; both answer the
+//! location and fire `company_locations/update`. The tax registration syncs with the company,
+//! as `companyLocationTaxSettingsUpdate`'s does.
 
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
@@ -26,7 +34,15 @@ use crate::state::{ShopState, gid};
 pub fn register(registry: &mut Registry) {
     registry
         .mutation("companyLocationAssignStaffMembers", assign_staff_members)
-        .mutation("companyLocationRemoveStaffMembers", remove_staff_members);
+        .mutation("companyLocationRemoveStaffMembers", remove_staff_members)
+        .mutation(
+            "companyLocationCreateTaxRegistration",
+            create_tax_registration,
+        )
+        .mutation(
+            "companyLocationRevokeTaxRegistration",
+            revoke_tax_registration,
+        );
 }
 
 /// The shop's owner, when no staff member is seeded yet.
@@ -203,9 +219,59 @@ fn remove_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     ))
 }
 
+/// `companyLocationCreateTaxRegistration`, deprecated for `companyLocationTaxSettingsUpdate`.
+fn create_tax_registration(
+    m: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let location = ctx.arg_str("locationId").unwrap_or_default().to_string();
+    let tax_id = ctx.arg_str("taxId").unwrap_or_default().trim().to_string();
+    let mut errors = Vec::new();
+    if !is(m.state(), &location, "CompanyLocation") {
+        errors.push(not_found(&["locationId"]));
+    }
+    if tax_id.is_empty() {
+        errors.push(UserError::new(&["taxId"], "Tax ID can't be blank").code("BLANK"));
+    }
+    if !errors.is_empty() {
+        return Ok(payload(json!({"companyLocation": null}), &errors));
+    }
+    crate::domains::customers::companies::change_tax_settings(
+        m.state_mut(),
+        &location,
+        |settings| {
+            settings.insert("taxRegistrationId".into(), json!(tax_id));
+        },
+    );
+    Ok(payload(json!({"companyLocation": location}), &[]))
+}
+
+/// `companyLocationRevokeTaxRegistration`, deprecated for `companyLocationTaxSettingsUpdate`.
+fn revoke_tax_registration(
+    m: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let location = ctx
+        .arg_str("companyLocationId")
+        .unwrap_or_default()
+        .to_string();
+    if !is(m.state(), &location, "CompanyLocation") {
+        let error = not_found(&["companyLocationId"]);
+        return Ok(payload(json!({"companyLocation": null}), &[error]));
+    }
+    crate::domains::customers::companies::change_tax_settings(
+        m.state_mut(),
+        &location,
+        |settings| {
+            settings.insert("taxRegistrationId".into(), Value::Null);
+        },
+    );
+    Ok(payload(json!({"companyLocation": location}), &[]))
+}
+
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use crate::domains::segments::tests::{data, demo, run};
 
@@ -277,5 +343,60 @@ mod tests {
             json!([assignment["id"]])
         );
         assert_eq!(shop.count("CompanyLocationStaffMemberAssignment"), 0);
+    }
+
+    #[test]
+    fn the_deprecated_tax_registration_mutations_set_and_clear_it() {
+        let mut shop = demo();
+        let location = location(&mut shop);
+        shop.take_events();
+        let created = run(
+            &mut shop,
+            "mutation($id: ID!) { companyLocationCreateTaxRegistration(locationId: $id, taxId: \"FR123\") {
+                companyLocation { taxSettings { taxRegistrationId } } userErrors { field message code } } }",
+            json!({"id": location}),
+        );
+        assert_eq!(
+            data(&created, "companyLocationCreateTaxRegistration")["companyLocation"]["taxSettings"]
+                ["taxRegistrationId"],
+            "FR123"
+        );
+        let topics: Vec<String> = shop
+            .take_events()
+            .into_iter()
+            .map(|event| event.topic)
+            .collect();
+        assert_eq!(topics, ["company_locations/update"]);
+        let before = shop.picture();
+        let refused = run(
+            &mut shop,
+            "mutation($id: ID!) { companyLocationCreateTaxRegistration(locationId: $id, taxId: \" \") { userErrors { field code } } }",
+            json!({"id": location}),
+        );
+        assert_eq!(
+            data(&refused, "companyLocationCreateTaxRegistration")["userErrors"],
+            json!([{"field": ["taxId"], "code": "BLANK"}])
+        );
+        let missing = run(
+            &mut shop,
+            "mutation { companyLocationRevokeTaxRegistration(companyLocationId: \"gid://shopify/CompanyLocation/1\") { userErrors { field code } } }",
+            json!({}),
+        );
+        assert_eq!(
+            data(&missing, "companyLocationRevokeTaxRegistration")["userErrors"],
+            json!([{"field": ["companyLocationId"], "code": "RESOURCE_NOT_FOUND"}])
+        );
+        assert_eq!(shop.picture(), before);
+        let revoked = run(
+            &mut shop,
+            "mutation($id: ID!) { companyLocationRevokeTaxRegistration(companyLocationId: $id) {
+                companyLocation { taxSettings { taxRegistrationId } } userErrors { message } } }",
+            json!({"id": location}),
+        );
+        assert_eq!(
+            data(&revoked, "companyLocationRevokeTaxRegistration")["companyLocation"]["taxSettings"]
+                ["taxRegistrationId"],
+            Value::Null
+        );
     }
 }
