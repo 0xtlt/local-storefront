@@ -247,6 +247,7 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
     assert_eq!(created["financial_status"], json!("paid"));
     assert_eq!(created["fulfillment_status"], Value::Null);
     assert_eq!(created["line_items"][0]["quantity"], json!(2));
+    assert_eq!(created["payment_gateway_names"], json!(["Credit card"]));
     let (_, transaction) = &delivered[1];
     assert_eq!(transaction["kind"], json!("sale"));
     assert_eq!(transaction["gateway"], json!("Credit card"));

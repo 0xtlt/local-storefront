@@ -125,7 +125,7 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
             "order_status_url": text(record, "statusPageUrl"),
             "original_total_additional_fees_set": money_set(field(record, "originalTotalAdditionalFeesSet")),
             "original_total_duties_set": money_set(field(record, "originalTotalDutiesSet")),
-            "payment_gateway_names": strings(field(record, "paymentGatewayNames")),
+            "payment_gateway_names": payment_gateway_names(record, lookup),
             "phone": text(record, "phone"),
             "po_number": text(record, "poNumber"),
             "presentment_currency": match text(record, "presentmentCurrencyCode") {
@@ -482,6 +482,25 @@ fn tax_lines(lines: &Value) -> Value {
             })
             .collect(),
     )
+}
+
+/// `payment_gateway_names`: the record's `paymentGatewayNames` when it has them (a sample),
+/// else the gateways of its transactions, each once, as the Admin API answers them.
+fn payment_gateway_names(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    if let Some(names) = record
+        .get("paymentGatewayNames")
+        .filter(|names| !names.is_null())
+    {
+        return strings(names);
+    }
+    let mut names: Vec<Value> = Vec::new();
+    for transaction in records(field(record, "transactions"), lookup) {
+        let gateway = text(&transaction, "gateway");
+        if gateway.is_string() && !names.contains(&gateway) {
+            names.push(gateway);
+        }
+    }
+    Value::Array(names)
 }
 
 /// `discountAllocations` as REST writes them, with the index of their discount application.

@@ -75,6 +75,25 @@ pub fn register(registry: &mut Registry) {
                     .collect(),
             )
         })
+        // "A list of the names of all payment gateways used for the order": those of its
+        // transactions, each once, in the order they were used.
+        .field("Order", "paymentGatewayNames", |r, _ctx, object| {
+            let mut names: Vec<String> = Vec::new();
+            for transaction in r
+                .map_of(object)
+                .map(|order| gids(order.get("transactions")))
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|id| r.state().get(id))
+            {
+                if let Some(gateway) = text(transaction, "gateway")
+                    && !names.iter().any(|known| known == gateway)
+                {
+                    names.push(gateway.to_string());
+                }
+            }
+            Ok(Output::value(names))
+        })
         .search_field("Order", "gateway", |r, _item, order| {
             let mut gateways: Vec<SearchValue> = Vec::new();
             for transaction in gids(order.get("transactions"))
