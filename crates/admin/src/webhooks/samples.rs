@@ -821,6 +821,13 @@ fn fulfillment_order_sample(topic: &str) -> (Value, Vec<Value>) {
             "heldByApp": "gid://shopify/App/12345",
         })
     };
+    let request = |message: &str| {
+        json!({
+            "__typename": "FulfillmentOrderMerchantRequest",
+            "id": "gid://shopify/FulfillmentOrderMerchantRequest/1",
+            "message": message,
+        })
+    };
     let event = payload::FULFILLMENT_ORDER_EVENT;
     match topic {
         "fulfillment_orders/placed_on_hold" => (
@@ -851,6 +858,50 @@ fn fulfillment_order_sample(topic: &str) -> (Value, Vec<Value>) {
             vec![fulfillment_order(1, "CLOSED", 0)],
         ),
         "fulfillment_orders/rescheduled" => (fulfillment_order(1, "SCHEDULED", 0), Vec::new()),
+        "fulfillment_orders/fulfillment_request_submitted" => (
+            fulfillment_order(1, "OPEN", 0)
+                .with("requestStatus", json!("UNSUBMITTED"))
+                .with(event, json!({
+                    "original": "gid://shopify/FulfillmentOrder/1",
+                    "submitted": "gid://shopify/FulfillmentOrder/1",
+                    "request": "gid://shopify/FulfillmentOrderMerchantRequest/1",
+                })),
+            vec![request("Fragile")],
+        ),
+        "fulfillment_orders/cancellation_request_submitted" => (
+            fulfillment_order(1, "IN_PROGRESS", 0)
+                .with("requestStatus", json!("CANCELLATION_REQUESTED"))
+                .with(event, json!({"request": "gid://shopify/FulfillmentOrderMerchantRequest/1"})),
+            vec![request("Customer cancelled their order")],
+        ),
+        "fulfillment_orders/fulfillment_request_accepted" => (
+            fulfillment_order(1, "IN_PROGRESS", 0)
+                .with("requestStatus", json!("ACCEPTED"))
+                .with(event, json!({"message": "We will ship the item tomorrow."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/fulfillment_request_rejected" => (
+            fulfillment_order(1, "OPEN", 0)
+                .with("requestStatus", json!("REJECTED"))
+                .with(event, json!({"message": "Can't fulfill due to no inventory on product."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/cancellation_request_accepted" => (
+            fulfillment_order(1, "CLOSED", 0)
+                .with(event, json!({"message": "Order has not been shipped yet."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/cancellation_request_rejected" => (
+            fulfillment_order(1, "IN_PROGRESS", 0)
+                .with("requestStatus", json!("CANCELLATION_REJECTED"))
+                .with(event, json!({"message": "Order has already been shipped."})),
+            Vec::new(),
+        ),
+        "fulfillment_orders/fulfillment_service_failed_to_complete" => (
+            fulfillment_order(1, "CLOSED", 0)
+                .with(event, json!({"message": "We broke the last item."})),
+            Vec::new(),
+        ),
         "fulfillment_orders/split" => (
             fulfillment_order(2, "OPEN", 0).with(event, json!({
                 "original": "gid://shopify/FulfillmentOrder/1",

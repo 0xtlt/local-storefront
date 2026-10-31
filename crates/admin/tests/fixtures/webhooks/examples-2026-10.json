@@ -831,6 +831,32 @@
         }
       }
     },
+    "fulfillment_orders/cancellation_request_accepted": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "closed"
+      },
+      "message": "Order has not been shipped yet."
+    },
+    "fulfillment_orders/cancellation_request_rejected": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "in_progress",
+        "request_status": "cancellation_rejected"
+      },
+      "message": "Order has already been shipped."
+    },
+    "fulfillment_orders/cancellation_request_submitted": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "in_progress",
+        "request_status": "cancellation_request"
+      },
+      "fulfillment_order_merchant_request": {
+        "id": "gid://shopify/FulfillmentOrderMerchantRequest/1",
+        "message": "Customer cancelled their order"
+      }
+    },
     "fulfillment_orders/cancelled": {
       "fulfillment_order": {
         "id": "gid://shopify/FulfillmentOrder/1",
@@ -840,6 +866,45 @@
         "id": "gid://shopify/FulfillmentOrder/2",
         "status": "open"
       }
+    },
+    "fulfillment_orders/fulfillment_request_accepted": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "in_progress",
+        "request_status": "accepted"
+      },
+      "message": "We will ship the item tomorrow."
+    },
+    "fulfillment_orders/fulfillment_request_rejected": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open",
+        "request_status": "rejected"
+      },
+      "message": "Can't fulfill due to no inventory on product."
+    },
+    "fulfillment_orders/fulfillment_request_submitted": {
+      "original_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open",
+        "request_status": "unsubmitted"
+      },
+      "submitted_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open",
+        "request_status": "unsubmitted"
+      },
+      "fulfillment_order_merchant_request": {
+        "id": "gid://shopify/FulfillmentOrderMerchantRequest/1",
+        "message": "Fragile"
+      }
+    },
+    "fulfillment_orders/fulfillment_service_failed_to_complete": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "closed"
+      },
+      "message": "We broke the last item."
     },
     "fulfillment_orders/hold_released": {
       "fulfillment_order": {

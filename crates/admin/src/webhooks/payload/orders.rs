@@ -1269,8 +1269,50 @@ pub(super) fn fulfillment_order_event(
             "remaining_fulfillment_order": this,
             "replacement_fulfillment_order": fulfillment_order_ref(field(&context, "replacement"), lookup),
         }),
+        "fulfillment_orders/fulfillment_request_submitted" => json!({
+            "original_fulfillment_order": requested(field(&context, "original"), lookup),
+            "submitted_fulfillment_order": requested(field(&context, "submitted"), lookup),
+            "fulfillment_order_merchant_request": merchant_request(field(&context, "request"), lookup),
+        }),
+        "fulfillment_orders/cancellation_request_submitted" => json!({
+            "fulfillment_order": requested(field(record, "id"), lookup),
+            "fulfillment_order_merchant_request": merchant_request(field(&context, "request"), lookup),
+        }),
+        "fulfillment_orders/fulfillment_request_accepted"
+        | "fulfillment_orders/fulfillment_request_rejected"
+        | "fulfillment_orders/cancellation_request_rejected" => json!({
+            "fulfillment_order": requested(field(record, "id"), lookup),
+            "message": text(&context, "message"),
+        }),
+        "fulfillment_orders/cancellation_request_accepted"
+        | "fulfillment_orders/fulfillment_service_failed_to_complete" => json!({
+            "fulfillment_order": this,
+            "message": text(&context, "message"),
+        }),
         // `hold_released`, `scheduled_fulfillment_order_ready`.
         _ => json!({"fulfillment_order": this}),
+    }
+}
+
+/// A fulfillment order with its request status, as the request topics write it: REST's
+/// `cancellation_request` for `CANCELLATION_REQUESTED` (the example of
+/// `cancellation_request_submitted`), the others in lowercase.
+fn requested(reference: &Value, lookup: &dyn Lookup) -> Value {
+    let Some(record) = resolve(reference, lookup) else {
+        return Value::Null;
+    };
+    let request = match field(&record, "requestStatus").as_str() {
+        Some("CANCELLATION_REQUESTED") => json!("cancellation_request"),
+        _ => lower(field(&record, "requestStatus")),
+    };
+    json!({"id": text(&record, "id"), "status": lower(field(&record, "status")), "request_status": request})
+}
+
+/// A `FulfillmentOrderMerchantRequest`: its GID and message.
+fn merchant_request(reference: &Value, lookup: &dyn Lookup) -> Value {
+    match resolve(reference, lookup) {
+        Some(record) => json!({"id": text(&record, "id"), "message": text(&record, "message")}),
+        None => Value::Null,
     }
 }
 
@@ -1279,7 +1321,7 @@ pub(super) fn return_event(topic: &str, record: &Map<String, Value>) -> Value {
     let head = json!({"id": id(record), "admin_graphql_api_id": text(record, "id")});
     let order = json!({"id": ref_id(field(record, "order")), "admin_graphql_api_id": ref_gid(field(record, "order"))});
     match topic {
-        "returns/request" | "returns/approve" | "returns/update" => merge([
+        "returns/request" | "returns/approve" => merge([
             head,
             json!({
                 "status": lower(field(record, "status")),

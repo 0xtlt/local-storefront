@@ -117,7 +117,14 @@ pub const BUILT_TOPICS: &[&str] = &[
     "fulfillment_events/create",
     "fulfillment_holds/added",
     "fulfillment_holds/released",
+    "fulfillment_orders/cancellation_request_accepted",
+    "fulfillment_orders/cancellation_request_rejected",
+    "fulfillment_orders/cancellation_request_submitted",
     "fulfillment_orders/cancelled",
+    "fulfillment_orders/fulfillment_request_accepted",
+    "fulfillment_orders/fulfillment_request_rejected",
+    "fulfillment_orders/fulfillment_request_submitted",
+    "fulfillment_orders/fulfillment_service_failed_to_complete",
     "fulfillment_orders/hold_released",
     "fulfillment_orders/moved",
     "fulfillment_orders/placed_on_hold",
@@ -203,7 +210,14 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "fulfillment_holds/added" | "fulfillment_holds/released" => {
             orders::fulfillment_hold(record)
         }
-        "fulfillment_orders/cancelled"
+        "fulfillment_orders/cancellation_request_accepted"
+        | "fulfillment_orders/cancellation_request_rejected"
+        | "fulfillment_orders/cancellation_request_submitted"
+        | "fulfillment_orders/cancelled"
+        | "fulfillment_orders/fulfillment_request_accepted"
+        | "fulfillment_orders/fulfillment_request_rejected"
+        | "fulfillment_orders/fulfillment_request_submitted"
+        | "fulfillment_orders/fulfillment_service_failed_to_complete"
         | "fulfillment_orders/hold_released"
         | "fulfillment_orders/moved"
         | "fulfillment_orders/placed_on_hold"

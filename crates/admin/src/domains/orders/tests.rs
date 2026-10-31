@@ -1624,3 +1624,141 @@ fn the_events_of_the_family_have_their_payloads() {
     assert_eq!(payload["amount"], json!("3.00"));
     assert_eq!(payload["payment_details"], Value::Null);
 }
+
+#[test]
+fn a_fulfillment_service_receives_accepts_and_cancels_requests() {
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        "mutation { fulfillmentServiceCreate(name: \"Acme 3PL\", callbackUrl: \"https://3pl.example/callback\", inventoryManagement: true, trackingSupport: true) {
+            fulfillmentService { id serviceName handle location { id name isFulfillmentService } } userErrors { field message } } }",
+        Value::Null,
+    );
+    let service = &created["data"]["fulfillmentServiceCreate"]["fulfillmentService"];
+    assert_eq!(service["handle"], json!("acme-3pl"), "{created}");
+    assert_eq!(service["location"]["isFulfillmentService"], json!(true));
+    let location = service["location"]["id"].clone();
+    assert_eq!(topics(&mut shop), ["locations/create"]);
+    let taken = run(
+        &mut shop,
+        "mutation { fulfillmentServiceCreate(name: \"acme 3pl\") { userErrors { field message } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        taken["data"]["fulfillmentServiceCreate"]["userErrors"],
+        json!([{"field": ["name"], "message": "Name has already been taken"}])
+    );
+
+    // The merchant moves an order to the service and asks it to fulfill it.
+    let id = order_named(&shop, "#1002");
+    let fo = order(&mut shop, &id)["fulfillmentOrders"]["nodes"][0]["id"].clone();
+    run(
+        &mut shop,
+        "mutation($id: ID!, $to: ID!) { fulfillmentOrderMove(id: $id, newLocationId: $to) { userErrors { message } } }",
+        json!({"id": fo, "to": location}),
+    );
+    let actions = run(
+        &mut shop,
+        "query($id: ID!) { fulfillmentOrder(id: $id) { supportedActions { action } } }",
+        json!({"id": fo}),
+    );
+    assert_eq!(
+        actions["data"]["fulfillmentOrder"]["supportedActions"][0]["action"],
+        json!("REQUEST_FULFILLMENT")
+    );
+    let submitted = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentOrderSubmitFulfillmentRequest(id: $id, message: \"Fragile\") {
+            submittedFulfillmentOrder { id requestStatus merchantRequests(first: 1) { nodes { kind message } } } unsubmittedFulfillmentOrder { id } userErrors { field message } } }",
+        json!({"id": fo}),
+    );
+    let payload = &submitted["data"]["fulfillmentOrderSubmitFulfillmentRequest"];
+    assert_eq!(payload["userErrors"], json!([]), "{submitted}");
+    assert_eq!(
+        payload["submittedFulfillmentOrder"]["requestStatus"],
+        json!("SUBMITTED")
+    );
+    assert_eq!(
+        payload["submittedFulfillmentOrder"]["merchantRequests"]["nodes"],
+        json!([{"kind": "FULFILLMENT_REQUEST", "message": "Fragile"}])
+    );
+    events(&mut shop);
+    let requested = run(
+        &mut shop,
+        "{ assignedFulfillmentOrders(first: 5, assignmentStatus: FULFILLMENT_REQUESTED) { nodes { id } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        requested["data"]["assignedFulfillmentOrders"]["nodes"],
+        json!([{"id": fo}])
+    );
+
+    // The service accepts, then the merchant asks to cancel, and the service agrees.
+    let accept = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentOrderAcceptFulfillmentRequest(id: $id, message: \"Ships tomorrow\") { fulfillmentOrder { status requestStatus } userErrors { message } } }",
+        json!({"id": fo}),
+    );
+    assert_eq!(
+        accept["data"]["fulfillmentOrderAcceptFulfillmentRequest"]["fulfillmentOrder"],
+        json!({"status": "IN_PROGRESS", "requestStatus": "ACCEPTED"})
+    );
+    let (topic, gid) = events(&mut shop).remove(0);
+    assert_eq!(topic, "fulfillment_orders/fulfillment_request_accepted");
+    assert_eq!(
+        payload_of(&shop, &topic, &gid)["message"],
+        json!("Ships tomorrow")
+    );
+    let twice = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentOrderAcceptFulfillmentRequest(id: $id) { userErrors { field message } } }",
+        json!({"id": fo}),
+    );
+    assert_eq!(
+        twice["data"]["fulfillmentOrderAcceptFulfillmentRequest"]["userErrors"][0]["field"],
+        json!(["id"])
+    );
+    run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentOrderSubmitCancellationRequest(id: $id, message: \"Customer cancelled\") { userErrors { message } } }",
+        json!({"id": fo}),
+    );
+    let (topic, gid) = events(&mut shop).remove(0);
+    let built = payload_of(&shop, &topic, &gid);
+    assert_eq!(
+        built["fulfillment_order"]["request_status"],
+        json!("cancellation_request")
+    );
+    assert_eq!(
+        built["fulfillment_order_merchant_request"]["message"],
+        json!("Customer cancelled")
+    );
+    let accepted = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentOrderAcceptCancellationRequest(id: $id) { fulfillmentOrder { status requestStatus } userErrors { message } } }",
+        json!({"id": fo}),
+    );
+    assert_eq!(
+        accepted["data"]["fulfillmentOrderAcceptCancellationRequest"]["fulfillmentOrder"],
+        json!({"status": "CLOSED", "requestStatus": "CANCELLATION_ACCEPTED"})
+    );
+    let after = order(&mut shop, &id);
+    let fos = after["fulfillmentOrders"]["nodes"].as_array().unwrap();
+    assert_eq!(fos.len(), 2);
+    assert_eq!(fos[1]["status"], json!("OPEN"));
+    assert_eq!(after["displayFulfillmentStatus"], json!("UNFULFILLED"));
+
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentServiceDelete(id: $id, inventoryAction: DELETE) { deletedId userErrors { message } } }",
+        json!({"id": service["id"]}),
+    );
+    assert_eq!(
+        deleted["data"]["fulfillmentServiceDelete"]["deletedId"],
+        service["id"]
+    );
+    assert!(shop.get(location.as_str().unwrap()).is_none());
+    // Its open fulfillment order went back to a location of the shop.
+    let moved_back = order(&mut shop, &id)["fulfillmentOrders"]["nodes"][1]["assignedLocation"]["location"]["id"].clone();
+    assert!(shop.keys("Location").any(|key| json!(key) == moved_back));
+}

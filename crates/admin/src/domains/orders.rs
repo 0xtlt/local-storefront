@@ -17,6 +17,7 @@ pub mod model;
 mod queries;
 mod refunds;
 mod returns;
+mod services;
 
 #[cfg(test)]
 mod tests;
@@ -1125,4 +1126,5 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     returns::register(registry);
     edits::register(registry);
     drafts::register(registry);
+    services::register(registry);
 }
