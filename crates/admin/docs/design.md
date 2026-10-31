@@ -1619,7 +1619,10 @@ succeeds and as it refuses (the shop left as it was).
   (segments `{fromIndex, start, firstEnd, interval, count, day, anchored}`: a new billing policy
   starts a segment at the current cycle) in the shop's time zone, and keeps their edits in
   `lsfCycleEdits` (`{"<index>": {skipped, billingAttemptExpectedDate, reason, contract,
-  concatenated, concatenatedInto}}`). The events of a cycle are keyed
+  concatenated, concatenatedInto}}`). Its date arithmetic is checked: a cycle that would start
+  or end after 9999 in UTC (`LAST_YEAR`, lsf's bound) does not exist, so a huge index answers
+  `CYCLE_INDEX_OUT_OF_RANGE`, and a first interval past it (an `intervalCount` of 2^31 − 1 weeks)
+  ends on December 30, 9999 at midnight in the shop's zone. The events of a cycle are keyed
   `gid://shopify/SubscriptionBillingCycle/<contract n>?index=<i>`, which names no record: their
   payload is built from the snapshot, the cycle as `to_value` answers it.
 - **`SubscriptionDraft`** (`new_gid`): a contract-like record, with `originalContract`,

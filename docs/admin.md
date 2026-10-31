@@ -1067,7 +1067,8 @@ How they behave, as shopify.dev documents it:
 - **Billing cycles** are computed from the billing policy and the shop's clock: cycle 1 starts
   when the contract is created, each is billed at its end (`billingAttemptExpectedDate`, unless a
   schedule edit moves it within the cycle), anchors (`MONTHDAY`, `WEEKDAY`, `YEARDAY`) end the
-  cycles at midnight in the shop's time zone, `maxCycles` ends them; a new billing interval keeps
+  cycles at midnight in the shop's time zone, `maxCycles` ends them, and so does the year 9999
+  (lsf's bound: a cycle past it is `CYCLE_INDEX_OUT_OF_RANGE`); a new billing interval keeps
   the current cycle's start and never ends it in the past. Edits are per cycle: a skip, a billing
   date, a contract edit (one cycle bills other lines without changing the contract), a
   concatenation (one order bills the cycles of several contracts of the customer).

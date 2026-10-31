@@ -1187,6 +1187,73 @@ fn cycles_follow_the_billing_policy_from_the_contract_creation() {
 }
 
 #[test]
+fn a_cycle_past_the_calendar_is_out_of_range() {
+    let mut shop = shop();
+    // Daily, without `maxCycles`: cycle 2,000,000,000 would start millions of years ahead.
+    let mut input = atomic_input(&shop, None);
+    input["contract"]["billingPolicy"] = json!({"interval": "DAY", "intervalCount": 1});
+    input["contract"]["deliveryPolicy"] = json!({"interval": "DAY", "intervalCount": 1});
+    let answer = run(&mut shop, ATOMIC, json!({"input": input}));
+    let daily = data(&answer, "subscriptionContractAtomicCreate")["contract"]["id"].clone();
+    // Every 2^31 - 1 weeks: its first cycle ends on the last midnight lsf computes.
+    let mut input = atomic_input(&shop, None);
+    input["contract"]["billingPolicy"] = json!({"interval": "WEEK", "intervalCount": i32::MAX});
+    input["contract"]["deliveryPolicy"] = json!({"interval": "WEEK", "intervalCount": i32::MAX});
+    let answer = run(&mut shop, ATOMIC, json!({"input": input}));
+    let created = data(&answer, "subscriptionContractAtomicCreate");
+    assert_eq!(created["userErrors"], json!([]), "{created:#}");
+    let sparse = created["contract"]["id"].clone();
+
+    let one = r#"query($input: SubscriptionBillingCycleInput!) { subscriptionBillingCycle(billingCycleInput: $input) { cycleIndex cycleEndAt } }"#;
+    for (id, index) in [
+        (&daily, 2_000_000_000i64),
+        (&sparse, 2),
+        (&sparse, 2_000_000_000),
+    ] {
+        let selector = json!({"contractId": id, "selector": {"index": index}});
+        let answer = run(&mut shop, one, json!({"input": selector}));
+        assert_eq!(
+            answer["data"]["subscriptionBillingCycle"],
+            Value::Null,
+            "{answer}"
+        );
+        let errors = refused(
+            &mut shop,
+            SKIP,
+            json!({"input": selector}),
+            "subscriptionBillingCycleSkip",
+        );
+        assert_eq!(errors[0]["code"], json!("INVALID"), "{errors}");
+        let answer = run(
+            &mut shop,
+            ATTEMPT,
+            json!({"id": id, "input": {"idempotencyKey": format!("far-{index}"), "billingCycleSelector": {"index": index}}}),
+        );
+        let made = data(&answer, "subscriptionBillingAttemptCreate");
+        assert_eq!(
+            made["userErrors"][0]["code"],
+            json!("CYCLE_INDEX_OUT_OF_RANGE"),
+            "{made:#}"
+        );
+    }
+    let answer = run(
+        &mut shop,
+        one,
+        json!({"input": {"contractId": sparse, "selector": {"index": 1}}}),
+    );
+    assert_eq!(
+        answer["data"]["subscriptionBillingCycle"],
+        json!({"cycleIndex": 1, "cycleEndAt": "9999-12-30T05:00:00Z"})
+    );
+    let answer = run(
+        &mut shop,
+        CYCLES,
+        json!({"id": daily, "range": {"startIndex": 1999999990, "endIndex": 2000000000}}),
+    );
+    assert!(answer.get("errors").is_none(), "{answer}");
+}
+
+#[test]
 fn anchored_cycles_end_at_midnight_on_the_anchor_day_in_the_shops_zone() {
     let mut shop = shop();
     let mut input = atomic_input(&shop, None);
