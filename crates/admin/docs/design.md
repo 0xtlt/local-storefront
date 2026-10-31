@@ -83,22 +83,62 @@ from the app when there is one (`--app`).
   token. Parallel tests each get a shop of their own, as storefront tests each get a session.
   A token belongs to one shop: the token, not the host, picks the shop of a request (the backend
   sends every shop to the same `http://127.0.0.1:9292`).
-- **Access tokens**: the one printed at start (deterministic for a shop and an app, so a test can
-  hard-code it), and those the OAuth endpoints issue. Offline tokens `shpat_…`, online tokens
-  `shpua_…`.
-- **OAuth**, as Shopify: `GET /admin/oauth/authorize` approves at once and redirects to the
-  `redirect_uri` (checked against `[auth] redirect_urls`) with `code`, `hmac`, `host`, `shop`,
-  `state`, `timestamp`; `POST /admin/oauth/access_token` exchanges the code, or a session token
-  (token exchange, `urn:ietf:params:oauth:grant-type:token-exchange`, offline or online access
-  token, expiring or not), or the client credentials. Every answer is Shopify's JSON.
-- **Session tokens** (App Bridge's `id_token`): `POST /__lsf/admin/session-token` mints one
-  (HS256 with the client secret, Shopify's claims), so that a test can call the authenticated
-  routes of the backend; `GET /__lsf/admin/launch` redirects to the app URL with the query an
-  embedded app is opened with (`embedded`, `hmac`, `host`, `id_token`, `locale`, `session`,
-  `shop`, `timestamp`).
-- **Access scopes are enforced**: a field or a mutation the token's scopes do not cover answers
-  `ACCESS_DENIED`, with the scope it requires (`write_*` implies `read_*`). A table maps the root
-  fields and mutations to their scope.
+- **Access tokens** (`auth::tokens`): the one printed at start (`default_token(shop, client_id)`,
+  deterministic for a shop and an app, so a test can hard-code it; offline, never expiring), and
+  those the OAuth endpoints issue. Every access token is `shpat_` and 32 hex digits: shopify.dev
+  ("Access tokens") says offline and online tokens both begin with `shpat_`, "whichever grant
+  produced them" (an earlier draft of this design said `shpua_` for online ones). Refresh tokens
+  are `shprt_…`. Lifetimes are Shopify's: an expiring offline token an hour, its refresh token 90
+  days, an online token and a client credentials token 24 hours (`expires_in` 86399). Refresh
+  tokens rotate as Shopify documents: the one presented stays usable until the app uses its
+  successor, a new grant is acquired, 30 days pass after its first use, or it expires.
+  Uninstalling (`Tokens::uninstall`) revokes every token of the app on the shop.
+- **OAuth**, as Shopify (`auth::oauth`): `GET /admin/oauth/authorize` approves at once and
+  redirects to the `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`;
+  `POST /admin/oauth/access_token` (JSON, form, or query parameters) exchanges the code (once,
+  within ten minutes), or a session token (token exchange,
+  `urn:ietf:params:oauth:grant-type:token-exchange`, offline or online access token, expiring or
+  not), or a non-expiring offline token to migrate it to an expiring one, or a refresh token, or
+  the client credentials. Every answer is Shopify's JSON, and every error its
+  `{"error", "error_description"}` with its status, `X-Lsf-Reason` saying why in plain words.
+  - *The shop*: on Shopify it is the host; lsf serves every shop on one address, so the shop of
+    an OAuth request is `?shop=`, else a `*.myshopify.com` `Host` or `X-Forwarded-Host`, else the
+    default shop. A code, a session token and a refresh token carry their own shop.
+  - *`redirect_uri`* must equal one of `[auth] redirect_urls` ("Must exactly match"); one on the
+    origin of `application_url` is also accepted on the origin of `--app-url`, as webhooks move
+    there. Without an app, any `http(s)` URL is accepted.
+  - What shopify.dev documents word for word: a code used twice (`400` `invalid_request` "The
+    authorization code was not found or was already used"), a dead refresh token (`401`
+    `invalid_request` "This request requires an active refresh_token"), a bad session token
+    (`400` `invalid_subject_token`), an unknown client id (`application_cannot_be_found` "Could
+    not find Shopify API application with api_key …"), the authorization page's "Oauth error
+    invalid_request: The redirect_uri is not whitelisted". Not documented, so lsf's best guess: a
+    wrong client secret is `401` `invalid_client` "Client authentication failed" (the mocks of
+    `@shopify/shopify-api`'s tests).
+  - Client assertions (application-only tokens) are not simulated: lsf cannot verify the app's
+    key pair, and says so.
+- **Session tokens** (App Bridge's `id_token`, `auth::session_token`): `POST
+  /__lsf/admin/session-token` (`{"shop"?, "user"?}`) mints one (HS256 with the client secret,
+  the claims of shopify.dev's "ID tokens": `iss`, `dest`, `aud`, `sub`, `exp`, `nbf`, `iat`,
+  `jti`, `sid`; no `sig`, which the page no longer lists), so that a test can call the
+  authenticated routes of the backend; `GET /__lsf/admin/launch` redirects to the app URL with
+  the query an embedded app is opened with (`embedded`, `hmac`, `host`, `id_token`, `locale`,
+  `session`, `shop`, `timestamp`), the `hmac` signing every other parameter. Verification allows
+  Shopify's libraries' 10-second leeway on `exp` and `nbf`.
+- **HMACs** (`auth::signing`): a webhook's `X-Shopify-Hmac-Sha256` (base64 of the body), the
+  `hmac` of an admin query (hex, the other parameters sorted and form-encoded as
+  `@shopify/shopify-api` and the `shopify_api` gem sign them), and an app proxy's `signature`
+  (hex, the sorted `name=value` strings concatenated, repeated names joined with commas),
+  checked against shopify.dev's published examples.
+- **Access scopes are enforced** (`auth::scopes`): a field or a mutation the token's scopes do not
+  cover answers `ACCESS_DENIED` with Shopify's message ("Access denied for products field.
+  Required access: `read_products` access scope.") and `extensions` (`code`, `documentation`,
+  `requiredAccess`). `write_x` implies `read_x`, `unauthenticated_write_x` implies
+  `unauthenticated_read_x`. The table is not hand-written: Shopify's introspection of 2026-10
+  carries the `requiredAccess` text of every type and field, which `mise run admin:access-scopes`
+  writes into `schemas/2026-10/access.json`; a root field without one requires that of the type
+  it answers (`products` → `Product`). Staff permissions, plans and requirements that depend on
+  the arguments (`metafieldsSet`, `tagsAdd`) are not checked.
 
 ## The state of a shop (`state`)
 
@@ -201,11 +241,28 @@ GID), stable across requests while the list does not change.
 ### Search syntax (`search`)
 
 The `query` argument of connections, and the `filter` of webhook subscriptions, use Shopify's
-search syntax: terms, `field:value`, comparators (`:<`, `:<=`, `:>`, `:>=`), `AND`, `OR`, `NOT`,
-`-`, parentheses, quoted phrases, `*` prefix and existence (`field:*`), dates (`created_at:>2026-01-01`,
-`created_at:>-7d`?). `search` parses it into a tree and matches a record through a per-type table
-of the fields each connection documents (`title`, `tag`, `status`, `vendor`, `sku`, `email`, …);
-an unknown field matches nothing, as Shopify. A free term matches the type's default text fields.
+search syntax (shopify.dev, "Search query syntax"): terms, `field:value`, comparators (`:<`,
+`:<=`, `:>`, `:>=`), `AND`, `OR` (which binds tighter: `bob OR norman Shopify` is
+`(bob OR norman) AND Shopify`), `NOT`, `-`, parentheses, quoted phrases, `*` prefix and existence
+(`field:*`), backslash escapes. Dates are what the reference documents: `now`, a year, a month,
+a day, a time with or without a zone, and ranges (`2021-01-01..2021-01-02`), each a period
+(`created_at:<=2024` is up to the end of 2024), in the shop's time zone. Shopify documents no
+relative date (`-7d`) for search; lsf has none.
+
+`search` parses a query into a tree (`Query::parse`, never an error: a malformed query is read
+as far as it goes, with warnings) and matches a record through the `Searchable` trait, which
+each domain implements from the filters its connections document (`documented_filters`, from
+the reference of 2026-10: `schemas/2026-10/search.json`). A value is tokenized text, a keyword,
+a number, a date, a boolean or an id, which says how `:` compares it. **A field the connection
+does not know is ignored**, as shopify.dev says ("If you specify an invalid field, then the query
+is ignored and all results are returned"; an earlier draft of this design said it matched
+nothing), with the warning Shopify returns in `extensions.search` ("Invalid search field for
+this query.", `Query::invalid_fields`). A free term matches the type's default text fields.
+
+A webhook `filter` (`search::Filter`) runs on the payload, as shopify.dev's "Filter webhook
+deliveries" says: dotted paths through arrays (`variants.price:>=10.00`), case-sensitive
+equality, a missing field or a type mismatch makes its term false (no delivery, unless negated),
+tags matched one by one in their string; a filter that does not follow the grammar is refused.
 
 ### Mutations (`mutations`)
 

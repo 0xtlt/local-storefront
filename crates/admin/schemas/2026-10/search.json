@@ -1,0 +1,1682 @@
+{
+ "source": "@shopify/dev-mcp@1.17.0, package/dist/data/admin_2026-10.json.gz (sha256 f651c221109dbc55601ab7a85353f3b82fec8ec9bbf9f260440139e28c7e8a7a)",
+ "connections": {
+  "Article": {
+   "comments": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["updated_at", "time"]
+   ],
+   "commentsCount": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["updated_at", "time"]
+   ],
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "Blog": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "CalculatedOrder": {
+   "lineItems": [
+    ["id", "id"]
+   ]
+  },
+  "CashDrawer": {
+   "cashActivities": [
+    ["id", "id"]
+   ]
+  },
+  "CashTrackingSession": {
+   "cashTransactions": [
+    ["id", "id"]
+   ]
+  },
+  "Channel": {
+   "productsCount": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ]
+  },
+  "Collection": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "Comment": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ]
+  },
+  "Company": {
+   "contacts": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "draftOrders": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "locations": [
+    ["default", "string"],
+    ["id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "CompanyContact": {
+   "draftOrders": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "roleAssignments": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "CompanyLocation": {
+   "draftOrders": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "roleAssignments": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "staffMemberAssignments": [
+    ["id", "id"]
+   ],
+   "storeCreditAccounts": [
+    ["id", "id"]
+   ]
+  },
+  "CompanyLocationCatalog": {
+   "companyLocations": [
+    ["default", "string"],
+    ["id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"]
+   ]
+  },
+  "Customer": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "orders": [
+    ["default", "string"],
+    ["cart_token", "string"],
+    ["channel", "string"],
+    ["channel_id", "id"],
+    ["chargeback_status", "string"],
+    ["checkout_token", "string"],
+    ["confirmation_number", "string"],
+    ["created_at", "time"],
+    ["credit_card_last4", "string"],
+    ["current_total_price", "float"],
+    ["customer_id", "id"],
+    ["delivery_method", "string"],
+    ["discount_code", "string"],
+    ["email", "string"],
+    ["financial_status", "string"],
+    ["fraud_protection_level", "string"],
+    ["fulfillment_location_id", "id"],
+    ["fulfillment_status", "string"],
+    ["gateway", "string"],
+    ["id", "id"],
+    ["location_id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["payment_id", "string"],
+    ["payment_provider_id", "id"],
+    ["po_number", "string"],
+    ["processed_at", "time"],
+    ["reference_location_id", "id"],
+    ["requested_order_edit_status", "string"],
+    ["return_status", "string"],
+    ["risk_level", "string"],
+    ["sales_channel", "string"],
+    ["sku", "string"],
+    ["source_identifier", "string"],
+    ["source_name", "string"],
+    ["status", "string"],
+    ["subtotal_line_items_quantity", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["test", "boolean"],
+    ["total_weight", "string"],
+    ["updated_at", "time"]
+   ],
+   "storeCreditAccounts": [
+    ["id", "id"]
+   ]
+  },
+  "DeliveryCustomization": {
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "DeliveryLocationGroup": {
+   "locations": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "DiscountAutomaticApp": {
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountAutomaticBasic": {
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountAutomaticBxgy": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountAutomaticFreeShipping": {
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountAutomaticNode": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "DiscountCodeApp": {
+   "codes": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountCodeBasic": {
+   "codes": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountCodeBxgy": {
+   "codes": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountCodeFreeShipping": {
+   "codes": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "DiscountCodeNode": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "DiscountNode": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "DraftOrder": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ]
+  },
+  "FulfillmentOrder": {
+   "locationsForMove": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "HasEvents": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ]
+  },
+  "HasMetafieldDefinitions": {
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "HasRollouts": {
+   "rollouts": [
+    ["status", "string"]
+   ]
+  },
+  "HasStoreCreditAccounts": {
+   "storeCreditAccounts": [
+    ["id", "id"]
+   ]
+  },
+  "InventoryItem": {
+   "inventoryLevels": [
+    ["id", "id"]
+   ]
+  },
+  "InventoryLevel": {
+   "scheduledChanges": [
+    ["id", "id"]
+   ]
+  },
+  "InventoryPurchaseOrder": {
+   "lineItems": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "InventoryShipment": {
+   "lineItems": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "lineItemsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "InventoryTransfer": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "lineItems": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "lineItemsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "Location": {
+   "inventoryLevels": [
+    ["id", "id"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "Market": {
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "MarketCatalog": {
+   "marketsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "Order": {
+   "agreements": [
+    ["id", "id"]
+   ],
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "fulfillmentOrders": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "returns": [
+    ["id", "id"]
+   ]
+  },
+  "Page": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "PaymentCustomization": {
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "PointOfSaleDevicePaymentSession": {
+   "cashActivities": [
+    ["id", "id"]
+   ]
+  },
+  "PriceList": {
+   "prices": [
+    ["id", "id"]
+   ]
+  },
+  "Product": {
+   "collections": [
+    ["default", "string"],
+    ["id", "id"],
+    ["product_id", "id"],
+    ["publishable_status", "string"],
+    ["published_status", "string"]
+   ],
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "media": [
+    ["id", "id"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "productParents": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ]
+  },
+  "ProductVariant": {
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "productParents": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ]
+  },
+  "Publication": {
+   "includedProducts": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ],
+   "includedProductsCount": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ],
+   "products": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ]
+  },
+  "QueryRoot": {
+   "abandonedCheckouts": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "abandonedCheckoutsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "analyticsTargets": [
+    ["default", "string"],
+    ["end_date", "date"],
+    ["filters", "string"],
+    ["id", "id"],
+    ["metric", "string"],
+    ["start_date", "date"]
+   ],
+   "articles": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["handle", "string"],
+    ["id", "id"],
+    ["published_at", "time"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["updated_at", "time"]
+   ],
+   "automaticDiscountNodes": [
+    ["default", "string"],
+    ["id", "id"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["type", "string"]
+   ],
+   "automaticDiscounts": [
+    ["default", "string"],
+    ["id", "id"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["type", "string"]
+   ],
+   "blogs": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "blogsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "bulkOperations": [
+    ["id", "id"]
+   ],
+   "carrierServices": [
+    ["id", "id"]
+   ],
+   "cashDrawers": [
+    ["id", "id"]
+   ],
+   "cashTrackingSessions": [
+    ["id", "id"]
+   ],
+   "catalogs": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "catalogsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "checkoutAndAccountsConfigurations": [
+    ["id", "id"]
+   ],
+   "checkoutProfiles": [
+    ["id", "id"]
+   ],
+   "codeDiscountNodes": [
+    ["default", "string"],
+    ["combines_with", "string"],
+    ["created_at", "time"],
+    ["discount_type", "string"],
+    ["ends_at", "time"],
+    ["id", "id"],
+    ["starts_at", "time"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["times_used", "integer"],
+    ["title", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "collections": [
+    ["default", "string"],
+    ["id", "id"],
+    ["product_id", "id"],
+    ["publishable_status", "string"],
+    ["published_status", "string"]
+   ],
+   "collectionsCount": [
+    ["default", "string"],
+    ["id", "id"],
+    ["product_id", "id"],
+    ["publishable_status", "string"],
+    ["published_status", "string"]
+   ],
+   "comments": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["updated_at", "time"]
+   ],
+   "companies": [
+    ["default", "string"],
+    ["id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"]
+   ],
+   "companyLocations": [
+    ["default", "string"],
+    ["id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"]
+   ],
+   "customerSavedSearches": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "customers": [
+    ["default", "string"],
+    ["accepts_marketing", "boolean"],
+    ["country", "string"],
+    ["customer_date", "time"],
+    ["email", "string"],
+    ["first_name", "string"],
+    ["id", "id"],
+    ["last_abandoned_order_date", "time"],
+    ["last_name", "string"],
+    ["order_date", "time"],
+    ["orders_count", "integer"],
+    ["phone", "string"],
+    ["state", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["total_spent", "float"],
+    ["updated_at", "time"]
+   ],
+   "customersCount": [
+    ["id", "id"]
+   ],
+   "deletionEvents": [
+    ["id", "id"]
+   ],
+   "deliveryCustomizations": [
+    ["id", "id"]
+   ],
+   "discountCodesCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "discountNodes": [
+    ["default", "string"],
+    ["code", "string"],
+    ["combines_with", "string"],
+    ["context", "string"],
+    ["created_at", "time"],
+    ["customer_ids", "string"],
+    ["discount_class", "string"],
+    ["discount_type", "string"],
+    ["ends_at", "time"],
+    ["id", "id"],
+    ["market_ids", "string"],
+    ["method", "string"],
+    ["segment_ids", "string"],
+    ["starts_at", "time"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["times_used", "integer"],
+    ["title", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "discountNodesCount": [
+    ["default", "string"],
+    ["code", "string"],
+    ["combines_with", "string"],
+    ["context", "string"],
+    ["created_at", "time"],
+    ["customer_ids", "string"],
+    ["discount_class", "string"],
+    ["discount_type", "string"],
+    ["ends_at", "time"],
+    ["id", "id"],
+    ["market_ids", "string"],
+    ["method", "string"],
+    ["segment_ids", "string"],
+    ["starts_at", "time"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["times_used", "integer"],
+    ["title", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "discountRedeemCodeSavedSearches": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "discountTags": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "disputes": [
+    ["id", "id"]
+   ],
+   "draftOrders": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "draftOrdersCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "events": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "eventsCount": [
+    ["action", "string"],
+    ["comments", "boolean"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["subject_type", "string"]
+   ],
+   "files": [
+    ["default", "string"],
+    ["id", "id"],
+    ["original_upload_size", "string"]
+   ],
+   "fulfillmentOrders": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "giftCards": [
+    ["default", "string"],
+    ["balance_status", "string"],
+    ["created_at", "time"],
+    ["expires_on", "date"],
+    ["id", "id"],
+    ["initial_value", "string"],
+    ["source", "string"],
+    ["status", "string"]
+   ],
+   "giftCardsCount": [
+    ["default", "string"],
+    ["balance_status", "string"],
+    ["created_at", "time"],
+    ["expires_on", "date"],
+    ["id", "id"],
+    ["initial_value", "string"],
+    ["source", "string"],
+    ["status", "string"]
+   ],
+   "inventoryItems": [
+    ["id", "id"],
+    ["sku", "string"]
+   ],
+   "inventoryPurchaseOrders": [
+    ["id", "id"]
+   ],
+   "inventoryShipments": [
+    ["id", "id"]
+   ],
+   "inventoryTransfers": [
+    ["default", "string"],
+    ["id", "id"],
+    ["tag", "string"],
+    ["tag_not", "string"]
+   ],
+   "locations": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "locationsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "marketingActivities": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "marketingEvents": [
+    ["id", "id"]
+   ],
+   "markets": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "menus": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "metaobjects": [
+    ["fields.{key}", "mixed"],
+    ["id", "id"]
+   ],
+   "orders": [
+    ["default", "string"],
+    ["cart_token", "string"],
+    ["channel", "string"],
+    ["channel_id", "id"],
+    ["chargeback_status", "string"],
+    ["checkout_token", "string"],
+    ["confirmation_number", "string"],
+    ["created_at", "time"],
+    ["credit_card_last4", "string"],
+    ["current_total_price", "float"],
+    ["customer_id", "id"],
+    ["delivery_method", "string"],
+    ["discount_code", "string"],
+    ["email", "string"],
+    ["financial_status", "string"],
+    ["fraud_protection_level", "string"],
+    ["fulfillment_location_id", "id"],
+    ["fulfillment_status", "string"],
+    ["gateway", "string"],
+    ["id", "id"],
+    ["location_id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["payment_id", "string"],
+    ["payment_provider_id", "id"],
+    ["po_number", "string"],
+    ["processed_at", "time"],
+    ["reference_location_id", "id"],
+    ["requested_order_edit_status", "string"],
+    ["return_status", "string"],
+    ["risk_level", "string"],
+    ["sales_channel", "string"],
+    ["sku", "string"],
+    ["source_identifier", "string"],
+    ["source_name", "string"],
+    ["status", "string"],
+    ["subtotal_line_items_quantity", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["test", "boolean"],
+    ["total_weight", "string"],
+    ["updated_at", "time"]
+   ],
+   "ordersCount": [
+    ["default", "string"],
+    ["cart_token", "string"],
+    ["channel", "string"],
+    ["channel_id", "id"],
+    ["chargeback_status", "string"],
+    ["checkout_token", "string"],
+    ["confirmation_number", "string"],
+    ["created_at", "time"],
+    ["credit_card_last4", "string"],
+    ["current_total_price", "float"],
+    ["customer_id", "id"],
+    ["delivery_method", "string"],
+    ["discount_code", "string"],
+    ["email", "string"],
+    ["financial_status", "string"],
+    ["fraud_protection_level", "string"],
+    ["fulfillment_location_id", "id"],
+    ["fulfillment_status", "string"],
+    ["gateway", "string"],
+    ["id", "id"],
+    ["location_id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["payment_id", "string"],
+    ["payment_provider_id", "id"],
+    ["po_number", "string"],
+    ["processed_at", "time"],
+    ["reference_location_id", "id"],
+    ["requested_order_edit_status", "string"],
+    ["return_status", "string"],
+    ["risk_level", "string"],
+    ["sales_channel", "string"],
+    ["sku", "string"],
+    ["source_identifier", "string"],
+    ["source_name", "string"],
+    ["status", "string"],
+    ["subtotal_line_items_quantity", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["test", "boolean"],
+    ["total_weight", "string"],
+    ["updated_at", "time"]
+   ],
+   "pages": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["published_at", "time"],
+    ["updated_at", "time"]
+   ],
+   "paymentCustomizations": [
+    ["id", "id"]
+   ],
+   "pointOfSaleDevicePaymentSessions": [
+    ["id", "id"]
+   ],
+   "productVariants": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["collection", "string"],
+    ["delivery_profile_id", "id"],
+    ["exclude_composite", "boolean"],
+    ["exclude_variants_with_components", "boolean"],
+    ["gift_card", "boolean"],
+    ["id", "id"],
+    ["inventory_quantity", "integer"],
+    ["location_id", "id"],
+    ["managed", "boolean"],
+    ["managed_by", "string"],
+    ["option1", "string"],
+    ["option2", "string"],
+    ["option3", "string"],
+    ["product_id", "id"],
+    ["product_ids", "string"],
+    ["product_publication_status", "string"],
+    ["product_status", "string"],
+    ["product_type", "string"],
+    ["publishable_status", "string"],
+    ["published_status", "string"],
+    ["requires_components", "boolean"],
+    ["sku", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["taxable", "boolean"],
+    ["title", "string"],
+    ["updated_at", "time"],
+    ["vendor", "string"]
+   ],
+   "products": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ],
+   "productsCount": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ],
+   "returnReasonDefinitions": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "rollouts": [
+    ["default", "string"],
+    ["change_type", "string"],
+    ["id", "id"],
+    ["status", "string"]
+   ],
+   "scriptTags": [
+    ["id", "id"]
+   ],
+   "segments": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "sellingPlanGroups": [
+    ["default", "string"],
+    ["app_id", "id"],
+    ["id", "id"]
+   ],
+   "shopPayPaymentRequestReceipts": [
+    ["created_at", "time"],
+    ["id", "id"],
+    ["source_identifier", "string"],
+    ["state", "string"]
+   ],
+   "staffMembers": [
+    ["id", "id"]
+   ],
+   "subscriptionBillingAttempts": [
+    ["id", "id"]
+   ],
+   "subscriptionContracts": [
+    ["customer_id", "id"],
+    ["id", "id"],
+    ["product_id", "id"],
+    ["product_variant_id", "id"],
+    ["selling_plan_id", "id"]
+   ],
+   "tenderTransactions": [
+    ["id", "id"]
+   ],
+   "urlRedirects": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "urlRedirectsCount": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "webhookSubscriptions": [
+    ["id", "id"]
+   ],
+   "webhookSubscriptionsCount": [
+    ["id", "id"]
+   ]
+  },
+  "RolloutTreatment": {
+   "changes": [
+    ["discount_id", "string"],
+    ["type", "string"]
+   ]
+  },
+  "SellingPlan": {
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  },
+  "Shop": {
+   "analyticsAnnotations": [
+    ["created_at", "time"],
+    ["ended_at", "time"],
+    ["id", "id"],
+    ["source", "string"],
+    ["started_at", "time"],
+    ["title", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "collections": [
+    ["default", "string"],
+    ["id", "id"],
+    ["product_id", "id"],
+    ["publishable_status", "string"],
+    ["published_status", "string"]
+   ],
+   "customers": [
+    ["default", "string"],
+    ["accepts_marketing", "boolean"],
+    ["country", "string"],
+    ["customer_date", "time"],
+    ["email", "string"],
+    ["first_name", "string"],
+    ["id", "id"],
+    ["last_abandoned_order_date", "time"],
+    ["last_name", "string"],
+    ["order_date", "time"],
+    ["orders_count", "integer"],
+    ["phone", "string"],
+    ["state", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["total_spent", "float"],
+    ["updated_at", "time"]
+   ],
+   "fulfillmentOrders": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "inventoryItems": [
+    ["id", "id"],
+    ["sku", "string"]
+   ],
+   "locations": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ],
+   "orders": [
+    ["default", "string"],
+    ["cart_token", "string"],
+    ["channel", "string"],
+    ["channel_id", "id"],
+    ["chargeback_status", "string"],
+    ["checkout_token", "string"],
+    ["confirmation_number", "string"],
+    ["created_at", "time"],
+    ["credit_card_last4", "string"],
+    ["current_total_price", "float"],
+    ["customer_id", "id"],
+    ["delivery_method", "string"],
+    ["discount_code", "string"],
+    ["email", "string"],
+    ["financial_status", "string"],
+    ["fraud_protection_level", "string"],
+    ["fulfillment_location_id", "id"],
+    ["fulfillment_status", "string"],
+    ["gateway", "string"],
+    ["id", "id"],
+    ["location_id", "id"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["payment_id", "string"],
+    ["payment_provider_id", "id"],
+    ["po_number", "string"],
+    ["processed_at", "time"],
+    ["reference_location_id", "id"],
+    ["requested_order_edit_status", "string"],
+    ["return_status", "string"],
+    ["risk_level", "string"],
+    ["sales_channel", "string"],
+    ["sku", "string"],
+    ["source_identifier", "string"],
+    ["source_name", "string"],
+    ["status", "string"],
+    ["subtotal_line_items_quantity", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["test", "boolean"],
+    ["total_weight", "string"],
+    ["updated_at", "time"]
+   ],
+   "productVariants": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["collection", "string"],
+    ["delivery_profile_id", "id"],
+    ["exclude_composite", "boolean"],
+    ["exclude_variants_with_components", "boolean"],
+    ["gift_card", "boolean"],
+    ["id", "id"],
+    ["inventory_quantity", "integer"],
+    ["location_id", "id"],
+    ["managed", "boolean"],
+    ["managed_by", "string"],
+    ["option1", "string"],
+    ["option2", "string"],
+    ["option3", "string"],
+    ["product_id", "id"],
+    ["product_ids", "string"],
+    ["product_publication_status", "string"],
+    ["product_status", "string"],
+    ["product_type", "string"],
+    ["publishable_status", "string"],
+    ["published_status", "string"],
+    ["requires_components", "boolean"],
+    ["sku", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["taxable", "boolean"],
+    ["title", "string"],
+    ["updated_at", "time"],
+    ["vendor", "string"]
+   ],
+   "products": [
+    ["default", "string"],
+    ["barcode", "string"],
+    ["bundles", "boolean"],
+    ["category_id", "string"],
+    ["collection_id", "id"],
+    ["combined_listing_role", "string"],
+    ["created_at", "time"],
+    ["delivery_profile_id", "id"],
+    ["gift_card", "boolean"],
+    ["handle", "string"],
+    ["has_only_composites", "boolean"],
+    ["has_only_default_variant", "boolean"],
+    ["has_variant_with_components", "boolean"],
+    ["id", "id"],
+    ["inventory_total", "integer"],
+    ["is_price_reduced", "boolean"],
+    ["metafields.{namespace}.{key}", "mixed"],
+    ["out_of_stock_somewhere", "boolean"],
+    ["price", "bigdecimal"],
+    ["product_configuration_owner", "string"],
+    ["product_publication_status", "string"],
+    ["product_type", "string"],
+    ["publication_ids", "string"],
+    ["publishable_status", "string"],
+    ["published_at", "time"],
+    ["published_status", "string"],
+    ["sku", "string"],
+    ["status", "string"],
+    ["tag", "string"],
+    ["tag_not", "string"],
+    ["title", "string"],
+    ["tracks_inventory", "boolean"],
+    ["updated_at", "time"],
+    ["variant_id", "id"],
+    ["variant_title", "string"],
+    ["vendor", "string"]
+   ]
+  },
+  "ShopifyPaymentsAccount": {
+   "balanceTransactions": [
+    ["default", "string"],
+    ["id", "id"]
+   ],
+   "disputes": [
+    ["id", "id"]
+   ],
+   "payouts": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "ShopifyPaymentsBankAccount": {
+   "payouts": [
+    ["default", "string"],
+    ["id", "id"]
+   ]
+  },
+  "StoreCreditAccount": {
+   "transactions": [
+    ["expires_at", "time"],
+    ["id", "id"],
+    ["type", "string"]
+   ]
+  },
+  "Validation": {
+   "metafieldDefinitions": [
+    ["default", "string"],
+    ["created_at", "time"],
+    ["id", "id"],
+    ["key", "string"],
+    ["namespace", "string"],
+    ["owner_type", "string"],
+    ["type", "string"],
+    ["updated_at", "time"]
+   ]
+  }
+ }
+}
