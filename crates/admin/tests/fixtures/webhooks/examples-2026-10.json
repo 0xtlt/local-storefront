@@ -124,6 +124,512 @@
       "published_scope": "web",
       "admin_graphql_api_id": "gid://shopify/Collection/408372092144951419"
     },
+    "companies/create": {
+      "name": "Example Company",
+      "note": "This is an example company",
+      "external_id": "123456789",
+      "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "customer_since": "2021-12-31T19:00:00-05:00",
+      "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+    },
+    "companies/delete": {
+      "name": "Example Company",
+      "note": "This is an example company",
+      "external_id": "123456789",
+      "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "customer_since": "2021-12-31T19:00:00-05:00",
+      "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+    },
+    "companies/update": {
+      "name": "Example Company",
+      "note": "This is an example company",
+      "external_id": "123456789",
+      "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "customer_since": "2021-12-31T19:00:00-05:00",
+      "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+    },
+    "company_contact_roles/assign": {
+      "company_contact": {
+        "customer_admin_graphql_api_id": "gid://shopify/Customer/12123842227812391",
+        "title": "Buyer",
+        "locale": "en",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951419",
+        "company": {
+          "name": "Example Company",
+          "note": "This is an example company",
+          "external_id": "123456789",
+          "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "customer_since": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        }
+      },
+      "company_location": {
+        "name": "Montreal",
+        "external_id": "123456789",
+        "phone": "555-555-5555",
+        "locale": "en",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "note": "Head Office Location",
+        "buyer_experience_configuration": null,
+        "admin_graphql_api_id": "gid://shopify/CompanyLocation/408372092144951419",
+        "tax_exemptions": [
+          "CA_BC_CONTRACTOR_EXEMPTION",
+          "CA_BC_RESELLER_EXEMPTION"
+        ],
+        "tax_settings": {
+          "tax_registration_id": "1214214141",
+          "tax_exempt": null,
+          "tax_exemptions": [
+            "CA_BC_CONTRACTOR_EXEMPTION",
+            "CA_BC_RESELLER_EXEMPTION"
+          ]
+        },
+        "company": {
+          "name": "Example Company",
+          "note": "This is an example company",
+          "external_id": "123456789",
+          "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "customer_since": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        },
+        "billing_address": {
+          "address1": "175 Sherbrooke Street West",
+          "city": "Montreal",
+          "province": "Quebec",
+          "country": "Canada",
+          "zip": "H3A 0G4",
+          "recipient": "Adam Felix",
+          "first_name": null,
+          "last_name": null,
+          "address2": null,
+          "phone": "+49738001239",
+          "zone_code": "QC",
+          "country_code": "CA",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+          "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        },
+        "shipping_address": {
+          "address1": "175 Sherbrooke Street West",
+          "city": "Montreal",
+          "province": "Quebec",
+          "country": "Canada",
+          "zip": "H3A 0G4",
+          "recipient": "Adam Felix",
+          "first_name": null,
+          "last_name": null,
+          "address2": null,
+          "phone": "+49738001239",
+          "zone_code": "QC",
+          "country_code": "CA",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+          "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        },
+        "tax_registration": {
+          "tax_id": "1214214141"
+        }
+      },
+      "company_contact_role": {
+        "name": "Location Admin"
+      }
+    },
+    "company_contact_roles/revoke": {
+      "company_contact": {
+        "customer_admin_graphql_api_id": "gid://shopify/Customer/12123842227812391",
+        "title": "Buyer",
+        "locale": "en",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951419",
+        "company": {
+          "name": "Example Company",
+          "note": "This is an example company",
+          "external_id": "123456789",
+          "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "customer_since": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        }
+      },
+      "company_location": {
+        "name": "Montreal",
+        "external_id": "123456789",
+        "phone": "555-555-5555",
+        "locale": "en",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "note": "Head Office Location",
+        "buyer_experience_configuration": null,
+        "admin_graphql_api_id": "gid://shopify/CompanyLocation/408372092144951419",
+        "tax_exemptions": [
+          "CA_BC_CONTRACTOR_EXEMPTION",
+          "CA_BC_RESELLER_EXEMPTION"
+        ],
+        "tax_settings": {
+          "tax_registration_id": "1214214141",
+          "tax_exempt": null,
+          "tax_exemptions": [
+            "CA_BC_CONTRACTOR_EXEMPTION",
+            "CA_BC_RESELLER_EXEMPTION"
+          ]
+        },
+        "company": {
+          "name": "Example Company",
+          "note": "This is an example company",
+          "external_id": "123456789",
+          "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "customer_since": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        },
+        "billing_address": {
+          "address1": "175 Sherbrooke Street West",
+          "city": "Montreal",
+          "province": "Quebec",
+          "country": "Canada",
+          "zip": "H3A 0G4",
+          "recipient": "Adam Felix",
+          "first_name": null,
+          "last_name": null,
+          "address2": null,
+          "phone": "+49738001239",
+          "zone_code": "QC",
+          "country_code": "CA",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+          "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        },
+        "shipping_address": {
+          "address1": "175 Sherbrooke Street West",
+          "city": "Montreal",
+          "province": "Quebec",
+          "country": "Canada",
+          "zip": "H3A 0G4",
+          "recipient": "Adam Felix",
+          "first_name": null,
+          "last_name": null,
+          "address2": null,
+          "phone": "+49738001239",
+          "zone_code": "QC",
+          "country_code": "CA",
+          "created_at": "2021-12-31T19:00:00-05:00",
+          "updated_at": "2021-12-31T19:00:00-05:00",
+          "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+          "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+        },
+        "tax_registration": {
+          "tax_id": "1214214141"
+        }
+      },
+      "company_contact_role": {
+        "name": "Location Admin"
+      }
+    },
+    "company_contacts/create": {
+      "customer_admin_graphql_api_id": "gid://shopify/Customer/12123842227812391",
+      "title": "Buyer",
+      "locale": "en",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951419",
+      "company": {
+        "name": "Example Company",
+        "note": "This is an example company",
+        "external_id": "123456789",
+        "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "customer_since": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      }
+    },
+    "company_contacts/delete": {
+      "customer_admin_graphql_api_id": "gid://shopify/Customer/12123842227812391",
+      "title": "Buyer",
+      "locale": "en",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951419",
+      "company": {
+        "name": "Example Company",
+        "note": "This is an example company",
+        "external_id": "123456789",
+        "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "customer_since": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      }
+    },
+    "company_contacts/update": {
+      "customer_admin_graphql_api_id": "gid://shopify/Customer/12123842227812391",
+      "title": "Buyer",
+      "locale": "en",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951419",
+      "company": {
+        "name": "Example Company",
+        "note": "This is an example company",
+        "external_id": "123456789",
+        "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "customer_since": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      }
+    },
+    "company_locations/create": {
+      "name": "Montreal",
+      "external_id": "123456789",
+      "phone": "555-555-5555",
+      "locale": "en",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "note": "Head Office Location",
+      "buyer_experience_configuration": null,
+      "admin_graphql_api_id": "gid://shopify/CompanyLocation/408372092144951419",
+      "tax_exemptions": [
+        "CA_BC_CONTRACTOR_EXEMPTION",
+        "CA_BC_RESELLER_EXEMPTION"
+      ],
+      "tax_settings": {
+        "tax_registration_id": "1214214141",
+        "tax_exempt": null,
+        "tax_exemptions": [
+          "CA_BC_CONTRACTOR_EXEMPTION",
+          "CA_BC_RESELLER_EXEMPTION"
+        ]
+      },
+      "company": {
+        "name": "Example Company",
+        "note": "This is an example company",
+        "external_id": "123456789",
+        "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "customer_since": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "billing_address": {
+        "address1": "175 Sherbrooke Street West",
+        "city": "Montreal",
+        "province": "Quebec",
+        "country": "Canada",
+        "zip": "H3A 0G4",
+        "recipient": "Adam Felix",
+        "first_name": null,
+        "last_name": null,
+        "address2": null,
+        "phone": "+49738001239",
+        "zone_code": "QC",
+        "country_code": "CA",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+        "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "shipping_address": {
+        "address1": "175 Sherbrooke Street West",
+        "city": "Montreal",
+        "province": "Quebec",
+        "country": "Canada",
+        "zip": "H3A 0G4",
+        "recipient": "Adam Felix",
+        "first_name": null,
+        "last_name": null,
+        "address2": null,
+        "phone": "+49738001239",
+        "zone_code": "QC",
+        "country_code": "CA",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+        "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "tax_registration": {
+        "tax_id": "1214214141"
+      }
+    },
+    "company_locations/delete": {
+      "name": "Montreal",
+      "external_id": "123456789",
+      "phone": "555-555-5555",
+      "locale": "en",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "note": "Head Office Location",
+      "buyer_experience_configuration": null,
+      "admin_graphql_api_id": "gid://shopify/CompanyLocation/408372092144951419",
+      "tax_exemptions": [
+        "CA_BC_CONTRACTOR_EXEMPTION",
+        "CA_BC_RESELLER_EXEMPTION"
+      ],
+      "tax_settings": {
+        "tax_registration_id": "1214214141",
+        "tax_exempt": null,
+        "tax_exemptions": [
+          "CA_BC_CONTRACTOR_EXEMPTION",
+          "CA_BC_RESELLER_EXEMPTION"
+        ]
+      },
+      "company": {
+        "name": "Example Company",
+        "note": "This is an example company",
+        "external_id": "123456789",
+        "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "customer_since": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "billing_address": {
+        "address1": "175 Sherbrooke Street West",
+        "city": "Montreal",
+        "province": "Quebec",
+        "country": "Canada",
+        "zip": "H3A 0G4",
+        "recipient": "Adam Felix",
+        "first_name": null,
+        "last_name": null,
+        "address2": null,
+        "phone": "+49738001239",
+        "zone_code": "QC",
+        "country_code": "CA",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+        "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "shipping_address": {
+        "address1": "175 Sherbrooke Street West",
+        "city": "Montreal",
+        "province": "Quebec",
+        "country": "Canada",
+        "zip": "H3A 0G4",
+        "recipient": "Adam Felix",
+        "first_name": null,
+        "last_name": null,
+        "address2": null,
+        "phone": "+49738001239",
+        "zone_code": "QC",
+        "country_code": "CA",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+        "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "tax_registration": {
+        "tax_id": "1214214141"
+      }
+    },
+    "company_locations/update": {
+      "name": "Montreal",
+      "external_id": "123456789",
+      "phone": "555-555-5555",
+      "locale": "en",
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "note": "Head Office Location",
+      "buyer_experience_configuration": null,
+      "admin_graphql_api_id": "gid://shopify/CompanyLocation/408372092144951419",
+      "tax_exemptions": [
+        "CA_BC_CONTRACTOR_EXEMPTION",
+        "CA_BC_RESELLER_EXEMPTION"
+      ],
+      "tax_settings": {
+        "tax_registration_id": "1214214141",
+        "tax_exempt": null,
+        "tax_exemptions": [
+          "CA_BC_CONTRACTOR_EXEMPTION",
+          "CA_BC_RESELLER_EXEMPTION"
+        ]
+      },
+      "company": {
+        "name": "Example Company",
+        "note": "This is an example company",
+        "external_id": "123456789",
+        "main_contact_admin_graphql_api_id": "gid://shopify/CompanyContact/408372092144951652",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "customer_since": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "billing_address": {
+        "address1": "175 Sherbrooke Street West",
+        "city": "Montreal",
+        "province": "Quebec",
+        "country": "Canada",
+        "zip": "H3A 0G4",
+        "recipient": "Adam Felix",
+        "first_name": null,
+        "last_name": null,
+        "address2": null,
+        "phone": "+49738001239",
+        "zone_code": "QC",
+        "country_code": "CA",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+        "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "shipping_address": {
+        "address1": "175 Sherbrooke Street West",
+        "city": "Montreal",
+        "province": "Quebec",
+        "country": "Canada",
+        "zip": "H3A 0G4",
+        "recipient": "Adam Felix",
+        "first_name": null,
+        "last_name": null,
+        "address2": null,
+        "phone": "+49738001239",
+        "zone_code": "QC",
+        "country_code": "CA",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00",
+        "admin_graphql_api_id": "gid://shopify/CompanyAddress/141016871799219115",
+        "company_admin_graphql_api_id": "gid://shopify/Company/408372092144951419"
+      },
+      "tax_registration": {
+        "tax_id": "1214214141"
+      }
+    },
+    "customer.tags_added": {
+      "customerId": "gid://shopify/Customer/1",
+      "tags": [
+        "tag1",
+        "tag2"
+      ],
+      "occurredAt": "2005-05-05T00:00:00.000Z"
+    },
+    "customer.tags_removed": {
+      "customerId": "gid://shopify/Customer/1",
+      "tags": [
+        "tag1",
+        "tag2"
+      ],
+      "occurredAt": "2005-05-05T00:00:00.000Z"
+    },
     "customers/create": {
       "id": 706405506930370084,
       "created_at": "2021-12-31T19:00:00-05:00",
@@ -306,6 +812,25 @@
         "country_code": "CA",
         "country_name": "CA",
         "default": true
+      }
+    },
+    "customers_email_marketing_consent/update": {
+      "customer_id": 706405506930370084,
+      "email_address": "bob@biller.com",
+      "email_marketing_consent": {
+        "state": "not_subscribed",
+        "opt_in_level": null,
+        "consent_updated_at": null
+      }
+    },
+    "customers_marketing_consent/update": {
+      "id": 706405506930370084,
+      "phone": null,
+      "sms_marketing_consent": {
+        "state": null,
+        "opt_in_level": null,
+        "consent_updated_at": null,
+        "consent_collected_from": "other"
       }
     },
     "discounts/create": {

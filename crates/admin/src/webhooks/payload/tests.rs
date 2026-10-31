@@ -111,6 +111,13 @@ const VALUES: &[(&str, &str)] = &[
         "shop/update",
         ".marketing_email_consent_enabled_at_checkout",
     ),
+    // `CompanyLocationTaxSettings.taxExempt` is a `Boolean!`: lsf writes it, where the example
+    // has `null`.
+    ("company_locations/*", ".tax_settings.tax_exempt"),
+    (
+        "company_contact_roles/*",
+        ".company_location.tax_settings.tax_exempt",
+    ),
     // The compliance examples are of another shop and customer (`{shop}.myshopify.com`), and of
     // a data request lsf has no record of.
     ("customers/data_request", "."),

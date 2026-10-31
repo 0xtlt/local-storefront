@@ -62,6 +62,28 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "products" => (product(), variants()),
         "collections" => (collection(), Vec::new()),
         "customers" => (customer(), Vec::new()),
+        "customer.tags_added" | "customer.tags_removed" => (
+            customer()
+                .with("id", json!("gid://shopify/Customer/1"))
+                .with("tags", json!(["tag1", "tag2"]))
+                .with("updatedAt", json!("2005-05-05T00:00:00Z")),
+            Vec::new(),
+        ),
+        "customers_email_marketing_consent" => (
+            customer().with(
+                "emailMarketingConsent",
+                json!({"marketingState": "NOT_SUBSCRIBED", "marketingOptInLevel": null, "consentUpdatedAt": null}),
+            ),
+            Vec::new(),
+        ),
+        "customers_marketing_consent" => (customer(), Vec::new()),
+        "companies" => (company(), Vec::new()),
+        "company_contacts" => (company_contact(), vec![company()]),
+        "company_locations" => (company_location(), vec![company()]),
+        "company_contact_roles" => (
+            role_assignment(),
+            vec![company_contact(), company_location(), company(), contact_role()],
+        ),
         "orders" => (order(), order_parts(false)),
         "fulfillments" => (fulfillment(), [vec![order()], order_parts(true)].concat()),
         "refunds" => (refund(), [vec![order()], order_parts(true)].concat()),
@@ -251,6 +273,95 @@ fn customer() -> Value {
             "gid://shopify/Order/280263",
             "gid://shopify/Order/220458",
         ],
+    })
+}
+
+fn company() -> Value {
+    json!({
+        "__typename": "Company",
+        "id": "gid://shopify/Company/408372092144951419",
+        "name": "Example Company",
+        "note": "This is an example company",
+        "externalId": "123456789",
+        "mainContact": "gid://shopify/CompanyContact/408372092144951652",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+        "customerSince": "2021-12-31T19:00:00-05:00",
+    })
+}
+
+fn company_contact() -> Value {
+    json!({
+        "__typename": "CompanyContact",
+        "id": "gid://shopify/CompanyContact/408372092144951419",
+        "customer": "gid://shopify/Customer/12123842227812391",
+        "company": "gid://shopify/Company/408372092144951419",
+        "title": "Buyer",
+        "locale": "en",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+    })
+}
+
+fn company_location() -> Value {
+    let address = json!({
+        "id": "gid://shopify/CompanyAddress/141016871799219115",
+        "address1": "175 Sherbrooke Street West",
+        "address2": null,
+        "city": "Montreal",
+        "province": "Quebec",
+        "zoneCode": "QC",
+        "country": "Canada",
+        "countryCode": "CA",
+        "zip": "H3A 0G4",
+        "recipient": "Adam Felix",
+        "firstName": null,
+        "lastName": null,
+        "phone": "+49738001239",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+    });
+    let exemptions = json!(["CA_BC_CONTRACTOR_EXEMPTION", "CA_BC_RESELLER_EXEMPTION"]);
+    json!({
+        "__typename": "CompanyLocation",
+        "id": "gid://shopify/CompanyLocation/408372092144951419",
+        "company": "gid://shopify/Company/408372092144951419",
+        "name": "Montreal",
+        "externalId": "123456789",
+        "phone": "555-555-5555",
+        "locale": "en",
+        "note": "Head Office Location",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+        "taxSettings": {
+            "taxRegistrationId": "1214214141",
+            "taxExempt": false,
+            "taxExemptions": exemptions,
+        },
+        "billingAddress": address,
+        "shippingAddress": address,
+    })
+}
+
+fn contact_role() -> Value {
+    json!({
+        "__typename": "CompanyContactRole",
+        "id": "gid://shopify/CompanyContactRole/1",
+        "name": "Location Admin",
+        "note": null,
+    })
+}
+
+fn role_assignment() -> Value {
+    json!({
+        "__typename": "CompanyContactRoleAssignment",
+        "id": "gid://shopify/CompanyContactRoleAssignment/1",
+        "company": "gid://shopify/Company/408372092144951419",
+        "companyContact": "gid://shopify/CompanyContact/408372092144951419",
+        "companyLocation": "gid://shopify/CompanyLocation/408372092144951419",
+        "role": "gid://shopify/CompanyContactRole/1",
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
     })
 }
 

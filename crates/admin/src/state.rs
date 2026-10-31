@@ -55,7 +55,8 @@ pub struct Event {
     /// A unique id, `X-Shopify-Event-Id`.
     pub id: String,
     /// The record as it was when the event happened: what a `…/delete` topic reports, since the
-    /// record is gone by the time the webhook is built.
+    /// record is gone by the time the webhook is built. For another topic, the record before the
+    /// change, when the payload says what changed ([`ShopState::emit_with`]).
     pub snapshot: Option<Record>,
 }
 
@@ -370,6 +371,18 @@ impl ShopState {
         };
         self.events.push(event);
         &self.events[self.events.len() - 1]
+    }
+
+    /// Records that `topic` happened to a record, with the record the event keeps given rather
+    /// than copied: the record before the change, for a topic whose payload says what changed
+    /// (`customer.tags_added` names the tags the record did not have), or a record about to go
+    /// with what its payload embeds (a role assignment revoked, a contact deleted with its
+    /// company inline). See `Event::snapshot`.
+    pub fn emit_with(&mut self, topic: &str, gid: &str, snapshot: Record) -> &Event {
+        self.emit(topic, gid);
+        let last = self.events.len() - 1;
+        self.events[last].snapshot = Some(snapshot);
+        &self.events[last]
     }
 
     /// The events not taken yet, in the order they happened.

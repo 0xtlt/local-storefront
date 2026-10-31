@@ -417,6 +417,14 @@ fn event_payload(event: &Event, lookup: &dyn Lookup) -> Result<Value, String> {
             json!(event.at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         );
     }
+    // A change whose event kept the record before it: the builders of the topics that say what
+    // changed (`customer.tags_added`) read it.
+    if !gone
+        && let Some(before) = &event.snapshot
+        && !record.contains_key(payload::PREVIOUS)
+    {
+        record.insert(payload::PREVIOUS.to_string(), Value::Object(before.clone()));
+    }
     if event.topic == "app/scopes_update" && !record.contains_key(payload::PREVIOUS_ACCESS_SCOPES) {
         let previous = event
             .snapshot

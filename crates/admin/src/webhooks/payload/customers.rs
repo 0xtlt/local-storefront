@@ -1,9 +1,11 @@
-//! The payloads of customers, and the addresses that orders share with them.
+//! The payloads of customers, of the companies they buy for (B2B), and the addresses that orders
+//! share with customers.
 
 use serde_json::{Map, Value, json};
 
 use super::{
-    Lookup, boolean, field, first, id, lower, records, resolve, strings, tags, text, time,
+    Lookup, PREVIOUS, boolean, field, first, id, lower, millis, records, ref_gid, resolve, strings,
+    tags, text, time,
 };
 
 /// `customers/create`, `/update`, `/enable`, `/disable`: a `Customer`.
@@ -231,4 +233,215 @@ fn name(address: &Map<String, Value>) -> Value {
         }
         name => name,
     }
+}
+
+/// `customer.tags_added` and `customer.tags_removed`: `{customerId, tags, occurredAt}`, in
+/// camelCase as Shopify's example writes these event topics. `tags` are those the change added
+/// (or removed): the difference with the record before it ([`PREVIOUS`]), ignoring case as tags
+/// do; without it (a webhook triggered on demand), the tags the customer has. `occurredAt` is
+/// the time of the change, which `updatedAt` holds, with milliseconds as the example has them.
+pub(super) fn tags_changed(record: &Map<String, Value>, added: bool) -> Value {
+    let now = tag_list(record);
+    let tags = match field(record, PREVIOUS) {
+        Value::Object(before) => {
+            let before = tag_list(before);
+            let (from, against) = if added {
+                (&now, &before)
+            } else {
+                (&before, &now)
+            };
+            from.iter()
+                .filter(|tag| !against.iter().any(|other| other.eq_ignore_ascii_case(tag)))
+                .cloned()
+                .collect()
+        }
+        _ => now,
+    };
+    json!({
+        "customerId": text(record, "id"),
+        "tags": tags,
+        "occurredAt": millis(field(record, "updatedAt")),
+    })
+}
+
+/// The tags of a record: an array, or REST's comma-separated string.
+fn tag_list(record: &Map<String, Value>) -> Vec<String> {
+    match field(record, "tags") {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        Value::String(text) => text
+            .split(',')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `customers_email_marketing_consent/update`: the customer's id, email and consent.
+pub(super) fn email_consent_update(record: &Map<String, Value>) -> Value {
+    let consent = match email_consent(field(record, "emailMarketingConsent")) {
+        Value::Null => json!({"state": null, "opt_in_level": null, "consent_updated_at": null}),
+        consent => consent,
+    };
+    json!({
+        "customer_id": id(record),
+        "email_address": email(record),
+        "email_marketing_consent": consent,
+    })
+}
+
+/// `customers_marketing_consent/update` (SMS): the customer's id, phone and consent, where
+/// `consent_collected_from` is in lowercase, as the topic's example writes it.
+pub(super) fn sms_consent_update(record: &Map<String, Value>) -> Value {
+    let consent = field(record, "smsMarketingConsent");
+    let collected = match field(
+        consent.as_object().unwrap_or(&Map::new()),
+        "consentCollectedFrom",
+    ) {
+        Value::String(from) => json!(from.to_ascii_lowercase()),
+        _ => json!("other"),
+    };
+    let consent = match consent {
+        Value::Object(consent) => json!({
+            "state": lower(field(consent, "marketingState")),
+            "opt_in_level": lower(field(consent, "marketingOptInLevel")),
+            "consent_updated_at": time(field(consent, "consentUpdatedAt")),
+            "consent_collected_from": collected,
+        }),
+        _ => json!({
+            "state": null,
+            "opt_in_level": null,
+            "consent_updated_at": null,
+            "consent_collected_from": collected,
+        }),
+    };
+    json!({
+        "id": id(record),
+        "phone": phone(record),
+        "sms_marketing_consent": consent,
+    })
+}
+
+/// `companies/create`, `/update`, `/delete`, and the company a contact or a location embeds: a
+/// `Company`, which REST names by GID alone (no numeric `id`).
+pub(super) fn company(record: &Map<String, Value>) -> Value {
+    json!({
+        "name": text(record, "name"),
+        "note": text(record, "note"),
+        "external_id": text(record, "externalId"),
+        "main_contact_admin_graphql_api_id": ref_gid(field(record, "mainContact")),
+        "created_at": time(field(record, "createdAt")),
+        "updated_at": time(field(record, "updatedAt")),
+        "customer_since": time(field(record, "customerSince")),
+        "admin_graphql_api_id": text(record, "id"),
+    })
+}
+
+/// The company a record names, embedded; `null` when it is gone.
+fn company_of(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    resolve(field(record, "company"), lookup).map_or(Value::Null, |found| company(&found))
+}
+
+/// `company_contacts/create`, `/update`, `/delete`: a `CompanyContact` with its company.
+pub(super) fn company_contact(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    json!({
+        "customer_admin_graphql_api_id": ref_gid(field(record, "customer")),
+        "title": text(record, "title"),
+        "locale": text(record, "locale"),
+        "created_at": time(field(record, "createdAt")),
+        "updated_at": time(field(record, "updatedAt")),
+        "admin_graphql_api_id": text(record, "id"),
+        "company": company_of(record, lookup),
+    })
+}
+
+/// `company_locations/create`, `/update`, `/delete`: a `CompanyLocation` with its company, its
+/// addresses and its tax settings.
+///
+/// `buyer_experience_configuration` is `null`, as in Shopify's example: how REST writes a
+/// configuration is not documented. `tax_settings.tax_exempt` is the location's (`false`
+/// unless set), where the example has `null`.
+pub(super) fn company_location(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let settings = field(record, "taxSettings");
+    let settings = settings.as_object().cloned().unwrap_or_default();
+    let exemptions = match field(&settings, "taxExemptions") {
+        Value::Null => strings(field(record, "taxExemptions")),
+        exemptions => strings(exemptions),
+    };
+    let registration = match text(&settings, "taxRegistrationId") {
+        Value::Null => text(record, "taxRegistrationId"),
+        registration => registration,
+    };
+    let company_gid = ref_gid(field(record, "company"));
+    let address = |key: &str| match field(record, key) {
+        Value::Object(address) => company_address(address, &company_gid),
+        _ => Value::Null,
+    };
+    json!({
+        "name": text(record, "name"),
+        "external_id": text(record, "externalId"),
+        "phone": text(record, "phone"),
+        "locale": text(record, "locale"),
+        "created_at": time(field(record, "createdAt")),
+        "updated_at": time(field(record, "updatedAt")),
+        "note": text(record, "note"),
+        "buyer_experience_configuration": null,
+        "admin_graphql_api_id": text(record, "id"),
+        "tax_exemptions": exemptions,
+        "tax_settings": {
+            "tax_registration_id": registration,
+            "tax_exempt": boolean(&settings, "taxExempt", false),
+            "tax_exemptions": exemptions,
+        },
+        "company": company_of(record, lookup),
+        "billing_address": address("billingAddress"),
+        "shipping_address": address("shippingAddress"),
+        "tax_registration": match &registration {
+            Value::Null => Value::Null,
+            registration => json!({"tax_id": registration}),
+        },
+    })
+}
+
+/// A `CompanyAddress` as REST writes it.
+fn company_address(address: &Map<String, Value>, company: &Value) -> Value {
+    json!({
+        "address1": text(address, "address1"),
+        "city": text(address, "city"),
+        "province": text(address, "province"),
+        "country": text(address, "country"),
+        "zip": text(address, "zip"),
+        "recipient": text(address, "recipient"),
+        "first_name": text(address, "firstName"),
+        "last_name": text(address, "lastName"),
+        "address2": text(address, "address2"),
+        "phone": text(address, "phone"),
+        "zone_code": text(address, "zoneCode"),
+        "country_code": text(address, "countryCode"),
+        "created_at": time(field(address, "createdAt")),
+        "updated_at": time(field(address, "updatedAt")),
+        "admin_graphql_api_id": text(address, "id"),
+        "company_admin_graphql_api_id": company,
+    })
+}
+
+/// `company_contact_roles/assign` and `/revoke`: a `CompanyContactRoleAssignment`, as the
+/// contact, the location and the role it joins.
+pub(super) fn role_assignment(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let contact = resolve(field(record, "companyContact"), lookup)
+        .map_or(Value::Null, |contact| company_contact(&contact, lookup));
+    let location = resolve(field(record, "companyLocation"), lookup)
+        .map_or(Value::Null, |location| company_location(&location, lookup));
+    let role = resolve(field(record, "role"), lookup)
+        .map_or(Value::Null, |role| json!({"name": text(&role, "name")}));
+    json!({
+        "company_contact": contact,
+        "company_location": location,
+        "company_contact_role": role,
+    })
 }
