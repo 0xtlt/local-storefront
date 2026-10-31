@@ -1532,3 +1532,88 @@ fn dispute_evidence_is_refused_past_its_due_date_or_with_an_unknown_file() {
         Value::Null
     );
 }
+
+#[test]
+fn the_tax_app_is_configured_then_activated_and_then_locked() {
+    let mut shop = demo();
+    let configure = "mutation($ready: Boolean!) { taxAppConfigure(ready: $ready) { taxAppConfiguration { state } userErrors { field message code } } }";
+    let ready = run(&mut shop, configure, json!({"ready": true}));
+    assert_eq!(
+        ready["data"]["taxAppConfigure"],
+        json!({"taxAppConfiguration": {"state": "READY"}, "userErrors": []})
+    );
+    assert_eq!(topics(&mut shop), ["tax_services/create"]);
+    let pending = run(&mut shop, configure, json!({"ready": false}));
+    assert_eq!(
+        pending["data"]["taxAppConfigure"]["taxAppConfiguration"]["state"],
+        "PENDING"
+    );
+    assert_eq!(topics(&mut shop), ["tax_services/update"]);
+    assert!(
+        super::tax::activate(&mut shop).is_err(),
+        "a pending app cannot be turned on"
+    );
+    run(&mut shop, configure, json!({"ready": true}));
+    super::tax::activate(&mut shop).unwrap();
+    let events = shop.take_events();
+    let last = events.last().unwrap();
+    let payload = crate::webhooks::payload::payload(
+        &last.topic,
+        shop.get(&last.gid).unwrap(),
+        &crate::api::samples::ShopLookup(&shop),
+    )
+    .unwrap();
+    assert_eq!(payload["active"], true);
+    assert_eq!(payload["name"], "lsf");
+    let locked = run(&mut shop, configure, json!({"ready": false}));
+    assert_eq!(
+        locked["data"]["taxAppConfigure"]["userErrors"][0]["code"],
+        "TAX_PARTNER_ALREADY_ACTIVE"
+    );
+    assert_eq!(super::tax::tax_state(&shop), "ACTIVE");
+    assert!(topics(&mut shop).is_empty());
+}
+
+#[test]
+fn tax_summaries_are_asked_for_an_order_or_a_period() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let create = "mutation($order: ID, $start: DateTime, $end: DateTime) { taxSummaryCreate(orderId: $order, startTime: $start, endTime: $end) {
+        enqueuedOrders { id } userErrors { field message code } } }";
+    let one = run(&mut shop, create, json!({"order": order}));
+    assert_eq!(
+        one["data"]["taxSummaryCreate"],
+        json!({"enqueuedOrders": [{"id": order}], "userErrors": []})
+    );
+    let all = run(
+        &mut shop,
+        create,
+        json!({"start": "2000-01-01T00:00:00Z", "end": "2099-01-01T00:00:00Z"}),
+    );
+    assert_eq!(
+        all["data"]["taxSummaryCreate"]["enqueuedOrders"]
+            .as_array()
+            .unwrap()
+            .len(),
+        shop.count("Order")
+    );
+    let none = run(
+        &mut shop,
+        create,
+        json!({"start": "2000-01-01T00:00:00Z", "end": "2000-01-02T00:00:00Z"}),
+    );
+    assert_eq!(
+        none["data"]["taxSummaryCreate"]["userErrors"][0]["code"],
+        "ORDER_NOT_FOUND"
+    );
+    let unknown = run(&mut shop, create, json!({"order": "gid://shopify/Order/1"}));
+    assert_eq!(
+        unknown["data"]["taxSummaryCreate"]["enqueuedOrders"],
+        Value::Null
+    );
+    let neither = run(&mut shop, create, json!({}));
+    assert_eq!(
+        neither["data"]["taxSummaryCreate"]["userErrors"][0]["code"],
+        "GENERAL_ERROR"
+    );
+}

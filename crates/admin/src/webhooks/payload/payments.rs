@@ -266,3 +266,14 @@ pub(super) fn dispute(dispute: &Map<String, Value>) -> Value {
         "initiated_at": time(field(dispute, "initiatedAt")),
     })
 }
+
+/// `tax_services/create` and `tax_services/update`: the app as the shop's tax service.
+pub(super) fn tax_service(record: &Map<String, Value>) -> Value {
+    let service = field(record, "lsfService");
+    json!({
+        "id": service.get("id").cloned().unwrap_or(Value::Null),
+        "name": service.get("name").cloned().unwrap_or(Value::Null),
+        "url": service.get("url").cloned().unwrap_or(Value::Null),
+        "active": service.get("active").and_then(Value::as_bool).unwrap_or(false),
+    })
+}

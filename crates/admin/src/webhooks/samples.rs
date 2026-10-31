@@ -100,6 +100,11 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "payment_terms" => (payment_terms(), vec![payment_schedule()]),
         "tender_transactions" => (tender_transaction(), Vec::new()),
         "disputes" => (dispute(), Vec::new()),
+        "tax_services" => (
+            json!({"__typename": "TaxAppConfiguration", "state": "ACTIVE",
+                   "lsfService": {"id": 1063370, "name": "Tax Service", "url": "https://taxes.shopify.com", "active": true}}),
+            Vec::new(),
+        ),
         "requested_order_edit" => requested_order_edit(topic),
         "fulfillment_events" => (fulfillment_event(), vec![fulfillment()]),
         "fulfillment_holds" => (fulfillment_hold(topic), Vec::new()),

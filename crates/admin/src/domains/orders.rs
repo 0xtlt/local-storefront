@@ -26,6 +26,7 @@ pub mod risk;
 mod services;
 pub mod shopify_payments;
 mod store_credit;
+pub mod tax;
 
 #[cfg(test)]
 mod extras_tests;
@@ -1361,4 +1362,5 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     risk::register(registry);
     shopify_payments::register(registry);
     store_credit::register(registry);
+    tax::register(registry);
 }

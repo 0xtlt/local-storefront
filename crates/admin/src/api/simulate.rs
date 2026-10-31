@@ -12,6 +12,7 @@
 //! | `POST /__lsf/admin/orders/link-request` (`{"shop"?, "order"}`) | The buyer asks for a new link to the order's status page: the email is recorded in the outbox, `orders/link_requested` fires. |
 //! | `POST /__lsf/admin/disputes` (`{"shop"?, "order", "amount"?, "type"?, "reason"?}`) | The buyer's bank opens a dispute (a `CHARGEBACK` of what the order was paid, `FRAUDULENT`, by default): `disputes/create`. `201` `{ok, shop, dispute}`. |
 //! | `POST /__lsf/admin/disputes/<n>/won`, `…/lost`, `…/accepted` | The bank decides it: `disputes/update`. `409` when it is decided already. |
+//! | `POST /__lsf/admin/tax-app/activate` (`{"shop"?}`) | The merchant turns on the tax app the app made `READY` (`taxAppConfigure`): `ACTIVE`, `tax_services/update`. `409` otherwise. |
 //!
 //! The shop is `?shop=` or the body's `shop`, else the default one. No token is needed: these
 //! are lsf's, for the tests on this machine, as the other control endpoints are.
@@ -146,6 +147,13 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Some(Err(error)) => HttpResponse::json(422, &json!({ "error": error })),
             }
         }
+        ("tax-app/activate", "POST") => match api.change_shop(&shop, orders::tax::activate) {
+            None => no_shop(),
+            Some(Ok(())) => {
+                HttpResponse::json(200, &json!({"ok": true, "shop": shop, "state": "ACTIVE"}))
+            }
+            Some(Err(error)) => HttpResponse::json(409, &json!({ "error": error })),
+        },
         (path, "POST") if path.starts_with("disputes/") => {
             let rest = &path["disputes/".len()..];
             let (number, outcome) = rest.split_once('/').unwrap_or((rest, ""));

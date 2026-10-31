@@ -222,6 +222,8 @@ pub const BUILT_TOPICS: &[&str] = &[
     "selling_plan_groups/update",
     "shop/redact",
     "shop/update",
+    "tax_services/create",
+    "tax_services/update",
     "tender_transactions/create",
     "variants/in_stock",
     "variants/out_of_stock",
@@ -319,6 +321,7 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "payment_terms/delete" => payments::payment_terms_deleted(record),
         "tender_transactions/create" => payments::tender_transaction(record),
         "disputes/create" | "disputes/update" => payments::dispute(record),
+        "tax_services/create" | "tax_services/update" => payments::tax_service(record),
         "requested_order_edit/created"
         | "requested_order_edit/declined"
         | "requested_order_edit/resolved" => payments::requested_order_edit(record, lookup),
