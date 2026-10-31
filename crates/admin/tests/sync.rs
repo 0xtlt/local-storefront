@@ -452,6 +452,10 @@ fn a_draft_or_unpublished_product_leaves_the_storefront() {
 #[test]
 fn a_renamed_product_is_renamed_in_what_names_it() {
     let (base, mut state) = rich();
+    // A change that does not show in the store, to an entity that names the product: looked at
+    // first, and written all the same once the product is renamed.
+    let zoe = customers::customer_gid(base.customer_by_email("zoe@example.com").unwrap());
+    set(&mut state, &zoe, "numberOfOrders", json!("9"));
     let coffee = product_gid(&base, "coffee-subscription");
     set(&mut state, &coffee, "handle", json!("coffee-club"));
     let (store, overlay) = synced(&state, &base);
@@ -934,5 +938,101 @@ fn content_syncs() {
     assert_eq!(
         store.metaobject("designer", "ines").unwrap().fields["name"].value,
         json!("Inès D.")
+    );
+}
+
+#[test]
+fn created_collections_metaobjects_and_markets_are_in_the_store() {
+    let (base, mut state) = rich();
+    // `collectionCreate` with products.
+    let collection = state.new_gid("Collection");
+    let dress = product_gid(&base, "linen-dress");
+    let boots = product_gid(&base, "preorder-boots");
+    state.insert(object(json!({
+        "__typename": "Collection", "id": collection, "title": "Picks", "handle": "picks",
+        "descriptionHtml": "<p>Ours.</p>", "sortOrder": "MANUAL", "products": [boots, dress],
+        "createdAt": "2026-03-15T10:00:00Z", "updatedAt": "2026-03-15T10:00:00Z", "metafields": [],
+    })));
+    // `metaobjectCreate`, with the id lsf-core gives its type and handle; a handle changed.
+    state.insert(object(json!({
+        "__typename": "Metaobject", "id": content::metaobject_gid("designer", "lea"),
+        "type": "designer", "handle": "lea",
+        "fields": [{"key": "name", "type": "single_line_text_field", "value": "Léa"},
+                   {"key": "signature_piece", "type": "product_reference", "value": boots}],
+        "capabilities": {"publishable": {"status": "ACTIVE"}},
+    })));
+    let marc = content::metaobject_gid("designer", "marc");
+    set(&mut state, &marc, "handle", json!("marc-b"));
+    // `marketCreate` for Great Britain, with the id lsf-core gives its handle.
+    state.insert(object(json!({
+        "__typename": "Market", "id": content::market_gid("uk"), "name": "UK", "handle": "uk",
+        "status": "ACTIVE", "enabled": true, "regions": [{"code": "GB"}], "metafields": [],
+    })));
+
+    let (store, overlay) = synced(&state, &base);
+    assert_eq!(overlay.removed.metaobjects["designer"], ["marc"]);
+    let picks = store.collection_by_handle("picks").expect("created");
+    assert_eq!(catalog::collection_gid(picks), collection);
+    let handles: Vec<&str> = picks
+        .products
+        .iter()
+        .map(|index| store.products[*index].handle.as_str())
+        .collect();
+    assert_eq!(handles, ["preorder-boots", "linen-dress"]);
+    let lea = store.metaobject("designer", "lea").expect("created");
+    assert_eq!(lea.fields["signature_piece"].value, json!("preorder-boots"));
+    assert!(store.metaobject("designer", "marc-b").is_some());
+    // The FAQ that named Marc names him by his new handle.
+    assert_eq!(
+        store.metaobject("faq", "returns").unwrap().fields["designers"].value,
+        json!(["designer/ines", "designer/marc-b"])
+    );
+    let uk = store
+        .markets
+        .iter()
+        .find(|market| market.handle == "uk")
+        .expect("created");
+    assert_eq!(uk.countries, ["GB"]);
+    assert_eq!(
+        store.market_of("GB").map(|market| market.handle.as_str()),
+        Some("uk")
+    );
+    assert_eq!(store.markets.len(), 2);
+}
+
+#[test]
+fn a_customer_whose_email_changed_stays_where_it_was() {
+    let (base, mut state) = rich();
+    let zoe = customers::customer_gid(base.customer_by_email("zoe@example.com").unwrap());
+    set(&mut state, &zoe, "email", json!("zoe.martin@example.com"));
+    let (store, overlay) = synced(&state, &base);
+    assert!(overlay.removed.is_empty());
+    let position = store
+        .customers
+        .iter()
+        .position(|customer| customer.email == "zoe.martin@example.com");
+    assert_eq!(position, Some(1));
+    assert_eq!(store.customers[1].id, base.customers[1].id);
+    assert_eq!(store.customers[1].orders.len(), 4);
+    // Her gift card names her by her new email.
+    assert_eq!(store.gift_cards[0].customer, Some(store.customers[1].id));
+}
+
+#[test]
+fn a_deleted_product_that_records_still_name_leaves_no_error() {
+    let (base, mut state) = rich();
+    // A product deleted without the collection and the group that list it being told.
+    let coffee = product_gid(&base, "coffee-subscription");
+    state.remove(&coffee);
+    let (store, overlay) = synced(&state, &base);
+    assert_eq!(overlay.removed.products, ["coffee-subscription"]);
+    assert!(store.product_by_handle("coffee-subscription").is_none());
+    let summer = store.collection_by_handle("summer").unwrap();
+    assert_eq!(summer.products.len(), 1);
+    // The metafields that named it name nothing now.
+    let dress = store.product_by_handle("linen-dress").unwrap();
+    assert_eq!(
+        dress.metafields["custom"]["related"].value,
+        json!(["gift-card"])
     );
 }

@@ -49,9 +49,9 @@ pub fn overlay(state: &ShopState, store: &Store) -> Option<Overlay> {
     sync.project(&changes)
 }
 
-/// The types of the records that are an entity of the store data, which the other records belong
-/// to (a variant to its product, a metafield to its owner).
-const ROOTS: [&str; 19] = [
+/// The types of the records that are an entity of the store data, written whole, which the
+/// other records belong to (a variant to its product, a metafield to its owner).
+const ENTITIES: [&str; 11] = [
     "Product",
     "Collection",
     "Page",
@@ -63,6 +63,11 @@ const ROOTS: [&str; 19] = [
     "Location",
     "Metaobject",
     "SellingPlanGroup",
+];
+
+/// The types of the records that are a part of a section of the store data: the shop, the
+/// markets of `localization`, the discounts and the settings of the Functions of `checkout`.
+const SECTIONS: [&str; 8] = [
     "Market",
     "Shop",
     "DiscountAutomaticNode",
@@ -444,7 +449,7 @@ impl<'s> Sync<'s> {
         for _ in 0..8 {
             let record = self.now.get(key).or_else(|| self.seed.get(key))?;
             let type_name = type_of(key, record)?;
-            if ROOTS.contains(&type_name) {
+            if ENTITIES.contains(&type_name) || SECTIONS.contains(&type_name) {
                 return Some((type_name, key));
             }
             let pointer = PARENT_FIELDS
@@ -467,7 +472,9 @@ impl<'s> Sync<'s> {
         let mut input = model::StoreInput::default();
         let mut removals = Removals::default();
         let mut shop_patch = Map::new();
+        // The entities looked at, and those written (added, replaced or removed).
         let mut done: HashSet<&'s str> = HashSet::new();
+        let mut written: HashSet<&'s str> = HashSet::new();
         let mut discounts = false;
         let mut functions: IndexSet<String> = IndexSet::new();
         let mut markets = false;
@@ -483,7 +490,10 @@ impl<'s> Sync<'s> {
             let mut moved: HashSet<&'s str> = std::mem::take(&mut variants).into_iter().collect();
             let mut members: Vec<&'s str> = Vec::new();
             for (type_name, key) in std::mem::take(&mut queue) {
-                if !done.insert(key) {
+                // An entity looked at already is looked at again when it turns out to name one
+                // that moved, unless it is written already.
+                let again = naming.contains(key) && ENTITIES.contains(&type_name);
+                if !done.insert(key) && (!again || written.contains(key)) {
                     continue;
                 }
                 match type_name {
@@ -524,6 +534,7 @@ impl<'s> Sync<'s> {
                                 moved.insert(key);
                             }
                         }
+                        written.insert(key);
                         members.extend(self.membership_changes(type_name, key));
                         if let Some(now) = now {
                             now.add(&mut input);
@@ -539,9 +550,10 @@ impl<'s> Sync<'s> {
                 }
             }
             if !moved.is_empty() {
-                for root in self.naming(&moved, &done) {
-                    naming.insert(root.1);
-                    queue.push(root);
+                for root in self.naming(&moved, &written) {
+                    if naming.insert(root.1) || !done.contains(root.1) {
+                        queue.push(root);
+                    }
                 }
             }
         }
@@ -624,8 +636,8 @@ impl<'s> Sync<'s> {
     }
 
     /// The entities that name one of `moved` (the records of the entities whose key changed or
-    /// that are gone, and the variants whose SKU changed): their data names them by their key,
-    /// which they must be written again with.
+    /// that are gone, and the variants whose SKU changed), and are not written yet: their data
+    /// names them by their key, which they must be written again with.
     fn naming(&self, moved: &HashSet<&'s str>, done: &HashSet<&'s str>) -> Vec<(&'s str, &'s str)> {
         let mut found = IndexSet::new();
         for (key, record) in self.state.iter() {
@@ -2508,7 +2520,7 @@ mod tests {
     fn everything(state: &ShopState, store: &Store) -> Value {
         let sync = Sync::new(state, store, &[]);
         let mut input = model::StoreInput::default();
-        for type_name in ROOTS {
+        for type_name in ENTITIES {
             for key in state.keys(type_name) {
                 if let Some(entity) = sync.entity(Era::Now, type_name, key) {
                     entity.add(&mut input);
