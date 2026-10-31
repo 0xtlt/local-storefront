@@ -1490,3 +1490,36 @@ fn deleted_records_leave_the_lists_that_named_them() {
         }
     }
 }
+
+/// A discount's percentage is a fraction from 0.0 to 1.0, as Shopify takes it: another is
+/// refused and nothing is created.
+#[test]
+fn a_discount_percentage_outside_zero_to_one_is_refused() {
+    let (_, mut shop) = rich();
+    let create = |shop: &mut ShopState, value: Value| {
+        run(
+            shop,
+            r#"mutation($input: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $input) { codeDiscountNode { id } userErrors { field message code } } }"#,
+            json!({"input": {"title": "Range", "code": "RANGE", "startsAt": "2026-01-01T00:00:00Z",
+                "customerGets": {"value": value, "items": {"all": true}}}}),
+        )
+    };
+    for percentage in [1e300, 1.5, -0.1] {
+        let answer = create(&mut shop, json!({"percentage": percentage}));
+        assert_eq!(
+            data(&answer, "discountCodeBasicCreate"),
+            &json!({"codeDiscountNode": null, "userErrors": [{
+                "field": ["basicCodeDiscount", "customerGets", "value", "percentage"],
+                "message": "Percentage must be between 0.0 and 1.0",
+                "code": "VALUE_OUTSIDE_RANGE",
+            }]}),
+            "{percentage}"
+        );
+    }
+    assert!(topics(&mut shop).is_empty());
+    let answer = create(&mut shop, json!({"percentage": 1.0}));
+    assert_eq!(
+        data(&answer, "discountCodeBasicCreate")["userErrors"],
+        json!([])
+    );
+}
