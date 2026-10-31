@@ -754,6 +754,9 @@ pub fn delete_order(state: &mut ShopState, order: &str) {
     if let Some(customer) = text(&record, "customer") {
         crate::domains::customers::refresh_customer(state, customer);
     }
+    if let Some(location) = crate::domains::customers::order_company_location(&record) {
+        crate::domains::customers::refresh_company_location(state, location);
+    }
 }
 
 /// `orderCreate`: an order imported by the app, made the way the seed makes the orders of the

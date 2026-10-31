@@ -165,6 +165,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
             result: &result,
             customer_id: Some(jane.id),
+            company_location_id: None,
             email: Some(&jane.email),
             phone: None,
             shipping_address: Some(&address),
@@ -243,6 +244,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             processed_at: "2026-05-01T09:31:00Z".parse().unwrap(),
             result: &result,
             customer_id: None,
+            company_location_id: None,
             email: None,
             phone: None,
             shipping_address: None,
@@ -265,6 +267,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             processed_at: "2026-05-01T09:32:00Z".parse().unwrap(),
             result: &result,
             customer_id: None,
+            company_location_id: None,
             email: None,
             phone: None,
             shipping_address: None,
@@ -275,4 +278,99 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
     );
     assert_eq!(next.number, 1006);
     assert_eq!(state.get(&next.id).unwrap()["name"], json!("#1006"));
+}
+
+/// An order placed for a company location (a B2B checkout) is the location's: its
+/// `ordersCount` and `totalSpent`, and its company's, count it as the customer's counters do,
+/// and a cancellation takes its total back.
+#[test]
+fn an_order_placed_for_a_company_location_counts_in_its_counters() {
+    let store = support::fixture_store("rich");
+    let mut state = ShopState::seeded(&store, None);
+    let buyer = store
+        .customers
+        .iter()
+        .find(|customer| customer.email == "buyer@acme.example")
+        .unwrap();
+    let company = &store.companies[buyer.company.unwrap()];
+    let lyon = company
+        .locations
+        .iter()
+        .find(|location| location.name == "Acme Lyon")
+        .unwrap();
+    let dress = store.product_by_handle("linen-dress").unwrap();
+    let variant = &dress.variants[0];
+    let result = lsf_checkout::CheckoutResult {
+        lines: vec![lsf_checkout::ResultLine {
+            id: "gid://shopify/CartLine/1".into(),
+            variant_id: variant.id,
+            product_id: dress.id,
+            title: dress.title.clone(),
+            quantity: 1,
+            unit_price: variant.price,
+            subtotal: variant.price,
+            total: variant.price,
+            ..Default::default()
+        }],
+        cost: lsf_checkout::Cost {
+            total: variant.price,
+            due_now: variant.price,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let order = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: Some(buyer.id),
+            company_location_id: Some(lyon.id),
+            email: Some(&buyer.email),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    let total = state.get(&order.id).unwrap()["totalPriceSet"]["shopMoney"]["amount"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let total: f64 = total.parse().unwrap();
+    let location = lsf_admin::state::gid("CompanyLocation", lyon.id);
+    let company_gid = lsf_admin::state::gid("Company", company.id);
+    let spent = |state: &ShopState, key: &str| -> f64 {
+        state.get(key).unwrap()["totalSpent"]["amount"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let record = state.get(&location).unwrap();
+    assert_eq!(record["ordersCount"]["count"], json!(5));
+    assert_eq!(record["orderCount"], json!(5));
+    assert_eq!(spent(&state, &location), 1250.0 + total);
+    assert_eq!(spent(&state, &company_gid), 1250.0 + total);
+    assert_eq!(
+        state.get(&order.id).unwrap()["purchasingEntity"]["__typename"],
+        json!("PurchasingCompany")
+    );
+
+    // Cancelled, it costs nothing, and still counts as an order.
+    let now = state.timestamp();
+    state
+        .get_mut(&order.id)
+        .unwrap()
+        .insert("cancelledAt".into(), json!(now));
+    lsf_admin::domains::orders::model::refresh_order(&mut state, &order.id);
+    assert_eq!(spent(&state, &location), 1250.0);
+    assert_eq!(spent(&state, &company_gid), 1250.0);
+    assert_eq!(
+        state.get(&location).unwrap()["ordersCount"]["count"],
+        json!(5)
+    );
 }

@@ -1693,8 +1693,19 @@ pub(super) fn place_order(
         if !computed.basis.matches(entry, &state.loaded().store) {
             return false;
         }
+        // The company location a B2B buyer orders for, as the checkout shows it.
+        let company_location = entry.session.customer_id.and_then(|customer_id| {
+            let customer = store
+                .customers
+                .iter()
+                .find(|customer| customer.id == customer_id)?;
+            let company = store.companies.get(customer.company?)?;
+            let index = customer.current_location(entry.session.company_location, &store)?;
+            company.locations.get(index).map(|location| location.id)
+        });
         let own = Placed {
             customer_id: entry.session.customer_id,
+            company_location,
             note: entry.session.cart_note.clone(),
             attributes: entry
                 .session
@@ -1759,6 +1770,7 @@ pub(super) fn place_order(
 /// What the session held of an order when it was placed.
 struct Placed {
     customer_id: Option<u64>,
+    company_location: Option<u64>,
     note: String,
     attributes: Vec<(String, String)>,
 }
@@ -1789,6 +1801,7 @@ fn record_in_admin(
             processed_at,
             result,
             customer_id: placed.customer_id,
+            company_location_id: placed.company_location,
             email: checkout.email.as_deref(),
             phone: checkout.phone.as_deref(),
             shipping_address: checkout.shipping_address.as_ref(),

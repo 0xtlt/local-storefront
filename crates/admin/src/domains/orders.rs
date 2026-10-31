@@ -929,6 +929,10 @@ pub struct PlacedOrder<'a> {
     pub result: &'a lsf_checkout::CheckoutResult,
     /// The logged-in customer, by their lsf-core id.
     pub customer_id: Option<u64>,
+    /// The company location the buyer ordered for (a B2B checkout), by its lsf-core id: the
+    /// order's `purchasingEntity` is then a `PurchasingCompany`, and the location's counters
+    /// count it.
+    pub company_location_id: Option<u64>,
     pub email: Option<&'a str>,
     pub phone: Option<&'a str>,
     pub shipping_address: Option<&'a lsf_checkout::Address>,
@@ -1120,6 +1124,31 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         location,
     };
     let order = insert_order(state, &draft);
+    let location = placed
+        .company_location_id
+        .map(|id| gid("CompanyLocation", id))
+        .filter(|location| state.contains(location));
+    if let Some(location) = &location {
+        let company = state
+            .get(location)
+            .and_then(|record| record.get("company"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        // The buyer's contact at the company: `CompanyContact/<customer id>`, the seed's.
+        let contact = draft
+            .customer
+            .as_deref()
+            .and_then(crate::state::parse_gid)
+            .map(|(_, id)| gid("CompanyContact", id))
+            .filter(|contact| state.contains(contact));
+        if let Some(record) = state.get_mut(&order) {
+            record.insert(
+                "purchasingEntity".into(),
+                json!({"__typename": "PurchasingCompany", "company": company, "location": location, "contact": contact}),
+            );
+        }
+        customers::refresh_company_location(state, location);
+    }
     state.emit("orders/create", &order);
     // What Shopify fires for a paid online order: the order, the transaction of the payment,
     // then `orders/paid`.

@@ -406,8 +406,8 @@ pub fn capturable_amount(state: &ShopState, order: &Record, authorization: &str)
 }
 
 /// Recomputes what an order derives from its line items, refunds, fulfillments, fulfillment
-/// orders, transactions and returns (see the module's documentation), and the customer's
-/// counters. Every mutation of the family runs it after changing an order's records.
+/// orders, transactions and returns (see the module's documentation), and the counters of its
+/// customer and of the company location it was placed for. Every mutation of the family runs it after changing an order's records.
 pub fn refresh_order(state: &mut ShopState, order: &str) {
     let Some(record) = state.get(order).cloned() else {
         return;
@@ -589,9 +589,16 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     if let Value::Object(fields) = fields {
         record.extend(fields);
     }
-    if let Some(customer) = record.get("customer").and_then(Value::as_str) {
-        let customer = customer.to_string();
+    let customer = record
+        .get("customer")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let location = customers::order_company_location(record).map(str::to_string);
+    if let Some(customer) = customer {
         customers::refresh_customer(state, &customer);
+    }
+    if let Some(location) = location {
+        customers::refresh_company_location(state, &location);
     }
 }
 

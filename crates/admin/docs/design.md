@@ -344,7 +344,9 @@ storefront, the checkout and the Function inputs already use.
   and the mutations share: `catalog::refresh_product` (price ranges, `totalInventory`,
   `tracksInventory`, `hasOutOfStockVariants`, `hasOnlyDefaultVariant`, `featuredMedia`, the
   variants' `inventoryQuantity`), `customers::refresh_customer` (`orders`, `numberOfOrders`,
-  `amountSpent`, `lastOrder`, `canDelete`), `content::attach_definition` (the seed's: a
+  `amountSpent`, `lastOrder`, `canDelete`), `customers::refresh_company_location` (a company
+  location's `ordersCount` and `totalSpent`, its company's `totalSpent`),
+  `content::attach_definition` (the seed's: a
   metafield's `definition`, created when there is none, the definition's `metafields` and
   `metafieldsCount`; the mutations link a metafield to an existing definition only, with
   `content::metafields::link_definition`, as Shopify keeps metafields without one).
@@ -753,7 +755,11 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
 - **`CompanyLocation`**: `name`, `externalId`, `company`, `locale`, `currency`,
   `shippingAddress` (an inline `CompanyAddress` with its id), `billingAddress: null` (the data
   has none), `taxSettings` (`taxRegistrationId`), `ordersCount`, `totalSpent`,
-  `roleAssignments`, dates, `metafields`.
+  `roleAssignments`, dates, `metafields`. The data's counters, given without the orders behind
+  them, are kept under `lsfOrdersBase`; `customers::refresh_company_location` (which
+  `refresh_order` runs) adds the orders placed for the location (`purchasingEntity` a
+  `PurchasingCompany`: a B2B order of the checkout) to them, and sums the company's
+  `totalSpent` again.
 - **`CompanyContact`**: `company`, `customer`, `title`, `locale`, `isMainContact`,
   `roleAssignments`, dates. **`CompanyContactRoleAssignment`**: one per location the buyer can
   order for, with the default role *(chosen)*.
@@ -821,7 +827,8 @@ records, so both are the same shape.
   `UnverifiedReturnLineItem` (with `unitPrice`) otherwise.
 - **Orders of the checkout**: `orders::record_placed_order(state, &PlacedOrder)` takes what the
   server's `place_order` has (the `CheckoutResult`, the time, the customer, the contact, the
-  address, the note, the attributes, the payment method's name as the gateway), gives the order
+  address, the note, the attributes, the payment method's name as the gateway, the company
+  location of a B2B buyer, which makes `purchasingEntity` a `PurchasingCompany`), gives the order
   the shop's next number (`model::next_order_number`, which `orderCreate` and a completed draft
   order take too: one numbering; a number or an id given and taken gets a new one), answers its
   GID and number (`RecordedOrder`), which the checkout shows on its thank-you page, refreshes

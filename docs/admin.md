@@ -566,6 +566,10 @@ published, Rails' wording otherwise), with their webhooks:
 | `companyContactCreate`, `companyContactUpdate`, `companyContactDelete`, `companyContactsDelete`, `companyContactRemoveFromCompany`, `companyAssignCustomerAsContact`, `companyAssignMainContact`, `companyRevokeMainContact` | A contact's id is its customer's (the checkout's `purchasingCompany.contact.id`). Deleting a contact keeps its customer. | `company_contacts/create`, `/update`, `/delete`; `companies/update` for the main contact |
 | `companyContactAssignRole(s)`, `companyLocationAssignRoles`, `companyContactRevokeRole(s)`, `companyLocationRevokeRoles` | One role per contact and location; the role and the location must be the contact's company's. | `company_contact_roles/assign`, `/revoke` |
 
+A company location's `ordersCount` and `totalSpent` (and its company's) count the orders placed
+for it at the local checkout by a B2B buyer, on top of what the store data says, as a customer's
+`numberOfOrders` and `amountSpent` count theirs; a cancelled order costs nothing.
+
 Every id that names nothing answers a `userError` (`Customer does not exist`, `Resource requested
 does not exist.`), and a mutation that fails changes nothing. The order of the webhooks of one
 mutation is lsf's: Shopify does not document it.

@@ -177,7 +177,8 @@ impl Checker<'_> {
             );
         }
         for (field, value) in object {
-            if field == "__typename" {
+            // `lsf…` keys hold what lsf keeps beyond the record, which GraphQL never reads.
+            if field == "__typename" || field.starts_with("lsf") {
                 continue;
             }
             let path = format!("{path}.{field}");

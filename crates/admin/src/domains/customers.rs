@@ -415,6 +415,9 @@ fn seed_company(seed: &mut Seed, company: &Company) {
             "ordersCount": {"count": location.orders_count, "precision": "EXACT"},
             "orderCount": location.orders_count,
             "totalSpent": seed.money_v2(location.total_spent),
+            // What the data counts without the orders behind them, which the orders placed
+            // for the location add to (`refresh_company_location`).
+            ORDERS_BASE: {"count": location.orders_count, "spent": location.total_spent},
             "roleAssignments": role_assignments,
             "createdAt": location_created,
             "updatedAt": date_time(location.updated_at),
@@ -529,6 +532,98 @@ pub fn refresh_customer(state: &mut ShopState, customer: &str) {
     record.insert("lastOrder".to_string(), json!(last));
     record.insert("canDelete".to_string(), json!(ids.is_empty()));
     record.insert("orders".to_string(), json!(ids));
+}
+
+/// What a company location's counters start from, kept on it under this key, which GraphQL
+/// never reads: `{"count", "spent"}` (cents), the store data's `orders_count` and `total_spent`,
+/// which it gives without the orders behind them (0 for a location the Admin API creates).
+pub const ORDERS_BASE: &str = "lsfOrdersBase";
+
+/// The company location an order was placed for: its `purchasingEntity` when it is a
+/// `PurchasingCompany`.
+pub fn order_company_location(order: &Record) -> Option<&str> {
+    let entity = order.get("purchasingEntity")?;
+    (entity.get("__typename").and_then(Value::as_str) == Some("PurchasingCompany"))
+        .then(|| entity.get("location").and_then(Value::as_str))
+        .flatten()
+}
+
+/// Recomputes what a company location and its company derive from the orders placed for the
+/// location, as [`refresh_customer`] does for a customer: the location's `ordersCount`,
+/// `orderCount` and `totalSpent` (what the store data counts, plus the orders of the shop placed
+/// for it, the cancelled ones costing nothing, as `amountSpent` counts them), and the company's
+/// `totalSpent`, the sum of its locations'. `Company.ordersCount` is read from its locations.
+pub fn refresh_company_location(state: &mut ShopState, location: &str) {
+    let Some(record) = state.get(location) else {
+        return;
+    };
+    let currency = state
+        .shop()
+        .and_then(|shop| shop.get("currencyCode"))
+        .and_then(Value::as_str)
+        .unwrap_or("USD")
+        .to_string();
+    let base = record.get(ORDERS_BASE);
+    let base_count = base
+        .and_then(|base| base.get("count"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let base_spent = base
+        .and_then(|base| base.get("spent"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let company = record
+        .get("company")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let orders: Vec<(i64, bool)> = state
+        .all("Order")
+        .filter(|order| order_company_location(order) == Some(location))
+        .map(|order| {
+            let total = order
+                .get("totalPriceSet")
+                .and_then(|set| set.get("shopMoney"))
+                .and_then(|money| cents_of(money.get("amount")))
+                .unwrap_or(0);
+            let cancelled = order.get("cancelledAt").is_some_and(|at| !at.is_null());
+            (total, cancelled)
+        })
+        .collect();
+    let count = base_count + orders.len() as i64;
+    let spent = orders
+        .iter()
+        .filter(|(_, cancelled)| !cancelled)
+        .fold(base_spent, |spent, (total, _)| spent.saturating_add(*total));
+    if let Some(record) = state.get_mut(location) {
+        record.insert(
+            "ordersCount".into(),
+            json!({"count": count, "precision": "EXACT"}),
+        );
+        record.insert("orderCount".into(), json!(count));
+        record.insert("totalSpent".into(), value::money_v2(spent, &currency));
+    }
+    let Some(company) = company else {
+        return;
+    };
+    let locations = state
+        .get(&company)
+        .and_then(|record| record.get("locations"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let total = locations
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(|location| state.get(location))
+        .filter_map(|location| {
+            location
+                .get("totalSpent")
+                .and_then(|money| cents_of(money.get("amount")))
+        })
+        .fold(0i64, i64::saturating_add);
+    if let Some(record) = state.get_mut(&company) {
+        record.insert("totalSpent".into(), value::money_v2(total, &currency));
+    }
 }
 
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a mutation"

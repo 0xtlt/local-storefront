@@ -205,6 +205,7 @@ fn place_order(api: &AdminApi) -> String {
         processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
         result: &result,
         customer_id: Some(jane.id),
+        company_location_id: None,
         email: Some(&jane.email),
         phone: None,
         shipping_address: Some(&address),
