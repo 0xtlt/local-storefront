@@ -671,12 +671,40 @@ impl AdminApi {
 
     /// `GET /__lsf/admin`.
     pub fn status(&self) -> Value {
-        let tokens = lock(&self.tokens);
         let now = Utc::now();
-        let shops: Vec<Value> = self
-            .all_shops()
+        let all_shops = self.all_shops();
+        // What the tokens say of each shop, copied so the tokens are not locked while a shop
+        // is: a shop busy with a long mutation would hold up every request's authentication.
+        let mut tokens_of: std::collections::HashMap<String, (Option<Vec<String>>, Vec<Value>)> = {
+            let tokens = lock(&self.tokens);
+            all_shops
+                .iter()
+                .map(|(domain, _)| {
+                    let installed = tokens
+                        .installed_scopes(domain, &self.auth.client_id)
+                        .map(<[String]>::to_vec);
+                    let grants = tokens
+                        .grants()
+                        .filter(|(_, grant)| grant.shop == *domain && !grant.expired(now))
+                        .map(|(token, grant)| {
+                            json!({
+                                "token": token,
+                                "mode": grant.mode,
+                                "source": grant.source,
+                                "scopes": grant.scopes.join(","),
+                                "expiresAt": grant.expires_at.map(|at| at.to_rfc3339()),
+                                "user": grant.user.as_ref().map(|user| user.id),
+                            })
+                        })
+                        .collect();
+                    (domain.clone(), (installed, grants))
+                })
+                .collect()
+        };
+        let shops: Vec<Value> = all_shops
             .into_iter()
             .map(|(domain, shop)| {
+                let (installed, grants) = tokens_of.remove(&domain).unwrap_or_default();
                 let live = lock(&shop);
                 let mut counts: Vec<(&str, usize)> = live
                     .state
@@ -684,20 +712,6 @@ impl AdminApi {
                     .map(|type_name| (type_name, live.state.count(type_name)))
                     .collect();
                 counts.sort();
-                let grants: Vec<Value> = tokens
-                    .grants()
-                    .filter(|(_, grant)| grant.shop == domain && !grant.expired(now))
-                    .map(|(token, grant)| {
-                        json!({
-                            "token": token,
-                            "mode": grant.mode,
-                            "source": grant.source,
-                            "scopes": grant.scopes.join(","),
-                            "expiresAt": grant.expires_at.map(|at| at.to_rfc3339()),
-                            "user": grant.user.as_ref().map(|user| user.id),
-                        })
-                    })
-                    .collect();
                 let subscriptions: Vec<Value> = self
                     .webhooks
                     .registry()
@@ -707,8 +721,8 @@ impl AdminApi {
                     .collect();
                 json!({
                     "shop": domain,
-                    "installed": tokens.installed_scopes(&domain, &self.auth.client_id).is_some(),
-                    "scopes": tokens.installed_scopes(&domain, &self.auth.client_id),
+                    "installed": installed.is_some(),
+                    "scopes": installed,
                     "token": self.token(&domain),
                     "changed": live.changed,
                     "records": live.state.len(),
