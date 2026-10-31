@@ -52,6 +52,8 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("fulfillment_events", _) => &["FulfillmentEvent"],
         ("requested_order_edit", _) => &["RequestedOrderEdit"],
         ("returns", _) => &["Return"],
+        ("reverse_deliveries", _) => &["ReverseDelivery"],
+        ("reverse_fulfillment_orders", _) => &["ReverseFulfillmentOrder"],
         ("fulfillments", _) => &["Fulfillment"],
         ("refunds", _) => &["Refund"],
         ("draft_orders", _) => &["DraftOrder"],

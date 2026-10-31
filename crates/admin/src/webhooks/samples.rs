@@ -103,7 +103,16 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "fulfillment_events" => (fulfillment_event(), vec![fulfillment()]),
         "fulfillment_holds" => (fulfillment_hold(topic), Vec::new()),
         "fulfillment_orders" => fulfillment_order_sample(topic),
+        "returns" if topic == "returns/update" => (
+            return_sample(topic).with(
+                "lsfUpdateRemovals",
+                json!([{"id": "gid://shopify/ReturnLineItem/987654321", "delta": 2}]),
+            ),
+            Vec::new(),
+        ),
         "returns" => (return_sample(topic), Vec::new()),
+        "reverse_deliveries" => reverse_delivery(),
+        "reverse_fulfillment_orders" => reverse_fulfillment_order(),
         "fulfillments" => (fulfillment(), [vec![order()], order_parts(true)].concat()),
         "refunds" => (refund(), [vec![order()], order_parts(true)].concat()),
         "draft_orders" => (draft_order(), Vec::new()),
@@ -1000,6 +1009,56 @@ fn requested_order_edit(topic: &str) -> (Value, Vec<Value>) {
             "quantity": 2,
             "resolvedQuantity": resolved,
         })],
+    )
+}
+
+/// The delivery of `reverse_deliveries/attach_deliverable`'s example, and its reverse
+/// fulfillment order.
+fn reverse_delivery() -> (Value, Vec<Value>) {
+    (
+        json!({
+            "__typename": "ReverseDelivery",
+            "id": "gid://shopify/ReverseDelivery/9080907654321",
+            "reverseFulfillmentOrder": "gid://shopify/ReverseFulfillmentOrder/11111111",
+            "reverseDeliveryLineItems": [],
+            "deliverable": {
+                "__typename": "ReverseDeliveryShippingDeliverable",
+                "tracking": {"carrierName": "USPS", "number": "123345345", "url": null},
+                "label": {"publicFileUrl": null, "createdAt": null},
+            },
+        }),
+        vec![json!({
+            "__typename": "ReverseFulfillmentOrder",
+            "id": "gid://shopify/ReverseFulfillmentOrder/11111111",
+            "lsfReturn": "gid://shopify/Return/123134564567890",
+        })],
+    )
+}
+
+/// The reverse fulfillment order of `reverse_fulfillment_orders/dispose`'s example and its two
+/// dispositions.
+fn reverse_fulfillment_order() -> (Value, Vec<Value>) {
+    let disposition = |id: u64, line: u64| {
+        json!({
+            "__typename": "ReverseFulfillmentOrderDisposition",
+            "id": format!("gid://shopify/ReverseFulfillmentOrderDisposition/{id}"),
+            "type": "RESTOCKED",
+            "quantity": 1,
+            "location": "gid://shopify/Location/3333333",
+            "lsfLineItem": format!("gid://shopify/ReverseFulfillmentOrderLineItem/{line}"),
+        })
+    };
+    (
+        json!({
+            "__typename": "ReverseFulfillmentOrder",
+            "id": "gid://shopify/ReverseFulfillmentOrder/11111111",
+            "status": "OPEN",
+            "lsfLastDispositions": [
+                "gid://shopify/ReverseFulfillmentOrderDisposition/1",
+                "gid://shopify/ReverseFulfillmentOrderDisposition/2",
+            ],
+        }),
+        vec![disposition(1, 2222222), disposition(2, 2222223)],
     )
 }
 

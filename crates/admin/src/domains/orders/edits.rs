@@ -831,7 +831,7 @@ pub(super) fn remove_discount(
 
 /// Adds units of a line item to a fulfillment order of the order that is still open (at
 /// `location` when one is), or to a new one there.
-fn add_to_fulfillment(
+pub(super) fn add_to_fulfillment(
     state: &mut ShopState,
     order: &str,
     line: &str,

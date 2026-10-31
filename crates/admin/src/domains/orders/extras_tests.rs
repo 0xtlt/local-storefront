@@ -565,3 +565,388 @@ fn a_draft_is_made_from_an_order_and_its_invoice_previewed() {
         json!(["orderId"])
     );
 }
+
+/// The fulfillment line items of an order: `(id, quantity)`.
+fn fulfilled_lines(shop: &mut ShopState, order: &str) -> Vec<(String, i64)> {
+    let answer = run(
+        shop,
+        "query($id: ID!) { order(id: $id) { fulfillments { fulfillmentLineItems(first: 10) { nodes { id quantity } } } } }",
+        json!({"id": order}),
+    );
+    answer["data"]["order"]["fulfillments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|fulfillment| {
+            fulfillment["fulfillmentLineItems"]["nodes"]
+                .as_array()
+                .unwrap()
+                .clone()
+        })
+        .map(|line| {
+            (
+                line["id"].as_str().unwrap().to_string(),
+                line["quantity"].as_i64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+const RETURN_CREATE: &str = "mutation($input: ReturnInput!) { returnCreate(returnInput: $input) {
+    return { id status returnLineItems(first: 5) { nodes { id ... on ReturnLineItem { quantity restockingFee { percentage amountSet { shopMoney { amount } } } } } }
+      exchangeLineItems(first: 5) { nodes { id quantity processableQuantity variantId } }
+      returnShippingFees { amountSet { shopMoney { amount } } }
+      reverseFulfillmentOrders(first: 5) { nodes { id status lineItems(first: 5) { nodes { id totalQuantity } } } } }
+    userErrors { field message code } } }";
+
+#[test]
+fn a_return_with_an_exchange_and_fees_is_delivered_disposed_and_processed() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let (line, _) = fulfilled_lines(&mut shop, &order)[0].clone();
+    let variant = shop.keys("ProductVariant").last().unwrap().to_string();
+    let created = run(
+        &mut shop,
+        RETURN_CREATE,
+        json!({"input": {
+            "orderId": order,
+            "returnLineItems": [{"fulfillmentLineItemId": line, "quantity": 1, "returnReason": "SIZE_TOO_SMALL", "restockingFee": {"percentage": 10}}],
+            "exchangeLineItems": [{"variantId": variant, "quantity": 1}],
+            "returnShippingFee": {"amount": {"amount": "5.00", "currencyCode": "USD"}},
+        }}),
+    );
+    let payload = &created["data"]["returnCreate"];
+    assert_eq!(payload["userErrors"], json!([]), "{created}");
+    let ret = &payload["return"];
+    assert_eq!(ret["status"], "OPEN");
+    let return_line = ret["returnLineItems"]["nodes"][0]["id"].clone();
+    assert_eq!(
+        ret["returnLineItems"]["nodes"][0]["restockingFee"]["percentage"],
+        10.0
+    );
+    let exchange = &ret["exchangeLineItems"]["nodes"][0];
+    assert_eq!(exchange["processableQuantity"], 1);
+    assert_eq!(exchange["variantId"], json!(variant));
+    assert_eq!(
+        cents(amount(&ret["returnShippingFees"][0]["amountSet"])),
+        500
+    );
+    let reverse = &ret["reverseFulfillmentOrders"]["nodes"][0];
+    assert_eq!(reverse["status"], "OPEN");
+    let reverse_line = reverse["lineItems"]["nodes"][0]["id"].clone();
+    let return_id = ret["id"].clone();
+    let exchange_id = exchange["id"].clone();
+    topics(&mut shop);
+
+    // What processing it would give back: the units, less the fees and the exchange.
+    let outcome = run(
+        &mut shop,
+        "query($id: ID!, $line: ID!, $exchange: ID!) { return(id: $id) { suggestedFinancialOutcome(
+            returnLineItems: [{id: $line, quantity: 1}], exchangeLineItems: [{id: $exchange, quantity: 1}]) {
+              discountedSubtotal { shopMoney { amount } } totalTax { shopMoney { amount } }
+              financialTransfer { __typename ... on RefundReturnOutcome { amount { shopMoney { amount } } } ... on InvoiceReturnOutcome { amount { shopMoney { amount } } } } } } }",
+        json!({"id": return_id, "line": return_line, "exchange": exchange_id}),
+    );
+    let outcome = &outcome["data"]["return"]["suggestedFinancialOutcome"];
+    let returned =
+        cents(amount(&outcome["discountedSubtotal"])) + cents(amount(&outcome["totalTax"]));
+    let exchange_price = super::model::field_cents(shop.get(&variant).unwrap(), "price");
+    let fee = (cents(amount(&outcome["discountedSubtotal"])) as f64 * 0.1).round() as i64;
+    let balance = returned
+        - fee
+        - 500
+        - exchange_price
+        - super::model::share(
+            exchange_price,
+            shop.setting(super::TAX_RATE_SETTING)
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            10_000,
+        );
+    let transfer = &outcome["financialTransfer"];
+    if balance >= 0 {
+        assert_eq!(transfer["__typename"], "RefundReturnOutcome", "{outcome}");
+        assert_eq!(cents(amount(&transfer["amount"])), balance);
+    } else {
+        assert_eq!(transfer["__typename"], "InvoiceReturnOutcome", "{outcome}");
+        assert_eq!(cents(amount(&transfer["amount"])), -balance);
+    }
+
+    // A delivery with its tracking, then its label: the customer gets the label.
+    let delivered = run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!) { reverseDeliveryCreateWithShipping(reverseFulfillmentOrderId: $id,
+            reverseDeliveryLineItems: [{reverseFulfillmentOrderLineItemId: $line, quantity: 1}],
+            trackingInput: {number: \"123345345\", url: \"https://tools.usps.com/go/TrackConfirmAction?tLabels=123345345\"}) {
+              reverseDelivery { id deliverable { ... on ReverseDeliveryShippingDeliverable { tracking { carrierName number } } } } userErrors { field message code } } }",
+        json!({"id": reverse["id"], "line": reverse_line}),
+    );
+    let delivery = &delivered["data"]["reverseDeliveryCreateWithShipping"]["reverseDelivery"];
+    assert_eq!(
+        delivery["deliverable"]["tracking"]["carrierName"], "USPS",
+        "{delivered}"
+    );
+    assert_eq!(topics(&mut shop), ["reverse_deliveries/attach_deliverable"]);
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { reverseDeliveryShippingUpdate(reverseDeliveryId: $id, labelInput: {fileUrl: \"https://example.com/label.pdf\"}) {
+            reverseDelivery { deliverable { ... on ReverseDeliveryShippingDeliverable { label { publicFileUrl } tracking { number } } } } userErrors { code } } }",
+        json!({"id": delivery["id"]}),
+    );
+    assert_eq!(
+        updated["data"]["reverseDeliveryShippingUpdate"]["reverseDelivery"]["deliverable"],
+        json!({"label": {"publicFileUrl": "https://example.com/label.pdf"}, "tracking": {"number": "123345345"}})
+    );
+    assert_eq!(topics(&mut shop), ["reverse_deliveries/attach_deliverable"]);
+    let emails = crate::outbox::emails(&shop);
+    assert_eq!(emails.len(), 2);
+    assert!(emails[1]["body"].as_str().unwrap().contains("label.pdf"));
+    // More units than the reverse fulfillment order has are refused.
+    let refused = run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!) { reverseDeliveryCreateWithShipping(reverseFulfillmentOrderId: $id,
+            reverseDeliveryLineItems: [{reverseFulfillmentOrderLineItemId: $line, quantity: 1}]) { reverseDelivery { id } userErrors { code } } }",
+        json!({"id": reverse["id"], "line": reverse_line}),
+    );
+    assert_eq!(
+        refused["data"]["reverseDeliveryCreateWithShipping"]["userErrors"][0]["code"],
+        "INVALID"
+    );
+
+    // The returned unit is disposed: restocked at the shop's location.
+    let location = shop.keys("Location").next().unwrap().to_string();
+    let disposed = run(
+        &mut shop,
+        "mutation($line: ID!, $location: ID!) { reverseFulfillmentOrderDispose(dispositionInputs: [{reverseFulfillmentOrderLineItemId: $line, quantity: 1, dispositionType: RESTOCKED, locationId: $location}]) {
+            reverseFulfillmentOrderLineItems { id dispositions { type quantity location { id } } } userErrors { field message code } } }",
+        json!({"line": reverse_line, "location": location}),
+    );
+    let lines =
+        &disposed["data"]["reverseFulfillmentOrderDispose"]["reverseFulfillmentOrderLineItems"];
+    assert_eq!(
+        lines[0]["dispositions"],
+        json!([{"type": "RESTOCKED", "quantity": 1, "location": {"id": location}}]),
+        "{disposed}"
+    );
+    assert_eq!(topics(&mut shop), ["reverse_fulfillment_orders/dispose"]);
+    let again = run(
+        &mut shop,
+        "mutation($line: ID!) { reverseFulfillmentOrderDispose(dispositionInputs: [{reverseFulfillmentOrderLineItemId: $line, quantity: 1, dispositionType: MISSING}]) { userErrors { code } } }",
+        json!({"line": reverse_line}),
+    );
+    assert_eq!(
+        again["data"]["reverseFulfillmentOrderDispose"]["userErrors"][0]["code"],
+        "INVALID"
+    );
+
+    // Processed with its exchange: the order owes the difference.
+    let before = shop.get(&order).unwrap().clone();
+    let lines_before = super::line_items(&shop, &order).len();
+    let processed = run(
+        &mut shop,
+        "mutation($id: ID!, $line: ID!, $exchange: ID!) { returnProcess(input: {returnId: $id,
+            returnLineItems: [{id: $line, quantity: 1}], exchangeLineItems: [{id: $exchange, quantity: 1}]}) {
+              return { status exchangeLineItems(first: 5) { nodes { processedQuantity lineItems { id } } } }
+              userErrors { field message code } } }",
+        json!({"id": return_id, "line": return_line, "exchange": exchange_id}),
+    );
+    let processed = &processed["data"]["returnProcess"];
+    assert_eq!(processed["userErrors"], json!([]), "{processed}");
+    assert_eq!(processed["return"]["status"], "CLOSED");
+    assert_eq!(
+        processed["return"]["exchangeLineItems"]["nodes"][0]["processedQuantity"],
+        1
+    );
+    assert_eq!(super::line_items(&shop, &order).len(), lines_before + 1);
+    let after = shop.get(&order).unwrap();
+    let outstanding_before = super::model::field_cents(&before, "totalOutstandingSet");
+    let outstanding = super::model::field_cents(after, "totalOutstandingSet");
+    // No money moved: the order owes the exchange less what came back.
+    assert_eq!(
+        outstanding - outstanding_before,
+        exchange_price
+            + super::model::share(
+                exchange_price,
+                shop.setting(super::TAX_RATE_SETTING)
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                10_000
+            )
+            - returned
+    );
+    let reverse_status = shop.get(reverse["id"].as_str().unwrap()).unwrap()["status"].clone();
+    assert_eq!(reverse_status, "CLOSED");
+}
+
+#[test]
+fn lines_are_removed_from_a_return_and_refunded() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let (line, quantity) = fulfilled_lines(&mut shop, &order)[0].clone();
+    assert!(
+        quantity >= 2,
+        "the demo's #1001 ships two units of its first line"
+    );
+    let created = run(
+        &mut shop,
+        RETURN_CREATE,
+        json!({"input": {"orderId": order, "returnLineItems": [{"fulfillmentLineItemId": line, "quantity": 2}]}}),
+    );
+    let ret = created["data"]["returnCreate"]["return"].clone();
+    let return_line = ret["returnLineItems"]["nodes"][0]["id"].clone();
+    topics(&mut shop);
+    let remove = "mutation($id: ID!, $line: ID!, $quantity: Int!) { removeFromReturn(returnId: $id, returnLineItems: [{returnLineItemId: $line, quantity: $quantity}]) {
+        return { totalQuantity returnLineItems(first: 5) { nodes { quantity } } reverseFulfillmentOrders(first: 1) { nodes { lineItems(first: 5) { nodes { totalQuantity } } } } }
+        userErrors { field message code } } }";
+    // Every unit is refused: a return keeps one.
+    let all = run(
+        &mut shop,
+        remove,
+        json!({"id": ret["id"], "line": return_line, "quantity": 2}),
+    );
+    assert_eq!(
+        all["data"]["removeFromReturn"]["userErrors"][0]["code"],
+        "INVALID"
+    );
+    let removed = run(
+        &mut shop,
+        remove,
+        json!({"id": ret["id"], "line": return_line, "quantity": 1}),
+    );
+    let removed = &removed["data"]["removeFromReturn"];
+    assert_eq!(removed["userErrors"], json!([]), "{removed}");
+    assert_eq!(removed["return"]["totalQuantity"], 1);
+    assert_eq!(
+        removed["return"]["reverseFulfillmentOrders"]["nodes"][0]["lineItems"]["nodes"][0]["totalQuantity"],
+        1
+    );
+    assert_eq!(topics(&mut shop), ["returns/update"]);
+    let payload = crate::webhooks::payload::payload(
+        "returns/update",
+        shop.get(ret["id"].as_str().unwrap()).unwrap(),
+        &crate::api::samples::ShopLookup(&shop),
+    )
+    .unwrap();
+    assert_eq!(
+        payload["return_line_items"]["removals"],
+        json!([{"admin_graphql_api_id": return_line, "delta": 1}])
+    );
+
+    // The unit left is refunded through the order's payment.
+    let sale = super::model::refundable_payments(&shop, shop.get(&order).unwrap())[0].clone();
+    let refund = "mutation($input: ReturnRefundInput!) { returnRefund(returnRefundInput: $input) {
+        refund { totalRefundedSet { shopMoney { amount } } return { id } } userErrors { field message code } } }";
+    let too_many = run(
+        &mut shop,
+        refund,
+        json!({"input": {"returnId": ret["id"], "returnRefundLineItems": [{"returnLineItemId": return_line, "quantity": 2}]}}),
+    );
+    assert_eq!(
+        too_many["data"]["returnRefund"]["userErrors"][0]["code"],
+        "INVALID"
+    );
+    assert!(topics(&mut shop).is_empty());
+    let refunded = run(
+        &mut shop,
+        refund,
+        json!({"input": {"returnId": ret["id"], "returnRefundLineItems": [{"returnLineItemId": return_line, "quantity": 1}],
+                         "orderTransactions": [{"parentId": sale.0, "transactionAmount": {"amount": "1.00", "currencyCode": "USD"}}]}}),
+    );
+    let refunded = &refunded["data"]["returnRefund"];
+    assert_eq!(refunded["userErrors"], json!([]), "{refunded}");
+    assert_eq!(refunded["refund"]["return"]["id"], ret["id"]);
+    assert_eq!(cents(amount(&refunded["refund"]["totalRefundedSet"])), 100);
+    let topics = topics(&mut shop);
+    assert!(topics.contains(&"refunds/create".to_string()), "{topics:?}");
+    let item = shop.get(return_line.as_str().unwrap()).unwrap();
+    assert_eq!(item["refundedQuantity"], 1);
+}
+
+#[test]
+fn a_return_is_calculated_without_being_made() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let (line, _) = fulfilled_lines(&mut shop, &order)[0].clone();
+    let variant = shop.keys("ProductVariant").last().unwrap().to_string();
+    let returns = shop.count("Return");
+    let answer = run(
+        &mut shop,
+        "query($input: CalculateReturnInput!) { returnCalculate(input: $input) { id
+            returnLineItems { quantity fulfillmentLineItem { id } subtotalSet { shopMoney { amount } } restockingFee { percentage amountSet { shopMoney { amount } } } }
+            exchangeLineItems { quantity variant { id } originalUnitPriceSet { shopMoney { amount } } discountedUnitPriceSet { shopMoney { amount } } }
+            returnShippingFee { amountSet { shopMoney { amount } } } } }",
+        json!({"input": {"orderId": order,
+            "returnLineItems": [{"fulfillmentLineItemId": line, "quantity": 1, "restockingFee": {"percentage": 20}}],
+            "exchangeLineItems": [{"variantId": variant, "quantity": 1, "appliedDiscount": {"value": {"percentage": 50}}}],
+            "returnShippingFee": {"amount": {"amount": "3.00", "currencyCode": "USD"}}}}),
+    );
+    let calculated = &answer["data"]["returnCalculate"];
+    assert!(
+        calculated["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("gid://shopify/CalculatedReturn/"),
+        "{answer}"
+    );
+    let returned = &calculated["returnLineItems"][0];
+    assert_eq!(returned["fulfillmentLineItem"]["id"], json!(line));
+    let subtotal = cents(amount(&returned["subtotalSet"]));
+    assert_eq!(
+        cents(amount(&returned["restockingFee"]["amountSet"])),
+        (subtotal as f64 * 0.2).round() as i64
+    );
+    let exchange = &calculated["exchangeLineItems"][0];
+    assert_eq!(
+        cents(amount(&exchange["discountedUnitPriceSet"])) * 2,
+        cents(amount(&exchange["originalUnitPriceSet"]))
+    );
+    assert_eq!(
+        cents(amount(&calculated["returnShippingFee"]["amountSet"])),
+        300
+    );
+    assert_eq!(shop.count("Return"), returns);
+    assert!(answer.get("extensions").is_none(), "{answer}");
+}
+
+#[test]
+fn the_deprecated_removal_takes_lines_off_an_open_return_only() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1001");
+    let (line, _) = fulfilled_lines(&mut shop, &order)[0].clone();
+    let created = run(
+        &mut shop,
+        RETURN_CREATE,
+        json!({"input": {"orderId": order, "returnLineItems": [{"fulfillmentLineItemId": line, "quantity": 2}]}}),
+    );
+    let ret = created["data"]["returnCreate"]["return"].clone();
+    let return_line = ret["returnLineItems"]["nodes"][0]["id"].clone();
+    let remove = "mutation($id: ID!, $line: ID!) { returnLineItemRemoveFromReturn(returnId: $id, returnLineItems: [{returnLineItemId: $line, quantity: 1}]) {
+        return { totalQuantity } userErrors { field message code } } }";
+    let removed = run(
+        &mut shop,
+        remove,
+        json!({"id": ret["id"], "line": return_line}),
+    );
+    assert_eq!(
+        removed["data"]["returnLineItemRemoveFromReturn"],
+        json!({"return": {"totalQuantity": 1}, "userErrors": []})
+    );
+    run(
+        &mut shop,
+        "mutation($id: ID!) { returnClose(id: $id) { userErrors { message } } }",
+        json!({"id": ret["id"]}),
+    );
+    topics(&mut shop);
+    let before = shop.get(return_line.as_str().unwrap()).cloned();
+    let refused = run(
+        &mut shop,
+        remove,
+        json!({"id": ret["id"], "line": return_line}),
+    );
+    assert_eq!(
+        refused["data"]["returnLineItemRemoveFromReturn"]["userErrors"][0]["code"],
+        "INVALID_STATE"
+    );
+    assert_eq!(shop.get(return_line.as_str().unwrap()).cloned(), before);
+    assert!(topics(&mut shop).is_empty());
+}

@@ -136,7 +136,8 @@ pub fn create_refund(state: &mut ShopState, order: &str, spec: &RefundSpec) -> S
         let restocked = line.restock_type != "NO_RESTOCK";
         // Units that did not ship leave their fulfillment orders: all of a `CANCEL`, as many as
         // there are of a `NO_RESTOCK`.
-        if line.restock_type != "RETURN" {
+        // Units of a return shipped: they leave no fulfillment order.
+        if line.restock_type != "RETURN" && spec.return_id.is_none() {
             model::take_unfulfilled(state, order, &line.line, line.quantity);
         }
         if restocked {

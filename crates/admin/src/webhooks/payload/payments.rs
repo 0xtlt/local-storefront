@@ -1,11 +1,13 @@
-//! The payloads of the payments of orders: payment terms and their schedules, tender
-//! transactions, in the key order of the examples of the reference of 2026-10.
+//! The payloads of the rest of the orders family: payment terms and their schedules, tender
+//! transactions, risk assessments, Shopify Protect, requested order edits, returns' updates,
+//! reverse deliveries and dispositions, in the key order of the examples of the reference of
+//! 2026-10.
 
 use serde_json::{Map, Value, json};
 
 use super::{
-    Lookup, field, first, id, lower, money_amount, numeric, records, ref_gid, ref_id, resolve,
-    text, time,
+    Lookup, field, first, id, items, lower, money_amount, numeric, records, ref_gid, ref_id,
+    resolve, text, time,
 };
 
 /// The dates of payment terms and schedules, which their GraphQL types do not have: lsf keeps
@@ -162,5 +164,85 @@ pub(super) fn requested_order_edit(edit: &Map<String, Value>, lookup: &dyn Looku
         "order_id": ref_id(field(edit, "order")),
         "requested_at": time(field(edit, "requestedAt")),
         "line_items": {"removals": removals},
+    })
+}
+
+/// `{id, admin_graphql_api_id}` of a reference.
+fn reference(value: &Value) -> Value {
+    match ref_gid(value) {
+        Value::Null => Value::Null,
+        gid => json!({"id": ref_id(value), "admin_graphql_api_id": gid}),
+    }
+}
+
+/// `returns/update`: the return line items a change took off a return (`lsfUpdateRemovals`,
+/// `[{id, delta}]`). lsf's returns have no fees a change updates: their lists are empty.
+pub(super) fn return_update(record: &Map<String, Value>) -> Value {
+    let removals: Vec<Value> = items(field(record, "lsfUpdateRemovals"))
+        .iter()
+        .map(|removal| {
+            json!({
+                "admin_graphql_api_id": ref_gid(removal.get("id").unwrap_or(&Value::Null)),
+                "delta": removal.get("delta"),
+            })
+        })
+        .collect();
+    json!({
+        "admin_graphql_api_id": text(record, "id"),
+        "return_line_items": {"removals": removals},
+        "restocking_fees": {"updates": [], "removals": []},
+        "return_shipping_fees": {"updates": [], "removals": []},
+    })
+}
+
+/// `reverse_deliveries/attach_deliverable`: a `ReverseDelivery`, its return and its tracking
+/// and label.
+pub(super) fn reverse_delivery(delivery: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let reverse = resolve(field(delivery, "reverseFulfillmentOrder"), lookup);
+    let return_ref = reverse.as_ref().map_or(Value::Null, |reverse| {
+        reference(field(reverse, "lsfReturn"))
+    });
+    let deliverable = field(delivery, "deliverable");
+    let tracking = deliverable.get("tracking").cloned().unwrap_or(Value::Null);
+    let label = deliverable.get("label").cloned().unwrap_or(Value::Null);
+    json!({
+        "id": id(delivery),
+        "admin_graphql_api_id": text(delivery, "id"),
+        "return": return_ref,
+        "shipping_deliverable": {
+            "tracking": {
+                "carrier_name": tracking.get("carrierName").cloned().unwrap_or(Value::Null),
+                "tracking_number": tracking.get("number").cloned().unwrap_or(Value::Null),
+                "tracking_url": tracking.get("url").cloned().unwrap_or(Value::Null),
+            },
+            "label": {
+                "public_file_url": label.get("publicFileUrl").cloned().unwrap_or(Value::Null),
+                "created_at": time(label.get("createdAt").unwrap_or(&Value::Null)),
+            },
+        },
+    })
+}
+
+/// `reverse_fulfillment_orders/dispose`: a `ReverseFulfillmentOrder` and the dispositions its
+/// last change made (`lsfLastDispositions`).
+pub(super) fn reverse_dispositions(reverse: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+    let dispositions: Vec<Value> = records(field(reverse, "lsfLastDispositions"), lookup)
+        .iter()
+        .map(|disposition| {
+            json!({
+                "reverse_fulfillment_order_line_item": reference(field(disposition, "lsfLineItem")),
+                "reverse_delivery_line_item": Value::Null,
+                "type": lower(field(disposition, "type")),
+                "location": reference(field(disposition, "location")),
+                "quantity": field(disposition, "quantity"),
+            })
+        })
+        .collect();
+    let total = dispositions.len();
+    json!({
+        "id": id(reverse),
+        "admin_graphql_api_id": text(reverse, "id"),
+        "dispositions": dispositions,
+        "total_dispositions": total,
     })
 }

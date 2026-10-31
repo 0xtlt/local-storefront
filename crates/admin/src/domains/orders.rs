@@ -20,6 +20,7 @@ pub mod payments;
 mod queries;
 mod refunds;
 mod requested_edits;
+mod return_extras;
 mod returns;
 pub mod risk;
 mod services;
@@ -712,7 +713,15 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
             "totalQuantity": lines.iter().map(|(_, quantity)| quantity).sum::<u32>(),
             "createdAt": created,
             "closedAt": if status == "CLOSED" { json!(created) } else { Value::Null },
+            "exchangeLineItems": [],
+            "returnShippingFees": [],
+            "reverseFulfillmentOrders": [],
         })));
+        // An open or closed return has its reverse fulfillment order.
+        if matches!(status, "OPEN" | "CLOSED") {
+            return_extras::open_reverse_fulfillment(state, &id);
+            return_extras::follow_return(state, &id);
+        }
         returns.push(id);
     }
 
@@ -1337,6 +1346,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     fulfillments::register(registry);
     refunds::register(registry);
     returns::register(registry);
+    return_extras::register(registry);
     edits::register(registry);
     edit_extras::register(registry);
     drafts::register(registry);

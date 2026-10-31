@@ -17,9 +17,9 @@
 //!   at once: the topic is about a return becoming `OPEN`, lsf's reading), `returns/decline`,
 //!   `returns/close`, `returns/reopen`, `returns/cancel`, `returns/process` (with
 //!   `refunds/create` for its refund). The order's `returnStatus` follows.
-//! - Not simulated: exchanges, reverse fulfillment orders and deliveries, restocking fees,
-//!   return shipping fees (said in `extensions.lsf.notes`). A disposition `RESTOCKED` of
-//!   `returnProcess` puts the units back in stock at its location.
+//! - Exchanges, fees, reverse fulfillment orders and the rest are in `return_extras`. A
+//!   disposition `RESTOCKED` of `returnProcess` puts the units back in stock at its location, and
+//!   is recorded on the return's reverse fulfillment order.
 //!
 //! Messages: "Return is not approvable. Only returns with status REQUESTED can be approved."
 //! and "Return is not declinable. Only non-refunded returns with status REQUESTED can be
@@ -98,6 +98,10 @@ pub fn returnable_quantity(state: &ShopState, fulfillment_line: &str) -> i64 {
     (shipped - in_returns).max(0)
 }
 
+/// The removals of the last `removeFromReturn` of a return, `[{id, delta}]`: what its
+/// `returns/update` reports.
+pub const UPDATE_REMOVALS: &str = "lsfUpdateRemovals";
+
 /// A return error with its code.
 fn error(field: &[&str], message: &str, code: &str) -> UserError {
     UserError::new(field, message).code(code)
@@ -168,23 +172,16 @@ fn create(
         }
         lines.push((line.to_string(), quantity, item.clone()));
     }
+    let exchanges = super::return_extras::read_exchanges(
+        state,
+        &array(&input, "exchangeLineItems"),
+        &[argument, "exchangeLineItems"],
+        &mut errors,
+    );
     if !errors.is_empty() {
         return failed(&errors);
     }
-    for (field, what) in [
-        ("exchangeLineItems", "exchanges"),
-        ("returnShippingFee", "return shipping fees"),
-    ] {
-        if input
-            .get(field)
-            .is_some_and(|value| !value.is_null() && value != &json!([]))
-        {
-            mutation.note(format!(
-                "{}: lsf does not simulate {what} yet: `{field}` was ignored",
-                ctx.field_name()
-            ));
-        }
-    }
+    let order_record = state.get(&order).cloned().unwrap_or_default();
     let state = mutation.state_mut();
     let now = state.timestamp();
     let id = state.new_gid("Return");
@@ -198,6 +195,17 @@ fn create(
         .to_string();
     let mut return_lines = Vec::new();
     for (line, quantity, item) in &lines {
+        // The restocking fee is a percentage of what the units are worth.
+        let line_item = state
+            .get(line)
+            .and_then(|line| text(line, "lineItem"))
+            .map(str::to_string)
+            .unwrap_or_default();
+        let (_, subtotal, _) = refunds::line_amounts(state, &order_record, &line_item, *quantity);
+        let fee = item
+            .get("restockingFee")
+            .filter(|fee| !fee.is_null())
+            .and_then(|fee| super::return_extras::restocking_fee(state, fee, subtotal));
         let line_id = state.new_gid("ReturnLineItem");
         let reason = item
             .get("returnReason")
@@ -216,10 +224,18 @@ fn create(
             "returnReason": reason,
             "returnReasonNote": item.get("returnReasonNote").and_then(Value::as_str).unwrap_or_default(),
             "customerNote": item.get("customerNote"),
-            "restockingFee": null,
+            "restockingFee": fee,
         })));
         return_lines.push(line_id);
     }
+    let exchange_lines =
+        super::return_extras::insert_exchanges(state, &exchanges, status == "OPEN");
+    let shipping_fees: Vec<Value> = input
+        .get("returnShippingFee")
+        .filter(|fee| !fee.is_null())
+        .and_then(|fee| super::return_extras::shipping_fee(state, fee))
+        .into_iter()
+        .collect();
     state.insert(value::object(json!({
         "__typename": "Return",
         "id": id,
@@ -234,10 +250,13 @@ fn create(
         "decline": null,
         "refunds": [],
         "transactions": [],
-        "exchangeLineItems": [],
+        "exchangeLineItems": exchange_lines,
         "reverseFulfillmentOrders": [],
-        "returnShippingFees": [],
+        "returnShippingFees": shipping_fees,
     })));
+    if status == "OPEN" {
+        super::return_extras::open_reverse_fulfillment(state, &id);
+    }
     model::push_key(state, &order, "returns", &id);
     model::refresh_order(state, &order);
     state.emit(
@@ -269,7 +288,12 @@ fn refresh_return(state: &mut ShopState, id: &str) {
         return;
     };
     let open = text(record, "status") == Some("OPEN");
-    for line in gids(record.get("returnLineItems")) {
+    let lines: Vec<String> = gids(record.get("returnLineItems"))
+        .into_iter()
+        .chain(gids(record.get("exchangeLineItems")))
+        .collect();
+    super::return_extras::follow_return(state, id);
+    for line in lines {
         if let Some(item) = state.get_mut(&line) {
             let unprocessed = int(item, "unprocessedQuantity");
             item.insert(
@@ -309,6 +333,7 @@ fn approve(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         record.insert("status".into(), json!("OPEN"));
         record.insert("requestApprovedAt".into(), json!(now));
     }
+    super::return_extras::open_reverse_fulfillment(state, &id);
     refresh_return(state, &id);
     model::refresh_order(state, &order);
     state.emit("returns/approve", &id);
@@ -528,7 +553,42 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         &["input", "financialTransfer", "issueRefund", "refundMethods"],
         &mut errors,
     );
-    if processing.is_empty() && moves.is_empty() && store_credit.is_empty() && errors.is_empty() {
+    let exchange_lines = state
+        .get(&id)
+        .map(|record| gids(record.get("exchangeLineItems")))
+        .unwrap_or_default();
+    let mut exchanges: Vec<(String, i64)> = Vec::new();
+    for (index, item) in array(&input, "exchangeLineItems").iter().enumerate() {
+        let index = index.to_string();
+        let line = item.get("id").and_then(Value::as_str).unwrap_or_default();
+        let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
+        if !exchange_lines.iter().any(|known| known == line) {
+            errors.push(error(
+                &["input", "exchangeLineItems", &index, "id"],
+                "Exchange line item does not exist.",
+                "NOT_FOUND",
+            ));
+            continue;
+        }
+        let processable = state
+            .get(line)
+            .map_or(0, |line| int(line, "processableQuantity"));
+        if quantity <= 0 || quantity > processable {
+            errors.push(error(
+                &["input", "exchangeLineItems", &index, "quantity"],
+                "Exchange line item has an invalid quantity.",
+                "INVALID",
+            ));
+            continue;
+        }
+        exchanges.push((line.to_string(), quantity));
+    }
+    if processing.is_empty()
+        && moves.is_empty()
+        && store_credit.is_empty()
+        && exchanges.is_empty()
+        && errors.is_empty()
+    {
         errors.push(error(
             &["input", "returnLineItems"],
             "Return line items can't be blank.",
@@ -537,14 +597,6 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     }
     if !errors.is_empty() {
         return failed(&errors);
-    }
-    if input
-        .get("exchangeLineItems")
-        .is_some_and(|items| items != &json!([]) && !items.is_null())
-    {
-        mutation.note(
-            "returnProcess: lsf does not simulate exchanges yet: `exchangeLineItems` was ignored",
-        );
     }
     let shipping_input = model::input_of(input.get("refundShipping"));
     let state = mutation.state_mut();
@@ -567,10 +619,13 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             .and_then(|line| state.get(line))
             .and_then(|line| text(line, "lineItem"))
             .map(str::to_string);
+        super::return_extras::record_processed(state, &id, line, *quantity, restock.clone());
         let Some(line_item) = line_item else {
             continue;
         };
-        if moves.is_empty() && store_credit.is_empty() {
+        // An exchange takes the returned units back with a refund, which moves only the money
+        // the transfer gives.
+        if moves.is_empty() && store_credit.is_empty() && exchanges.is_empty() {
             // Without a refund, a restocked unit goes back in stock alone.
             if let Some(location) = restock {
                 model::restock_line(state, &line_item, location.as_deref(), *quantity, true);
@@ -590,7 +645,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         }
     }
     let mut refund = None;
-    if !moves.is_empty() || !store_credit.is_empty() {
+    if !moves.is_empty() || !store_credit.is_empty() || !exchanges.is_empty() {
         let order_record = state.get(&order).cloned().unwrap_or_default();
         let remaining_shipping = refunds::refundable_shipping(&order_record);
         let shipping = if shipping_input.get("fullRefund").and_then(Value::as_bool) == Some(true) {
@@ -617,14 +672,22 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         ));
         model::settle_financial_status(state, &order);
     }
-    let done = gids(
-        state
-            .get(&id)
-            .and_then(|record| record.get("returnLineItems")),
-    )
-    .iter()
-    .filter_map(|line| state.get(line))
-    .all(|line| int(line, "unprocessedQuantity") == 0);
+    if !exchanges.is_empty() {
+        super::return_extras::process_exchanges(state, &order, &exchanges);
+        model::settle_financial_status(state, &order);
+    }
+    let done = state
+        .get(&id)
+        .map(|record| {
+            gids(record.get("returnLineItems"))
+                .into_iter()
+                .chain(gids(record.get("exchangeLineItems")))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|line| state.get(line))
+        .all(|line| int(line, "unprocessedQuantity") == 0);
     if done {
         let now = state.timestamp();
         if let Some(record) = state.get_mut(&id) {
@@ -635,7 +698,7 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     }
     model::refresh_order(state, &order);
     state.emit("returns/process", &id);
-    if refund.is_some() {
+    if refund.is_some() || !exchanges.is_empty() {
         model::order_updated(state, &order);
     }
     Ok(payload(json!({"return": id}), &[]))

@@ -212,6 +212,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "returns/decline",
     "returns/reopen",
     "returns/request",
+    "returns/update",
+    "reverse_deliveries/attach_deliverable",
+    "reverse_fulfillment_orders/dispose",
     "selling_plan_groups/create",
     "selling_plan_groups/delete",
     "selling_plan_groups/update",
@@ -316,6 +319,9 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "requested_order_edit/created"
         | "requested_order_edit/declined"
         | "requested_order_edit/resolved" => payments::requested_order_edit(record, lookup),
+        "returns/update" => payments::return_update(record),
+        "reverse_deliveries/attach_deliverable" => payments::reverse_delivery(record, lookup),
+        "reverse_fulfillment_orders/dispose" => payments::reverse_dispositions(record, lookup),
         "returns/approve" | "returns/cancel" | "returns/close" | "returns/decline"
         | "returns/reopen" | "returns/request" => orders::return_event(topic, record),
         "app/uninstalled" | "shop/update" => shop::shop(record, lookup),
