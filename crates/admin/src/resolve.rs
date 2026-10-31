@@ -944,7 +944,11 @@ impl graphql::Resolver for ShopResolver<'_> {
                     return Ok(Output::Object(Obj::built(type_name, payload)));
                 }
             }
-            return mutation::run(self, ctx);
+            // One webhook per topic and record of this mutation (`ShopState::merge_events_from`).
+            let start = self.state.event_count();
+            let output = mutation::run(self, ctx);
+            self.state.merge_events_from(start);
+            return output;
         }
         if let Some(resolve) = self.registry.field_fn(ctx.parent_type(), ctx.field_name()) {
             return resolve(self, ctx, object);

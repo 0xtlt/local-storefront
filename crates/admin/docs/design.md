@@ -360,7 +360,10 @@ storefront, the checkout and the Function inputs already use.
   keeps a copy of the record: emit before removing, or use `ShopState::delete`;
   `ShopState::emit_with` gives the copy, the record before the change for a topic that says
   what changed);
-  `take_events` hands them over. Event ids are UUIDs made of the shop and a sequence that a reset
+  `take_events` hands them over. One mutation emits one event per topic and record: the resolver
+  merges the repeats of a mutation into the first (`ShopState::merge_events_from`), whose
+  payload is built from the record as the mutation left it (an order created fulfilled that
+  commits then ships a level's units reports the level once). Event ids are UUIDs made of the shop and a sequence that a reset
   does not restart, so a receiver never sees one twice.
 - **Shops** (`Shops`): the default shop is the store data's (`shop.permanent_domain`); `create`
   makes another from the same seed (cloned, not seeded again) and moves it to its domain: its own

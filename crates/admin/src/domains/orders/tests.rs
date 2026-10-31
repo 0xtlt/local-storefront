@@ -2171,3 +2171,71 @@ fn a_checkout_order_names_the_inventory_item_of_its_variant() {
         "{answer}"
     );
 }
+
+/// One mutation sends one webhook per topic and record: an order created fulfilled that commits
+/// then ships the units of one level reports that level once, and a product given metafields
+/// with its variant is updated once.
+#[test]
+fn a_mutation_sends_one_event_per_topic_and_record() {
+    let mut shop = demo();
+    let id = order_named(&shop, "#1002");
+    let line = gids_of(shop.get(&id).unwrap(), "lineItems")[0].clone();
+    let variant = shop.get(&line).unwrap()["variant"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let product = shop.get(&variant).unwrap()["product"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 2}], "fulfillmentStatus": "FULFILLED"},
+            "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let fired = topics(&mut shop);
+    assert_eq!(
+        fired
+            .iter()
+            .filter(|topic| *topic == "inventory_levels/update")
+            .count(),
+        1,
+        "{fired:?}"
+    );
+
+    let set = run(
+        &mut shop,
+        "mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } } }",
+        json!({"metafields": [
+            {"ownerId": product, "namespace": "custom", "key": "zz_a", "type": "single_line_text_field", "value": "a"},
+            {"ownerId": variant, "namespace": "custom", "key": "zz_b", "type": "single_line_text_field", "value": "b"},
+        ]}),
+    );
+    assert_eq!(
+        set["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{set}"
+    );
+    assert_eq!(
+        events(&mut shop),
+        [("products/update".to_string(), product)]
+    );
+
+    // Two mutations of one request are two changes: each sends its own.
+    let twice = run(
+        &mut shop,
+        "mutation($id: ID!) { a: tagsAdd(id: $id, tags: [\"zz-1\"]) { userErrors { message } } b: tagsAdd(id: $id, tags: [\"zz-2\"]) { userErrors { message } } }",
+        json!({"id": id}),
+    );
+    assert!(twice.get("errors").is_none(), "{twice}");
+    assert_eq!(topics(&mut shop), ["orders/updated", "orders/updated"]);
+}
