@@ -1,0 +1,11 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Bundles"
+handle = "bundles"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.transform.run"
+  input_query = "src/run.graphql"
+  export = "run"
