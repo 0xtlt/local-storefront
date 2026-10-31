@@ -422,7 +422,7 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         "errors": [],
         "order": order,
     })));
-    let job = json!({"id": gid("Job", number), "done": true, "query": null});
+    let job = crate::resolve::done_job(state, "order_cancel");
     Ok(payload(
         json!({"job": job, "jobResult": result, "orderCancelUserErrors": []}),
         &[],

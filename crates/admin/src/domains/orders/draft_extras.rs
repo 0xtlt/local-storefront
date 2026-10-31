@@ -30,7 +30,7 @@ use super::drafts::{create_from, find_draft, invoice_text, remove_draft};
 use super::model::{self, int, text};
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -173,15 +173,6 @@ fn targets(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Vec<St
         .filter_map(Value::as_str)
         .map(str::to_string)
         .collect())
-}
-
-/// A `Job` already done.
-fn done_job(state: &ShopState, name: &str) -> Value {
-    json!({
-        "id": format!("gid://shopify/Job/{}", value::uuid(&format!("job/{}/{name}/{}", state.domain(), state.event_count()))),
-        "done": true,
-        "query": null,
-    })
 }
 
 /// `draftOrderBulkAddTags` and `draftOrderBulkRemoveTags`.

@@ -39,7 +39,7 @@ use super::functions::{FunctionProblem, function_of};
 use super::metafields;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
 use crate::search::{Query, SearchValue, Searchable};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
@@ -1858,14 +1858,6 @@ pub(super) fn search_nodes(state: &ShopState, search: &str, types: &[&str]) -> V
         })
         .map(str::to_string)
         .collect()
-}
-
-/// A `Job` that is done: what lsf's bulk discount mutations answer, having done the work.
-pub(super) fn done_job(state: &ShopState, name: &str) -> Value {
-    json!({
-        "id": format!("gid://shopify/Job/{}", value::uuid(&format!("job/{}/{name}/{}", state.domain(), state.events().len()))),
-        "done": true,
-    })
 }
 
 fn bulk(

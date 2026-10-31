@@ -22,10 +22,9 @@
 
 use serde_json::{Value, json};
 
-use super::done_job;
 use crate::domains::content::navigation::add_redirect;
 use crate::graphql::{self, FieldContext, FieldError, Output, Request};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {

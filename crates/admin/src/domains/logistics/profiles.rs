@@ -1457,7 +1457,7 @@ fn remove(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         }
     }
     state.remove(&id);
-    let job = catalog::done_job(state, "delivery_profile_remove");
+    let job = crate::resolve::done_job(state, "delivery_profile_remove");
     Ok(payload(json!({"job": job}), &[]))
 }
 

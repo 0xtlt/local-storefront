@@ -19,9 +19,9 @@
 
 use serde_json::{Value, json};
 
-use super::discounts::{MAX_TAGS, done_job, inner_mut, node_of, search_nodes, tags_of};
+use super::discounts::{MAX_TAGS, inner_mut, node_of, search_nodes, tags_of};
 use crate::graphql::{FieldContext, FieldError};
-use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Mutation, Registry, UserError, done_job, payload};
 use crate::state::ShopState;
 
 pub fn register(registry: &mut Registry) {

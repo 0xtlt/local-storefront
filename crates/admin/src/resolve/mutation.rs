@@ -185,6 +185,28 @@ impl UserError {
     }
 }
 
+/// A `Job` that is already done, as a record of the shop (so that `node(id:)` and `job(id:)`
+/// find it): what lsf answers for the work Shopify does in the background, having done it at
+/// once. `kind` names the work (`collection_add_products`, `order_cancel`, …); the id is a UUID,
+/// as Shopify's job ids are, different for each job of the shop. Returns its GID.
+pub fn done_job(state: &mut ShopState, kind: &str) -> String {
+    let id = format!(
+        "gid://shopify/Job/{}",
+        crate::state::value::uuid(&format!(
+            "job/{}/{kind}/{}",
+            state.domain(),
+            state.count("Job")
+        ))
+    );
+    let mut record = Record::new();
+    record.insert("__typename".into(), json!("Job"));
+    record.insert("id".into(), json!(id));
+    record.insert("done".into(), json!(true));
+    record.insert("query".into(), Value::Null);
+    state.insert_as(id.clone(), record);
+    id
+}
+
 /// A payload: `fields` (an object), with `userErrors` set to `errors`.
 pub fn payload(fields: Value, errors: &[UserError]) -> Value {
     let mut payload = match fields {
@@ -274,7 +296,22 @@ pub(super) fn run(
 mod tests {
     use super::*;
     use crate::graphql::{self, Request};
-    use crate::state::Blob;
+    use crate::state::{Blob, Clock};
+
+    #[test]
+    fn each_done_job_is_a_record_of_its_own() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        // Two families, one job each: never the same id.
+        let cancel = done_job(&mut state, "order_cancel");
+        let mandate = done_job(&mut state, "order_create_mandate_payment");
+        let again = done_job(&mut state, "order_cancel");
+        assert_ne!(cancel, mandate);
+        assert_ne!(cancel, again);
+        let record = state.get(&cancel).unwrap();
+        assert_eq!(record["__typename"], "Job");
+        assert_eq!(record["done"], true);
+        assert_eq!(record["query"], Value::Null);
+    }
 
     /// A `productCreate` that writes a lot, then answers as its `title` says: `fail` (user
     /// errors), `keep` (user errors, changes kept), `error` (a GraphQL error, changes kept

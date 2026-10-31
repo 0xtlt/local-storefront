@@ -1084,7 +1084,6 @@ fn collection_details(
 /// `node` reads.
 fn mandate_job(state: &mut ShopState, order: &str, reference: &str) -> Value {
     let result = state.new_gid("OrderCreateMandatePaymentJobResult");
-    let number = parse_gid(&result).map_or(1, |(_, number)| number);
     state.insert(value::object(json!({
         "__typename": "OrderCreateMandatePaymentJobResult",
         "id": result,
@@ -1093,8 +1092,9 @@ fn mandate_job(state: &mut ShopState, order: &str, reference: &str) -> Value {
         "errors": [],
         "order": order,
     })));
+    let job = crate::resolve::done_job(state, "order_create_mandate_payment");
     json!({
-        "job": {"id": gid("Job", number), "done": true, "query": null},
+        "job": job,
         "jobResult": result,
         "paymentReferenceId": reference,
     })

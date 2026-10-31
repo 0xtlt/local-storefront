@@ -38,7 +38,6 @@ mod variants;
 
 pub use collections::apply_rules;
 pub use inventory::with_idempotency;
-pub use media::done_job;
 pub use products::{delete_product, tags_of};
 pub use publications::publish_on;
 pub use records::{

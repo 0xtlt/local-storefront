@@ -628,7 +628,8 @@ fn product_duplicate(
         ctx.arg_str("newStatus"),
         include_images,
     );
-    let image_job = include_images.then(|| media::done_job(state, "product_duplicate_images"));
+    let image_job =
+        include_images.then(|| crate::resolve::done_job(state, "product_duplicate_images"));
     if ctx.arg_bool("synchronous") == Some(false) {
         let operation = state.new_gid("ProductDuplicateOperation");
         state.insert(value::object(json!({

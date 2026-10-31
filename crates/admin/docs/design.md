@@ -851,8 +851,15 @@ savepoint, and puts back the event sequence, the revision and the clock: the sho
 the order of every map included. Savepoints nest: a bulk operation's mutation per line opens its
 own, which an outer failure still undoes once released. A success closes the log. The cost is
 what the mutation wrote: a copy of the shop, as it was done first, took 180 to 400 ms on 198,000
-records, before every mutation's first write. A mutation lsf does not
-simulate answers a GraphQL error with `extensions.code = "LSF_NOT_SIMULATED"`, never a silent
+records, before every mutation's first write.
+
+**Jobs** (`resolve::done_job`): the work Shopify does in the background (a bulk delete, a
+collection's products added, an order cancelled, a bulk billing) is done within the mutation,
+which answers a `Job` already `done`: a record of the shop, its id a UUID per job, so that
+`node(id:)` and `job(id:)` find it. A family that keeps more on its job (a bulk billing's cycles)
+writes it on that record.
+
+A mutation lsf does not simulate answers a GraphQL error with `extensions.code = "LSF_NOT_SIMULATED"`, never a silent
 success; `GET /__lsf/admin` lists those it simulates. Simulated so far, as references:
 `productCreate`, `productUpdate`, `productDelete`, `tagsAdd`, `tagsRemove`,
 `webhookSubscriptionCreate`, `webhookSubscriptionUpdate`, `webhookSubscriptionDelete` (and the
@@ -1711,7 +1718,7 @@ never written to.**
 | Module | Records | Ids, keys |
 |---|---|---|
 | `storefront` | `ScriptTag`, `WebPixel`, `ServerPixel`, `StorefrontAccessToken` | the counter of each type; a storefront token's secret is a UUID of the shop and its id, without dashes |
-| `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `SavedSearch`, `Job`s done, `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
+| `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `SavedSearch`, `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
 | `platform` | `StaffMember/1` (the shop owner, seeded), `CheckoutProfile/1` and `CheckoutAndAccountsConfiguration/1` (seeded), `AndroidApplication`/`AppleApplication` (ids of `MobilePlatformApplication`, the type by platform, as the reference's), `FulfillmentConstraintRule`, `DelegateAccessToken` (key `delegate-access-token/<hash>`, never the token), `ProductResourceFeedback` (key `product-resource-feedback/<product>`) | the counter |
 
 - **App extensions** lsf-checkout lists without reading (`App::other`): the web pixel extension's
