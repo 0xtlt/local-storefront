@@ -20,6 +20,9 @@ pub struct App {
     pub name: Option<String>,
     pub client_id: Option<String>,
     pub handle: Option<String>,
+    /// What else `shopify.app.toml` says that the backend of the app depends on: its URL, its
+    /// access scopes, its webhook subscriptions. Read by `lsf-admin`.
+    pub config: AppConfig,
     pub functions: Vec<FunctionExtension>,
     pub ui_extensions: Vec<UiExtension>,
     /// Extensions of another type (theme app extension, admin action, ...): listed, not used.
@@ -52,6 +55,58 @@ impl App {
             )
             .collect()
     }
+}
+
+/// The parts of `shopify.app.toml` the Admin API and the webhooks of `lsf-admin` read.
+#[derive(Clone, Debug, Default)]
+pub struct AppConfig {
+    /// The configuration file that was read.
+    pub file: Option<PathBuf>,
+    /// `application_url`: where Shopify loads the app, and the base of the relative webhook
+    /// `uri`s.
+    pub application_url: Option<String>,
+    /// `embedded`.
+    pub embedded: Option<bool>,
+    /// `[access_scopes] scopes`, split on commas and trimmed.
+    pub scopes: Vec<String>,
+    /// `[access_scopes] optional_scopes`.
+    pub optional_scopes: Vec<String>,
+    /// `[access_scopes] use_legacy_install_flow`.
+    pub use_legacy_install_flow: bool,
+    /// `[auth] redirect_urls`.
+    pub redirect_urls: Vec<String>,
+    /// `[webhooks] api_version`.
+    pub webhooks_api_version: Option<String>,
+    /// `[[webhooks.subscriptions]]`, in the order of the file.
+    pub webhook_subscriptions: Vec<WebhookSubscriptionConfig>,
+    /// `[app_proxy]`: `url`, `subpath`, `prefix`.
+    pub app_proxy: Option<AppProxyConfig>,
+}
+
+/// One `[[webhooks.subscriptions]]` of `shopify.app.toml`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WebhookSubscriptionConfig {
+    /// `topics`, as written (`orders/create`).
+    pub topics: Vec<String>,
+    /// `compliance_topics` (`customers/data_request`, `customers/redact`, `shop/redact`).
+    pub compliance_topics: Vec<String>,
+    /// `uri`: an absolute URL, or a path relative to `application_url`. Also `pubsub://…` and
+    /// `arn:aws:events:…`, which lsf cannot deliver to.
+    pub uri: String,
+    /// `filter`, in Shopify's search syntax.
+    pub filter: Option<String>,
+    /// `include_fields`.
+    pub include_fields: Vec<String>,
+    /// `name`.
+    pub name: Option<String>,
+}
+
+/// `[app_proxy]` of `shopify.app.toml`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AppProxyConfig {
+    pub url: String,
+    pub subpath: String,
+    pub prefix: String,
 }
 
 #[derive(Clone, Debug)]
@@ -544,6 +599,76 @@ fn load_app_config(app: &mut App) {
     app.name = text("name");
     app.client_id = text("client_id");
     app.handle = text("handle");
+    app.config = app_config(&table, file);
+}
+
+/// The strings of an array, or of a comma-separated string (`scopes = "read_products,write_orders"`).
+fn strings(value: Option<&toml::Value>) -> Vec<String> {
+    match value {
+        Some(toml::Value::String(text)) => text
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect(),
+        Some(toml::Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn app_config(table: &toml::Table, file: PathBuf) -> AppConfig {
+    let section = |name: &str| table.get(name).and_then(|value| value.as_table());
+    let text_in = |table: Option<&toml::Table>, key: &str| {
+        table
+            .and_then(|table| table.get(key))
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+    };
+    let access_scopes = section("access_scopes");
+    let webhooks = section("webhooks");
+    let webhook_subscriptions = webhooks
+        .and_then(|webhooks| webhooks.get("subscriptions"))
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.as_table())
+                .map(|entry| WebhookSubscriptionConfig {
+                    topics: strings(entry.get("topics")),
+                    compliance_topics: strings(entry.get("compliance_topics")),
+                    uri: text_in(Some(entry), "uri").unwrap_or_default(),
+                    filter: text_in(Some(entry), "filter"),
+                    include_fields: strings(entry.get("include_fields")),
+                    name: text_in(Some(entry), "name"),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let app_proxy = section("app_proxy").map(|proxy| AppProxyConfig {
+        url: text_in(Some(proxy), "url").unwrap_or_default(),
+        subpath: text_in(Some(proxy), "subpath").unwrap_or_default(),
+        prefix: text_in(Some(proxy), "prefix").unwrap_or_default(),
+    });
+    AppConfig {
+        file: Some(file),
+        application_url: text_in(Some(table), "application_url"),
+        embedded: table.get("embedded").and_then(|value| value.as_bool()),
+        scopes: strings(access_scopes.and_then(|scopes| scopes.get("scopes"))),
+        optional_scopes: strings(access_scopes.and_then(|scopes| scopes.get("optional_scopes"))),
+        use_legacy_install_flow: access_scopes
+            .and_then(|scopes| scopes.get("use_legacy_install_flow"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+        redirect_urls: strings(section("auth").and_then(|auth| auth.get("redirect_urls"))),
+        webhooks_api_version: text_in(webhooks, "api_version"),
+        webhook_subscriptions,
+        app_proxy,
+    }
 }
 
 fn read_toml(file: &Path) -> Result<toml::Table, String> {
@@ -992,6 +1117,89 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn reads_the_backend_configuration() {
+        let root = temp_app("backend-config");
+        write(
+            &root,
+            "shopify.app.toml",
+            r#"
+client_id = "abc"
+name = "Demo"
+application_url = "https://example.trycloudflare.com"
+embedded = true
+
+[access_scopes]
+scopes = "write_products, read_orders"
+optional_scopes = ["read_customers"]
+
+[auth]
+redirect_urls = ["https://example.trycloudflare.com/auth/callback"]
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create", "orders/updated"]
+  uri = "https://hooks.example.com/orders"
+  filter = "total_price:>100"
+  include_fields = ["id", "total_price"]
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "/webhooks/compliance"
+
+[app_proxy]
+url = "https://example.trycloudflare.com/proxy"
+subpath = "tools"
+prefix = "apps"
+"#,
+        );
+        let app = load(&root).unwrap();
+        let config = &app.config;
+        assert_eq!(
+            config.application_url.as_deref(),
+            Some("https://example.trycloudflare.com")
+        );
+        assert_eq!(config.embedded, Some(true));
+        assert_eq!(config.scopes, ["write_products", "read_orders"]);
+        assert_eq!(config.optional_scopes, ["read_customers"]);
+        assert_eq!(
+            config.redirect_urls,
+            ["https://example.trycloudflare.com/auth/callback"]
+        );
+        assert_eq!(config.webhooks_api_version.as_deref(), Some("2026-10"));
+        assert_eq!(config.webhook_subscriptions.len(), 3);
+        assert_eq!(config.webhook_subscriptions[0].topics, ["app/uninstalled"]);
+        assert_eq!(
+            config.webhook_subscriptions[0].uri,
+            "/webhooks/app/uninstalled"
+        );
+        assert_eq!(
+            config.webhook_subscriptions[1].filter.as_deref(),
+            Some("total_price:>100")
+        );
+        assert_eq!(
+            config.webhook_subscriptions[1].include_fields,
+            ["id", "total_price"]
+        );
+        assert_eq!(
+            config.webhook_subscriptions[2].compliance_topics,
+            ["customers/data_request", "customers/redact", "shop/redact"]
+        );
+        let proxy = config.app_proxy.as_ref().unwrap();
+        assert_eq!(
+            (proxy.subpath.as_str(), proxy.prefix.as_str()),
+            ("tools", "apps")
+        );
+        assert!(config.file.as_ref().unwrap().ends_with("shopify.app.toml"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

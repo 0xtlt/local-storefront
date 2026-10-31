@@ -2349,6 +2349,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsf-admin"
+version = "0.2.0"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "graphql-parser",
+ "indexmap 2.14.2",
+ "lsf-checkout",
+ "lsf-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lsf-checkout"
 version = "0.2.0"
 dependencies = [

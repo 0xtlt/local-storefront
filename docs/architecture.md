@@ -6,6 +6,7 @@ Three crates, each depending only on the one before it, and two that stand besid
 crates/liquid    lsf-liquid     the Liquid language: no knowledge of Shopify
 crates/core      lsf-core       Shopify on top of it: store data, objects, filters, tags, rendering
 crates/checkout  lsf-checkout   the Functions and checkout UI extensions of a Shopify app, on the store data
+crates/admin     lsf-admin      the Admin API (GraphQL, 2026-10) and the webhooks of a Shopify app, on the store data
 crates/cli       lsf            the command line and the HTTP server
 crates/fmt       lsf-fmt        the formatter of `lsf fmt`: a source in, a source out
 ```

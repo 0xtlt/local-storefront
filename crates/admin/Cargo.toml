@@ -1,0 +1,18 @@
+[package]
+name = "lsf-admin"
+description = "A local Shopify Admin API (GraphQL, 2026-10) and the webhooks of an app, on local store data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+lsf-core.workspace = true
+lsf-checkout.workspace = true
+chrono.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+# Parses the queries the Admin API is sent, and its schema.
+graphql-parser = "0.4"
