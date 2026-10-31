@@ -393,6 +393,7 @@ pub fn check_policies(
         // Days and months do not divide one another: only the same kind of interval is checked.
         if billing_months == delivery_months
             && delivery_span > 0
+            && billing_span > 0
             && (billing_span < delivery_span || billing_span % delivery_span != 0)
         {
             let mut at: Vec<&str> = path.to_vec();
