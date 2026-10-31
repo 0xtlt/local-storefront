@@ -7,9 +7,11 @@ the app to its backend, signed as Shopify signs them. The backend runs and is te
 development store, no tunnel, the same data every run, and the failures that are hard to provoke
 on a real store (a missing scope, throttling, an uninstall) on demand.
 
-A product the backend creates through the Admin API is a product of the local shop; an order
-placed in the [local checkout](checkout.md) is an order the Admin API lists, and its
-`orders/create` webhook reaches the backend.
+A product the backend creates through the Admin API is a product of the local shop, on the
+theme's pages at once ([what the storefront and the checkout
+see](#what-the-storefront-and-the-checkout-see)); an order placed in the [local
+checkout](checkout.md) is an order the Admin API lists, and its `orders/create` webhook reaches
+the backend.
 
 ## Start
 
@@ -261,6 +263,54 @@ On demand: `POST /__lsf/webhooks/trigger {"topic": "orders/create", "id"?: "<gid
 webhook of a record of the shop (a representative one without `id`), and
 `npx local-storefront app webhook trigger --topic orders/create` does it from the command line,
 without a server. See the [control API](control-api.md) and the [CLI](cli.md#app-webhook-trigger).
+
+## What the storefront and the checkout see
+
+What the backend changes through the Admin API is what the storefront and the
+[local checkout](checkout.md) of the running server show, from the next request on:
+
+- a product it creates is on the theme's pages and in the collections it joined, once it is
+  `ACTIVE` and published on the Online Store; set to `DRAFT` or `ARCHIVED`, or unpublished, it
+  leaves them;
+- a customer it creates can log in, at `/__lsf/login?customer=<email>` and at the checkout;
+- a metafield it sets is read by Liquid (`product.metafields.custom.care`, `shop.metafields…`)
+  and by the Function inputs: the `$app:config` settings of a discount, a validation, a
+  customization or a cart transform;
+- an app discount it creates (`discountAutomaticAppCreate`, `discountCodeAppCreate`) runs its
+  Function at the checkout, with the metafields it was given, while it is active;
+- the open pages reload, with `--live-reload`.
+
+| Syncs | Does not sync |
+|---|---|
+| Products: title, handle, description, vendor, type, tags, status and publication, options, variants (price, SKU, barcode, inventory policy, weight), stock per location, media from `files/`, collections and selling plan groups they are in | Orders and what belongs to them (`orderCreate`, draft orders, fulfillments, refunds, returns): the account pages show the orders of the data and of the checkout |
+| Collections: title, handle, description, image, products in order | Discounts that are not app discounts (`DiscountCodeBasic`, …): the local checkout runs Functions only; of an app discount, `combinesWith`, usage limits and every code but the first |
+| Customers: email, names, phone, tags, marketing consent, account state, addresses, their company | Gift cards the Admin API creates (changes to the data's cards sync) |
+| Companies and their locations, pages, blogs and articles, menus, locations, metaobjects, selling plan groups | SEO, product categories, bundles, collection rules (a changed automated collection becomes a manual one) |
+| Metafields of all of these, of the shop and of markets; markets and their countries | Metafield and metaobject definitions, files, translations, publications other than the Online Store |
+| Shop: name, email, description, policies | Domains, currency, time zone, plan; turning a Function off (its settings go, it still runs) |
+
+The full list, field by field, is in the design notes of `lsf-admin`
+(`crates/admin/docs/design.md`, "Store sync").
+
+- **Only the default shop syncs.** The shops of `POST /__lsf/admin/shops` exist to isolate tests:
+  what they change stays in the Admin API.
+- **The files do not change.** lsf builds the store from the files with the Admin API's changes on
+  top; nothing is written to disk. `DELETE /__lsf/admin` (and the store data edited, with
+  `--watch`, or `POST /__lsf/reload`) puts the storefront back to the files.
+- **A session with its own data** (`PUT /__lsf/session` with `data`) sees its data on top of the
+  Admin API's changes.
+- **An order placed at the checkout** is recorded in the Admin API, and the store is not built
+  again for it: orders do not sync (the account pages show it from the checkout, as they do
+  without the Admin API).
+- **When the store data refuses a change** (an email it does not take, two variants with the
+  same options), the storefront shows the rest, the terminal says what was refused (once), and so
+  does `GET /__lsf/admin` (`storeSync.built.diagnostics`).
+- **What it costs**: a request of the backend only counts the change. The next request that
+  reads the store builds it again, once for a burst of mutations: under 2 ms on the demo store,
+  about 0.3 s for 3,000 products of 12 variants. Pages served without a change in between cost
+  nothing more. `GET /__lsf/admin` gives `storeSync`: the generation of the changes, whether a
+  change waits for the next page (`pending`), what the overlay writes and removes, and how long
+  the last build took.
 
 ## What the answers say
 
@@ -592,7 +642,8 @@ page; lsf leaves them empty.
   delivered (or `408` after `?timeout=`), with what was sent and what the backend answered.
   `DELETE /__lsf/webhooks` forgets them.
 - **Start clean**: `DELETE /__lsf/admin` puts every shop back to the store data, forgets the
-  subscriptions the backend made and the tokens OAuth issued; the printed token works again.
+  subscriptions the backend made and the tokens OAuth issued; the printed token works again, and
+  the storefront is the files' again.
 - **Isolate parallel tests**: `POST /__lsf/admin/shops {"shop": "test-1"}` gives each test a shop
   of its own, seeded from the same data, and its token.
 - **Fixed dates**: with `now` in the store data, every record created or changed is dated then,

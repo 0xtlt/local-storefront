@@ -139,6 +139,10 @@ pub struct ShopState {
     /// The files the shop keeps beside its records, by key: the bytes of a staged upload, the
     /// result of a bulk operation. Not records: no GraphQL type, no event, no sync.
     blobs: HashMap<String, Blob>,
+    /// How many times a record was written (added, removed, or handed out to change), ever:
+    /// what tells whether a request changed the shop, without comparing records. A reset does
+    /// not restart it.
+    revision: u64,
 }
 
 /// A file a shop keeps beside its records ([`ShopState::put_blob`]): what a client uploaded to a
@@ -173,6 +177,7 @@ impl ShopState {
             emitted: 0,
             originals: None,
             blobs: HashMap::new(),
+            revision: 0,
         }
     }
 
@@ -440,6 +445,7 @@ impl ShopState {
     /// Keeps the record of `key` as it is, before its first change since tracking started.
     /// Cheap: one copy of a record the first time it changes, nothing afterwards.
     fn note(&mut self, key: &str) {
+        self.revision += 1;
         let Some(originals) = &mut self.originals else {
             return;
         };
@@ -447,6 +453,13 @@ impl ShopState {
             let original = self.records.get(key).map(|entry| entry.record.clone());
             originals.insert(key.to_string(), original);
         }
+    }
+
+    /// A number that grows whenever a record is written: added, removed, or handed out by
+    /// [`ShopState::get_mut`] (which may leave it as it was). The same number before and after a
+    /// request means that the request changed nothing.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Whether a record may have changed since the seed: it was changed, created or removed,
@@ -545,12 +558,13 @@ impl ShopState {
     }
 
     /// The shop as it is after a reset: `seed`, under this shop's domain, with the events gone
-    /// and the event sequence kept.
+    /// and the event sequence kept. The revision moves on: a reset is a write.
     fn reset_from(&mut self, seed: &ShopState) {
         let domain = self.domain.clone();
-        let emitted = self.emitted;
+        let (emitted, revision) = (self.emitted, self.revision);
         *self = seed.clone();
         self.emitted = emitted;
+        self.revision = revision + 1;
         if domain != self.domain {
             self.rehost(&domain);
         }
@@ -896,6 +910,14 @@ mod tests {
         assert!(state.changed("gid://shopify/Product/1"));
         assert!(!state.changed("gid://shopify/Product/2"));
         assert!(!state.changed("gid://shopify/Product/4"));
+
+        // Reading leaves the revision as it is; any write moves it on.
+        let revision = state.revision();
+        let _ = state.get("gid://shopify/Product/1");
+        let _ = state.changes();
+        assert_eq!(state.revision(), revision);
+        let _ = state.get_mut("gid://shopify/Product/4");
+        assert!(state.revision() > revision);
     }
 
     #[test]
