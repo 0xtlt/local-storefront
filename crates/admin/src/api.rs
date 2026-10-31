@@ -4,7 +4,14 @@
 //!
 //! See `crates/admin/docs/design.md`.
 
+mod admin;
+pub mod samples;
+#[cfg(test)]
+mod tests;
+
 use std::collections::HashMap;
+
+pub use admin::{AdminApi, AdminOptions, INVALID_TOKEN, Reseeded, ThrottleSetting};
 
 /// A request, as `lsf` decoded it.
 #[derive(Clone, Debug, Default)]

@@ -1,0 +1,131 @@
+//! The records a webhook is built from outside of an event: `POST /__lsf/webhooks/trigger` and
+//! `lsf app webhook trigger` send the payload of a record of the shop (the one named, else a
+//! representative one of the topic's type), so that the backend gets the products, orders and
+//! customers of the store data rather than Shopify's examples. A topic whose type the shop has
+//! no record of falls back to the built-in sample of [`samples::fixed`].
+
+use chrono::Utc;
+use serde_json::{Value, json};
+
+use crate::state::{Record, ShopState};
+use crate::webhooks::payload::{self, DELETED_AT, Lookup, PREVIOUS_ACCESS_SCOPES, Records};
+use crate::webhooks::samples::{self, Sample, Samples};
+
+/// The records of a shop, for the payload builders.
+pub struct ShopLookup<'a>(pub &'a ShopState);
+
+impl Lookup for ShopLookup<'_> {
+    fn record(&self, gid: &str) -> Option<Record> {
+        self.0.get(gid).cloned()
+    }
+
+    fn shop(&self) -> Option<Record> {
+        self.0.shop().cloned()
+    }
+}
+
+/// The types of record a topic's payload is built from, in the order a representative one is
+/// looked for.
+pub fn record_types(topic: &str) -> &'static [&'static str] {
+    let (resource, _) = topic.split_once('/').unwrap_or((topic, ""));
+    match (resource, topic) {
+        (_, "app/scopes_update") => &["AppInstallation"],
+        ("app" | "shop", _) => &["Shop"],
+        ("products", _) => &["Product"],
+        ("collections", _) => &["Collection"],
+        ("customers", _) => &["Customer"],
+        ("orders", _) => &["Order"],
+        ("fulfillments", _) => &["Fulfillment"],
+        ("refunds", _) => &["Refund"],
+        ("draft_orders", _) => &["DraftOrder"],
+        ("inventory_items", _) => &["InventoryItem"],
+        ("inventory_levels", _) => &["InventoryLevel"],
+        ("locations", _) => &["Location"],
+        ("app_subscriptions", _) => &["AppSubscription"],
+        ("bulk_operations", _) => &["BulkOperation"],
+        ("metaobjects", _) => &["Metaobject"],
+        ("discounts", _) => &["DiscountAutomaticNode", "DiscountCodeNode"],
+        _ => &[],
+    }
+}
+
+/// Why a sample cannot be made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SampleError {
+    /// The record named is not one of the shop.
+    NotFound(String),
+    /// lsf does not build the payload of the topic.
+    NotBuilt(String),
+}
+
+/// The record of `topic` to build a payload from: `id`, or the first record of the topic's
+/// type, prepared as the webhooks prepare the record of an event (`deletedAt` for a
+/// `…/delete`, the scopes before for `app/scopes_update`).
+pub fn sample(shop: &ShopState, topic: &str, id: Option<&str>) -> Result<Sample, SampleError> {
+    if !payload::is_built(topic) {
+        return Err(SampleError::NotBuilt(format!(
+            "lsf does not build the payload of `{topic}`: it builds {}",
+            payload::BUILT_TOPICS.join(", ")
+        )));
+    }
+    let record = match id {
+        Some(id) => Some(shop.get(id).cloned().ok_or_else(|| {
+            SampleError::NotFound(format!("{id} is not a record of {}", shop.domain()))
+        })?),
+        None => record_types(topic)
+            .iter()
+            .find_map(|type_name| shop.all(type_name).next().cloned()),
+    };
+    let Some(mut record) = record else {
+        return samples::fixed(topic).ok_or_else(|| {
+            SampleError::NotFound(format!(
+                "{} has no record to build `{topic}` from",
+                shop.domain()
+            ))
+        });
+    };
+    if (topic.ends_with("/delete") || topic == "inventory_levels/disconnect")
+        && !record.contains_key(DELETED_AT)
+    {
+        record.insert(
+            DELETED_AT.into(),
+            json!(crate::state::value::date_time(Utc::now())),
+        );
+    }
+    if topic == "app/scopes_update" && !record.contains_key(PREVIOUS_ACCESS_SCOPES) {
+        let scopes = record
+            .get("accessScopes")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        record.insert(PREVIOUS_ACCESS_SCOPES.into(), scopes);
+    }
+    let lookup = Records::of(
+        shop.iter()
+            .filter(|(key, _)| crate::state::gid_type(key).is_some())
+            .map(|(_, record)| record.clone()),
+        shop.shop().cloned(),
+    );
+    Ok(Sample { record, lookup })
+}
+
+/// The samples of a shop seeded from the store data: what `lsf app webhook trigger` builds its
+/// payloads from.
+pub struct ShopSamples(pub ShopState);
+
+impl Samples for ShopSamples {
+    fn shop(&self) -> String {
+        self.0.domain().to_string()
+    }
+
+    fn sample(&self, topic: &str) -> Option<Sample> {
+        sample(&self.0, topic, None).ok()
+    }
+}
+
+/// The payload of `topic` for a record of the shop.
+pub fn payload_of(shop: &ShopState, topic: &str, id: Option<&str>) -> Result<Value, SampleError> {
+    let sample = sample(shop, topic, id)?;
+    sample.payload(topic).ok_or_else(|| {
+        SampleError::NotBuilt(format!("lsf does not build the payload of `{topic}`"))
+    })
+}

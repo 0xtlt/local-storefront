@@ -5,8 +5,9 @@
 //!
 //! As on Shopify, the queries list the subscriptions created through the Admin API, per shop;
 //! those of `shopify.app.toml` are the app's and are not listed ("app-specific subscriptions").
-//! A subscription is not a record of the shop: a reset of the shop does not keep it, as the api
-//! layer clears the registry with the shop. A subscription requires the access scope its topic
+//! A subscription is not a record of the shop: the store data reloading keeps it (it is the
+//! app's setup of the shop), `DELETE /__lsf/admin` forgets it. A subscription requires the
+//! access scope its topic
 //! names (the description of each `WebhookSubscriptionTopic` value, read into
 //! [`crate::webhooks::topics`]); without it, the mutation answers a user error on `topic`, worded
 //! by lsf.

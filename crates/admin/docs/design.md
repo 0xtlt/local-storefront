@@ -641,7 +641,8 @@ records, so both are the same shape.
   (the client id, `lsf-local-client-id` without one), `embedded`, `developerType: PARTNER`,
   `requestedAccessScopes`, `availableAccessScopes`, `optionalAccessScopes`, `installation`,
   `webhookApiVersion`. **`AppInstallation`**: `app`, `accessScopes` (`[access_scopes] scopes`;
-  without an app every scope the 2026-10 schema names, `app::ALL_SCOPES`), `launchUrl`.
+  without an app every scope of the 2026-10 schema, `auth::scopes::ALL_SCOPES`, the list the access
+  checks share), `launchUrl`.
 - **`ShopifyFunction`** per Function of the app: `id`, `title`, `handle`, `apiType`,
   `apiVersion`, `app`, `appKey`, `inputQuery`.
 - **Discounts** of `checkout.discounts`: a `DiscountAutomaticNode` (`automaticDiscount`: a
