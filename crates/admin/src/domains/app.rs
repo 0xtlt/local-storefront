@@ -363,14 +363,14 @@ fn seed_discount(seed: &mut Seed, discount: &CheckoutDiscount, created: &str) {
     seed.insert(record);
 }
 
-/// The API version lsf serves, which the webhooks of an app without `[webhooks] api_version`
-/// use.
+/// The API version the webhooks of an app without `[webhooks] api_version` use:
+/// [`crate::version::DEFAULT`].
 fn crate_version() -> &'static str {
-    "2026-10"
+    crate::version::DEFAULT
 }
 
-/// Every access scope of the 2026-10 Admin API: what the installation has when there is no
-/// app. The list is [`crate::auth::scopes::ALL_SCOPES`], which the access checks share.
+/// Every access scope of the versions of the Admin API lsf knows: what the installation has when
+/// there is no app. The list is [`crate::auth::scopes::ALL_SCOPES`], which the access checks share.
 pub use crate::auth::scopes::ALL_SCOPES;
 /// The topic of the event a change emits when Shopify has no webhook topic for it (a
 /// customization, a validation, a cart transform, a usage record): no subscription receives it

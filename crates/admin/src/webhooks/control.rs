@@ -222,6 +222,9 @@ fn unknown_topic(topic: &str) -> HttpResponse {
         .unwrap_or_default();
     HttpResponse::json(
         422,
-        &json!({"error": format!("`{topic}` is not a webhook topic of API 2026-10{hint}")}),
+        &json!({"error": format!(
+            "`{topic}` is not a webhook topic of API {}{hint}",
+            crate::version::DEFAULT
+        )}),
     )
 }
