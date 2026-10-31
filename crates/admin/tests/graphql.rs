@@ -629,3 +629,50 @@ fn arguments_reach_the_resolver_coerced_with_their_defaults() {
         [json!({"first": 3, "reverse": false, "sortKey": "TITLE"})]
     );
 }
+
+#[test]
+fn the_queries_of_shopifys_app_template_validate() {
+    // Shopify's React Router app template (`app/routes/app._index.tsx`) and shopify.dev's
+    // `metafieldsSet` example.
+    let cases = [
+        (
+            r#"mutation populateProduct($product: ProductCreateInput!) {
+              productCreate(product: $product) {
+                product { id title handle status variants(first: 10) { edges { node { id price barcode createdAt } } } }
+              }
+            }"#,
+            json!({"product": {"title": "Red Snowboard"}}),
+            10 + 1 + 2 + 10,
+        ),
+        (
+            r#"mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                productVariants { id price barcode createdAt }
+              }
+            }"#,
+            json!({
+                "productId": "gid://shopify/Product/1",
+                "variants": [{"id": "gid://shopify/ProductVariant/1", "price": "100.00"}]
+            }),
+            10 + 1,
+        ),
+        (
+            r#"mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                metafields { key namespace value createdAt updatedAt }
+                userErrors { field message code }
+              }
+            }"#,
+            json!({"metafields": [{
+                "key": "nickname", "namespace": "my_fields", "ownerId": "gid://shopify/Customer/624407574",
+                "type": "single_line_text_field", "value": "Big Tuna"
+            }]}),
+            10 + 1 + 1,
+        ),
+    ];
+    for (query, variables, cost) in cases {
+        let prepared = graphql::prepare(admin(), query, None, variables.as_object().unwrap())
+            .unwrap_or_else(|errors| panic!("{query}: {errors:#?}"));
+        assert_eq!(prepared.requested_cost(), cost, "{query}");
+    }
+}

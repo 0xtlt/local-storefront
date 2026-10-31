@@ -157,6 +157,7 @@ mise run prettier:golden   # regenerate the golden expectations of the formatter
 mise run prettier:fixtures # download the tests of the plugin, which the formatter's tests replay
 mise run prettier:compare -- path/to/theme   # list the files `lsf fmt` and Prettier disagree on
 mise run oracle:strict2-fixes                # check the fixes of `lsf check --fix` with the gem
+mise run admin:schema                        # regenerate the Admin API schema of lsf-admin from the pinned @shopify/dev-mcp
 ```
 
 Documentation: user-facing changes go into the guide of their task in `docs/` and into
