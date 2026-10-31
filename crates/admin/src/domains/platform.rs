@@ -19,12 +19,15 @@
 
 pub mod access;
 pub mod checkout;
+pub mod constraints;
+pub mod discount_tags;
 pub mod extensions;
 pub mod feedback;
 pub mod flow;
 pub mod mobile;
 pub mod queries;
 pub mod subscriptions;
+pub mod upload_targets;
 
 use serde_json::{Value, json};
 
@@ -106,11 +109,14 @@ pub fn seed(seed: &mut Seed) {
 pub fn register(registry: &mut crate::resolve::Registry) {
     access::register(registry);
     checkout::register(registry);
+    constraints::register(registry);
+    discount_tags::register(registry);
     feedback::register(registry);
     flow::register(registry);
     mobile::register(registry);
     queries::register(registry);
     subscriptions::register(registry);
+    upload_targets::register(registry);
 }
 
 #[cfg(test)]

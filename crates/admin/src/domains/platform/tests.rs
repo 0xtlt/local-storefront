@@ -507,3 +507,204 @@ fn apps_installations_and_staff_answer_real_values() {
         answer["extensions"]
     );
 }
+
+#[test]
+fn a_fulfillment_constraint_rule_runs_a_constraint_function_of_the_app() {
+    let mut shop = shop();
+    let create = "mutation($handle: String, $methods: [DeliveryMethodType!]!) { fulfillmentConstraintRuleCreate(functionHandle: $handle, deliveryMethodTypes: $methods, metafields: [{namespace: \"$app\", key: \"limits\", type: \"json\", value: \"{\\\"max\\\": 3}\"}]) { fulfillmentConstraintRule { id deliveryMethodTypes function { handle apiType } metafield(namespace: \"$app\", key: \"limits\") { value } } userErrors { field code } } }";
+    for (handle, code) in [
+        (json!(null), "MISSING_FUNCTION_IDENTIFIER"),
+        (json!("nope"), "FUNCTION_NOT_FOUND"),
+    ] {
+        let answer = run(
+            &mut shop,
+            create,
+            json!({"handle": handle, "methods": ["SHIPPING"]}),
+        );
+        assert_eq!(
+            answer["data"]["fulfillmentConstraintRuleCreate"]["userErrors"][0]["code"], code,
+            "{answer}"
+        );
+    }
+    assert_eq!(shop.count("FulfillmentConstraintRule"), 0);
+    let answer = run(
+        &mut shop,
+        create,
+        json!({"handle": "delivery-limits", "methods": ["SHIPPING", "PICK_UP"]}),
+    );
+    let rule = &answer["data"]["fulfillmentConstraintRuleCreate"]["fulfillmentConstraintRule"];
+    assert_eq!(
+        rule["function"]["apiType"], "fulfillment_constraints",
+        "{answer}"
+    );
+    assert_eq!(rule["metafield"]["value"], "{\"max\":3}");
+    let again = run(
+        &mut shop,
+        create,
+        json!({"handle": "delivery-limits", "methods": ["SHIPPING"]}),
+    );
+    assert_eq!(
+        again["data"]["fulfillmentConstraintRuleCreate"]["userErrors"][0]["code"],
+        "FUNCTION_ALREADY_REGISTERED"
+    );
+    let id = rule["id"].as_str().unwrap();
+    let updated = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentConstraintRuleUpdate(id: $id, deliveryMethodTypes: [LOCAL]) { fulfillmentConstraintRule { deliveryMethodTypes } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        updated["data"]["fulfillmentConstraintRuleUpdate"]["fulfillmentConstraintRule"]["deliveryMethodTypes"],
+        json!(["LOCAL"])
+    );
+    let listed = run(
+        &mut shop,
+        "{ fulfillmentConstraintRules { id } }",
+        json!({}),
+    );
+    assert_eq!(
+        listed["data"]["fulfillmentConstraintRules"],
+        json!([{"id": id}])
+    );
+    let deleted = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentConstraintRuleDelete(id: $id) { success userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        deleted["data"]["fulfillmentConstraintRuleDelete"]["success"],
+        true
+    );
+    let missing = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentConstraintRuleDelete(id: $id) { success userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        missing["data"]["fulfillmentConstraintRuleDelete"]["userErrors"][0]["code"],
+        "NOT_FOUND"
+    );
+}
+
+#[test]
+fn discount_tags_are_added_and_removed_in_bulk() {
+    let mut shop = shop();
+    let created = run(
+        &mut shop,
+        "mutation { discountCodeBasicCreate(basicCodeDiscount: {title: \"Ten\", code: \"TEN\", startsAt: \"2024-01-01T00:00:00Z\", customerSelection: {all: true}, customerGets: {value: {percentage: 0.1}, items: {all: true}}}) { codeDiscountNode { id } userErrors { message } } }",
+        json!({}),
+    );
+    let id = created["data"]["discountCodeBasicCreate"]["codeDiscountNode"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{created}"))
+        .to_string();
+    shop.take_events();
+    let add = "mutation($ids: [ID!], $search: String, $tags: [String!]!) { discountBulkTagsAdd(ids: $ids, search: $search, tags: $tags) { job { done } userErrors { field code } } }";
+    for (variables, code) in [
+        (json!({"tags": ["summer"]}), "MISSING_ARGUMENT"),
+        (
+            json!({"ids": [id], "search": "x", "tags": ["summer"]}),
+            "TOO_MANY_ARGUMENTS",
+        ),
+        (json!({"ids": [id], "tags": []}), "BLANK"),
+    ] {
+        let answer = run(&mut shop, add, variables);
+        assert_eq!(
+            answer["data"]["discountBulkTagsAdd"]["userErrors"][0]["code"], code,
+            "{answer}"
+        );
+    }
+    assert!(topics(&mut shop).is_empty());
+    let number = id.rsplit('/').next().unwrap();
+    let answer = run(
+        &mut shop,
+        add,
+        json!({"ids": [format!("gid://shopify/DiscountNode/{number}")], "tags": ["summer", "vip"]}),
+    );
+    assert_eq!(
+        answer["data"]["discountBulkTagsAdd"]["job"]["done"], true,
+        "{answer}"
+    );
+    assert_eq!(topics(&mut shop), ["discounts/update"]);
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { codeDiscountNode(id: $id) { codeDiscount { ... on DiscountCodeBasic { tags } } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        read["data"]["codeDiscountNode"]["codeDiscount"]["tags"],
+        json!(["summer", "vip"]),
+        "{read}"
+    );
+    let removed = run(
+        &mut shop,
+        "mutation { discountBulkTagsRemove(search: \"title:Ten\", tags: [\"vip\"]) { job { done } userErrors { code } } }",
+        json!({}),
+    );
+    assert_eq!(
+        removed["data"]["discountBulkTagsRemove"]["job"]["done"],
+        true
+    );
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { codeDiscountNode(id: $id) { codeDiscount { ... on DiscountCodeBasic { tags } } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        read["data"]["codeDiscountNode"]["codeDiscount"]["tags"],
+        json!(["summer"])
+    );
+}
+
+#[test]
+fn the_deprecated_upload_targets_are_staged_uploads() {
+    let mut shop = shop();
+    let one = run(
+        &mut shop,
+        "mutation { stagedUploadTargetGenerate(input: {filename: \"a.jpg\", mimeType: \"image/jpeg\", resource: IMAGE, httpMethod: POST}) { url parameters { name value } userErrors { field message } } }",
+        json!({}),
+    );
+    let payload = &one["data"]["stagedUploadTargetGenerate"];
+    assert_eq!(payload["userErrors"], json!([]), "{one}");
+    assert!(
+        payload["url"]
+            .as_str()
+            .unwrap()
+            .contains("/__lsf/admin/uploads/")
+    );
+    assert!(
+        payload["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|parameter| parameter["name"] == "key")
+    );
+    let many = run(
+        &mut shop,
+        "mutation { stagedUploadTargetsGenerate(input: [{filename: \"a.jpg\", mimeType: \"image/jpeg\", resource: IMAGE}, {filename: \"b.png\", mimeType: \"image/png\", resource: IMAGE}]) { urls { url parameters { name } } userErrors { field message } } }",
+        json!({}),
+    );
+    assert_eq!(
+        many["data"]["stagedUploadTargetsGenerate"]["urls"]
+            .as_array()
+            .map(Vec::len),
+        Some(2),
+        "{many}"
+    );
+    let refused = run(
+        &mut shop,
+        "mutation { stagedUploadTargetsGenerate(input: [{filename: \"a.jpg\", mimeType: \"text/plain\", resource: IMAGE}]) { urls { url } userErrors { field message } } }",
+        json!({}),
+    );
+    assert!(
+        !refused["data"]["stagedUploadTargetsGenerate"]["userErrors"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{refused}"
+    );
+    assert_eq!(
+        refused["data"]["stagedUploadTargetsGenerate"]["urls"],
+        Value::Null
+    );
+}
