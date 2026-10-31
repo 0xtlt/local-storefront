@@ -20,7 +20,7 @@ use crate::domains::platform::{self, access::AuthEffect};
 use crate::domains::{app as app_domain, orders};
 use crate::graphql::{self, Bucket, Request};
 use crate::resolve::{Registry, ShopResolver};
-use crate::state::{Event, ShopState, Shops};
+use crate::state::{Clock, Event, ShopState, Shops};
 use crate::throttle::{self, Plan, Throttle};
 use crate::version::{self, AdminPath, ApiVersion, Resolution, Served};
 use crate::webhooks::{AppUrls, DeliveryOptions, Settings, TriggerError, TriggerRequest, Webhooks};
@@ -330,13 +330,13 @@ impl AdminApi {
     ) -> Option<T> {
         let shop = self.shop(domain)?;
         let mut live = lock(&shop);
-        let revision = live.state.revision();
+        let before = (live.state.revision(), live.state.clock());
         let start = live.state.event_count();
         let result = change(&mut live.state);
         crate::domains::segments::follow(&mut live.state, start, &|topic| {
             self.webhooks.subscribes(domain, topic)
         });
-        self.count_change(&live, revision);
+        self.count_change(&live, before);
         let events = live.state.take_events();
         if !events.is_empty() {
             live.changed = true;
@@ -369,9 +369,11 @@ impl AdminApi {
     }
 
     /// Counts a change of the default shop for store sync, when a record of it was written since
-    /// `revision`: called while the shop is locked.
-    fn count_change(&self, live: &LiveShop, revision: u64) {
-        if live.default && live.state.revision() != revision {
+    /// `before` (its revision and its clock then), or its clock moved: what the storefront sees
+    /// depends on the time too (an app discount runs between its dates). Called while the shop
+    /// is locked.
+    fn count_change(&self, live: &LiveShop, before: (u64, Clock)) {
+        if live.default && (live.state.revision(), live.state.clock()) != before {
             self.sync.changed();
         }
     }
@@ -697,7 +699,7 @@ impl AdminApi {
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
         let mut live = lock(&shop);
-        let revision = live.state.revision();
+        let before = (live.state.revision(), live.state.clock());
         // What the shop's clock passed since the last request (a payment schedule that came due,
         // a data erasure ten days old, a scheduled listing): a change like the request's own.
         self.tick(&mut live.state);
@@ -714,7 +716,7 @@ impl AdminApi {
         let started = std::time::Instant::now();
         let mut response = graphql::run(version.schema(), &mut resolver, &query, Some(bucket));
         response.extensions.extend(resolver.extensions());
-        self.count_change(&live, revision);
+        self.count_change(&live, before);
         let events = live.state.take_events();
         let effects = platform::access::effects(&events);
         if !events.is_empty() {

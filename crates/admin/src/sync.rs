@@ -28,6 +28,32 @@ use serde_json::{Map, Value, json};
 use crate::domains::{catalog, content, logistics};
 use crate::state::{ChangeKind, Record, ShopState, gid, gid_type, parse_gid};
 
+/// The next instant after now at which the time alone changes what [`overlay`] projects: the
+/// earliest start or end of an app discount still to come (the checkout runs those active by
+/// the shop's clock). `None` when there is none.
+pub fn next_moment(state: &ShopState) -> Option<chrono::DateTime<chrono::Utc>> {
+    let now = state.now();
+    state
+        .all_of(&["DiscountAutomaticNode", "DiscountCodeNode"])
+        .filter_map(app_discount)
+        .flat_map(|details| ["startsAt", "endsAt"].map(|field| details.get(field)))
+        .filter_map(|at| chrono::DateTime::parse_from_rfc3339(at?.as_str()?).ok())
+        .map(|at| at.with_timezone(&chrono::Utc))
+        .filter(|at| *at > now)
+        .min()
+}
+
+/// The discount of a discount node, when it is an app's (`DiscountAutomaticApp`,
+/// `DiscountCodeApp`): what the checkout runs.
+fn app_discount(record: &Record) -> Option<&Map<String, Value>> {
+    let details = record
+        .get("automaticDiscount")
+        .or_else(|| record.get("codeDiscount"))
+        .and_then(Value::as_object)?;
+    let kind = details.get("__typename").and_then(Value::as_str)?;
+    (kind == "DiscountAutomaticApp" || kind == "DiscountCodeApp").then_some(details)
+}
+
 /// What diagnostics name the overlay of the Admin API's changes.
 pub const OVERLAY_NAME: &str = "(admin api)";
 
@@ -2258,15 +2284,8 @@ impl<'s> Sync<'s> {
         keys.sort_by_key(|key| parse_gid(key).map_or(0, |(_, id)| id));
         keys.into_iter()
             .filter_map(|key| {
-                let record = view.get(key)?;
-                let details = record
-                    .get("automaticDiscount")
-                    .or_else(|| record.get("codeDiscount"))
-                    .and_then(Value::as_object)?;
+                let details = app_discount(view.get(key)?)?;
                 let kind = details.get("__typename").and_then(Value::as_str)?;
-                if kind != "DiscountAutomaticApp" && kind != "DiscountCodeApp" {
-                    return None;
-                }
                 let starts = details.get("startsAt").and_then(Value::as_str);
                 let ends = details.get("endsAt").and_then(Value::as_str);
                 let active = starts.is_none_or(|starts| starts <= now.as_str())

@@ -7,7 +7,7 @@
 //! request that reads the store ([`StoreSync::update`]), so that a burst of mutations is
 //! projected once, and the store built once.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ use lsf_core::diagnostics::Diagnostics;
 use lsf_core::store::load::Overlay;
 use serde_json::{Map, Value, json};
 
-use crate::state::ShopState;
+use crate::state::{Clock, ShopState};
 
 /// What the Admin API changed in the default shop, as store data.
 #[derive(Clone, Debug, Default)]
@@ -57,6 +57,9 @@ pub(super) struct StoreSync {
     /// How many times the default shop changed (or was put back to the seed): read without a
     /// lock, so that a server knows at once whether its store may be behind.
     changes: AtomicU64,
+    /// When the overlay goes stale by itself, as Unix seconds (`0`: never): on the system clock,
+    /// the next start or end of an app discount it runs or will run. Passing it counts a change.
+    stale_at: AtomicI64,
     inner: Mutex<Option<Inner>>,
 }
 
@@ -67,8 +70,24 @@ impl StoreSync {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// How many times the default shop changed.
+    /// How many times the default shop changed, counting the time that made the overlay stale
+    /// (see `stale_at`) as a change. Cheap: no lock.
     pub(super) fn changes(&self) -> u64 {
+        self.changes_at(chrono::Utc::now().timestamp())
+    }
+
+    /// [`StoreSync::changes`] at `now`, in Unix seconds.
+    fn changes_at(&self, now: i64) -> u64 {
+        let stale_at = self.stale_at.load(Ordering::Acquire);
+        if stale_at != 0
+            && now >= stale_at
+            && self
+                .stale_at
+                .compare_exchange(stale_at, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            self.changed();
+        }
         self.changes.load(Ordering::Acquire)
     }
 
@@ -117,6 +136,14 @@ impl StoreSync {
             }
             inner.base.clone()
         };
+        // When the time alone changes what it projects, from before it is made: a moment it
+        // already saw only makes it once more. A frozen clock moves by `POST
+        // /__lsf/admin/clock`, which counts a change.
+        let stale_at = match state.clock() {
+            Clock::System => crate::sync::next_moment(state).map_or(0, |at| at.timestamp()),
+            Clock::Frozen(_) => 0,
+        };
+        self.stale_at.store(stale_at, Ordering::Release);
         // Made without this lock: `GET /__lsf/admin` reads it meanwhile. The shop's lock keeps
         // the shop, the base and the count as they were read.
         let overlay = crate::sync::overlay(state, &base);
@@ -195,4 +222,20 @@ fn summary(overlay: &Overlay) -> Value {
         _ => Map::new(),
     };
     json!({"written": written, "removed": removed})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_time_that_makes_the_overlay_stale_counts_one_change() {
+        let sync = StoreSync::default();
+        assert_eq!(sync.changes_at(1_000), 0);
+        sync.stale_at.store(1_000, Ordering::Release);
+        assert_eq!(sync.changes_at(999), 0);
+        assert_eq!(sync.changes_at(1_000), 1);
+        // Once: the next overlay says when it goes stale again.
+        assert_eq!(sync.changes_at(2_000), 1);
+    }
 }

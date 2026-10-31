@@ -2070,7 +2070,11 @@ which every mutation would have paid on the Admin request's path, ten times for 
    (`DELETE /__lsf/admin`) counts too. Only the default shop's `LiveShop` (`default: true`, kept
    through a reseed that moves it) counts: the other shops never sync. A change that does not go
    through `graphql` or `change_shop` must count itself the same way (`AdminApi::install` writes
-   only the installation's scopes, which do not sync, and does not).
+   only the installation's scopes, which do not sync, and does not). **The time** changes what
+   the overlay says too (an app discount runs between its `startsAt` and `endsAt`): a request
+   that moved the clock counts (`POST /__lsf/admin/clock`), and on the system clock the overlay
+   says when it goes stale by itself (`sync::next_moment`, the next start or end of an app
+   discount), which the count passes once that instant is past (`StoreSync::changes`, no lock).
 3. **The next request that reads the store** (`dispatch`, after the Admin API's own paths, and
    `observe_changes`, which live reload calls) compares the count with the one its store was
    built at (`ServerState::admin_changes`): equal, it goes on (one atomic read). Different, it
