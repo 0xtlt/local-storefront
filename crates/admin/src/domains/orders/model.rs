@@ -767,7 +767,7 @@ fn inventory_level(state: &ShopState, item: &str, location: Option<&str>) -> Opt
 /// `variants/in_stock` or `variants/out_of_stock` when the stock crossed zero
 /// (`catalog::after_inventory_change`), then `inventory_levels/update`. Returns whether a level
 /// changed.
-fn move_inventory(
+pub fn move_inventory(
     state: &mut ShopState,
     item: &str,
     location: Option<&str>,

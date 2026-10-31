@@ -17,9 +17,11 @@
 mod catalog;
 mod content;
 mod customers;
+mod logistics;
 mod orders;
 mod shop;
 
+pub use logistics::LOGISTICS_EVENT;
 pub use orders::{
     EDIT_ADDITIONS, EDIT_COMMITTED_AT, EDIT_NOTIFY_CUSTOMER, EDIT_REMOVALS, EDIT_STAFF_NOTE,
     FULFILLMENT_ORDER_EVENT,
@@ -135,6 +137,7 @@ pub const BUILT_TOPICS: &[&str] = &[
     "customers/update",
     "customers_email_marketing_consent/update",
     "customers_marketing_consent/update",
+    "delivery_promise_settings/update",
     "discounts/create",
     "discounts/delete",
     "discounts/redeemcode_added",
@@ -144,6 +147,7 @@ pub const BUILT_TOPICS: &[&str] = &[
     "draft_orders/delete",
     "draft_orders/update",
     "fulfillment_events/create",
+    "fulfillment_events/delete",
     "fulfillment_holds/added",
     "fulfillment_holds/released",
     "fulfillment_orders/cancellation_request_accepted",
@@ -155,8 +159,14 @@ pub const BUILT_TOPICS: &[&str] = &[
     "fulfillment_orders/fulfillment_request_submitted",
     "fulfillment_orders/fulfillment_service_failed_to_complete",
     "fulfillment_orders/hold_released",
+    "fulfillment_orders/line_items_prepared_for_local_delivery",
+    "fulfillment_orders/line_items_prepared_for_pickup",
+    "fulfillment_orders/manually_reported_progress_stopped",
+    "fulfillment_orders/merged",
     "fulfillment_orders/moved",
+    "fulfillment_orders/order_routing_complete",
     "fulfillment_orders/placed_on_hold",
+    "fulfillment_orders/progress_reported",
     "fulfillment_orders/rescheduled",
     "fulfillment_orders/scheduled_fulfillment_order_ready",
     "fulfillment_orders/split",
@@ -168,6 +178,21 @@ pub const BUILT_TOPICS: &[&str] = &[
     "inventory_levels/connect",
     "inventory_levels/disconnect",
     "inventory_levels/update",
+    "inventory_shipments/add_items",
+    "inventory_shipments/create",
+    "inventory_shipments/delete",
+    "inventory_shipments/mark_in_transit",
+    "inventory_shipments/receive_items",
+    "inventory_shipments/remove_items",
+    "inventory_shipments/update_item_quantities",
+    "inventory_shipments/update_tracking",
+    "inventory_transfers/add_items",
+    "inventory_transfers/cancel",
+    "inventory_transfers/complete",
+    "inventory_transfers/ready_to_ship",
+    "inventory_transfers/remove_items",
+    "inventory_transfers/update_item_quantities",
+    "inventory_transfers/updated",
     "locations/activate",
     "locations/create",
     "locations/deactivate",
@@ -194,6 +219,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "products/create",
     "products/delete",
     "products/update",
+    "profiles/create",
+    "profiles/delete",
+    "profiles/update",
     "refunds/create",
     "returns/approve",
     "returns/cancel",
@@ -276,7 +304,9 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "refunds/create" => orders::refund(record, lookup),
         "order_transactions/create" => orders::order_transaction(record),
         "orders/edited" => orders::order_edit(record),
-        "fulfillment_events/create" => orders::fulfillment_event(record, lookup),
+        "fulfillment_events/create" | "fulfillment_events/delete" => {
+            orders::fulfillment_event(record, lookup)
+        }
         "fulfillment_holds/added" | "fulfillment_holds/released" => {
             orders::fulfillment_hold(record)
         }
@@ -294,6 +324,24 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         | "fulfillment_orders/rescheduled"
         | "fulfillment_orders/scheduled_fulfillment_order_ready"
         | "fulfillment_orders/split" => orders::fulfillment_order_event(topic, record, lookup),
+        "fulfillment_orders/line_items_prepared_for_local_delivery"
+        | "fulfillment_orders/line_items_prepared_for_pickup"
+        | "fulfillment_orders/manually_reported_progress_stopped"
+        | "fulfillment_orders/merged"
+        | "fulfillment_orders/order_routing_complete"
+        | "fulfillment_orders/progress_reported" => {
+            logistics::fulfillment_order(topic, record, lookup)
+        }
+        _ if topic.starts_with("inventory_transfers/") && is_built(topic) => {
+            logistics::transfer(topic, record)
+        }
+        _ if topic.starts_with("inventory_shipments/") && is_built(topic) => {
+            logistics::shipment(topic, record, lookup)
+        }
+        "profiles/create" | "profiles/update" | "profiles/delete" => {
+            logistics::delivery_profile(record)
+        }
+        "delivery_promise_settings/update" => logistics::delivery_promise_settings(record, lookup),
         "returns/approve" | "returns/cancel" | "returns/close" | "returns/decline"
         | "returns/reopen" | "returns/request" => orders::return_event(topic, record),
         "app/uninstalled" | "shop/update" => shop::shop(record, lookup),
