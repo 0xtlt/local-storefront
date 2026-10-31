@@ -1,5 +1,5 @@
 //! Locations: `locationAdd`, `locationEdit`, `locationActivate`, `locationDeactivate`,
-//! `locationDelete`.
+//! `locationDelete`, `locationLocalPickupEnable`, `locationLocalPickupDisable`.
 //!
 //! As shopify.dev's reference of 2026-10 describes them:
 //!
@@ -23,6 +23,11 @@
 //! - `locationDelete` refuses an active location ("The location cannot be deleted while it is
 //!   active.", `LOCATION_IS_ACTIVE`: the reference's example) and one with inventory
 //!   (`LOCATION_HAS_INVENTORY`). Event: `locations/delete`.
+//! - `locationLocalPickupEnable` sets a location's `localPickupSettingsV2` (its pickup time and
+//!   instructions), `locationLocalPickupDisable` removes them; an inactive location is refused
+//!   (`ACTIVE_LOCATION_NOT_FOUND`), and so is the deprecated `CUSTOM` pickup time
+//!   (`CUSTOM_PICKUP_TIME_NOT_ALLOWED`). shopify.dev does not say which topic these fire: lsf
+//!   sends `locations/update`, as for any other change of the location.
 //!
 //! The store sync removes a deactivated location from the store data. Messages Shopify documents
 //! only by their code are the code's description in the 2026-10 schema.
@@ -42,7 +47,9 @@ pub fn register(registry: &mut Registry) {
         .mutation("locationEdit", location_edit)
         .mutation("locationActivate", location_activate)
         .mutation("locationDeactivate", location_deactivate)
-        .mutation("locationDelete", location_delete);
+        .mutation("locationDelete", location_delete)
+        .mutation("locationLocalPickupEnable", local_pickup_enable)
+        .mutation("locationLocalPickupDisable", local_pickup_disable);
 }
 
 /// A payload whose errors are in `key` (`locationDeactivateUserErrors`).
@@ -583,4 +590,85 @@ fn location_delete(
     }
     state.delete(&id, "locations/delete");
     Ok(errors_payload(json!({"deletedLocationId": id}), key, &[]))
+}
+
+/// The active location of an argument, or the error of local pickup settings.
+fn pickup_location(state: &ShopState, id: &str, path: &[&str]) -> Result<(), UserError> {
+    if is(state, id, "Location") && is_active_location(state, id) {
+        Ok(())
+    } else {
+        Err(coded(
+            path,
+            "Provided locationId is not for an active location belonging to this store.",
+            "ACTIVE_LOCATION_NOT_FOUND",
+        ))
+    }
+}
+
+/// `locationLocalPickupEnable`.
+fn local_pickup_enable(
+    mutation: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let settings = input(ctx, "localPickupSettings");
+    let id = text(&settings, "locationId")
+        .unwrap_or_default()
+        .to_string();
+    let checked = pickup_location(
+        mutation.state(),
+        &id,
+        &["localPickupSettings", "locationId"],
+    )
+    .and_then(|()| match text(&settings, "pickupTime") {
+        Some("CUSTOM") => Err(coded(
+            &["localPickupSettings", "pickupTime"],
+            "Custom pickup time is not allowed for local pickup settings.",
+            "CUSTOM_PICKUP_TIME_NOT_ALLOWED",
+        )),
+        _ => Ok(()),
+    });
+    if let Err(error) = checked {
+        return Ok(errors_payload(
+            json!({"localPickupSettings": null}),
+            "userErrors",
+            &[error],
+        ));
+    }
+    let value = json!({
+        "pickupTime": settings.get("pickupTime"),
+        "instructions": text(&settings, "instructions").unwrap_or_default(),
+    });
+    let state = mutation.state_mut();
+    if let Some(record) = state.get_mut(&id) {
+        record.insert("localPickupSettingsV2".into(), value.clone());
+    }
+    state.touch(&id);
+    state.emit("locations/update", &id);
+    Ok(errors_payload(
+        json!({"localPickupSettings": value}),
+        "userErrors",
+        &[],
+    ))
+}
+
+/// `locationLocalPickupDisable`.
+fn local_pickup_disable(
+    mutation: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+) -> Result<Value, FieldError> {
+    let id = ctx.arg_str("locationId").unwrap_or_default().to_string();
+    if let Err(error) = pickup_location(mutation.state(), &id, &["locationId"]) {
+        return Ok(errors_payload(
+            json!({"locationId": null}),
+            "userErrors",
+            &[error],
+        ));
+    }
+    let state = mutation.state_mut();
+    if let Some(record) = state.get_mut(&id) {
+        record.remove("localPickupSettingsV2");
+    }
+    state.touch(&id);
+    state.emit("locations/update", &id);
+    Ok(errors_payload(json!({"locationId": id}), "userErrors", &[]))
 }

@@ -1,6 +1,7 @@
 //! Selling plan groups: `sellingPlanGroupCreate`, `sellingPlanGroupUpdate`,
 //! `sellingPlanGroupDelete`, `sellingPlanGroupAddProducts`, `sellingPlanGroupRemoveProducts`,
-//! `sellingPlanGroupAddProductVariants`, `sellingPlanGroupRemoveProductVariants`, and the
+//! `sellingPlanGroupAddProductVariants`, `sellingPlanGroupRemoveProductVariants`,
+//! `productJoinSellingPlanGroups`, `productLeaveSellingPlanGroups`, their variant forms, and the
 //! `appliesTo…` fields of a group.
 //!
 //! As shopify.dev's reference of 2026-10 describes them:
@@ -15,6 +16,8 @@
 //! - `resources` (`productIds`, `productVariantIds`) and the add/remove mutations link the group
 //!   with products and variants, each side listing the other (`Product.sellingPlanGroups`,
 //!   `ProductVariant.sellingPlanGroups`).
+//! - `productJoinSellingPlanGroups`, `productLeaveSellingPlanGroups` and their variant forms do
+//!   the same from the product's (or the variant's) side.
 //! - Events: `selling_plan_groups/create`, `selling_plan_groups/update` (also when its products
 //!   change), `selling_plan_groups/delete`.
 //!
@@ -39,6 +42,10 @@ pub fn register(registry: &mut Registry) {
         .mutation("sellingPlanGroupRemoveProducts", remove_products)
         .mutation("sellingPlanGroupAddProductVariants", add_variants)
         .mutation("sellingPlanGroupRemoveProductVariants", remove_variants)
+        .mutation("productJoinSellingPlanGroups", product_join)
+        .mutation("productLeaveSellingPlanGroups", product_leave)
+        .mutation("productVariantJoinSellingPlanGroups", variant_join)
+        .mutation("productVariantLeaveSellingPlanGroups", variant_leave)
         .field("SellingPlanGroup", "appliesToProduct", applies_to_product)
         .field(
             "SellingPlanGroup",
@@ -989,4 +996,76 @@ fn remove_variants(
         false,
         "removedProductVariantIds",
     )
+}
+
+/// `productJoinSellingPlanGroups` and the three others: a product or a variant joins or leaves
+/// groups, as `sellingPlanGroupAddProducts` and the others do from the group's side.
+fn join_groups(
+    mutation: &mut Mutation<'_>,
+    ctx: &FieldContext<'_>,
+    type_name: &str,
+    member: bool,
+) -> Result<Value, FieldError> {
+    let (answer, list, message, code) = if type_name == "Product" {
+        (
+            "product",
+            "products",
+            "Product does not exist.",
+            "PRODUCT_DOES_NOT_EXIST",
+        )
+    } else {
+        (
+            "productVariant",
+            "productVariants",
+            "Product variant does not exist.",
+            "PRODUCT_VARIANT_DOES_NOT_EXIST",
+        )
+    };
+    let state = mutation.state();
+    let id = ctx.arg_str("id").unwrap_or_default().to_string();
+    if !is(state, &id, type_name) {
+        return Ok(payload(
+            json!({answer: null}),
+            &[error(&["id"], message, code)],
+        ));
+    }
+    let groups = gids(ctx.arg("sellingPlanGroupIds"));
+    let errors: Vec<UserError> = groups
+        .iter()
+        .enumerate()
+        .filter(|(_, group)| !is(state, group, "SellingPlanGroup"))
+        .map(|(index, _)| {
+            error(
+                &["sellingPlanGroupIds", &index.to_string()],
+                "Selling plan group does not exist.",
+                "GROUP_DOES_NOT_EXIST",
+            )
+        })
+        .collect();
+    if !errors.is_empty() {
+        return Ok(payload(json!({answer: null}), &errors));
+    }
+    let state = mutation.state_mut();
+    for group in &groups {
+        if link(state, group, list, std::slice::from_ref(&id), member) {
+            state.emit("selling_plan_groups/update", group);
+        }
+    }
+    Ok(payload(json!({answer: id}), &[]))
+}
+
+fn product_join(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
+    join_groups(mutation, ctx, "Product", true)
+}
+
+fn product_leave(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
+    join_groups(mutation, ctx, "Product", false)
+}
+
+fn variant_join(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
+    join_groups(mutation, ctx, "ProductVariant", true)
+}
+
+fn variant_leave(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
+    join_groups(mutation, ctx, "ProductVariant", false)
 }

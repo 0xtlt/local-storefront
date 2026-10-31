@@ -1733,3 +1733,131 @@ fn records_are_found_by_identifier_and_by_their_relations() {
     assert_eq!(data["item"]["inventoryLevel"]["id"], json!(level));
     assert_eq!(data["location"]["inventoryLevel"]["id"], json!(level));
 }
+
+#[test]
+fn products_join_selling_plan_groups_and_locations_offer_pickup() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let group = run(
+        &mut shop,
+        r#"mutation { sellingPlanGroupCreate(input: {name: "Refill", options: ["Every"], sellingPlansToCreate: [{name: "Monthly", options: ["month"],
+            billingPolicy: {recurring: {interval: MONTH, intervalCount: 1}}, deliveryPolicy: {recurring: {interval: MONTH, intervalCount: 1}}}]}) {
+            sellingPlanGroup { id } userErrors { message } } }"#,
+    );
+    let group = group["data"]["sellingPlanGroupCreate"]["sellingPlanGroup"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+
+    // An unknown group or product is refused, and nothing changes.
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $groups: [ID!]!) { productJoinSellingPlanGroups(id: $id, sellingPlanGroupIds: $groups) {
+            product { id } userErrors { field message code } } }"#,
+        json!({"id": mug, "groups": [group, "gid://shopify/SellingPlanGroup/0"]}),
+    );
+    assert_eq!(
+        refused["data"]["productJoinSellingPlanGroups"],
+        json!({"product": null, "userErrors": [{"field": ["sellingPlanGroupIds", "1"],
+            "message": "Selling plan group does not exist.", "code": "GROUP_DOES_NOT_EXIST"}]})
+    );
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($groups: [ID!]!) { productVariantJoinSellingPlanGroups(id: "gid://shopify/ProductVariant/0", sellingPlanGroupIds: $groups) {
+            productVariant { id } userErrors { field code } } }"#,
+        json!({"groups": [group]}),
+    );
+    assert_eq!(
+        refused["data"]["productVariantJoinSellingPlanGroups"]["userErrors"],
+        json!([{"field": ["id"], "code": "PRODUCT_VARIANT_DOES_NOT_EXIST"}])
+    );
+    unchanged(&mut shop, &before, &[&mug, &group]);
+
+    let joined = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $groups: [ID!]!) { productJoinSellingPlanGroups(id: $id, sellingPlanGroupIds: $groups) {
+            product { sellingPlanGroups(first: 5) { nodes { name } } } userErrors { message } } }"#,
+        json!({"id": mug, "groups": [group]}),
+    );
+    assert_eq!(
+        ok(&joined, "productJoinSellingPlanGroups")["product"]["sellingPlanGroups"]["nodes"],
+        json!([{"name": "Refill"}])
+    );
+    assert_eq!(topics(&mut shop), ["selling_plan_groups/update"]);
+    let left = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $groups: [ID!]!) { productLeaveSellingPlanGroups(id: $id, sellingPlanGroupIds: $groups) { userErrors { message } } }"#,
+        json!({"id": mug, "groups": [group]}),
+    );
+    ok(&left, "productLeaveSellingPlanGroups");
+    assert!(!super::gids(shop.get(&group).unwrap().get("products")).contains(&mug));
+    assert_eq!(topics(&mut shop), ["selling_plan_groups/update"]);
+
+    let variant = variants(&shop, &mug)[0].clone();
+    let joined = run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $groups: [ID!]!) { productVariantJoinSellingPlanGroups(id: $id, sellingPlanGroupIds: $groups) {
+            productVariant { sellingPlanGroups(first: 5) { nodes { name } } } userErrors { message } } }"#,
+        json!({"id": variant, "groups": [group]}),
+    );
+    assert_eq!(
+        ok(&joined, "productVariantJoinSellingPlanGroups")["productVariant"]["sellingPlanGroups"]["nodes"],
+        json!([{"name": "Refill"}])
+    );
+    assert!(super::gids(shop.get(&group).unwrap().get("productVariants")).contains(&variant));
+    assert_eq!(topics(&mut shop), ["selling_plan_groups/update"]);
+
+    // Local pickup: an unknown location and the deprecated `CUSTOM` time are refused.
+    let location = shop.keys("Location").next().unwrap().to_string();
+    let before = shop.clone();
+    let refused = run(
+        &mut shop,
+        r#"mutation { locationLocalPickupEnable(localPickupSettings: {locationId: "gid://shopify/Location/0", pickupTime: ONE_HOUR}) {
+            localPickupSettings { pickupTime } userErrors { field code } } }"#,
+    );
+    assert_eq!(
+        refused["data"]["locationLocalPickupEnable"],
+        json!({"localPickupSettings": null, "userErrors": [{"field": ["localPickupSettings", "locationId"], "code": "ACTIVE_LOCATION_NOT_FOUND"}]})
+    );
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { locationLocalPickupEnable(localPickupSettings: {locationId: $id, pickupTime: CUSTOM}) {
+            userErrors { field code } } }"#,
+        json!({"id": location}),
+    );
+    assert_eq!(
+        refused["data"]["locationLocalPickupEnable"]["userErrors"],
+        json!([{"field": ["localPickupSettings", "pickupTime"], "code": "CUSTOM_PICKUP_TIME_NOT_ALLOWED"}])
+    );
+    unchanged(&mut shop, &before, &[&location]);
+
+    let enabled = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { locationLocalPickupEnable(localPickupSettings: {locationId: $id, pickupTime: TWO_HOURS, instructions: "Ring twice"}) {
+            localPickupSettings { pickupTime instructions } userErrors { field message code } } }"#,
+        json!({"id": location}),
+    );
+    assert_eq!(
+        ok(&enabled, "locationLocalPickupEnable")["localPickupSettings"],
+        json!({"pickupTime": "TWO_HOURS", "instructions": "Ring twice"})
+    );
+    assert_eq!(topics(&mut shop), ["locations/update"]);
+    let disabled = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { locationLocalPickupDisable(locationId: $id) { locationId userErrors { message } } }"#,
+        json!({"id": location}),
+    );
+    assert_eq!(
+        ok(&disabled, "locationLocalPickupDisable")["locationId"],
+        json!(location)
+    );
+    assert!(
+        shop.get(&location)
+            .unwrap()
+            .get("localPickupSettingsV2")
+            .is_none()
+    );
+    assert_eq!(topics(&mut shop), ["locations/update"]);
+}
