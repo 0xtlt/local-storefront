@@ -1940,3 +1940,51 @@ fn tags_added_to_a_product_follow_the_smart_collections() {
             .contains(&json!("zz-new"))
     );
 }
+
+/// A gift card expires by the shop's day, in its time zone, the zone the seed writes
+/// `expiresOn` in, and `isRedeemable` is read at the shop's clock rather than kept from when the
+/// card was written.
+#[test]
+fn gift_cards_expire_by_the_shop_s_day() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+    let (mut store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Directory(path),
+        &Default::default(),
+    );
+    // 23:30 in UTC is already the next day in Paris, the shop's zone.
+    store.now = Some("2026-03-15T23:30:00Z".parse().unwrap());
+    let mut shop = ShopState::seeded(&store, None);
+    let created = run(
+        &mut shop,
+        r#"mutation { giftCardCreate(input: {initialValue: "20", expiresOn: "2026-03-15"}) { giftCard { id isRedeemable } userErrors { message } } }"#,
+    );
+    let card = ok(&created, "giftCardCreate")["giftCard"].clone();
+    assert_eq!(card["isRedeemable"], json!(false), "{created}");
+    let credit = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { giftCardCredit(id: $id, creditInput: {creditAmount: {amount: "5", currencyCode: EUR}}) { userErrors { field code } } }"#,
+        json!({"id": card["id"]}),
+    );
+    assert_eq!(
+        credit["data"]["giftCardCredit"]["userErrors"],
+        json!([{"field": ["id"], "code": "INVALID"}])
+    );
+
+    // Stored redeemable, expired since: it is read as it is now.
+    let id = card["id"].as_str().unwrap();
+    let record = shop.get_mut(id).unwrap();
+    record.insert("isRedeemable".into(), json!(true));
+    let read = |shop: &mut ShopState| {
+        run_with(
+            shop,
+            "query($id: ID!) { giftCard(id: $id) { isRedeemable } }",
+            json!({"id": id}),
+        )["data"]["giftCard"]["isRedeemable"]
+            .clone()
+    };
+    assert_eq!(read(&mut shop), json!(false));
+    shop.get_mut(id)
+        .unwrap()
+        .insert("expiresOn".into(), json!("2026-03-16"));
+    assert_eq!(read(&mut shop), json!(true));
+}

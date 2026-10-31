@@ -706,7 +706,8 @@ Every id is a function of the data: the same data gives the same records every r
   with its checkout charge and is a `PRE_ORDER` when it takes a deposit, `OTHER` otherwise.
 - **`GiftCard`**: `balance`, `initialValue` (in the card's currency), `enabled`, `expiresOn` (the
   day of the data, in the shop's time zone),
-  `isRedeemable` (enabled, not expired by the shop's clock, a balance left), `lastCharacters`,
+  `isRedeemable` (enabled, not expired by the shop's day in its time zone, a balance left;
+  computed when it is read, as the clock runs), `lastCharacters`,
   `maskedCode`, `customer`, `recipientAttributes` when the recipient is a customer (`recipient`
   is a `Customer!`: the message and nickname of a card for someone else are not kept),
   `templateSuffix`, dates.

@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 
 use super::cents_of;
 use super::records::{coded, currency, field, input, is, text};
-use crate::graphql::{FieldContext, FieldError};
+use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, value};
 
@@ -37,7 +37,15 @@ pub fn register(registry: &mut Registry) {
         .mutation("giftCardUpdate", gift_card_update)
         .mutation("giftCardCredit", gift_card_credit)
         .mutation("giftCardDebit", gift_card_debit)
-        .mutation("giftCardDeactivate", gift_card_deactivate);
+        .mutation("giftCardDeactivate", gift_card_deactivate)
+        // Read at the shop's clock, which runs: a card stored redeemable expires all the same.
+        .field("GiftCard", "isRedeemable", |r, _ctx, object| {
+            let today = today(r.state());
+            Ok(Output::value(
+                r.map_of(object)
+                    .is_some_and(|card| redeemable(card, &today)),
+            ))
+        });
 }
 
 /// The cents of a `MoneyInput` (`{amount, currencyCode}`) and its currency.
@@ -62,8 +70,32 @@ fn cents_in(record: &Record, name: &str) -> i64 {
     cents_of(record.get(name).and_then(|money| money.get("amount"))).unwrap_or(0)
 }
 
+/// The shop's date today (`2026-03-15`): its clock in its time zone (`Shop.ianaTimezone`, else
+/// the offset the seed read, else UTC), the zone the seed writes `expiresOn` in. A card expires
+/// at the end of the shop's day, not of UTC's.
+pub fn today(state: &ShopState) -> String {
+    let now = state.now();
+    let shop = state.shop();
+    if let Some(zone) = shop
+        .and_then(|shop| shop.get("ianaTimezone"))
+        .and_then(Value::as_str)
+        .and_then(|zone| zone.parse::<chrono_tz::Tz>().ok())
+    {
+        return now.with_timezone(&zone).format("%Y-%m-%d").to_string();
+    }
+    let offset = shop
+        .and_then(|shop| shop.get("timezoneOffsetMinutes"))
+        .and_then(Value::as_i64)
+        .and_then(|minutes| i32::try_from(minutes * 60).ok())
+        .and_then(chrono::FixedOffset::east_opt);
+    match offset {
+        Some(offset) => now.with_timezone(&offset).format("%Y-%m-%d").to_string(),
+        None => now.format("%Y-%m-%d").to_string(),
+    }
+}
+
 /// Whether a card can be redeemed: enabled, not expired by `today`, a balance left.
-fn redeemable(record: &Record, today: &str) -> bool {
+pub fn redeemable(record: &Record, today: &str) -> bool {
     let enabled = record
         .get("enabled")
         .and_then(Value::as_bool)
@@ -239,7 +271,7 @@ fn gift_card_create(
         "updatedAt": now,
     }));
     apply_fields(&mut record, &input);
-    let today = now.get(..10).unwrap_or_default().to_string();
+    let today = today(state);
     record.insert("isRedeemable".into(), json!(redeemable(&record, &today)));
     state.insert(record);
     state.emit("gift_cards/create", &id);
@@ -256,7 +288,7 @@ fn card_arg(state: &ShopState, ctx: &FieldContext<'_>) -> Option<String> {
 /// Refreshes `isRedeemable` and `updatedAt`, and emits `gift_cards/update`.
 fn changed(state: &mut ShopState, card: &str) {
     let now = state.timestamp();
-    let today = now.get(..10).unwrap_or_default().to_string();
+    let today = today(state);
     if let Some(record) = state.get_mut(card) {
         let redeemable = redeemable(record, &today);
         record.insert("isRedeemable".into(), json!(redeemable));
@@ -364,11 +396,7 @@ fn transaction(
         }
         _ => {}
     }
-    let today = mutation
-        .timestamp()
-        .get(..10)
-        .unwrap_or_default()
-        .to_string();
+    let today = today(mutation.state());
     let enabled = record
         .get("enabled")
         .and_then(Value::as_bool)
