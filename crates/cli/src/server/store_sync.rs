@@ -88,8 +88,9 @@ impl ServerState {
     /// What the Admin API changed of the theme the storefront serves: the files written over
     /// the theme directory or deleted from it, or the whole of another theme it published
     /// (`lsf_admin::domains::themes`), and the script tags `content_for_header` loads. The
-    /// directory is never written to. Applied when they changed, while `rebuilding` is held.
-    fn sync_theme(&self, api: &lsf_admin::api::AdminApi) {
+    /// directory is never written to. Applied when they changed, while `rebuilding` is held:
+    /// after a change of the default shop, and after a reseed (`ServerState::reload`).
+    pub(super) fn sync_theme(&self, api: &lsf_admin::api::AdminApi) {
         let files = self.app.theme.files();
         let overlay = api.storefront_overlay();
         let generation = overlay.as_ref().map_or(0, |overlay| overlay.generation);

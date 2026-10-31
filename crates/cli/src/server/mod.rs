@@ -307,7 +307,8 @@ impl ServerState {
 
     /// Reloads the store from disk. Sessions keep their cart and customer; the shops of the
     /// Admin API are seeded again, and what it changed in them is dropped (the terminal says so):
-    /// the store is the files'.
+    /// the store is the files', and the theme the directory's, without the Admin API's files or
+    /// script tags.
     pub fn reload(&self) -> Arc<Loaded> {
         // A build that panicked leaves nothing half done behind this lock: it guards no data.
         let _rebuilding = self
@@ -340,6 +341,9 @@ impl ServerState {
                     );
                 }
                 admin.api.sync_store(files.base.clone());
+                // The reseed dropped what the Admin API wrote to the theme and the script tags:
+                // the storefront serves the directory again, as the Admin API now reports it.
+                self.sync_theme(&admin.api);
                 // Nothing changed since the reseed, unless a request of the backend came in
                 // meanwhile: then the store has it already.
                 match admin.api.synced() {

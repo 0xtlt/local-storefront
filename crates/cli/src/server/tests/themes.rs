@@ -170,3 +170,45 @@ fn the_storefront_serves_the_association_files_of_the_shops_mobile_apps() {
     let answer = admin_query(&state, "{ themes(first: 1) { nodes { role } } }");
     assert_eq!(answer["data"]["themes"]["nodes"][0]["role"], "MAIN");
 }
+
+/// A reload of the store data (`--watch`, `POST /__lsf/reload`) reseeds the shops, which drops
+/// the Admin API's files and script tags: the storefront kept serving them, while the Admin API
+/// reported the directory.
+#[test]
+fn a_reload_of_the_store_data_serves_the_directory_again() {
+    let state = admin_server();
+    mutate(
+        &state,
+        UPSERT,
+        json!({"files": [
+            {"filename": "templates/index.json", "body": {"type": "TEXT", "value": "{\"sections\": {\"main\": {\"type\": \"admin-banner\", \"settings\": {}}}, \"order\": [\"main\"]}"}},
+            {"filename": "sections/admin-banner.liquid", "body": {"type": "TEXT", "value": "<p>Written by the Admin API</p>"}},
+        ]}),
+    );
+    mutate(
+        &state,
+        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/bar.js\", displayScope: ONLINE_STORE}) { scriptTag { id } userErrors { message } } }",
+        json!({}),
+    );
+    let home = text(&get(&state, "/", "visitor"));
+    assert!(home.contains("Written by the Admin API"), "{home}");
+    assert!(home.contains("asyncLoad"));
+
+    state.reload();
+
+    let home = text(&get(&state, "/", "visitor"));
+    assert!(home.contains("Stored title"), "{home}");
+    assert!(!home.contains("Written by the Admin API"), "{home}");
+    assert!(!home.contains("asyncLoad"), "{home}");
+    // As the Admin API reports it.
+    let answer = admin_query(
+        &state,
+        "{ theme(id: \"gid://shopify/OnlineStoreTheme/1\") { files(filenames: [\"sections/admin-banner.liquid\"], first: 1) { nodes { filename } } } scriptTags(first: 5) { nodes { id } } }",
+    );
+    assert_eq!(
+        answer["data"]["theme"]["files"]["nodes"],
+        json!([]),
+        "{answer}"
+    );
+    assert_eq!(answer["data"]["scriptTags"]["nodes"], json!([]), "{answer}");
+}

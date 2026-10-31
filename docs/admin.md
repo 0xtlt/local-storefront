@@ -422,7 +422,8 @@ The full list, field by field, is in the design notes of `lsf-admin`
   what they change stays in the Admin API.
 - **The files do not change.** lsf builds the store from the files with the Admin API's changes on
   top; nothing is written to disk. `DELETE /__lsf/admin` (and the store data edited, with
-  `--watch`, or `POST /__lsf/reload`) puts the storefront back to the files.
+  `--watch`, or `POST /__lsf/reload`) puts the storefront back to the files, and the theme back
+  to the directory, without the files and script tags the Admin API added.
 - **A session with its own data** (`PUT /__lsf/session` with `data`) sees its data on top of the
   Admin API's changes.
 - **An order placed at the checkout** is recorded in the Admin API, and the store is not built

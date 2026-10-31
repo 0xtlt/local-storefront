@@ -1701,8 +1701,9 @@ never written to.**
   the main theme of the default shop. The local theme without writes: nothing (the directory
   alone). With writes: the overlay. Another theme published: all its files, exclusively. Its
   `generation` is a hash of what it holds. The server applies it where store sync builds the store
-  (`ServerState::sync_theme`, when the count of changes moved, under the build lock), only when
-  the generation differs; live reload's token includes it. The CDN serves an asset of the overlay
+  (`ServerState::sync_theme`, when the count of changes moved, under the build lock, and after
+  each reseed of `reload`, which drops the Admin API's files and script tags), only when the
+  generation differs; live reload's token includes it. The CDN serves an asset of the overlay
   as it is (`/cdn/shop/t/1/assets/…`; an image without the CDN's transforms).
 - *What it costs* (release builds of the commit before themes and of this one, the fixture theme
   of lsf-core, the demo store, the two servers' renders interleaved by batches of 25, 1000 each,
@@ -2058,8 +2059,9 @@ which every mutation would have paid on the Admin request's path, ten times for 
 6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` reads the files again and
    loads the new base, reseeds
    (`AdminApi::reseed`; the terminal says what was dropped), moves sync to the new base
-   (`sync_store`, which counts a change), and builds from `synced()`: the store is the new base,
-   unless the backend changed the shop in between.
+   (`sync_store`, which counts a change), applies the theme the reseeded shop has
+   (`sync_theme`: the directory, without the Admin API's files or script tags), and builds
+   from `synced()`: the store is the new base, unless the backend changed the shop in between.
 7. **What the store data refuses** of the overlay: the problems of the store built with it that
    the files alone do not have (`Applied::diagnostics`) are printed when they differ from the
    last build's, and given to `AdminApi::sync_built`, which `GET /__lsf/admin` shows in
