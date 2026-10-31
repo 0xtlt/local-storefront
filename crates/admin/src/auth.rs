@@ -2,6 +2,17 @@
 //!
 //! See `crates/admin/docs/design.md`.
 
+pub mod oauth;
+pub mod scopes;
+pub mod session_token;
+pub mod signing;
+pub mod tokens;
+
+pub use oauth::{AppAuth, Context, Shops};
+pub use scopes::{RequiredAccess, Root, covers, required_access};
+pub use signing::{app_proxy_signature, query_hmac, webhook_hmac};
+pub use tokens::{Grant, Tokens, default_token};
+
 use std::path::Path;
 
 /// The client secret lsf signs with when nothing gives one: webhooks, OAuth and session tokens
