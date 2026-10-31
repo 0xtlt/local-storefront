@@ -41,8 +41,8 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::domains::outbox;
 use crate::graphql::{FieldContext, FieldError, Output};
+use crate::outbox::{self, Channel, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState};
 
@@ -116,13 +116,13 @@ fn request_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .to_string();
     outbox::record(
         state,
-        "data_erasure",
-        &email,
-        &format!(
-            "Data erasure requested: the customer's personal data is erased on {} unless the request is cancelled",
-            crate::state::value::date_time(due)
-        ),
-        &customer,
+        Entry::new(Channel::DataErasure, "data_erasure_requested")
+            .to(email)
+            .about(&customer)
+            .body(format!(
+                "Data erasure requested: the customer's personal data is erased on {} unless the request is cancelled",
+                crate::state::value::date_time(due)
+            )),
     );
     // No webhook: Shopify sends `customers/redact` when it erases, not when it is asked.
     state.emit(crate::domains::app::CHANGED, &customer);
@@ -148,10 +148,9 @@ fn cancel_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     state.set_memo(erasure_memo(&customer), Value::Null);
     outbox::record(
         state,
-        "data_erasure",
-        "",
-        "Data erasure cancelled",
-        &customer,
+        Entry::new(Channel::DataErasure, "data_erasure_cancelled")
+            .about(&customer)
+            .body("Data erasure cancelled"),
     );
     state.emit(crate::domains::app::CHANGED, &customer);
     Ok(payload(json!({"customerId": customer}), &[]))
@@ -209,10 +208,10 @@ pub fn process_due_erasures(state: &mut ShopState) -> Vec<String> {
         );
         outbox::record(
             state,
-            "data_erasure",
-            &email,
-            "Customer data erased: names, email, phone, note and addresses redacted; customers/redact sent to the app",
-            customer,
+            Entry::new(Channel::DataErasure, "customer_data_erased")
+                .to(email)
+                .about(customer)
+                .body("Customer data erased: names, email, phone, note and addresses redacted; customers/redact sent to the app"),
         );
         state.emit("customers/update", customer);
     }
@@ -618,9 +617,10 @@ mod tests {
             &json!({"customerId": alex, "userErrors": []})
         );
         assert!(super::erasure_pending(&shop, &alex));
-        let outbox = crate::domains::outbox::entries(&shop);
+        let outbox = crate::outbox::entries(&shop, None);
         assert_eq!(outbox[0]["channel"], "data_erasure");
-        assert!(outbox[0]["what"].as_str().unwrap().contains("2026-11-10"));
+        assert_eq!(outbox[0]["what"], "data_erasure_requested");
+        assert!(outbox[0]["body"].as_str().unwrap().contains("2026-11-10"));
         // A second request, and nothing changes.
         let before = shop.picture();
         let again = run(&mut shop, request, json!({"id": alex}));

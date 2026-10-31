@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use super::model::{self, text};
 use crate::domains::app::CHANGED;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
 
@@ -411,15 +411,14 @@ pub fn request_link(state: &mut ShopState, order: &str) -> Result<(), String> {
         .to_string();
     let number = crate::state::parse_gid(order).map_or(0, |(_, number)| number);
     let key = value::uuid(&format!("{}/{order}/{}", state.domain(), state.timestamp()));
-    outbox::send(
+    outbox::record(
         state,
-        &Email {
-            template: "order_link_requested",
-            to: &email,
-            subject: format!("Your order {name}"),
-            body: format!("View your order: {origin}/account/orders/{number}?key={key}"),
-            resource: Some(order),
-        },
+        Entry::email("order_link_requested", &email)
+            .subject(format!("Your order {name}"))
+            .body(format!(
+                "View your order: {origin}/account/orders/{number}?key={key}"
+            ))
+            .about(order),
     );
     state.emit("orders/link_requested", order);
     Ok(())

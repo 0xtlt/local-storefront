@@ -538,11 +538,11 @@ fn a_due_schedule_is_captured_and_a_reminder_recorded() {
         reminded["data"]["paymentReminderSend"],
         json!({"success": true, "userErrors": []})
     );
-    let emails = outbox::emails(&shop);
+    let emails = outbox::entries(&shop, Some(outbox::Channel::Email));
     assert_eq!(emails.len(), 1);
-    assert_eq!(emails[0]["template"], "payment_reminder");
+    assert_eq!(emails[0]["what"], "payment_reminder");
     assert_eq!(emails[0]["to"], "buyer@example.com");
-    assert_eq!(emails[0]["resource"], json!(schedule));
+    assert_eq!(emails[0]["about"], json!(schedule));
 
     later(&mut shop, 7);
     let captured = run(&mut shop, capture, json!({"id": schedule}));
@@ -559,7 +559,10 @@ fn a_due_schedule_is_captured_and_a_reminder_recorded() {
         refused["data"]["paymentReminderSend"]["userErrors"][0]["code"],
         "PAYMENT_REMINDER_SEND_UNSUCCESSFUL"
     );
-    assert_eq!(outbox::emails(&shop).len(), 1);
+    assert_eq!(
+        outbox::entries(&shop, Some(outbox::Channel::Email)).len(),
+        1
+    );
 }
 
 #[test]
@@ -695,8 +698,8 @@ fn invoices_are_recorded_in_the_outbox() {
         json!({"id": order}),
     );
     assert_eq!(sent["data"]["orderInvoiceSend"]["userErrors"], json!([]));
-    let emails = outbox::emails(&shop);
-    assert_eq!(emails[0]["template"], "order_invoice");
+    let emails = outbox::entries(&shop, Some(outbox::Channel::Email));
+    assert_eq!(emails[0]["what"], "order_invoice");
     assert_eq!(emails[0]["to"], "buyer@example.com");
     assert!(emails[0]["body"].as_str().unwrap().contains("Thanks"));
     // Without an address to send to, nothing is recorded.
@@ -712,7 +715,10 @@ fn invoices_are_recorded_in_the_outbox() {
         refused["data"]["orderInvoiceSend"]["userErrors"][0]["code"],
         "ORDER_INVOICE_SEND_UNSUCCESSFUL"
     );
-    assert_eq!(outbox::emails(&shop).len(), 1);
+    assert_eq!(
+        outbox::entries(&shop, Some(outbox::Channel::Email)).len(),
+        1
+    );
 }
 
 const CREDIT: &str = "mutation($id: ID!, $input: StoreCreditAccountCreditInput!) {
@@ -757,7 +763,10 @@ fn store_credit_is_credited_debited_by_expiry_and_expires() {
         expiring["storeCreditAccountTransaction"]["balanceAfterTransaction"]["amount"],
         "69.99"
     );
-    assert_eq!(outbox::emails(&shop)[0]["template"], "store_credit_issued");
+    assert_eq!(
+        outbox::entries(&shop, Some(outbox::Channel::Email))[0]["what"],
+        "store_credit_issued"
+    );
     // A debit takes from the credit that expires first.
     let debited = run(
         &mut shop,
@@ -1234,7 +1243,10 @@ fn shopify_protect_and_a_link_request_are_what_a_test_makes_happen() {
             "orders/link_requested"
         ]
     );
-    assert_eq!(outbox::emails(&shop)[0]["template"], "order_link_requested");
+    assert_eq!(
+        outbox::entries(&shop, Some(outbox::Channel::Email))[0]["what"],
+        "order_link_requested"
+    );
 }
 
 const ACCOUNT: &str = "{ shopifyPaymentsAccount { id activated defaultCurrency country accountOpenerName payoutStatementDescriptor

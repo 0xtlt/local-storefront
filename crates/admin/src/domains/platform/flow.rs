@@ -11,13 +11,14 @@
 //! - "The size of the payload, including keys, must be under 50000 bytes", else
 //!   `Properties size exceeds the limit of 50000 bytes.` (the guide's words).
 //!
-//! A trigger that passes is written to the shop's outbox (`GET /__lsf/admin/outbox`), with its
-//! handle and payload, as Flow would have received it. The deprecated `body` (a JSON string
+//! A trigger that passes is written to the shop's outbox (`GET /__lsf/admin/outbox`, channel
+//! `flow`): its handle as `to`, its payload as `data`, as Flow would have received it. The deprecated `body` (a JSON string
 //! with `trigger_id`/`trigger_title` and `properties`) is read too.
 
 use serde_json::{Map, Value, json};
 
 use crate::graphql::{FieldContext, FieldError};
+use crate::outbox::{Channel, Entry};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{ShopState, gid};
 
@@ -172,11 +173,11 @@ fn flow_trigger_receive(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         return Ok(payload(json!({}), &errors));
     }
     let state = m.state_mut();
-    super::outbox(
+    crate::outbox::record(
         state,
-        "flow",
-        &format!("flow_trigger/{handle}"),
-        json!({"handle": handle, "payload": payload_object}),
+        Entry::new(Channel::Flow, "flow_trigger")
+            .to(handle.as_str())
+            .data(Value::Object(payload_object)),
     );
     state.emit(
         super::super::app::CHANGED,

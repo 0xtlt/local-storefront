@@ -750,15 +750,12 @@ fn order_invoice_send(
         body.push('\n');
         body.push_str(message);
     }
-    crate::outbox::send(
+    crate::outbox::record(
         mutation.state_mut(),
-        &crate::outbox::Email {
-            template: "order_invoice",
-            to: &to,
-            subject,
-            body,
-            resource: Some(&order),
-        },
+        crate::outbox::Entry::email("order_invoice", &to)
+            .subject(subject)
+            .body(body)
+            .about(&order),
     );
     Ok(payload(json!({"order": order}), &[]))
 }

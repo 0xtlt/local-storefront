@@ -38,7 +38,7 @@ use super::model::{self, text};
 use crate::domains::app::CHANGED;
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::search::SearchValue;
 use crate::state::{Record, ShopState, value};
@@ -581,18 +581,15 @@ fn credit_mutation(
             .unwrap_or_default()
             .to_string();
         let balance = value::decimal(balance(state, &account));
-        outbox::send(
+        outbox::record(
             state,
-            &Email {
-                template: "store_credit_issued",
-                to: &email,
-                subject: format!("You received store credit from {shop}"),
-                body: format!(
+            Entry::email("store_credit_issued", &email)
+                .subject(format!("You received store credit from {shop}"))
+                .body(format!(
                     "{} {currency} of store credit was added to your account: your balance is {balance} {currency}.",
                     value::decimal(amount)
-                ),
-                resource: Some(&transaction),
-            },
+                ))
+                .about(&transaction),
         );
     }
     Ok(payload(

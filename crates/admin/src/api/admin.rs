@@ -808,25 +808,6 @@ impl AdminApi {
                     Err((status, error)) => HttpResponse::json(status, &json!({ "error": error })),
                 }
             }
-            ("GET", "/__lsf/admin/outbox") => {
-                let domain = request
-                    .query
-                    .iter()
-                    .find(|(name, _)| name == "shop")
-                    .map_or_else(
-                        || self.default_shop(),
-                        |(_, shop)| oauth::normalize_shop(shop),
-                    );
-                match self.outbox(&domain) {
-                    Some(entries) => {
-                        HttpResponse::json(200, &json!({"shop": domain, "outbox": entries}))
-                    }
-                    None => HttpResponse::json(
-                        404,
-                        &json!({"error": format!("there is no shop {domain}")}),
-                    ),
-                }
-            }
             ("POST", "/__lsf/admin/uninstall") => self.uninstall(request),
             ("POST", "/__lsf/admin/install") => self.install(request),
             (
@@ -907,10 +888,7 @@ impl AdminApi {
                     "tokens": grants,
                     "subscriptions": subscriptions,
                     // What Shopify would have sent the outside world, which lsf never sends.
-                    "outbox": crate::domains::outbox::entries(&live.state)
-                        .into_iter()
-                        .chain(crate::domains::logistics::outbox(&live.state))
-                        .collect::<Vec<_>>(),
+                    "outbox": crate::outbox::entries(&live.state, None),
                     "shippingPackages": crate::domains::logistics::delivery::packages(&live.state),
                 })
             })
@@ -1043,15 +1021,6 @@ impl AdminApi {
                 }
             }
         }
-    }
-
-    /// What the app platform's mutations would have sent outside (a Flow trigger, …): the
-    /// outbox of a shop, oldest first (`GET /__lsf/admin/outbox?shop=`). `None` for a shop
-    /// lsf does not have.
-    pub fn outbox(&self, shop: &str) -> Option<Vec<Value>> {
-        let shop = self.shop(shop)?;
-        let live = lock(&shop);
-        Some(platform::outbox_entries(&live.state))
     }
 
     /// The association file the storefront serves at `path` (`/.well-known/assetlinks.json`,

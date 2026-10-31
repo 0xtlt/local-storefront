@@ -522,13 +522,11 @@ fn the_update_url_is_for_shop_pay_and_the_emails_are_logged() {
         data(&answer, "customerPaymentMethodSendUpdateEmail")["customer"]["id"],
         json!(customer)
     );
-    let emails = shop
-        .memo(super::payment_methods::EMAILS_MEMO)
-        .unwrap()
-        .clone();
+    let emails = super::payment_methods::emails(&shop);
     assert_eq!(emails[0]["to"], json!("jane.doe@example.com"));
     assert_eq!(emails[0]["subject"], json!("Card expiring"));
-    assert_eq!(emails[0]["kind"], json!("customer_payment_method_update"));
+    assert_eq!(emails[0]["what"], json!("customer_payment_method_update"));
+    assert_eq!(emails[0]["about"], json!(card));
     let errors = refused(
         &mut shop,
         send,
@@ -545,7 +543,7 @@ fn the_update_url_is_for_shop_pay_and_the_emails_are_logged() {
         json!(customer)
     );
     assert_eq!(
-        shop.memo(super::payment_methods::EMAILS_MEMO).unwrap()[1]["resource"],
+        super::payment_methods::emails(&shop)[1]["about"],
         json!(used)
     );
     let errors = refused(

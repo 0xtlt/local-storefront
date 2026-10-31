@@ -660,7 +660,7 @@ fn a_subscription_is_bought_billed_skipped_paused_changed_and_cancelled() {
             "SubscriptionBillingAttemptSuccessState"
         ]
     );
-    assert_eq!(log["emails"][0]["kind"], json!("payment_instrument_add"));
+    assert_eq!(log["emails"][0]["what"], json!("payment_instrument_add"));
     assert_eq!(log["emails"][0]["to"], json!("jane.doe@example.com"));
     // Nothing of it reaches the storefront's store data but the stock the orders committed.
     let status = api.status();

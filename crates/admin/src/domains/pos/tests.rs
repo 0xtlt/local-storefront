@@ -75,15 +75,13 @@ fn drawers_are_created_found_renamed_and_assigned() {
         found["extensions"]["lsf"]["notes"][0]
             .as_str()
             .unwrap()
-            .contains("lsfDeviceLog")
+            .contains("outbox")
     );
-    assert_eq!(
-        shop.get(&device).unwrap()["lsfDeviceLog"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    let told = crate::outbox::entries(&shop, Some(crate::outbox::Channel::Pos));
+    assert_eq!(told.len(), 1);
+    assert_eq!(told[0]["what"], "cash_drawer_assigned");
+    assert_eq!(told[0]["to"], json!(device));
+    assert_eq!(told[0]["about"], json!(drawer));
     let renamed = run_with(
         &mut shop,
         r#"mutation($id: ID!) { cashDrawerUpdate(id: $id, input: {name: "Counter"}) { cashDrawer { name } userErrors { message } } }"#,

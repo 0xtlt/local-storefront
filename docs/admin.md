@@ -496,7 +496,7 @@ and the checkout (see "Store sync" below).
 | Publications | `publishablePublish`, `publishableUnpublish`; the deprecated `productPublish`, `productUnpublish`, `collectionPublish`, `collectionUnpublish` |
 | Product feeds | `productFeedCreate`, `productFeedDelete`, `productFullSync` |
 | Selling plans | `sellingPlanGroupCreate`, `sellingPlanGroupUpdate`, `sellingPlanGroupDelete`, `sellingPlanGroupAddProducts`, `sellingPlanGroupRemoveProducts`, `sellingPlanGroupAddProductVariants`, `sellingPlanGroupRemoveProductVariants`, `productJoinSellingPlanGroups`, `productLeaveSellingPlanGroups`, `productVariantJoinSellingPlanGroups`, `productVariantLeaveSellingPlanGroups` |
-| Gift cards | `giftCardCreate`, `giftCardUpdate`, `giftCardCredit`, `giftCardDebit`, `giftCardDeactivate`, `giftCardProductSet` (`productSet` for a gift card product: its variants untaxed, unshipped, untracked), `giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient` (the email in the shop's outbox, see "Emails") |
+| Gift cards | `giftCardCreate`, `giftCardUpdate`, `giftCardCredit`, `giftCardDebit`, `giftCardDeactivate`, `giftCardProductSet` (`productSet` for a gift card product: its variants untaxed, unshipped, untracked), `giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient` (the email in the shop's [outbox](#the-outbox)) |
 
 How they behave, as shopify.dev documents it:
 
@@ -570,8 +570,9 @@ How they behave, as shopify.dev documents it:
   currency, without delivery estimates.
 - **Gift card products and notifications**: `giftCardProductSet` runs `productSet` for a gift
   card product (with its `issuanceCurrency`, set at creation only). The notifications are not
-  sent: each is written to the card's `lsfNotifications` (`{at, kind, to, channel}`) and said in
-  `extensions.lsf.notes`.
+  sent: each is an email in the shop's [outbox](#the-outbox) (`gift_card_created` to the card's
+  customer, `gift_card_recipient` with the recipient's message); a card disabled, expired or
+  spent is refused (`INVALID`).
 - **Media given by URL** is recorded, not downloaded: `image.url` is the URL, the size unknown,
   and the medium is `READY` at once (Shopify answers `UPLOADED` and processes it later).
 - **Queries**: `products` and `productVariants` take their documented sort keys
@@ -631,8 +632,8 @@ specific webhooks").
   its `job` done and its `jobResult` readable with `node`; authorizations voided, payments
   refunded with `refundMethod`, units restocked with `restock`), `orderClose`, `orderOpen`,
   `orderMarkAsPaid`, `orderCapture`, `transactionVoid`, `orderCustomerSet`,
-  `orderCustomerRemove`, `orderInvoiceSend` (nothing sent), `orderDelete` (a cancelled or closed
-  order).
+  `orderCustomerRemove`, `orderInvoiceSend` (the invoice in the shop's [outbox](#the-outbox)),
+  `orderDelete` (a cancelled or closed order).
 - **Fulfillment**: the deprecated `fulfillmentCreateV2` and `fulfillmentTrackingInfoUpdateV2` run
   their successors below. `fulfillmentCreate` (with `lineItemsByFulfillmentOrder`, partial or whole;
   fulfillment orders close or stay in progress, the order is fulfilled or partially fulfilled),
@@ -664,8 +665,8 @@ specific webhooks").
   `requestedOrderEditCalculate`.
 - **Draft orders**: `draftOrderCreate`, `draftOrderUpdate`, `draftOrderDelete`,
   `draftOrderCalculate`, `draftOrderComplete` (an order, paid unless `paymentPending` or payment
-  terms), `draftOrderDuplicate`, `draftOrderInvoiceSend` and `orderInvoiceSend` (the invoice in
-  the shop's outbox), `draftOrderInvoicePreview`, `draftOrderCreateFromOrder`,
+  terms), `draftOrderDuplicate`, `draftOrderInvoiceSend` (the invoice in the shop's outbox),
+  `draftOrderInvoicePreview`, `draftOrderCreateFromOrder`,
   `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`, `draftOrderBulkDelete`; B2B drafts
   (`purchasingEntity.purchasingCompany`: the location's addresses and payment terms). Taxes are
   at the store data's `checkout.tax_rate`; `draftOrderAvailableDeliveryOptions` offers its
@@ -710,9 +711,8 @@ Payments processed are paid out. `GET /__lsf/admin/clock` reads it; a reset puts
 data's back.
 
 **Emails**: lsf sends none. What Shopify would email (payment reminders, invoices, gift cards,
-store credit, return labels, a requested edit declined, a new order link) is recorded in the
-shop's outbox: `GET /__lsf/admin/emails` (`{count, emails: [{id, template, to, subject, body,
-resource, sentAt}]}`), `DELETE /__lsf/admin/emails` to forget them.
+store credit, return labels, a requested edit declined, a new order link) is in the shop's
+[outbox](#the-outbox).
 
 **What buyers, banks and Shopify do**, which no mutation makes, is a control endpoint: `POST
 /__lsf/admin/disputes` (`{"order", "amount"?, "type"?, "reason"?}`) opens a chargeback or an
@@ -806,9 +806,10 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
   `IDEMPOTENCY_KEY_PARAMETER_MISMATCH`.
 - A shipment's items must be on its transfer, within what the transfer has left to ship.
   Transfers are named `#T1`, their shipments `T1-1`.
-- **Nothing leaves the machine.** A pickup's "Ready For Pickup" notification, a label bought, a
-  shipping confirmation are recorded in the shop's **outbox** (`GET /__lsf/admin`, each shop's
-  `outbox`: `kind`, what it is about, the details), never sent. `shippingLabelPurchase` answers a
+- **Nothing leaves the machine.** A pickup's "Ready for pickup" notice (`ready_for_pickup`,
+  `out_for_delivery` for a local delivery), a label bought (`shipping_label`), a shipping
+  confirmation (`shipping_confirmation`) are recorded in the shop's [outbox](#the-outbox), never
+  sent. `shippingLabelPurchase` answers a
   result already `PURCHASED` with a label (its tracking number made from its id, the same every
   run, from the carrier asked, else USPS, Canada Post or DHL Express by the origin's country), and
   fulfills the fulfillment order with that tracking, as a label bought in the admin does.
@@ -913,7 +914,8 @@ The WhatsApp consent of `customerCreate` is ignored, with a note.
 A backend that segments customers, runs campaigns, reports on sales or handles privacy requests
 works against lsf as against a store: the segment query language is parsed and evaluated over the
 customers of the shop, the marketing activities and analytics the app records are read back,
-what Shopify would send to the outside world is recorded in an outbox, never sent.
+what Shopify would send to the outside world is recorded in the [outbox](#the-outbox), never
+sent.
 
 **Segments** (`segmentCreate`, `segmentUpdate`, `segmentDelete`; `segments`, `segment`,
 `segmentsCount`, `customerSegmentMembers`, `customerSegmentMembership`,
@@ -1010,10 +1012,6 @@ a note; another schema than `sales` is a parse error.
 Shopify's banner off, as Shopify requires), `consentPolicy`, `consentPolicyRegions`;
 `privacyFeaturesDisable` and `privacySettings`.
 
-**The outbox**: lsf sends no email, no WhatsApp message, and erases nothing outside the shop.
-What Shopify would have sent is listed per shop in `GET /__lsf/admin` (`shops[].outbox`: `at`,
-`channel`, `to`, `what`, `about`).
-
 **Webhooks**: also `customer_account_settings/update` (built from the shop's customer account
 setting, sent on demand: no mutation changes it) and `audit_events/admin_api_activity` (each
 GraphQL request, when the app subscribes to it; Shopify delivers it through Pub/Sub or
@@ -1078,7 +1076,9 @@ How they behave, as shopify.dev documents it:
 - **The calculation API** answers a `SubscriptionContractCalculationPending`, and the first poll
   reads the `…Success` (calculated contract, projected order totals, warnings) or `…Failure`.
   Lines are restated whole: without `priceOverride` a line is priced from its variant.
-- **Emails** are not sent: `GET /__lsf/admin/subscriptions` lists them, with the charges.
+- **Emails** are not sent: they are in the shop's [outbox](#the-outbox)
+  (`customer_payment_method_update`, `payment_instrument_add`, the link in `data.url`), and
+  `GET /__lsf/admin/subscriptions` lists them with the charges.
 
 #### Test cards
 
@@ -1337,8 +1337,8 @@ seeded staff, so that a backend that manages cash works against lsf as against a
   (`is_open`, `location_id`, `point_of_sale_device_id`, the times), `cashManagementReasonCodes`,
   the deprecated `cashTrackingSession(s)`, read from the same sessions.
 - **Nothing reaches a device**: what Shopify would push to the POS app (a drawer assigned, a
-  session opened or closed) is written to the device's `lsfDeviceLog` and said in
-  `extensions.lsf.notes`. Shopify has no webhook topic for any of it. Nothing syncs to the
+  session opened or closed) is in the shop's [outbox](#the-outbox) (channel `pos`, `to` the
+  device) and said in `extensions.lsf.notes`. Shopify has no webhook topic for any of it. Nothing syncs to the
   storefront.
 
 ### The app: billing, discounts, Functions and bulk operations
@@ -1506,8 +1506,8 @@ too.
 **Flow triggers.** `flowTriggerReceive(handle:, payload:)` is checked against the app's
 `flow_trigger` extensions: the handle, every field of the trigger (a reference field by its key,
 `customer_id`, the `legacyResourceId` of a record of the shop), 50,000 bytes at most. lsf runs
-no workflow: the trigger goes to the shop's outbox, `GET /__lsf/admin/outbox` (`?shop=`), where
-lsf writes what it would have sent to a service outside.
+no workflow: the trigger goes to the shop's [outbox](#the-outbox) (channel `flow`, the handle as
+`to`, the payload as `data`).
 
 **Mobile apps.** `mobilePlatformApplicationCreate`, `Update`, `Delete`,
 `mobilePlatformApplication(s)`: Android and Apple apps. The storefront serves their association
@@ -1630,6 +1630,44 @@ app.listen(3000);
 Not simulated: the prefix and subpath a merchant can change in the admin (lsf serves those of
 the file). Shopify does not document what `template` and `request.page_type` are on a proxied
 page; lsf leaves them empty.
+
+## The outbox
+
+lsf sends nothing outside the machine. What Shopify would have sent, or bought, is recorded in
+the shop's outbox instead, for a test to read:
+
+| Channel | What lands there (`what`) |
+|---|---|
+| `email` | The emails to a buyer or a customer: `payment_reminder`, `order_invoice`, `draft_order_invoice`, `gift_card_created`, `gift_card_recipient`, `store_credit_issued`, `return_label`, `requested_order_edit_declined`, `order_link_requested`, `ready_for_pickup`, `out_for_delivery`, `shipping_confirmation`, `customer_payment_method_update`, `payment_instrument_add` |
+| `carrier` | A shipping label bought (`shipping_label`): the carrier as `to`, the service, the tracking number and the package in `data` |
+| `flow` | A Flow trigger (`flow_trigger`): its handle as `to`, its payload as `data` |
+| `pos` | What Shopify would push to a POS device: `cash_drawer_assigned`, `payment_session_opened`, `payment_session_closed` |
+| `data_erasure` | A customer's data erasure: `data_erasure_requested`, `data_erasure_cancelled`, `customer_data_erased` |
+
+```json
+{
+  "id": 1,
+  "at": "2026-11-10T09:00:00Z",
+  "channel": "email",
+  "to": "buyer@example.com",
+  "what": "payment_reminder",
+  "about": "gid://shopify/PaymentSchedule/1",
+  "subject": "Payment reminder for order #1001",
+  "body": "120.0 USD is due on 2026-12-10 for order #1001."
+}
+```
+
+`id` counts per shop, `at` is the shop's clock, `to` an address, a carrier, a trigger or a device,
+`about` the record it is about. An email has its `subject` and `body` (lsf's words: Shopify does
+not publish the text of its notifications); another channel says what happened in `body`, and
+`data` holds what else would have gone out.
+
+- `GET /__lsf/admin/outbox?shop=&channel=email` lists them, oldest first, the last 1000 (`{shop,
+  count, outbox}`); `DELETE /__lsf/admin/outbox` forgets them (`?channel=` those of one channel).
+- `GET /__lsf/admin/emails` and `DELETE /__lsf/admin/emails` are the same for `channel=email`
+  (`{shop, count, emails}`).
+- `GET /__lsf/admin` shows each shop's outbox (`shops[].outbox`).
+- A mutation that fails records nothing; `DELETE /__lsf/admin` empties every outbox.
 
 ## Testing
 

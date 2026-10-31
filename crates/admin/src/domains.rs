@@ -13,7 +13,6 @@ pub mod logistics;
 pub mod marketing;
 pub mod markets;
 pub mod orders;
-pub mod outbox;
 pub mod platform;
 pub mod pos;
 pub mod privacy;

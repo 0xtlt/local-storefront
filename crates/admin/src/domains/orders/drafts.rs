@@ -1460,15 +1460,12 @@ fn invoice_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         super::payments::refresh_terms(state, terms);
     }
     let to = to.unwrap_or_default();
-    crate::outbox::send(
+    crate::outbox::record(
         state,
-        &crate::outbox::Email {
-            template: "draft_order_invoice",
-            to: &to,
-            subject,
-            body,
-            resource: Some(&id),
-        },
+        crate::outbox::Entry::email("draft_order_invoice", &to)
+            .subject(subject)
+            .body(body)
+            .about(&id),
     );
     state.emit("draft_orders/update", &id);
     Ok(payload(json!({"draftOrder": id}), &[]))

@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use super::model::{self, int, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::resolve::{Obj, ShopResolver};
 use crate::state::{ShopState, value};
@@ -278,18 +278,16 @@ fn close(
 
 /// The buyer's notice that their request was declined, in the outbox.
 fn notify_decline(state: &mut ShopState, to: &str, name: &str, note: Option<&str>, id: &str) {
-    outbox::send(
+    let body = match note {
+        Some(note) => format!("Your request to edit order {name} was declined: {note}"),
+        None => format!("Your request to edit order {name} was declined."),
+    };
+    outbox::record(
         state,
-        &Email {
-            template: "requested_order_edit_declined",
-            to,
-            subject: format!("Your request to edit order {name}"),
-            body: match note {
-                Some(note) => format!("Your request to edit order {name} was declined: {note}"),
-                None => format!("Your request to edit order {name} was declined."),
-            },
-            resource: Some(id),
-        },
+        Entry::email("requested_order_edit_declined", to)
+            .subject(format!("Your request to edit order {name}"))
+            .body(body)
+            .about(id),
     );
 }
 

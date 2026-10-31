@@ -52,7 +52,7 @@ use serde_json::{Map, Value, json};
 use super::model::{self, NewTransaction, field_cents, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::outbox::{self, Email};
+use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
 
@@ -1314,18 +1314,16 @@ fn reminder_send(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .and_then(|due| parse_time(Some(&json!(due))))
         .map(|due| day_of(state, due));
     let state = mutation.state_mut();
-    outbox::send(
+    let body = match &due {
+        Some(due) => format!("{balance} {currency} is due on {due} for order {name}."),
+        None => format!("{balance} {currency} is due for order {name}."),
+    };
+    outbox::record(
         state,
-        &Email {
-            template: "payment_reminder",
-            to: &email,
-            subject: format!("Payment reminder for order {name}"),
-            body: match &due {
-                Some(due) => format!("{balance} {currency} is due on {due} for order {name}."),
-                None => format!("{balance} {currency} is due for order {name}."),
-            },
-            resource: Some(&id),
-        },
+        Entry::email("payment_reminder", &email)
+            .subject(format!("Payment reminder for order {name}"))
+            .body(body)
+            .about(&id),
     );
     Ok(payload(json!({"success": true}), &[]))
 }

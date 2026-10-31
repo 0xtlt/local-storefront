@@ -1,13 +1,14 @@
 //! The control endpoints of the world outside the shop, which a test drives: the shop's clock
-//! (so that payment schedules come due), the emails lsf records instead of sending them, and
-//! what buyers and Shopify's services do to an order.
+//! (so that payment schedules come due), the outbox of what lsf records instead of sending it,
+//! and what buyers and Shopify's services do to an order.
 //!
 //! | Request | What it does |
 //! |---|---|
 //! | `GET /__lsf/admin/clock?shop=` | The shop's time: `{shop, now, frozen}`. |
 //! | `POST /__lsf/admin/clock` (`{"shop"?, "now"?, "advance"?}`) | Freezes the shop's clock at `now` (RFC 3339), or moves it on by `advance` (seconds, or `"30d"`, `"12h"`, `"15m"`, `"45s"`), then does what the time passing does: the payment schedules that came due fire `payment_schedules/due`. A reset puts the clock of the store data back. |
-//! | `GET /__lsf/admin/emails?shop=` | The emails lsf recorded as sent (payment reminders, invoices, gift cards, store credit): `{count, emails}`, oldest first. |
-//! | `DELETE /__lsf/admin/emails?shop=` | Forgets them. |
+//! | `GET /__lsf/admin/outbox?shop=&channel=` | What lsf recorded instead of sending it ([`crate::outbox`]): `{shop, count, outbox}`, oldest first, of one channel (`email`, `carrier`, `flow`, `pos`, `data_erasure`) or all. |
+//! | `DELETE /__lsf/admin/outbox?shop=&channel=` | Forgets them: `{ok, shop, outbox}`, how many. |
+//! | `GET /__lsf/admin/emails?shop=`, `DELETE …` | The same for `channel=email`, as `{shop, count, emails}` and `{ok, shop, emails}`. |
 //! | `POST /__lsf/admin/orders/protect` (`{"shop"?, "order", "status"?, "eligibility"?}`) | Shopify Protect changes its mind about an order: `Order.shopifyProtect` takes the status (`ACTIVE` by default) and the eligibility (`ELIGIBLE`), and `orders/shopify_protect_eligibility_changed` fires. |
 //! | `POST /__lsf/admin/orders/link-request` (`{"shop"?, "order"}`) | The buyer asks for a new link to the order's status page: the email is recorded in the outbox, `orders/link_requested` fires. |
 //! | `POST /__lsf/admin/disputes` (`{"shop"?, "order", "amount"?, "type"?, "reason"?}`) | The buyer's bank opens a dispute (a `CHARGEBACK` of what the order was paid, `FRAUDULENT`, by default): `disputes/create`. `201` `{ok, shop, dispute}`. |
@@ -22,7 +23,7 @@ use serde_json::{Value, json};
 
 use super::{AdminApi, HttpRequest, HttpResponse};
 use crate::domains::orders;
-use crate::outbox;
+use crate::outbox::{self, Channel};
 use crate::state::{Clock, ShopState, value};
 
 /// The answer to a request of these endpoints, `None` for another path.
@@ -83,18 +84,35 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
             }
             HttpResponse::json(200, &answer)
         }
-        ("emails", "GET") => api
-            .change_shop(&shop, |state| {
-                let emails = outbox::emails(state);
-                json!({"shop": state.domain(), "count": emails.len(), "emails": emails})
-            })
-            .map_or_else(no_shop, |answer| HttpResponse::json(200, &answer)),
-        ("emails", "DELETE") => api
-            .change_shop(
-                &shop,
-                |state| json!({"ok": true, "shop": state.domain(), "emails": outbox::clear(state)}),
-            )
-            .map_or_else(no_shop, |answer| HttpResponse::json(200, &answer)),
+        ("outbox" | "emails", "GET" | "DELETE") => {
+            // `/emails` is the outbox of one channel, under the name of its list.
+            let (list, channel) = if area == "emails" {
+                ("emails", Some(Channel::Email))
+            } else {
+                match request.query_param("channel").map(Channel::parse) {
+                    None => ("outbox", None),
+                    Some(Some(channel)) => ("outbox", Some(channel)),
+                    Some(None) => {
+                        let known: Vec<&str> = Channel::ALL.map(Channel::as_str).to_vec();
+                        return Some(HttpResponse::json(
+                            422,
+                            &json!({"error": format!("`channel` is one of {}", known.join(", "))}),
+                        ));
+                    }
+                }
+            };
+            let answer = if method == "GET" {
+                api.with_shop(&shop, |state| {
+                    let entries = outbox::entries(state, channel);
+                    json!({"shop": state.domain(), "count": entries.len(), list: entries})
+                })
+            } else {
+                api.change_shop(&shop, |state| {
+                    json!({"ok": true, "shop": state.domain(), list: outbox::clear(state, channel)})
+                })
+            };
+            answer.map_or_else(no_shop, |answer| HttpResponse::json(200, &answer))
+        }
         ("orders/protect" | "orders/link-request", "POST") => {
             let Some(order) = body
                 .get("order")
@@ -200,12 +218,13 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                 Some(Err(error)) => HttpResponse::json(409, &json!({ "error": error })),
             }
         }
-        ("clock" | "emails" | "orders/protect" | "orders/link-request" | "disputes", _) => {
-            HttpResponse::json(
-                405,
-                &json!({"error": format!("{method} is not allowed here")}),
-            )
-        }
+        (
+            "clock" | "outbox" | "emails" | "orders/protect" | "orders/link-request" | "disputes",
+            _,
+        ) => HttpResponse::json(
+            405,
+            &json!({"error": format!("{method} is not allowed here")}),
+        ),
         _ => return None,
     })
 }

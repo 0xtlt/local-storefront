@@ -182,6 +182,8 @@ fn drawer_find_or_create(
         let note = tell_device(
             state,
             &device,
+            "cash_drawer_assigned",
+            &drawer,
             format!("assigned to the cash drawer {drawer}"),
         );
         mutation.note(format!("cashDrawerFindOrCreate: {note}"));
@@ -265,6 +267,8 @@ fn assign(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         let note = tell_device(
             state,
             &device,
+            "cash_drawer_assigned",
+            &drawer,
             format!("assigned to the cash drawer {drawer}"),
         );
         mutation.note(format!("pointOfSaleDeviceAssignToCashDrawer: {note}"));

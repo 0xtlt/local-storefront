@@ -208,12 +208,34 @@ fn the_outbox_lists_what_flow_would_have_received() {
         json!([]),
         "{answer}"
     );
+    let outbox = send(
+        &api,
+        "GET",
+        "/__lsf/admin/outbox?channel=flow",
+        None,
+        Value::Null,
+    );
+    let outbox: Value = serde_json::from_slice(&outbox.body).unwrap();
+    assert_eq!(outbox["count"], 1, "{outbox}");
+    assert_eq!(outbox["outbox"][0]["to"], "auction-bid-placed", "{outbox}");
+    assert_eq!(outbox["outbox"][0]["data"]["Amount"], "30", "{outbox}");
+    // Forgotten on `DELETE`.
+    let cleared = send(&api, "DELETE", "/__lsf/admin/outbox", None, Value::Null);
+    let cleared: Value = serde_json::from_slice(&cleared.body).unwrap();
+    assert_eq!(cleared["outbox"], 1, "{cleared}");
     let outbox = send(&api, "GET", "/__lsf/admin/outbox", None, Value::Null);
     let outbox: Value = serde_json::from_slice(&outbox.body).unwrap();
-    assert_eq!(
-        outbox["outbox"][0]["target"], "flow_trigger/auction-bid-placed",
-        "{outbox}"
+    assert_eq!(outbox["outbox"], json!([]), "{outbox}");
+    // A channel lsf does not have is refused, with the ones it has.
+    let unknown = send(
+        &api,
+        "GET",
+        "/__lsf/admin/outbox?channel=fax",
+        None,
+        Value::Null,
     );
+    assert_eq!(unknown.status, 422);
+    assert!(String::from_utf8_lossy(&unknown.body).contains("data_erasure"));
 }
 
 #[test]

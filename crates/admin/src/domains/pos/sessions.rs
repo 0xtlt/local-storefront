@@ -296,7 +296,13 @@ fn open(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
         record.insert("activePaymentSession".into(), json!(session));
     }
     state.emit("point_of_sale_device_payment_sessions/create", &session);
-    let note = tell_device(state, &device, format!("payment session {session} opened"));
+    let note = tell_device(
+        state,
+        &device,
+        "payment_session_opened",
+        &session,
+        format!("payment session {session} opened"),
+    );
     mutation.note(format!("pointOfSaleDevicePaymentSessionOpen: {note}"));
     Ok(payload(
         json!({"pointOfSaleDevicePaymentSession": session}),
@@ -388,7 +394,13 @@ fn count(
             if let Some(record) = state.get_mut(&device) {
                 record.insert("activePaymentSession".into(), Value::Null);
             }
-            let note = tell_device(state, &device, format!("payment session {session} closed"));
+            let note = tell_device(
+                state,
+                &device,
+                "payment_session_closed",
+                &session,
+                format!("payment session {session} closed"),
+            );
             mutation.note(format!("pointOfSaleDevicePaymentSessionClose: {note}"));
         }
     }

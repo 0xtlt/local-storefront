@@ -21,8 +21,9 @@
 //!   `revokedAt` and `revokedReason: MANUALLY_REVOKED`, and is hidden unless `showRevoked`.
 //! - `customerPaymentMethodGetUpdateUrl` "only supports Shop Pay": another instrument is
 //!   `INVALID_INSTRUMENT`. The URL is a page of lsf where the customer gives a new card.
-//! - The emails are not sent: they are written to the log of `GET /__lsf/admin/subscriptions`
-//!   ([`EMAILS_MEMO`]), with the link they would carry.
+//! - The emails are not sent: they are written to the shop's outbox ([`crate::outbox`]), with
+//!   the link they would carry; `GET /__lsf/admin/subscriptions` lists them ([`emails`]) with
+//!   the charges.
 //! - Events: `customer_payment_methods/create`, `/update`, `/revoke`.
 //!
 //! **What a charge does** with a method is lsf's convention, read when the method is made and
@@ -37,6 +38,7 @@ use serde_json::{Map, Value, json};
 use super::model::{CONTRACT, PAYMENT_METHOD, Pointer, object, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
+use crate::outbox::{Channel, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
 
@@ -95,9 +97,8 @@ pub fn register(registry: &mut Registry) {
         );
 }
 
-/// The memo the emails lsf did not send are logged under: `[{"at", "to", "subject",
-/// "kind", "customer", "url", …}]`.
-pub const EMAILS_MEMO: &str = "subscriptions/emails";
+/// The emails of the family, as the outbox names them (`what`).
+pub const EMAILS: [&str; 2] = ["customer_payment_method_update", "payment_instrument_add"];
 
 /// The prefix of lsf's card vault sessions.
 const SESSION_PREFIX: &str = "lsf-card-";
@@ -790,38 +791,41 @@ fn get_update_url(
     Ok(payload(json!({"updatePaymentMethodUrl": url}), &[]))
 }
 
-/// Logs an email lsf does not send.
-pub fn log_email(state: &mut ShopState, email: Value) {
-    let mut emails = state
-        .memo(EMAILS_MEMO)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    emails.push(email);
-    state.set_memo(EMAILS_MEMO, Value::Array(emails));
+/// The emails of the family in the shop's outbox, oldest first.
+pub fn emails(state: &ShopState) -> Vec<Value> {
+    crate::outbox::entries(state, Some(Channel::Email))
+        .into_iter()
+        .filter(|email| {
+            email
+                .get("what")
+                .and_then(Value::as_str)
+                .is_some_and(|what| EMAILS.contains(&what))
+        })
+        .collect()
 }
 
-/// The fields of an `EmailInput` lsf logs, the customer's email by default.
-fn email_fields(input: &Map<String, Value>, to: Option<&str>, subject: &str) -> Map<String, Value> {
-    let mut email = Map::new();
-    email.insert(
-        "to".into(),
-        input.get("to").cloned().unwrap_or_else(|| json!(to)),
-    );
-    email.insert(
-        "subject".into(),
-        input
-            .get("subject")
-            .cloned()
-            .unwrap_or_else(|| json!(subject)),
-    );
-    for field in ["from", "bcc", "body", "customMessage"] {
-        email.insert(
+/// The email of an `EmailInput` (`to`, `subject`, `body`; `from`, `bcc` and `customMessage` in
+/// its `data`), to the customer's address and with lsf's subject by default.
+fn email_entry(
+    what: &str,
+    input: &Map<String, Value>,
+    to: Option<&str>,
+    subject: &str,
+    mut data: Map<String, Value>,
+) -> Entry {
+    let given = |field: &str| input.get(field).and_then(Value::as_str);
+    let mut email = Entry::email(what, given("to").or(to).unwrap_or_default())
+        .subject(given("subject").unwrap_or(subject));
+    if let Some(body) = given("body") {
+        email = email.body(body);
+    }
+    for field in ["from", "bcc", "customMessage"] {
+        data.insert(
             field.into(),
             input.get(field).cloned().unwrap_or(Value::Null),
         );
     }
-    email
+    email.data(Value::Object(data))
 }
 
 /// `customerPaymentMethodSendUpdateEmail`: the email with the link to update the method,
@@ -856,16 +860,20 @@ fn send_update_email(
         ));
     }
     let url = update_url(mutation.origin(), mutation.shop(), &id);
-    let mut email = email_fields(&input, address.as_deref(), "Update your payment method");
-    let state = mutation.state_mut();
-    email.insert("at".into(), json!(state.timestamp()));
-    email.insert("kind".into(), json!("customer_payment_method_update"));
-    email.insert("customer".into(), json!(customer));
-    email.insert("paymentMethod".into(), json!(id));
-    email.insert("url".into(), json!(url));
-    log_email(state, Value::Object(email));
+    let mut data = Map::new();
+    data.insert("customer".into(), json!(customer));
+    data.insert("url".into(), json!(url));
+    let email = email_entry(
+        EMAILS[0],
+        &input,
+        address.as_deref(),
+        "Update your payment method",
+        data,
+    )
+    .about(&id);
+    crate::outbox::record(mutation.state_mut(), email);
     mutation.note(
-        "customerPaymentMethodSendUpdateEmail: lsf sends no email; it is logged at GET /__lsf/admin/subscriptions",
+        "customerPaymentMethodSendUpdateEmail: lsf sends no email; it is in the shop's outbox (GET /__lsf/admin/emails)",
     );
     Ok(payload(json!({"customer": customer}), &[]))
 }
@@ -921,15 +929,19 @@ fn send_add_email(
             )],
         ));
     }
-    let mut email = email_fields(&input, address.as_deref(), "Add a payment method");
-    let state = mutation.state_mut();
-    email.insert("at".into(), json!(state.timestamp()));
-    email.insert("kind".into(), json!("payment_instrument_add"));
-    email.insert("customer".into(), json!(customer));
-    email.insert("resource".into(), json!(resource));
-    email.insert("resourceType".into(), json!(kind));
-    log_email(state, Value::Object(email));
-    mutation.note("paymentInstrumentSendAddEmail: lsf sends no email; it is logged at GET /__lsf/admin/subscriptions");
+    let mut data = Map::new();
+    data.insert("customer".into(), json!(customer));
+    data.insert("resourceType".into(), json!(kind));
+    let email = email_entry(
+        EMAILS[1],
+        &input,
+        address.as_deref(),
+        "Add a payment method",
+        data,
+    )
+    .about(&resource);
+    crate::outbox::record(mutation.state_mut(), email);
+    mutation.note("paymentInstrumentSendAddEmail: lsf sends no email; it is in the shop's outbox (GET /__lsf/admin/emails)");
     Ok(payload(json!({"customer": customer}), &[]))
 }
 

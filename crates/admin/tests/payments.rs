@@ -261,7 +261,20 @@ fn a_b2b_order_on_net_terms_comes_due_and_is_paid() {
     assert_eq!(status, 200);
     assert_eq!(emails["count"], 1);
     assert_eq!(emails["emails"][0]["to"], "buyer@northwind.example");
-    assert_eq!(emails["emails"][0]["template"], "payment_reminder");
+    assert_eq!(emails["emails"][0]["what"], "payment_reminder");
+    assert_eq!(emails["emails"][0]["channel"], "email");
+    // The same entry in the outbox, and in the shop's status.
+    let (_, outbox) = request(&api, "GET", "/__lsf/admin/outbox", Value::Null);
+    assert_eq!(outbox["outbox"], emails["emails"]);
+    let shop = api.default_shop();
+    let status = api.status();
+    let listed = status["shops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|listed| listed["shop"] == json!(shop))
+        .unwrap();
+    assert_eq!(listed["outbox"], emails["emails"]);
 
     // Thirty-one days later, the schedule is due.
     let (status, clock) = request(
@@ -466,7 +479,7 @@ fn what_buyers_and_shopify_do_to_an_order_is_delivered() {
     assert_eq!(topic, "orders/link_requested");
     assert_eq!(link["admin_graphql_api_id"], order);
     let (_, emails) = request(&api, "GET", "/__lsf/admin/emails", Value::Null);
-    assert_eq!(emails["emails"][0]["template"], "order_link_requested");
+    assert_eq!(emails["emails"][0]["what"], "order_link_requested");
     let (status, refused) = request(
         &api,
         "POST",

@@ -876,7 +876,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
 | `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |
 | `/__lsf/admin/card-sessions`, `/__lsf/admin/subscriptions`, `/__lsf/admin/billing-attempts/<n>/challenge[/complete\|/fail]`, `/__lsf/admin/payment-methods/<token>/update` | `api::subscriptions`: lsf's card vault, the log of the emails and charges, the customer's 3D Secure and card update pages; no token. |
-| `/__lsf/admin/clock`, `/__lsf/admin/emails`, `/__lsf/admin/disputes[/<n>/won\|lost\|accepted]`, `/__lsf/admin/orders/protect`, `/__lsf/admin/orders/link-request`, `/__lsf/admin/tax-app/activate` | `api::simulate`: the world outside the shop, which a test drives (see "Payments, store credit, disputes and the clock" under "Orders"). No token. |
+| `/__lsf/admin/clock`, `/__lsf/admin/outbox`, `/__lsf/admin/emails`, `/__lsf/admin/disputes[/<n>/won\|lost\|accepted]`, `/__lsf/admin/orders/protect`, `/__lsf/admin/orders/link-request`, `/__lsf/admin/tax-app/activate` | `api::simulate`: the world outside the shop, which a test drives (see "The outbox", and "Payments, store credit, disputes and the clock" under "Orders"). No token. |
 | `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
 
 `lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
@@ -1063,8 +1063,8 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
   resolver after `markets::after_mutation`) turns the listing events of a mutation on a
   channel's publication (`product_listings/*`) and its stock changes into incremental syncs, and
   recomputes the feeds' statuses when a market, a locale or a channel changed.
-- **The outside world**: the notifications of a gift card are written to its `lsfNotifications`,
-  never sent.
+- **The outside world**: the notifications of a gift card are emails in the shop's outbox
+  (see "The outbox"), never sent.
 
 ### Customers (`domains/customers.rs` and `domains/customers/`)
 
@@ -1135,7 +1135,6 @@ Each in a module of its own, whose header has the rules and their sources:
 | `analytics` | `AnalyticsAnnotation`, `AnalyticsTarget` records; `analytics::shopifyql`, a ShopifyQL subset (`FROM sales`) over a row per line sold, per order (its shipping and taxes) and per refund. |
 | `staff` | The shop's owner (`StaffMember`, seeded last, when no family seeded staff), `CompanyLocationStaffMemberAssignment` records, and the deprecated tax registration mutations on the companies family's `change_tax_settings`. |
 | `checkouts` | `AbandonedCheckout` records of the local checkout (one per cart token and order generation, a memo naming it), `Abandonment` records for checkouts of customers, the cart events (no record: the event's snapshot), what is abandoned when read (`is_listed`: contact, and more than ten minutes since the last change by the shop's clock), the three-month cleanup. |
-| `outbox` | What Shopify would send the outside world: a memo of the shop, listed by `GET /__lsf/admin`. |
 
 **What follows a change** (`segments::follow`): the mutation framework calls it after each
 mutation (`resolve::ShopResolver`, before the events are merged), and `AdminApi::change_shop`
@@ -1311,9 +1310,8 @@ what shopify.dev documents and what lsf chose. What they keep:
   puts the store data's back): `payment_schedules/due` once per schedule that came due
   (`lsfDueSent`), store credit that expired, a payout per day of Shopify Payments the shop's
   day left behind.
-- **The outbox** (`crate::outbox`): the emails Shopify would send, kept in a memo of the shop
-  (`lsf/outbox`), so a failed mutation takes them back and a reset forgets them;
-  `GET /__lsf/admin/emails` reads them.
+- **The emails** Shopify would send (reminders, invoices, store credit, return labels, order
+  links) are in the shop's outbox (see "The outbox").
 - **What the outside world does** that no mutation does (a bank's dispute and its decision,
   Shopify Protect, a buyer's link request, the merchant turning a tax app on) are functions of
   the domain (`shopify_payments::open_dispute`, `risk::set_protect`, `risk::request_link`,
@@ -1373,9 +1371,9 @@ module's header has the rules and the sources):
   `metafields`), **`DeliveryPromiseProvider`**, **`DeliveryPromiseParticipant`**
   (`lsfBrandedPromiseHandle`), **`ShippingLabelPurchaseResult`** (done, `PURCHASED`) and
   **`ShippingLabel`**.
-- **The outbox**: what Shopify would send or buy (a notification, a label) is a memo of the shop
-  (`lsf/outbox`, `logistics::send`), rolled back with a failed mutation, shown by
-  `GET /__lsf/admin` (`outbox`, and `shippingPackages`).
+- **The outbox**: what Shopify would send or buy (a pickup notice, a label, a shipping
+  confirmation) is in the shop's outbox (see "The outbox"); `GET /__lsf/admin` also shows each
+  shop's `shippingPackages`.
 - **Events**: a topic that says what changed (`inventory_shipments/receive_items`'s quantities
   before and after, `inventory_transfers/add_items`, `fulfillment_orders/merged`, …) is emitted
   with its context as the event's snapshot (`logistics::emit_change`: `happenedAt` and
@@ -1631,8 +1629,9 @@ succeeds and as it refuses (the shop left as it was).
   `orders::model::commit_line`, `orders/create`, `order_transactions/create` and `orders/paid`
   emitted as `orderCreate` emits them.
 - **`Job`** of a bulk charge or search: done, the cycles it found under `lsfBillingCycles`.
-- **The emails** lsf does not send are the memo `subscriptions/emails`, which
-  `GET /__lsf/admin/subscriptions` reads with the charges (the billing attempts).
+- **The emails** lsf does not send are in the shop's outbox (see "The outbox"):
+  `GET /__lsf/admin/subscriptions` lists them (`payment_methods::emails`) with the charges (the
+  billing attempts).
 - **From the checkout**: `AdminApi::record_order` runs `checkout::contracts_from_order` after
   `orders::record_placed_order`, in the same change of the shop.
 - Events without a webhook topic (a draft changed, a calculation made, a challenge opened, a bulk
@@ -1645,8 +1644,8 @@ The seed runs last (`pos::seed`): it reads the locations and the staff another f
 - **`PointOfSaleDevice`**, one per active location that is no fulfillment service:
   `stable_id("point_of_sale_device", <location GID>)` *(chosen: the Admin API cannot make one)*,
   `cashDrawer`, `activePaymentSession`, `fiscalDeviceIdentifier: null`, the location under
-  `lsfLocation`, and `lsfDeviceLog` (`[{at, message}]`): what lsf would have pushed to the POS
-  app, which it never sends.
+  `lsfLocation`. What lsf would have pushed to the POS app, which it never sends, is in the
+  shop's outbox (see "The outbox", channel `pos`).
 - **`StaffMember`**, the shop owner, `stable_id("staff_member", "owner")`, when no family seeded
   staff: `name` "Shop owner" *(chosen)*, the shop's email, `isShopOwner: true`, the primary locale.
 - **Reason codes**: a `CashManagementDefaultReasonCode` per value of its enum and a
@@ -1720,13 +1719,12 @@ never written to.**
   `shopify.extension.toml` at seed (`platform::extensions`, `[settings]` of the file when it is
   below `[[extensions]]`, as Shopify CLI reads it) into settings of the shop
   (`webPixelExtension`, `flowTriggers`).
-- **The outside world** (`platform::outbox`): what Shopify would hand to a service lsf does not
-  run is never sent. The state Shopify would show is kept (a server pixel `CONNECTED`, a mobile
-  app), and what would have been sent (a Flow trigger) is appended to the shop's outbox, a memo
-  (`lsf/outbox`, the last 1000), which a failed mutation puts back and a reset empties:
-  `GET /__lsf/admin/outbox`. EventBridge and Pub/Sub subscriptions' deliveries are in the
-  webhooks' log, `not_sent`. The association files of mobile apps are served by the storefront
-  (`/.well-known/…`, `AdminApi::association_file`).
+- **The outside world**: what Shopify would hand to a service lsf does not run is never sent.
+  The state Shopify would show is kept (a server pixel `CONNECTED`, a mobile app), and what
+  would have been sent (a Flow trigger) is in the shop's outbox (see "The outbox"). EventBridge
+  and Pub/Sub subscriptions' deliveries are in the webhooks' log, `not_sent`. The association
+  files of mobile apps are served by the storefront (`/.well-known/…`,
+  `AdminApi::association_file`).
 - **Script tags** reach `content_for_header` through `lsf_core::theme::Theme::set_script_tags`,
   set by the server from the default shop (`AdminApi::storefront_scripts`) as the overlay is.
   They are not store data: a script tag is the app's, not the theme's or the data's, and the
@@ -1739,6 +1737,29 @@ never written to.**
   with_arguments`); `stagedUploadTargetGenerate(s)` run `stagedUploadsCreate`; bulk deletes and
   bulk tags by search run the `urlRedirects` and `discountNodes` connections. One set of checks,
   of records and of events, the deprecated shapes kept in the payloads.
+
+## The outbox (`outbox`)
+
+lsf never sends anything outside the machine: what Shopify would have sent or bought is recorded
+in the shop's outbox instead, by one API every family uses (`outbox::record(state,
+Entry::email(what, to).subject(..).body(..).about(..))`, `Entry::new(channel, what)` for the
+other channels), and read by one (`outbox::entries(state, channel)`, `outbox::clear`).
+
+- **An entry** is `{id, at, channel, to, what, about}`, with `subject` and `body` for an email
+  (the words of another channel in `body`) and `data` for what else would have gone out. `id`
+  counts per shop and is never given twice (the memo keeps the last one past a `DELETE`); `at` is
+  the shop's clock; `what` is a stable name a test matches (`payment_reminder`,
+  `shipping_label`, `flow_trigger`, `cash_drawer_assigned`, `customer_data_erased`). The
+  channels (`outbox::Channel`): `email`, `carrier` (a label bought), `flow` (a Flow trigger),
+  `pos` (what Shopify pushes to a POS device), `data_erasure`.
+- **A memo of the shop** (`lsf/outbox`, the last 1000 entries): a mutation that fails takes its
+  entries back with the undo log, a reset empties it, the store sync never sees it.
+- **Read** by `GET /__lsf/admin/outbox?shop=&channel=` (`DELETE` forgets them), its alias
+  `GET /__lsf/admin/emails` (`channel=email`, the list named `emails`), `GET /__lsf/admin`
+  (`shops[].outbox`), and `GET /__lsf/admin/subscriptions` (the Subscriptions API's emails).
+  `api::simulate` answers the first two.
+- **A record keeps** what its GraphQL type answers (an abandonment's `emailState` and
+  `emailSentAt`, which the app reports); what no query reads goes to the outbox.
 
 ## Events and webhooks (`webhooks`)
 
@@ -2105,10 +2126,10 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`, `segments`, `customer_merge`, `privacy`, `marketing`, `analytics`, `staff`, `checkouts`, `outbox`, `pos`, `platform`, `store_admin`, `storefront`, `themes`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`, `segments`, `customer_merge`, `privacy`, `marketing`, `analytics`, `staff`, `checkouts`, `pos`, `platform`, `store_admin`, `storefront`, `themes`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |
-| `outbox` | The emails lsf records instead of sending them, in a memo of the shop. |
+| `outbox` | What lsf records instead of sending it to the outside world, in a memo of the shop (see "The outbox"). |
 | `throttle` | The cost bucket of each shop and app. |
 | `api` | One HTTP request in, one answer out: the Admin API endpoints, OAuth, and the `/__lsf/admin` and `/__lsf/webhooks` control endpoints. `api::sync`: store sync as a server runs it (the count of changes, the overlay made when asked). `api::simulate`: the clock, the outbox, and what buyers, banks and Shopify do. |
