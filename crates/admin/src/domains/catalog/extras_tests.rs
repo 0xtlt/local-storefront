@@ -850,3 +850,129 @@ fn a_product_bundle_that_is_wrong_is_refused_and_nothing_changes() {
     unchanged(&mut shop, &before, &[&mug]);
     assert_eq!(shop.count("Product"), before.count("Product"));
 }
+
+#[test]
+fn a_combined_listing_points_its_parent_variants_at_its_children() {
+    let mut shop = demo();
+    let parent = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Shorts", combinedListingRole: PARENT}) { product { id combinedListingRole } userErrors { message } } }"#,
+    );
+    let parent_product = &ok(&parent, "productCreate")["product"];
+    assert_eq!(parent_product["combinedListingRole"], json!("PARENT"));
+    let parent = parent_product["id"].as_str().unwrap().to_string();
+    let (blue, _) = new_product(&mut shop, "Shorts - Blue");
+    let (red, _) = new_product(&mut shop, "Shorts - Red");
+    shop.take_events();
+    let added = run_with(
+        &mut shop,
+        r#"mutation($parent: ID!, $blue: ID!, $red: ID!) { combinedListingUpdate(parentProductId: $parent,
+            productsAdded: [{childProductId: $blue, selectedParentOptionValues: [{name: "Color", value: "Blue"}]},
+                {childProductId: $red, selectedParentOptionValues: [{name: "Color", value: "Red"}]}],
+            optionsAndValues: [{name: "Color", values: ["Red", "Blue"]}]) {
+            product { combinedListingRole options { name values } variants(first: 5) { nodes { title } }
+                combinedListing { parentProduct { id } combinedListingChildren(first: 5) { nodes { product { title } parentVariant { selectedOptions { name value } } } } } }
+            userErrors { field message code } } }"#,
+        json!({"parent": parent, "blue": blue, "red": red}),
+    );
+    let product = &ok(&added, "combinedListingUpdate")["product"];
+    assert_eq!(
+        product["options"],
+        json!([{"name": "Color", "values": ["Red", "Blue"]}])
+    );
+    assert_eq!(
+        product["variants"]["nodes"],
+        json!([{"title": "Blue"}, {"title": "Red"}])
+    );
+    assert_eq!(
+        product["combinedListing"]["parentProduct"]["id"],
+        json!(parent)
+    );
+    assert_eq!(
+        product["combinedListing"]["combinedListingChildren"]["nodes"],
+        json!([{"product": {"title": "Shorts - Blue"}, "parentVariant": {"selectedOptions": [{"name": "Color", "value": "Blue"}]}},
+            {"product": {"title": "Shorts - Red"}, "parentVariant": {"selectedOptions": [{"name": "Color", "value": "Red"}]}}])
+    );
+    let mut events = topics(&mut shop);
+    events.sort();
+    events.dedup();
+    assert!(events.contains(&"products/update".to_string()));
+
+    // The child reads the listing too; the role is a search filter.
+    let read = run_with(
+        &mut shop,
+        r#"query($blue: ID!) { product(id: $blue) { combinedListingRole combinedListing { parentProduct { title } } }
+            products(first: 5, query: "combined_listing_role:PARENT") { nodes { title } } }"#,
+        json!({"blue": blue}),
+    );
+    assert_eq!(
+        read["data"]["product"],
+        json!({"combinedListingRole": "CHILD", "combinedListing": {"parentProduct": {"title": "Shorts"}}})
+    );
+    assert_eq!(
+        read["data"]["products"]["nodes"],
+        json!([{"title": "Shorts"}])
+    );
+
+    // Edited and removed: the red child leaves, the blue one becomes navy.
+    let changed = run_with(
+        &mut shop,
+        r#"mutation($parent: ID!, $blue: ID!, $red: ID!) { combinedListingUpdate(parentProductId: $parent, title: "Summer shorts",
+            productsEdited: [{childProductId: $blue, selectedParentOptionValues: [{name: "Color", value: "Navy"}]}],
+            productsRemovedIds: [$red]) {
+            product { title options { values } combinedListing { combinedListingChildren(first: 5) { nodes { product { id } } } } }
+            userErrors { field message code } } }"#,
+        json!({"parent": parent, "blue": blue, "red": red}),
+    );
+    let product = &ok(&changed, "combinedListingUpdate")["product"];
+    assert_eq!(product["title"], json!("Summer shorts"));
+    assert_eq!(product["options"], json!([{"values": ["Navy"]}]));
+    assert_eq!(
+        product["combinedListing"]["combinedListingChildren"]["nodes"],
+        json!([{"product": {"id": blue}}])
+    );
+    assert_eq!(shop.get(&red).unwrap()["combinedListingRole"], json!(null));
+}
+
+#[test]
+fn a_combined_listing_update_that_is_wrong_is_refused_and_nothing_changes() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let parent = run(
+        &mut shop,
+        r#"mutation { productCreate(product: {title: "Shorts", combinedListingRole: PARENT}) { product { id } } }"#,
+    )["data"]["productCreate"]["product"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+    let before = shop.clone();
+    let not_parent = run_with(
+        &mut shop,
+        r#"mutation($mug: ID!) { combinedListingUpdate(parentProductId: $mug, productsRemovedIds: []) { product { id } userErrors { field message code } } }"#,
+        json!({"mug": mug}),
+    );
+    assert_eq!(
+        not_parent["data"]["combinedListingUpdate"]["userErrors"],
+        json!([{"field": ["parentProductId"], "code": "PARENT_PRODUCT_MUST_BE_A_COMBINED_LISTING",
+            "message": "Unable to update components for a product that isn't a combined listing."}])
+    );
+    let wrong = run_with(
+        &mut shop,
+        r#"mutation($parent: ID!, $mug: ID!) { combinedListingUpdate(parentProductId: $parent, productsAdded: [
+            {childProductId: $parent, selectedParentOptionValues: [{name: "Color", value: "Blue"}]},
+            {childProductId: $mug, selectedParentOptionValues: []},
+            {childProductId: "gid://shopify/Product/1", selectedParentOptionValues: [{name: "Color", value: "Red"}]}]) {
+            product { id } userErrors { field code } } }"#,
+        json!({"parent": parent, "mug": mug}),
+    );
+    assert_eq!(
+        wrong["data"]["combinedListingUpdate"],
+        json!({"product": null, "userErrors": [
+            {"field": ["productsAdded", "0"], "code": "CANNOT_HAVE_PARENT_AS_CHILD"},
+            {"field": ["productsAdded", "1"], "code": "MUST_HAVE_SELECTED_OPTION_VALUES"},
+            {"field": ["productsAdded", "2"], "code": "PRODUCT_NOT_FOUND"},
+        ]})
+    );
+    unchanged(&mut shop, &before, &[&parent, &mug]);
+}

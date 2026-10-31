@@ -14,6 +14,7 @@ mod bundles;
 mod collection_duplicate;
 mod collection_sources;
 mod collections;
+mod combined_listings;
 #[cfg(test)]
 mod extras_tests;
 mod gift_cards;
@@ -1328,6 +1329,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     collections::register(registry);
     collection_duplicate::register(registry);
     collection_sources::register(registry);
+    combined_listings::register(registry);
     inventory::register(registry);
     locations::register(registry);
     selling_plans::register(registry);

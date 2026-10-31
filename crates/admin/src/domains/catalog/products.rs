@@ -28,9 +28,12 @@
 //!   `products/create`, `inventory_items/create`, `inventory_levels/connect`.
 //! - `productChangeStatus` (deprecated for `productUpdate`) sets the status: `products/update`.
 //!
+//! - `combinedListingRole` "can only be set during creation": `productCreate` keeps it (see
+//!   [`super::combined_listings`]); `productUpdate` notes that it was ignored.
+//!
 //! The messages are Shopify's (Rails validations: "Title can't be blank"); where shopify.dev does
-//! not show them, they follow the same form. Inputs lsf does not simulate yet (`category`,
-//! `combinedListingRole`, …) are said in `extensions.lsf.notes`, never silently dropped.
+//! not show them, they follow the same form. Inputs lsf does not simulate yet (`category`, …)
+//! are said in `extensions.lsf.notes`, never silently dropped.
 
 use serde_json::{Map, Value, json};
 
@@ -54,7 +57,6 @@ pub fn register(registry: &mut Registry) {
 const NOT_SIMULATED: &[&str] = &[
     "category",
     "claimOwnership",
-    "combinedListingRole",
     "redirectNewHandle",
     "deleteConflictingConstrainedMetafields",
 ];
@@ -353,6 +355,9 @@ fn product_create(
         "metafields": [],
     }));
     apply_fields(&mut record, &input);
+    if let Some(role) = text(&input, "combinedListingRole") {
+        record.insert("combinedListingRole".into(), json!(role));
+    }
     state.insert(record);
     let choices = create_options(state, &product, &options);
     for input in &media_inputs {
@@ -485,6 +490,12 @@ fn product_update(
 ) -> Result<Value, FieldError> {
     let input = product_input(ctx);
     note_ignored(mutation, "productUpdate", &input, ctx);
+    if input
+        .get("combinedListingRole")
+        .is_some_and(|role| !role.is_null())
+    {
+        mutation.note("productUpdate: `combinedListingRole` can only be set when a product is created: it was ignored");
+    }
     let state = mutation.state();
     let Some(product) = product_to_update(state, ctx, &input) else {
         let error =

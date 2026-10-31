@@ -227,12 +227,14 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     if !errors.is_empty() {
         return Ok(payload(empty, &errors));
     }
-    for name in [
-        "category",
-        "claimOwnership",
-        "combinedListingRole",
-        "redirectNewHandle",
-    ] {
+    if existing.is_some()
+        && input
+            .get("combinedListingRole")
+            .is_some_and(|role| !role.is_null())
+    {
+        mutation.note("productSet: `combinedListingRole` can only be set when a product is created: it was ignored");
+    }
+    for name in ["category", "claimOwnership", "redirectNewHandle"] {
         if input.get(name).is_some_and(|value| !value.is_null()) {
             mutation.note(format!(
                 "productSet: lsf does not simulate `{name}` yet: it was ignored"
@@ -263,6 +265,9 @@ fn product_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
         products::apply_fields(record, &input);
         if let Some(gift_card) = input.get("giftCard").and_then(Value::as_bool) {
             record.insert("isGiftCard".into(), json!(gift_card));
+        }
+        if created && let Some(role) = text(&input, "combinedListingRole") {
+            record.insert("combinedListingRole".into(), json!(role));
         }
         if let Some(handle) = &handle {
             record.insert("handle".into(), json!(handle));
