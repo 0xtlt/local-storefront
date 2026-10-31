@@ -11,22 +11,34 @@ the same data every run.
 
 ### Added
 
-- **A local GraphQL Admin API, version 2026-10.** Every server answers
+- **A local GraphQL Admin API, version 2026-10, with every mutation.** Every server answers
   `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the storefront, the
   checkout and the Function inputs use. Queries follow Shopify's 2026-10 schema (its
   introspection matches Shopify's), with its validation errors, query costs (`extensions.cost`),
   throttling (`THROTTLED`, `MAX_COST_EXCEEDED`), cursors, the `query:` search syntax, and
-  `ACCESS_DENIED` for a scope the token lacks. Mutations are simulated for:
-  - products, variants, options, media, `productSet`, collections, inventory, locations,
-    publications, selling plans and gift cards;
-  - orders, fulfillments, fulfillment services, refunds, returns, order edits and draft orders;
-  - customers, addresses, consent, and B2B companies with their contacts and roles;
-  - metafields and their definitions, metaobjects, pages, blogs, articles, menus, redirects,
-    files and translations;
-  - billing, app discounts and the settings of Functions, bulk operations and staged uploads.
+  `ACCESS_DENIED` for a scope the token lacks. All 496 mutations of 2026-10 are simulated,
+  the deprecated ones included, with their user errors, side effects and webhooks:
+  - the catalog: products, variants, media, `productSet`, collections and their sources,
+    bundles, combined listings, inventory, transfers and shipments, locations, publications,
+    channels, product feeds, selling plans, gift cards;
+  - orders: payments and payment terms, fulfillments and fulfillment orders (split, merge,
+    reroute), fulfillment services, shipping labels, refunds, returns and exchanges, order
+    edits, draft orders, disputes, store credit, risk, tax;
+  - customers and B2B companies, segments (their query language is evaluated over the
+    customers), saved searches, merges, data erasure, consent, marketing, analytics and a
+    ShopifyQL subset;
+  - the Subscriptions API: contracts, drafts, billing cycles and attempts (test cards decide the
+    outcome), and customers' payment methods;
+  - markets, catalogs, price lists and contextual prices, quantity rules, locales, web presences;
+  - metafields and their definitions, metaobjects, pages, blogs, menus, redirects (in bulk and by
+    CSV import), files, translations, policies;
+  - themes and theme files (written over the theme directory in memory, never to disk), script
+    tags (loaded by `content_for_header`), pixels, storefront tokens, delegate tokens;
+  - the app: billing, discounts and Function settings, bulk operations, staged uploads,
+    `appUninstall`, scope revocation, Flow triggers, point of sale.
 
-  A failed mutation changes nothing. One lsf does not simulate answers `LSF_NOT_SIMULATED`; the
-  guide lists them. Guide: [Admin API](docs/admin.md).
+  A failed mutation changes nothing. `crates/admin/tests/coverage.rs` fails if a mutation of a
+  version lsf serves is not simulated. Guide: [Admin API](docs/admin.md).
 - **API version 2027-01, the release candidate, on demand.** `--admin-versions 2026-10,2027-01`
   serves it next to 2026-10, each at its own `/admin/api/<version>/graphql.json`, with its own
   schema, introspection, access scopes, search filters and webhook topics:
@@ -56,8 +68,10 @@ the same data every run.
   - retried after 1, 5 and 15 s;
   - filtered by `filter` and `include_fields`.
 
-  Payloads follow Shopify's 2026-10 examples for more than 100 topics. A topic lsf builds no
-  payload for is logged, never sent with a made-up body. `lsf app webhook trigger` sends one on
+  Payloads follow Shopify's 2026-10 examples, for every topic Shopify publishes an example of
+  (224 of the 227); the other three are logged, never sent with a made-up body. The storefront's
+  cart and the local checkout send `carts/*` and `checkouts/*`, and a checkout left without an
+  order becomes an abandoned checkout the backend reads. `lsf app webhook trigger` sends one on
   demand, compliance topics included, as `shopify app webhook trigger` does.
   `GET /__lsf/webhooks` lists the deliveries. After an uninstall, nothing is delivered for the
   shop but `app/uninstalled`.
@@ -68,6 +82,11 @@ the same data every run.
 - **Control endpoints under `/__lsf/admin`:** reset the shop, make extra shops for isolated
   tests, install and uninstall the app, and make session tokens for a test to call the
   backend's routes. [Control API](docs/control-api.md).
+- **The shop's clock and its outbox.** `POST /__lsf/admin/clock` moves a shop's time: payment
+  schedules come due, store credit expires, payouts are made, scheduled listings go live,
+  checkouts are abandoned, data erasures run, each with its webhooks. What Shopify would send
+  the outside world (emails, labels, Flow triggers, point-of-sale messages) is never sent: it is
+  in `GET /__lsf/admin/outbox`.
 - **New options:**
   - `--app-url`: where the backend listens.
   - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
