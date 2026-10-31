@@ -17,6 +17,7 @@ Commands are non-interactive. Exit codes: 0 nothing to report, 1 something to fi
 - [Formatting](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/formatting.md): `npx local-storefront fmt` and its options
 - [Performance](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/performance.md): `npx local-storefront profile`, points, Server-Timing
 - [Checkout](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/checkout.md): `npx local-storefront app dev --app`, `app init` (scenarios) and `app function run`: the Functions and checkout UI extensions of a Shopify app
+- [Admin API](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/admin.md): the local GraphQL Admin API (2026-10), OAuth, token exchange, webhooks and the app proxy, for the backend of a Shopify app
 - [Storefront](https://raw.githubusercontent.com/0xtlt/local-storefront/main/docs/storefront.md): accounts, password page, images, feature previews
 
 ## Reference

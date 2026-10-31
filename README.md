@@ -87,6 +87,19 @@ Function and extension of the app, and opens a checkout for each:
 `npx local-storefront app function run --app ../my-app` runs the Functions once and prints their
 input and output. Guide: [checkout](docs/checkout.md).
 
+### Test an app's backend against a local Admin API
+
+```bash
+npx local-storefront app dev --app ../my-app --app-url http://localhost:3000
+```
+
+Serves a local GraphQL Admin API (version 2026-10) over the store data, at
+`/admin/api/2026-10/graphql.json`, with OAuth, token exchange and session tokens. Webhooks of
+the app reach its backend, signed as Shopify signs them. The backend runs offline, against the
+same data every run, and what it changes shows on the storefront and in the checkout at once.
+`npx local-storefront app webhook trigger --topic orders/create --app ../my-app` sends one
+webhook on demand. Guide: [Admin API](docs/admin.md).
+
 ### Get ready for Shopify's strict Liquid parser
 
 Shopify is moving every store to a strict Liquid parser, and a file it rejects can no longer be
@@ -135,6 +148,7 @@ what it would cost Shopify. Guide: [performance](docs/performance.md).
 | `npx local-storefront check` | Checks every Liquid file, and what Shopify's strict parser rejects. `--fix` rewrites it. `--format json` for tools. |
 | `npx local-storefront fmt [paths]` | Formats Liquid files as Prettier does. `--check` for CI. |
 | `npx local-storefront app dev --app <dir>` | Serves a Shopify app: its checkout, where its Functions run and its checkout UI extensions show, and its customer account, where its customer account UI extensions show. `serve --app` does it with the theme. |
+| `npx local-storefront app webhook trigger --topic <topic> --app <dir>` | Sends one webhook of an app to its backend, signed as Shopify signs it, as `shopify app webhook trigger` does. |
 | `npx local-storefront app init [--app <dir>]` | Writes checkout scenarios (`checkouts/` in the store data) made for the Functions and extensions of the app. |
 | `npx local-storefront app build [handle]... --app <dir>` | Builds the extensions of an app as `shopify app build` does, without Node: Functions, and UI extensions from their sources. |
 | `npx local-storefront app check [--app <dir>]` | Runs the Functions of every checkout scenario, for CI: exits with 1 when one fails. |

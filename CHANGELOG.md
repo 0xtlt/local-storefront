@@ -3,6 +3,82 @@
 What changed in each version of `lsf`, for someone who uses it. The section of a version is
 what its [GitHub release](https://github.com/0xtlt/local-storefront/releases) says.
 
+## Unreleased
+
+lsf now serves a local GraphQL Admin API (version 2026-10) and delivers an app's webhooks to its
+backend: the backend of a Shopify app runs and is tested offline, against the store data, with
+the same data every run.
+
+### Added
+
+- **A local GraphQL Admin API, version 2026-10.** Every server answers
+  `POST /admin/api/2026-10/graphql.json` over the store data, with the ids the storefront, the
+  checkout and the Function inputs use. Queries follow Shopify's 2026-10 schema (its
+  introspection matches Shopify's), with its validation errors, query costs (`extensions.cost`),
+  throttling (`THROTTLED`, `MAX_COST_EXCEEDED`), cursors, the `query:` search syntax, and
+  `ACCESS_DENIED` for a scope the token lacks. Mutations are simulated for:
+  - products, variants, options, media, `productSet`, collections, inventory, locations,
+    publications, selling plans and gift cards;
+  - orders, fulfillments, fulfillment services, refunds, returns, order edits and draft orders;
+  - customers, addresses, consent, and B2B companies with their contacts and roles;
+  - metafields and their definitions, metaobjects, pages, blogs, articles, menus, redirects,
+    files and translations;
+  - billing, app discounts and the settings of Functions, bulk operations and staged uploads.
+
+  A failed mutation changes nothing. One lsf does not simulate answers `LSF_NOT_SIMULATED`; the
+  guide lists them. Guide: [Admin API](docs/admin.md).
+- **The storefront and the checkout show what the backend changes.** A product it creates is on
+  the theme's pages at once, and a draft leaves them. A customer it creates can log in at the
+  checkout. A metafield it sets is read by Liquid and by the Functions, and an app discount it
+  creates runs its Function at the checkout. Open pages reload. An order placed in the local
+  checkout is an order of the Admin API, and its `orders/create` webhook reaches the backend.
+- **OAuth, token exchange and session tokens**, answered as Shopify answers them:
+  - the authorization code grant, and token exchange from a session token (embedded apps);
+  - expiring offline tokens and their refresh, and client credentials;
+  - a launch URL that opens the backend as Shopify's admin opens an embedded app.
+
+  Tokens have the scopes of `shopify.app.toml`. The guide says what Shopify's libraries need to
+  reach lsf.
+- **Webhooks, signed as Shopify signs them.** The subscriptions of `shopify.app.toml` and those
+  the backend makes with `webhookSubscriptionCreate` are delivered to the backend:
+  - with Shopify's headers and HMAC;
+  - retried after 1, 5 and 15 s;
+  - filtered by `filter` and `include_fields`.
+
+  Payloads follow Shopify's 2026-10 examples for more than 100 topics. A topic lsf builds no
+  payload for is logged, never sent with a made-up body. `lsf app webhook trigger` sends one on
+  demand, compliance topics included, as `shopify app webhook trigger` does.
+  `GET /__lsf/webhooks` lists the deliveries. After an uninstall, nothing is delivered for the
+  shop but `app/uninstalled`.
+- **The app proxy.** A storefront request under the prefix of `[app_proxy]` goes to the backend
+  with Shopify's parameters and signature. A Liquid answer is rendered in the theme's layout.
+- **Billing.** `appSubscriptionCreate` and `appPurchaseOneTimeCreate` lead to a local approval
+  page. Approving goes to the `returnUrl`, and the charge is active.
+- **Control endpoints under `/__lsf/admin`:** reset the shop, make extra shops for isolated
+  tests, install and uninstall the app, and make session tokens for a test to call the
+  backend's routes. [Control API](docs/control-api.md).
+- **New options:**
+  - `--app-url`: where the backend listens.
+  - `--client-secret`: else `SHOPIFY_API_SECRET`, else the app's `.env`.
+  - `--admin-throttle`.
+- **`examples/admin-backend`:** a backend written with Shopify's libraries
+  (`@shopify/shopify-app-react-router`, `@shopify/shopify-api`), with a script that runs it
+  against lsf end to end (`mise run admin:e2e`).
+
+### Changed
+
+- **Store data:** products gain `status` (`active`, `draft`, `archived`) and `published`. Only
+  an active, published product is on the storefront. Entries of `checkout.discounts` gain an
+  `id`. [Data format](docs/data-format.md).
+- **Two companies with the same name** are both kept, and reported (`duplicate_company`). The
+  second used to replace the first.
+
+### Fixed
+
+- **A large store loads much faster.** The default product recommendations took a time cubic in
+  the number of products: 3,000 products took 5 to 6 s to load, and now take 0.3 s. This speeds
+  up startup and `--watch` too.
+
 ## 0.2.0 - 2026-10-30
 
 lsf now runs the checkout and the customer account of a Shopify app: its Functions and its UI
