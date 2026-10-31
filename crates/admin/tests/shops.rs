@@ -383,3 +383,82 @@ fn an_order_placed_for_a_company_location_counts_in_its_counters() {
         json!(5)
     );
 }
+
+/// A guest checkout whose email is a customer's (in any case) is that customer's order, as
+/// Shopify links it, and the customer's counters count it.
+#[test]
+fn a_guest_order_with_a_customer_s_email_is_that_customer_s() {
+    let store = support::demo_store();
+    let mut state = ShopState::seeded(&store, None);
+    let jane = store
+        .customers
+        .iter()
+        .find(|customer| customer.first_name == "Jane")
+        .unwrap();
+    let customer = customers::customer_gid(jane);
+    let orders_before = state.get(&customer).unwrap()["numberOfOrders"].clone();
+    let tee = store.product_by_handle("organic-cotton-t-shirt").unwrap();
+    let variant = &tee.variants[0];
+    let result = CheckoutResult {
+        lines: vec![ResultLine {
+            id: "gid://shopify/CartLine/1".into(),
+            variant_id: variant.id,
+            product_id: tee.id,
+            title: tee.title.clone(),
+            quantity: 1,
+            unit_price: variant.price,
+            subtotal: variant.price,
+            total: variant.price,
+            ..Default::default()
+        }],
+        cost: Cost {
+            total: variant.price,
+            due_now: variant.price,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let email = jane.email.to_uppercase();
+    let order = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: Some(&email),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    assert_eq!(state.get(&order.id).unwrap()["customer"], json!(customer));
+    let record = state.get(&customer).unwrap();
+    let before: u64 = orders_before.as_str().unwrap().parse().unwrap();
+    assert_eq!(record["numberOfOrders"], json!((before + 1).to_string()));
+    assert_eq!(record["lastOrder"], json!(order.id));
+
+    // An email no customer has stays a guest's.
+    let guest = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:31:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: Some("nobody@example.com"),
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    assert_eq!(state.get(&guest.id).unwrap()["customer"], Value::Null);
+}

@@ -971,10 +971,26 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         .id
         .filter(|id| !state.contains(id) && crate::state::gid_type(id) == Some("Order"))
         .map_or_else(|| state.new_gid("Order"), str::to_string);
-    let customer = placed
-        .customer_id
-        .map(|id| gid("Customer", id))
-        .filter(|customer| state.contains(customer));
+    // A guest whose email is a customer's places the order as that customer: Shopify links a
+    // guest checkout to the customer account with the same email (Help Center behaviour, which
+    // shopify.dev does not document). Emails compare ignoring case.
+    let customer = match placed.customer_id {
+        Some(id) => Some(gid("Customer", id)).filter(|customer| state.contains(customer)),
+        None => placed
+            .email
+            .map(str::trim)
+            .filter(|email| !email.is_empty())
+            .and_then(|email| {
+                state.keys("Customer").find(|key| {
+                    state
+                        .get(key)
+                        .and_then(|record| record.get("email"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|known| known.eq_ignore_ascii_case(email))
+                })
+            })
+            .map(str::to_string),
+    };
     let customer_record = customer.as_ref().and_then(|customer| state.get(customer));
     let accepts_marketing = customer_record
         .and_then(|record| record.get("emailMarketingConsent"))

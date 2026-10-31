@@ -304,7 +304,9 @@ The full list, field by field, is in the design notes of `lsf-admin`
   again for it: orders do not sync (the account pages show it from the checkout, as they do
   without the Admin API). The Admin API numbers it, as it numbers the orders of `orderCreate` and
   of draft orders: no two orders share a name, and the thank-you page shows that number.
-  Without the Admin API, each session numbers its orders after the store data's, as before.
+  Without the Admin API, each session numbers its orders after the store data's, as before. A
+  guest whose email is a customer's places the order as that customer, as on Shopify: the
+  customer's `numberOfOrders` and `amountSpent` count it.
 - **When the store data refuses a change** (an email it does not take, two variants with the
   same options), the storefront shows the rest, the terminal says what was refused (once), and so
   does `GET /__lsf/admin` (`storeSync.built.diagnostics`).

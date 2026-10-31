@@ -836,8 +836,9 @@ records, so both are the same shape.
   the shop's next number (`model::next_order_number`, which `orderCreate` and a completed draft
   order take too: one numbering; a number or an id given and taken gets a new one), a GID of the
   shop's counter, as `orderCreate`'s (not made of the number), answers its GID and number
-  (`RecordedOrder`), which the checkout shows on its thank-you page, refreshes
-  the customer, and emits `orders/create`,
+  (`RecordedOrder`), which the checkout shows on its thank-you page, links a guest whose email
+  is a customer's (ignoring case) to that customer, as Shopify does (Help Center behaviour, not
+  on shopify.dev), refreshes the customer, and emits `orders/create`,
   `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits
   no stock: the local checkout keeps the stock of the data *(chosen: test purchases never sell a
   product out)*. `lsf`'s `place_order` calls it through `AdminApi::record_order`.
