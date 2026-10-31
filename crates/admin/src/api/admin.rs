@@ -364,7 +364,14 @@ impl AdminApi {
     /// gave the order (its next one when the checkout gives none).
     pub fn record_order(&self, placed: &orders::PlacedOrder) -> Option<orders::RecordedOrder> {
         self.change_shop(&self.default_shop(), |state| {
-            orders::record_placed_order(state, placed)
+            let recorded = orders::record_placed_order(state, placed);
+            // A subscription bought at the checkout is a contract, as on Shopify.
+            crate::domains::subscriptions::checkout::contracts_from_order(
+                state,
+                &recorded.id,
+                placed,
+            );
+            recorded
         })
     }
 
@@ -698,6 +705,9 @@ impl AdminApi {
     /// The control endpoints under `/__lsf/admin`.
     fn control(&self, request: &HttpRequest, path: &str) -> HttpResponse {
         if let Some(response) = super::app::handle(self, request, path) {
+            return response;
+        }
+        if let Some(response) = super::subscriptions::handle(self, request, path) {
             return response;
         }
         let method = request.method.to_ascii_uppercase();

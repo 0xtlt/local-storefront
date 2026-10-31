@@ -12,6 +12,38 @@ import { dirname, join } from "node:path";
 
 import { isMain, root, versionArg } from "./source.mjs";
 
+// The topics the reference has no "Sample Payload" for: the payloads of Shopify's own
+// subscriptions reference app (https://github.com/Shopify/subscriptions-reference-app,
+// `app/types/webhooks.ts` for the keys and their order, the fixtures of its tests,
+// `app/jobs/dunning/tests/fixtures/`, for the values). `/challenged` is the same resource, with
+// no order: the app has no fixture of it.
+const attempt = (fields) =>
+  JSON.stringify(
+    {
+      id: 1,
+      admin_graphql_api_id: "gid://shopify/SubscriptionBillingAttempt/1",
+      idempotency_key: "foo-bar-baz",
+      order_id: 1,
+      admin_graphql_api_order_id: "gid://shopify/Order/1",
+      subscription_contract_id: 1,
+      admin_graphql_api_subscription_contract_id: "gid://shopify/SubscriptionContract/1",
+      ready: true,
+      error_message: null,
+      error_code: null,
+      ...fields,
+    },
+    null,
+    2,
+  );
+const SUPPLEMENTS = {
+  "subscription_billing_attempts/challenged": attempt({ order_id: null, admin_graphql_api_order_id: null }),
+  "subscription_billing_attempts/failure": attempt({
+    error_message: "insufficient_funds",
+    error_code: "insufficient_funds",
+  }),
+  "subscription_billing_attempts/success": attempt({}),
+};
+
 /** Writes examples-<version>.json from shopify.dev's webhook reference of `version`. */
 export async function generate(version) {
   const source = `https://shopify.dev/docs/api/webhooks/${version}.md`;
@@ -38,6 +70,9 @@ export async function generate(version) {
     // digits, which a number of JavaScript cannot hold.
     JSON.parse(text);
     examples[topic] = text;
+  }
+  for (const [topic, text] of Object.entries(SUPPLEMENTS)) {
+    if (!(topic in examples)) examples[topic] = text;
   }
   const entries = built.map((topic) => {
     if (!(topic in examples)) throw new Error(`${topic}: no example payload in ${source}`);

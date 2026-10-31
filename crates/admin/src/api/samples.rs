@@ -69,6 +69,9 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("channels", _) => &["Channel"],
         ("collection_listings", _) => &["Collection"],
         ("product_listings" | "scheduled_product_listings", _) => &["Product"],
+        ("customer_payment_methods", _) => &["CustomerPaymentMethod"],
+        ("subscription_contracts", _) => &["SubscriptionContract"],
+        ("subscription_billing_attempts", _) => &["SubscriptionBillingAttempt"],
         _ => &[],
     }
 }
