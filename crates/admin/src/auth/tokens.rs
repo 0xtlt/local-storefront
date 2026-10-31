@@ -349,6 +349,21 @@ impl Tokens {
     ) -> String {
         self.installs
             .insert((shop.to_string(), client_id.to_string()), scopes.to_vec());
+        // Scopes are approved (and revoked) for an installation, not for a token (shopify.dev,
+        // "Manage access scopes" and `appRevokeAccessScopes`): the tokens the installation
+        // issued, by token exchange or OAuth, carry its new scopes from now on.
+        let installation =
+            |grant_shop: &str, grant_client: &str| grant_shop == shop && grant_client == client_id;
+        for grant in self.access.values_mut() {
+            if installation(&grant.shop, &grant.client_id) {
+                grant.scopes = scopes.to_vec();
+            }
+        }
+        for entry in self.refresh.values_mut() {
+            if installation(&entry.shop, &entry.client_id) {
+                entry.scopes = scopes.to_vec();
+            }
+        }
         let token = default_token(shop, client_id);
         self.access.insert(
             token.clone(),
@@ -735,6 +750,43 @@ mod tests {
         assert!(grant.covers("read_products"));
         assert_eq!(tokens.installed_scopes(SHOP, "client"), Some(&scopes()[..]));
         assert_eq!(tokens.lookup("shpat_nope", at(0)), Err(TokenError::Unknown));
+    }
+
+    #[test]
+    fn installing_again_changes_the_scopes_of_every_token_of_the_app() {
+        let mut tokens = Tokens::with_seed(1);
+        let default = tokens.install(SHOP, "client", &scopes(), at(0));
+        let exchanged = tokens.issue_offline(
+            SHOP,
+            "client",
+            &scopes(),
+            true,
+            GrantSource::TokenExchange,
+            at(1),
+        );
+        let other_app = tokens.issue_offline(
+            SHOP,
+            "other",
+            &scopes(),
+            false,
+            GrantSource::TokenExchange,
+            at(1),
+        );
+        let fewer = vec!["read_products".to_string()];
+        tokens.install(SHOP, "client", &fewer, at(2));
+        for token in [&default, &exchanged.access_token] {
+            let grant = tokens.lookup(token, at(3)).unwrap();
+            assert_eq!(grant.scopes, fewer, "{token}");
+            assert!(!grant.covers("write_products"));
+        }
+        // The refresh token gives the installation's scopes too.
+        let refreshed = tokens
+            .refresh(exchanged.refresh_token.as_deref().unwrap(), "client", at(4))
+            .unwrap();
+        assert_eq!(refreshed.grant.scopes, fewer);
+        // Another app's tokens keep theirs.
+        let grant = tokens.lookup(&other_app.access_token, at(3)).unwrap();
+        assert_eq!(grant.scopes, scopes());
     }
 
     #[test]

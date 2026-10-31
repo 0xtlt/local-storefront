@@ -234,7 +234,8 @@ an `X-Lsf-Reason` header saying why in plain words.
 `read_products` access scope."), for root fields, nested ones (an order's `customer` needs
 `read_customers`) and `node`. `write_x` covers `read_x`. To see what the backend does with fewer
 scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app again with them
-(the same token now reads less, and `app/scopes_update` is delivered).
+(every token of the app on the shop now reads less, the printed one and those of token exchange
+and OAuth alike, and `app/scopes_update` is delivered).
 
 **Uninstall.** `POST /__lsf/admin/uninstall` revokes the app's tokens on the shop and delivers
 `app/uninstalled`; `POST /__lsf/admin/install` installs it again.
