@@ -119,7 +119,7 @@ supports with 2026-10, as Shopify does ([API versions](#api-versions)).
 The recipes read the address of lsf from an environment variable of your own (`LSF_URL` here),
 so that the same code talks to Shopify when it is not set.
 
-### React Router app (`@shopify/shopify-app-react-router`) and `@shopify/shopify-api`
+### JavaScript: the React Router app and `@shopify/shopify-api`
 
 Every request of `@shopify/shopify-api` (the Admin API clients, token exchange, OAuth) goes
 through its runtime's fetch function, which `setAbstractFetchFunc` of
@@ -200,7 +200,7 @@ browser's.
 `authenticate.webhook` verifies the webhooks lsf delivers with `apiSecretKey`: give lsf the same
 secret.
 
-### `@shopify/admin-api-client`
+### JavaScript: `@shopify/admin-api-client`
 
 `createAdminApiClient` takes a `customFetchApi` (`dist/graphql/client.mjs` of 2.0.1). It always
 builds an `https://` URL from `storeDomain` (`validateDomainAndGetStoreUrl` of
@@ -254,7 +254,7 @@ client = ShopifyAPI::Clients::Graphql::Admin.new(session: session)
 client.query(query: "{ shop { name } }").body
 ```
 
-### Python
+### Python: the `ShopifyAPI` package
 
 The `ShopifyAPI` package (12.7.0) builds `https://<shop>.myshopify.com/admin/api/<version>`, but
 its `GraphQL` resource reads its `endpoint` at each `execute` (`shopify/resources/graphql.py`):
@@ -283,7 +283,7 @@ answer = requests.post(
 ).json()
 ```
 
-### `fetch` and `curl`
+### Any HTTP client: `fetch` and `curl`
 
 ```js
 const response = await fetch("http://127.0.0.1:9292/admin/api/2026-10/graphql.json", {
@@ -310,7 +310,7 @@ curl -s http://127.0.0.1:9292/admin/api/2026-10/graphql.json \
 | An access token by token exchange | `POST /admin/oauth/access_token` with the session token, as the React Router template and the libraries do: offline or online, expiring or not. |
 | An access token by the authorization code grant | `GET /admin/oauth/authorize?client_id=&scope=&redirect_uri=&state=` approves at once and redirects to `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`; then `POST /admin/oauth/access_token`. `redirect_uri` must be one of `[auth] redirect_urls` (also on the origin of `--app-url`). |
 | Refresh tokens, client credentials | `grant_type=refresh_token`, `grant_type=client_credentials`, as Shopify. |
-| A delegate access token | `delegateAccessTokenCreate`: `shppa_…`, a subset of the parent's scopes, expiring with it or sooner (see "The app platform"). |
+| A delegate access token | `delegateAccessTokenCreate`: `shppa_…`, a subset of the parent's scopes, expiring with it or sooner (see "[The app's installation](#the-apps-installation-and-shopifys-other-services)"). |
 
 Every access token is `shpat_` and 32 hex digits, as Shopify's. A token belongs to one shop. A
 request without a valid token is answered `401`
@@ -363,7 +363,8 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
     considered abandoned if it remains incomplete for more than ten minutes", Help Center) is in
     `abandonedCheckouts`, and, for a customer of the shop, has an `Abandonment`; three months on,
     the admin deletes it (`checkouts/delete`). The time is the shop's: with a store data `now`,
-    move it with `POST /__lsf/admin/clock {"advance": "11m"}` ([control API](control-api.md)).
+    move it with `POST /__lsf/admin/clock {"advance": "11m"}` ([the shop's
+    clock](#the-shops-clock)).
 - **Payloads** are Shopify's JSON for the topic (the REST representation of the resource), built
   from the record as the change left it, cut to `include_fields`, and checked against `filter`.
   A topic whose payload lsf does not build is logged as not sent, never sent with a made-up body.
@@ -467,15 +468,35 @@ The full list, field by field, is in the design notes of `lsf-admin`
   discount's amount, …), or a line or an order whose total would be, answers a `userError`
   ("Price must be less than 10000000000000") and changes nothing. Shopify publishes no limit:
   this one is lsf's, so that no total overflows.
-- A mutation lsf does not simulate answers an error with `extensions.code: LSF_NOT_SIMULATED`, never
-  a silent success. `GET /__lsf/admin` lists those it simulates. The REST Admin API
-  (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API only.
+- Nothing answers a silent success for what lsf does not do: an input it ignores is in
+  `extensions.lsf.notes`, and a mutation it did not simulate would answer an error with
+  `extensions.code: LSF_NOT_SIMULATED` (no mutation of the versions it serves does). The REST
+  Admin API (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API
+  only.
 
 ## What lsf simulates
 
-Every query of 2026-10 is answered from the records of the shop: a field the store data does not
-give is a default, reported in `extensions.lsf.defaulted`. The mutations, and the queries that
-need more than reading records, are listed by family below.
+Every mutation of the versions lsf serves (2026-10, and [2027-01](#api-versions) when asked) is
+simulated, and every query answered: `crates/admin/tests/coverage.rs` fails when a version brings
+one that is not (`GET /__lsf/admin` lists the mutations, `mutations`). Simulated means:
+
+- **Checked as Shopify checks**: the input is validated, and what is wrong answers the
+  mutation's `userErrors` (Shopify's field, message and code where shopify.dev documents them,
+  lsf's words where it does not). A mutation that fails changes nothing.
+- **Done**: the records of the shop change, and every query that follows, the storefront and the
+  checkout see it ([what they see](#what-the-storefront-and-the-checkout-see)). Work Shopify
+  does in the background is done at once: its `Job` answers `done: true`.
+- **Delivered**: the mutation's webhooks reach the backend, with Shopify's payloads (every topic
+  but `returns/process`, `shipping_addresses/create` and `/update`, which Shopify publishes no
+  example of, and which lsf logs as not sent).
+- **Kept local**: what Shopify would send or buy outside (an email, a label, a Flow trigger) is
+  recorded in the [outbox](#the-outbox); what waits on time happens by the [shop's
+  clock](#the-shops-clock). Where lsf cannot do what Shopify does, the answer says so
+  (`extensions.lsf.notes`), and so does the family below.
+
+A query reads the records of the shop: a field the store data does not give is a default,
+reported in `extensions.lsf.defaulted`. The families below list their mutations, the queries
+that need more than reading records, and what lsf chose where Shopify does not say.
 
 ### Products, collections and inventory
 
@@ -703,12 +724,9 @@ specific webhooks").
   `requested_order_edit/created`, `/declined`, `/resolved`; `draft_orders/create`, `/update`,
   `/delete`; `disputes/create`, `/update`; `tax_services/create`, `/update`.
 
-**The shop's clock** moves what is due: `POST /__lsf/admin/clock` with `{"advance": "31d"}` (or
-`{"now": "2026-12-01T00:00:00Z"}`) freezes it later, and what the time passing does happens at
-once, as it does before every request of the Admin API: a payment schedule that came due fires
-`payment_schedules/due` (once), store credit that expired leaves its account, the days Shopify
-Payments processed are paid out. `GET /__lsf/admin/clock` reads it; a reset puts the store
-data's back.
+**Time**: a payment schedule that came due fires `payment_schedules/due` (once), store credit
+that expired leaves its account, the days Shopify Payments processed are paid out, by the
+[shop's clock](#the-shops-clock).
 
 **Emails**: lsf sends none. What Shopify would email (payment reminders, invoices, gift cards,
 store credit, return labels, a requested edit declined, a new order link) is in the shop's
@@ -716,11 +734,11 @@ store credit, return labels, a requested edit declined, a new order link) is in 
 
 **What buyers, banks and Shopify do**, which no mutation makes, is a control endpoint: `POST
 /__lsf/admin/disputes` (`{"order", "amount"?, "type"?, "reason"?}`) opens a chargeback or an
-inquiry (`disputes/create`), `POST /__lsf/admin/disputes/<n>/won` or `/lost` decides it;
-`POST /__lsf/admin/orders/protect` (`{"order", "status", "eligibility"}`) changes Shopify
-Protect's view of an order; `POST /__lsf/admin/orders/link-request` (`{"order"}`) is a buyer
-asking for a new order link; `POST /__lsf/admin/tax-app/activate` is the merchant turning on
-the tax app. See [the control API](control-api.md).
+inquiry (`disputes/create`), `POST /__lsf/admin/disputes/<n>/won`, `/lost` or `/accepted`
+decides it; `POST /__lsf/admin/orders/protect` (`{"order", "status"?, "eligibility"?}`) changes
+Shopify Protect's view of an order; `POST /__lsf/admin/orders/link-request` (`{"order"}`) is a
+buyer asking for a new order link; `POST /__lsf/admin/tax-app/activate` is the merchant turning
+on the tax app. See [the control API](control-api.md).
 
 What lsf chose where Shopify does not say, or where a local tool must differ:
 
@@ -776,7 +794,7 @@ end to end.
 | Inventory transfers | `inventoryTransferCreate`, `inventoryTransferCreateAsReadyToShip`, `inventoryTransferDuplicate`, `inventoryTransferEdit`, `inventoryTransferSetItems`, `inventoryTransferRemoveItems`, `inventoryTransferMarkAsReadyToShip`, `inventoryTransferCancel`, `inventoryTransferDelete` |
 | Inventory shipments | `inventoryShipmentCreate`, `inventoryShipmentCreateInTransit`, `inventoryShipmentAddItems`, `inventoryShipmentRemoveItems`, `inventoryShipmentUpdateItemQuantities`, `inventoryShipmentMarkInTransit`, `inventoryShipmentReceive`, `inventoryShipmentSetTracking`, `inventoryShipmentSetBarcode`, `inventoryShipmentDelete` |
 | Fulfillment orders | `fulfillmentOrderSplit`, `fulfillmentOrderMerge`, `fulfillmentOrderReportProgress`, `fulfillmentOrderLineItemsPreparedForPickup`, `fulfillmentOrdersReroute`, `fulfillmentOrdersSetFulfillmentDeadline` (and `fulfillmentOrderOpen` stops reported progress, from 2026-01) |
-| Labels and rules | `shippingLabelPurchase`, `fulfillmentConstraintRuleCreate`, `…Update`, `…Delete` |
+| Labels and rules | `shippingLabelPurchase`, `fulfillmentConstraintRuleCreate`, `…Update`, `…Delete` (a fulfillment constraints Function of the app, with its metafields; `fulfillmentConstraintRules` lists them) |
 | Carriers and delivery | `carrierServiceCreate`, `…Update`, `…Delete`, `deliveryProfileCreate`, `…Update`, `…Remove`, `deliveryPromiseProviderUpsert`, `deliveryPromiseParticipantsUpdate`, `deliverySettingUpdate`, `deliveryShippingOriginAssign`, `shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete` |
 
 How the stock moves, as the Help Center's "Creating and processing inventory transfers"
@@ -967,7 +985,7 @@ Customer saved searches fire `customer_groups/create`, `/update`, `/delete`.
 | Mutation | What lsf does | Webhooks |
 |---|---|---|
 | `customerMerge` (with `customerMergePreview`, `customerMergeJobStatus`, `Customer.mergeable`) | Shopify's rules of the customer kept (the override's email, the only email, an enabled account, the consent, else `customerTwoId`); refused for a company contact, gift cards, a subscription, store credit, payment methods, a multipass identifier, a pending erasure, merged tags over 250 or a note over 5000 characters. The kept customer gets the other's orders, draft orders, addresses, metafields, tags and note (or the overrides); the job is done at once. | `customers/update`, `customers/delete`, `customers/merge` |
-| `customerRequestDataErasure`, `customerCancelDataErasure` | The erasure waits 10 days, cancellable meanwhile; then (by the shop's clock: `POST /__lsf/admin/clock`) the names, email, phone, note and addresses are redacted, consents `REDACTED`, and `customers/redact` is sent to the app. Each step is in the outbox. | `customers/update`, `customers/redact` |
+| `customerRequestDataErasure`, `customerCancelDataErasure` | The erasure waits 10 days, cancellable meanwhile; then (by the [shop's clock](#the-shops-clock)) the names, email, phone, note and addresses are redacted, consents `REDACTED`, and `customers/redact` is sent to the app. Each step is in the outbox. | `customers/update`, `customers/redact` |
 | `customerWhatsAppMarketingConsentUpdate` | As the SMS consent: a phone is required, `SUBSCRIBED`, `UNSUBSCRIBED` or `PENDING`; it shows in `defaultPhoneNumber.whatsAppMarketingConsent`. | `customers/update`, `customers_whats_app_marketing_consent/update` |
 | `dataSaleOptOut` | The customer of the email opts out (`dataSaleOptOut: true`); an email no customer has gets a customer of its own *(chosen)*. | `customers/update` or `customers/create` |
 | `companyLocationAssignStaffMembers`, `companyLocationRemoveStaffMembers` | The shop's owner is a `StaffMember` (`Shop.accountOwner`); assignments show in `CompanyLocation.staffMemberAssignments`. | none |
@@ -1216,8 +1234,9 @@ are not shown on the storefront.
 metafields change. Shopify has no topic for pages, blogs, articles, comments, menus, redirects,
 files, or the metafields of other owners.
 
-Redirects in bulk, standard definitions, `fileAcknowledgeUpdateFailed` and themes are in "The
-online store: themes, script tags, redirects in bulk, policies" below. Not simulated:
+Redirects in bulk, standard definitions, `fileAcknowledgeUpdateFailed` and themes are in
+"[Themes, script tags, redirects in bulk and
+policies](#themes-script-tags-redirects-in-bulk-and-policies)" below. Not simulated:
 metafield definition `constraints`, the effects of `capabilities` and `access` (kept as given),
 and staff authors of articles (`author.userId`).
 
@@ -1275,9 +1294,9 @@ How they behave, as shopify.dev documents it:
   specification to read). Publishing on it (`publishablePublish` with its publication, or
   `publishablePublishToCurrentChannel`) is `product_listings/add` (`collection_listings/add`),
   unpublishing or deleting the product `…/remove`, changing it while listed `…/update`. A future
-  `publishDate` on a channel schedules the listing: `scheduled_product_listings/add`, listed by
-  the first mutation once the date has passed (lsf has no clock of its own to run it at the
-  date). `channelFullSync` answers a trace per country and published language.
+  `publishDate` on a channel schedules the listing: `scheduled_product_listings/add`, listed once
+  the [shop's clock](#the-shops-clock) passes the date. `channelFullSync` answers a trace per
+  country and published language.
 - **Resource feedback**: `bulkProductResourceFeedbackCreate` (read by
   `productResourceFeedback`) and `shopResourceFeedbackCreate` (read by `App.feedback` and
   `Channel.resourceFeedback`; `ACCEPTED` clears it). Older feedback answers "Feedback for a
@@ -1310,7 +1329,7 @@ market's `baseCurrencyManualRate`, else 1.0, and `extensions.lsf.notes` says so.
 error by its code only, the message is the code's description in the schema or lsf's (the source
 of each is in the code).
 
-### Point of sale: cash drawers and payment sessions
+### Point of sale, cash drawers and payment sessions
 
 Shopify POS runs on phones and tablets the Admin API cannot make: the seed gives each active
 location one `PointOfSaleDevice`, and the shop its owner (a `StaffMember`) when nothing else
@@ -1338,15 +1357,15 @@ seeded staff, so that a backend that manages cash works against lsf as against a
   the deprecated `cashTrackingSession(s)`, read from the same sessions.
 - **Nothing reaches a device**: what Shopify would push to the POS app (a drawer assigned, a
   session opened or closed) is in the shop's [outbox](#the-outbox) (channel `pos`, `to` the
-  device) and said in `extensions.lsf.notes`. Shopify has no webhook topic for any of it. Nothing syncs to the
-  storefront.
+  device) and said in `extensions.lsf.notes`. Shopify has no webhook topic for any of it.
+  Nothing syncs to the storefront.
 
-### The app: billing, discounts, Functions and bulk operations
+### Billing, discounts, Functions and bulk operations
 
 **Billing.** The billing helpers of the React Router template (`billing.require`,
 `billing.request`, `billing.check`, `billing.cancel`, `createUsageRecord`,
 `updateUsageCappedAmount` of `@shopify/shopify-api`) work unchanged, from a route the front end
-fetches (from the loader of a page, see ["Billing from a page"](#react-router-app-shopifyshopify-app-react-router-and-shopifyshopify-api)):
+fetches (from the loader of a page, see ["Billing from a page"](#javascript-the-react-router-app-and-shopifyshopify-api)):
 
 - `appSubscriptionCreate` (recurring and usage lines, a discount, `trialDays`, `test`) and
   `appPurchaseOneTimeCreate` make a `PENDING` charge and answer a `confirmationUrl` on lsf:
@@ -1413,12 +1432,11 @@ target (the default). The bytes stay in the shop until it is reset, for
 `resourceUrl`). The deprecated `stagedUploadTargetGenerate` (one target) and
 `stagedUploadTargetsGenerate` (`urls`) answer the same targets.
 
-Credits, revenue attribution records and frozen subscriptions have no data behind them.
-The app's access, delegate tokens, Flow triggers, discount tags in bulk, fulfillment constraint
-rules and the deprecated `stagedUploadTargetGenerate(s)` are in "The app platform" below.
-Credits, revenue attribution records and frozen subscriptions have no data behind them.
+Credits, revenue attribution records and frozen subscriptions have no data behind them. The
+app's access, delegate tokens and Flow triggers are in "[The app's installation and Shopify's
+other services](#the-apps-installation-and-shopifys-other-services)" below.
 
-### The online store: themes, script tags, redirects in bulk, policies
+### Themes, script tags, redirects in bulk and policies
 
 **Themes.** The theme lsf serves (`lsf serve --theme`, the scratch theme of `lsf app dev`) is
 the shop's **main theme**, `gid://shopify/OnlineStoreTheme/1` (the id `content_for_header`
@@ -1465,15 +1483,12 @@ one per app, `CONNECTED` once it has an endpoint; nothing is sent to it.
 
 **Redirects in bulk.** `urlRedirectBulkDeleteAll`, `urlRedirectBulkDeleteByIds`,
 `urlRedirectBulkDeleteBySearch` (the `query` of `urlRedirects`; a field it does not have is
-refused rather than deleting every redirect), `urlRedirectBulkDeleteBySavedSearch`, each done at
-once (its `job` done). `urlRedirectImportCreate` reads a redirect CSV (`Redirect from,Redirect
+refused rather than deleting every redirect), `urlRedirectBulkDeleteBySavedSearch` (a [saved
+search](#segments-marketing-analytics-and-privacy) of redirects), each done at once (its `job`
+done). `urlRedirectImportCreate` reads a redirect CSV (`Redirect from,Redirect
 to`) from a staged upload or a URL (`count`, `previewRedirects`); `urlRedirectImportSubmit`
 creates and updates the redirects (`createdCount`, `updatedCount`, `failedCount`, `finished`;
 twice is `ALREADY_IMPORTED`); `urlRedirectImport`.
-
-**Saved searches.** `savedSearchCreate`, `savedSearchUpdate`, `savedSearchDelete`, and the
-`…SavedSearches` queries of each resource (`urlRedirectSavedSearches`, `productSavedSearches`,
-…): a name is unique per resource type; `searchTerms` and `filters` are the query split.
 
 **Policies.** `shopPolicyUpdate`: the policy of its type replaced, or created with Shopify's title
 and URL; the five policies of the store data (privacy, refund, shipping, terms of service,
@@ -1488,10 +1503,10 @@ webhooks), with its `standardTemplate`.
 **Files.** `fileAcknowledgeUpdateFailed` puts a `FAILED` file back to `READY` and clears its
 errors (lsf's files are `READY` at once, so only a file made `FAILED` otherwise is one).
 
-### The app platform
+### The app's installation and Shopify's other services
 
-**Access.** `appUninstall` is the uninstall of `POST /__lsf/admin/uninstall` (tokens revoked,
-subscription cancelled, `app/uninstalled`, the shop's webhook subscriptions deleted).
+**Access.** `appUninstall` uninstalls the app as `POST /__lsf/admin/uninstall` does
+([Uninstall](#tokens)).
 `appRevokeAccessScopes` revokes optional scopes the installation was granted (not the
 `scopes` of `shopify.app.toml`: `CANNOT_REVOKE_REQUIRED_SCOPES`; not an undeclared one; not a
 `read_x` its `write_x` implies): every token of the installation loses them at once, and
@@ -1528,22 +1543,17 @@ its own look.
 lsf delivers nothing to them: their deliveries are in `GET /__lsf/webhooks`, `not_sent`, with
 their payload.
 
-**Also:** `shopResourceFeedbackCreate` (`app.feedback`; `ACCEPTED` clears it) and
-`bulkProductResourceFeedbackCreate`, `fulfillmentConstraintRuleCreate`/`Update`/`Delete` (a
-fulfillment constraints Function of the app, its metafields; `fulfillmentConstraintRules`),
-`discountBulkTagsAdd`/`Remove` (by ids, search or saved search), the deprecated
-`stagedUploadTargetGenerate(s)` (targets of `stagedUploadsCreate`). The queries `app`,
-`appByHandle`, `appByKey`, `appInstallation(s)`, `currentAppInstallation`, `staffMember(s)`
-(the shop owner is `StaffMember/1`) and `currentStaffMember` (the user of an online token,
-`null` for an offline one) answer every field; what an App Store listing would give (an icon, a
-category) is lsf's, an app in development having none.
+**Queries.** `app`, `appByHandle`, `appByKey`, `appInstallation(s)`, `currentAppInstallation`,
+`staffMember(s)` (the shop owner is `StaffMember/1`) and `currentStaffMember` (the user of an
+online token, `null` for an offline one) answer every field; what an App Store listing would give
+(an icon, a category) is lsf's, an app in development having none.
 
 **Webhooks** without a mutation behind them, sent by `POST /__lsf/webhooks/trigger` and
 `lsf app webhook trigger`: `rollouts/*` (from a `Rollout`, else Shopify's example),
 `finance_app_staff_member/*` (from the staff member) and `finance_kyc_information/update`, which
 Shopify documents with an empty payload: lsf sends the record in REST's shape.
 
-### App proxy
+## App proxy
 
 With `--app` and an `[app_proxy]` in `shopify.app.toml`, the storefront forwards
 `/<prefix>/<subpath>` and every path below it to the backend, signed as Shopify signs it, and
@@ -1633,6 +1643,30 @@ Not simulated: the prefix and subpath a merchant can change in the admin (lsf se
 the file). Shopify does not document what `template` and `request.page_type` are on a proxied
 page; lsf leaves them empty.
 
+## The shop's clock
+
+A shop's time is its clock: the system's, or the store data's `now` (then the same run gives the
+same answers). What waits on time happens when the clock passes it, before every Admin API
+request and when a test moves the clock, with its webhooks:
+
+- a payment schedule that came due fires `payment_schedules/due`, once;
+- store credit that expired leaves its account;
+- Shopify Payments pays out the days the shop's day left behind;
+- a charge of the app left pending two days is `EXPIRED`;
+- a scheduled channel listing whose date passed is listed (`product_listings/add`);
+- a data erasure ten days old is processed (`customers/redact`);
+- an abandoned checkout three months old is deleted (`checkouts/delete`).
+
+What is worked out when it is read follows the clock without waiting: a checkout left ten
+minutes is abandoned, a discount runs between its dates (the checkout too), `PaymentTerms.due`
+and `overdue`, a gift card's expiry. A webhook `filter` counts `now` by the shop's clock.
+
+`POST /__lsf/admin/clock` moves it: `{"advance": "31d"}` (seconds, or `s`, `m`, `h`, `d`) or
+`{"now": "2026-12-01T00:00:00Z"}`, with `"shop"?`. The clock then stays at that instant, frozen,
+and what the move passed happens at once; the answer says which customers were erased and how
+many checkouts were deleted (`erased`, `deletedCheckouts`). `GET /__lsf/admin/clock` reads it;
+`DELETE /__lsf/admin` puts the store data's back.
+
 ## The outbox
 
 lsf sends nothing outside the machine. What Shopify would have sent, or bought, is recorded in
@@ -1676,13 +1710,14 @@ not publish the text of its notifications); another channel says what happened i
 - **Wait for a webhook**: `GET /__lsf/webhooks?topic=products/create&wait=1` answers once one is
   delivered (or `408` after `?timeout=`), with what was sent and what the backend answered.
   `DELETE /__lsf/webhooks` forgets them.
-- **Start clean**: `DELETE /__lsf/admin` puts every shop back to the store data, forgets the
-  subscriptions the backend made and the tokens OAuth issued; the printed token works again, and
-  the storefront is the files' again.
+- **Start clean**: `DELETE /__lsf/admin` puts every shop back to the store data (its clock and
+  its outbox too), forgets the subscriptions the backend made and the tokens OAuth issued; the
+  printed token works again, and the storefront is the files' again.
 - **Isolate parallel tests**: `POST /__lsf/admin/shops {"shop": "test-1"}` gives each test a shop
   of its own, seeded from the same data, and its token.
 - **Fixed dates**: with `now` in the store data, every record created or changed is dated then,
-  and the same run gives the same answers.
+  and the same run gives the same answers; [`POST /__lsf/admin/clock`](#the-shops-clock) moves
+  it on.
 - **Throttling**: `--admin-throttle legacy` (1000 points, 50 a second) reaches `THROTTLED`
   sooner; `--admin-throttle off` never does.
 - The store data edited while the server runs seeds the shops again: what the Admin API changed is

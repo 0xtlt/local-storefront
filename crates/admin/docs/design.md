@@ -789,9 +789,13 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    from the snapshot. What a mutation keeps between requests that is not a record (an
    idempotency key and the answer it gave) is `set_memo`/`memo`: put back with the records
    when the mutation fails, not seen by the store sync.
-5. **Say what is not simulated**: `m.note("productCreate: lsf does not simulate `media` yet")` for
-   an input it ignores; an argument-dependent scope the access table cannot express is checked in
+5. **Say what is not simulated**: `m.note("productCreate: lsf ignores `category`")` for an
+   input it ignores; an argument-dependent scope the access table cannot express is checked in
    the mutation (`tagsAdd` needs the write scope of the resource: `access::denied`).
+6. **Use the shared pieces**: what Shopify would send outside goes to the outbox
+   (`outbox::record`, see "The outbox"), what waits on time joins `domains::tick` (see "The
+   shop's clock"), background work answers `resolve::done_job`, and a bulk mutation's `ids` |
+   `search` | `savedSearchId` is `resolve::selection`.
 
 `m.webhooks()` gives the app's webhooks (their registry of subscriptions), `m.grant()` the token's
 scopes, `m.version()` the request's version (`m.api_version()` its name, `m.schema()` its
@@ -859,12 +863,14 @@ which answers a `Job` already `done`: a record of the shop, its id a UUID per jo
 `node(id:)` and `job(id:)` find it. A family that keeps more on its job (a bulk billing's cycles)
 writes it on that record.
 
-A mutation lsf does not simulate answers a GraphQL error with `extensions.code = "LSF_NOT_SIMULATED"`, never a silent
-success; `GET /__lsf/admin` lists those it simulates. Simulated so far, as references:
-`productCreate`, `productUpdate`, `productDelete`, `tagsAdd`, `tagsRemove`,
-`webhookSubscriptionCreate`, `webhookSubscriptionUpdate`, `webhookSubscriptionDelete` (and the
-`webhookSubscription`, `webhookSubscriptions`, `webhookSubscriptionsCount` queries). The
-families' mutations are listed in the user guide (`docs/admin.md`, "What lsf simulates").
+**Coverage**: every mutation of every version lsf knows is registered by a family
+(`tests/coverage.rs` fails on one that is not, so a new version's mutations are written before
+it is served). A mutation no family registered would answer a GraphQL error with
+`extensions.code = "LSF_NOT_SIMULATED"` (`resolve::not_simulated`), never a silent success;
+`GET /__lsf/admin` lists the registered ones. As references to read first: `productCreate`,
+`productUpdate`, `productDelete`, `tagsAdd`, `tagsRemove`, `webhookSubscriptionCreate`,
+`webhookSubscriptionUpdate`, `webhookSubscriptionDelete`. The families' mutations are listed in
+the user guide (`docs/admin.md`, "What lsf simulates").
 
 ## The HTTP side (`api`)
 
@@ -1714,7 +1720,7 @@ never written to.**
 |---|---|---|
 | `storefront` | `ScriptTag`, `WebPixel`, `ServerPixel`, `StorefrontAccessToken` | the counter of each type; a storefront token's secret is a UUID of the shop and its id, without dashes |
 | `store_admin` | `UrlRedirectImport` (its rows under `lsfRows`), `StandardMetafieldDefinitionTemplate` (seeded: shopify.dev's 16, by their ids) | the counter; a template by its id (`…Template/2` is the care guide) |
-| `platform` | `StaffMember/1` (the shop owner, seeded), `CheckoutProfile/1` and `CheckoutAndAccountsConfiguration/1` (seeded), `AndroidApplication`/`AppleApplication` (ids of `MobilePlatformApplication`, the type by platform, as the reference's), `FulfillmentConstraintRule`, `DelegateAccessToken` (key `delegate-access-token/<hash>`, never the token), `ProductResourceFeedback` (key `product-resource-feedback/<product>`) | the counter |
+| `platform` | `StaffMember/1` (the shop owner, seeded), `CheckoutProfile/1` and `CheckoutAndAccountsConfiguration/1` (seeded), `AndroidApplication`/`AppleApplication` (ids of `MobilePlatformApplication`, the type by platform, as the reference's), `DelegateAccessToken` (key `delegate-access-token/<hash>`, never the token). `FulfillmentConstraintRule` is the logistics family's, `ProductResourceFeedback` the markets family's (`feedback/<product>/<channel>`) | the counter |
 
 - **App extensions** lsf-checkout lists without reading (`App::other`): the web pixel extension's
   `[settings.fields]` and the Flow triggers' `[[settings.fields]]` are read from their
@@ -1971,8 +1977,9 @@ Kept here so that nobody invents a field for it; each would need the store data 
   customs data, media taken from a URL outside `files/`, the recommendations a product of the
   data sets (written again, it gets the default ones), whether an untracked variant is in stock
   at one location and not another (it is wherever it is stocked once its inventory changed).
-- **Collections**: rules (lsf-core resolves them; a changed automated collection is written as
-  a manual one with the products it has), publication (an unpublished collection stays), SEO.
+- **Collections**: rules and sources (lsf-core resolves rules; a changed automated collection, or
+  one made of sources, is written as a manual one with the products it has), publication (an
+  unpublished collection stays), SEO.
 - **Customers**: the note, the language, tax exemptions, SMS consent, a customer without an
   email (removed from the storefront), the roles of a contact beyond the locations it orders
   for, a second contact.
@@ -2000,15 +2007,14 @@ Kept here so that nobody invents a field for it; each would need the store data 
   consent policies and privacy settings, abandoned checkouts and abandonments, staff assignments:
   none is store data. A merge, an erasure, a data sale opt-out and a WhatsApp consent change
   customers, which sync as customers do (the WhatsApp and the opt-out are not in the data).
-- **Point of sale**: devices, cash drawers, reason codes, payment sessions; collection sources
-  (a collection made of sources is written as a manual one with the products it has).
+- **Point of sale**: devices, cash drawers, reason codes, payment sessions.
+- **Logistics**: inventory transfers and shipments (the stock they move syncs), fulfillment
+  orders, fulfillment constraint rules, shipping labels, carrier services (the checkout does not
+  call them), delivery promises, shipping packages; delivery profiles beyond the general
+  profile's flat rates to the rest of the world: other zones and profiles, conditional rates,
+  carrier services' rates (the store data has one list of rates, offered to every address).
 - Metafield and metaobject definitions, files (`files/` is on disk), translations, webhooks,
-  publications other than the Online Store, inventory transfers and shipments (the stock they
-  move syncs), fulfillment orders, fulfillment constraint rules, shipping labels, carrier
-  services (the checkout does not call them), delivery promises, shipping packages.
-- **Delivery profiles** beyond the general profile's flat rates to the rest of the world: other
-  zones and profiles, conditional rates, carrier services' rates (the store data has one list of
-  rates, offered to every address).
+  publications other than the Online Store.
 - Themes, theme files and script tags are not store data: the storefront gets them through the
   theme it serves (see "Themes"), not the overlay of the store data.
 - The `session` of the data and the scenarios of `checkouts/` are not written: a product,
@@ -2031,24 +2037,24 @@ Kept here so that nobody invents a field for it; each would need the store data 
 - Pages and articles: `isPublished`; metaobjects: `capabilities.publishable.status`; locations:
   `isActive`, and `isFulfillmentService: false` (a fulfillment service's location is not one of
   the store data).
-- **Ids**: a record created with an id of the counter keeps it in the store, for the entities
-  whose data has an `id` (products, variants, collections, pages, blogs, articles, comments,
-  customers and their addresses, companies and their locations, locations, selling plans,
-  images, media other than images, discounts). The others take the id lsf-core derives from
-  their key, which the mutation that creates one must give it: `metaobject_gid(type, handle)`,
-  `menu_gid(handle)`, `market_gid(handle)`, a gift card `stable_id("gift_card", code)`, an image
-  of a product `stable_id("media", "<handle>/<position>")`. Their id changes in the store when
-  their key does (a metaobject's handle, a menu's handle), and the images of a product follow
-  their positions.
 
-### Ids
+### Ids in the store data
+
+A record created with an id of the counter keeps it in the store, for the entities whose data
+has an `id` (products, variants, collections, pages, blogs, articles, comments, customers and
+their addresses, companies and their locations, locations, selling plans, images, media other
+than images, discounts). The others take the id lsf-core derives from their key, which the
+mutation that creates one must give it: `metaobject_gid(type, handle)`, `menu_gid(handle)`,
+`market_gid(handle)`, a gift card `stable_id("gift_card", code)`, an image of a product
+`stable_id("media", "<handle>/<position>")`. Their id changes in the store when their key does
+(a metaobject's handle, a menu's handle), and the images of a product follow their positions.
 
 The ids of what the Admin API did not touch do not change: the overlay writes only what
 changed, every entity it writes carries its id, a renamed entity stays where it was, and a
 removal keeps the ids and the dates of the others (an undated entity after a removed one keeps
 the date its position gave it). Sessions and carts that name variants by id keep working.
 
-### Server wiring (done)
+### Server wiring
 
 The plan was to project after each change, under the shop's lock, and to build the store lazily.
 The projection is lazy too: on the store of 3,000 products of the timing below it takes 40 to 70 ms,
