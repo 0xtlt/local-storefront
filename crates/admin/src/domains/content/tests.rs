@@ -1325,3 +1325,50 @@ fn creates_updates_and_deletes_files() {
         json!([{"field": ["fileIds", "0"], "code": "FILE_DOES_NOT_EXIST"}])
     );
 }
+
+#[test]
+fn setting_a_metafield_needs_the_access_of_its_owner() {
+    use crate::auth::tokens::{AccessMode, Grant, GrantSource};
+    let mut shop = rich();
+    let grant = Grant {
+        shop: shop.domain().to_string(),
+        client_id: "test".into(),
+        scopes: vec!["write_customers".to_string()],
+        mode: AccessMode::Offline,
+        user: None,
+        issued_at: chrono::Utc::now(),
+        expires_at: None,
+        source: GrantSource::Install,
+    };
+    let product = find(&shop, "Product", "handle", "linen-dress");
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    let mut resolver = ShopResolver::new(&mut shop, Registry::standard()).with_grant(&grant);
+    let request = Request::new(
+        "mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id } userErrors { message } } }",
+    );
+    let denied = graphql::run(
+        crate::schema::admin(),
+        &mut resolver,
+        &request.clone().with_variables(json!({"metafields": [
+            {"ownerId": product, "namespace": "lsf_test", "key": "kk", "type": "boolean", "value": "true"}]})),
+        None,
+    )
+    .to_json();
+    assert_eq!(
+        denied["errors"][0]["extensions"]["code"], "ACCESS_DENIED",
+        "{denied}"
+    );
+    let allowed = graphql::run(
+        crate::schema::admin(),
+        &mut resolver,
+        &request.with_variables(json!({"metafields": [
+            {"ownerId": customer, "namespace": "lsf_test", "key": "kk", "type": "boolean", "value": "true"}]})),
+        None,
+    )
+    .to_json();
+    assert_eq!(
+        allowed["data"]["metafieldsSet"]["userErrors"],
+        json!([]),
+        "{allowed}"
+    );
+}
