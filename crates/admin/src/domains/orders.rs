@@ -4,6 +4,22 @@
 //! The orders of the store data and the orders placed in the local checkout become records the
 //! same way: each is first an [`OrderDraft`], which [`insert_order`] turns into records. The
 //! records and their ids: the "Records" section of `crates/admin/docs/design.md`.
+//!
+//! What the Admin API does with them is in the submodules: [`model`] (what an order's records
+//! derive from one another, the money and the inventory they move), [`queries`] (the search
+//! filters, sort keys and resolvers of the family), and one module per group of mutations.
+
+mod drafts;
+mod edits;
+mod fulfillments;
+mod lifecycle;
+pub mod model;
+mod queries;
+mod refunds;
+mod returns;
+
+#[cfg(test)]
+mod tests;
 
 use chrono::{DateTime, Utc};
 use lsf_core::store::{Order, Product, Variant};
@@ -195,8 +211,14 @@ fn derived(type_name: &str, kind: &str, order: &str, key: &str) -> String {
     gid(type_name, stable_id(kind, &format!("{order}/{key}")))
 }
 
+/// The setting of the shop that holds the checkout's tax rate, in basis points (2000 is 20 %):
+/// draft orders compute their taxes with it.
+pub const TAX_RATE_SETTING: &str = "taxRateBps";
+
 pub fn seed(seed: &mut Seed) {
     let store = seed.store;
+    seed.state
+        .set_setting(TAX_RATE_SETTING, json!(store.checkout.tax_rate_bps));
     let location = catalog::locations(store).first().map(catalog::location_gid);
     for customer in &store.customers {
         for order in &customer.orders {
@@ -1054,6 +1076,15 @@ pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
         .map(|record| gids(record.get("lineItems")))
         .unwrap_or_default()
 }
-/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
-/// a mutation" in `crates/admin/docs/design.md`.
-pub fn register(_registry: &mut crate::resolve::Registry) {}
+
+/// The custom resolvers and the mutations of this family: see "Writing a resolver or a
+/// mutation" in `crates/admin/docs/design.md`.
+pub fn register(registry: &mut crate::resolve::Registry) {
+    queries::register(registry);
+    lifecycle::register(registry);
+    fulfillments::register(registry);
+    refunds::register(registry);
+    returns::register(registry);
+    edits::register(registry);
+    drafts::register(registry);
+}

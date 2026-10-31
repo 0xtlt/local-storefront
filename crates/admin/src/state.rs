@@ -135,6 +135,10 @@ pub struct ShopState {
     /// record that did not exist), once [`ShopState::track_changes`] turned tracking on: what
     /// the store sync projects, and what it compares with to drop the changes that were undone.
     originals: Option<IndexMap<String, Option<Record>>>,
+    /// What the store data says of the shop that no record holds, by name: the checkout's tax
+    /// rate (`taxRateBps`), which draft orders compute their taxes with. Set by the seed, kept
+    /// by a reset.
+    settings: Map<String, Value>,
 }
 
 impl ShopState {
@@ -149,12 +153,23 @@ impl ShopState {
             events: Vec::new(),
             emitted: 0,
             originals: None,
+            settings: Map::new(),
         }
     }
 
     /// A shop seeded from the store data and the app: see [`seed::seed`].
     pub fn seeded(store: &Store, app: Option<&App>) -> ShopState {
         seed::seed(store, app)
+    }
+
+    /// A setting of the shop the seed made: see the `settings` field.
+    pub fn setting(&self, name: &str) -> Option<&Value> {
+        self.settings.get(name)
+    }
+
+    /// Sets a setting of the shop (the seed does).
+    pub fn set_setting(&mut self, name: &str, value: Value) {
+        self.settings.insert(name.to_string(), value);
     }
 
     /// The `*.myshopify.com` domain of the shop.

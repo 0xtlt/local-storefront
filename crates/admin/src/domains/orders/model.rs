@@ -1,0 +1,1032 @@
+//! What the records of an order derive from one another, and the changes the mutations of the
+//! family share: amounts, the transactions that move money, the inventory an order commits or
+//! gives back.
+//!
+//! The records keep their derived values (an order's current totals, a line item's current and
+//! unfulfilled quantities, a fulfillment order's status), as the seed writes them. A mutation
+//! changes the records it is about (a refund, a fulfillment, a fulfillment order's line items),
+//! then runs [`refresh_order`], which recomputes the rest the way the seed computed it:
+//!
+//! - a line item's `currentQuantity` is its `quantity` less what refunds took (removals by an
+//!   order edit are refunds of restock type `CANCEL`, as Shopify records them); its
+//!   `unfulfilledQuantity` is what its fulfillment order line items still have to fulfill;
+//! - the order's `current…` amounts are its amounts less what the refunds took back; its total is
+//!   the subtotal, the shipping and the tax, as the seed counts it;
+//! - the money received, refunded and capturable is the sum of its successful transactions;
+//!   `totalOutstandingSet` is the current total less the net payment (negative when the
+//!   customer is owed money, as shopify.dev describes the field);
+//! - `displayFulfillmentStatus` follows the fulfillments and the fulfillment orders.
+//!
+//! `displayFinancialStatus` is not recomputed there: the store data gives statuses the money
+//! alone cannot tell (a `partially_refunded` order without a refund), which an unrelated change
+//! must not overwrite. [`settle_financial_status`] recomputes it after a change of money.
+
+use std::collections::HashMap;
+
+use serde_json::{Map, Value, json};
+
+use crate::domains::catalog::{self, gids};
+use crate::domains::customers;
+use crate::state::{Record, ShopState, value};
+
+/// The financial statuses whose money was taken (`captured` in the seed).
+const CAPTURED: [&str; 4] = ["PAID", "PARTIALLY_PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
+
+/// The currency of the shop: every amount of an order is in it.
+pub fn currency(state: &ShopState) -> String {
+    state
+        .shop()
+        .and_then(|shop| shop.get("currencyCode"))
+        .and_then(Value::as_str)
+        .unwrap_or("USD")
+        .to_string()
+}
+
+/// A decimal amount (`"19.99"`, `"20"`, `"0.125"`) in cents, rounded half away from zero.
+/// `None` when it is not a number.
+pub fn parse_cents(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let (units, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    if (units.is_empty() && fraction.is_empty())
+        || !units.bytes().chain(fraction.bytes()).all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let units: i64 = if units.is_empty() {
+        0
+    } else {
+        units.parse().ok()?
+    };
+    let digit = |index: usize| {
+        fraction
+            .as_bytes()
+            .get(index)
+            .map_or(0, |byte| i64::from(byte - b'0'))
+    };
+    let mut cents = units.checked_mul(100)? + digit(0) * 10 + digit(1);
+    if digit(2) >= 5 {
+        cents += 1;
+    }
+    Some(if negative { -cents } else { cents })
+}
+
+/// The cents of an amount as the records and the inputs write it: a `MoneyBag` (its shop
+/// money), a `MoneyV2` or `MoneyInput` (its `amount`), a `Money` or `Decimal` string, a number.
+/// 0 when there is none.
+pub fn cents(value: Option<&Value>) -> i64 {
+    match value {
+        Some(Value::Object(map)) => match map.get("shopMoney") {
+            Some(shop) => cents(Some(shop)),
+            None => cents(map.get("amount")),
+        },
+        Some(Value::String(text)) => parse_cents(text).unwrap_or(0),
+        Some(Value::Number(number)) => number
+            .as_f64()
+            .map_or(0, |amount| (amount * 100.0).round() as i64),
+        _ => 0,
+    }
+}
+
+/// The cents of a field of a record.
+pub fn field_cents(record: &Record, field: &str) -> i64 {
+    cents(record.get(field))
+}
+
+/// A string field of a record.
+pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
+    record.get(field).and_then(Value::as_str)
+}
+
+/// An integer field of a record, 0 when it has none.
+pub fn int(record: &Record, field: &str) -> i64 {
+    match record.get(field) {
+        Some(Value::Number(number)) => number.as_i64().unwrap_or(0),
+        Some(Value::String(text)) => text.parse().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// The items of an array field: GIDs or inline objects.
+pub fn array(record: &Record, field: &str) -> Vec<Value> {
+    record
+        .get(field)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Appends a key to an array field of a record (made if missing).
+pub fn push_key(state: &mut ShopState, record: &str, field: &str, key: &str) {
+    if let Some(record) = state.get_mut(record) {
+        let items = record
+            .entry(field.to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(items) = items
+            && !items.iter().any(|item| item.as_str() == Some(key))
+        {
+            items.push(json!(key));
+        }
+    }
+}
+
+/// Whether an order is cancelled.
+pub fn is_cancelled(order: &Record) -> bool {
+    order.get("cancelledAt").is_some_and(|at| !at.is_null())
+}
+
+/// The order of a record that names one in `order` (a fulfillment order, a fulfillment, a
+/// refund, a return), when it names an order of the shop.
+pub fn order_of(state: &ShopState, record: &str) -> Option<String> {
+    let order = state.get(record)?.get("order")?.as_str()?;
+    (state.type_of(order) == Some("Order")).then(|| order.to_string())
+}
+
+/// The fulfillments of a line item that shipped: `(fulfillment line item GID, quantity)`, over
+/// the order's successful fulfillments.
+pub fn fulfilled_lines(state: &ShopState, order: &str, line: &str) -> Vec<(String, i64)> {
+    let Some(record) = state.get(order) else {
+        return Vec::new();
+    };
+    gids(record.get("fulfillments"))
+        .iter()
+        .filter_map(|fulfillment| state.get(fulfillment))
+        .filter(|fulfillment| text(fulfillment, "status") == Some("SUCCESS"))
+        .flat_map(|fulfillment| gids(fulfillment.get("fulfillmentLineItems")))
+        .filter_map(|id| {
+            let item = state.get(&id)?;
+            (text(item, "lineItem") == Some(line)).then(|| (id.clone(), int(item, "quantity")))
+        })
+        .collect()
+}
+
+/// How many units of a line item shipped.
+pub fn fulfilled_quantity(state: &ShopState, order: &str, line: &str) -> i64 {
+    fulfilled_lines(state, order, line)
+        .iter()
+        .map(|(_, quantity)| quantity)
+        .sum()
+}
+
+/// The fulfillment order line items of a line item, with their fulfillment order, over the
+/// order's fulfillment orders: `(fulfillment order, its line item)`.
+pub fn fulfillment_order_lines(state: &ShopState, order: &str, line: &str) -> Vec<(String, String)> {
+    let Some(record) = state.get(order) else {
+        return Vec::new();
+    };
+    gids(record.get("fulfillmentOrders"))
+        .iter()
+        .flat_map(|fulfillment_order| {
+            let lines = state
+                .get(fulfillment_order)
+                .map(|record| gids(record.get("lineItems")))
+                .unwrap_or_default();
+            lines
+                .into_iter()
+                .filter(|id| {
+                    state
+                        .get(id)
+                        .is_some_and(|item| text(item, "lineItem") == Some(line))
+                })
+                .map(|id| (fulfillment_order.clone(), id))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Takes `quantity` unfulfilled units of a line item off its fulfillment orders (a removal, a
+/// refund of units that did not ship): from the remaining quantity of each of its fulfillment
+/// order line items, the open fulfillment orders first. Returns what it could take.
+pub fn take_unfulfilled(state: &mut ShopState, order: &str, line: &str, quantity: i64) -> i64 {
+    let mut left = quantity;
+    let mut lines = fulfillment_order_lines(state, order, line);
+    // Open fulfillment orders first, cancelled and closed ones last.
+    lines.sort_by_key(|(fulfillment_order, _)| {
+        match state.get(fulfillment_order).and_then(|fo| text(fo, "status")) {
+            Some("OPEN" | "IN_PROGRESS" | "ON_HOLD" | "SCHEDULED") => 0,
+            _ => 1,
+        }
+    });
+    let mut touched = Vec::new();
+    for (fulfillment_order, id) in lines {
+        if left == 0 {
+            break;
+        }
+        let Some(item) = state.get_mut(&id) else {
+            continue;
+        };
+        let remaining = int(item, "remainingQuantity");
+        let taken = remaining.min(left);
+        if taken <= 0 {
+            continue;
+        }
+        item.insert("remainingQuantity".into(), json!(remaining - taken));
+        let total = int(item, "totalQuantity");
+        item.insert("totalQuantity".into(), json!((total - taken).max(0)));
+        left -= taken;
+        touched.push(fulfillment_order);
+    }
+    for fulfillment_order in touched {
+        refresh_fulfillment_order(state, &fulfillment_order);
+    }
+    quantity - left
+}
+
+/// The status a fulfillment order's line items and fulfillments give it: `CLOSED` once nothing
+/// remains, `IN_PROGRESS` once part of it shipped, `OPEN` otherwise. A fulfillment order on
+/// hold, scheduled, incomplete or cancelled keeps its status until nothing remains of it.
+pub fn refresh_fulfillment_order(state: &mut ShopState, fulfillment_order: &str) {
+    let Some(record) = state.get(fulfillment_order) else {
+        return;
+    };
+    let remaining: i64 = gids(record.get("lineItems"))
+        .iter()
+        .filter_map(|id| state.get(id))
+        .map(|item| int(item, "remainingQuantity"))
+        .sum();
+    let shipped = gids(record.get("fulfillments")).iter().any(|fulfillment| {
+        state
+            .get(fulfillment)
+            .is_some_and(|fulfillment| text(fulfillment, "status") == Some("SUCCESS"))
+    });
+    let status = text(record, "status").unwrap_or("OPEN");
+    let new = match status {
+        "CANCELLED" | "INCOMPLETE" => status,
+        _ if remaining == 0 => "CLOSED",
+        "OPEN" | "IN_PROGRESS" | "CLOSED" if shipped => "IN_PROGRESS",
+        "OPEN" | "IN_PROGRESS" | "CLOSED" => "OPEN",
+        other => other,
+    }
+    .to_string();
+    if Some(new.as_str()) != text(record, "status") {
+        if let Some(record) = state.get_mut(fulfillment_order) {
+            record.insert("status".into(), json!(new));
+        }
+        state.touch(fulfillment_order);
+    }
+}
+
+/// What the refunds of an order took back.
+#[derive(Default)]
+struct Refunded {
+    /// Units, by line item.
+    quantities: HashMap<String, i64>,
+    subtotal: i64,
+    tax: i64,
+    shipping: i64,
+    /// Whether a refund put units back in stock.
+    restocked: bool,
+    /// What refunds gave back beyond the value of what they took back: a refund of money alone.
+    /// Shopify records it as an order adjustment (`REFUND_DISCREPANCY`), which takes it off the
+    /// current total.
+    discrepancy: i64,
+}
+
+fn refunded(state: &ShopState, order: &Record) -> Refunded {
+    let mut refunded = Refunded::default();
+    for refund in gids(order.get("refunds"))
+        .iter()
+        .filter_map(|refund| state.get(refund))
+    {
+        let mut value = 0;
+        for line in array(refund, "refundLineItems") {
+            let Some(line) = line.as_object() else {
+                continue;
+            };
+            if let Some(item) = text(line, "lineItem") {
+                *refunded.quantities.entry(item.to_string()).or_default() += int(line, "quantity");
+            }
+            refunded.subtotal += field_cents(line, "subtotalSet");
+            refunded.tax += field_cents(line, "totalTaxSet");
+            value += field_cents(line, "subtotalSet") + field_cents(line, "totalTaxSet");
+            refunded.restocked |= line.get("restocked").and_then(Value::as_bool) == Some(true);
+        }
+        for line in array(refund, "refundShippingLines") {
+            if let Some(line) = line.as_object() {
+                refunded.shipping += field_cents(line, "subtotalAmountSet");
+                refunded.tax += field_cents(line, "taxAmountSet");
+                value += field_cents(line, "subtotalAmountSet") + field_cents(line, "taxAmountSet");
+            }
+        }
+        refunded.discrepancy += (field_cents(refund, "totalRefundedSet") - value).max(0);
+    }
+    refunded
+}
+
+/// What the transactions of an order moved: `(received, refunded, capturable, voided)`.
+/// Received is what sales and captures took; capturable what authorizations hold that was
+/// neither captured nor voided.
+pub fn money_moved(state: &ShopState, order: &Record) -> (i64, i64, i64, bool) {
+    let transactions: Vec<&Record> = gids(order.get("transactions"))
+        .iter()
+        .filter_map(|transaction| state.get(transaction))
+        .filter(|transaction| text(transaction, "status") == Some("SUCCESS"))
+        .collect();
+    let (mut received, mut refunded, mut voided) = (0, 0, false);
+    for transaction in &transactions {
+        let amount = field_cents(transaction, "amountSet");
+        match text(transaction, "kind") {
+            Some("SALE" | "CAPTURE") => received += amount,
+            Some("REFUND") => refunded += amount,
+            Some("VOID") => voided = true,
+            _ => {}
+        }
+    }
+    let capturable = transactions
+        .iter()
+        .filter(|transaction| text(transaction, "kind") == Some("AUTHORIZATION"))
+        .map(|authorization| capturable_of(&transactions, authorization))
+        .sum();
+    (received, refunded, capturable, voided)
+}
+
+/// What an authorization still holds: its amount less its captures, nothing once voided or
+/// captured for the last time.
+fn capturable_of(transactions: &[&Record], authorization: &Record) -> i64 {
+    let id = text(authorization, "id");
+    let children: Vec<&&Record> = transactions
+        .iter()
+        .filter(|transaction| text(transaction, "parentTransaction") == id)
+        .collect();
+    if children
+        .iter()
+        .any(|child| text(child, "kind") == Some("VOID"))
+        || authorization.get("multiCapturable").and_then(Value::as_bool) == Some(false)
+            && children
+                .iter()
+                .any(|child| text(child, "kind") == Some("CAPTURE"))
+    {
+        return 0;
+    }
+    let captured: i64 = children
+        .iter()
+        .filter(|child| text(child, "kind") == Some("CAPTURE"))
+        .map(|child| field_cents(child, "amountSet"))
+        .sum();
+    (field_cents(authorization, "amountSet") - captured).max(0)
+}
+
+/// What an authorization of an order still holds, by its GID: what `orderCapture` may take.
+pub fn capturable_amount(state: &ShopState, order: &Record, authorization: &str) -> i64 {
+    let transactions: Vec<&Record> = gids(order.get("transactions"))
+        .iter()
+        .filter_map(|transaction| state.get(transaction))
+        .filter(|transaction| text(transaction, "status") == Some("SUCCESS"))
+        .collect();
+    state
+        .get(authorization)
+        .map_or(0, |record| capturable_of(&transactions, record))
+}
+
+/// Recomputes what an order derives from its line items, refunds, fulfillments, fulfillment
+/// orders, transactions and returns (see the module's documentation), and the customer's
+/// counters. Every mutation of the family runs it after changing an order's records.
+pub fn refresh_order(state: &mut ShopState, order: &str) {
+    let Some(record) = state.get(order).cloned() else {
+        return;
+    };
+    let currency = currency(state);
+    let bag = |cents: i64| value::money_bag(cents, &currency);
+    let refunded = refunded(state, &record);
+    let financial = text(&record, "displayFinancialStatus").unwrap_or("PENDING");
+    let captured = CAPTURED.contains(&financial);
+    let cancelled = is_cancelled(&record);
+
+    // The remaining units of each line item, over its fulfillment orders.
+    let mut remaining: HashMap<String, i64> = HashMap::new();
+    let fulfillment_orders = gids(record.get("fulfillmentOrders"));
+    let mut fulfillment_statuses: Vec<String> = Vec::new();
+    for fulfillment_order in fulfillment_orders
+        .iter()
+        .filter_map(|id| state.get(id))
+    {
+        let mut left = 0;
+        for item in gids(fulfillment_order.get("lineItems"))
+            .iter()
+            .filter_map(|id| state.get(id))
+        {
+            if let Some(line) = text(item, "lineItem") {
+                *remaining.entry(line.to_string()).or_default() += int(item, "remainingQuantity");
+            }
+            left += int(item, "remainingQuantity");
+        }
+        if left > 0 {
+            fulfillment_statuses.push(
+                text(fulfillment_order, "status")
+                    .unwrap_or("OPEN")
+                    .to_string(),
+            );
+        }
+    }
+
+    let lines = gids(record.get("lineItems"));
+    let (mut lines_total, mut line_discounts) = (0, 0);
+    let (mut quantity, mut current_quantity, mut unfulfilled_total, mut fulfilled_total) =
+        (0, 0, 0, 0);
+    let mut current_line_discounts = 0;
+    for line in &lines {
+        let fulfilled = fulfilled_quantity(state, order, line);
+        let Some(item) = state.get_mut(line) else {
+            continue;
+        };
+        let ordered = int(item, "quantity");
+        let current = (ordered - refunded.quantities.get(line).copied().unwrap_or(0)).max(0);
+        let unfulfilled = remaining.get(line).copied().unwrap_or(0).min(current);
+        let original = field_cents(item, "originalTotalSet");
+        let discounted = field_cents(item, "discountedTotalSet");
+        let discount = field_cents(item, "totalDiscountSet");
+        let share = |total: i64, units: i64| {
+            if ordered == 0 {
+                0
+            } else {
+                total * units / ordered
+            }
+        };
+        item.insert("currentQuantity".into(), json!(current));
+        item.insert("unfulfilledQuantity".into(), json!(unfulfilled));
+        item.insert(
+            "refundableQuantity".into(),
+            json!(if captured { current } else { 0 }),
+        );
+        item.insert(
+            "unfulfilledOriginalTotalSet".into(),
+            bag(share(original, unfulfilled)),
+        );
+        item.insert(
+            "unfulfilledDiscountedTotalSet".into(),
+            bag(share(discounted, unfulfilled)),
+        );
+        lines_total += discounted;
+        line_discounts += discount;
+        current_line_discounts += share(discount, current);
+        quantity += ordered;
+        current_quantity += current;
+        unfulfilled_total += unfulfilled;
+        fulfilled_total += fulfilled;
+    }
+
+    let cart_discount = field_cents(&record, "cartDiscountAmountSet");
+    let subtotal = lines_total - cart_discount;
+    let shipping = field_cents(&record, "totalShippingPriceSet");
+    let shipping_original: i64 = array(&record, "shippingLines")
+        .iter()
+        .filter_map(Value::as_object)
+        .filter(|line| line.get("isRemoved").and_then(Value::as_bool) != Some(true))
+        .map(|line| field_cents(line, "originalPriceSet"))
+        .sum();
+    let shipping_discount = (shipping_original - shipping).max(0);
+    let tax = field_cents(&record, "totalTaxSet");
+    let total = subtotal + shipping + tax;
+    let current_subtotal = subtotal - refunded.subtotal;
+    let current_shipping = shipping - refunded.shipping;
+    let current_tax = tax - refunded.tax;
+    let current_total =
+        current_subtotal + current_shipping + current_tax - refunded.discrepancy;
+    let (received, refunded_money, capturable, _) = money_moved(state, &record);
+    let net = received - refunded_money;
+    let weight = int(&record, "totalWeight");
+    let current_weight = if quantity == 0 {
+        0
+    } else {
+        weight * current_quantity / quantity
+    };
+
+    let display_fulfillment = if unfulfilled_total == 0 {
+        if fulfilled_total > 0 {
+            "FULFILLED"
+        } else if refunded.restocked {
+            "RESTOCKED"
+        } else {
+            "UNFULFILLED"
+        }
+    } else if fulfilled_total > 0 {
+        "PARTIALLY_FULFILLED"
+    } else if !fulfillment_statuses.is_empty()
+        && fulfillment_statuses.iter().all(|status| status == "ON_HOLD")
+    {
+        "ON_HOLD"
+    } else if !fulfillment_statuses.is_empty()
+        && fulfillment_statuses.iter().all(|status| status == "SCHEDULED")
+    {
+        "SCHEDULED"
+    } else {
+        "UNFULFILLED"
+    };
+    let return_statuses: Vec<String> = gids(record.get("returns"))
+        .iter()
+        .filter_map(|id| state.get(id))
+        .filter_map(|record| text(record, "status").map(str::to_string))
+        .collect();
+    let has = |status: &str| return_statuses.iter().any(|known| known == status);
+    let return_status = if has("OPEN") {
+        "IN_PROGRESS"
+    } else if has("REQUESTED") {
+        "RETURN_REQUESTED"
+    } else if has("CLOSED") {
+        "RETURNED"
+    } else {
+        "NO_RETURN"
+    };
+
+    let Some(record) = state.get_mut(order) else {
+        return;
+    };
+    let fields = json!({
+        "subtotalLineItemsQuantity": quantity,
+        "currentSubtotalLineItemsQuantity": current_quantity,
+        "subtotalPriceSet": bag(subtotal),
+        "currentSubtotalPriceSet": bag(current_subtotal),
+        "currentShippingPriceSet": bag(current_shipping),
+        "currentTotalTaxSet": bag(current_tax),
+        "totalDiscountsSet": bag(line_discounts + cart_discount + shipping_discount),
+        "currentTotalDiscountsSet": bag(current_line_discounts + cart_discount + shipping_discount),
+        "totalPriceSet": bag(total),
+        "currentTotalPriceSet": bag(current_total),
+        "totalReceivedSet": bag(received),
+        "netPaymentSet": bag(net),
+        "totalRefundedSet": bag(refunded_money),
+        "totalRefundedShippingSet": bag(refunded.shipping),
+        "totalOutstandingSet": bag(current_total - net),
+        "totalCapturableSet": bag(capturable),
+        "currentTotalWeight": current_weight.to_string(),
+        "displayFulfillmentStatus": display_fulfillment,
+        "fullyPaid": captured && received >= total,
+        "unpaid": matches!(financial, "PENDING" | "AUTHORIZED" | "EXPIRED" | "VOIDED"),
+        "capturable": capturable > 0 && !cancelled,
+        "canMarkAsPaid": matches!(financial, "PENDING" | "PARTIALLY_PAID") && !cancelled,
+        "refundable": captured && financial != "REFUNDED",
+        "restockable": !cancelled,
+        "fulfillable": !cancelled && unfulfilled_total > 0,
+        "returnStatus": return_status,
+    });
+    if let Value::Object(fields) = fields {
+        record.extend(fields);
+    }
+    if let Some(customer) = record.get("customer").and_then(Value::as_str) {
+        let customer = customer.to_string();
+        customers::refresh_customer(state, &customer);
+    }
+}
+
+/// Recomputes `displayFinancialStatus` from the money of an order, after a change of money (a
+/// payment, a capture, a refund, an edit of its total): refunded in full or in part once money
+/// went back; paid in full or in part once it was taken; authorized while an authorization
+/// holds money; voided once one was voided; paid when it costs nothing. An order none of these
+/// apply to keeps its pending or expired status. Then [`refresh_order`] again, for what the
+/// status implies.
+pub fn settle_financial_status(state: &mut ShopState, order: &str) {
+    refresh_order(state, order);
+    let Some(record) = state.get(order) else {
+        return;
+    };
+    let (received, refunded, capturable, voided) = money_moved(state, record);
+    let total = field_cents(record, "currentTotalPriceSet");
+    let current = text(record, "displayFinancialStatus").unwrap_or("PENDING");
+    let status = if refunded > 0 && refunded >= received {
+        "REFUNDED"
+    } else if refunded > 0 {
+        "PARTIALLY_REFUNDED"
+    } else if received > 0 && received >= total {
+        "PAID"
+    } else if received > 0 {
+        "PARTIALLY_PAID"
+    } else if capturable > 0 {
+        "AUTHORIZED"
+    } else if voided {
+        "VOIDED"
+    } else if total <= 0 {
+        "PAID"
+    } else if matches!(current, "EXPIRED" | "VOIDED") {
+        current
+    } else {
+        "PENDING"
+    }
+    .to_string();
+    if let Some(record) = state.get_mut(order) {
+        record.insert("displayFinancialStatus".into(), json!(status));
+    }
+    refresh_order(state, order);
+}
+
+/// A transaction to record on an order.
+pub struct NewTransaction<'a> {
+    /// `SALE`, `CAPTURE`, `AUTHORIZATION`, `REFUND`, `VOID`, …
+    pub kind: &'a str,
+    pub amount: i64,
+    pub gateway: Option<&'a str>,
+    pub parent: Option<&'a str>,
+    /// Whether the money moved through a manual gateway (`orderMarkAsPaid`, a cash payment).
+    pub manual: bool,
+    pub test: bool,
+}
+
+/// Records a successful transaction on an order: an `OrderTransaction` in `transactions`, with
+/// `order_transactions/create`. Returns its GID. The order's amounts are left to the caller's
+/// [`settle_financial_status`].
+pub fn add_transaction(state: &mut ShopState, order: &str, transaction: &NewTransaction) -> String {
+    let currency = currency(state);
+    let now = state.timestamp();
+    let id = state.new_gid("OrderTransaction");
+    let gateway = transaction.gateway.unwrap_or("manual");
+    state.insert(value::object(json!({
+        "__typename": "OrderTransaction",
+        "id": id,
+        "kind": transaction.kind,
+        "status": "SUCCESS",
+        "amountSet": value::money_bag(transaction.amount, &currency),
+        "gateway": gateway,
+        "formattedGateway": formatted_gateway(gateway),
+        "order": order,
+        "parentTransaction": transaction.parent,
+        "test": transaction.test,
+        "manualPaymentGateway": transaction.manual,
+        "manuallyCapturable": transaction.kind == "AUTHORIZATION",
+        "multiCapturable": false,
+        "createdAt": now,
+        "processedAt": now,
+        "fees": [],
+    })));
+    push_key(state, order, "transactions", &id);
+    state.emit("order_transactions/create", &id);
+    id
+}
+
+/// A gateway as the admin shows it: `manual` is "Manual", `bogus` "Bogus", others capitalized
+/// word by word.
+fn formatted_gateway(gateway: &str) -> String {
+    gateway
+        .split(['_', ' '])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().collect::<String>() + chars.as_str()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The gateway of an order's first sale, capture or authorization: what a refund goes back
+/// through.
+pub fn payment_gateway(state: &ShopState, order: &Record) -> Option<String> {
+    gids(order.get("transactions"))
+        .iter()
+        .filter_map(|id| state.get(id))
+        .find(|transaction| {
+            matches!(
+                text(transaction, "kind"),
+                Some("SALE" | "CAPTURE" | "AUTHORIZATION")
+            )
+        })
+        .and_then(|transaction| text(transaction, "gateway").map(str::to_string))
+}
+
+/// The successful sales and captures of an order, with what each may still refund: the parents
+/// a refund of its money goes against, in order.
+pub fn refundable_payments(state: &ShopState, order: &Record) -> Vec<(String, i64)> {
+    let transactions: Vec<&Record> = gids(order.get("transactions"))
+        .iter()
+        .filter_map(|id| state.get(id))
+        .filter(|transaction| text(transaction, "status") == Some("SUCCESS"))
+        .collect();
+    transactions
+        .iter()
+        .filter(|transaction| matches!(text(transaction, "kind"), Some("SALE" | "CAPTURE")))
+        .map(|payment| {
+            let id = text(payment, "id").unwrap_or_default().to_string();
+            let refunded: i64 = transactions
+                .iter()
+                .filter(|transaction| {
+                    text(transaction, "kind") == Some("REFUND")
+                        && text(transaction, "parentTransaction") == Some(id.as_str())
+                })
+                .map(|refund| field_cents(refund, "amountSet"))
+                .sum();
+            (id, (field_cents(payment, "amountSet") - refunded).max(0))
+        })
+        .collect()
+}
+
+/// The inventory level of an item at a location (its first level when it has none there).
+fn inventory_level(state: &ShopState, item: &str, location: Option<&str>) -> Option<String> {
+    let levels = gids(state.get(item)?.get("inventoryLevels"));
+    levels
+        .iter()
+        .find(|level| {
+            location.is_some()
+                && state
+                    .get(level)
+                    .and_then(|level| level.get("location"))
+                    .and_then(Value::as_str)
+                    == location
+        })
+        .or_else(|| levels.first())
+        .cloned()
+}
+
+/// Changes the quantities of an inventory item at a location (`[("available", -2),
+/// ("committed", 2)]`), as an order that commits, ships or restocks units does: a tracked item
+/// only, at its level at that location (else its first). The level's `updatedAt`, the product's
+/// derived fields and `inventory_levels/update` follow. Returns whether a level changed.
+pub fn move_inventory(
+    state: &mut ShopState,
+    item: &str,
+    location: Option<&str>,
+    changes: &[(&str, i64)],
+) -> bool {
+    let tracked = state
+        .get(item)
+        .and_then(|item| item.get("tracked"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !tracked || changes.iter().all(|(_, delta)| *delta == 0) {
+        return false;
+    }
+    let Some(level) = inventory_level(state, item, location) else {
+        return false;
+    };
+    let now = state.timestamp();
+    let Some(record) = state.get_mut(&level) else {
+        return false;
+    };
+    if let Some(Value::Array(quantities)) = record.get_mut("quantities") {
+        for (name, delta) in changes {
+            if let Some(quantity) = quantities
+                .iter_mut()
+                .find(|quantity| quantity.get("name").and_then(Value::as_str) == Some(name))
+            {
+                let current = quantity
+                    .get("quantity")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                quantity["quantity"] = json!(current + delta);
+                quantity["updatedAt"] = json!(now);
+            }
+        }
+    }
+    state.touch(&level);
+    let product = state
+        .get(item)
+        .and_then(|item| item.get("variant"))
+        .and_then(Value::as_str)
+        .and_then(|variant| state.get(variant))
+        .and_then(|variant| variant.get("product"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if let Some(product) = product {
+        catalog::refresh_product(state, &product);
+    }
+    state.emit("inventory_levels/update", &level);
+    true
+}
+
+/// The quantity of an item at a location under a name (`committed`).
+pub fn inventory_quantity(state: &ShopState, item: &str, location: Option<&str>, name: &str) -> i64 {
+    inventory_level(state, item, location)
+        .and_then(|level| state.get(&level))
+        .and_then(|level| level.get("quantities"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|quantity| quantity.get("name").and_then(Value::as_str) == Some(name))
+        .and_then(|quantity| quantity.get("quantity"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+}
+
+/// Commits units of an item to an order (`available` to `committed`), as Shopify does when an
+/// order that claims inventory is created or edited.
+pub fn commit_inventory(state: &mut ShopState, item: &str, location: Option<&str>, units: i64) {
+    move_inventory(
+        state,
+        item,
+        location,
+        &[("available", -units), ("committed", units)],
+    );
+}
+
+/// Ships units of an item: they leave `committed` and `on_hand`. Units the order never committed
+/// (an order of the store data or of the local checkout, which keep the stock of the data) leave
+/// the stock as it is.
+pub fn ship_inventory(state: &mut ShopState, item: &str, location: Option<&str>, units: i64) {
+    let committed = inventory_quantity(state, item, location, "committed");
+    let units = units.min(committed);
+    if units > 0 {
+        move_inventory(
+            state,
+            item,
+            location,
+            &[("committed", -units), ("on_hand", -units)],
+        );
+    }
+}
+
+/// Puts units of an item back in stock: units that had not shipped leave `committed` for
+/// `available` as far as they were committed; the others (returned units, or units the order
+/// never committed) come back to `available` and `on_hand`.
+pub fn restock_inventory(
+    state: &mut ShopState,
+    item: &str,
+    location: Option<&str>,
+    units: i64,
+    shipped: bool,
+) {
+    let from_committed = if shipped {
+        0
+    } else {
+        units.min(inventory_quantity(state, item, location, "committed"))
+    };
+    let returned = units - from_committed;
+    move_inventory(
+        state,
+        item,
+        location,
+        &[
+            ("committed", -from_committed),
+            ("available", units),
+            ("on_hand", returned),
+        ],
+    );
+}
+
+/// The inventory item of a line item, through its variant.
+pub fn inventory_item_of(state: &ShopState, line: &Record) -> Option<String> {
+    let variant = state.get(text(line, "variant")?)?;
+    text(variant, "inventoryItem").map(str::to_string)
+}
+
+/// The location a line item is fulfilled from: the assigned location of its first fulfillment
+/// order.
+pub fn line_location(state: &ShopState, order: &str, line: &str) -> Option<String> {
+    let (fulfillment_order, _) = fulfillment_order_lines(state, order, line)
+        .into_iter()
+        .next()?;
+    assigned_location(state, &fulfillment_order)
+}
+
+/// The location a fulfillment order is assigned to.
+pub fn assigned_location(state: &ShopState, fulfillment_order: &str) -> Option<String> {
+    state
+        .get(fulfillment_order)?
+        .get("assignedLocation")?
+        .get("location")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// The `FulfillmentOrderAssignedLocation` of a location record, as the seed writes it.
+pub fn assigned_location_value(state: &ShopState, location: &str) -> Value {
+    let Some(record) = state.get(location) else {
+        return json!({"name": "", "countryCode": "US", "location": null});
+    };
+    let address = record.get("address").cloned().unwrap_or(Value::Null);
+    json!({
+        "name": record.get("name"),
+        "location": location,
+        "address1": address.get("address1"),
+        "address2": address.get("address2"),
+        "city": address.get("city"),
+        "province": address.get("provinceCode"),
+        "zip": address.get("zip"),
+        "phone": address.get("phone"),
+        "countryCode": address
+            .get("countryCode")
+            .and_then(Value::as_str)
+            .filter(|code| !code.is_empty())
+            .unwrap_or("US"),
+    })
+}
+
+/// The next order number of the shop: one above the highest, 1001 for the first.
+pub fn next_order_number(state: &ShopState) -> u64 {
+    state
+        .all("Order")
+        .filter_map(|order| order.get("number").and_then(Value::as_u64))
+        .max()
+        .unwrap_or(1000)
+        .max(1000)
+        + 1
+}
+
+/// Marks an order changed: `updatedAt`, and `orders/updated`.
+pub fn order_updated(state: &mut ShopState, order: &str) {
+    state.touch(order);
+    state.emit("orders/updated", order);
+}
+
+/// A `MailingAddress` from a `MailingAddressInput`, with an id of the order's (`model_name=
+/// Address`). `None` when the input is not an object.
+pub fn mailing_address(input: &Value, id: &str) -> Option<Value> {
+    let input = input.as_object()?;
+    let get = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let country_code = get("countryCode").map(|code| code.to_ascii_uppercase());
+    let country = country_code
+        .as_deref()
+        .and_then(lsf_core::store::reference::country_name)
+        .map(str::to_string)
+        .or_else(|| get("country"));
+    let province_code = get("provinceCode");
+    let (first, last) = (get("firstName"), get("lastName"));
+    let name = match (&first, &last) {
+        (Some(first), Some(last)) => Some(format!("{first} {last}")),
+        (Some(name), None) | (None, Some(name)) => Some(name.clone()),
+        (None, None) => None,
+    };
+    let area = [
+        get("city"),
+        province_code.clone().or_else(|| get("province")),
+        get("zip"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ");
+    let mut formatted: Vec<String> = [get("company"), get("address1"), get("address2")]
+        .into_iter()
+        .flatten()
+        .collect();
+    if !area.is_empty() {
+        formatted.push(area.clone());
+    }
+    if let Some(country) = &country {
+        formatted.push(country.clone());
+    }
+    let formatted_area = [Some(area), country.clone()]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(json!({
+        "id": id,
+        "firstName": first,
+        "lastName": last,
+        "name": name,
+        "company": get("company"),
+        "address1": get("address1"),
+        "address2": get("address2"),
+        "city": get("city"),
+        "province": get("province").or_else(|| province_code.clone()),
+        "provinceCode": province_code,
+        "country": country,
+        "countryCodeV2": country_code,
+        "zip": get("zip"),
+        "phone": get("phone"),
+        "formatted": formatted,
+        "formattedArea": if formatted_area.is_empty() { Value::Null } else { json!(formatted_area) },
+    }))
+}
+
+/// `customAttributes` from an `[AttributeInput]` (`{key, value}`).
+pub fn attributes(input: Option<&Value>) -> Value {
+    Value::Array(
+        input
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|attribute| {
+                let key = attribute.get("key")?.as_str()?;
+                Some(json!({"key": key, "value": attribute.get("value").cloned().unwrap_or(Value::Null)}))
+            })
+            .collect(),
+    )
+}
+
+/// An input object of a mutation argument, empty when absent.
+pub fn input_of(value: Option<&Value>) -> Map<String, Value> {
+    value.and_then(Value::as_object).cloned().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_amounts() {
+        assert_eq!(parse_cents("19.99"), Some(1999));
+        assert_eq!(parse_cents("20"), Some(2000));
+        assert_eq!(parse_cents("0.125"), Some(13));
+        assert_eq!(parse_cents("-5.5"), Some(-550));
+        assert_eq!(parse_cents(".5"), Some(50));
+        assert_eq!(parse_cents("x"), None);
+        assert_eq!(parse_cents(""), None);
+        assert_eq!(
+            cents(Some(&json!({"shopMoney": {"amount": "12.5"}}))),
+            1250
+        );
+        assert_eq!(cents(Some(&json!({"amount": "3", "currencyCode": "EUR"}))), 300);
+        assert_eq!(cents(None), 0);
+        assert_eq!(formatted_gateway("manual"), "Manual");
+        assert_eq!(formatted_gateway("shopify_payments"), "Shopify Payments");
+    }
+}
