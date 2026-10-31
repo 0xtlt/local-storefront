@@ -161,7 +161,7 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
         &mut state,
         &orders::PlacedOrder {
             id: Some("gid://shopify/Order/1004"),
-            number: 1004,
+            number: Some(1004),
             processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
             result: &result,
             customer_id: Some(jane.id),
@@ -173,7 +173,14 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             payment: Some("Credit card"),
         },
     );
-    assert_eq!(order, "gid://shopify/Order/1004");
+    assert_eq!(
+        order,
+        orders::RecordedOrder {
+            id: "gid://shopify/Order/1004".into(),
+            number: 1004
+        }
+    );
+    let order = order.id;
     assert!(!before.contains(&order));
     let record = state.get(&order).unwrap();
     assert_eq!(record["name"], json!("#1004"));
@@ -227,13 +234,12 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
         ["orders/create", "order_transactions/create", "orders/paid"]
     );
 
-    // The checkout numbers the orders of each session on its own: an id that is taken gets a
-    // new one.
+    // An id or a number that is taken gets a new one: no two orders share a name.
     let again = orders::record_placed_order(
         &mut state,
         &orders::PlacedOrder {
             id: Some("gid://shopify/Order/1004"),
-            number: 1004,
+            number: Some(1004),
             processed_at: "2026-05-01T09:31:00Z".parse().unwrap(),
             result: &result,
             customer_id: None,
@@ -245,6 +251,28 @@ fn an_order_placed_in_the_checkout_is_an_order_of_the_shop() {
             payment: None,
         },
     );
-    assert_ne!(again, order);
-    assert_eq!(state.get(&again).unwrap()["customer"], Value::Null);
+    assert_ne!(again.id, order);
+    assert_eq!(again.number, 1005);
+    assert_eq!(state.get(&again.id).unwrap()["name"], json!("#1005"));
+    assert_eq!(state.get(&again.id).unwrap()["customer"], Value::Null);
+
+    // Without a number, the shop gives its next one, as to `orderCreate`'s orders.
+    let next = orders::record_placed_order(
+        &mut state,
+        &orders::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:32:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            email: None,
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    assert_eq!(next.number, 1006);
+    assert_eq!(state.get(&next.id).unwrap()["name"], json!("#1006"));
 }

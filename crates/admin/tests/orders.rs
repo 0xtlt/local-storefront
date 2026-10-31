@@ -201,7 +201,7 @@ fn place_order(api: &AdminApi) -> String {
     };
     api.record_order(&PlacedOrder {
         id: Some("gid://shopify/Order/1004"),
-        number: 1004,
+        number: Some(1004),
         processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
         result: &result,
         customer_id: Some(jane.id),
@@ -213,6 +213,7 @@ fn place_order(api: &AdminApi) -> String {
         payment: Some("Credit card"),
     })
     .expect("the order is recorded")
+    .id
 }
 
 #[test]

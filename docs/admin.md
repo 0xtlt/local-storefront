@@ -302,7 +302,9 @@ The full list, field by field, is in the design notes of `lsf-admin`
   Admin API's changes.
 - **An order placed at the checkout** is recorded in the Admin API, and the store is not built
   again for it: orders do not sync (the account pages show it from the checkout, as they do
-  without the Admin API).
+  without the Admin API). The Admin API numbers it, as it numbers the orders of `orderCreate` and
+  of draft orders: no two orders share a name, and the thank-you page shows that number.
+  Without the Admin API, each session numbers its orders after the store data's, as before.
 - **When the store data refuses a change** (an email it does not take, two variants with the
   same options), the storefront shows the rest, the terminal says what was refused (once), and so
   does `GET /__lsf/admin` (`storeSync.built.diagnostics`).

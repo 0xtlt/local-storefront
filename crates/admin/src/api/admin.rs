@@ -338,8 +338,9 @@ impl AdminApi {
     }
 
     /// Records an order placed in the local checkout in the default shop, and delivers its
-    /// `orders/create` (and `orders/paid`) webhooks. Returns the GID of the order.
-    pub fn record_order(&self, placed: &orders::PlacedOrder) -> Option<String> {
+    /// `orders/create` (and `orders/paid`) webhooks. Returns the GID and the number the shop
+    /// gave the order (its next one when the checkout gives none).
+    pub fn record_order(&self, placed: &orders::PlacedOrder) -> Option<orders::RecordedOrder> {
         self.change_shop(&self.default_shop(), |state| {
             orders::record_placed_order(state, placed)
         })

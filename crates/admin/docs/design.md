@@ -594,7 +594,8 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 
 `lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
 storefront, the checkout and the control API, records the orders `place_order` places
-(`AdminApi::record_order`), and reseeds it when the store data reloads (`AdminApi::reseed`:
+(`AdminApi::record_order`, while the cart is taken, so that the order's number is the Admin
+API's; without the Admin API a session numbers its orders on its own), and reseeds it when the store data reloads (`AdminApi::reseed`:
 what the Admin API changed is dropped and the terminal says so; the subscriptions the backend made
 stay, as the app's setup of the shop). It turns store sync on (`AdminApi::sync_store`): see
 "Server wiring" under "Store sync". `lsf app webhook trigger` builds its payloads with
@@ -819,10 +820,12 @@ records, so both are the same shape.
   `ReturnLineItem` of the line's fulfillment when it was fulfilled, an
   `UnverifiedReturnLineItem` (with `unitPrice`) otherwise.
 - **Orders of the checkout**: `orders::record_placed_order(state, &PlacedOrder)` takes what the
-  server's `place_order` has (the `CheckoutResult`, the order number and id it gave, the time,
-  the customer, the contact, the address, the note, the attributes, the payment method's name as
-  the gateway), keeps the checkout's id when it is free (sessions number their orders on their
-  own: a taken id gets a new one), refreshes the customer, and emits `orders/create`,
+  server's `place_order` has (the `CheckoutResult`, the time, the customer, the contact, the
+  address, the note, the attributes, the payment method's name as the gateway), gives the order
+  the shop's next number (`model::next_order_number`, which `orderCreate` and a completed draft
+  order take too: one numbering; a number or an id given and taken gets a new one), answers its
+  GID and number (`RecordedOrder`), which the checkout shows on its thank-you page, refreshes
+  the customer, and emits `orders/create`,
   `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits
   no stock: the local checkout keeps the stock of the data *(chosen: test purchases never sell a
   product out)*. `lsf`'s `place_order` calls it through `AdminApi::record_order`.
