@@ -564,6 +564,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 | other `/admin/api/<v>/…` | `404`: another version, or the REST Admin API, which lsf does not serve. |
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
+| `/__lsf/admin/charges/<n>` (`GET` the page, `POST …/approve`, `…/decline`), `/__lsf/admin/uploads/<shop>[/<key>]`, `/__lsf/admin/bulk/<shop>/<n>.jsonl` | `api::app`: the merchant's approval of a charge, staged uploads, bulk operations' results; no token, as Shopify's admin page and signed URLs need none from the app. The URLs the mutations answer for them are on the origin the request reached lsf at (`http://<Host>`, `ShopResolver::with_origin`). |
 | `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
 
 `lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
@@ -820,6 +821,42 @@ records, so both are the same shape.
   `checkout.functions` names it): `title`, `enabled`, `functionId`, `shopifyFunction`,
   `blockOnFailure: false`, and the metafields `checkout.functions` gives it. Without an app,
   none: there is no Function to own.
+
+What the app family's mutations make (`domains/app/`: `billing`, `discounts`, `functions`,
+`bulk`, `uploads`, `metafields`), in the same shapes, so that the store sync reads them as it
+reads the seed's:
+
+- **`AppSubscription`** (`name`, `status`, `test`, `trialDays`, `returnUrl`,
+  `currentPeriodEnd`, `lineItems`, `createdAt`, and lsf's `updatedAt`, `replacementBehavior`,
+  `activatedAt`, `trialEndsAt`), whose **`AppSubscriptionLineItem`s** are records of their own
+  (not `Node`s: `node(id:)` does not find them) under Shopify's id,
+  `gid://shopify/AppSubscriptionLineItem/<subscription n>?v=1&index=<i>`, with
+  `plan.pricingDetails` inline (`AppRecurringPricing` with its `discount`, or
+  `AppUsagePricing` with `balanceUsed`) and their `usageRecords` (**`AppUsageRecord`**s); a new
+  capped amount waiting for the merchant is the line's `pendingCappedAmount`.
+  **`AppPurchaseOneTime`** (`name`, `price`, `status`, `test`, `createdAt`, lsf's `returnUrl`).
+  Subscriptions and purchases share their numbers, which are the `charge_id` of the
+  confirmation page. `AppInstallation.activeSubscriptions`, `allSubscriptions` and
+  `oneTimePurchases` are read from them.
+- **Discounts** made by the mutations: the node and its discount as above, for each of the eight
+  types, the dates in UTC (`startsAt` given with an offset is written with `Z`, as Shopify answers
+  it, and as the sync compares it with the shop's clock); `status` is computed from the dates when
+  it is read. Shopify's own types keep their `customerGets` (`AllDiscountItems`,
+  `DiscountProducts`, `DiscountCollections`; `DiscountPercentage`, `DiscountAmount`,
+  `DiscountOnQuantity`), `customerBuys`, `minimumRequirement`, `destinationSelection`, and a
+  `summary` of lsf's wording. The metafields of a node have its `owner` and `ownerType:
+  DISCOUNT`; they are deleted with it. **`DiscountRedeemCodeBulkCreation`** records what
+  `discountRedeemCodeBulkAdd` did.
+- **`CartTransform`**, **`DeliveryCustomization`**, **`PaymentCustomization`**, **`Validation`**
+  made by the mutations: new ids of each type's counter, `functionId` and `shopifyFunction` the
+  Function's id (a validation has only `shopifyFunction`), `enabled`, their metafields.
+- **`BulkOperation`** (`status`, `type`, `query`, `objectCount`, `rootObjectCount`,
+  `fileSize`, `url` or `partialDataUrl`, `errorCode`, dates); its JSONL is a file of the shop
+  (`ShopState::put_blob`, key `bulk/<n>.jsonl`), as the bytes of a staged upload are (their key,
+  `tmp/<shop id>/<folder>/<uuid>/<file>`).
+- A change Shopify has no webhook topic for (a customization, a validation, a cart transform, a
+  usage record, a charge waiting for the merchant) emits `domains::app::CHANGED`
+  (`lsf/changed`): no subscription can receive it, but it says the shop changed.
 
 ## Events and webhooks (`webhooks`)
 

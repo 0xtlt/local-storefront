@@ -1093,6 +1093,16 @@ fn a_bulk_query_writes_every_node_as_jsonl() {
     assert!(first_product["title"].is_string());
     assert_eq!(lines[1]["__parentId"], first_product["id"]);
 
+    let listed = run(
+        &mut shop,
+        r#"{ a: bulkOperations(first: 5, query: "status:completed operation_type:query") { nodes { id } }
+             b: bulkOperations(first: 5, query: "status:running") { nodes { id } } }"#,
+        Value::Null,
+    );
+    assert_eq!(listed["data"]["a"]["nodes"], json!([{"id": id}]));
+    assert_eq!(listed["data"]["b"]["nodes"], json!([]));
+    assert!(listed["extensions"].get("search").is_none(), "{listed}");
+
     let refused = run(
         &mut shop,
         r#"mutation { bulkOperationRunQuery(query: "{ shop { name } }") { bulkOperation { id } userErrors { field message code } } }"#,
