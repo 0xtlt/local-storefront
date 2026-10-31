@@ -231,6 +231,38 @@ pub fn locations(state: &ShopState, transfer: &Record) -> (Option<String>, Optio
     (live("origin"), live("destination"))
 }
 
+/// Moves the open transfers (not canceled nor transferred) that start or end at a location to
+/// another, as `locationDeactivate` relocates "incoming movements" with the stock
+/// (`FAILED_TO_RELOCATE_INCOMING_MOVEMENTS` is what Shopify answers when it cannot): their
+/// snapshot names the new location, so that what they commit, ship and receive from then on
+/// does so there, with `inventory_transfers/updated`.
+pub fn relocate(state: &mut ShopState, from: &str, to: &str) {
+    let open: Vec<String> = state
+        .all("InventoryTransfer")
+        .filter(|transfer| {
+            !matches!(
+                text(transfer, "status"),
+                Some("CANCELED" | "TRANSFERRED" | "OTHER")
+            ) && ["origin", "destination"]
+                .iter()
+                .any(|field| snapshot_location(transfer.get(*field)).as_deref() == Some(from))
+        })
+        .filter_map(|transfer| text(transfer, "id").map(str::to_string))
+        .collect();
+    for id in open {
+        let snapshot = location_snapshot(state, Some(to));
+        if let Some(record) = state.get_mut(&id) {
+            for field in ["origin", "destination"] {
+                if snapshot_location(record.get(field)).as_deref() == Some(from) {
+                    record.insert(field.into(), snapshot.clone());
+                }
+            }
+        }
+        state.touch(&id);
+        emit_change(state, "inventory_transfers/updated", &id, json!({}));
+    }
+}
+
 // --- Checks ---
 
 /// A location input: `Ok(None)` when blank, the errors of one that is not a location or is not

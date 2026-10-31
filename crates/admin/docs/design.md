@@ -1387,7 +1387,13 @@ module's header has the rules and the sources):
   and enter the destination's `incoming` (a level made when the destination did not stock the
   item, `inventory_levels/connect`); received, accepted units become `available` and `on_hand`.
   `transfers::settle` keeps what a transfer commits equal to what it has not shipped while it is
-  ready to ship or in progress, and nothing otherwise.
+  ready to ship or in progress, and nothing otherwise. A move at a location the item is not
+  stocked at moves nothing (`model::move_inventory` never falls back to another level when a
+  location is given), and no level is made at an inactive location. `locationDeactivate` with a
+  `destinationLocationId` moves the levels there, then the open transfers that start or end at
+  the location (`transfers::relocate`: their snapshot names the destination,
+  `inventory_transfers/updated`), so that a shipment in transit is received where its incoming
+  units went, as Shopify relocates "incoming movements".
 - **`FulfillmentOrder`**s split, merged, rerouted (the order's committed stock moved with
   `model::move_line_commitment`), with `fulfillBy`, and `lsfProgress` (the reported progress,
   which keeps it `IN_PROGRESS`: `model::refresh_fulfillment_order` reads it) and `lsfPrepared`.

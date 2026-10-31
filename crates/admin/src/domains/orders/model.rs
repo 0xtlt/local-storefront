@@ -936,26 +936,28 @@ pub fn refundable_payments(state: &ShopState, order: &Record) -> Vec<(String, i6
         .collect()
 }
 
-/// The inventory level of an item at a location (its first level when it has none there).
+/// The inventory level of an item at a location, `None` when it is not stocked there; its first
+/// level when no location is given. A location given is never another: the units of an order
+/// or a transfer at a location move there or nowhere.
 fn inventory_level(state: &ShopState, item: &str, location: Option<&str>) -> Option<String> {
     let levels = gids(state.get(item)?.get("inventoryLevels"));
+    let Some(location) = location else {
+        return levels.first().cloned();
+    };
     levels
-        .iter()
-        .find(|level| {
-            location.is_some()
-                && state
-                    .get(level)
-                    .and_then(|level| level.get("location"))
-                    .and_then(Value::as_str)
-                    == location
-        })
-        .or_else(|| levels.first())
-        .cloned()
+        .into_iter()
+        .find(|level| text_of(state, level, "location") == Some(location))
+}
+
+/// A text field of a record, by key.
+fn text_of<'s>(state: &'s ShopState, key: &str, field: &str) -> Option<&'s str> {
+    state.get(key).and_then(|record| text(record, field))
 }
 
 /// Changes the quantities of an inventory item at a location (`[("available", -2),
 /// ("committed", 2)]`), as an order that commits, ships or restocks units does: a tracked item
-/// only, at its level at that location (else its first). What an inventory mutation of the
+/// only, at its level at that location (its first when none is given; nothing when it is not
+/// stocked there). What an inventory mutation of the
 /// catalog runs follows: the level's `updatedAt`, the product's derived fields and smart
 /// collections (`catalog::product_changed`), the variants' `availableForSale` and
 /// `variants/in_stock` or `variants/out_of_stock` when the stock crossed zero
@@ -1155,8 +1157,8 @@ fn line_parts(state: &ShopState, line: &str) -> Vec<StockPart> {
         .unwrap_or_default()
 }
 
-/// The location of an item's level at a location (its first level when it has none there): the
-/// key a line's commitments are kept under.
+/// The location of an item's level at a location (its first level when none is given): the key
+/// a line's commitments are kept under.
 fn level_location(state: &ShopState, item: &str, location: Option<&str>) -> Option<String> {
     let level = inventory_level(state, item, location)?;
     text(state.get(&level)?, "location").map(str::to_string)

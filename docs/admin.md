@@ -804,6 +804,9 @@ describes it:
 - The transfer follows its shipments: lines `shippedQuantity`, `pickedForShipmentQuantity` (draft
   shipments), `processableQuantity`; `IN_PROGRESS` once a shipment is in transit, `TRANSFERRED`
   once every unit shipped and was received (`inventory_transfers/complete`).
+- **Deactivating a location** with a `destinationLocationId` moves its stock there, and the open
+  transfers that start or end at it too: a shipment in transit to it is received at the
+  destination, and the inactive location stocks nothing.
 - **Rerouting** and **merging** keep each order line's committed stock right: a fulfillment
   order rerouted takes what the order committed to its new location; a split or a merge stays at
   one location, so nothing moves.

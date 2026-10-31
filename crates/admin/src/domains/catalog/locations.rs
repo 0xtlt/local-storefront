@@ -463,6 +463,10 @@ fn deactivate_once(
     for product in &products {
         product_changed(state, product);
     }
+    // The transfers and their shipments under way follow the stock.
+    if let Some(destination) = &destination {
+        crate::domains::logistics::transfers::relocate(state, &id, destination);
+    }
     if let Some(record) = state.get_mut(&id) {
         record.insert("isActive".into(), json!(false));
         record.insert("fulfillsOnlineOrders".into(), json!(false));
