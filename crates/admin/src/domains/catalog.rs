@@ -17,6 +17,7 @@ mod collections;
 mod combined_listings;
 #[cfg(test)]
 mod extras_tests;
+pub mod feeds;
 mod gift_cards;
 mod inventory;
 mod legacy_publications;
@@ -1317,6 +1318,13 @@ pub fn cents_of(value: Option<&Value>) -> Option<i64> {
     lsf_core::store::model::Money::Decimal(text.to_string()).cents()
 }
 
+/// What follows a mutation for the catalog, which the resolver runs after each one that
+/// emitted events (after `markets::after_mutation`, whose listing events it reads): the
+/// incremental syncs and the statuses of the product feeds ([`feeds::after_mutation`]).
+pub fn after_mutation(state: &mut ShopState, start: usize) {
+    feeds::after_mutation(state, start);
+}
+
 /// The custom resolvers and the mutations of the catalog: see "Writing a resolver or a mutation"
 /// in `crates/admin/docs/design.md`.
 pub fn register(registry: &mut crate::resolve::Registry) {
@@ -1330,6 +1338,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     collection_duplicate::register(registry);
     collection_sources::register(registry);
     combined_listings::register(registry);
+    feeds::register(registry);
     inventory::register(registry);
     locations::register(registry);
     selling_plans::register(registry);

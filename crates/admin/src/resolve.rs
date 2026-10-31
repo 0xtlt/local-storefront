@@ -1024,6 +1024,8 @@ impl ShopResolver<'_> {
             let output = mutation::run(self, ctx);
             // What follows a change on its own: listings, auto-publishing (`domains::markets`).
             crate::domains::markets::after_mutation(self.state, start);
+            // The product feeds' syncs, from the listings (`domains::catalog`).
+            crate::domains::catalog::after_mutation(self.state, start);
             self.state.merge_events_from(start);
             return output;
         }

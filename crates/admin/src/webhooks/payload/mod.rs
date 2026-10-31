@@ -19,6 +19,7 @@
 mod catalog;
 mod content;
 mod customers;
+mod feeds;
 mod markets;
 mod orders;
 mod shop;
@@ -205,6 +206,11 @@ pub const BUILT_TOPICS: &[&str] = &[
     "orders/paid",
     "orders/partially_fulfilled",
     "orders/updated",
+    "product_feeds/create",
+    "product_feeds/full_sync",
+    "product_feeds/full_sync_finish",
+    "product_feeds/incremental_sync",
+    "product_feeds/update",
     "product_listings/add",
     "product_listings/remove",
     "product_listings/update",
@@ -356,6 +362,10 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
             markets::product_listing(record, lookup, true)
         }
         "product_listings/remove" => markets::product_listing_removed(record, false),
+        "product_feeds/create" | "product_feeds/update" => feeds::feed(record),
+        "product_feeds/full_sync" => feeds::full_sync(record, lookup),
+        "product_feeds/incremental_sync" => feeds::incremental_sync(record, lookup),
+        "product_feeds/full_sync_finish" => feeds::full_sync_finish(record, lookup),
         "scheduled_product_listings/remove" => markets::product_listing_removed(record, true),
         _ => return None,
     })

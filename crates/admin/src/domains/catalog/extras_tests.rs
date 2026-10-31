@@ -976,3 +976,223 @@ fn a_combined_listing_update_that_is_wrong_is_refused_and_nothing_changes() {
     );
     unchanged(&mut shop, &before, &[&parent, &mug]);
 }
+
+/// A channel of the app and its publication.
+fn channel(shop: &mut crate::state::ShopState) -> (String, String) {
+    let answer = run(
+        shop,
+        r#"mutation { channelCreate(input: {accountId: "A1", accountName: "Marketplace", specificationHandle: "example-us"}) { channel { id } userErrors { message } } }"#,
+    );
+    let channel = ok(&answer, "channelCreate")["channel"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let publication = shop.get(&channel).unwrap()["lsfPublication"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+    (channel, publication)
+}
+
+/// Publishes a product on a publication.
+fn publish(shop: &mut crate::state::ShopState, product: &str, publication: &str) {
+    let answer = run_with(
+        shop,
+        r#"mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }"#,
+        json!({"id": product, "publication": publication}),
+    );
+    ok(&answer, "publishablePublish");
+}
+
+/// The payload of an event as the webhooks build it.
+fn event_payload(shop: &crate::state::ShopState, event: &crate::state::Event) -> serde_json::Value {
+    let record = event
+        .snapshot
+        .clone()
+        .or_else(|| shop.get(&event.gid).cloned())
+        .unwrap();
+    crate::webhooks::payload::payload(
+        &event.topic,
+        &record,
+        &crate::api::samples::ShopLookup(shop),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_product_feed_syncs_the_products_of_its_channel() {
+    let mut shop = demo();
+    let (channel, publication) = channel(&mut shop);
+    let mug = product(&shop, "ceramic-mug");
+    let tote = product(&shop, "canvas-tote-bag");
+    publish(&mut shop, &mug, &publication);
+    publish(&mut shop, &tote, &publication);
+    shop.take_events();
+    let created = run(
+        &mut shop,
+        r#"mutation { productFeedCreate(input: {country: CA, language: EN}) { productFeed { id country language status channelId } userErrors { field message code } } }"#,
+    );
+    let feed = &ok(&created, "productFeedCreate")["productFeed"];
+    assert_eq!(feed["status"], json!("ACTIVE"));
+    assert_eq!(feed["channelId"], json!(channel));
+    let feed = feed["id"].as_str().unwrap().to_string();
+    let events = shop.take_events();
+    assert_eq!(events[0].topic, "product_feeds/create");
+    assert_eq!(
+        event_payload(&shop, &events[0]),
+        json!({"id": feed, "country": "CA", "language": "EN", "status": "active"})
+    );
+    let listed = run(&mut shop, r#"{ productFeeds(first: 5) { nodes { id } } }"#);
+    assert_eq!(
+        listed["data"]["productFeeds"]["nodes"],
+        json!([{"id": feed}])
+    );
+
+    // A full sync: one webhook per product of the channel, then the finish.
+    let synced = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productFullSync(id: $id) { id userErrors { field message code } } }"#,
+        json!({"id": feed}),
+    );
+    let sync = ok(&synced, "productFullSync")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(sync.starts_with("gid://shopify/ProductFullSync/"));
+    let events = shop.take_events();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.topic.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "product_feeds/full_sync",
+            "product_feeds/full_sync",
+            "product_feeds/full_sync_finish"
+        ]
+    );
+    let first = event_payload(&shop, &events[0]);
+    assert_eq!(first["metadata"]["fullSyncId"], json!(sync));
+    assert_eq!(first["metadata"]["type"], json!("FULL"));
+    assert_eq!(first["productFeed"]["id"], json!(feed));
+    assert_eq!(first["product"]["id"], json!(mug));
+    assert_eq!(first["product"]["title"], json!("Ceramic Mug"));
+    assert_eq!(
+        first["product"]["variants"]["edges"][0]["node"]["price"],
+        json!({"amount": "22.00", "currencyCode": "USD"})
+    );
+    let finish = event_payload(&shop, &events[2]);
+    assert_eq!(finish["fullSync"]["count"], json!(2));
+    assert_eq!(finish["fullSync"]["status"], json!("completed"));
+
+    // A listed product changes: an incremental sync; unlisted: its deletion.
+    run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productUpdate(product: {id: $id, title: "Big mug"}) { userErrors { message } } }"#,
+        json!({"id": mug}),
+    );
+    let events = shop.take_events();
+    let incremental: Vec<&crate::state::Event> = events
+        .iter()
+        .filter(|event| event.topic == "product_feeds/incremental_sync")
+        .collect();
+    assert_eq!(incremental.len(), 1);
+    let payload = event_payload(&shop, incremental[0]);
+    assert_eq!(payload["metadata"]["action"], json!("UPDATE"));
+    assert_eq!(payload["product"]["title"], json!("Big mug"));
+    run_with(
+        &mut shop,
+        r#"mutation($id: ID!, $publication: ID!) { publishableUnpublish(id: $id, input: [{publicationId: $publication}]) { userErrors { message } } }"#,
+        json!({"id": tote, "publication": publication}),
+    );
+    let events = shop.take_events();
+    let removed = events
+        .iter()
+        .find(|event| event.topic == "product_feeds/incremental_sync")
+        .unwrap();
+    let payload = event_payload(&shop, removed);
+    assert_eq!(payload["metadata"]["action"], json!("DELETE"));
+    assert_eq!(payload["product"]["isPublished"], json!(false));
+
+    // `channelFullSync` syncs the channel's feeds of its countries and languages.
+    let channel_sync = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { channelFullSync(channelId: $id, country: CA, language: EN) { fullSyncTraceInfo { operationId } userErrors { message } } }"#,
+        json!({"id": channel}),
+    );
+    let operation =
+        ok(&channel_sync, "channelFullSync")["fullSyncTraceInfo"][0]["operationId"].clone();
+    let events = shop.take_events();
+    let finish = events
+        .iter()
+        .find(|event| event.topic == "product_feeds/full_sync_finish")
+        .unwrap();
+    assert_eq!(
+        event_payload(&shop, finish)["metadata"]["fullSyncId"],
+        operation
+    );
+}
+
+#[test]
+fn a_feed_follows_the_languages_of_the_shop_and_wrong_input_is_refused() {
+    let mut shop = demo();
+    let before = shop.clone();
+    // No channel yet.
+    let without = run(
+        &mut shop,
+        r#"mutation { productFeedCreate(input: {country: CA, language: FR}) { productFeed { id } userErrors { field message code } } }"#,
+    );
+    assert_eq!(
+        without["data"]["productFeedCreate"]["userErrors"],
+        json!([{"field": ["input", "channelId"], "message": "The input value is invalid.", "code": "INVALID"}])
+    );
+    for mutation in [
+        r#"mutation { productFeedDelete(id: "gid://shopify/ProductFeed/1") { deletedId userErrors { field code } } }"#,
+        r#"mutation { productFullSync(id: "gid://shopify/ProductFeed/1") { id userErrors { field code } } }"#,
+    ] {
+        let answer = run(&mut shop, mutation);
+        let payload = answer["data"].as_object().unwrap().values().next().unwrap();
+        assert_eq!(
+            payload["userErrors"],
+            json!([{"field": ["id"], "code": "INVALID"}]),
+            "{answer}"
+        );
+    }
+    unchanged(&mut shop, &before, &[]);
+
+    channel(&mut shop);
+    let created = run(
+        &mut shop,
+        r#"mutation { productFeedCreate(input: {country: CA, language: FR}) { productFeed { id status } userErrors { message } } }"#,
+    );
+    let feed = ok(&created, "productFeedCreate")["productFeed"].clone();
+    assert_eq!(feed["status"], json!("ACTIVE"));
+    let taken = run(
+        &mut shop,
+        r#"mutation { productFeedCreate(input: {country: CA, language: FR}) { productFeed { id } userErrors { field message code } } }"#,
+    );
+    assert_eq!(
+        taken["data"]["productFeedCreate"]["userErrors"],
+        json!([{"field": ["input"], "message": "The input value is already taken.", "code": "TAKEN"}])
+    );
+    shop.take_events();
+    // French is unpublished: the feed is inactive.
+    let disabled = run(
+        &mut shop,
+        r#"mutation { shopLocaleDisable(locale: "fr") { locale userErrors { message } } }"#,
+    );
+    ok(&disabled, "shopLocaleDisable");
+    assert!(topics(&mut shop).contains(&"product_feeds/update".to_string()));
+    assert_eq!(
+        shop.get(feed["id"].as_str().unwrap()).unwrap()["status"],
+        json!("INACTIVE")
+    );
+    let deleted = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productFeedDelete(id: $id) { deletedId userErrors { message } } }"#,
+        json!({"id": feed["id"]}),
+    );
+    assert_eq!(ok(&deleted, "productFeedDelete")["deletedId"], feed["id"]);
+    assert_eq!(shop.count("ProductFeed"), 0);
+}
