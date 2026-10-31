@@ -992,9 +992,14 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         .map(|line| {
             let variant = gid("ProductVariant", line.variant_id);
             let variant_record = state.get(&variant);
-            let weight = variant_record
+            // The variant's own item: one the Admin API created has an id of the counter, not
+            // the one lsf-core would derive.
+            let inventory_item = variant_record
                 .and_then(|record| record.get("inventoryItem"))
                 .and_then(Value::as_str)
+                .map(str::to_string);
+            let weight = inventory_item
+                .as_deref()
                 .and_then(|item| state.get(item))
                 .and_then(|item| item.get("measurement"))
                 .and_then(|measurement| measurement.get("weight"))
@@ -1002,7 +1007,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
             LineDraft {
                 product: Some(gid("Product", line.product_id)),
                 variant: Some(variant.clone()),
-                inventory_item: Some(catalog::inventory_item_gid(line.variant_id)),
+                inventory_item,
                 title: line.title.clone(),
                 variant_title: line
                     .variant_title

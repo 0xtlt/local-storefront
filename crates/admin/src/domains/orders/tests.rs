@@ -2110,3 +2110,64 @@ fn a_fulfillment_service_location_does_not_reach_the_storefront() {
         }
     }
 }
+
+/// A checkout order of a variant the Admin API created names that variant's inventory item,
+/// whose id is of the counter, not the one lsf-core would derive from the variant.
+#[test]
+fn a_checkout_order_names_the_inventory_item_of_its_variant() {
+    let mut shop = demo();
+    let created = run(
+        &mut shop,
+        "mutation { productCreate(product: {title: \"Admin hat\"}) { product { id variants(first: 1) { nodes { id inventoryItem { id } } } } userErrors { message } } }",
+        Value::Null,
+    );
+    let product = created["data"]["productCreate"]["product"].clone();
+    let variant = product["variants"]["nodes"][0].clone();
+    let item = variant["inventoryItem"]["id"].as_str().unwrap().to_string();
+    let id = |gid: &Value| crate::state::parse_gid(gid.as_str().unwrap()).unwrap().1;
+    assert_ne!(
+        item,
+        crate::domains::catalog::inventory_item_gid(id(&variant["id"]))
+    );
+    let result = lsf_checkout::CheckoutResult {
+        lines: vec![lsf_checkout::ResultLine {
+            id: "gid://shopify/CartLine/1".into(),
+            variant_id: id(&variant["id"]),
+            product_id: id(&product["id"]),
+            title: "Admin hat".into(),
+            quantity: 1,
+            unit_price: 1000,
+            subtotal: 1000,
+            total: 1000,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let recorded = super::record_placed_order(
+        &mut shop,
+        &super::PlacedOrder {
+            id: None,
+            number: None,
+            processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
+            result: &result,
+            customer_id: None,
+            company_location_id: None,
+            email: None,
+            phone: None,
+            shipping_address: None,
+            note: None,
+            attributes: &[],
+            payment: None,
+        },
+    );
+    let answer = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 1) { nodes { lineItems(first: 1) { nodes { inventoryItemId } } } } } }",
+        json!({"id": recorded.id}),
+    );
+    assert_eq!(
+        answer["data"]["order"]["fulfillmentOrders"]["nodes"][0]["lineItems"]["nodes"][0]["inventoryItemId"],
+        json!(item),
+        "{answer}"
+    );
+}
