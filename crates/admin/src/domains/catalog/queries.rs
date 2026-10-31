@@ -17,7 +17,7 @@
 
 use serde_json::{Value, json};
 
-use super::records::field;
+use super::records::{default_location, field};
 use super::{cents_of, gids};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
@@ -389,7 +389,21 @@ pub fn register(registry: &mut Registry) {
         })
         .field("Product", "inCollection", in_collection)
         .field("InventoryItem", "inventoryLevel", item_level)
-        .field("Location", "inventoryLevel", location_level);
+        .field("Location", "inventoryLevel", location_level)
+        // The primary location: `location` without an id ("If no ID is provided, the primary
+        // location of the Shop is returned", the 2026-10 schema), where a new variant is stocked.
+        .query("location", |r, ctx, object| match ctx.arg_str("id") {
+            Some(_) => r.generic(ctx, object),
+            None => Ok(Output::object_or_null(
+                default_location(r.state()).map(|location| Obj::record(&location)),
+            )),
+        })
+        .field("Location", "isPrimary", |r, _ctx, object| {
+            let primary = default_location(r.state());
+            Ok(Output::value(
+                object.key().is_some() && object.key() == primary.as_deref(),
+            ))
+        });
 }
 
 /// The variants of a product record.
