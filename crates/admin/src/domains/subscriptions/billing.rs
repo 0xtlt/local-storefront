@@ -22,7 +22,8 @@
 //!   discount allocations, the delivery method's address and price less its discounts, the tax
 //!   at the store data's rate, `sourceName: subscription_contract`, the line items' selling
 //!   plans, a sale of the total through the method's gateway; the stock is committed at the
-//!   shop's first location, as an order that claims inventory does. Then `orders/create`,
+//!   location that can give every line (`orders::model::fulfilling_location`), as an order that
+//!   claims inventory does. Then `orders/create`,
 //!   `order_transactions/create` and `tender_transactions/create`, `orders/paid`, and
 //!   `subscription_billing_attempts/success`.
 //!   The contract's `orders` list it, `lastPaymentStatus` is `SUCCEEDED`, each discount that
@@ -159,8 +160,23 @@ fn billed_contract(
     (contract.to_string(), index, billed, members)
 }
 
+/// Where the order of a billed contract is fulfilled from: where every line can come from
+/// (`orders::model::fulfilling_location`).
+fn location_for(state: &ShopState, billed: &Record) -> Option<String> {
+    let wanted: Vec<(String, i64)> = lines(billed)
+        .iter()
+        .filter_map(|line| {
+            Some((
+                line.get("variantId")?.as_str()?.to_string(),
+                line.get("quantity").and_then(Value::as_i64).unwrap_or(0),
+            ))
+        })
+        .collect();
+    orders_model::fulfilling_location(state, &wanted)
+}
+
 /// The variants of the lines that lack stock: tracked, not sold when out of stock, and with
-/// less available at the shop's location than the line takes (a bundle: one of its components,
+/// less available at the attempt's location than the line takes (a bundle: one of its components,
 /// `orders::model::short_parts`).
 fn short_variants(state: &ShopState, billed: &Record, location: Option<&str>) -> Vec<String> {
     lines(billed)
@@ -565,7 +581,7 @@ pub fn attempt(state: &mut ShopState, spec: &AttemptSpec<'_>) -> String {
         "lsfMembers": members.iter().map(|(contract, index)| json!({"contract": contract, "index": index})).collect::<Vec<_>>(),
         "lsfOversell": spec.oversell,
     }));
-    let location = state.keys("Location").next().map(str::to_string);
+    let location = location_for(state, &billed);
     let short = if spec.oversell {
         Vec::new()
     } else {
@@ -809,7 +825,7 @@ pub fn complete_challenge(
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let (_, _, billed, _) = billed_contract(state, &anchor, index);
-        let location = state.keys("Location").next().map(str::to_string);
+        let location = location_for(state, &billed);
         let oversell = record
             .get("lsfOversell")
             .and_then(Value::as_bool)

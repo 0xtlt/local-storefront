@@ -743,6 +743,11 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
   took nothing (of the store data or the checkout) ships and restocks without moving the stock. A variant an order
   sells out is out of stock as after an inventory mutation: `availableForSale` is `false`,
   `variants/out_of_stock` is sent, and the storefront shows it sold out.
+- Where an order that names no location fulfills from (`orderCreate` without
+  `fulfillment.locationId`, a completed draft order, a subscription's billing): Shopify does not
+  document it for these orders. lsf takes the shop's primary location (`location` without an id)
+  when it can give every line, else the first active location that can, else the primary one,
+  where `DECREMENT_OBEYING_POLICY` and billing then find the stock short.
 - `orderCreate`'s `discountCode` makes a `DiscountCodeApplication` (its `value` as the
   reference's examples answer it) and the allocations on the lines (an amount off the order is
   spread over them by their totals) or on the shipping line. Its `allocationMethod`,

@@ -1724,28 +1724,25 @@ fn a_variant_short_of_stock_fails_the_attempt_unless_overselling() {
         .as_str()
         .unwrap()
         .to_string();
-    let location = shop.keys("Location").next().unwrap().to_string();
-    let level = crate::domains::catalog::gids(shop.get(&item).unwrap().get("inventoryLevels"))
-        .into_iter()
-        .find(|level| shop.get(level).unwrap()["location"] == json!(location))
-        .unwrap();
-    // One left where the order would commit two.
-    let quantities = shop.get(&level).unwrap()["quantities"].clone();
-    let one: Vec<Value> = quantities
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|quantity| {
-            let mut quantity = quantity.clone();
-            if ["available", "on_hand"].contains(&quantity["name"].as_str().unwrap()) {
-                quantity["quantity"] = json!(1);
-            }
-            quantity
-        })
-        .collect();
-    shop.get_mut(&level)
-        .unwrap()
-        .insert("quantities".into(), json!(one));
+    // One left at every location, where the order would commit two.
+    for level in crate::domains::catalog::gids(shop.get(&item).unwrap().get("inventoryLevels")) {
+        let quantities = shop.get(&level).unwrap()["quantities"].clone();
+        let one: Vec<Value> = quantities
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|quantity| {
+                let mut quantity = quantity.clone();
+                if ["available", "on_hand"].contains(&quantity["name"].as_str().unwrap()) {
+                    quantity["quantity"] = json!(1);
+                }
+                quantity
+            })
+            .collect();
+        shop.get_mut(&level)
+            .unwrap()
+            .insert("quantities".into(), json!(one));
+    }
     shop.get_mut(&item)
         .unwrap()
         .insert("tracked".into(), json!(true));
@@ -1773,6 +1770,76 @@ fn a_variant_short_of_stock_fails_the_attempt_unless_overselling() {
     assert_eq!(
         read["data"]["subscriptionBillingAttempt"]["state"]["__typename"],
         json!("SubscriptionBillingAttemptSuccessState")
+    );
+}
+
+/// Billing takes the stock where it is: the primary location has none of the variant, another
+/// active location has it, and the attempt succeeds and commits there.
+#[test]
+fn a_billing_attempt_commits_at_the_location_that_has_the_stock() {
+    let mut shop = shop();
+    let method = card(&mut shop, "4242424242424242");
+    let id = contract(&mut shop, Some(&method));
+    let variant = variant(&shop);
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.get_mut(&item)
+        .unwrap()
+        .insert("tracked".into(), json!(true));
+    shop.get_mut(&variant)
+        .unwrap()
+        .insert("inventoryPolicy".into(), json!("DENY"));
+    let primary = crate::domains::catalog::default_location(&shop).unwrap();
+    let levels = crate::domains::catalog::gids(shop.get(&item).unwrap().get("inventoryLevels"));
+    let location_of = |shop: &ShopState, level: &str| shop.get(level).unwrap()["location"].clone();
+    let (empty, stocked): (Vec<String>, Vec<String>) = levels
+        .into_iter()
+        .partition(|level| location_of(&shop, level) == json!(primary));
+    assert!(!empty.is_empty() && !stocked.is_empty(), "two levels");
+    let other = location_of(&shop, &stocked[0])
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (level, units) in [(&empty[0], 0), (&stocked[0], 30)] {
+        let quantities: Vec<Value> = shop.get(level).unwrap()["quantities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|quantity| {
+                let mut quantity = quantity.clone();
+                if ["available", "on_hand"].contains(&quantity["name"].as_str().unwrap()) {
+                    quantity["quantity"] = json!(units);
+                }
+                quantity
+            })
+            .collect();
+        shop.get_mut(level)
+            .unwrap()
+            .insert("quantities".into(), json!(quantities));
+    }
+    at(&mut shop, "2026-02-15T12:00:00Z");
+    let (_, attempt) = bill(&mut shop, &id, "stocked");
+    assert_eq!(
+        attempt["state"]["__typename"],
+        json!("SubscriptionBillingAttemptSuccessState"),
+        "{attempt:#}"
+    );
+    let quantity = |shop: &ShopState, location: &str, name: &str| {
+        crate::domains::orders::model::inventory_quantity(shop, &item, Some(location), name)
+    };
+    assert_eq!(quantity(&shop, &other, "committed"), 2);
+    assert_eq!(quantity(&shop, &other, "available"), 28);
+    assert_eq!(quantity(&shop, &primary, "available"), 0);
+    let order = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 1) { nodes { assignedLocation { location { id } } } } } }",
+        json!({"id": attempt["order"]["id"]}),
+    );
+    assert_eq!(
+        order["data"]["order"]["fulfillmentOrders"]["nodes"][0]["assignedLocation"]["location"]["id"],
+        json!(other)
     );
 }
 

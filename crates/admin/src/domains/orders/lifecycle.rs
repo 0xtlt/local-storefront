@@ -890,7 +890,19 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             );
             None
         }
-        None => state.keys("Location").next().map(str::to_string),
+        // Where every line can come from (`model::fulfilling_location`).
+        None => {
+            let lines: Vec<(String, i64)> = array(&input, "lineItems")
+                .iter()
+                .filter_map(|item| {
+                    Some((
+                        item.get("variantId")?.as_str()?.to_string(),
+                        item.get("quantity")?.as_i64()?,
+                    ))
+                })
+                .collect();
+            model::fulfilling_location(state, &lines)
+        }
     };
 
     // The lines.

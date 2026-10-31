@@ -1207,7 +1207,9 @@ records, so both are the same shape.
   `MoneyBag`s before and after discounts, `requiresShipping`, `taxable`, `isGiftCard`,
   `product`, `variant`, `image`, `weight`, `customAttributes`. The price is the variant's in the
   data (it has no price of its own for an order).
-- **`FulfillmentOrder`** (every order has one, at the first location): `status` (`OPEN`,
+- **`FulfillmentOrder`** (every order has one, at the order's location: for the seed's, the
+  first; for an order the Admin API makes without one, `model::fulfilling_location`, the primary
+  location when it can give every line, else the first active one that can): `status` (`OPEN`,
   `IN_PROGRESS` when partly fulfilled, `CLOSED`, `CANCELLED`), `requestStatus: UNSUBMITTED`,
   `assignedLocation`, `destination` (the shipping address), `deliveryMethod`, `lineItems`
   (`FulfillmentOrderLineItem`: `totalQuantity`, `remainingQuantity`, …), `fulfillments`.

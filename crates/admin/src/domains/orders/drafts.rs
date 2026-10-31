@@ -1224,6 +1224,14 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             }
         });
     let included = record.get("taxesIncluded").and_then(Value::as_bool) == Some(true);
+    // Where every line can come from (`model::fulfilling_location`).
+    let location = model::fulfilling_location(
+        state,
+        &line_drafts
+            .iter()
+            .filter_map(|line| Some((line.variant.clone()?, i64::from(line.quantity))))
+            .collect::<Vec<_>>(),
+    );
     let draft = OrderDraft {
         id: order_id.clone(),
         name: format!("#{number}"),
@@ -1275,7 +1283,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         gateway: None,
         source_name: Some(source),
         returns: Vec::new(),
-        location: state.keys("Location").next().map(str::to_string),
+        location,
         presentment: None,
     };
     let order = super::insert_order(state, &draft);

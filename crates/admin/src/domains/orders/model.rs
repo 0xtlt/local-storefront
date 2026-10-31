@@ -1124,6 +1124,54 @@ pub fn short_parts(
         .collect()
 }
 
+/// The location an order fulfills from when it names none: `orderCreate` without
+/// `fulfillment.locationId`, a draft order completed, a subscription's billing. Shopify
+/// documents no rule for these orders (its order routing is the checkout's): lsf takes the
+/// shop's primary location (`location` without an id: the first active one) when it can give
+/// every line its units, else the first active location that can, else the primary one (where
+/// `DECREMENT_OBEYING_POLICY` and billing then find the stock short). A location can give a
+/// line when it stocks each tracked part of it ([`stock_parts`]) and has the units of those that
+/// do not sell when out of stock ([`short_parts`]). Fulfillment services' locations come last.
+pub fn fulfilling_location(state: &ShopState, lines: &[(String, i64)]) -> Option<String> {
+    let primary = catalog::default_location(state);
+    let mut candidates: Vec<String> = primary.iter().cloned().collect();
+    let mut services = Vec::new();
+    for location in state.keys("Location") {
+        if Some(location) == primary.as_deref() || !catalog::is_active_location(state, location) {
+            continue;
+        }
+        let service = text_of_bool(state, location, "isFulfillmentService");
+        if service {
+            services.push(location.to_string());
+        } else {
+            candidates.push(location.to_string());
+        }
+    }
+    candidates.extend(services);
+    let gives = |location: &str| {
+        lines.iter().all(|(variant, units)| {
+            stock_parts(state, variant).iter().all(|part| {
+                let tracked = text_of_bool(state, &part.item, "tracked");
+                !tracked || inventory_level(state, &part.item, Some(location)).is_some()
+            }) && short_parts(state, variant, Some(location), *units).is_empty()
+        })
+    };
+    candidates
+        .iter()
+        .find(|location| gives(location))
+        .cloned()
+        .or(primary)
+}
+
+/// A boolean field of a record, by key (`false` when absent).
+fn text_of_bool(state: &ShopState, key: &str, field: &str) -> bool {
+    state
+        .get(key)
+        .and_then(|record| record.get(field))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 /// The parts a line item takes from the stock: those it recorded (a bundle's components when
 /// it committed them), else what its variant takes now.
 fn line_parts(state: &ShopState, line: &str) -> Vec<StockPart> {

@@ -2589,3 +2589,76 @@ fn a_bundle_sold_takes_its_components_stock() {
         json!(socks_available - 2)
     );
 }
+
+/// `orderCreate` without a location fulfills from where every line can come from: the primary
+/// location when it can, else another active location.
+#[test]
+fn an_order_without_a_location_takes_the_stock_where_it_is() {
+    let mut shop = demo();
+    let primary = crate::domains::catalog::default_location(&shop).unwrap();
+    // A variant stocked at the primary location and at another one.
+    let (variant, item, other) = shop
+        .keys("ProductVariant")
+        .find_map(|variant| {
+            let item = shop.get(variant)?["inventoryItem"].as_str()?.to_string();
+            let levels = crate::domains::catalog::gids(shop.get(&item)?.get("inventoryLevels"));
+            let other = levels.iter().find_map(|level| {
+                let location = shop.get(level)?["location"].as_str()?;
+                (location != primary).then(|| location.to_string())
+            })?;
+            (levels.len() > 1).then(|| (variant.to_string(), item, other))
+        })
+        .expect("a variant at two locations");
+    shop.get_mut(&item)
+        .unwrap()
+        .insert("tracked".into(), json!(true));
+    shop.get_mut(&variant)
+        .unwrap()
+        .insert("inventoryPolicy".into(), json!("DENY"));
+    let set = |shop: &mut ShopState, location: &str, units: i64| {
+        let level = crate::domains::catalog::level_at(shop, &item, location).unwrap();
+        let record = shop.get_mut(&level).unwrap();
+        for quantity in record["quantities"].as_array_mut().unwrap() {
+            if ["available", "on_hand"].contains(&quantity["name"].as_str().unwrap()) {
+                quantity["quantity"] = json!(units);
+            }
+        }
+    };
+    set(&mut shop, &primary, 0);
+    set(&mut shop, &other, 5);
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 2}]},
+            "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    assert_eq!(
+        model::inventory_quantity(&shop, &item, Some(&other), "committed"),
+        2
+    );
+    assert_eq!(
+        model::inventory_quantity(&shop, &item, Some(&primary), "available"),
+        0
+    );
+    // Short everywhere: the primary location, and the claim fails.
+    let refused = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 4}]},
+            "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        refused["data"]["orderCreate"]["userErrors"][0]["code"],
+        json!("INVENTORY_CLAIM_FAILED"),
+        "{refused}"
+    );
+}
