@@ -1242,3 +1242,594 @@ fn delivery_promises_settings_and_packages() {
     );
     assert!(super::delivery::packages(&shop).is_empty());
 }
+
+/// Runs a mutation expected to refuse its input: its user errors' codes, the shop unchanged.
+fn refused(shop: &mut ShopState, query: &str, variables: Value, name: &str) -> Vec<String> {
+    let before = shop.picture();
+    let answer = run(shop, query, variables);
+    assert_eq!(shop.picture(), before, "{name} changed the shop: {answer}");
+    let errors = answer["data"][name]["userErrors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!errors.is_empty(), "{name} refused nothing: {answer}");
+    errors
+        .iter()
+        .map(|error| {
+            error["code"]
+                .as_str()
+                .or(error["message"].as_str())
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
+}
+
+/// Runs a mutation expected to succeed: its payload.
+fn done(shop: &mut ShopState, query: &str, variables: Value, name: &str) -> Value {
+    let answer = run(shop, query, variables);
+    let payload = answer["data"][name].clone();
+    assert_eq!(payload["userErrors"], json!([]), "{name}: {answer}");
+    payload
+}
+
+#[test]
+fn a_transfer_is_edited_given_items_duplicated_and_deleted() {
+    let mut shop = rich();
+    let (paris, berlin) = locations(&shop);
+    let red = item_of(&shop, "DRESS-S-RED");
+    let floral = item_of(&shop, "DRESS-M-FLO");
+    let created = done(
+        &mut shop,
+        CREATE,
+        json!({"input": {"originLocationId": paris, "destinationLocationId": berlin,
+            "lineItems": [{"inventoryItemId": red, "quantity": 2}]}}),
+        "inventoryTransferCreate",
+    );
+    let transfer = created["inventoryTransfer"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    shop.take_events();
+
+    let edit = "mutation($id: ID!, $input: InventoryTransferEditInput!) { inventoryTransferEdit(id: $id, input: $input) {
+        inventoryTransfer { referenceName note tags dateCreated destination { location { id } } } userErrors { field message code } } }";
+    let edited = done(
+        &mut shop,
+        edit,
+        json!({"id": transfer, "input": {"referenceName": "PO-7", "note": "Fragile", "tags": ["spring"], "dateCreated": "2026-03-01"}}),
+        "inventoryTransferEdit",
+    );
+    assert_eq!(edited["inventoryTransfer"]["referenceName"], "PO-7");
+    assert_eq!(
+        edited["inventoryTransfer"]["dateCreated"],
+        "2026-03-01T00:00:00Z"
+    );
+    assert_eq!(
+        last_payload(&mut shop, "inventory_transfers/updated")["id"],
+        json!(transfer)
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            edit,
+            json!({"id": transfer, "input": {"originId": berlin, "destinationId": berlin}}),
+            "inventoryTransferEdit"
+        ),
+        ["TRANSFER_ORIGIN_CANNOT_BE_THE_SAME_AS_DESTINATION"]
+    );
+
+    let set = "mutation($input: InventoryTransferSetItemsInput!) { inventoryTransferSetItems(input: $input) @idempotent(key: $key) {
+        updatedLineItems { inventoryItemId newQuantity deltaQuantity } userErrors { field message code } } }";
+    let set = |key: &str| set.replace("$key", &format!("\"{key}\""));
+    let answer = done(
+        &mut shop,
+        &set("a"),
+        json!({"input": {"id": transfer, "lineItems": [{"inventoryItemId": red, "quantity": 3}, {"inventoryItemId": floral, "quantity": 0}]}}),
+        "inventoryTransferSetItems",
+    );
+    assert_eq!(
+        answer["updatedLineItems"],
+        json!([{"inventoryItemId": red, "newQuantity": 3, "deltaQuantity": 1}, {"inventoryItemId": floral, "newQuantity": 0, "deltaQuantity": 0}])
+    );
+    let events = shop.take_events();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.topic == "inventory_transfers/update_item_quantities")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.topic == "inventory_transfers/add_items")
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            &set("b"),
+            json!({"input": {"id": transfer, "lineItems": [{"inventoryItemId": red, "quantity": 1}, {"inventoryItemId": red, "quantity": 2}]}}),
+            "inventoryTransferSetItems"
+        ),
+        ["DUPLICATE_ITEM"]
+    );
+
+    // Ready to ship: 3 committed; 0 is no longer a quantity, the origin no longer moves.
+    done(
+        &mut shop,
+        "mutation($id: ID!) { inventoryTransferMarkAsReadyToShip(id: $id) { inventoryTransfer { id } userErrors { code } } }",
+        json!({"id": transfer}),
+        "inventoryTransferMarkAsReadyToShip",
+    );
+    assert_eq!(levels(&shop, &red, &paris), [1, 3, 0, 4]);
+    assert_eq!(
+        refused(
+            &mut shop,
+            &set("c"),
+            json!({"input": {"id": transfer, "lineItems": [{"inventoryItemId": red, "quantity": 0}]}}),
+            "inventoryTransferSetItems"
+        ),
+        ["INVALID_QUANTITY"]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            edit,
+            json!({"id": transfer, "input": {"originId": berlin}}),
+            "inventoryTransferEdit"
+        ),
+        ["TRANSFER_LOCATION_IMMUTABLE"]
+    );
+    // Reduced to 2 on a ready-to-ship transfer: one unit back to available.
+    done(
+        &mut shop,
+        &set("d"),
+        json!({"input": {"id": transfer, "lineItems": [{"inventoryItemId": red, "quantity": 2}]}}),
+        "inventoryTransferSetItems",
+    );
+    assert_eq!(levels(&shop, &red, &paris), [2, 2, 0, 4]);
+
+    let lines: Vec<String> =
+        crate::domains::catalog::gids(shop.get(&transfer).unwrap().get("lineItems"));
+    let floral_line = lines
+        .iter()
+        .find(|line| shop.get(line).unwrap()["inventoryItem"] == json!(floral))
+        .unwrap()
+        .clone();
+    let red_line = lines
+        .iter()
+        .find(|line| **line != floral_line)
+        .unwrap()
+        .clone();
+    let remove = "mutation($input: InventoryTransferRemoveItemsInput!) { inventoryTransferRemoveItems(input: $input) {
+        removedQuantities { inventoryItemId deltaQuantity newQuantity } userErrors { field message code } } }";
+    let answer = done(
+        &mut shop,
+        remove,
+        json!({"input": {"id": transfer, "transferLineItemIds": [floral_line]}}),
+        "inventoryTransferRemoveItems",
+    );
+    assert_eq!(
+        answer["removedQuantities"][0]["inventoryItemId"],
+        json!(floral)
+    );
+    assert_eq!(
+        last_payload(&mut shop, "inventory_transfers/remove_items")["items_removed"],
+        json!([{"line_item_id": floral_line}])
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            remove,
+            json!({"input": {"id": transfer, "transferLineItemIds": [red_line]}}),
+            "inventoryTransferRemoveItems"
+        ),
+        ["CANT_REMOVE_ALL_ITEMS_FROM_READY_TO_SHIP_TRANSFER"]
+    );
+
+    // Duplicated: a draft of the same items, nothing committed.
+    let duplicate =
+        "mutation($id: ID!) { inventoryTransferDuplicate(id: $id) @idempotent(key: $id) {
+        inventoryTransfer { id status totalQuantity } userErrors { field message code } } }";
+    let duplicate = duplicate.replace("@idempotent(key: $id)", "@idempotent(key: \"dup\")");
+    let copy = done(
+        &mut shop,
+        &duplicate,
+        json!({"id": transfer}),
+        "inventoryTransferDuplicate",
+    );
+    assert_eq!(copy["inventoryTransfer"]["status"], "DRAFT");
+    assert_eq!(copy["inventoryTransfer"]["totalQuantity"], 2);
+    assert_eq!(levels(&shop, &red, &paris), [2, 2, 0, 4]);
+    assert_eq!(
+        refused(
+            &mut shop,
+            &duplicate.replace("\"dup\"", "\"dup-2\""),
+            json!({"id": "gid://shopify/InventoryTransfer/999"}),
+            "inventoryTransferDuplicate"
+        ),
+        ["TRANSFER_NOT_FOUND"]
+    );
+    // The same key with the same arguments answers the first answer again, and makes nothing.
+    let count = shop.count("InventoryTransfer");
+    let again = done(
+        &mut shop,
+        &duplicate,
+        json!({"id": transfer}),
+        "inventoryTransferDuplicate",
+    );
+    assert_eq!(
+        again["inventoryTransfer"]["id"],
+        copy["inventoryTransfer"]["id"]
+    );
+    assert_eq!(shop.count("InventoryTransfer"), count);
+
+    let delete = "mutation($id: ID!) { inventoryTransferDelete(id: $id) { deletedId userErrors { field message code } } }";
+    assert_eq!(
+        refused(
+            &mut shop,
+            delete,
+            json!({"id": transfer}),
+            "inventoryTransferDelete"
+        ),
+        ["INVALID_TRANSFER_STATUS"]
+    );
+    let copy_id = copy["inventoryTransfer"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let deleted = done(
+        &mut shop,
+        delete,
+        json!({"id": copy_id}),
+        "inventoryTransferDelete",
+    );
+    assert_eq!(deleted["deletedId"], json!(copy_id));
+    assert!(shop.get(&copy_id).is_none());
+}
+
+#[test]
+fn a_shipment_is_drafted_changed_tracked_shipped_and_deleted() {
+    let mut shop = rich();
+    let (paris, berlin) = locations(&shop);
+    let red = item_of(&shop, "DRESS-S-RED");
+    let answer = run(
+        &mut shop,
+        "mutation($input: InventoryTransferCreateAsReadyToShipInput!) {
+          inventoryTransferCreateAsReadyToShip(input: $input) @idempotent(key: \"r\") { inventoryTransfer { id } userErrors { code } } }",
+        json!({"input": {"originLocationId": paris, "destinationLocationId": berlin, "lineItems": [{"inventoryItemId": red, "quantity": 3}]}}),
+    );
+    let transfer =
+        answer["data"]["inventoryTransferCreateAsReadyToShip"]["inventoryTransfer"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let create = "mutation($input: InventoryShipmentCreateInput!) { inventoryShipmentCreate(input: $input) @idempotent(key: $key) {
+        inventoryShipment { id status lineItems(first: 5) { nodes { id quantity } } } userErrors { field message code } } }";
+    let create = |key: &str| create.replace("$key", &format!("\"{key}\""));
+    let shipment = done(
+        &mut shop,
+        &create("a"),
+        json!({"input": {"movementId": transfer, "lineItems": [{"inventoryItemId": red, "quantity": 1}]}}),
+        "inventoryShipmentCreate",
+    );
+    let id = shipment["inventoryShipment"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(shipment["inventoryShipment"]["status"], "DRAFT");
+    // A draft moves nothing: the units are picked.
+    assert_eq!(levels(&shop, &red, &paris), [1, 3, 0, 4]);
+    let line_of_transfer =
+        crate::domains::catalog::gids(shop.get(&transfer).unwrap().get("lineItems"))[0].clone();
+    assert_eq!(
+        shop.get(&line_of_transfer).unwrap()["pickedForShipmentQuantity"],
+        1
+    );
+    assert_eq!(
+        last_payload(&mut shop, "inventory_shipments/create")["status"],
+        "DRAFT"
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            &create("b"),
+            json!({"input": {"movementId": "gid://shopify/InventoryTransfer/9", "lineItems": []}}),
+            "inventoryShipmentCreate"
+        ),
+        ["TRANSFER_NOT_FOUND"]
+    );
+
+    let add = "mutation($id: ID!, $lines: [InventoryShipmentLineItemInput!]!) { inventoryShipmentAddItems(id: $id, lineItems: $lines) @idempotent(key: $key) {
+        addedItems { id quantity } userErrors { field message code } } }";
+    let add = |key: &str| add.replace("$key", &format!("\"{key}\""));
+    let added = done(
+        &mut shop,
+        &add("a"),
+        json!({"id": id, "lines": [{"inventoryItemId": red, "quantity": 1}]}),
+        "inventoryShipmentAddItems",
+    );
+    assert_eq!(added["addedItems"][0]["quantity"], 2);
+    let line = added["addedItems"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        last_payload(&mut shop, "inventory_shipments/add_items")["items_added"],
+        json!([{"id": line, "quantity": 1}])
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            &add("b"),
+            json!({"id": id, "lines": [{"inventoryItemId": red, "quantity": 5}]}),
+            "inventoryShipmentAddItems"
+        ),
+        ["INVALID_QUANTITY"]
+    );
+
+    let update = "mutation($id: ID!, $items: [InventoryShipmentUpdateItemQuantitiesInput!]) { inventoryShipmentUpdateItemQuantities(id: $id, items: $items) {
+        updatedLineItems { id quantity } userErrors { field message code } } }";
+    let updated = done(
+        &mut shop,
+        update,
+        json!({"id": id, "items": [{"shipmentLineItemId": line, "quantity": 1}]}),
+        "inventoryShipmentUpdateItemQuantities",
+    );
+    assert_eq!(updated["updatedLineItems"][0]["quantity"], 1);
+    assert_eq!(
+        last_payload(&mut shop, "inventory_shipments/update_item_quantities")["items_updated"],
+        json!([{"id": line, "old_quantity": 2, "new_quantity": 1}])
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            update,
+            json!({"id": id, "items": [{"shipmentLineItemId": line, "quantity": 0}]}),
+            "inventoryShipmentUpdateItemQuantities"
+        ),
+        ["INVALID_QUANTITY"]
+    );
+
+    let barcode = "mutation($id: ID!, $barcode: String!) { inventoryShipmentSetBarcode(id: $id, barcode: $barcode) { inventoryShipment { barcode } userErrors { field message code } } }";
+    assert_eq!(
+        done(
+            &mut shop,
+            barcode,
+            json!({"id": id, "barcode": "BOX-1"}),
+            "inventoryShipmentSetBarcode"
+        )["inventoryShipment"]["barcode"],
+        "BOX-1"
+    );
+    let other = done(
+        &mut shop,
+        &create("c"),
+        json!({"input": {"movementId": transfer, "lineItems": [{"inventoryItemId": red, "quantity": 1}]}}),
+        "inventoryShipmentCreate",
+    )["inventoryShipment"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        refused(
+            &mut shop,
+            barcode,
+            json!({"id": other, "barcode": "BOX-1"}),
+            "inventoryShipmentSetBarcode"
+        ),
+        ["BARCODE_DUPLICATE"]
+    );
+
+    let tracking = "mutation($id: ID!, $tracking: InventoryShipmentTrackingInput!) { inventoryShipmentSetTracking(id: $id, tracking: $tracking) {
+        inventoryShipment { tracking { company trackingNumber trackingUrl arrivesAt } } userErrors { field message code } } }";
+    done(
+        &mut shop,
+        tracking,
+        json!({"id": id, "tracking": {"company": "DHL", "trackingNumber": "42", "trackingUrl": "https://example.com/42", "arrivesAt": "2026-04-02T09:00:00Z"}}),
+        "inventoryShipmentSetTracking",
+    );
+    let payload = last_payload(&mut shop, "inventory_shipments/update_tracking");
+    assert_eq!(payload["shipment_id"], json!(id));
+    assert_eq!(payload["updated_tracking"]["tracking_number"], "42");
+    assert_eq!(
+        refused(
+            &mut shop,
+            tracking,
+            json!({"id": id, "tracking": {"trackingUrl": "ftp://example.com/42"}}),
+            "inventoryShipmentSetTracking"
+        ),
+        ["INVALID_URL"]
+    );
+
+    // The other draft: its line removed, then itself deleted.
+    let other_line =
+        crate::domains::catalog::gids(shop.get(&other).unwrap().get("lineItems"))[0].clone();
+    let remove = "mutation($id: ID!, $lines: [ID!]!) { inventoryShipmentRemoveItems(id: $id, lineItems: $lines) { inventoryShipment { lineItemTotalQuantity } userErrors { field message code } } }";
+    assert_eq!(
+        refused(
+            &mut shop,
+            remove,
+            json!({"id": other, "lines": ["gid://shopify/InventoryShipmentLineItem/9"]}),
+            "inventoryShipmentRemoveItems"
+        ),
+        ["ITEM_NOT_FOUND"]
+    );
+    let removed = done(
+        &mut shop,
+        remove,
+        json!({"id": other, "lines": [other_line]}),
+        "inventoryShipmentRemoveItems",
+    );
+    assert_eq!(removed["inventoryShipment"]["lineItemTotalQuantity"], 0);
+    let delete = "mutation($id: ID!) { inventoryShipmentDelete(id: $id) { id userErrors { field message code } } }";
+    assert_eq!(
+        done(
+            &mut shop,
+            delete,
+            json!({"id": other}),
+            "inventoryShipmentDelete"
+        )["id"],
+        json!(other)
+    );
+    assert_eq!(
+        last_payload(&mut shop, "inventory_shipments/delete")["id"],
+        json!(other)
+    );
+
+    // In transit: one unit out of Paris, incoming in Berlin; then it cannot be shipped again or
+    // deleted, and reducing it to nothing is refused.
+    let mark = "mutation($id: ID!) { inventoryShipmentMarkInTransit(id: $id, dateShipped: \"2026-03-20T08:00:00Z\") { inventoryShipment { status dateShipped } userErrors { field message code } } }";
+    let marked = done(
+        &mut shop,
+        mark,
+        json!({"id": id}),
+        "inventoryShipmentMarkInTransit",
+    );
+    assert_eq!(
+        marked["inventoryShipment"]["dateShipped"],
+        "2026-03-20T08:00:00Z"
+    );
+    assert_eq!(levels(&shop, &red, &paris), [1, 2, 0, 3]);
+    assert_eq!(levels(&shop, &red, &berlin), [3, 0, 1, 3]);
+    assert_eq!(
+        refused(
+            &mut shop,
+            mark,
+            json!({"id": id}),
+            "inventoryShipmentMarkInTransit"
+        ),
+        ["INVALID_SHIPMENT_STATUS"]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            delete,
+            json!({"id": id}),
+            "inventoryShipmentDelete"
+        ),
+        ["INVALID_SHIPMENT_STATUS"]
+    );
+    // Two units more on the shipment in transit; then back to one: the unit comes back,
+    // committed again for the transfer.
+    done(
+        &mut shop,
+        &add("c"),
+        json!({"id": id, "lines": [{"inventoryItemId": red, "quantity": 2}]}),
+        "inventoryShipmentAddItems",
+    );
+    assert_eq!(levels(&shop, &red, &paris), [1, 0, 0, 1]);
+    assert_eq!(levels(&shop, &red, &berlin), [3, 0, 3, 3]);
+    done(
+        &mut shop,
+        update,
+        json!({"id": id, "items": [{"shipmentLineItemId": line, "quantity": 2}]}),
+        "inventoryShipmentUpdateItemQuantities",
+    );
+    assert_eq!(levels(&shop, &red, &paris), [1, 1, 0, 2]);
+    assert_eq!(levels(&shop, &red, &berlin), [3, 0, 2, 3]);
+
+    let receive = "mutation($id: ID!, $line: ID!, $quantity: Int!) { inventoryShipmentReceive(id: $id, lineItems: [{shipmentLineItemId: $line, quantity: $quantity, reason: ACCEPTED}]) @idempotent(key: \"x\") {
+        inventoryShipment { status } userErrors { field message code } } }";
+    assert_eq!(
+        refused(
+            &mut shop,
+            receive,
+            json!({"id": id, "line": line, "quantity": 3}),
+            "inventoryShipmentReceive"
+        ),
+        ["INVALID_QUANTITY"]
+    );
+}
+
+#[test]
+fn the_other_mutations_refuse_what_they_cannot_do_and_change_nothing() {
+    let mut shop = rich();
+    let (_, fo) = order_with_stock(&mut shop);
+    let (_, other) = order_with_stock(&mut shop);
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation($inputs: [FulfillmentOrderMergeInput!]!) { fulfillmentOrderMerge(fulfillmentOrderMergeInputs: $inputs) { fulfillmentOrderMerges { fulfillmentOrder { id } } userErrors { field message code } } }",
+            json!({"inputs": [{"mergeIntents": [{"fulfillmentOrderId": fo}, {"fulfillmentOrderId": other}]}]}),
+            "fulfillmentOrderMerge",
+        ),
+        [
+            "The fulfillment orders to merge must be at least two, of the same order and location, with the same delivery method."
+        ]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation { carrierServiceDelete(id: \"gid://shopify/DeliveryCarrierService/9\") { deletedId userErrors { field message code } } }",
+            json!({}),
+            "carrierServiceDelete",
+        ),
+        ["CARRIER_SERVICE_DELETE_FAILED"]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation { carrierServiceUpdate(input: {id: \"gid://shopify/DeliveryCarrierService/9\", name: \"x\"}) { carrierService { id } userErrors { field message code } } }",
+            json!({}),
+            "carrierServiceUpdate",
+        ),
+        ["CARRIER_SERVICE_UPDATE_FAILED"]
+    );
+    for mutation in [
+        "fulfillmentConstraintRuleDelete(id: \"gid://shopify/FulfillmentConstraintRule/9\") { success",
+        "fulfillmentConstraintRuleUpdate(id: \"gid://shopify/FulfillmentConstraintRule/9\", deliveryMethodTypes: [SHIPPING]) { fulfillmentConstraintRule { id }",
+    ] {
+        let name = &mutation[..mutation.find('(').unwrap()];
+        assert_eq!(
+            refused(
+                &mut shop,
+                &format!("mutation {{ {mutation} userErrors {{ field message code }} }} }}"),
+                json!({}),
+                name
+            ),
+            ["NOT_FOUND"]
+        );
+    }
+    let general = super::profiles::general_profile_gid();
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation($id: ID!) { deliveryProfileUpdate(id: $id, profile: {locationGroupsToCreate: [{locationsToAdd: [\"gid://shopify/Location/9\"]}]}) { profile { id } userErrors { field message } } }",
+            json!({"id": general}),
+            "deliveryProfileUpdate",
+        ),
+        ["Location not found"]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation { deliveryPromiseParticipantsUpdate(brandedPromiseHandle: \"express\", ownersToAdd: [\"gid://shopify/Product/1\"]) { promiseParticipants { id } userErrors { field message } } }",
+            json!({}),
+            "deliveryPromiseParticipantsUpdate",
+        ),
+        ["Owner gid://shopify/Product/1 is not a product variant of the shop"]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation { shippingPackageUpdate(id: \"gid://shopify/ShippingPackage/1\", shippingPackage: {name: \" \"}) { userErrors { field message } } }",
+            json!({}),
+            "shippingPackageUpdate",
+        ),
+        ["Name can't be blank"]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation { shippingPackageDelete(id: \"gid://shopify/ShippingPackage/2\") { deletedId userErrors { field message } } }",
+            json!({}),
+            "shippingPackageDelete",
+        ),
+        ["Shipping package not found."]
+    );
+    assert_eq!(
+        refused(
+            &mut shop,
+            "mutation { deliveryProfileRemove(id: \"gid://shopify/DeliveryProfile/9\") { job { id } userErrors { field message } } }",
+            json!({}),
+            "deliveryProfileRemove",
+        ),
+        ["Profile could not be found"]
+    );
+}

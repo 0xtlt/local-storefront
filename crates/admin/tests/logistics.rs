@@ -204,13 +204,29 @@ fn the_general_profiles_rates_are_the_checkouts_shipping_rates() {
     let mut shop = ShopState::seeded(&store, None);
     // Another profile's rates, a transfer, a carrier service: nothing for the checkout.
     exercise(&mut shop);
-    let overlay = sync::overlay(&shop, &store);
-    assert!(
-        overlay
-            .as_ref()
-            .is_none_or(|overlay| overlay.data.get("checkout").is_none()),
-        "{overlay:#?}"
+    let overlay = sync::overlay(&shop, &store).expect("the stock moved");
+    assert!(overlay.data.get("checkout").is_none(), "{overlay:#?}");
+    // The storefront's stock is what the transfer, the shipment and the order left available.
+    let (moved, diagnostics) = load_with_overlays(
+        &DataSource::Directory(support::fixture("rich")),
+        &LoadOptions::default(),
+        std::slice::from_ref(&overlay),
     );
+    assert!(!diagnostics.has_errors(), "{diagnostics}");
+    let (_, item) = sku(&shop, "DRESS-S-RED");
+    let available: i64 =
+        lsf_admin::domains::catalog::gids(shop.get(&item).unwrap().get("inventoryLevels"))
+            .iter()
+            .map(|level| lsf_admin::domains::catalog::available_of(shop.get(level).unwrap()))
+            .sum();
+    let variant = moved
+        .products
+        .iter()
+        .flat_map(|product| &product.variants)
+        .find(|variant| variant.sku == "DRESS-S-RED")
+        .unwrap();
+    assert_eq!(variant.inventory_quantity, available);
+    assert_ne!(available, 7, "the stock did not move");
 
     let general = logistics::profiles::general_profile_gid();
     let profile = shop.get(&general).unwrap().clone();
