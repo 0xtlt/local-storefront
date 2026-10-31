@@ -88,10 +88,15 @@ async function main() {
     lsfBin,
     ["serve", "--theme", "theme", "--app", ".", "--app-url", appUrl, "--port", "0", "--static"],
     { cwd: appRoot, env: { ...process.env, LSF_APP_URL: undefined, LSF_CLIENT_SECRET: undefined } },
-    (text) => text.match(/^ready:\s+(http:\/\/127\.0\.0\.1:\d+)\//m),
+    // The banner's token line and its `ready:` line may come on different streams, in either
+    // order: wait for both.
+    (text) => {
+      const ready = text.match(/^ready:\s+(http:\/\/127\.0\.0\.1:\d+)\//m);
+      const token = text.match(/X-Shopify-Access-Token: (shpat_[0-9a-f]+)/);
+      return ready && token && { lsf: ready[1], token: token[1] };
+    },
   );
-  const lsf = lsfProcess.match[1];
-  const token = lsfProcess.log.join("").match(/X-Shopify-Access-Token: (shpat_[0-9a-f]+)/)[1];
+  const { lsf, token } = lsfProcess.match;
   let backendProcess;
   const stop = () => {
     for (const child of [backendProcess?.child, lsfProcess.child]) child?.kill("SIGTERM");
