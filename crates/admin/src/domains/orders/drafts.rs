@@ -29,9 +29,9 @@
 use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
+use super::TAX_RATE_SETTING;
 use super::model::{self, NewTransaction, array, field_cents, int, text};
 use super::{FinancialStatus, FulfillmentState, LineDraft, OrderDraft, ShippingDraft};
-use super::TAX_RATE_SETTING;
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
@@ -62,7 +62,13 @@ const NOT_SIMULATED: &[(&str, &str)] = &[
 ];
 
 /// A line of a draft as its record (or a calculated draft) holds it, before its id.
-fn line_value(state: &ShopState, input: &Value, currency: &str, path: &[&str], errors: &mut Vec<UserError>) -> Option<Map<String, Value>> {
+fn line_value(
+    state: &ShopState,
+    input: &Value,
+    currency: &str,
+    path: &[&str],
+    errors: &mut Vec<UserError>,
+) -> Option<Map<String, Value>> {
     let bag = |cents: i64| value::money_bag(cents, currency);
     let get = |name: &str| input.get(name).and_then(Value::as_str);
     let quantity = input.get("quantity").and_then(Value::as_i64).unwrap_or(0);
@@ -76,8 +82,16 @@ fn line_value(state: &ShopState, input: &Value, currency: &str, path: &[&str], e
     let price_input = input
         .get("priceOverride")
         .filter(|price| !price.is_null())
-        .or_else(|| input.get("originalUnitPriceWithCurrency").filter(|price| !price.is_null()))
-        .or_else(|| input.get("originalUnitPrice").filter(|price| !price.is_null()))
+        .or_else(|| {
+            input
+                .get("originalUnitPriceWithCurrency")
+                .filter(|price| !price.is_null())
+        })
+        .or_else(|| {
+            input
+                .get("originalUnitPrice")
+                .filter(|price| !price.is_null())
+        })
         .map(|price| model::cents(Some(price)));
     let mut line = Map::new();
     let unit;
@@ -95,8 +109,11 @@ fn line_value(state: &ShopState, input: &Value, currency: &str, path: &[&str], e
             };
             let product = text(variant_record, "product").and_then(|product| state.get(product));
             let item = text(variant_record, "inventoryItem").and_then(|item| state.get(item));
-            let variant_title = text(variant_record, "title").filter(|title| *title != "Default Title");
-            let title = product.and_then(|product| text(product, "title")).unwrap_or_default();
+            let variant_title =
+                text(variant_record, "title").filter(|title| *title != "Default Title");
+            let title = product
+                .and_then(|product| text(product, "title"))
+                .unwrap_or_default();
             unit = price_input.unwrap_or_else(|| field_cents(variant_record, "price"));
             line.extend(value::object(json!({
                 "title": title,
@@ -155,7 +172,9 @@ fn line_value(state: &ShopState, input: &Value, currency: &str, path: &[&str], e
         }
     }
     let original = unit * quantity;
-    let discount_input = input.get("appliedDiscount").filter(|discount| !discount.is_null());
+    let discount_input = input
+        .get("appliedDiscount")
+        .filter(|discount| !discount.is_null());
     let (discount, applied) = match discount_input {
         Some(discount) => {
             let (amount, applied) = applied_discount(discount, original, Some(quantity), currency);
@@ -205,7 +224,10 @@ fn applied_discount(input: &Value, base: i64, units: Option<i64>, currency: &str
                 .get("amountWithCurrency")
                 .or_else(|| input.get("amount"))
                 .filter(|amount| !amount.is_null())
-                .map_or_else(|| (value * 100.0).round() as i64, |amount| model::cents(Some(amount)));
+                .map_or_else(
+                    || (value * 100.0).round() as i64,
+                    |amount| model::cents(Some(amount)),
+                );
             (fixed * units.unwrap_or(1)).min(base)
         }
     }
@@ -239,8 +261,14 @@ fn totals(
     currency: &str,
 ) -> Map<String, Value> {
     let bag = |cents: i64| value::money_bag(cents, currency);
-    let original: i64 = lines.iter().map(|line| field_cents(line, "originalTotalSet")).sum();
-    let subtotal_lines: i64 = lines.iter().map(|line| field_cents(line, "discountedTotalSet")).sum();
+    let original: i64 = lines
+        .iter()
+        .map(|line| field_cents(line, "originalTotalSet"))
+        .sum();
+    let subtotal_lines: i64 = lines
+        .iter()
+        .map(|line| field_cents(line, "discountedTotalSet"))
+        .sum();
     let line_discounts = original - subtotal_lines;
     let taxable_lines: i64 = lines
         .iter()
@@ -248,7 +276,9 @@ fn totals(
         .map(|line| field_cents(line, "discountedTotalSet"))
         .sum();
     let (order_discount, applied_value) = match applied {
-        Some(discount) if !discount.is_null() => applied_discount(discount, subtotal_lines, None, currency),
+        Some(discount) if !discount.is_null() => {
+            applied_discount(discount, subtotal_lines, None, currency)
+        }
         _ => (0, Value::Null),
     };
     let subtotal = subtotal_lines - order_discount;
@@ -257,7 +287,9 @@ fn totals(
     } else {
         taxable_lines - order_discount * taxable_lines / subtotal_lines
     };
-    let shipping_price = shipping.map_or(0, |line| field_cents(line.as_object().unwrap_or(&Map::new()), "originalPriceSet"));
+    let shipping_price = shipping.map_or(0, |line| {
+        field_cents(line.as_object().unwrap_or(&Map::new()), "originalPriceSet")
+    });
     let rate = state
         .setting(TAX_RATE_SETTING)
         .and_then(Value::as_i64)
@@ -296,7 +328,10 @@ fn totals(
         .sum();
     let overridden: Vec<bool> = lines
         .iter()
-        .map(|line| line.get("priceOverride").is_some_and(|price| !price.is_null()))
+        .map(|line| {
+            line.get("priceOverride")
+                .is_some_and(|price| !price.is_null())
+        })
         .collect();
     let tax_lines: Vec<Value> = (tax > 0)
         .then(|| json!({"title": "Tax", "rate": rate as f64 / 10_000.0, "ratePercentage": rate as f64 / 100.0, "priceSet": bag(tax), "price": value::money(tax), "channelLiable": false, "source": "Shopify"}))
@@ -375,22 +410,27 @@ fn read_input(
             .get(*field)
             .is_some_and(|value| !value.is_null() && value != &json!([]))
         {
-            mutation.note(format!("{name}: lsf does not simulate {what} yet: `{field}` was ignored"));
+            mutation.note(format!(
+                "{name}: lsf does not simulate {what} yet: `{field}` was ignored"
+            ));
         }
     }
     let state = mutation.state();
     let currency = model::currency(state);
     let now = state.timestamp();
-    let lines: Option<Vec<Map<String, Value>>> = input.get("lineItems").and_then(Value::as_array).map(|items| {
-        items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                let index = index.to_string();
-                line_value(state, item, &currency, &["lineItems", &index], errors)
-            })
-            .collect()
-    });
+    let lines: Option<Vec<Map<String, Value>>> = input
+        .get("lineItems")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| {
+                    let index = index.to_string();
+                    line_value(state, item, &currency, &["lineItems", &index], errors)
+                })
+                .collect()
+        });
     let lines = match (lines, base) {
         (Some(lines), _) => lines,
         (None, Some(base)) => gids(base.get("lineItems"))
@@ -401,8 +441,13 @@ fn read_input(
     };
     let mut fields = Map::new();
     let purchasing = model::input_of(input.get("purchasingEntity"));
-    if purchasing.get("purchasingCompany").is_some_and(|company| !company.is_null()) {
-        mutation.note(format!("{name}: lsf does not simulate B2B draft orders yet: `purchasingCompany` was ignored"));
+    if purchasing
+        .get("purchasingCompany")
+        .is_some_and(|company| !company.is_null())
+    {
+        mutation.note(format!(
+            "{name}: lsf does not simulate B2B draft orders yet: `purchasingCompany` was ignored"
+        ));
     }
     let state = mutation.state();
     let customer = purchasing
@@ -419,7 +464,10 @@ fn read_input(
         }
     }
     if let Some(email) = input.get("email") {
-        let email = email.as_str().map(str::trim).filter(|email| !email.is_empty());
+        let email = email
+            .as_str()
+            .map(str::trim)
+            .filter(|email| !email.is_empty());
         if email.is_some_and(|email| !email.contains('@')) {
             errors.push(UserError::new(&["email"], "Email is invalid"));
         }
@@ -427,19 +475,32 @@ fn read_input(
     }
     for field in ["phone", "poNumber"] {
         if let Some(value) = input.get(field) {
-            fields.insert(field.into(), json!(value.as_str().filter(|text| !text.is_empty())));
+            fields.insert(
+                field.into(),
+                json!(value.as_str().filter(|text| !text.is_empty())),
+            );
         }
     }
     if let Some(note) = input.get("note") {
-        fields.insert("note2".into(), json!(note.as_str().filter(|text| !text.is_empty())));
+        fields.insert(
+            "note2".into(),
+            json!(note.as_str().filter(|text| !text.is_empty())),
+        );
     }
     if input.contains_key("tags") {
         fields.insert("tags".into(), json!(tags_of(input.get("tags"))));
     }
     if input.contains_key("customAttributes") {
-        fields.insert("customAttributes".into(), model::attributes(input.get("customAttributes")));
+        fields.insert(
+            "customAttributes".into(),
+            model::attributes(input.get("customAttributes")),
+        );
     }
-    for field in ["taxExempt", "visibleToCustomer", "allowDiscountCodesInCheckout"] {
+    for field in [
+        "taxExempt",
+        "visibleToCustomer",
+        "allowDiscountCodesInCheckout",
+    ] {
         if let Some(flag) = input.get(field).and_then(Value::as_bool) {
             fields.insert(field.into(), json!(flag));
         }
@@ -460,20 +521,35 @@ fn read_input(
         fields.insert("lsfAppliedDiscount".into(), discount.clone());
     }
     if let Some(line) = input.get("shippingLine") {
-        fields.insert("shippingLine".into(), shipping_line(line, &currency, &now).unwrap_or(Value::Null));
+        fields.insert(
+            "shippingLine".into(),
+            shipping_line(line, &currency, &now).unwrap_or(Value::Null),
+        );
     }
     let id_of = |kind: &str| {
         format!(
             "gid://shopify/MailingAddress/{}?model_name=Address",
-            stable_id("draft_address", &format!("{now}/{kind}/{}", state.count("DraftOrder")))
+            stable_id(
+                "draft_address",
+                &format!("{now}/{kind}/{}", state.count("DraftOrder"))
+            )
         )
     };
-    for (field, kind) in [("shippingAddress", "shipping"), ("billingAddress", "billing")] {
+    for (field, kind) in [
+        ("shippingAddress", "shipping"),
+        ("billingAddress", "billing"),
+    ] {
         if let Some(address) = input.get(field) {
-            fields.insert(field.into(), model::mailing_address(address, &id_of(kind)).unwrap_or(Value::Null));
+            fields.insert(
+                field.into(),
+                model::mailing_address(address, &id_of(kind)).unwrap_or(Value::Null),
+            );
         }
     }
-    if input.get("useCustomerDefaultAddress").and_then(Value::as_bool) == Some(true)
+    if input
+        .get("useCustomerDefaultAddress")
+        .and_then(Value::as_bool)
+        == Some(true)
         && let Some(address) = fields
             .get("customer")
             .and_then(Value::as_str)
@@ -490,7 +566,10 @@ fn read_input(
         .and_then(Value::as_str)
         .and_then(|customer| state.get(customer))
         .and_then(|customer| customer.get("email"))
-        .filter(|_| !input.contains_key("email") && base.is_none_or(|base| base.get("email").is_none_or(Value::is_null)))
+        .filter(|_| {
+            !input.contains_key("email")
+                && base.is_none_or(|base| base.get("email").is_none_or(Value::is_null))
+        })
     {
         fields.insert("email".into(), email.clone());
     }
@@ -503,7 +582,11 @@ fn write_draft(state: &mut ShopState, id: &str, draft: &Draft, replace_lines: bo
     let currency = model::currency(state);
     let mut line_ids = Vec::new();
     if replace_lines {
-        for old in state.get(id).map(|record| gids(record.get("lineItems"))).unwrap_or_default() {
+        for old in state
+            .get(id)
+            .map(|record| gids(record.get("lineItems")))
+            .unwrap_or_default()
+        {
             state.remove(&old);
         }
         for line in &draft.lines {
@@ -538,16 +621,32 @@ fn write_draft(state: &mut ShopState, id: &str, draft: &Draft, replace_lines: bo
         .filter_map(|line| state.get(line).cloned())
         .collect();
     let tax_exempt = record.get("taxExempt").and_then(Value::as_bool) == Some(true);
-    record.extend(totals(state, &lines, applied.as_ref(), record.get("shippingLine"), tax_exempt, &currency));
+    record.extend(totals(
+        state,
+        &lines,
+        applied.as_ref(),
+        record.get("shippingLine"),
+        tax_exempt,
+        &currency,
+    ));
     let matches = match (record.get("billingAddress"), record.get("shippingAddress")) {
-        (Some(billing), Some(shipping)) if !billing.is_null() && !shipping.is_null() => {
-            ["address1", "address2", "city", "zip", "countryCodeV2", "firstName", "lastName"]
-                .iter()
-                .all(|key| billing.get(key) == shipping.get(key))
-        }
+        (Some(billing), Some(shipping)) if !billing.is_null() && !shipping.is_null() => [
+            "address1",
+            "address2",
+            "city",
+            "zip",
+            "countryCodeV2",
+            "firstName",
+            "lastName",
+        ]
+        .iter()
+        .all(|key| billing.get(key) == shipping.get(key)),
         _ => false,
     };
-    record.insert("billingAddressMatchesShippingAddress".into(), json!(matches));
+    record.insert(
+        "billingAddressMatchesShippingAddress".into(),
+        json!(matches),
+    );
     state.insert(record);
     state.touch(id);
 }
@@ -556,7 +655,12 @@ fn write_draft(state: &mut ShopState, id: &str, draft: &Draft, replace_lines: bo
 fn next_draft_number(state: &ShopState) -> u64 {
     state
         .all("DraftOrder")
-        .filter_map(|draft| text(draft, "name")?.trim_start_matches("#D").parse::<u64>().ok())
+        .filter_map(|draft| {
+            text(draft, "name")?
+                .trim_start_matches("#D")
+                .parse::<u64>()
+                .ok()
+        })
         .max()
         .unwrap_or(0)
         + 1
@@ -569,7 +673,10 @@ fn new_draft(state: &mut ShopState) -> String {
     let currency = model::currency(state);
     let shop = state.shop().cloned().unwrap_or_default();
     let origin = text(&shop, "url").unwrap_or_default().to_string();
-    let shop_number = state.shop_gid().and_then(parse_gid).map_or(0, |(_, number)| number);
+    let shop_number = state
+        .shop_gid()
+        .and_then(parse_gid)
+        .map_or(0, |(_, number)| number);
     let key = format!("{}/{id}", state.domain());
     let token = format!(
         "{:016x}{:016x}",
@@ -587,7 +694,7 @@ fn new_draft(state: &mut ShopState) -> String {
         "completedAt": null,
         "invoiceSentAt": null,
         "invoiceUrl": format!("{origin}/{shop_number}/invoices/{token}"),
-        "invoiceEmailTemplateSubject": format!("Complete your purchase"),
+        "invoiceEmailTemplateSubject": "Complete your purchase",
         "currencyCode": currency,
         "presentmentCurrencyCode": currency,
         "email": null,
@@ -651,7 +758,10 @@ fn find_draft(state: &ShopState, id: &str) -> Result<Record, UserError> {
 
 /// lsf's wording for a change to a completed draft.
 fn completed_error() -> UserError {
-    UserError::new(&[], "This draft order has been completed and can no longer be changed")
+    UserError::new(
+        &[],
+        "This draft order has been completed and can no longer be changed",
+    )
 }
 
 /// `draftOrderUpdate`.
@@ -727,7 +837,18 @@ fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
         tax_exempt,
         &currency,
     ));
-    for field in ["email", "note2", "poNumber", "tags", "customAttributes", "shippingAddress", "billingAddress", "visibleToCustomer", "reserveInventoryUntil", "allowDiscountCodesInCheckout"] {
+    for field in [
+        "email",
+        "note2",
+        "poNumber",
+        "tags",
+        "customAttributes",
+        "shippingAddress",
+        "billingAddress",
+        "visibleToCustomer",
+        "reserveInventoryUntil",
+        "allowDiscountCodesInCheckout",
+    ] {
         calculated.remove(field);
     }
     calculated.insert("lineItems".into(), json!(draft.lines));
@@ -754,7 +875,10 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     if text(&record, "status") == Some("COMPLETED") {
         return Ok(payload(
             json!({"draftOrder": null}),
-            &[UserError::new(&[], "This draft order has already been completed")],
+            &[UserError::new(
+                &[],
+                "This draft order has already been completed",
+            )],
         ));
     }
     if ctx.arg("paymentGatewayId").is_some_and(|id| !id.is_null()) {
@@ -798,11 +922,20 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             quantity: int(line, "quantity").max(0) as u32,
             unit_price: field_cents(line, "originalUnitPriceSet"),
             discount: field_cents(line, "totalDiscountSet"),
-            requires_shipping: line.get("requiresShipping").and_then(Value::as_bool).unwrap_or(true),
+            requires_shipping: line
+                .get("requiresShipping")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             taxable: line.get("taxable").and_then(Value::as_bool).unwrap_or(true),
-            gift_card: line.get("isGiftCard").and_then(Value::as_bool).unwrap_or(false),
+            gift_card: line
+                .get("isGiftCard")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             image: line.get("image").filter(|image| !image.is_null()).cloned(),
-            weight: line.get("weight").filter(|weight| !weight.is_null()).cloned(),
+            weight: line
+                .get("weight")
+                .filter(|weight| !weight.is_null())
+                .cloned(),
             grams: 0,
             attributes: line
                 .get("customAttributes")
@@ -812,7 +945,11 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
                 .filter_map(|attribute| {
                     Some((
                         attribute.get("key")?.as_str()?.to_string(),
-                        attribute.get("value")?.as_str().unwrap_or_default().to_string(),
+                        attribute
+                            .get("value")?
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
                     ))
                 })
                 .collect(),
@@ -826,8 +963,15 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         .map(|line| {
             let price = field_cents(line.as_object().unwrap_or(&Map::new()), "originalPriceSet");
             ShippingDraft {
-                title: line.get("title").and_then(Value::as_str).unwrap_or("Shipping").to_string(),
-                handle: line.get("shippingRateHandle").and_then(Value::as_str).map(str::to_string),
+                title: line
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Shipping")
+                    .to_string(),
+                handle: line
+                    .get("shippingRateHandle")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 original: price,
                 discounted: price,
             }
@@ -844,10 +988,20 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         accepts_marketing: false,
         tax_exempt: record.get("taxExempt").and_then(Value::as_bool) == Some(true),
         lines: line_drafts,
-        shipping_address: record.get("shippingAddress").filter(|a| !a.is_null()).cloned(),
-        billing_address: record.get("billingAddress").filter(|a| !a.is_null()).cloned(),
+        shipping_address: record
+            .get("shippingAddress")
+            .filter(|a| !a.is_null())
+            .cloned(),
+        billing_address: record
+            .get("billingAddress")
+            .filter(|a| !a.is_null())
+            .cloned(),
         shipping,
-        tax: if included { 0 } else { field_cents(&record, "totalTaxSet") },
+        tax: if included {
+            0
+        } else {
+            field_cents(&record, "totalTaxSet")
+        },
         order_discount: line_subtotal - subtotal,
         discount_codes: Vec::new(),
         note: text(&record, "note2").map(str::to_string),
@@ -859,7 +1013,11 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
             .filter_map(|attribute| {
                 Some((
                     attribute.get("key")?.as_str()?.to_string(),
-                    attribute.get("value")?.as_str().unwrap_or_default().to_string(),
+                    attribute
+                        .get("value")?
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
                 ))
             })
             .collect(),
@@ -874,17 +1032,28 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     };
     let order = super::insert_order(state, &draft);
     if let Some(order_record) = state.get_mut(&order) {
-        order_record.insert("tags".into(), record.get("tags").cloned().unwrap_or(json!([])));
-        order_record.insert("poNumber".into(), record.get("poNumber").cloned().unwrap_or(Value::Null));
+        order_record.insert(
+            "tags".into(),
+            record.get("tags").cloned().unwrap_or(json!([])),
+        );
+        order_record.insert(
+            "poNumber".into(),
+            record.get("poNumber").cloned().unwrap_or(Value::Null),
+        );
         order_record.insert("closed".into(), json!(false));
         if included {
-            order_record.insert("totalTaxSet".into(), record.get("totalTaxSet").cloned().unwrap_or(Value::Null));
+            order_record.insert(
+                "totalTaxSet".into(),
+                record.get("totalTaxSet").cloned().unwrap_or(Value::Null),
+            );
             order_record.insert("taxesIncluded".into(), json!(true));
         }
     }
     state.emit("orders/create", &order);
     if !pending {
-        let total = state.get(&order).map_or(0, |order| field_cents(order, "totalPriceSet"));
+        let total = state
+            .get(&order)
+            .map_or(0, |order| field_cents(order, "totalPriceSet"));
         model::add_transaction(
             state,
             &order,
@@ -906,10 +1075,19 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         };
         if let Some(item) = model::inventory_item_of(state, &item_record) {
             let location = model::line_location(state, &order, &line);
-            model::commit_inventory(state, &item, location.as_deref(), int(&item_record, "quantity"));
+            model::commit_inventory(
+                state,
+                &item,
+                location.as_deref(),
+                int(&item_record, "quantity"),
+            );
         }
     }
-    if state.get(&order).and_then(|record| text(record, "displayFinancialStatus")) == Some("PAID") {
+    if state
+        .get(&order)
+        .and_then(|record| text(record, "displayFinancialStatus"))
+        == Some("PAID")
+    {
         state.emit("orders/paid", &order);
     }
     let now = state.timestamp();
@@ -942,15 +1120,29 @@ fn duplicate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     let copy = new_draft(state);
     let mut fields = Map::new();
     for field in [
-        "email", "phone", "note2", "poNumber", "customer", "purchasingEntity", "tags",
-        "customAttributes", "taxExempt", "shippingLine", "shippingAddress", "billingAddress",
-        "visibleToCustomer", "allowDiscountCodesInCheckout",
+        "email",
+        "phone",
+        "note2",
+        "poNumber",
+        "customer",
+        "purchasingEntity",
+        "tags",
+        "customAttributes",
+        "taxExempt",
+        "shippingLine",
+        "shippingAddress",
+        "billingAddress",
+        "visibleToCustomer",
+        "allowDiscountCodesInCheckout",
     ] {
         if let Some(value) = record.get(field) {
             fields.insert(field.into(), value.clone());
         }
     }
-    if let Some(discount) = record.get("appliedDiscount").filter(|discount| !discount.is_null()) {
+    if let Some(discount) = record
+        .get("appliedDiscount")
+        .filter(|discount| !discount.is_null())
+    {
         fields.insert(
             "lsfAppliedDiscount".into(),
             json!({"value": discount.get("value"), "valueType": discount.get("valueType"), "title": discount.get("title"), "description": discount.get("description")}),

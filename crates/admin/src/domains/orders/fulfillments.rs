@@ -179,8 +179,12 @@ fn fulfillment_create(
         }
         let its_order = text(&record, "order").map(str::to_string);
         let its_location = model::assigned_location(state, id);
-        if order.as_ref().is_some_and(|order| Some(order) != its_order.as_ref())
-            || location.as_ref().is_some_and(|location| *location != its_location)
+        if order
+            .as_ref()
+            .is_some_and(|order| Some(order) != its_order.as_ref())
+            || location
+                .as_ref()
+                .is_some_and(|location| *location != its_location)
         {
             // The rule is shopify.dev's ("associated with the same Order and are assigned to
             // the same Location"); the message is lsf's wording.
@@ -192,12 +196,17 @@ fn fulfillment_create(
         order = its_order;
         location = Some(its_location);
         let lines = gids(record.get("lineItems"));
-        match group.get("fulfillmentOrderLineItems").and_then(Value::as_array) {
+        match group
+            .get("fulfillmentOrderLineItems")
+            .and_then(Value::as_array)
+        {
             Some(items) if !items.is_empty() => {
                 for item in items {
                     let line = item.get("id").and_then(Value::as_str).unwrap_or_default();
                     let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
-                    let remaining = state.get(line).map_or(0, |line| int(line, "remainingQuantity"));
+                    let remaining = state
+                        .get(line)
+                        .map_or(0, |line| int(line, "remainingQuantity"));
                     let already: i64 = shipping
                         .iter()
                         .filter(|(_, known, _)| known == line)
@@ -225,7 +234,9 @@ fn fulfillment_create(
             }
             _ => {
                 for line in lines {
-                    let remaining = state.get(&line).map_or(0, |line| int(line, "remainingQuantity"));
+                    let remaining = state
+                        .get(&line)
+                        .map_or(0, |line| int(line, "remainingQuantity"));
                     if remaining > 0 {
                         shipping.push((id.to_string(), line, remaining));
                     }
@@ -234,7 +245,10 @@ fn fulfillment_create(
         }
     }
     let Some(order) = order.filter(|order| state.type_of(order) == Some("Order")) else {
-        return failed(vec![UserError::new(&["fulfillment"], "Order does not exist")]);
+        return failed(vec![UserError::new(
+            &["fulfillment"],
+            "Order does not exist",
+        )]);
     };
     if shipping.is_empty() {
         return failed(vec![UserError::new(
@@ -384,9 +398,14 @@ fn tracking_info_update(
         );
         return Ok(payload(json!({"fulfillment": null}), &[error]));
     }
-    let tracking = ctx.arg("trackingInfoInput").map(tracking_of).unwrap_or_default();
+    let tracking = ctx
+        .arg("trackingInfoInput")
+        .map(tracking_of)
+        .unwrap_or_default();
     if ctx.arg_bool("notifyCustomer") == Some(true) {
-        mutation.note("fulfillmentTrackingInfoUpdate: lsf sends no email: `notifyCustomer` was ignored");
+        mutation.note(
+            "fulfillmentTrackingInfoUpdate: lsf sends no email: `notifyCustomer` was ignored",
+        );
     }
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&fulfillment) {
@@ -407,14 +426,21 @@ fn fulfillment_cancel(
         Ok(fulfillment) => fulfillment,
         Err(error) => return Ok(payload(json!({"fulfillment": null}), &[error])),
     };
-    let record = mutation.state().get(&fulfillment).cloned().unwrap_or_default();
+    let record = mutation
+        .state()
+        .get(&fulfillment)
+        .cloned()
+        .unwrap_or_default();
     if text(&record, "status") != Some("SUCCESS") {
         // lsf's wording.
         let error = UserError::new(&["id"], "Fulfillment cannot be cancelled");
         return Ok(payload(json!({"fulfillment": null}), &[error]));
     }
     let Some(order) = model::order_of(mutation.state(), &fulfillment) else {
-        return Ok(payload(json!({"fulfillment": null}), &[UserError::new(&["id"], "Order does not exist")]));
+        return Ok(payload(
+            json!({"fulfillment": null}),
+            &[UserError::new(&["id"], "Order does not exist")],
+        ));
     };
     let state = mutation.state_mut();
     if let Some(record) = state.get_mut(&fulfillment) {
@@ -432,10 +458,11 @@ fn fulfillment_cancel(
         };
         // The fulfillment order line item it shipped from, on a fulfillment order still open
         // when there is one.
-        let candidates: Vec<(String, String)> = model::fulfillment_order_lines(state, &order, line_item)
-            .into_iter()
-            .filter(|(fo, _)| fulfillment_orders.contains(fo))
-            .collect();
+        let candidates: Vec<(String, String)> =
+            model::fulfillment_order_lines(state, &order, line_item)
+                .into_iter()
+                .filter(|(fo, _)| fulfillment_orders.contains(fo))
+                .collect();
         let open = candidates.iter().find(|(fo, _)| {
             matches!(
                 state.get(fo).and_then(|record| text(record, "status")),
@@ -495,7 +522,10 @@ pub fn split_off(
         if take && let Some(record) = state.get_mut(line) {
             let remaining = int(record, "remainingQuantity");
             let total = int(record, "totalQuantity");
-            record.insert("remainingQuantity".into(), json!((remaining - quantity).max(0)));
+            record.insert(
+                "remainingQuantity".into(),
+                json!((remaining - quantity).max(0)),
+            );
             record.insert("totalQuantity".into(), json!((total - quantity).max(0)));
         }
         let line_id = state.new_gid("FulfillmentOrderLineItem");
@@ -650,7 +680,9 @@ fn line_items_of(
             ));
             continue;
         }
-        let remaining = state.get(line).map_or(0, |line| int(line, "remainingQuantity"));
+        let remaining = state
+            .get(line)
+            .map_or(0, |line| int(line, "remainingQuantity"));
         if !lines.iter().any(|known| known == line) || quantity > remaining {
             errors.push(coded(
                 path,
@@ -666,11 +698,17 @@ fn line_items_of(
 
 /// The units of a fulfillment order that are not in `picked`: what a partial hold or move
 /// leaves.
-fn the_rest(state: &ShopState, record: &serde_json::Map<String, Value>, picked: &[(String, i64)]) -> Vec<(String, i64)> {
+fn the_rest(
+    state: &ShopState,
+    record: &serde_json::Map<String, Value>,
+    picked: &[(String, i64)],
+) -> Vec<(String, i64)> {
     gids(record.get("lineItems"))
         .into_iter()
         .filter_map(|line| {
-            let remaining = state.get(&line).map_or(0, |item| int(item, "remainingQuantity"));
+            let remaining = state
+                .get(&line)
+                .map_or(0, |item| int(item, "remainingQuantity"));
             let taken: i64 = picked
                 .iter()
                 .filter(|(known, _)| *known == line)
@@ -699,7 +737,11 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
     };
     let state = mutation.state();
     let Some(record) = fulfillment_order(state, &id) else {
-        return failed(&[coded(&["id"], "The fulfillment order could not be found.", "FULFILLMENT_ORDER_NOT_FOUND")]);
+        return failed(&[coded(
+            &["id"],
+            "The fulfillment order could not be found.",
+            "FULFILLMENT_ORDER_NOT_FOUND",
+        )]);
     };
     if !matches!(
         text(&record, "status"),
@@ -845,7 +887,11 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let failed = |errors: &[UserError]| Ok(payload(json!({"fulfillmentOrder": null}), errors));
     let state = mutation.state();
     let Some(record) = fulfillment_order(state, &id) else {
-        return failed(&[coded(&["id"], "The fulfillment order could not be found.", "FULFILLMENT_ORDER_NOT_FOUND")]);
+        return failed(&[coded(
+            &["id"],
+            "The fulfillment order could not be found.",
+            "FULFILLMENT_ORDER_NOT_FOUND",
+        )]);
     };
     let app = app_gid(state);
     let holds = gids(record.get("fulfillmentHolds"));
@@ -857,7 +903,10 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         // lsf's wording.
         return failed(&[UserError::new(
             &["holdIds"],
-            format!("Fulfillment hold {} does not exist on this fulfillment order.", number(unknown)),
+            format!(
+                "Fulfillment hold {} does not exist on this fulfillment order.",
+                number(unknown)
+            ),
         )]);
     }
     let releasing: Vec<String> = holds
@@ -872,10 +921,15 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .collect();
     if text(&record, "status") != Some("ON_HOLD") || releasing.is_empty() {
         // lsf's wording.
-        return failed(&[UserError::new(&["id"], "The fulfillment order is not on hold.")]);
+        return failed(&[UserError::new(
+            &["id"],
+            "The fulfillment order is not on hold.",
+        )]);
     }
     if external.is_some() {
-        mutation.note("fulfillmentOrderReleaseHold: lsf does not simulate `externalId`: it was ignored");
+        mutation.note(
+            "fulfillmentOrderReleaseHold: lsf does not simulate `externalId`: it was ignored",
+        );
     }
     let state = mutation.state_mut();
     let left: Vec<String> = holds
@@ -921,7 +975,10 @@ fn move_fulfillment_order(
         return failed(&[UserError::new(&["id"], "Fulfillment order does not exist.")]);
     };
     if state.type_of(&location) != Some("Location") {
-        return failed(&[UserError::new(&["newLocationId"], "Location does not exist.")]);
+        return failed(&[UserError::new(
+            &["newLocationId"],
+            "Location does not exist.",
+        )]);
     }
     if model::assigned_location(state, &id).as_deref() == Some(location.as_str()) {
         return failed(&[UserError::new(
@@ -929,8 +986,14 @@ fn move_fulfillment_order(
             "The fulfillment order is already assigned to this location.",
         )]);
     }
-    if matches!(text(&record, "status"), Some("CLOSED" | "CANCELLED" | "INCOMPLETE")) {
-        return failed(&[UserError::new(&["id"], "Cannot move a closed fulfillment order.")]);
+    if matches!(
+        text(&record, "status"),
+        Some("CLOSED" | "CANCELLED" | "INCOMPLETE")
+    ) {
+        return failed(&[UserError::new(
+            &["id"],
+            "Cannot move a closed fulfillment order.",
+        )]);
     }
     if matches!(
         text(&record, "requestStatus"),
@@ -950,7 +1013,13 @@ fn move_fulfillment_order(
     let picked = if items.is_empty() {
         the_rest(state, &record, &[])
     } else {
-        line_items_of(state, &record, &items, &["fulfillmentOrderLineItems"], &mut errors)
+        line_items_of(
+            state,
+            &record,
+            &items,
+            &["fulfillmentOrderLineItems"],
+            &mut errors,
+        )
     };
     if !errors.is_empty() {
         return failed(&errors);
@@ -974,16 +1043,28 @@ fn move_fulfillment_order(
     };
     // The stock the order committed moves along.
     for (fo_line, quantity) in &picked {
-        let Some(line) = state.get(fo_line).and_then(|item| text(item, "lineItem")).map(str::to_string) else {
+        let Some(line) = state
+            .get(fo_line)
+            .and_then(|item| text(item, "lineItem"))
+            .map(str::to_string)
+        else {
             continue;
         };
-        let Some(item) = state.get(&line).and_then(|record| model::inventory_item_of(state, record)) else {
+        let Some(item) = state
+            .get(&line)
+            .and_then(|record| model::inventory_item_of(state, record))
+        else {
             continue;
         };
         let committed = model::inventory_quantity(state, &item, from.as_deref(), "committed");
         let units = (*quantity).min(committed);
         if units > 0 {
-            model::move_inventory(state, &item, from.as_deref(), &[("committed", -units), ("available", units)]);
+            model::move_inventory(
+                state,
+                &item,
+                from.as_deref(),
+                &[("committed", -units), ("available", units)],
+            );
             model::commit_inventory(state, &item, Some(&location), units);
         }
     }
@@ -1100,11 +1181,18 @@ fn reschedule(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
     let failed = |error: UserError| Ok(payload(json!({"fulfillmentOrder": null}), &[error]));
     let Some(record) = fulfillment_order(mutation.state(), &id) else {
-        return failed(coded(&["id"], "The fulfillment order could not be found.", "FULFILLMENT_ORDER_NOT_FOUND"));
+        return failed(coded(
+            &["id"],
+            "The fulfillment order could not be found.",
+            "FULFILLMENT_ORDER_NOT_FOUND",
+        ));
     };
     if text(&record, "status") != Some("SCHEDULED") {
         // lsf's wording.
-        return failed(UserError::new(&["id"], "Only a scheduled fulfillment order can be rescheduled."));
+        return failed(UserError::new(
+            &["id"],
+            "Only a scheduled fulfillment order can be rescheduled.",
+        ));
     }
     let fulfill_at = ctx.arg_str("fulfillAt").unwrap_or_default().to_string();
     let state = mutation.state_mut();

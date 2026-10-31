@@ -71,7 +71,11 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         ))
     };
     let state = mutation.state();
-    let Some(order) = state.get(&id).filter(|_| state.type_of(&id) == Some("Order")).cloned() else {
+    let Some(order) = state
+        .get(&id)
+        .filter(|_| state.type_of(&id) == Some("Order"))
+        .cloned()
+    else {
         return failed(UserError::new(&["id"], "Order does not exist"));
     };
     if model::is_cancelled(&order) {
@@ -157,7 +161,10 @@ fn calculated_order(state: &ShopState, id: &str) -> Result<String, UserError> {
         return Err(UserError::new(&["id"], "The order edit does not exist."));
     };
     if record.get("committed").and_then(Value::as_bool) == Some(true) {
-        return Err(UserError::new(&["id"], "The order edit was already committed."));
+        return Err(UserError::new(
+            &["id"],
+            "The order edit was already committed.",
+        ));
     }
     Ok(calculated)
 }
@@ -237,7 +244,9 @@ fn refresh_calculated(state: &mut ShopState, calculated: &str) {
     };
     let currency = model::currency(state);
     let bag = |cents: i64| value::money_bag(cents, &currency);
-    let order_id = text(&record, "originalOrder").unwrap_or_default().to_string();
+    let order_id = text(&record, "originalOrder")
+        .unwrap_or_default()
+        .to_string();
     let order = state.get(&order_id).cloned().unwrap_or_default();
     let rate = tax_rate_bps(state, &order);
     let mut lines: Vec<Value> = record
@@ -257,19 +266,30 @@ fn refresh_calculated(state: &mut ShopState, calculated: &str) {
         let discount = line.get("lsfDiscount").and_then(Value::as_i64).unwrap_or(0);
         let added = line.get("lsfLineItem").is_none_or(Value::is_null);
         let discounted_unit = if added {
-            if units == 0 { unit } else { unit - discount / units }
+            if units == 0 {
+                unit
+            } else {
+                unit - discount / units
+            }
         } else {
             cents_of(line, "discountedUnitPriceSet")
         };
         let editable = units - shipped;
-        let line_total = if added { unit * units - discount } else { discounted_unit * units };
+        let line_total = if added {
+            unit * units - discount
+        } else {
+            discounted_unit * units
+        };
         line.insert("editableQuantity".into(), json!(editable));
         line.insert("discountedUnitPriceSet".into(), bag(discounted_unit));
         line.insert(
             "editableSubtotalSet".into(),
             bag(line_total - discounted_unit * shipped),
         );
-        line.insert("uneditableSubtotalSet".into(), bag(discounted_unit * shipped));
+        line.insert(
+            "uneditableSubtotalSet".into(),
+            bag(discounted_unit * shipped),
+        );
         let mut line_changes = Vec::new();
         if added {
             line_changes.push(match line.get("variant").filter(|variant| !variant.is_null()) {
@@ -313,7 +333,9 @@ fn refresh_calculated(state: &mut ShopState, calculated: &str) {
         quantity += units;
         subtotal += line_total;
         let line_taxable = if added {
-            line.get("lsfTaxable").and_then(Value::as_bool).unwrap_or(true)
+            line.get("lsfTaxable")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
         } else {
             line.get("lsfLineItem")
                 .and_then(Value::as_str)
@@ -362,7 +384,10 @@ fn refresh_calculated(state: &mut ShopState, calculated: &str) {
 fn positive_quantity(ctx: &FieldContext<'_>) -> Result<i64, UserError> {
     match ctx.arg_i64("quantity") {
         Some(quantity) if quantity > 0 => Ok(quantity),
-        _ => Err(UserError::new(&["quantity"], "Quantity must be greater than 0")),
+        _ => Err(UserError::new(
+            &["quantity"],
+            "Quantity must be greater than 0",
+        )),
     }
 }
 
@@ -498,7 +523,8 @@ fn add_custom_item(
             &[error],
         ))
     };
-    let calculated = match calculated_order(mutation.state(), ctx.arg_str("id").unwrap_or_default()) {
+    let calculated = match calculated_order(mutation.state(), ctx.arg_str("id").unwrap_or_default())
+    {
         Ok(calculated) => calculated,
         Err(error) => return failed(error),
     };
@@ -598,9 +624,13 @@ fn add_line_item_discount(
     let discount = model::input_of(ctx.arg("discount"));
     let currency = model::currency(state);
     let units = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
-    let unit = line.as_object().map_or(0, |line| cents_of(line, "originalUnitPriceSet"));
+    let unit = line
+        .as_object()
+        .map_or(0, |line| cents_of(line, "originalUnitPriceSet"));
     let percent = discount.get("percentValue").and_then(Value::as_f64);
-    let fixed = discount.get("fixedValue").map(|value| model::cents(Some(value)));
+    let fixed = discount
+        .get("fixedValue")
+        .map(|value| model::cents(Some(value)));
     let (amount, value) = match (percent, fixed) {
         (Some(percent), None) if (0.0..=100.0).contains(&percent) => (
             ((unit * units) as f64 * percent / 100.0).round() as i64,
@@ -692,8 +722,11 @@ fn remove_discount(
         .map(str::to_string);
     let Some(line) = line else {
         return failed(
-            UserError::new(&["discountApplicationId"], "The discount does not exist on this edit")
-                .code("INVALID"),
+            UserError::new(
+                &["discountApplicationId"],
+                "The discount does not exist on this edit",
+            )
+            .code("INVALID"),
         );
     };
     let state = mutation.state_mut();
@@ -706,7 +739,8 @@ fn remove_discount(
         .get_mut(&calculated)
         .and_then(|record| record.get_mut("addedDiscountApplications"))
     {
-        applications.retain(|known| known.get("id").and_then(Value::as_str) != Some(application.as_str()));
+        applications
+            .retain(|known| known.get("id").and_then(Value::as_str) != Some(application.as_str()));
     }
     Ok(staged(state, &calculated, None, json!({})))
 }
@@ -810,7 +844,9 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         Err(error) => return failed(error),
     };
     let record = state.get(&calculated).cloned().unwrap_or_default();
-    let order = text(&record, "originalOrder").unwrap_or_default().to_string();
+    let order = text(&record, "originalOrder")
+        .unwrap_or_default()
+        .to_string();
     let Some(order_record) = state.get(&order).cloned() else {
         return failed(UserError::new(&["id"], "Order does not exist"));
     };
@@ -852,7 +888,9 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         let units = int(line, "quantity");
         match line.get("lsfLineItem").and_then(Value::as_str) {
             Some(item_id) => {
-                let current = state.get(item_id).map_or(0, |item| int(item, "currentQuantity"));
+                let current = state
+                    .get(item_id)
+                    .map_or(0, |item| int(item, "currentQuantity"));
                 if units > current {
                     let delta = units - current;
                     additions.push(json!({"id": item_id, "delta": delta}));
@@ -861,7 +899,10 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                         let unit = field_cents(item, "originalUnitPriceSet");
                         let discounted_unit = field_cents(item, "discountedUnitPriceSet");
                         item.insert("quantity".into(), json!(ordered));
-                        item.insert("originalTotalSet".into(), value::money_bag(unit * ordered, &currency));
+                        item.insert(
+                            "originalTotalSet".into(),
+                            value::money_bag(unit * ordered, &currency),
+                        );
                         item.insert(
                             "discountedTotalSet".into(),
                             value::money_bag(discounted_unit * ordered, &currency),
@@ -888,7 +929,10 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             }
             None if units > 0 => {
                 let variant = text(line, "variant").map(str::to_string);
-                let variant_record = variant.as_deref().and_then(|variant| state.get(variant)).cloned();
+                let variant_record = variant
+                    .as_deref()
+                    .and_then(|variant| state.get(variant))
+                    .cloned();
                 let product = variant_record
                     .as_ref()
                     .and_then(|variant| text(variant, "product"))
@@ -918,8 +962,14 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     quantity: units as u32,
                     unit_price: cents_of(line, "originalUnitPriceSet"),
                     discount: line.get("lsfDiscount").and_then(Value::as_i64).unwrap_or(0),
-                    requires_shipping: line.get("lsfRequiresShipping").and_then(Value::as_bool).unwrap_or(true),
-                    taxable: line.get("lsfTaxable").and_then(Value::as_bool).unwrap_or(true),
+                    requires_shipping: line
+                        .get("lsfRequiresShipping")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
+                    taxable: line
+                        .get("lsfTaxable")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
                     gift_card: false,
                     image: line.get("image").filter(|image| !image.is_null()).cloned(),
                     weight,
@@ -927,8 +977,12 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     attributes: Vec::new(),
                 };
                 let id = state.new_gid("LineItem");
-                let mut item = super::line_item_record(&id, &draft, &currency, draft.quantity, captured, &now);
-                if let Some(allocations) = line.get("calculatedDiscountAllocations").and_then(Value::as_array) {
+                let mut item =
+                    super::line_item_record(&id, &draft, &currency, draft.quantity, captured, &now);
+                if let Some(allocations) = line
+                    .get("calculatedDiscountAllocations")
+                    .and_then(Value::as_array)
+                {
                     item.insert(
                         "discountAllocations".into(),
                         json!(allocations
@@ -978,7 +1032,8 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         .map(|line| field_cents(line.as_object().unwrap_or(&Map::new()), "priceSet"))
         .sum::<i64>();
     let current = state.get(&order).cloned().unwrap_or_default();
-    let refunded_tax = field_cents(&current, "totalTaxSet") - field_cents(&current, "currentTotalTaxSet");
+    let refunded_tax =
+        field_cents(&current, "totalTaxSet") - field_cents(&current, "currentTotalTaxSet");
     let tax = wanted_tax + refunded_tax;
     if let Some(item) = state.get_mut(&order) {
         item.insert("totalTaxSet".into(), value::money_bag(tax, &currency));
@@ -1013,8 +1068,5 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     // `orders/edited` is about the edit: its payload is the committed calculated order's.
     state.emit("orders/edited", &calculated);
     state.emit("orders/updated", &order);
-    Ok(payload(
-        json!({"order": order, "successMessages": []}),
-        &[],
-    ))
+    Ok(payload(json!({"order": order, "successMessages": []}), &[]))
 }

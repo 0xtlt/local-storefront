@@ -34,9 +34,11 @@ use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
-    registry
-        .mutation("refundCreate", refund_create)
-        .field("Order", "suggestedRefund", suggested_refund);
+    registry.mutation("refundCreate", refund_create).field(
+        "Order",
+        "suggestedRefund",
+        suggested_refund,
+    );
 }
 
 /// A line of a refund to record.
@@ -64,7 +66,12 @@ pub struct RefundSpec {
 }
 
 /// What a line refunds for `quantity` units: `(unit price after all discounts, subtotal, tax)`.
-pub fn line_amounts(state: &ShopState, order: &Record, line: &str, quantity: i64) -> (i64, i64, i64) {
+pub fn line_amounts(
+    state: &ShopState,
+    order: &Record,
+    line: &str,
+    quantity: i64,
+) -> (i64, i64, i64) {
     let Some(item) = state.get(line) else {
         return (0, 0, 0);
     };
@@ -85,12 +92,12 @@ pub fn line_amounts(state: &ShopState, order: &Record, line: &str, quantity: i64
     let subtotal = after_cart * quantity / ordered;
     let order_subtotal = field_cents(order, "subtotalPriceSet");
     let tax = field_cents(order, "totalTaxSet");
-    let line_tax = if order_subtotal <= 0 || item.get("taxable").and_then(Value::as_bool) == Some(false)
-    {
-        0
-    } else {
-        tax * subtotal / order_subtotal
-    };
+    let line_tax =
+        if order_subtotal <= 0 || item.get("taxable").and_then(Value::as_bool) == Some(false) {
+            0
+        } else {
+            tax * subtotal / order_subtotal
+        };
     (unit, subtotal, line_tax)
 }
 
@@ -341,7 +348,9 @@ fn refund_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         .to_string();
     let state = mutation.state();
     let failed = |errors: &[UserError]| Ok(payload(json!({"refund": null, "order": null}), errors));
-    let Some(order_record) = state.get(&order).filter(|_| state.type_of(&order) == Some("Order"))
+    let Some(order_record) = state
+        .get(&order)
+        .filter(|_| state.type_of(&order) == Some("Order"))
     else {
         // lsf's wording.
         return failed(&[UserError::new(&["orderId"], "Order does not exist")]);
@@ -492,7 +501,8 @@ fn suggested_refund(
     let mut refund_lines = Vec::new();
     let (mut subtotal, mut tax) = (0, 0);
     for line in &lines {
-        let (unit, line_subtotal, line_tax) = line_amounts(state, order_record, &line.line, line.quantity);
+        let (unit, line_subtotal, line_tax) =
+            line_amounts(state, order_record, &line.line, line.quantity);
         subtotal += line_subtotal;
         tax += line_tax;
         refund_lines.push(json!({
@@ -523,7 +533,9 @@ fn suggested_refund(
         }
         let take = left.min(*refundable);
         left -= take;
-        let gateway = state.get(payment).and_then(|record| text(record, "gateway"));
+        let gateway = state
+            .get(payment)
+            .and_then(|record| text(record, "gateway"));
         suggested.push(json!({
             "kind": "SUGGESTED_REFUND",
             "amountSet": bag(take),
@@ -557,5 +569,8 @@ fn suggested_refund(
     let Value::Object(map) = value else {
         return Ok(Output::Null);
     };
-    Ok(Output::Object(Obj::built("SuggestedRefund", map as Map<String, Value>)))
+    Ok(Output::Object(Obj::built(
+        "SuggestedRefund",
+        map as Map<String, Value>,
+    )))
 }

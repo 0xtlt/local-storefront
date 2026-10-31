@@ -52,7 +52,10 @@ pub fn parse_cents(text: &str) -> Option<i64> {
     };
     let (units, fraction) = digits.split_once('.').unwrap_or((digits, ""));
     if (units.is_empty() && fraction.is_empty())
-        || !units.bytes().chain(fraction.bytes()).all(|b| b.is_ascii_digit())
+        || !units
+            .bytes()
+            .chain(fraction.bytes())
+            .all(|b| b.is_ascii_digit())
     {
         return None;
     }
@@ -173,7 +176,11 @@ pub fn fulfilled_quantity(state: &ShopState, order: &str, line: &str) -> i64 {
 
 /// The fulfillment order line items of a line item, with their fulfillment order, over the
 /// order's fulfillment orders: `(fulfillment order, its line item)`.
-pub fn fulfillment_order_lines(state: &ShopState, order: &str, line: &str) -> Vec<(String, String)> {
+pub fn fulfillment_order_lines(
+    state: &ShopState,
+    order: &str,
+    line: &str,
+) -> Vec<(String, String)> {
     let Some(record) = state.get(order) else {
         return Vec::new();
     };
@@ -205,7 +212,10 @@ pub fn take_unfulfilled(state: &mut ShopState, order: &str, line: &str, quantity
     let mut lines = fulfillment_order_lines(state, order, line);
     // Open fulfillment orders first, cancelled and closed ones last.
     lines.sort_by_key(|(fulfillment_order, _)| {
-        match state.get(fulfillment_order).and_then(|fo| text(fo, "status")) {
+        match state
+            .get(fulfillment_order)
+            .and_then(|fo| text(fo, "status"))
+        {
             Some("OPEN" | "IN_PROGRESS" | "ON_HOLD" | "SCHEDULED") => 0,
             _ => 1,
         }
@@ -354,7 +364,10 @@ fn capturable_of(transactions: &[&Record], authorization: &Record) -> i64 {
     if children
         .iter()
         .any(|child| text(child, "kind") == Some("VOID"))
-        || authorization.get("multiCapturable").and_then(Value::as_bool) == Some(false)
+        || authorization
+            .get("multiCapturable")
+            .and_then(Value::as_bool)
+            == Some(false)
             && children
                 .iter()
                 .any(|child| text(child, "kind") == Some("CAPTURE"))
@@ -399,10 +412,7 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     let mut remaining: HashMap<String, i64> = HashMap::new();
     let fulfillment_orders = gids(record.get("fulfillmentOrders"));
     let mut fulfillment_statuses: Vec<String> = Vec::new();
-    for fulfillment_order in fulfillment_orders
-        .iter()
-        .filter_map(|id| state.get(id))
-    {
+    for fulfillment_order in fulfillment_orders.iter().filter_map(|id| state.get(id)) {
         let mut left = 0;
         for item in gids(fulfillment_order.get("lineItems"))
             .iter()
@@ -483,8 +493,7 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     let current_subtotal = subtotal - refunded.subtotal;
     let current_shipping = shipping - refunded.shipping;
     let current_tax = tax - refunded.tax;
-    let current_total =
-        current_subtotal + current_shipping + current_tax - refunded.discrepancy;
+    let current_total = current_subtotal + current_shipping + current_tax - refunded.discrepancy;
     let (received, refunded_money, capturable, _) = money_moved(state, &record);
     let net = received - refunded_money;
     let weight = int(&record, "totalWeight");
@@ -505,11 +514,15 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     } else if fulfilled_total > 0 {
         "PARTIALLY_FULFILLED"
     } else if !fulfillment_statuses.is_empty()
-        && fulfillment_statuses.iter().all(|status| status == "ON_HOLD")
+        && fulfillment_statuses
+            .iter()
+            .all(|status| status == "ON_HOLD")
     {
         "ON_HOLD"
     } else if !fulfillment_statuses.is_empty()
-        && fulfillment_statuses.iter().all(|status| status == "SCHEDULED")
+        && fulfillment_statuses
+            .iter()
+            .all(|status| status == "SCHEDULED")
     {
         "SCHEDULED"
     } else {
@@ -785,7 +798,12 @@ pub fn move_inventory(
 }
 
 /// The quantity of an item at a location under a name (`committed`).
-pub fn inventory_quantity(state: &ShopState, item: &str, location: Option<&str>, name: &str) -> i64 {
+pub fn inventory_quantity(
+    state: &ShopState,
+    item: &str,
+    location: Option<&str>,
+    name: &str,
+) -> i64 {
     inventory_level(state, item, location)
         .and_then(|level| state.get(&level))
         .and_then(|level| level.get("quantities"))
@@ -1004,7 +1022,10 @@ pub fn attributes(input: Option<&Value>) -> Value {
 
 /// An input object of a mutation argument, empty when absent.
 pub fn input_of(value: Option<&Value>) -> Map<String, Value> {
-    value.and_then(Value::as_object).cloned().unwrap_or_default()
+    value
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1020,11 +1041,11 @@ mod tests {
         assert_eq!(parse_cents(".5"), Some(50));
         assert_eq!(parse_cents("x"), None);
         assert_eq!(parse_cents(""), None);
+        assert_eq!(cents(Some(&json!({"shopMoney": {"amount": "12.5"}}))), 1250);
         assert_eq!(
-            cents(Some(&json!({"shopMoney": {"amount": "12.5"}}))),
-            1250
+            cents(Some(&json!({"amount": "3", "currencyCode": "EUR"}))),
+            300
         );
-        assert_eq!(cents(Some(&json!({"amount": "3", "currencyCode": "EUR"}))), 300);
         assert_eq!(cents(None), 0);
         assert_eq!(formatted_gateway("manual"), "Manual");
         assert_eq!(formatted_gateway("shopify_payments"), "Shopify Payments");

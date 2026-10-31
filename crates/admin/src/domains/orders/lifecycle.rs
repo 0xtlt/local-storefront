@@ -240,7 +240,10 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         ]);
     }
     let staff_note = ctx.arg_str("staffNote").map(str::to_string);
-    if staff_note.as_ref().is_some_and(|note| note.chars().count() > 255) {
+    if staff_note
+        .as_ref()
+        .is_some_and(|note| note.chars().count() > 255)
+    {
         return failed(&[UserError::new(
             &["staffNote"],
             "Staff note is too long (maximum is 255 characters)",
@@ -253,8 +256,11 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_bool)
         .or_else(|| ctx.arg_bool("refund"))
         .unwrap_or(false);
-    if method.is_some_and(|method| method.get("storeCreditRefund").is_some_and(|v| !v.is_null()))
-    {
+    if method.is_some_and(|method| {
+        method
+            .get("storeCreditRefund")
+            .is_some_and(|v| !v.is_null())
+    }) {
         mutation.note(
             "orderCancel: lsf does not simulate store credit: `storeCreditRefund` was ignored, \
              nothing was refunded",
@@ -279,9 +285,9 @@ fn order_cancel(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         {
             continue;
         }
-        let holds = state
-            .get(&order)
-            .map_or(0, |order| model::capturable_amount(state, order, authorization));
+        let holds = state.get(&order).map_or(0, |order| {
+            model::capturable_amount(state, order, authorization)
+        });
         if holds > 0 {
             let gateway = text(transaction, "gateway").map(str::to_string);
             let amount = field_cents(transaction, "amountSet");
@@ -688,7 +694,10 @@ fn order_invoice_send(
 fn order_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("orderId").unwrap_or_default().to_string();
     let Some(order) = find_order(mutation.state(), &id) else {
-        return Ok(payload(json!({"deletedId": null}), &[no_order(&["orderId"])]));
+        return Ok(payload(
+            json!({"deletedId": null}),
+            &[no_order(&["orderId"])],
+        ));
     };
     let record = mutation.state().get(&order).cloned().unwrap_or_default();
     let closed = record.get("closed").and_then(Value::as_bool) == Some(true);
@@ -807,8 +816,11 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         let quantity = item.get("quantity").and_then(Value::as_i64).unwrap_or(0);
         if quantity <= 0 {
             errors.push(
-                UserError::new(&[&path[..], &["quantity"]].concat(), "Quantity must be greater than 0")
-                    .code("INVALID"),
+                UserError::new(
+                    &[&path[..], &["quantity"]].concat(),
+                    "Quantity must be greater than 0",
+                )
+                .code("INVALID"),
             );
             continue;
         }
@@ -844,8 +856,11 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             else {
                 // lsf's wording.
                 errors.push(
-                    UserError::new(&[&path[..], &["variantId"]].concat(), "Variant does not exist")
-                        .code("INVALID"),
+                    UserError::new(
+                        &[&path[..], &["variantId"]].concat(),
+                        "Variant does not exist",
+                    )
+                    .code("INVALID"),
                 );
                 continue;
             };
@@ -868,28 +883,39 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                 .sku
                 .take()
                 .or_else(|| text(variant_record, "sku").map(str::to_string));
-            line.vendor = line
-                .vendor
-                .take()
-                .or_else(|| product_record.and_then(|product| text(product, "vendor")).map(str::to_string));
+            line.vendor = line.vendor.take().or_else(|| {
+                product_record
+                    .and_then(|product| text(product, "vendor"))
+                    .map(str::to_string)
+            });
             line.unit_price = price.unwrap_or_else(|| field_cents(variant_record, "price"));
             line.requires_shipping = item
                 .get("requiresShipping")
                 .and_then(Value::as_bool)
-                .or_else(|| inventory.and_then(|item| item.get("requiresShipping")).and_then(Value::as_bool))
+                .or_else(|| {
+                    inventory
+                        .and_then(|item| item.get("requiresShipping"))
+                        .and_then(Value::as_bool)
+                })
                 .unwrap_or(true);
             line.weight = inventory
                 .and_then(|item| item.get("measurement"))
                 .and_then(|measurement| measurement.get("weight"))
                 .cloned();
-            line.image = variant_record.get("image").filter(|image| !image.is_null()).cloned();
+            line.image = variant_record
+                .get("image")
+                .filter(|image| !image.is_null())
+                .cloned();
             line.gift_card |= product_record
                 .and_then(|product| product.get("isGiftCard"))
                 .and_then(Value::as_bool)
                 == Some(true);
             if behaviour == "DECREMENT_OBEYING_POLICY"
                 && let Some(item_gid) = &item_gid
-                && inventory.and_then(|item| item.get("tracked")).and_then(Value::as_bool) == Some(true)
+                && inventory
+                    .and_then(|item| item.get("tracked"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
                 && text(variant_record, "inventoryPolicy") != Some("CONTINUE")
                 && model::inventory_quantity(state, item_gid, None, "available") < quantity
             {
@@ -1014,8 +1040,11 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         Some(location) if state.type_of(location) == Some("Location") => Some(location.to_string()),
         Some(_) => {
             errors.push(
-                UserError::new(&["order", "fulfillment", "locationId"], "Location does not exist")
-                    .code("INVALID"),
+                UserError::new(
+                    &["order", "fulfillment", "locationId"],
+                    "Location does not exist",
+                )
+                .code("INVALID"),
             );
             None
         }
@@ -1036,11 +1065,16 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         ("companyLocationId", "B2B orders (`companyLocationId`)"),
     ] {
         if input.get(field).is_some_and(|value| !value.is_null()) {
-            mutation.note(format!("orderCreate: lsf does not simulate {what} yet: it was ignored"));
+            mutation.note(format!(
+                "orderCreate: lsf does not simulate {what} yet: it was ignored"
+            ));
         }
     }
     if options.get("sendReceipt").and_then(Value::as_bool) == Some(true)
-        || options.get("sendFulfillmentReceipt").and_then(Value::as_bool) == Some(true)
+        || options
+            .get("sendFulfillmentReceipt")
+            .and_then(Value::as_bool)
+            == Some(true)
     {
         mutation.note("orderCreate: lsf sends no email: the receipts were not sent");
     }
@@ -1071,18 +1105,30 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     let discount = model::input_of(input.get("discountCode"));
     let mut discount_codes = Vec::new();
     let mut order_discount = 0;
-    if let Some(code) = discount.get("itemPercentageDiscountCode").and_then(Value::as_object) {
-        let percentage = code.get("percentage").and_then(Value::as_f64).unwrap_or(0.0);
+    if let Some(code) = discount
+        .get("itemPercentageDiscountCode")
+        .and_then(Value::as_object)
+    {
+        let percentage = code
+            .get("percentage")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
         for line in &mut lines {
             let total = line.unit_price * i64::from(line.quantity);
             line.discount = ((total as f64) * percentage / 100.0).round() as i64;
         }
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
-    } else if let Some(code) = discount.get("itemFixedDiscountCode").and_then(Value::as_object) {
-        order_discount = model::cents(code.get("amountSet").and_then(|set| set.get("shopMoney")))
-            .min(subtotal);
+    } else if let Some(code) = discount
+        .get("itemFixedDiscountCode")
+        .and_then(Value::as_object)
+    {
+        order_discount =
+            model::cents(code.get("amountSet").and_then(|set| set.get("shopMoney"))).min(subtotal);
         discount_codes.extend(code.get("code").and_then(Value::as_str).map(str::to_string));
-    } else if let Some(code) = discount.get("freeShippingDiscountCode").and_then(Value::as_object) {
+    } else if let Some(code) = discount
+        .get("freeShippingDiscountCode")
+        .and_then(Value::as_object)
+    {
         if let Some(shipping) = &mut shipping {
             shipping.discounted = 0;
         }
@@ -1129,8 +1175,15 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .get("email")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .or_else(|| customer_record.and_then(|record| text(record, "email")).map(str::to_string)),
-        phone: input.get("phone").and_then(Value::as_str).map(str::to_string),
+            .or_else(|| {
+                customer_record
+                    .and_then(|record| text(record, "email"))
+                    .map(str::to_string)
+            }),
+        phone: input
+            .get("phone")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         accepts_marketing: input
             .get("buyerAcceptsMarketing")
             .and_then(Value::as_bool)
@@ -1146,7 +1199,10 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         tax,
         order_discount,
         discount_codes,
-        note: input.get("note").and_then(Value::as_str).map(str::to_string),
+        note: input
+            .get("note")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         attributes: input
             .get("customAttributes")
             .and_then(Value::as_array)
@@ -1184,7 +1240,10 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         record.insert("test".into(), json!(test));
         record.insert("tags".into(), json!(tags_of(input.get("tags"))));
         for field in ["poNumber", "sourceIdentifier"] {
-            record.insert(field.into(), input.get(field).cloned().unwrap_or(Value::Null));
+            record.insert(
+                field.into(),
+                input.get(field).cloned().unwrap_or(Value::Null),
+            );
         }
         if let Some(closed) = input.get("closedAt").and_then(Value::as_str) {
             record.insert("closed".into(), json!(true));
@@ -1193,10 +1252,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             record.insert("closed".into(), json!(false));
         }
         if !draft.discount_codes.is_empty() {
-            record.insert(
-                "discountCodes".into(),
-                json!(draft.discount_codes),
-            );
+            record.insert("discountCodes".into(), json!(draft.discount_codes));
         }
     }
     // The seed's records of a fulfilled order, with the tracking of `fulfillment`.
@@ -1233,7 +1289,11 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         state.emit("order_transactions/create", &transaction);
     }
     for transaction in &transactions {
-        let amount = model::cents(transaction.get("amountSet").and_then(|set| set.get("shopMoney")));
+        let amount = model::cents(
+            transaction
+                .get("amountSet")
+                .and_then(|set| set.get("shopMoney")),
+        );
         let kind = transaction
             .get("kind")
             .and_then(Value::as_str)
@@ -1257,7 +1317,10 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         );
         if let Some(record) = state.get_mut(&created) {
             record.insert("status".into(), json!(status));
-            for (from, to) in [("authorizationCode", "authorizationCode"), ("processedAt", "processedAt")] {
+            for (from, to) in [
+                ("authorizationCode", "authorizationCode"),
+                ("processedAt", "processedAt"),
+            ] {
                 if let Some(value) = transaction.get(from).filter(|value| !value.is_null()) {
                     record.insert(to.into(), value.clone());
                 }
@@ -1309,18 +1372,20 @@ fn tax_lines_cents(lines: Option<&Value>, base: i64) -> i64 {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(|line| match line.get("priceSet").and_then(|set| set.get("shopMoney")) {
-            Some(money) => model::cents(Some(money)),
-            None => {
-                let rate = line
-                    .get("rate")
-                    .and_then(|rate| match rate {
-                        Value::String(text) => text.parse::<f64>().ok(),
-                        other => other.as_f64(),
-                    })
-                    .unwrap_or(0.0);
-                ((base as f64) * rate).round() as i64
-            }
-        })
+        .map(
+            |line| match line.get("priceSet").and_then(|set| set.get("shopMoney")) {
+                Some(money) => model::cents(Some(money)),
+                None => {
+                    let rate = line
+                        .get("rate")
+                        .and_then(|rate| match rate {
+                            Value::String(text) => text.parse::<f64>().ok(),
+                            other => other.as_f64(),
+                        })
+                        .unwrap_or(0.0);
+                    ((base as f64) * rate).round() as i64
+                }
+            },
+        )
         .sum()
 }

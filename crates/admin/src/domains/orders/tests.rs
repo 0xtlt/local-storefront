@@ -167,7 +167,10 @@ fn orders_are_searched_and_sorted_by_their_documented_filters() {
         "{ orders(first: 3, sortKey: ORDER_NUMBER, reverse: true) { nodes { name } } ordersCount(query: \"fulfillment_status:unshipped\") { count } }",
         Value::Null,
     );
-    assert_eq!(reversed["data"]["orders"]["nodes"][0]["name"], json!("#1003"));
+    assert_eq!(
+        reversed["data"]["orders"]["nodes"][0]["name"],
+        json!("#1003")
+    );
     assert_eq!(reversed["data"]["ordersCount"]["count"], json!(2));
 }
 
@@ -183,16 +186,31 @@ fn fulfillment_orders_say_what_they_support() {
         .iter()
         .map(|action| action["action"].as_str().unwrap())
         .collect();
-    assert!(actions.starts_with(&["CREATE_FULFILLMENT", "HOLD", "MOVE"]), "{actions:?}");
+    assert!(
+        actions.starts_with(&["CREATE_FULFILLMENT", "HOLD", "MOVE"]),
+        "{actions:?}"
+    );
     let fulfilled = named(&mut shop, "#1001");
-    assert_eq!(fulfilled["fulfillmentOrders"]["nodes"][0]["status"], json!("CLOSED"));
-    assert_eq!(fulfilled["fulfillmentOrders"]["nodes"][0]["supportedActions"], json!([]));
+    assert_eq!(
+        fulfilled["fulfillmentOrders"]["nodes"][0]["status"],
+        json!("CLOSED")
+    );
+    assert_eq!(
+        fulfilled["fulfillmentOrders"]["nodes"][0]["supportedActions"],
+        json!([])
+    );
     let open = run(
         &mut shop,
         "{ fulfillmentOrders(first: 10) { nodes { id status } } all: fulfillmentOrders(first: 10, includeClosed: true) { nodes { id } } }",
         Value::Null,
     );
-    assert_eq!(open["data"]["fulfillmentOrders"]["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        open["data"]["fulfillmentOrders"]["nodes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     assert_eq!(open["data"]["all"]["nodes"].as_array().unwrap().len(), 3);
 }
 
@@ -226,7 +244,10 @@ fn fulfillment_create_ships_part_then_all_of_an_order() {
     assert_eq!(fulfillment["name"], json!("#1002-F1"));
     assert_eq!(fulfillment["status"], json!("SUCCESS"));
     assert_eq!(fulfillment["totalQuantity"], json!(first));
-    assert_eq!(fulfillment["location"]["id"], fo["assignedLocation"]["location"]["id"]);
+    assert_eq!(
+        fulfillment["location"]["id"],
+        fo["assignedLocation"]["location"]["id"]
+    );
     assert_eq!(
         fulfillment["trackingInfo"],
         json!([{"company": "UPS", "number": "1Z999", "url": "https://www.ups.com/WebTracking?loc=en_US&requester=ST&trackNums=1Z999"}])
@@ -235,7 +256,11 @@ fn fulfillment_create_ships_part_then_all_of_an_order() {
     let partial = first < total;
     assert_eq!(
         after["displayFulfillmentStatus"],
-        json!(if partial { "PARTIALLY_FULFILLED" } else { "FULFILLED" })
+        json!(if partial {
+            "PARTIALLY_FULFILLED"
+        } else {
+            "FULFILLED"
+        })
     );
     assert_eq!(
         after["fulfillmentOrders"]["nodes"][0]["status"],
@@ -250,7 +275,11 @@ fn fulfillment_create_ships_part_then_all_of_an_order() {
         fired,
         [
             "fulfillments/create",
-            if partial { "orders/partially_fulfilled" } else { "orders/fulfilled" },
+            if partial {
+                "orders/partially_fulfilled"
+            } else {
+                "orders/fulfilled"
+            },
             "orders/updated"
         ]
     );
@@ -268,7 +297,10 @@ fn fulfillment_create_ships_part_then_all_of_an_order() {
         );
         let done = order(&mut shop, &id);
         assert_eq!(done["displayFulfillmentStatus"], json!("FULFILLED"));
-        assert_eq!(done["fulfillmentOrders"]["nodes"][0]["status"], json!("CLOSED"));
+        assert_eq!(
+            done["fulfillmentOrders"]["nodes"][0]["status"],
+            json!("CLOSED")
+        );
         assert_eq!(
             topics(&mut shop),
             ["fulfillments/create", "orders/fulfilled", "orders/updated"]
@@ -280,7 +312,10 @@ fn fulfillment_create_ships_part_then_all_of_an_order() {
 fn fulfillment_create_refuses_what_cannot_ship() {
     let mut shop = demo();
     let closed = named(&mut shop, "#1001");
-    let closed_fo = closed["fulfillmentOrders"]["nodes"][0]["id"].as_str().unwrap().to_string();
+    let closed_fo = closed["fulfillmentOrders"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let number = crate::state::parse_gid(&closed_fo).unwrap().1;
     let answer = run(
         &mut shop,
@@ -342,7 +377,10 @@ fn fulfillments_are_tracked_and_cancelled() {
         event["data"]["fulfillmentEventCreate"]["fulfillmentEvent"]["status"],
         json!("IN_TRANSIT")
     );
-    assert_eq!(topics(&mut shop), ["fulfillment_events/create", "fulfillments/update"]);
+    assert_eq!(
+        topics(&mut shop),
+        ["fulfillment_events/create", "fulfillments/update"]
+    );
     let status = run(
         &mut shop,
         "query($id: ID!) { fulfillment(id: $id) { displayStatus inTransitAt events(first: 5) { nodes { status } } } }",
@@ -390,12 +428,21 @@ fn fulfillment_orders_are_held_released_and_moved() {
     let payload = &held["data"]["fulfillmentOrderHold"];
     assert_eq!(payload["userErrors"], json!([]), "{held}");
     assert_eq!(payload["fulfillmentOrder"]["status"], json!("ON_HOLD"));
-    assert_eq!(payload["fulfillmentHold"]["displayReason"], json!("Awaiting payment"));
+    assert_eq!(
+        payload["fulfillmentHold"]["displayReason"],
+        json!("Awaiting payment")
+    );
     assert_eq!(payload["remainingFulfillmentOrder"], Value::Null);
-    assert_eq!(order(&mut shop, &id)["displayFulfillmentStatus"], json!("ON_HOLD"));
+    assert_eq!(
+        order(&mut shop, &id)["displayFulfillmentStatus"],
+        json!("ON_HOLD")
+    );
     assert_eq!(
         topics(&mut shop),
-        ["fulfillment_holds/added", "fulfillment_orders/placed_on_hold"]
+        [
+            "fulfillment_holds/added",
+            "fulfillment_orders/placed_on_hold"
+        ]
     );
     let again = run(
         &mut shop,
@@ -417,12 +464,17 @@ fn fulfillment_orders_are_held_released_and_moved() {
     );
     assert_eq!(
         topics(&mut shop),
-        ["fulfillment_holds/released", "fulfillment_orders/hold_released"]
+        [
+            "fulfillment_holds/released",
+            "fulfillment_orders/hold_released"
+        ]
     );
 
     let other = shop
         .keys("Location")
-        .find(|location| Some(json!(location)) != Some(fo["assignedLocation"]["location"]["id"].clone()))
+        .find(|location| {
+            Some(json!(location)) != Some(fo["assignedLocation"]["location"]["id"].clone())
+        })
         .unwrap()
         .to_string();
     let moved = run(
@@ -435,7 +487,10 @@ fn fulfillment_orders_are_held_released_and_moved() {
     assert_eq!(payload["userErrors"], json!([]), "{moved}");
     // Nothing of it shipped and all of it moved: the same fulfillment order, at the new place.
     assert_eq!(payload["movedFulfillmentOrder"]["id"], fo["id"]);
-    assert_eq!(payload["movedFulfillmentOrder"]["assignedLocation"]["location"]["id"], json!(other));
+    assert_eq!(
+        payload["movedFulfillmentOrder"]["assignedLocation"]["location"]["id"],
+        json!(other)
+    );
     assert_eq!(topics(&mut shop), ["fulfillment_orders/moved"]);
 }
 
@@ -449,9 +504,14 @@ fn order_cancel_voids_refunds_and_restocks() {
     let id = order_named(&shop, "#1002");
     let before = order(&mut shop, &id);
     let line = before["lineItems"]["nodes"][0].clone();
-    let item = model::inventory_item_of(&shop, shop.get(line["id"].as_str().unwrap()).unwrap()).unwrap();
+    let item =
+        model::inventory_item_of(&shop, shop.get(line["id"].as_str().unwrap()).unwrap()).unwrap();
     let available_before = available(&shop, &item);
-    let answer = run(&mut shop, ORDER_CANCEL, json!({"id": id, "restock": true, "refund": true}));
+    let answer = run(
+        &mut shop,
+        ORDER_CANCEL,
+        json!({"id": id, "restock": true, "refund": true}),
+    );
     let payload = &answer["data"]["orderCancel"];
     assert_eq!(payload["orderCancelUserErrors"], json!([]), "{answer}");
     assert_eq!(payload["job"]["done"], json!(true));
@@ -472,15 +532,34 @@ fn order_cancel_voids_refunds_and_restocks() {
     assert_eq!(amount(&after["currentTotalPriceSet"]), "0.0");
     assert_eq!(amount(&after["totalOutstandingSet"]), "0.0");
     assert_eq!(after["lineItems"]["nodes"][0]["currentQuantity"], json!(0));
-    assert_eq!(after["fulfillmentOrders"]["nodes"][0]["status"], json!("CANCELLED"));
-    let refund = after["transactions"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        after["fulfillmentOrders"]["nodes"][0]["status"],
+        json!("CANCELLED")
+    );
+    let refund = after["transactions"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
     assert_eq!(refund["kind"], json!("REFUND"));
-    assert_eq!(refund["parentTransaction"]["id"], before["transactions"][0]["id"]);
+    assert_eq!(
+        refund["parentTransaction"]["id"],
+        before["transactions"][0]["id"]
+    );
     let tracked = line_is_tracked(&shop, &item);
-    let restocked = if tracked { line["quantity"].as_i64().unwrap() } else { 0 };
+    let restocked = if tracked {
+        line["quantity"].as_i64().unwrap()
+    } else {
+        0
+    };
     assert_eq!(available(&shop, &item), available_before + restocked);
     // The units go back in stock, then the money goes back.
-    let mut expected = if tracked { vec!["inventory_levels/update"] } else { Vec::new() };
+    let mut expected = if tracked {
+        vec!["inventory_levels/update"]
+    } else {
+        Vec::new()
+    };
     expected.extend([
         "order_transactions/create",
         "refunds/create",
@@ -489,12 +568,19 @@ fn order_cancel_voids_refunds_and_restocks() {
         "orders/updated",
     ]);
     assert_eq!(topics(&mut shop), expected);
-    let again = run(&mut shop, ORDER_CANCEL, json!({"id": id, "restock": false, "refund": false}));
+    let again = run(
+        &mut shop,
+        ORDER_CANCEL,
+        json!({"id": id, "restock": false, "refund": false}),
+    );
     assert_eq!(
         again["data"]["orderCancel"]["orderCancelUserErrors"],
         json!([{"field": ["orderId"], "message": "Order has already been cancelled", "code": "INVALID"}])
     );
-    assert_eq!(again["data"]["orderCancel"]["userErrors"][0]["message"], json!("Order has already been cancelled"));
+    assert_eq!(
+        again["data"]["orderCancel"]["userErrors"][0]["message"],
+        json!("Order has already been cancelled")
+    );
 }
 
 fn line_is_tracked(shop: &ShopState, item: &str) -> bool {
@@ -508,7 +594,10 @@ fn order_close_open_and_delete() {
     let delete = "mutation($id: ID!) { orderDelete(orderId: $id) { deletedId userErrors { field message code } } }";
     let refused = run(&mut shop, delete, json!({"id": id}));
     assert_eq!(refused["data"]["orderDelete"]["deletedId"], Value::Null);
-    assert_eq!(refused["data"]["orderDelete"]["userErrors"][0]["code"], json!("INVALID"));
+    assert_eq!(
+        refused["data"]["orderDelete"]["userErrors"][0]["code"],
+        json!("INVALID")
+    );
     let closed = run(
         &mut shop,
         "mutation($id: ID!) { orderClose(input: {id: $id}) { order { closed closedAt } userErrors { field message } } }",
@@ -521,17 +610,26 @@ fn order_close_open_and_delete() {
         "mutation($id: ID!) { orderOpen(input: {id: $id}) { order { closed closedAt } userErrors { field message } } }",
         json!({"id": id}),
     );
-    assert_eq!(opened["data"]["orderOpen"]["order"], json!({"closed": false, "closedAt": null}));
+    assert_eq!(
+        opened["data"]["orderOpen"]["order"],
+        json!({"closed": false, "closedAt": null})
+    );
     run(
         &mut shop,
         "mutation($id: ID!) { orderClose(input: {id: $id}) { userErrors { message } } }",
         json!({"id": id}),
     );
     events(&mut shop);
-    let customer = shop.get(&id).unwrap()["customer"].as_str().unwrap().to_string();
+    let customer = shop.get(&id).unwrap()["customer"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let count = shop.get(&customer).unwrap()["numberOfOrders"].clone();
     let deleted = run(&mut shop, delete, json!({"id": id}));
-    assert_eq!(deleted["data"]["orderDelete"], json!({"deletedId": id, "userErrors": []}));
+    assert_eq!(
+        deleted["data"]["orderDelete"],
+        json!({"deletedId": id, "userErrors": []})
+    );
     assert!(shop.get(&id).is_none());
     assert_ne!(shop.get(&customer).unwrap()["numberOfOrders"], count);
     let fired = shop.take_events();
@@ -562,11 +660,18 @@ fn order_update_changes_what_is_given() {
         }}),
     );
     let order = &answer["data"]["orderUpdate"]["order"];
-    assert_eq!(answer["data"]["orderUpdate"]["userErrors"], json!([]), "{answer}");
+    assert_eq!(
+        answer["data"]["orderUpdate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
     assert_eq!(order["note"], json!("Gift wrap"));
     assert_eq!(order["tags"], json!(["vip", "rush"]));
     assert_eq!(order["poNumber"], json!("PO-7"));
-    assert_eq!(order["customAttributes"], json!([{"key": "gift", "value": "yes"}]));
+    assert_eq!(
+        order["customAttributes"],
+        json!([{"key": "gift", "value": "yes"}])
+    );
     assert_eq!(order["shippingAddress"]["city"], json!("Paris"));
     assert_eq!(order["shippingAddress"]["countryCodeV2"], json!("FR"));
     assert_eq!(
@@ -591,7 +696,10 @@ const ORDER_CREATE: &str = "mutation($order: OrderCreateOrderInput!, $options: O
 
 fn first_variant(shop: &ShopState) -> (String, String) {
     let variant = shop.keys("ProductVariant").next().unwrap().to_string();
-    let item = shop.get(&variant).unwrap()["inventoryItem"].as_str().unwrap().to_string();
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
     (variant, item)
 }
 
@@ -619,8 +727,15 @@ fn order_create_imports_an_order_with_its_money_and_stock() {
             "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"},
         }),
     );
-    assert_eq!(answer["data"]["orderCreate"]["userErrors"], json!([]), "{answer}");
-    let id = answer["data"]["orderCreate"]["order"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let id = answer["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let created = order(&mut shop, &id);
     assert_eq!(created["name"], json!("#1004"));
     assert_eq!(created["displayFinancialStatus"], json!("PARTIALLY_PAID"));
@@ -628,14 +743,21 @@ fn order_create_imports_an_order_with_its_money_and_stock() {
     assert_eq!(created["transactions"][0]["gateway"], json!("bogus"));
     assert_eq!(shop.get(&id).unwrap()["customer"], json!(customer));
     assert_eq!(shop.get(&id).unwrap()["tags"], json!(["imported"]));
-    let price = crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let price =
+        crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
     assert_eq!(
         model::field_cents(shop.get(&id).unwrap(), "totalPriceSet"),
         2 * price + 500 + 1000
     );
     if line_is_tracked(&shop, &item) {
-        assert_eq!(model::inventory_quantity(&shop, &item, None, "available"), available - 2);
-        assert_eq!(model::inventory_quantity(&shop, &item, None, "committed"), 2);
+        assert_eq!(
+            model::inventory_quantity(&shop, &item, None, "available"),
+            available - 2
+        );
+        assert_eq!(
+            model::inventory_quantity(&shop, &item, None, "committed"),
+            2
+        );
     }
     let fired = topics(&mut shop);
     assert_eq!(fired[0], "orders/create");
@@ -647,8 +769,14 @@ fn order_create_imports_an_order_with_its_money_and_stock() {
         ORDER_CREATE,
         json!({"order": {"lineItems": [{"variantId": variant, "quantity": 1}], "financialStatus": "PAID"}}),
     );
-    let paid_id = paid["data"]["orderCreate"]["order"]["id"].as_str().unwrap().to_string();
-    assert_eq!(order(&mut shop, &paid_id)["displayFinancialStatus"], json!("PAID"));
+    let paid_id = paid["data"]["orderCreate"]["order"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        order(&mut shop, &paid_id)["displayFinancialStatus"],
+        json!("PAID")
+    );
     assert_eq!(
         topics(&mut shop),
         ["orders/create", "order_transactions/create", "orders/paid"]
@@ -680,7 +808,10 @@ fn pending_orders_are_marked_as_paid_and_authorizations_captured_or_voided() {
             json!({"order": {"lineItems": [{"variantId": variant, "quantity": 1}], "financialStatus": status}}),
         );
         events(shop);
-        answer["data"]["orderCreate"]["order"]["id"].as_str().unwrap().to_string()
+        answer["data"]["orderCreate"]["order"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
     };
     let mark = "mutation($id: ID!) { orderMarkAsPaid(input: {id: $id}) { order { id displayFinancialStatus } userErrors { field message } } }";
     let pending = create(&mut shop, "PENDING");
@@ -706,7 +837,10 @@ fn pending_orders_are_marked_as_paid_and_authorizations_captured_or_voided() {
     let authorized = create(&mut shop, "AUTHORIZED");
     let before = order(&mut shop, &authorized);
     assert_eq!(before["displayFinancialStatus"], json!("AUTHORIZED"));
-    let authorization = before["transactions"][0]["id"].as_str().unwrap().to_string();
+    let authorization = before["transactions"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let total = amount(&before["totalCapturableSet"]).to_string();
     let capture = "mutation($input: OrderCaptureInput!) { orderCapture(input: $input) { transaction { kind amountSet { shopMoney { amount } } parentTransaction { id } } userErrors { field message } } }";
     let too_much = run(
@@ -715,7 +849,10 @@ fn pending_orders_are_marked_as_paid_and_authorizations_captured_or_voided() {
         json!({"input": {"id": authorized, "parentTransactionId": authorization, "amount": "100000"}}),
     );
     assert_eq!(too_much["data"]["orderCapture"]["transaction"], Value::Null);
-    assert_eq!(too_much["data"]["orderCapture"]["userErrors"][0]["field"], json!(["amount"]));
+    assert_eq!(
+        too_much["data"]["orderCapture"]["userErrors"][0]["field"],
+        json!(["amount"])
+    );
     let captured = run(
         &mut shop,
         capture,
@@ -725,7 +862,10 @@ fn pending_orders_are_marked_as_paid_and_authorizations_captured_or_voided() {
         captured["data"]["orderCapture"]["transaction"]["kind"],
         json!("CAPTURE")
     );
-    assert_eq!(order(&mut shop, &authorized)["displayFinancialStatus"], json!("PAID"));
+    assert_eq!(
+        order(&mut shop, &authorized)["displayFinancialStatus"],
+        json!("PAID")
+    );
     assert_eq!(
         topics(&mut shop),
         ["order_transactions/create", "orders/paid", "orders/updated"]
@@ -739,7 +879,10 @@ fn pending_orders_are_marked_as_paid_and_authorizations_captured_or_voided() {
         voided["data"]["transactionVoid"],
         json!({"transaction": {"kind": "VOID"}, "userErrors": []})
     );
-    assert_eq!(order(&mut shop, &voidable)["displayFinancialStatus"], json!("VOIDED"));
+    assert_eq!(
+        order(&mut shop, &voidable)["displayFinancialStatus"],
+        json!("VOIDED")
+    );
     let twice = run(&mut shop, void, json!({"id": authorization}));
     assert_eq!(
         twice["data"]["transactionVoid"]["userErrors"],
@@ -768,9 +911,18 @@ fn refund_create_takes_back_lines_and_money() {
         json!({"id": id, "line": line["id"]}),
     );
     let suggestion = &suggested["data"]["order"]["suggestedRefund"];
-    let refund_amount = suggestion["amountSet"]["shopMoney"]["amount"].as_str().unwrap().to_string();
-    assert_eq!(suggestion["suggestedTransactions"][0]["parentTransaction"]["id"], sale["id"]);
-    assert_eq!(suggestion["suggestedTransactions"][0]["kind"], json!("SUGGESTED_REFUND"));
+    let refund_amount = suggestion["amountSet"]["shopMoney"]["amount"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        suggestion["suggestedTransactions"][0]["parentTransaction"]["id"],
+        sale["id"]
+    );
+    assert_eq!(
+        suggestion["suggestedTransactions"][0]["kind"],
+        json!("SUGGESTED_REFUND")
+    );
     let answer = run(
         &mut shop,
         REFUND_CREATE,
@@ -783,9 +935,18 @@ fn refund_create_takes_back_lines_and_money() {
     );
     let payload = &answer["data"]["refundCreate"];
     assert_eq!(payload["userErrors"], json!([]), "{answer}");
-    assert_eq!(payload["refund"]["totalRefundedSet"]["shopMoney"]["amount"], json!(refund_amount));
-    assert_eq!(payload["refund"]["refundLineItems"]["nodes"][0]["restocked"], json!(true));
-    assert_eq!(payload["order"]["displayFinancialStatus"], json!("PARTIALLY_REFUNDED"));
+    assert_eq!(
+        payload["refund"]["totalRefundedSet"]["shopMoney"]["amount"],
+        json!(refund_amount)
+    );
+    assert_eq!(
+        payload["refund"]["refundLineItems"]["nodes"][0]["restocked"],
+        json!(true)
+    );
+    assert_eq!(
+        payload["order"]["displayFinancialStatus"],
+        json!("PARTIALLY_REFUNDED")
+    );
     let after = order(&mut shop, &id);
     assert_eq!(
         after["lineItems"]["nodes"][0]["currentQuantity"],
@@ -793,8 +954,14 @@ fn refund_create_takes_back_lines_and_money() {
     );
     assert_eq!(amount(&after["totalOutstandingSet"]), "0.0");
     let fired = topics(&mut shop);
-    assert!(fired.contains(&"order_transactions/create".to_string()), "{fired:?}");
-    assert_eq!(&fired[fired.len() - 2..], ["refunds/create", "orders/updated"]);
+    assert!(
+        fired.contains(&"order_transactions/create".to_string()),
+        "{fired:?}"
+    );
+    assert_eq!(
+        &fired[fired.len() - 2..],
+        ["refunds/create", "orders/updated"]
+    );
 
     let errors = |shop: &mut ShopState, input: Value| -> Value {
         run(shop, REFUND_CREATE, json!({"input": input}))["data"]["refundCreate"].clone()
@@ -804,11 +971,17 @@ fn refund_create_takes_back_lines_and_money() {
         json!([{"field": null, "message": "either refund line items or refund duties or transactions or refund methods must be present"}])
     );
     assert_eq!(
-        errors(&mut shop, json!({"orderId": id, "refundLineItems": [{"lineItemId": line["id"], "quantity": 99}]}))["userErrors"],
+        errors(
+            &mut shop,
+            json!({"orderId": id, "refundLineItems": [{"lineItemId": line["id"], "quantity": 99}]})
+        )["userErrors"],
         json!([{"field": ["refundLineItems", "0", "quantity"], "message": "cannot refund more items than were purchased"}])
     );
     assert_eq!(
-        errors(&mut shop, json!({"orderId": id, "refundLineItems": [{"lineItemId": line["id"], "quantity": 1}], "shipping": {"amount": "1000"}}))["userErrors"],
+        errors(
+            &mut shop,
+            json!({"orderId": id, "refundLineItems": [{"lineItemId": line["id"], "quantity": 1}], "shipping": {"amount": "1000"}})
+        )["userErrors"],
         json!([{"field": ["shipping"], "message": "Shipping must have amount less than or equal to remaining shipping"}])
     );
     assert!(shop.take_events().is_empty());
@@ -834,7 +1007,10 @@ fn returns_are_requested_approved_processed_and_closed() {
         "query($id: ID!) { returnableFulfillment(id: $id) { id } }",
         json!({"id": fulfillment["id"]}),
     );
-    assert_eq!(node["data"]["returnableFulfillment"]["id"], fulfillment["id"]);
+    assert_eq!(
+        node["data"]["returnableFulfillment"]["id"],
+        fulfillment["id"]
+    );
 
     let request = "mutation($input: ReturnRequestInput!) { returnRequest(input: $input) {
         return { id name status totalQuantity returnLineItems(first: 5) { nodes { ... on ReturnLineItem { quantity processableQuantity customerNote } } } }
@@ -865,11 +1041,18 @@ fn returns_are_requested_approved_processed_and_closed() {
     let created = &requested["data"]["returnRequest"]["return"];
     assert_eq!(created["status"], json!("REQUESTED"), "{requested}");
     assert_eq!(created["name"], json!("#1001-R1"));
-    assert_eq!(created["returnLineItems"]["nodes"][0]["processableQuantity"], json!(0));
+    assert_eq!(
+        created["returnLineItems"]["nodes"][0]["processableQuantity"],
+        json!(0)
+    );
     let return_id = created["id"].clone();
     assert_eq!(topics(&mut shop), ["returns/request"]);
     assert_eq!(
-        run(&mut shop, "query($id: ID!) { order(id: $id) { returnStatus } }", json!({"id": id}))["data"]["order"]["returnStatus"],
+        run(
+            &mut shop,
+            "query($id: ID!) { order(id: $id) { returnStatus } }",
+            json!({"id": id})
+        )["data"]["order"]["returnStatus"],
         json!("RETURN_REQUESTED")
     );
 
@@ -930,13 +1113,19 @@ fn returns_are_requested_approved_processed_and_closed() {
         "mutation($id: ID!) { returnCancel(id: $id) { return { status } userErrors { message code } } }",
         json!({"id": return_id}),
     );
-    assert_eq!(cancel["data"]["returnCancel"]["userErrors"][0]["code"], json!("INVALID_STATE"));
+    assert_eq!(
+        cancel["data"]["returnCancel"]["userErrors"][0]["code"],
+        json!("INVALID_STATE")
+    );
     let close = run(
         &mut shop,
         "mutation($id: ID!) { returnClose(id: $id) { return { status } userErrors { message } } }",
         json!({"id": return_id}),
     );
-    assert_eq!(close["data"]["returnClose"]["return"]["status"], json!("CLOSED"));
+    assert_eq!(
+        close["data"]["returnClose"]["return"]["status"],
+        json!("CLOSED")
+    );
     assert_eq!(topics(&mut shop), ["returns/reopen", "returns/close"]);
 }
 
@@ -976,10 +1165,18 @@ fn a_requested_return_is_declined_and_an_open_one_cancelled() {
         "mutation($id: ID!) { returnCancel(id: $id) { return { status } userErrors { message } } }",
         json!({"id": open["id"]}),
     );
-    assert_eq!(cancelled["data"]["returnCancel"]["return"]["status"], json!("CANCELED"));
+    assert_eq!(
+        cancelled["data"]["returnCancel"]["return"]["status"],
+        json!("CANCELED")
+    );
     assert_eq!(
         topics(&mut shop),
-        ["returns/request", "returns/decline", "returns/approve", "returns/cancel"]
+        [
+            "returns/request",
+            "returns/decline",
+            "returns/approve",
+            "returns/cancel"
+        ]
     );
 }
 
@@ -1000,7 +1197,10 @@ fn an_order_edit_adds_removes_and_discounts_line_items() {
     assert_eq!(calculated["originalOrder"]["id"], json!(id));
     let session = begin["data"]["orderEditBegin"]["orderEditSession"]["id"].clone();
     let calculated_line = calculated["lineItems"]["nodes"][0].clone();
-    assert_eq!(calculated_line["editableQuantity"], json!(existing_quantity));
+    assert_eq!(
+        calculated_line["editableQuantity"],
+        json!(existing_quantity)
+    );
 
     // Another variant than the line's, by the session's id.
     let line_variant = shop.get(existing["id"].as_str().unwrap()).unwrap()["variant"].clone();
@@ -1009,7 +1209,8 @@ fn an_order_edit_adds_removes_and_discounts_line_items() {
         .find(|variant| json!(variant) != line_variant)
         .unwrap()
         .to_string();
-    let price = crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let price =
+        crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
     let added = run(
         &mut shop,
         "mutation($id: ID!, $variant: ID!) { orderEditAddVariant(id: $id, variantId: $variant, quantity: 2) {
@@ -1029,7 +1230,10 @@ fn an_order_edit_adds_removes_and_discounts_line_items() {
         "mutation($id: ID!, $variant: ID!) { orderEditAddVariant(id: $id, variantId: $variant, quantity: 1) { userErrors { field message } } }",
         json!({"id": calculated["id"], "variant": variant}),
     );
-    assert_eq!(duplicate["data"]["orderEditAddVariant"]["userErrors"][0]["field"], json!(["variantId"]));
+    assert_eq!(
+        duplicate["data"]["orderEditAddVariant"]["userErrors"][0]["field"],
+        json!(["variantId"])
+    );
     let discounted = run(
         &mut shop,
         "mutation($id: ID!, $line: ID!) { orderEditAddLineItemDiscount(id: $id, lineItemId: $line, discount: {percentValue: 50, description: \"Goodwill\"}) {
@@ -1070,10 +1274,16 @@ fn an_order_edit_adds_removes_and_discounts_line_items() {
     assert_eq!(lines[0]["currentQuantity"], json!(0));
     assert_eq!(lines[1]["quantity"], json!(2));
     assert_eq!(lines[1]["unfulfilledQuantity"], json!(2));
-    assert_eq!(amount(&after["currentSubtotalPriceSet"]), crate::state::value::decimal(price));
+    assert_eq!(
+        amount(&after["currentSubtotalPriceSet"]),
+        crate::state::value::decimal(price)
+    );
     let fired = topics(&mut shop);
     assert!(fired.contains(&"refunds/create".to_string()), "{fired:?}");
-    assert_eq!(&fired[fired.len() - 2..], ["orders/edited", "orders/updated"]);
+    assert_eq!(
+        &fired[fired.len() - 2..],
+        ["orders/edited", "orders/updated"]
+    );
     let again = run(
         &mut shop,
         "mutation($id: ID!) { orderEditCommit(id: $id) { order { id } userErrors { field message } } }",
@@ -1091,7 +1301,10 @@ fn an_order_edit_adds_removes_and_discounts_line_items() {
         json!({"id": fulfilled}),
     );
     let calculated = &begun["data"]["orderEditBegin"]["calculatedOrder"];
-    assert_eq!(calculated["lineItems"]["nodes"][0]["editableQuantity"], json!(0));
+    assert_eq!(
+        calculated["lineItems"]["nodes"][0]["editableQuantity"],
+        json!(0)
+    );
     let refused = run(
         &mut shop,
         "mutation($id: ID!, $line: ID!) { orderEditSetQuantity(id: $id, lineItemId: $line, quantity: 0) { userErrors { field message } } }",
@@ -1116,7 +1329,8 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
     let mut shop = demo();
     shop.set_setting(super::TAX_RATE_SETTING, json!(2000));
     let (variant, item) = first_variant(&shop);
-    let price = crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
+    let price =
+        crate::domains::catalog::cents_of(shop.get(&variant).unwrap().get("price")).unwrap();
     let customer = shop.keys("Customer").next().unwrap().to_string();
     let input = json!({
         "lineItems": [
@@ -1138,15 +1352,25 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
         json!({"input": input}),
     );
     let calculation = &calculated["data"]["draftOrderCalculate"]["calculatedDraftOrder"];
-    assert_eq!(calculated["data"]["draftOrderCalculate"]["userErrors"], json!([]), "{calculated}");
+    assert_eq!(
+        calculated["data"]["draftOrderCalculate"]["userErrors"],
+        json!([]),
+        "{calculated}"
+    );
     assert!(shop.take_events().is_empty());
     let created = run(
         &mut shop,
-        &format!("mutation($input: DraftOrderInput!) {{ draftOrderCreate(input: $input) {{ draftOrder {{ {DRAFT_FIELDS} }} userErrors {{ field message }} }} }}"),
+        &format!(
+            "mutation($input: DraftOrderInput!) {{ draftOrderCreate(input: $input) {{ draftOrder {{ {DRAFT_FIELDS} }} userErrors {{ field message }} }} }}"
+        ),
         json!({"input": input}),
     );
     let draft = created["data"]["draftOrderCreate"]["draftOrder"].clone();
-    assert_eq!(created["data"]["draftOrderCreate"]["userErrors"], json!([]), "{created}");
+    assert_eq!(
+        created["data"]["draftOrderCreate"]["userErrors"],
+        json!([]),
+        "{created}"
+    );
     assert_eq!(draft["name"], json!("#D1"));
     assert_eq!(draft["status"], json!("OPEN"));
     assert_eq!(draft["note2"], json!("Call first"));
@@ -1163,13 +1387,22 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
     let decimal = crate::state::value::decimal;
     assert_eq!(amount(&draft["subtotalPriceSet"]), decimal(subtotal));
     assert_eq!(amount(&draft["totalTaxSet"]), decimal(tax));
-    assert_eq!(amount(&draft["totalPriceSet"]), decimal(subtotal + 750 + tax));
+    assert_eq!(
+        amount(&draft["totalPriceSet"]),
+        decimal(subtotal + 750 + tax)
+    );
     assert_eq!(draft["taxLines"][0]["rate"], json!(0.2));
     assert_eq!(calculation["totalPriceSet"], draft["totalPriceSet"]);
     assert_eq!(calculation["lineItems"][0]["quantity"], json!(2));
-    assert_eq!(draft["shippingLine"], json!({"title": "Express", "custom": true}));
+    assert_eq!(
+        draft["shippingLine"],
+        json!({"title": "Express", "custom": true})
+    );
     let id = draft["id"].as_str().unwrap().to_string();
-    assert_eq!(events(&mut shop), [("draft_orders/create".to_string(), id.clone())]);
+    assert_eq!(
+        events(&mut shop),
+        [("draft_orders/create".to_string(), id.clone())]
+    );
 
     let updated = run(
         &mut shop,
@@ -1185,18 +1418,34 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
         "mutation($id: ID!) { draftOrderInvoiceSend(id: $id) { draftOrder { status invoiceSentAt } userErrors { field message } } }",
         json!({"id": id}),
     );
-    assert_eq!(sent["data"]["draftOrderInvoiceSend"]["draftOrder"]["status"], json!("INVOICE_SENT"));
+    assert_eq!(
+        sent["data"]["draftOrderInvoiceSend"]["draftOrder"]["status"],
+        json!("INVOICE_SENT")
+    );
     let copy = run(
         &mut shop,
         "mutation($id: ID!) { draftOrderDuplicate(id: $id) { draftOrder { id name status totalPriceSet { shopMoney { amount } } } userErrors { message } } }",
         json!({"id": id}),
     );
-    assert_eq!(copy["data"]["draftOrderDuplicate"]["draftOrder"]["name"], json!("#D2"));
-    assert_eq!(copy["data"]["draftOrderDuplicate"]["draftOrder"]["status"], json!("OPEN"));
-    assert_eq!(copy["data"]["draftOrderDuplicate"]["draftOrder"]["totalPriceSet"], draft["totalPriceSet"]);
+    assert_eq!(
+        copy["data"]["draftOrderDuplicate"]["draftOrder"]["name"],
+        json!("#D2")
+    );
+    assert_eq!(
+        copy["data"]["draftOrderDuplicate"]["draftOrder"]["status"],
+        json!("OPEN")
+    );
+    assert_eq!(
+        copy["data"]["draftOrderDuplicate"]["draftOrder"]["totalPriceSet"],
+        draft["totalPriceSet"]
+    );
     assert_eq!(
         topics(&mut shop),
-        ["draft_orders/update", "draft_orders/update", "draft_orders/create"]
+        [
+            "draft_orders/update",
+            "draft_orders/update",
+            "draft_orders/create"
+        ]
     );
 
     let available_before = available(&shop, &item);
@@ -1207,7 +1456,11 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
         json!({"id": id}),
     );
     let done = &completed["data"]["draftOrderComplete"]["draftOrder"];
-    assert_eq!(completed["data"]["draftOrderComplete"]["userErrors"], json!([]), "{completed}");
+    assert_eq!(
+        completed["data"]["draftOrderComplete"]["userErrors"],
+        json!([]),
+        "{completed}"
+    );
     assert_eq!(done["status"], json!("COMPLETED"));
     assert_eq!(done["order"]["name"], json!("#1004"));
     assert_eq!(done["order"]["displayFinancialStatus"], json!("PAID"));
@@ -1220,7 +1473,10 @@ fn draft_orders_are_created_calculated_updated_and_completed() {
     let fired = topics(&mut shop);
     assert_eq!(fired[0], "orders/create");
     assert_eq!(fired[1], "order_transactions/create");
-    assert_eq!(&fired[fired.len() - 2..], ["orders/paid", "draft_orders/update"]);
+    assert_eq!(
+        &fired[fired.len() - 2..],
+        ["orders/paid", "draft_orders/update"]
+    );
     let again = run(
         &mut shop,
         "mutation($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id } userErrors { field message } } }",
@@ -1274,7 +1530,10 @@ fn draft_orders_answer_shopifys_errors_and_are_deleted() {
         "mutation($id: ID!) { draftOrderDelete(input: {id: $id}) { deletedId userErrors { message } } }",
         json!({"id": id}),
     );
-    assert_eq!(deleted["data"]["draftOrderDelete"], json!({"deletedId": id, "userErrors": []}));
+    assert_eq!(
+        deleted["data"]["draftOrderDelete"],
+        json!({"deletedId": id, "userErrors": []})
+    );
     let fired = shop.take_events();
     assert_eq!(fired.len(), 1);
     assert_eq!(fired[0].topic, "draft_orders/delete");
@@ -1307,12 +1566,18 @@ fn the_events_of_the_family_have_their_payloads() {
         .collect();
     assert_eq!(fired[0].0, "fulfillment_holds/added");
     assert_eq!(built[0]["fulfillment_order"]["id"], json!(fo_id));
-    assert_eq!(built[0]["fulfillment_hold"]["reason"], json!("incorrect_address"));
+    assert_eq!(
+        built[0]["fulfillment_hold"]["reason"],
+        json!("incorrect_address")
+    );
     assert_eq!(built[0]["fulfillment_hold"]["handle"], json!("address"));
     assert_eq!(fired[1].0, "fulfillment_orders/placed_on_hold");
     assert_eq!(built[1]["fulfillment_order"]["status"], json!("on_hold"));
     assert_eq!(built[1]["remaining_fulfillment_order"], Value::Null);
-    assert_eq!(built[1]["created_fulfillment_hold"], built[0]["fulfillment_hold"]);
+    assert_eq!(
+        built[1]["created_fulfillment_hold"],
+        built[0]["fulfillment_hold"]
+    );
     run(
         &mut shop,
         "mutation($id: ID!) { fulfillmentOrderReleaseHold(id: $id) { userErrors { message } } }",
@@ -1332,7 +1597,10 @@ fn the_events_of_the_family_have_their_payloads() {
     let (topic, gid) = events(&mut shop).remove(0);
     let moved = payload_of(&shop, &topic, &gid);
     assert_eq!(moved["destination_location_id"], json!(other));
-    assert_eq!(moved["source_location"]["id"], fo["assignedLocation"]["location"]["id"]);
+    assert_eq!(
+        moved["source_location"]["id"],
+        fo["assignedLocation"]["location"]["id"]
+    );
     assert_eq!(moved["original_fulfillment_order"]["id"], json!(fo_id));
 
     let (variant, _) = first_variant(&shop);
@@ -1341,7 +1609,11 @@ fn the_events_of_the_family_have_their_payloads() {
         ORDER_CREATE,
         json!({"order": {"lineItems": [{"variantId": variant, "quantity": 1}], "transactions": [{"kind": "AUTHORIZATION", "gateway": "bogus", "amountSet": {"shopMoney": {"amount": "3.00", "currencyCode": "EUR"}}}]}}),
     );
-    assert_eq!(created["data"]["orderCreate"]["userErrors"], json!([]), "{created}");
+    assert_eq!(
+        created["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{created}"
+    );
     let transaction = events(&mut shop)
         .into_iter()
         .find(|(topic, _)| topic == "order_transactions/create")

@@ -38,8 +38,12 @@ use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
-        .mutation("returnCreate", |m, ctx| create(m, ctx, "returnInput", "OPEN"))
-        .mutation("returnRequest", |m, ctx| create(m, ctx, "input", "REQUESTED"))
+        .mutation("returnCreate", |m, ctx| {
+            create(m, ctx, "returnInput", "OPEN")
+        })
+        .mutation("returnRequest", |m, ctx| {
+            create(m, ctx, "input", "REQUESTED")
+        })
         .mutation("returnApproveRequest", approve)
         .mutation("returnDeclineRequest", decline)
         .mutation("returnClose", |m, ctx| {
@@ -115,7 +119,11 @@ fn create(
         .to_string();
     let state = mutation.state();
     if state.type_of(&order) != Some("Order") {
-        return failed(&[error(&[argument, "orderId"], "Order does not exist.", "NOT_FOUND")]);
+        return failed(&[error(
+            &[argument, "orderId"],
+            "Order does not exist.",
+            "NOT_FOUND",
+        )]);
     }
     let items = array(&input, "returnLineItems");
     if items.is_empty() {
@@ -245,7 +253,9 @@ fn create(
 
 /// A return of the shop, its status and its order.
 fn find_return(state: &ShopState, id: &str) -> Option<(String, String)> {
-    let record = state.get(id).filter(|_| state.type_of(id) == Some("Return"))?;
+    let record = state
+        .get(id)
+        .filter(|_| state.type_of(id) == Some("Return"))?;
     Some((
         text(record, "status").unwrap_or("OPEN").to_string(),
         text(record, "order").unwrap_or_default().to_string(),
@@ -280,7 +290,11 @@ fn approve(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         .to_string();
     let failed = |error: UserError| Ok(payload(json!({"return": null}), &[error]));
     let Some((status, order)) = find_return(mutation.state(), &id) else {
-        return failed(self::error(&["input", "id"], "Return does not exist.", "NOT_FOUND"));
+        return failed(self::error(
+            &["input", "id"],
+            "Return does not exist.",
+            "NOT_FOUND",
+        ));
     };
     if status != "REQUESTED" {
         return failed(self::error(
@@ -311,7 +325,11 @@ fn decline(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         .to_string();
     let failed = |error: UserError| Ok(payload(json!({"return": null}), &[error]));
     let Some((status, order)) = find_return(mutation.state(), &id) else {
-        return failed(self::error(&["input", "id"], "Return does not exist.", "NOT_FOUND"));
+        return failed(self::error(
+            &["input", "id"],
+            "Return does not exist.",
+            "NOT_FOUND",
+        ));
     };
     if status != "REQUESTED" {
         return failed(self::error(
@@ -359,7 +377,9 @@ fn change_status(
         let message = match to {
             "CLOSED" => "Return is not closable. Only returns with status OPEN can be closed.",
             "OPEN" => "Return is not reopenable. Only returns with status CLOSED can be reopened.",
-            _ => "Return is not cancelable. Only returns that were not processed or refunded can be canceled.",
+            _ => {
+                "Return is not cancelable. Only returns that were not processed or refunded can be canceled."
+            }
         };
         return failed(self::error(&["id"], message, "INVALID_STATE"));
     }
@@ -369,7 +389,11 @@ fn change_status(
         record.insert("status".into(), json!(to));
         record.insert(
             "closedAt".into(),
-            if to == "CLOSED" { json!(now) } else { Value::Null },
+            if to == "CLOSED" {
+                json!(now)
+            } else {
+                Value::Null
+            },
         );
     }
     refresh_return(state, &id);
@@ -389,7 +413,11 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
     let failed = |errors: &[UserError]| Ok(payload(json!({"return": null}), errors));
     let state = mutation.state();
     let Some((status, order)) = find_return(state, &id) else {
-        return failed(&[error(&["input", "returnId"], "Return does not exist.", "NOT_FOUND")]);
+        return failed(&[error(
+            &["input", "returnId"],
+            "Return does not exist.",
+            "NOT_FOUND",
+        )]);
     };
     if status != "OPEN" {
         return failed(&[error(
@@ -417,7 +445,9 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             ));
             continue;
         }
-        let processable = state.get(line).map_or(0, |line| int(line, "processableQuantity"));
+        let processable = state
+            .get(line)
+            .map_or(0, |line| int(line, "processableQuantity"));
         if quantity <= 0 || quantity > processable {
             errors.push(error(
                 &["input", "returnLineItems", &index, "quantity"],
@@ -456,7 +486,14 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         let amount = model::cents(transaction.get("transactionAmount"));
         let Some((_, left)) = payments.iter().find(|(id, _)| id == parent) else {
             errors.push(error(
-                &["input", "financialTransfer", "issueRefund", "orderTransactions", &index, "parentId"],
+                &[
+                    "input",
+                    "financialTransfer",
+                    "issueRefund",
+                    "orderTransactions",
+                    &index,
+                    "parentId",
+                ],
                 "Parent transaction does not exist.",
                 "NOT_FOUND",
             ));
@@ -465,7 +502,14 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         let over = refund.get("allowOverRefunding").and_then(Value::as_bool) == Some(true);
         if amount <= 0 || (!over && amount > *left) {
             errors.push(error(
-                &["input", "financialTransfer", "issueRefund", "orderTransactions", &index, "transactionAmount"],
+                &[
+                    "input",
+                    "financialTransfer",
+                    "issueRefund",
+                    "orderTransactions",
+                    &index,
+                    "transactionAmount",
+                ],
                 "Transaction amount is invalid.",
                 "INVALID",
             ));
@@ -491,7 +535,9 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
         .get("exchangeLineItems")
         .is_some_and(|items| items != &json!([]) && !items.is_null())
     {
-        mutation.note("returnProcess: lsf does not simulate exchanges yet: `exchangeLineItems` was ignored");
+        mutation.note(
+            "returnProcess: lsf does not simulate exchanges yet: `exchangeLineItems` was ignored",
+        );
     }
     let shipping_input = model::input_of(input.get("refundShipping"));
     let state = mutation.state_mut();
@@ -530,7 +576,12 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
             refund_lines.push(RefundLine {
                 line: line_item,
                 quantity: *quantity,
-                restock_type: if restock.is_some() { "RETURN" } else { "NO_RESTOCK" }.into(),
+                restock_type: if restock.is_some() {
+                    "RETURN"
+                } else {
+                    "NO_RESTOCK"
+                }
+                .into(),
                 location: restock.clone().flatten(),
             });
         }
@@ -551,17 +602,24 @@ fn process(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value,
                 lines: refund_lines,
                 shipping,
                 transactions: moves,
-                note: input.get("note").and_then(Value::as_str).map(str::to_string),
+                note: input
+                    .get("note")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 processed_at: None,
                 return_id: Some(id.clone()),
             },
         ));
         model::settle_financial_status(state, &order);
     }
-    let done = gids(state.get(&id).and_then(|record| record.get("returnLineItems")))
-        .iter()
-        .filter_map(|line| state.get(line))
-        .all(|line| int(line, "unprocessedQuantity") == 0);
+    let done = gids(
+        state
+            .get(&id)
+            .and_then(|record| record.get("returnLineItems")),
+    )
+    .iter()
+    .filter_map(|line| state.get(line))
+    .all(|line| int(line, "unprocessedQuantity") == 0);
     if done {
         let now = state.timestamp();
         if let Some(record) = state.get_mut(&id) {

@@ -110,7 +110,11 @@ impl Receiver {
             .requests
             .recv_timeout(Duration::from_secs(10))
             .expect("a webhook was delivered");
-        assert!(verify_webhook_hmac(SECRET, &body, &headers["x-shopify-hmac-sha256"]));
+        assert!(verify_webhook_hmac(
+            SECRET,
+            &body,
+            &headers["x-shopify-hmac-sha256"]
+        ));
         (
             headers["x-shopify-topic"].clone(),
             serde_json::from_slice(&body).unwrap(),
@@ -234,7 +238,10 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
     let order = place_order(&api);
     let delivered = receiver.take(3);
     let topics: Vec<&str> = delivered.iter().map(|(topic, _)| topic.as_str()).collect();
-    assert_eq!(topics, ["orders/create", "order_transactions/create", "orders/paid"]);
+    assert_eq!(
+        topics,
+        ["orders/create", "order_transactions/create", "orders/paid"]
+    );
     let (_, created) = &delivered[0];
     assert_eq!(created["admin_graphql_api_id"], json!(order));
     assert_eq!(created["financial_status"], json!("paid"));
@@ -261,10 +268,17 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
         "mutation($fo: ID!) { fulfillmentCreate(fulfillment: {lineItemsByFulfillmentOrder: [{fulfillmentOrderId: $fo}], trackingInfo: {company: \"UPS\", number: \"1Z1\"}}) { fulfillment { id } userErrors { message } } }",
         json!({"fo": fulfillment_order}),
     );
-    assert_eq!(shipped["data"]["fulfillmentCreate"]["userErrors"], json!([]), "{shipped}");
+    assert_eq!(
+        shipped["data"]["fulfillmentCreate"]["userErrors"],
+        json!([]),
+        "{shipped}"
+    );
     let delivered = receiver.take(3);
     let topics: Vec<&str> = delivered.iter().map(|(topic, _)| topic.as_str()).collect();
-    assert_eq!(topics, ["fulfillments/create", "orders/fulfilled", "orders/updated"]);
+    assert_eq!(
+        topics,
+        ["fulfillments/create", "orders/fulfilled", "orders/updated"]
+    );
     assert_eq!(delivered[0].1["tracking_number"], json!("1Z1"));
     assert_eq!(
         delivered[0].1["tracking_url"],
@@ -289,20 +303,34 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
             "transactions": [{"orderId": order, "kind": "REFUND", "gateway": "Credit card", "parentId": sale, "amount": "20.00"}],
         }}),
     );
-    assert_eq!(refunded["data"]["refundCreate"]["userErrors"], json!([]), "{refunded}");
+    assert_eq!(
+        refunded["data"]["refundCreate"]["userErrors"],
+        json!([]),
+        "{refunded}"
+    );
     let delivered = receiver.take(3);
     let topics: Vec<&str> = delivered.iter().map(|(topic, _)| topic.as_str()).collect();
     assert_eq!(
         topics,
-        ["order_transactions/create", "refunds/create", "orders/updated"]
+        [
+            "order_transactions/create",
+            "refunds/create",
+            "orders/updated"
+        ]
     );
     assert_eq!(delivered[0].1["kind"], json!("refund"));
     let refund = &delivered[1].1;
     assert_eq!(refund["restock"], json!(true));
-    assert_eq!(refund["refund_line_items"][0]["restock_type"], json!("return"));
+    assert_eq!(
+        refund["refund_line_items"][0]["restock_type"],
+        json!("return")
+    );
     assert_eq!(refund["refund_line_items"][0]["quantity"], json!(1));
     assert_eq!(refund["transactions"][0]["amount"], json!("20.00"));
-    assert_eq!(delivered[2].1["financial_status"], json!("partially_refunded"));
+    assert_eq!(
+        delivered[2].1["financial_status"],
+        json!("partially_refunded")
+    );
 
     // A custom item is added by an order edit.
     let begun = graphql(
@@ -316,7 +344,11 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
         "mutation($id: ID!) { orderEditAddCustomItem(id: $id, title: \"Gift note\", quantity: 1, price: {amount: \"3.00\", currencyCode: USD}) { calculatedLineItem { id } userErrors { message } } }",
         json!({"id": calculated}),
     );
-    assert_eq!(added["data"]["orderEditAddCustomItem"]["userErrors"], json!([]), "{added}");
+    assert_eq!(
+        added["data"]["orderEditAddCustomItem"]["userErrors"],
+        json!([]),
+        "{added}"
+    );
     let committed = graphql(
         &api,
         "mutation($id: ID!) { orderEditCommit(id: $id, staffNote: \"Added a note\") { order { lineItems(first: 5) { nodes { id title } } } userErrors { message } } }",

@@ -254,10 +254,9 @@ pub fn register(registry: &mut Registry) {
                         .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
                 });
             match found {
-                Some(Value::Object(map)) => Ok(Output::Object(Obj::built(
-                    "ReturnableFulfillment",
-                    map,
-                ))),
+                Some(Value::Object(map)) => {
+                    Ok(Output::Object(Obj::built("ReturnableFulfillment", map)))
+                }
                 _ => Ok(Output::Null),
             }
         });
@@ -330,10 +329,7 @@ fn customer_name(r: &ShopResolver<'_>, item: &Value) -> SortValue {
     )
 }
 
-fn fulfillment_orders_where(
-    r: &ShopResolver<'_>,
-    keep: impl Fn(&Record) -> bool,
-) -> Vec<Value> {
+fn fulfillment_orders_where(r: &ShopResolver<'_>, keep: impl Fn(&Record) -> bool) -> Vec<Value> {
     r.state()
         .keys("FulfillmentOrder")
         .filter(|key| r.state().get(key).is_some_and(&keep))
@@ -368,9 +364,9 @@ fn assigned_fulfillment_orders(
             .and_then(|assigned| assigned.get("location"))
             .and_then(Value::as_str);
         is_service_location(r, location)
-            && locations
-                .as_ref()
-                .is_none_or(|ids| location.is_some_and(|location| ids.iter().any(|id| id == location)))
+            && locations.as_ref().is_none_or(|ids| {
+                location.is_some_and(|location| ids.iter().any(|id| id == location))
+            })
             && status.is_none_or(|status| text(record, "requestStatus") == Some(status))
             && !matches!(text(record, "status"), Some("CLOSED" | "CANCELLED"))
     });
@@ -387,9 +383,9 @@ fn other_locations(r: &ShopResolver<'_>, fulfillment_order: &Record) -> Vec<Stri
         .keys("Location")
         .filter(|location| Some(*location) != assigned)
         .filter(|location| {
-            r.state()
-                .get(location)
-                .is_some_and(|record| record.get("isActive").and_then(Value::as_bool) != Some(false))
+            r.state().get(location).is_some_and(|record| {
+                record.get("isActive").and_then(Value::as_bool) != Some(false)
+            })
         })
         .map(str::to_string)
         .collect()
@@ -488,7 +484,10 @@ fn locations_for_move(
 /// The returnable fulfillments of an order, as inline `ReturnableFulfillment`s.
 fn returnable_fulfillments(r: &ShopResolver<'_>, order: &str) -> Vec<Value> {
     let state = r.state();
-    let Some(record) = state.get(order).filter(|_| state.type_of(order) == Some("Order")) else {
+    let Some(record) = state
+        .get(order)
+        .filter(|_| state.type_of(order) == Some("Order"))
+    else {
         return Vec::new();
     };
     gids(record.get("fulfillments"))

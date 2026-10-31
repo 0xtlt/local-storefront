@@ -873,7 +873,10 @@ fn return_sample(topic: &str) -> Value {
         _ => "OPEN",
     };
     let lines = if topic == "returns/approve" || topic == "returns/request" {
-        json!(["gid://shopify/ReturnLineItem/1", "gid://shopify/ReturnLineItem/2"])
+        json!([
+            "gid://shopify/ReturnLineItem/1",
+            "gid://shopify/ReturnLineItem/2"
+        ])
     } else {
         json!([])
     };

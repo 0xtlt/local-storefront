@@ -1190,7 +1190,9 @@ pub(super) fn fulfillment_hold(record: &Map<String, Value>) -> Value {
 /// What a fulfillment order topic writes of a fulfillment order: its GID and status.
 fn fulfillment_order_ref(reference: &Value, lookup: &dyn Lookup) -> Value {
     match resolve(reference, lookup) {
-        Some(record) => json!({"id": text(&record, "id"), "status": lower(field(&record, "status"))}),
+        Some(record) => {
+            json!({"id": text(&record, "id"), "status": lower(field(&record, "status"))})
+        }
         None => Value::Null,
     }
 }
@@ -1210,7 +1212,11 @@ fn line_quantities(value: &Value) -> Value {
 }
 
 /// `fulfillment_orders/…`: a `FulfillmentOrder`, with what lsf kept of the change.
-pub(super) fn fulfillment_order_event(topic: &str, record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
+pub(super) fn fulfillment_order_event(
+    topic: &str,
+    record: &Map<String, Value>,
+    lookup: &dyn Lookup,
+) -> Value {
     let context = object(field(record, FULFILLMENT_ORDER_EVENT));
     let this = json!({"id": text(record, "id"), "status": lower(field(record, "status"))});
     match topic {
