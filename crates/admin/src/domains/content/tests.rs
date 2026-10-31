@@ -1193,3 +1193,135 @@ fn what_the_content_mutations_create_syncs_to_the_store() {
     );
     assert_eq!(linen.metafields["custom"]["weight_kg"].value, json!("1.25"));
 }
+
+const FILE_CREATE: &str = "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) {
+    files { id alt fileStatus __typename
+        ... on MediaImage { mimeType image { url altText } }
+        ... on GenericFile { url mimeType originalFileSize }
+        ... on Video { filename } }
+    userErrors { field message code } } }";
+
+#[test]
+fn creates_updates_and_deletes_files() {
+    let mut shop = rich();
+    shop.take_events();
+    super::files::record_staged_upload(
+        "https://127.0.0.1:9292/__lsf/staged/42/manual.pdf",
+        super::files::StagedUpload {
+            filename: "manual.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: 2048,
+        },
+    );
+    let created = run(
+        &mut shop,
+        FILE_CREATE,
+        json!({"files": [
+            {"originalSource": "https://cdn.example/photos/zebra.jpg?v=3", "alt": "Hero"},
+            {"originalSource": "https://127.0.0.1:9292/__lsf/staged/42/manual.pdf"},
+            {"originalSource": "https://cdn.example/clip.mp4", "contentType": "VIDEO", "filename": "launch.mp4"},
+        ]}),
+    );
+    let files = &created["data"]["fileCreate"]["files"];
+    assert_eq!(
+        created["data"]["fileCreate"]["userErrors"],
+        json!([]),
+        "{created}"
+    );
+    assert_eq!(files[0]["__typename"], "MediaImage");
+    assert_eq!(files[0]["fileStatus"], "READY");
+    assert_eq!(
+        files[0]["image"],
+        json!({"url": "https://cdn.example/photos/zebra.jpg?v=3", "altText": "Hero"})
+    );
+    assert_eq!(files[1]["__typename"], "GenericFile");
+    assert_eq!(files[1]["originalFileSize"], json!(2048));
+    assert_eq!(files[1]["mimeType"], "application/pdf");
+    assert_eq!(files[2]["filename"], "launch.mp4");
+    assert_eq!(
+        topics(&mut shop),
+        ["files/create", "files/create", "files/create"]
+    );
+
+    // The same name: refused, or a UUID appended.
+    let duplicate = run(
+        &mut shop,
+        FILE_CREATE,
+        json!({"files": [{"originalSource": "https://other.example/zebra.jpg", "duplicateResolutionMode": "RAISE_ERROR"}]}),
+    );
+    assert_eq!(
+        duplicate["data"]["fileCreate"]["userErrors"][0]["code"],
+        "FILENAME_ALREADY_EXISTS"
+    );
+    let mismatched = run(
+        &mut shop,
+        FILE_CREATE,
+        json!({"files": [{"originalSource": "https://other.example/zebra.jpg", "filename": "zebra.png"}, {"originalSource": "nope"}]}),
+    );
+    let codes: Vec<&Value> = mismatched["data"]["fileCreate"]["userErrors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| &error["code"])
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            &json!("MISMATCHED_FILENAME_AND_ORIGINAL_SOURCE"),
+            &json!("INVALID_IMAGE_SOURCE_URL")
+        ]
+    );
+
+    let image = files[0]["id"].as_str().unwrap().to_string();
+    let product = find(&shop, "Product", "handle", "linen-dress");
+    let updated = run(
+        &mut shop,
+        "mutation($files: [FileUpdateInput!]!) { fileUpdate(files: $files) { files { alt } userErrors { field code } } }",
+        json!({"files": [{"id": image, "alt": "Front", "referencesToAdd": [product]}]}),
+    );
+    assert_eq!(
+        updated["data"]["fileUpdate"]["files"],
+        json!([{"alt": "Front"}]),
+        "{updated}"
+    );
+    let media = shop.get(&product).unwrap()["media"].clone();
+    assert!(media.as_array().unwrap().contains(&json!(image)));
+    assert_eq!(topics(&mut shop), ["files/update", "products/update"]);
+
+    let searched = run(
+        &mut shop,
+        "{ files(first: 5, query: \"zebra\") { nodes { id } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        searched["data"]["files"]["nodes"],
+        json!([{"id": image}]),
+        "{searched}"
+    );
+
+    let deleted = run(
+        &mut shop,
+        "mutation($ids: [ID!]!) { fileDelete(fileIds: $ids) { deletedFileIds userErrors { field code } } }",
+        json!({"ids": [image]}),
+    );
+    assert_eq!(
+        deleted["data"]["fileDelete"]["deletedFileIds"],
+        json!([image])
+    );
+    assert!(
+        !shop.get(&product).unwrap()["media"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(image))
+    );
+    assert_eq!(topics(&mut shop), ["products/update", "files/delete"]);
+    let missing = run(
+        &mut shop,
+        "mutation($ids: [ID!]!) { fileDelete(fileIds: $ids) { deletedFileIds userErrors { field code } } }",
+        json!({"ids": [image]}),
+    );
+    assert_eq!(
+        missing["data"]["fileDelete"]["userErrors"],
+        json!([{"field": ["fileIds", "0"], "code": "FILE_DOES_NOT_EXIST"}])
+    );
+}

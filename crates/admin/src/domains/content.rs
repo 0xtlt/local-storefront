@@ -4,6 +4,7 @@
 //!
 //! The records and their ids: the "Records" section of `crates/admin/docs/design.md`.
 
+pub mod files;
 mod metafield_definitions;
 pub mod metafields;
 mod metaobjects;
@@ -1184,6 +1185,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     metaobjects::register(registry);
     online_store::register(registry);
     navigation::register(registry);
+    files::register(registry);
 }
 
 /// A code of a user error as the error type's code enum has it: itself when the enum has it,
