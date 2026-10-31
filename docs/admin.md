@@ -294,6 +294,79 @@ need more than reading records, are listed by family below.
 
 ### Metafields, metaobjects and content
 
+**Metafields.** `metafieldsSet` and `metafieldsDelete` work on every owner the schema allows
+(products, variants, collections, customers, companies and their locations, orders, draft
+orders, pages, blogs, articles, locations, markets, discounts, the owners of Functions, the
+shop, the app's installation).
+
+- Every type of 2026-10 is checked as Shopify checks it (`number_integer` `"330\n"` is
+  "Value must be an integer."), and kept as the Admin API returns it: JSON compact, `money` with
+  a string amount in the shop's currency, measurements as `{"value", "unit"}`, references as
+  GIDs of records that exist. `metafieldDefinitionTypes` lists the types with their categories and
+  validations.
+- 25 inputs at most, all or nothing: one error and nothing is set. Errors have Shopify's `field`
+  (`["metafields", "0", "value"]`) and `code` (`INVALID_VALUE`, `INVALID_TYPE`, `BLANK`,
+  `APP_NOT_AUTHORIZED`, `STALE_OBJECT`, …).
+- `namespace` omitted, `$app` and `$app:x` are the app's reserved namespaces (`app--<id>`,
+  `app--<id>--x`), in mutations and queries alike; another app's is refused.
+- `compareDigest`: `Metafield.compareDigest` gives it; given, the value must not have changed;
+  `null`, the metafield must not exist yet.
+- With a definition of the owner type, namespace and key, `type` may be left out, must be the
+  definition's when given, and the value must pass its validations (`min`, `max`, `regex`,
+  `choices`, `list.min`, …). Setting a metafield does not create a definition. The store data's
+  metafields come with definitions lsf infers (one per owner type, namespace and key).
+- The token needs the access of the owner (`write_products` for a product's).
+- A product's metafields (or a variant's) are written to the store: the theme's Liquid and the
+  Function inputs read them, as every metafield of an owner the store data has.
+
+**Metafield definitions.** `metafieldDefinitionCreate`, `metafieldDefinitionUpdate`,
+`metafieldDefinitionDelete` (`deleteAllAssociatedMetafields`, required for the app's
+namespaces and for reference types with metafields), `metafieldDefinitionPin`,
+`metafieldDefinitionUnpin`; `metafieldDefinitions(ownerType:, namespace:, key:, pinnedStatus:,
+sortKey:)` and `metafieldDefinition(identifier:)`. A definition created where metafields exist
+takes them and checks them (`validationStatus`).
+
+**Metaobjects.** `metaobjectDefinitionCreate`, `metaobjectDefinitionUpdate` (field definitions
+created, updated and deleted; the entries follow), `metaobjectDefinitionDelete` (with its
+entries), `metaobjectCreate`, `metaobjectUpdate`, `metaobjectUpsert`, `metaobjectDelete`,
+`metaobjectBulkDelete` (done at once: its `job` is `done`); `metaobjects(type:)` with `sortKey`
+and `query` (`fields.<key>:value`), `metaobjectByHandle`, `metaobjectDefinitionByType`,
+`Metaobject.field(key:)` and `values`.
+
+- `$app:author` is the app's type. Field values are checked against the field definitions as
+  metafield values are; required fields must have one; `fields` patches, `values` replaces.
+- A handle left out is made from the display name (`Jane Austen` → `jane-austen`, then
+  `jane-austen-1`).
+- With the `publishable` capability, an entry is a `DRAFT` until it is `ACTIVE`; only active
+  entries are on the storefront.
+
+**Online store.** `pageCreate`, `pageUpdate`, `pageDelete`; `blogCreate`, `blogUpdate`,
+`blogDelete`; `articleCreate` (in a blog by `blogId`, or a new one from `blog: {title}`),
+`articleUpdate`, `articleDelete`; `commentApprove`, `commentSpam`, `commentNotSpam`,
+`commentDelete`; `menuCreate`, `menuUpdate`, `menuDelete`; `urlRedirectCreate`,
+`urlRedirectUpdate`, `urlRedirectDelete`. Handles are made from titles, `redirectNewHandle`
+creates the redirect, `metafields` inputs are checked as `metafieldsSet` checks them. Published
+pages and articles, menus, and active metaobjects are written to the store the theme renders.
+
+**Files.** `fileCreate` (up to 250, from a URL or a staged upload), `fileUpdate` (alt, filename,
+content, the products a file is a medium of), `fileDelete`; `files` searched by name and alt,
+sorted by `FILENAME`. A file is `READY` as soon as it is created: lsf has nothing to process, so
+a backend that polls `fileStatus` sees it at once. Its URL is the source's.
+
+**Webhooks.** `metafield_definitions/create`, `/update` (also pin and unpin), `/delete`;
+`metaobjects/create`, `/update`, `/delete`; `products/update` when a product's or a variant's
+metafields change. Shopify has no topic for pages, blogs, articles, comments, menus, redirects,
+files, or the metafields of other owners.
+
+**Not simulated yet** (`LSF_NOT_SIMULATED`): `standardMetafieldDefinitionEnable`,
+`standardMetaobjectDefinitionEnable`, `translationsRegister`, `translationsRemove`,
+`shopLocaleEnable`, `shopLocaleUpdate`, `shopLocaleDisable`, `urlRedirectBulkDeleteAll`,
+`urlRedirectBulkDeleteByIds`, `urlRedirectBulkDeleteBySavedSearch`,
+`urlRedirectBulkDeleteBySearch`, `urlRedirectImportCreate`, `urlRedirectImportSubmit`,
+`fileAcknowledgeUpdateFailed`, the `theme*` mutations, and the `market*` mutations. Nor are
+metafield definition `constraints`, the effects of `capabilities` and `access` (kept as given),
+and staff authors of articles (`author.userId`).
+
 ### The app: billing, discounts, Functions and bulk operations
 
 ### App proxy
