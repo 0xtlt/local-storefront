@@ -1411,8 +1411,11 @@ does, the next query reads `COMPLETED` with its `url`, `objectCount` and `fileSi
 Cloud Storage ones: a `POST` target (`url` and form `parameters`, the `file` last) or a `PUT`
 target (the default). The bytes stay in the shop until it is reset, for
 `bulkOperationRunMutation` (`stagedUploadPath`) and `fileCreate` (`originalSource`, the
-`resourceUrl`). The deprecated `stagedUploadTargetGenerate` (one target) and
-`stagedUploadTargetsGenerate` (`urls`) answer the same targets.
+`resourceUrl`). A target takes up to 1 GiB (Shopify's largest staged upload, a video; an image
+is 20 MB there, a 3D model 500 MB), and a MiB for the form around it; any other request of lsf
+takes 32 MiB. A larger body is answered `413`, never read as an empty one. The deprecated
+`stagedUploadTargetGenerate` (one target) and `stagedUploadTargetsGenerate` (`urls`) answer the
+same targets.
 
 Credits, revenue attribution records and frozen subscriptions have no data behind them.
 The app's access, delegate tokens, Flow triggers, discount tags in bulk, fulfillment constraint

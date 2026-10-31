@@ -654,9 +654,11 @@ async fn handle(
         })
         .collect();
     let content_type = headers.get("content-type").cloned().unwrap_or_default();
-    let body = axum::body::to_bytes(body, 32 * 1024 * 1024)
-        .await
-        .unwrap_or_default();
+    let limit = body_limit(parts.uri.path());
+    let body = match read_body(body, limit, headers.get("content-length")).await {
+        Ok(body) => body,
+        Err(refused) => return refused.into_response(limit),
+    };
     let incoming = Incoming {
         method: parts.method.as_str().to_string(),
         path: percent_decode(parts.uri.path()),
@@ -735,6 +737,82 @@ async fn handle(
     response
         .body(Body::from(reply.body))
         .unwrap_or_else(|_| Response::new(Body::empty()))
+}
+
+/// The largest body most requests may have: a form, a GraphQL request, the data of a session.
+pub const BODY_LIMIT: usize = 32 << 20;
+
+/// The largest body of an upload to a staged upload target: Shopify's largest staged upload, a
+/// video ("Max 1 GB"; an image 20 MB, a 3D model 500 MB, a theme ZIP 50 MB), and a MiB for the
+/// form around it.
+pub const UPLOAD_BODY_LIMIT: usize = (1 << 30) + (1 << 20);
+
+/// The largest body a request to `path` may have.
+fn body_limit(path: &str) -> usize {
+    if path.starts_with(lsf_admin::domains::app::uploads::UPLOADS_PATH) {
+        UPLOAD_BODY_LIMIT
+    } else {
+        BODY_LIMIT
+    }
+}
+
+/// Why a body was not read.
+#[derive(Debug, PartialEq)]
+enum BodyRefused {
+    /// More than the limit: `413`, rather than an empty body, which an upload took for an empty
+    /// file.
+    TooLarge,
+    /// The connection failed while it was sent.
+    Unreadable(String),
+}
+
+impl BodyRefused {
+    fn into_response(self, limit: usize) -> Response<Body> {
+        let (status, message) = match self {
+            BodyRefused::TooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "the body is larger than the {} MiB this path takes",
+                    limit >> 20
+                ),
+            ),
+            BodyRefused::Unreadable(why) => (
+                StatusCode::BAD_REQUEST,
+                format!("the body could not be read: {why}"),
+            ),
+        };
+        Response::builder()
+            .status(status)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::from(message))
+            .unwrap_or_else(|_| Response::new(Body::empty()))
+    }
+}
+
+/// The body of a request, of `limit` bytes at most: one that says it is larger is refused before
+/// it is read, one that turns out larger as soon as it passes the limit.
+async fn read_body(
+    body: Body,
+    limit: usize,
+    content_length: Option<&String>,
+) -> Result<bytes::Bytes, BodyRefused> {
+    use futures_util::StreamExt;
+    if content_length
+        .and_then(|length| length.trim().parse::<u64>().ok())
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(BodyRefused::TooLarge);
+    }
+    let mut stream = body.into_data_stream();
+    let mut bytes = bytes::BytesMut::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| BodyRefused::Unreadable(error.to_string()))?;
+        if bytes.len() + chunk.len() > limit {
+            return Err(BodyRefused::TooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes.freeze())
 }
 
 /// `/__lsf/livereload`: a WebSocket for the pages that open one, and otherwise the token of
