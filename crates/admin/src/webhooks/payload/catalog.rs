@@ -156,7 +156,7 @@ fn option(option: &Map<String, Value>, product_id: &Value, index: usize) -> Valu
 }
 
 /// The images of a product, REST's `images`: its `MediaImage`s (or its deprecated `images`).
-fn images(
+pub(super) fn images(
     record: &Map<String, Value>,
     product_id: &Value,
     variants: &[Map<String, Value>],

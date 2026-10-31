@@ -120,6 +120,16 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "metaobjects" => (metaobject(), Vec::new()),
         "discounts" if topic.starts_with("discounts/redeemcode") => (code_discount(), Vec::new()),
         "discounts" => (discount(), Vec::new()),
+        "markets" => (market(), Vec::new()),
+        "markets_backup_region" => (backup_region(), Vec::new()),
+        "locales" => (shop_locale(), Vec::new()),
+        "domains" => (domain(), Vec::new()),
+        "channels" => (channel(), Vec::new()),
+        "collection_listings" => (collection_listing(), Vec::new()),
+        "product_listings" | "scheduled_product_listings" => (
+            product().with("options", json!([LISTING_OPTION])),
+            [variants(), vec![listing_option()]].concat(),
+        ),
         _ => return None,
     };
     if topic.ends_with("/delete") {
@@ -1358,4 +1368,80 @@ mod tests {
         assert!(fixed("carts/create").is_none());
         assert_eq!(FixedSamples.shop(), "shop.myshopify.com");
     }
+}
+
+/// A market, as the examples of `markets/*` show it.
+fn market() -> Value {
+    json!({
+        "__typename": "Market",
+        "id": "gid://shopify/Market/188558248",
+        "name": "United States",
+        "handle": "united-states",
+        "type": "REGION",
+        "status": "ACTIVE",
+    })
+}
+
+/// The backup region of `markets_backup_region/update`.
+fn backup_region() -> Value {
+    json!({
+        "__typename": "MarketRegionCountry",
+        "id": "gid://shopify/MarketRegionCountry/238945671234567891",
+        "code": "US",
+        "name": "United States",
+    })
+}
+
+/// A locale of the shop, as the examples of `locales/*` show it.
+fn shop_locale() -> Value {
+    json!({
+        "__typename": "ShopLocale",
+        "locale": "fr-CA",
+        "name": "French (Canada)",
+        "primary": false,
+        "published": true,
+    })
+}
+
+/// A domain, as the examples of `domains/*` show it.
+fn domain() -> Value {
+    json!({
+        "__typename": "Domain",
+        "id": "gid://shopify/Domain/690933842",
+        "host": "jsmith.myshopify.com",
+        "url": "https://jsmith.myshopify.com",
+        "sslEnabled": true,
+        "localization": {"country": null, "defaultLocale": "en", "alternateLocales": []},
+    })
+}
+
+/// The channel of `channels/delete`.
+fn channel() -> Value {
+    json!({
+        "__typename": "Channel",
+        "id": "gid://shopify/Channel/123456789",
+        "name": "Example channel",
+        "handle": "example-channel",
+    })
+}
+
+/// The collection of `collection_listings/*`, listed on the date of the example.
+fn collection_listing() -> Value {
+    collection().with("updatedAt", Value::Null).with(
+        crate::domains::markets::LISTING,
+        json!({"publishedAt": "2021-12-31T19:00:00-05:00", "publishAt": null}),
+    )
+}
+
+/// The option of the T-shirt of the listing examples.
+const LISTING_OPTION: &str = "gid://shopify/ProductOption/527050010214937811";
+
+fn listing_option() -> Value {
+    json!({
+        "__typename": "ProductOption",
+        "id": LISTING_OPTION,
+        "name": "Title",
+        "position": 1,
+        "values": ["Small", "Medium"],
+    })
 }
