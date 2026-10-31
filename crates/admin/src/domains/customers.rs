@@ -1,0 +1,380 @@
+//! Customers, and the companies they buy for (B2B): companies, their locations, contacts and
+//! contact roles.
+//!
+//! The records and their ids: the "Records" section of `crates/admin/docs/design.md`.
+
+use lsf_core::store::{Address, Company, CompanyLocation, Customer};
+use lsf_core::util::stable_id;
+use serde_json::{Value, json};
+
+use super::catalog::cents_of;
+use crate::state::seed::Seed;
+use crate::state::value::{self, date_time, text};
+use crate::state::{ShopState, gid};
+
+/// The roles every company has on Shopify, with the key of their ids: buyers order with the
+/// second, the default one.
+pub const CONTACT_ROLES: [(&str, &str); 2] = [
+    ("location-admin", "Location admin"),
+    ("ordering-only", "Ordering only"),
+];
+
+pub fn customer_gid(customer: &Customer) -> String {
+    gid("Customer", customer.id)
+}
+
+pub fn company_gid(company: &Company) -> String {
+    gid("Company", company.id)
+}
+
+pub fn company_location_gid(location: &CompanyLocation) -> String {
+    gid("CompanyLocation", location.id)
+}
+
+/// The contact of a customer at their company: its id is the customer's, as the checkout's
+/// `purchasingCompany.contact.id` has it.
+pub fn company_contact_gid(customer: &Customer) -> String {
+    gid("CompanyContact", customer.id)
+}
+
+/// One of the [`CONTACT_ROLES`] of a company.
+pub fn contact_role_gid(company: &Company, role: &str) -> String {
+    gid(
+        "CompanyContactRole",
+        stable_id("company_contact_role", &format!("{}/{role}", company.id)),
+    )
+}
+
+pub fn role_assignment_gid(customer: &Customer, location: &CompanyLocation) -> String {
+    gid(
+        "CompanyContactRoleAssignment",
+        stable_id(
+            "company_contact_role_assignment",
+            &format!("{}/{}", customer.id, location.id),
+        ),
+    )
+}
+
+pub fn company_address_gid(location: &CompanyLocation, address: &Address) -> String {
+    gid(
+        "CompanyAddress",
+        stable_id(
+            "company_address",
+            &format!("{}/{}", location.id, address.id),
+        ),
+    )
+}
+
+pub fn seed(seed: &mut Seed) {
+    let store = seed.store;
+    for customer in &store.customers {
+        seed_customer(seed, customer);
+    }
+    for company in &store.companies {
+        seed_company(seed, company);
+    }
+}
+
+fn seed_customer(seed: &mut Seed, customer: &Customer) {
+    let store = seed.store;
+    let id = customer_gid(customer);
+    // The store data gives no creation date: the first order's, as the checkout's
+    // `Customer.createdAt` has it, else the fixed date of the seed.
+    let created = customer
+        .orders
+        .iter()
+        .map(|order| order.created_at)
+        .min()
+        .map_or_else(Seed::epoch_string, date_time);
+    let addresses: Vec<Value> = customer
+        .addresses
+        .iter()
+        .map(|address| value::mailing_address(address, "CustomerAddress"))
+        .collect();
+    let display_name = match value::full_name(&customer.first_name, &customer.last_name) {
+        Value::String(name) => name,
+        _ => customer.email.clone(),
+    };
+    let marketing_state = if customer.accepts_marketing {
+        "SUBSCRIBED"
+    } else {
+        "NOT_SUBSCRIBED"
+    };
+    // Every buyer of a company is one of its contacts, as in the checkout.
+    let contact = customer.company.map(|_| company_contact_gid(customer));
+    let metafields = seed.metafields(&id, "CUSTOMER", &created, &customer.metafields);
+    seed.insert(json!({
+        "__typename": "Customer",
+        "id": id,
+        "firstName": text(&customer.first_name),
+        "lastName": text(&customer.last_name),
+        "displayName": display_name,
+        "email": text(&customer.email),
+        "phone": text(&customer.phone),
+        "defaultEmailAddress": (!customer.email.is_empty()).then(|| json!({
+            "emailAddress": customer.email,
+            "marketingState": marketing_state,
+            "marketingOptInLevel": "SINGLE_OPT_IN",
+            "marketingUpdatedAt": null,
+            "validFormat": customer.email.contains('@'),
+        })),
+        "defaultPhoneNumber": (!customer.phone.is_empty()).then(|| json!({
+            "phoneNumber": customer.phone,
+            "smsMarketingConsent": {
+                "state": "NEVER_SUBSCRIBED",
+                "optInLevel": "SINGLE_OPT_IN",
+                "updatedAt": null,
+            },
+        })),
+        "emailMarketingConsent": (!customer.email.is_empty()).then(|| json!({
+            "marketingState": marketing_state,
+            "marketingOptInLevel": "SINGLE_OPT_IN",
+            "consentUpdatedAt": null,
+        })),
+        "smsMarketingConsent": (!customer.phone.is_empty()).then(|| json!({
+            "marketingState": "NOT_SUBSCRIBED",
+            "marketingOptInLevel": "SINGLE_OPT_IN",
+            "consentUpdatedAt": null,
+        })),
+        "addresses": addresses,
+        "addressesV2": addresses,
+        "defaultAddress": addresses.first(),
+        "state": if customer.has_account { "ENABLED" } else { "DISABLED" },
+        "verifiedEmail": customer.has_account,
+        "taxExempt": customer.tax_exempt,
+        "taxExemptions": [],
+        "dataSaleOptOut": false,
+        "tags": customer.tags,
+        "locale": store.primary_language().iso_code,
+        "companyContactProfiles": contact.into_iter().collect::<Vec<_>>(),
+        "orders": [],
+        "createdAt": created,
+        "updatedAt": created,
+        "metafields": metafields,
+    }));
+}
+
+fn seed_company(seed: &mut Seed, company: &Company) {
+    let store = seed.store;
+    let id = company_gid(company);
+    let created = date_time(company.created_at);
+    let roles: Vec<String> = CONTACT_ROLES
+        .iter()
+        .map(|(key, name)| {
+            let role = contact_role_gid(company, key);
+            seed.insert(json!({
+                "__typename": "CompanyContactRole",
+                "id": role,
+                "name": name,
+                "note": null,
+            }))
+        })
+        .collect();
+    let ordering_only = contact_role_gid(company, CONTACT_ROLES[1].0);
+    let company_index = store
+        .companies
+        .iter()
+        .position(|candidate| candidate.id == company.id);
+    let buyers: Vec<&Customer> = store
+        .customers
+        .iter()
+        .filter(|customer| customer.company.is_some() && customer.company == company_index)
+        .collect();
+
+    // Each buyer can order for the locations the data gives them, with the default role.
+    let mut assignments: Vec<(String, String, String)> = Vec::new();
+    let mut contacts = Vec::new();
+    for (rank, customer) in buyers.iter().enumerate() {
+        let contact = company_contact_gid(customer);
+        let mut own = Vec::new();
+        for index in &customer.company_locations {
+            let Some(location) = company.locations.get(*index) else {
+                continue;
+            };
+            let assignment = role_assignment_gid(customer, location);
+            seed.insert(json!({
+                "__typename": "CompanyContactRoleAssignment",
+                "id": assignment,
+                "company": id,
+                "companyContact": contact,
+                "companyLocation": company_location_gid(location),
+                "role": ordering_only,
+                "createdAt": created,
+                "updatedAt": created,
+            }));
+            own.push(assignment.clone());
+            assignments.push((company_location_gid(location), assignment, contact.clone()));
+        }
+        let details = customer.company_contact.as_ref();
+        let contact_created = details.map_or(created.clone(), |c| date_time(c.created_at));
+        seed.insert(json!({
+            "__typename": "CompanyContact",
+            "id": contact,
+            "company": id,
+            "customer": customer_gid(customer),
+            "title": details.and_then(|c| c.title.as_deref()).map_or(Value::Null, text),
+            "locale": details.and_then(|c| c.locale.as_deref()).map_or(Value::Null, text),
+            "isMainContact": rank == 0,
+            "roleAssignments": own,
+            "createdAt": contact_created,
+            "updatedAt": details.map_or(created.clone(), |c| date_time(c.updated_at)),
+        }));
+        contacts.push(contact);
+    }
+
+    let mut locations = Vec::new();
+    let mut spent = 0;
+    for location in &company.locations {
+        let location_id = company_location_gid(location);
+        let location_created = date_time(location.created_at);
+        let shipping = location
+            .shipping_address
+            .as_ref()
+            .map(|address| company_address(location, address, &company.name, &location_created));
+        let role_assignments: Vec<&String> = assignments
+            .iter()
+            .filter(|(owner, _, _)| *owner == location_id)
+            .map(|(_, assignment, _)| assignment)
+            .collect();
+        let metafields = seed.metafields(
+            &location_id,
+            "COMPANY_LOCATION",
+            &location_created,
+            &location.metafields,
+        );
+        spent += location.total_spent;
+        seed.insert(json!({
+            "__typename": "CompanyLocation",
+            "id": location_id,
+            "name": location.name,
+            "externalId": location.external_id,
+            "company": id,
+            "locale": location.locale,
+            "currency": seed.currency,
+            "shippingAddress": shipping,
+            "billingAddress": null,
+            "taxSettings": {
+                "taxRegistrationId": location.tax_registration_id,
+                "taxExempt": false,
+                "taxExemptions": [],
+            },
+            "taxRegistrationId": location.tax_registration_id,
+            "taxExemptions": [],
+            "ordersCount": {"count": location.orders_count, "precision": "EXACT"},
+            "orderCount": location.orders_count,
+            "totalSpent": seed.money_v2(location.total_spent),
+            "roleAssignments": role_assignments,
+            "createdAt": location_created,
+            "updatedAt": date_time(location.updated_at),
+            "metafields": metafields,
+        }));
+        locations.push(location_id);
+    }
+
+    let metafields = seed.metafields(&id, "COMPANY", &created, &company.metafields);
+    seed.insert(json!({
+        "__typename": "Company",
+        "id": id,
+        "name": company.name,
+        "externalId": company.external_id,
+        "note": null,
+        "customerSince": created,
+        "createdAt": created,
+        "updatedAt": date_time(company.updated_at),
+        "locations": locations,
+        "contacts": contacts,
+        "mainContact": contacts.first(),
+        "contactRoles": roles,
+        "defaultRole": ordering_only,
+        "totalSpent": seed.money_v2(spent),
+        "metafields": metafields,
+    }));
+}
+
+/// The address of a company location: a `CompanyAddress`, which is an object of its own on
+/// Shopify (with an id), held inline by the location.
+fn company_address(
+    location: &CompanyLocation,
+    address: &Address,
+    company: &str,
+    created: &str,
+) -> Value {
+    json!({
+        "id": company_address_gid(location, address),
+        "address1": address.address1,
+        "address2": text(&address.address2),
+        "city": text(&address.city),
+        "province": text(&address.province),
+        "zoneCode": text(&address.province_code),
+        "country": text(&address.country),
+        "countryCode": address.country_code.to_ascii_uppercase(),
+        "zip": text(&address.zip),
+        "phone": text(&address.phone),
+        "firstName": text(&address.first_name),
+        "lastName": text(&address.last_name),
+        "recipient": value::full_name(&address.first_name, &address.last_name),
+        "companyName": if address.company.is_empty() { company } else { &address.company },
+        "formattedAddress": value::formatted(address),
+        "formattedArea": value::formatted_area(address),
+        "createdAt": created,
+        "updatedAt": created,
+    })
+}
+
+/// Recomputes what a customer derives from their orders: `orders`, `numberOfOrders`,
+/// `amountSpent` (what the orders that are not cancelled cost, as the checkout's
+/// `Customer.amountSpent`), `lastOrder` and `canDelete`. The seed runs it once the orders
+/// exist; a mutation that creates, cancels or deletes an order runs it after.
+pub fn refresh_customer(state: &mut ShopState, customer: &str) {
+    let currency = state
+        .shop()
+        .and_then(|shop| shop.get("currencyCode"))
+        .and_then(Value::as_str)
+        .unwrap_or("USD")
+        .to_string();
+    let orders: Vec<(String, i64, bool, String)> = state
+        .all("Order")
+        .filter(|order| order.get("customer").and_then(Value::as_str) == Some(customer))
+        .map(|order| {
+            let total = order
+                .get("totalPriceSet")
+                .and_then(|set| set.get("shopMoney"))
+                .and_then(|money| cents_of(money.get("amount")))
+                .unwrap_or(0);
+            let cancelled = order.get("cancelledAt").is_some_and(|at| !at.is_null());
+            let processed = order
+                .get("processedAt")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            (
+                order
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                total,
+                cancelled,
+                processed,
+            )
+        })
+        .collect();
+    let spent: i64 = orders
+        .iter()
+        .filter(|(_, _, cancelled, _)| !cancelled)
+        .map(|(_, total, _, _)| total)
+        .sum();
+    let last = orders
+        .iter()
+        .max_by(|a, b| a.3.cmp(&b.3))
+        .map(|(id, _, _, _)| id.clone());
+    let ids: Vec<String> = orders.iter().map(|(id, _, _, _)| id.clone()).collect();
+    let Some(record) = state.get_mut(customer) else {
+        return;
+    };
+    record.insert("numberOfOrders".to_string(), json!(ids.len().to_string()));
+    record.insert("amountSpent".to_string(), value::money_v2(spent, &currency));
+    record.insert("lastOrder".to_string(), json!(last));
+    record.insert("canDelete".to_string(), json!(ids.is_empty()));
+    record.insert("orders".to_string(), json!(ids));
+}

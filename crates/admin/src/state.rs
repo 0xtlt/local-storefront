@@ -1,12 +1,23 @@
 //! The state of a shop: its records, seeded from the store data, and the events of what changed.
 //!
-//! See `crates/admin/docs/design.md`.
+//! A record is a JSON object in the shape of its GraphQL type, keyed by its GID. [`ShopState`]
+//! holds the records of one shop, its clock and its pending events; [`Shops`] holds every shop of
+//! the server, by domain, each seeded from the same store data. What a record of each type holds
+//! and how its id is made: the "Records" section of `crates/admin/docs/design.md`.
 
-use chrono::{DateTime, Utc};
+pub mod seed;
+pub mod value;
+
+use std::collections::HashMap;
+
+use chrono::{DateTime, SubsecRound, Utc};
+use indexmap::{IndexMap, IndexSet};
+use lsf_checkout::app::App;
+use lsf_core::Store;
 use serde_json::{Map, Value};
 
-/// A record: a JSON object in the shape of its GraphQL type, with its GID in `id` and, for the
-/// records whose type has an interface or a union, its type in `__typename`.
+/// A record: a JSON object in the shape of its GraphQL type, with its GID in `id` and its type in
+/// `__typename`.
 pub type Record = Map<String, Value>;
 
 /// The GID of an entity: `gid://shopify/Product/1`.
@@ -21,6 +32,13 @@ pub fn parse_gid(gid: &str) -> Option<(&str, u64)> {
     let (type_name, id) = rest.split_once('/')?;
     let id = id.split_once('?').map_or(id, |(id, _)| id);
     Some((type_name, id.parse().ok()?))
+}
+
+/// The type a GID names, whatever its id looks like: `Product` for `gid://shopify/Product/1`.
+pub fn gid_type(gid: &str) -> Option<&str> {
+    let rest = gid.strip_prefix("gid://shopify/")?;
+    let (type_name, _) = rest.split_once('/')?;
+    (!type_name.is_empty()).then_some(type_name)
 }
 
 /// Something that changed in a shop, which webhooks report.
@@ -41,9 +59,511 @@ pub struct Event {
     pub snapshot: Option<Record>,
 }
 
+/// The clock of a shop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Clock {
+    /// The `now` of the store data: every change happens at that instant, so a test reads the
+    /// same dates every run.
+    Frozen(DateTime<Utc>),
+    /// The time of the machine, to the second (Shopify's `DateTime`s have no fraction).
+    System,
+}
+
+impl Clock {
+    /// The clock the store data asks for.
+    pub fn of(store: &Store) -> Clock {
+        store.now.map_or(Clock::System, Clock::Frozen)
+    }
+
+    pub fn now(self) -> DateTime<Utc> {
+        match self {
+            Clock::Frozen(now) => now.trunc_subsecs(0),
+            Clock::System => Utc::now().trunc_subsecs(0),
+        }
+    }
+}
+
+/// A record and its type, as the state keeps it.
+#[derive(Clone, Debug)]
+struct Entry {
+    type_name: String,
+    record: Record,
+}
+
+/// The records of one shop, its clock and the events of what changed.
+///
+/// Records are kept in creation order: the order of the store data for the seeded ones, then the
+/// order the Admin API created the others in. That is the order [`ShopState::all`] lists, and the
+/// order a connection shows before a `sortKey` applies; the root connections of Shopify sort by
+/// `ID` by default (`locations` and `markets` by `NAME`, `orders` by `PROCESSED_AT`), which the
+/// resolver applies on top. There is no locking here: the `api` layer keeps a shop behind a
+/// mutex.
+#[derive(Clone, Debug)]
+pub struct ShopState {
+    domain: String,
+    records: IndexMap<String, Entry>,
+    /// The keys of the records of each type, in creation order.
+    by_type: HashMap<String, IndexSet<String>>,
+    /// The next numeric id of each group of types (see [`counter_group`]).
+    counters: HashMap<String, u64>,
+    clock: Clock,
+    events: Vec<Event>,
+    /// How many events the shop emitted, ever: the sequence event ids are made from. It
+    /// survives a reset, so that a webhook receiver never sees an event id twice.
+    emitted: u64,
+}
+
+impl ShopState {
+    /// An empty shop.
+    pub fn new(domain: impl Into<String>, clock: Clock) -> ShopState {
+        ShopState {
+            domain: domain.into(),
+            records: IndexMap::new(),
+            by_type: HashMap::new(),
+            counters: HashMap::new(),
+            clock,
+            events: Vec::new(),
+            emitted: 0,
+        }
+    }
+
+    /// A shop seeded from the store data and the app: see [`seed::seed`].
+    pub fn seeded(store: &Store, app: Option<&App>) -> ShopState {
+        seed::seed(store, app)
+    }
+
+    /// The `*.myshopify.com` domain of the shop.
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    /// The GID of the `Shop` record.
+    pub fn shop_gid(&self) -> Option<&str> {
+        self.keys("Shop").next()
+    }
+
+    /// The `Shop` record.
+    pub fn shop(&self) -> Option<&Record> {
+        self.shop_gid().and_then(|gid| self.get(gid))
+    }
+
+    pub fn clock(&self) -> Clock {
+        self.clock
+    }
+
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
+    }
+
+    /// The time of the shop: the store data's `now` when it has one, the system clock otherwise.
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
+    }
+
+    /// [`ShopState::now`] as a GraphQL `DateTime`: `2026-01-01T00:00:00Z`.
+    pub fn timestamp(&self) -> String {
+        value::date_time(self.now())
+    }
+
+    /// The record of a GID (or of the key a record without a GID is kept under, see
+    /// [`ShopState::insert_as`]).
+    pub fn get(&self, gid: &str) -> Option<&Record> {
+        self.records.get(gid).map(|entry| &entry.record)
+    }
+
+    pub fn get_mut(&mut self, gid: &str) -> Option<&mut Record> {
+        self.records.get_mut(gid).map(|entry| &mut entry.record)
+    }
+
+    pub fn contains(&self, gid: &str) -> bool {
+        self.records.contains_key(gid)
+    }
+
+    /// The type of the record of a GID: its `__typename`.
+    pub fn type_of(&self, gid: &str) -> Option<&str> {
+        self.records.get(gid).map(|entry| entry.type_name.as_str())
+    }
+
+    /// Adds a record, or replaces the record of the same GID where it was. The key is the
+    /// record's `id`; a record without one gets a new GID of its `__typename`
+    /// ([`ShopState::new_gid`]) as its `id`. The type is `__typename`, else the type of the GID.
+    /// Returns the GID.
+    pub fn insert(&mut self, mut record: Record) -> String {
+        let type_name = record_type(&record);
+        let key = match record.get("id").and_then(Value::as_str) {
+            Some(id) => id.to_string(),
+            None => {
+                let id = self.new_gid(&type_name);
+                record.insert("id".to_string(), Value::String(id.clone()));
+                id
+            }
+        };
+        self.insert_as(key, record)
+    }
+
+    /// Adds a record under `key`, for the records whose `id` is not a GID or that have none
+    /// (`ShopifyFunction`, whose id is a UUID; `ShopLocale`, kept under its locale).
+    pub fn insert_as(&mut self, key: impl Into<String>, record: Record) -> String {
+        let key = key.into();
+        let type_name = record_type(&record).to_string();
+        if let Some((gid_type, id)) = parse_gid(&key) {
+            let next = self.counters.entry(counter_group(gid_type)).or_insert(1);
+            *next = (*next).max(id.saturating_add(1));
+        }
+        if let Some(previous) = self.records.get(&key)
+            && previous.type_name != type_name
+            && let Some(keys) = self.by_type.get_mut(&previous.type_name)
+        {
+            keys.shift_remove(&key);
+        }
+        self.by_type
+            .entry(type_name.clone())
+            .or_default()
+            .insert(key.clone());
+        self.records
+            .insert(key.clone(), Entry { type_name, record });
+        key
+    }
+
+    /// Removes a record. What refers to it is left as it is: a reference to a record that is
+    /// gone resolves to `null`.
+    pub fn remove(&mut self, gid: &str) -> Option<Record> {
+        let entry = self.records.shift_remove(gid)?;
+        if let Some(keys) = self.by_type.get_mut(&entry.type_name) {
+            keys.shift_remove(gid);
+        }
+        Some(entry.record)
+    }
+
+    /// Emits `topic` for the record, then removes it: the event keeps the record as it was.
+    pub fn delete(&mut self, gid: &str, topic: &str) -> Option<Record> {
+        if !self.contains(gid) {
+            return None;
+        }
+        self.emit(topic, gid);
+        self.remove(gid)
+    }
+
+    /// The GIDs of the records of a type, in creation order.
+    pub fn keys<'s>(&'s self, type_name: &str) -> impl Iterator<Item = &'s str> + 's {
+        self.by_type
+            .get(type_name)
+            .into_iter()
+            .flat_map(|keys| keys.iter().map(String::as_str))
+    }
+
+    /// The records of a type, in creation order.
+    pub fn all<'s>(&'s self, type_name: &str) -> impl Iterator<Item = &'s Record> + 's {
+        self.keys(type_name).filter_map(|key| self.get(key))
+    }
+
+    /// The records of any of `types`, in creation order across them: the members of an interface
+    /// or a union (`files`: `MediaImage`, `Video`, `GenericFile`, …).
+    pub fn all_of<'s>(&'s self, types: &'s [&str]) -> impl Iterator<Item = &'s Record> + 's {
+        self.records
+            .values()
+            .filter(|entry| types.contains(&entry.type_name.as_str()))
+            .map(|entry| &entry.record)
+    }
+
+    /// The number of records of a type.
+    pub fn count(&self, type_name: &str) -> usize {
+        self.by_type.get(type_name).map_or(0, IndexSet::len)
+    }
+
+    /// The number of records of every type.
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    /// Every record, in creation order, with its key.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Record)> {
+        self.records
+            .iter()
+            .map(|(key, entry)| (key.as_str(), &entry.record))
+    }
+
+    /// The types that have records.
+    pub fn types(&self) -> impl Iterator<Item = &str> {
+        self.by_type
+            .iter()
+            .filter(|(_, keys)| !keys.is_empty())
+            .map(|(type_name, _)| type_name.as_str())
+    }
+
+    /// A new GID for a record of `type_name`, from a counter that starts above every id of the
+    /// type the state holds. The discount nodes (`DiscountAutomaticNode`, `DiscountCodeNode`,
+    /// `DiscountNode`) share a counter, as they share their ids on Shopify.
+    pub fn new_gid(&mut self, type_name: &str) -> String {
+        let next = self.counters.entry(counter_group(type_name)).or_insert(1);
+        let id = *next;
+        *next += 1;
+        gid(type_name, id)
+    }
+
+    /// Sets `updatedAt` of a record to now, when the record has that field. Returns whether the
+    /// record exists.
+    pub fn touch(&mut self, gid: &str) -> bool {
+        let now = self.timestamp();
+        match self.get_mut(gid) {
+            Some(record) => {
+                if record.contains_key("updatedAt") {
+                    record.insert("updatedAt".to_string(), Value::String(now));
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Records that `topic` happened to a record. A `…/delete` event keeps a copy of the record:
+    /// emit it before removing the record (or use [`ShopState::delete`]).
+    pub fn emit(&mut self, topic: &str, gid: &str) -> &Event {
+        let snapshot = topic
+            .ends_with("/delete")
+            .then(|| self.get(gid).cloned())
+            .flatten();
+        self.emitted += 1;
+        let event = Event {
+            topic: topic.to_string(),
+            shop: self.domain.clone(),
+            gid: gid.to_string(),
+            at: self.now(),
+            id: value::uuid(&format!("event/{}/{}", self.domain, self.emitted)),
+            snapshot,
+        };
+        self.events.push(event);
+        &self.events[self.events.len() - 1]
+    }
+
+    /// The events not taken yet, in the order they happened.
+    pub fn events(&self) -> &[Event] {
+        &self.events
+    }
+
+    /// Takes the events emitted since the last call.
+    pub fn take_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Moves the shop to another domain: what a shop created from the seed of another one needs.
+    /// The `Shop` record gets the id of the new domain, and every value naming the old domain
+    /// (`myshopifyDomain`, the host of the primary domain when it is the myshopify one, URLs on
+    /// it) or the old `Shop` GID is rewritten.
+    fn rehost(&mut self, domain: &str) {
+        let old_domain = std::mem::replace(&mut self.domain, domain.to_string());
+        let old_origin = format!("https://{old_domain}");
+        let new_origin = format!("https://{domain}");
+        let old_shop = self.shop_gid().map(str::to_string);
+        let new_shop = gid("Shop", lsf_core::util::stable_id("shop", domain));
+        let rewrite = |text: &str| -> Option<String> {
+            if Some(text) == old_shop.as_deref() {
+                Some(new_shop.clone())
+            } else if text == old_domain {
+                Some(domain.to_string())
+            } else {
+                text.strip_prefix(&old_origin)
+                    .filter(|rest| rest.is_empty() || rest.starts_with(['/', '?']))
+                    .map(|rest| format!("{new_origin}{rest}"))
+            }
+        };
+        for entry in self.records.values_mut() {
+            for value in entry.record.values_mut() {
+                rewrite_strings(value, &rewrite);
+            }
+        }
+        if let Some(old_shop) = old_shop
+            && let Some(record) = self.remove(&old_shop)
+        {
+            self.insert(record);
+        }
+    }
+
+    /// The shop as it is after a reset: `seed`, under this shop's domain, with the events gone
+    /// and the event sequence kept.
+    fn reset_from(&mut self, seed: &ShopState) {
+        let domain = self.domain.clone();
+        let emitted = self.emitted;
+        *self = seed.clone();
+        self.emitted = emitted;
+        if domain != self.domain {
+            self.rehost(&domain);
+        }
+    }
+}
+
+/// The type of a record: its `__typename`, else the type of its GID.
+fn record_type(record: &Record) -> String {
+    record
+        .get("__typename")
+        .and_then(Value::as_str)
+        .or_else(|| record.get("id").and_then(Value::as_str).and_then(gid_type))
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The counter a type takes its new ids from: its own, except the discount nodes, which share
+/// one.
+fn counter_group(type_name: &str) -> String {
+    match type_name {
+        "DiscountAutomaticNode" | "DiscountCodeNode" | "DiscountNode" => "DiscountNode".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn rewrite_strings(value: &mut Value, rewrite: &impl Fn(&str) -> Option<String>) {
+    match value {
+        Value::String(text) => {
+            if let Some(new) = rewrite(text) {
+                *text = new;
+            }
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| rewrite_strings(item, rewrite)),
+        Value::Object(map) => map
+            .values_mut()
+            .for_each(|item| rewrite_strings(item, rewrite)),
+        _ => {}
+    }
+}
+
+/// The shops of the server, by domain (`my-shop.myshopify.com`).
+///
+/// The default shop is the store data's (`shop.permanent_domain`). Others are created for test
+/// isolation, each a copy of the same seed. No locking here: the `api` layer wraps each shop in
+/// a mutex.
+#[derive(Clone, Debug)]
+pub struct Shops {
+    /// The records the store data and the app give, under the default domain: every shop starts
+    /// as a copy of them.
+    seed: ShopState,
+    shops: IndexMap<String, ShopState>,
+}
+
+impl Shops {
+    /// The default shop, seeded from the store data and the app.
+    pub fn new(store: &Store, app: Option<&App>) -> Shops {
+        let seed = ShopState::seeded(store, app);
+        let mut shops = IndexMap::new();
+        shops.insert(seed.domain().to_string(), seed.clone());
+        Shops { seed, shops }
+    }
+
+    /// The domain of the default shop: `shop.permanent_domain` of the store data.
+    pub fn default_domain(&self) -> &str {
+        self.seed.domain()
+    }
+
+    pub fn default_shop(&self) -> Option<&ShopState> {
+        self.shops.get(self.seed.domain())
+    }
+
+    pub fn default_shop_mut(&mut self) -> Option<&mut ShopState> {
+        self.shops.get_mut(self.seed.domain())
+    }
+
+    pub fn get(&self, domain: &str) -> Option<&ShopState> {
+        self.shops.get(&domain.to_ascii_lowercase())
+    }
+
+    pub fn get_mut(&mut self, domain: &str) -> Option<&mut ShopState> {
+        self.shops.get_mut(&domain.to_ascii_lowercase())
+    }
+
+    /// The domains of the shops, the default one first, then in creation order.
+    pub fn domains(&self) -> impl Iterator<Item = &str> {
+        self.shops.keys().map(String::as_str)
+    }
+
+    pub fn len(&self) -> usize {
+        self.shops.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shops.is_empty()
+    }
+
+    /// Creates a shop seeded from the same data: `test-1` (or `test-1.myshopify.com`) makes
+    /// `test-1.myshopify.com`. An error when the name is not a valid shop name, or is taken.
+    pub fn create(&mut self, name: &str) -> Result<&mut ShopState, String> {
+        let domain = shop_domain(name)?;
+        if self.shops.contains_key(&domain) {
+            return Err(format!("the shop {domain} already exists"));
+        }
+        let mut shop = self.seed.clone();
+        shop.rehost(&domain);
+        Ok(self.shops.entry(domain).or_insert(shop))
+    }
+
+    /// Forgets a shop other than the default one. Returns whether it existed.
+    pub fn remove(&mut self, domain: &str) -> bool {
+        let domain = domain.to_ascii_lowercase();
+        domain != self.seed.domain() && self.shops.shift_remove(&domain).is_some()
+    }
+
+    /// Puts every shop back to the seed: what the Admin API changed is dropped, the shops
+    /// created stay (seeded again), and the pending events are dropped.
+    pub fn reset(&mut self) {
+        let seed = &self.seed;
+        for shop in self.shops.values_mut() {
+            shop.reset_from(seed);
+        }
+    }
+
+    /// Seeds again from new store data (the data changed on disk), then resets every shop. The
+    /// default shop follows `shop.permanent_domain` if it changed.
+    pub fn reseed(&mut self, store: &Store, app: Option<&App>) {
+        let seed = ShopState::seeded(store, app);
+        let old_default = self.seed.domain().to_string();
+        if seed.domain() != old_default
+            && let Some(shop) = self.shops.shift_remove(&old_default)
+        {
+            let mut moved = shop;
+            moved.domain = seed.domain().to_string();
+            self.shops.insert(seed.domain().to_string(), moved);
+            self.shops.move_index(self.shops.len() - 1, 0);
+        }
+        self.seed = seed;
+        self.reset();
+    }
+}
+
+/// The domain of a shop name: `test-1` → `test-1.myshopify.com`.
+pub fn shop_domain(name: &str) -> Result<String, String> {
+    let name = name.trim().to_ascii_lowercase();
+    let handle = name.strip_suffix(".myshopify.com").unwrap_or(&name);
+    let valid = !handle.is_empty()
+        && handle.len() <= 60
+        && handle
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && !handle.starts_with('-')
+        && !handle.ends_with('-');
+    if valid {
+        Ok(format!("{handle}.myshopify.com"))
+    } else {
+        Err(format!(
+            "\"{name}\" is not a shop name: use lowercase letters, digits and hyphens, e.g. \"test-1\""
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn record(value: Value) -> Record {
+        match value {
+            Value::Object(map) => map,
+            _ => unreachable!(),
+        }
+    }
 
     #[test]
     fn reads_gids() {
@@ -55,5 +575,101 @@ mod tests {
         );
         assert_eq!(parse_gid("gid://other/Product/7"), None);
         assert_eq!(parse_gid("gid://shopify/Product/x"), None);
+        assert_eq!(
+            gid_type("gid://shopify/ShopifyFunction/a-b"),
+            Some("ShopifyFunction")
+        );
+        assert_eq!(gid_type("fr"), None);
+    }
+
+    #[test]
+    fn keeps_records_by_type_in_creation_order() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        state.insert(record(
+            json!({"__typename": "Product", "id": "gid://shopify/Product/9"}),
+        ));
+        state.insert(record(
+            json!({"__typename": "Product", "id": "gid://shopify/Product/3"}),
+        ));
+        state.insert(record(
+            json!({"__typename": "Collection", "id": "gid://shopify/Collection/5"}),
+        ));
+        let ids: Vec<&str> = state.keys("Product").collect();
+        assert_eq!(ids, ["gid://shopify/Product/9", "gid://shopify/Product/3"]);
+        assert_eq!(state.count("Product"), 2);
+        assert_eq!(state.all_of(&["Collection", "Product"]).count(), 3);
+        // A new id is above every id of the type.
+        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/10");
+        assert_eq!(state.new_gid("Product"), "gid://shopify/Product/11");
+        assert_eq!(state.new_gid("Order"), "gid://shopify/Order/1");
+        // A record without an id gets a new one.
+        let new = state.insert(record(json!({"__typename": "Product", "title": "New"})));
+        assert_eq!(new, "gid://shopify/Product/12");
+        assert_eq!(state.get(&new).unwrap()["id"], json!(new));
+        // Replacing keeps the position; removing forgets it.
+        state.insert(record(
+            json!({"__typename": "Product", "id": "gid://shopify/Product/9", "title": "Nine"}),
+        ));
+        assert_eq!(
+            state.keys("Product").next(),
+            Some("gid://shopify/Product/9")
+        );
+        assert!(state.remove("gid://shopify/Product/3").is_some());
+        assert_eq!(state.count("Product"), 2);
+        assert!(state.get("gid://shopify/Product/3").is_none());
+    }
+
+    #[test]
+    fn discount_nodes_share_their_ids() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        state.insert(record(
+            json!({"__typename": "DiscountCodeNode", "id": "gid://shopify/DiscountCodeNode/2"}),
+        ));
+        assert_eq!(
+            state.new_gid("DiscountAutomaticNode"),
+            "gid://shopify/DiscountAutomaticNode/3"
+        );
+    }
+
+    #[test]
+    fn touches_and_emits_at_the_frozen_clock() {
+        let now = DateTime::parse_from_rfc3339("2026-03-01T10:00:00.5Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut state = ShopState::new("a.myshopify.com", Clock::Frozen(now));
+        let gid = state.insert(record(json!({
+            "__typename": "Product", "id": "gid://shopify/Product/1",
+            "title": "Hat", "updatedAt": "2024-01-01T00:00:00Z"
+        })));
+        assert!(state.touch(&gid));
+        assert_eq!(
+            state.get(&gid).unwrap()["updatedAt"],
+            json!("2026-03-01T10:00:00Z")
+        );
+        assert!(!state.touch("gid://shopify/Product/2"));
+
+        let first = state.emit("products/update", &gid).clone();
+        assert_eq!(first.shop, "a.myshopify.com");
+        assert_eq!(first.snapshot, None);
+        let deleted = state.delete(&gid, "products/delete").unwrap();
+        assert_eq!(deleted["title"], json!("Hat"));
+        let events = state.take_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].snapshot.as_ref().unwrap()["title"], json!("Hat"));
+        assert_ne!(events[0].id, events[1].id);
+        assert_eq!(events[0].id.len(), 36);
+        assert!(state.take_events().is_empty());
+    }
+
+    #[test]
+    fn names_shops() {
+        assert_eq!(shop_domain("test-1").unwrap(), "test-1.myshopify.com");
+        assert_eq!(
+            shop_domain("Test-1.myshopify.com").unwrap(),
+            "test-1.myshopify.com"
+        );
+        assert!(shop_domain("").is_err());
+        assert!(shop_domain("a b").is_err());
+        assert!(shop_domain("other.example.com").is_err());
     }
 }

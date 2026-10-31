@@ -1,0 +1,17 @@
+# A Shopify app for the tests of lsf-admin: Functions of every kind the checkout runs. They are
+# never run here: the Admin API only lists them and the objects that own them.
+name = "Admin fixtures"
+client_id = "11111111111111111111111111111111"
+handle = "admin-fixtures"
+application_url = "https://app.example.com"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,write_products,read_orders,read_customers,write_discounts"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/webhooks/orders"

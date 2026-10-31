@@ -1,0 +1,11 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Payment rules"
+handle = "payment-rules"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.payment-methods.transform.run"
+  input_query = "src/run.graphql"
+  export = "run"

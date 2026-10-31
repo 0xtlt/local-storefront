@@ -1,0 +1,11 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Volume discount"
+handle = "volume-discount"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/run.graphql"
+  export = "run"
