@@ -1092,6 +1092,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
         location,
     };
     let order = insert_order(state, &draft);
+    record_discounts(state, &order, result);
     state.emit("orders/create", &order);
     // What Shopify fires for a paid online order: the order, the transaction of the payment,
     // then `orders/paid`.
@@ -1106,6 +1107,102 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
         state.emit("orders/paid", &order);
     }
     order
+}
+
+/// The discounts of a checkout as its order keeps them: a `DiscountApplication` for each, in the
+/// checkout's order (an `AutomaticDiscountApplication`, or a `DiscountCodeApplication` for one of
+/// a code), and on each line and on the shipping line the `DiscountAllocation`s the discounts
+/// made, which name their application. What `Order.discountApplications`, the lines'
+/// `discountAllocations` and the `discount_applications` of the order webhooks read.
+fn record_discounts(state: &mut ShopState, order: &str, result: &lsf_checkout::CheckoutResult) {
+    let Some(currency) = state
+        .get(order)
+        .and_then(|record| record.get("currencyCode"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let applications: Vec<Value> = result
+        .discounts
+        .iter()
+        .enumerate()
+        .map(|(index, discount)| {
+            let details = &discount.details;
+            let value = match details.value {
+                lsf_checkout::DiscountValue::Percentage(percentage) => {
+                    json!({"__typename": "PricingPercentageValue", "percentage": percentage})
+                }
+                lsf_checkout::DiscountValue::Fixed(cents) => {
+                    let mut money = value::money_v2(cents, &currency);
+                    money["__typename"] = json!("MoneyV2");
+                    money
+                }
+            };
+            let mut application = json!({
+                "index": index,
+                "allocationMethod": details.allocation_method.graphql(),
+                "targetSelection": details.target_selection.graphql(),
+                "targetType": details.target_type.graphql(),
+                "value": value,
+            });
+            match &discount.code {
+                Some(code) => {
+                    application["__typename"] = json!("DiscountCodeApplication");
+                    application["code"] = json!(code);
+                }
+                None => {
+                    application["__typename"] = json!("AutomaticDiscountApplication");
+                    application["title"] = json!(discount.title);
+                }
+            }
+            application
+        })
+        .collect();
+    if applications.is_empty() {
+        return;
+    }
+    let allocations = |made: &[lsf_checkout::DiscountAllocation]| -> Value {
+        made.iter()
+            .filter_map(|allocation| {
+                Some(json!({
+                    "allocatedAmountSet": value::money_bag(allocation.amount, &currency),
+                    "discountApplication": applications.get(allocation.discount)?,
+                }))
+            })
+            .collect()
+    };
+    for (line, item) in result.lines.iter().zip(line_items(state, order)) {
+        let made = allocations(&line.discount_allocations);
+        if let Some(record) = state.get_mut(&item) {
+            record.insert("discountAllocations".to_string(), made);
+        }
+    }
+    let shipping: Vec<lsf_checkout::DiscountAllocation> = result
+        .delivery_groups
+        .iter()
+        .flat_map(|group| group.discount_allocations.iter().cloned())
+        .collect();
+    let shipping = allocations(&shipping);
+    if let Some(record) = state.get_mut(order) {
+        for key in ["shippingLine", "shippingLines"] {
+            match record.get_mut(key) {
+                Some(Value::Object(line)) => {
+                    line.insert("discountAllocations".to_string(), shipping.clone());
+                }
+                Some(Value::Array(lines)) => {
+                    for line in lines.iter_mut().filter_map(Value::as_object_mut) {
+                        line.insert("discountAllocations".to_string(), shipping.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        record.insert(
+            "discountApplications".to_string(),
+            Value::Array(applications.clone()),
+        );
+    }
 }
 
 /// The line items of an order record.
