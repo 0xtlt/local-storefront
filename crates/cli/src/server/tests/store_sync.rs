@@ -1,15 +1,11 @@
 //! Store sync through the handlers: what the backend changes through the Admin API is what the
-//! storefront and the checkout serve next.
-//!
-//! The mutations lsf does not simulate yet (`customerCreate`, `metafieldsSet`,
-//! `discountAutomaticAppCreate`, `publishablePublish`) are made as they would make their
-//! records, through `AdminApi::change_shop`, which is where every change of the default shop goes.
+//! storefront and the checkout serve next. Every change is a GraphQL mutation, sent as a backend
+//! sends it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lsf_admin::domains::{app as app_domain, catalog, content};
-use lsf_admin::state::{ShopState, value};
+use lsf_admin::domains::catalog;
 use lsf_core::theme::Revalidate;
 use serde_json::{Value as Json, json};
 
@@ -23,59 +19,38 @@ use super::{
 use crate::app::App;
 
 /// The fixture theme's server, serving the Admin API and the checkout of the fixture app, which
-/// asks for no scope: the backend gets those it needs to change products.
+/// asks for no scope: the backend gets those its mutations need.
 fn checkout_admin_server() -> ServerState {
     let state = checkout_server_with(fixture_app(), &[], false, None, Some(Default::default()));
     let installed = admin_request(
         &state,
         "POST",
         "/__lsf/admin/install",
-        r#"{"scopes": "read_products,write_products"}"#,
+        r#"{"scopes": "write_products,write_publications,write_customers,write_discounts,write_validations"}"#,
     );
     assert_eq!(installed.status, 200, "{}", text(&installed));
     state
 }
 
-/// Changes the default shop as a mutation would.
-fn change(state: &ServerState, change: impl FnOnce(&mut ShopState)) {
-    let admin = state.admin.as_ref().expect("the Admin API");
-    admin
-        .api
-        .change_shop(&admin.api.default_shop(), change)
-        .expect("the default shop");
-}
-
-/// A metafield set on an owner, as `metafieldsSet` makes it.
-fn set_metafield(
-    shop: &mut ShopState,
-    owner: &str,
-    owner_type: &str,
-    (namespace, key): (&str, &str),
-    kind: &str,
-    text: &str,
-) {
-    let id = content::metafield_gid(owner, namespace, key);
-    let now = shop.timestamp();
-    shop.insert(value::object(json!({
-        "__typename": "Metafield",
-        "id": id,
-        "namespace": namespace,
-        "key": key,
-        "type": kind,
-        "value": text,
-        "jsonValue": content::json_value(kind, text),
-        "owner": owner,
-        "ownerType": owner_type,
-        "createdAt": now,
-        "updatedAt": now,
-    })));
-    if let Some(Json::Array(ids)) = shop
-        .get_mut(owner)
-        .and_then(|record| record.get_mut("metafields"))
-        && !ids.contains(&json!(id))
-    {
-        ids.push(json!(id));
-    }
+/// A mutation (with its variables) that must answer neither an error nor a user error: its
+/// payload.
+fn mutate(state: &ServerState, query: &str, variables: Json) -> Json {
+    let reply = admin_request(
+        state,
+        "POST",
+        "/admin/api/2026-10/graphql.json",
+        &json!({ "query": query, "variables": variables }).to_string(),
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let answer = body_json(&reply);
+    assert!(answer.get("errors").is_none(), "{answer}");
+    let payload = answer["data"]
+        .as_object()
+        .and_then(|data| data.values().next())
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(payload["userErrors"], json!([]), "{answer}");
+    payload
 }
 
 fn product_gid(state: &ServerState, handle: &str) -> String {
@@ -164,13 +139,20 @@ fn a_product_the_backend_creates_is_on_the_storefront() {
     // `productCreate` does not publish it on the Online Store, as on Shopify.
     assert_eq!(get(&state, "/products/wool-hat", "sync").status, 404);
 
-    // `publishablePublish`.
-    change(&state, |shop| {
-        let now = shop.timestamp();
-        shop.get_mut(&id)
-            .unwrap()
-            .insert("publishedAt".into(), json!(now));
-    });
+    // `publishablePublish` on the Online Store.
+    let publications = admin_query(&state, "{ publications(first: 5) { nodes { id name } } }");
+    let online_store = publications["data"]["publications"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|publication| publication["name"] == "Online Store")
+        .map(|publication| publication["id"].clone())
+        .unwrap_or_else(|| panic!("the Online Store: {publications}"));
+    mutate(
+        &state,
+        "mutation($id: ID!, $publication: ID!) { publishablePublish(id: $id, input: [{publicationId: $publication}]) { userErrors { field message } } }",
+        json!({"id": id, "publication": online_store}),
+    );
     assert_eq!(title_on_page(&state, "wool-hat", "sync"), "Wool Hat");
     // Last of the collection's five, on its second page of three.
     let collection = text(&get(&state, "/collections/frontpage?page=2", "sync"));
@@ -208,23 +190,16 @@ fn a_product_the_backend_sets_to_draft_leaves_the_storefront() {
 #[test]
 fn a_customer_the_backend_creates_can_log_in() {
     let state = checkout_admin_server();
-    // `customerCreate`.
-    change(&state, |shop| {
-        let id = shop.new_gid("Customer");
-        let now = shop.timestamp();
-        let address = "gid://shopify/MailingAddress/77?model_name=CustomerAddress";
-        shop.insert(value::object(json!({
-            "__typename": "Customer", "id": id, "firstName": "Noa", "lastName": "Lee",
-            "email": "noa@example.com", "phone": null, "state": "ENABLED", "tags": ["vip"],
-            "taxExempt": false, "emailMarketingConsent": {"marketingState": "SUBSCRIBED"},
-            "addresses": [], "addressesV2": [
-                {"id": address, "firstName": "Noa", "lastName": "Lee", "address1": "1 Rue de la Paix",
-                 "city": "Lyon", "countryCodeV2": "FR", "zip": "69001"}
-            ],
-            "defaultAddress": {"id": address},
-            "metafields": [], "createdAt": now, "updatedAt": now,
-        })));
-    });
+    mutate(
+        &state,
+        r#"mutation($input: CustomerInput!) { customerCreate(input: $input) { customer { id } userErrors { field message } } }"#,
+        json!({"input": {
+            "firstName": "Noa", "lastName": "Lee", "email": "noa@example.com", "tags": ["vip"],
+            "emailMarketingConsent": {"marketingState": "SUBSCRIBED"},
+            "addresses": [{"firstName": "Noa", "lastName": "Lee", "address1": "1 Rue de la Paix",
+                "city": "Lyon", "countryCode": "FR", "zip": "69001"}],
+        }}),
+    );
 
     // The storefront logs them in.
     let login = get(
@@ -311,26 +286,17 @@ fn metafields_the_backend_sets_are_read_by_liquid() {
         page(&state)
     );
     let tee = product_gid(&state, "organic-cotton-t-shirt");
-    // `metafieldsSet`, on a product (one the data gives) and on the shop (a new one).
-    change(&state, |shop| {
-        let shop_gid = shop.shop_gid().unwrap().to_string();
-        set_metafield(
-            shop,
-            &tee,
-            "PRODUCT",
-            ("custom", "care"),
-            "single_line_text_field",
-            "Hand wash",
-        );
-        set_metafield(
-            shop,
-            &shop_gid,
-            "SHOP",
-            ("custom", "banner"),
-            "single_line_text_field",
-            "Spring sale",
-        );
-    });
+    let shop = admin_query(&state, "{ shop { id } }")["data"]["shop"]["id"].clone();
+    // `metafieldsSet`, on a product (one the data gives, whose definition gives the type) and on
+    // the shop (a new one).
+    mutate(
+        &state,
+        r#"mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } } }"#,
+        json!({"metafields": [
+            {"ownerId": tee, "namespace": "custom", "key": "care", "value": "Hand wash"},
+            {"ownerId": shop, "namespace": "custom", "key": "banner", "type": "single_line_text_field", "value": "Spring sale"},
+        ]}),
+    );
     assert!(
         page(&state).contains("care=Hand wash|banner=Spring sale<"),
         "{}",
@@ -341,30 +307,29 @@ fn metafields_the_backend_sets_are_read_by_liquid() {
 #[test]
 fn the_settings_the_backend_gives_a_validation_are_read_by_its_function() {
     let state = checkout_admin_server();
-    let app = lsf_checkout::app::load(&fixture_app()).expect("the fixture app");
-    let index = app
-        .functions
+    // The validation the app made for its Function.
+    let validations = admin_query(
+        &state,
+        "{ validations(first: 10) { nodes { id shopifyFunction { handle } } } }",
+    );
+    let owner = validations["data"]["validations"]["nodes"]
+        .as_array()
+        .unwrap()
         .iter()
-        .position(|function| function.handle == "quantity-limit")
-        .expect("the validation Function");
-    let owner = app_domain::owner_gid("Validation", index);
-    let namespace = content::admin_namespace(app_domain::app_id(Some(&app)), "$app:config");
+        .find(|validation| validation["shopifyFunction"]["handle"] == "quantity-limit")
+        .map(|validation| validation["id"].clone())
+        .unwrap_or_else(|| panic!("the validation of quantity-limit: {validations}"));
     let three = json!([{"variant": "TEE-BLK-M", "quantity": 3}]);
     let path = cart_checkout(&state, "co-limit-before", three.clone());
     let before = body_json(&get(&state, &format!("{path}.json"), "co-limit-before"));
     assert_eq!(before["errors"], json!([]), "{before}");
 
-    // `metafieldsSet` on the validation the app made.
-    change(&state, |shop| {
-        set_metafield(
-            shop,
-            &owner,
-            "VALIDATION",
-            (&namespace, "settings"),
-            "json",
-            r#"{"maxQuantity":2}"#,
-        );
-    });
+    // `metafieldsSet` on it, in the app's `$app:config`.
+    mutate(
+        &state,
+        r#"mutation($owner: ID!) { metafieldsSet(metafields: [{ownerId: $owner, namespace: "$app:config", key: "settings", type: "json", value: "{\"maxQuantity\":2}"}]) { userErrors { field message } } }"#,
+        json!({ "owner": owner }),
+    );
     let path = cart_checkout(&state, "co-limit", three);
     let after = body_json(&get(&state, &format!("{path}.json"), "co-limit"));
     assert_eq!(after["errors"][0]["function"], "quantity-limit", "{after}");
@@ -378,37 +343,17 @@ fn the_settings_the_backend_gives_a_validation_are_read_by_its_function() {
 #[test]
 fn an_app_discount_the_backend_creates_runs_its_function_at_the_checkout() {
     let state = checkout_admin_server();
-    let app = lsf_checkout::app::load(&fixture_app()).expect("the fixture app");
-    let function = app_domain::function_id(Some(&app), "volume-discount");
-    let namespace = content::admin_namespace(app_domain::app_id(Some(&app)), "$app:config");
     let settings = r#"{"minimumQuantity":3,"percentage":10}"#;
     // `discountAutomaticAppCreate`, with its metafields.
-    change(&state, |shop| {
-        let id = shop.new_gid("DiscountAutomaticNode");
-        shop.insert(value::object(json!({
-            "__typename": "DiscountAutomaticNode",
-            "id": id,
-            "automaticDiscount": {
-                "__typename": "DiscountAutomaticApp",
-                "title": "Volume 10",
-                "discountId": id,
-                "appDiscountType": {"functionId": function, "title": "Volume discount"},
-                "discountClasses": ["PRODUCT"],
-                "startsAt": "2026-01-01T00:00:00Z",
-                "endsAt": null,
-                "status": "ACTIVE",
-            },
-            "metafields": [],
-        })));
-        set_metafield(
-            shop,
-            &id,
-            "DISCOUNT",
-            (&namespace, "settings"),
-            "json",
-            settings,
-        );
-    });
+    mutate(
+        &state,
+        r#"mutation($discount: DiscountAutomaticAppInput!) { discountAutomaticAppCreate(automaticAppDiscount: $discount) { automaticAppDiscount { discountId } userErrors { field message } } }"#,
+        json!({"discount": {
+            "title": "Volume 10", "functionHandle": "volume-discount", "discountClasses": ["PRODUCT"],
+            "startsAt": "2026-01-01T00:00:00Z",
+            "metafields": [{"namespace": "$app:config", "key": "settings", "type": "json", "value": settings}],
+        }}),
+    );
     let path = cart_checkout(
         &state,
         "co-volume",
@@ -595,15 +540,19 @@ fn an_order_placed_at_the_checkout_does_not_build_the_store_again() {
 #[test]
 fn what_the_store_data_refuses_of_a_change_is_told_and_the_rest_is_served() {
     let state = admin_server();
-    // A customer whose email the store data refuses: `customerCreate` checks it, a record made
-    // another way may not.
-    change(&state, |shop| {
-        let id = shop.new_gid("Customer");
-        shop.insert(value::object(json!({
-            "__typename": "Customer", "id": id, "email": "not an email", "firstName": "Kim",
-            "state": "DISABLED", "tags": [], "addressesV2": [], "metafields": [],
-        })));
-    });
+    // Two companies of one name: Shopify takes them (only an external id is unique), the store
+    // data names a company by its name, and says so. Neither is lost (the overlay once let the
+    // second replace the first, silently).
+    let twins: Vec<Json> = (0..2)
+        .map(|_| {
+            mutate(
+                &state,
+                r#"mutation { companyCreate(input: {company: {name: "Twin Bistro"}}) { company { id } userErrors { field message } } }"#,
+                json!({}),
+            )["company"]["id"]
+                .clone()
+        })
+        .collect();
     rename(&state, "ceramic-mug", "Stoneware Mug");
     assert_eq!(title_on_page(&state, "ceramic-mug", "bad"), "Stoneware Mug");
     let loaded = state.loaded();
@@ -618,7 +567,16 @@ fn what_the_store_data_refuses_of_a_change_is_told_and_the_rest_is_served() {
         "{told}"
     );
     assert_eq!(told[0]["file"], lsf_admin::sync::OVERLAY_NAME, "{told}");
-    assert_eq!(told[0]["code"], "invalid_email", "{told}");
+    assert_eq!(told[0]["code"], "duplicate_company", "{told}");
+    // The store, built from the overlay with the problem told, has both.
+    let kept: Vec<String> = loaded
+        .store
+        .companies
+        .iter()
+        .filter(|company| company.name == "Twin Bistro")
+        .map(|company| format!("gid://shopify/Company/{}", company.id))
+        .collect();
+    assert_eq!(kept, twins);
 }
 
 #[test]

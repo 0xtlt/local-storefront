@@ -100,7 +100,8 @@ pub fn metafield_definition_gid(owner_type: &str, namespace: &str, key: &str) ->
 
 /// The namespace of a metafield as the Admin API writes it: the reserved namespace of the app,
 /// written `$app` or `$app:<name>` in the store data and in queries, is `app--<app id>` or
-/// `app--<app id>--<name>`.
+/// `app--<app id>--<name>`. A metaobject type of the app is written the same way (`$app:author`
+/// is `app--<app id>--author`).
 pub fn admin_namespace(app_id: u64, namespace: &str) -> String {
     if namespace == "$app" {
         format!("app--{app_id}")
@@ -108,6 +109,19 @@ pub fn admin_namespace(app_id: u64, namespace: &str) -> String {
         format!("app--{app_id}--{name}")
     } else {
         namespace.to_string()
+    }
+}
+
+/// A metaobject type as the store data writes it, the inverse of [`admin_namespace`]: the app's
+/// own `app--<app id>--author` is `$app:author`. What the ids of metaobjects are made of
+/// ([`metaobject_gid`]), as lsf-core makes them from the store data, and what store sync writes.
+pub fn data_type(app_id: u64, kind: &str) -> String {
+    match kind
+        .strip_prefix(&format!("app--{app_id}--"))
+        .filter(|name| !name.is_empty())
+    {
+        Some(name) => format!("$app:{name}"),
+        None => kind.to_string(),
     }
 }
 
@@ -487,11 +501,14 @@ fn seed_metaobjects(seed: &mut Seed) {
         for entry in &entries {
             ids.push(seed_metaobject(seed, entry, display, &created));
         }
+        // An app's own type, `$app:author` in the store data, is `app--<id>--author` in the
+        // Admin API; its ids are made of the store data's spelling, as lsf-core makes them.
+        let name = kind.strip_prefix("$app:").unwrap_or(kind);
         seed.insert(json!({
             "__typename": "MetaobjectDefinition",
             "id": metaobject_definition_gid(kind),
-            "type": kind,
-            "name": value::humanize(kind),
+            "type": admin_namespace(seed.app_id, kind),
+            "name": value::humanize(name),
             "description": null,
             "displayNameKey": display,
             "fieldDefinitions": field_definitions,
@@ -567,7 +584,7 @@ fn seed_metaobject(
     seed.insert(json!({
         "__typename": "Metaobject",
         "id": id,
-        "type": entry.kind,
+        "type": admin_namespace(seed.app_id, &entry.kind),
         "handle": entry.handle,
         "displayName": display_name,
         "definition": metaobject_definition_gid(&entry.kind),
@@ -1096,8 +1113,10 @@ pub fn infer_metafield_definitions(state: &mut ShopState) {
 }
 
 /// Links a metafield to the definition of its owner type, namespace and key, creating the
-/// definition when there is none (with the metafield's type). What a mutation that creates a
-/// metafield runs. Returns the GID of the definition, `None` for an app-reserved namespace.
+/// definition when there is none (with the metafield's type). What the seed runs
+/// ([`infer_metafield_definitions`]); a mutation links a metafield to a definition that exists
+/// and creates none ([`metafields::link_definition`]). Returns the GID of the definition, `None`
+/// for an app-reserved namespace.
 pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<String> {
     let record = state.get(metafield)?;
     let field = |name: &str| {
@@ -1116,7 +1135,10 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
     if namespace.starts_with("app--") {
         return None;
     }
-    let id = metafield_definition_gid(&owner_type, &namespace, &key);
+    // The definition of the owner type, namespace and key, whatever its id
+    // (`metafieldDefinitionCreate` gives one of the counter), else the seed's.
+    let id = metafields::find_definition(state, &owner_type, &namespace, &key)
+        .unwrap_or_else(|| metafield_definition_gid(&owner_type, &namespace, &key));
     if !state.contains(&id) {
         state.insert(value::object(json!({
             "__typename": "MetafieldDefinition",

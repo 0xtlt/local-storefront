@@ -575,8 +575,8 @@ fn app_discount_errors_change_nothing() {
             ]),
         ),
         (
-            json!({"title": "X", "functionHandle": "volume-discount", "metafields": [{"namespace": "$app", "key": "c", "type": "json", "value": "{nope"}]}),
-            json!([{"field": ["automaticAppDiscount", "metafields", "0", "value"], "message": "Value is invalid JSON: key must be a string at line 1 column 2.", "code": "INVALID"}]),
+            json!({"title": "X", "functionHandle": "volume-discount", "metafields": [{"namespace": "$app", "key": "cfg", "type": "json", "value": "{nope"}]}),
+            json!([{"field": ["automaticAppDiscount", "metafields", "0", "value"], "message": "Value is invalid JSON: unexpected token at '{nope' (key must be a string at line 1 column 2).", "code": "INVALID"}]),
         ),
     ];
     for (input, errors) in cases {

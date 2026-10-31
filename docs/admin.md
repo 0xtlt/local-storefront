@@ -345,8 +345,9 @@ The full list, field by field, is in the design notes of `lsf-admin`
   again for it: orders do not sync (the account pages show it from the checkout, as they do
   without the Admin API).
 - **When the store data refuses a change** (an email it does not take, two variants with the
-  same options), the storefront shows the rest, the terminal says what was refused (once), and so
-  does `GET /__lsf/admin` (`storeSync.built.diagnostics`).
+  same options, two companies of one name, which Shopify allows), the storefront shows the rest,
+  the terminal says what was refused (once), and so does `GET /__lsf/admin`
+  (`storeSync.built.diagnostics`).
 - **What it costs**: a request of the backend only counts the change. The next request that
   reads the store builds it again, once for a burst of mutations: under 2 ms on the demo store,
   about 0.3 s for 3,000 products of 12 variants. Pages served without a change in between cost
@@ -404,6 +405,12 @@ How they behave, as shopify.dev documents it:
   remove products from a smart collection", "The location cannot be deleted while it is
   active.", … Where Shopify documents an error by its code only, the message is the code's
   description in the 2026-10 schema.
+- **Metafields** given to `productCreate`, `productUpdate`, `productSet`, the variant
+  mutations, collections, locations and selling plans (and to customers, app discounts and the
+  owners of Functions) are checked as `metafieldsSet` checks them
+  (see "Metafields, metaobjects and content"): the type and the value, a definition's type and
+  validations, `$app` and another app's namespaces. The errors are the mutation's, at the path of
+  the input (`["metafields", "0", "value"]`; `productSet`'s with the code `INVALID_METAFIELD`).
 - **Derived values follow**: price ranges, `totalInventory`, `hasOnlyDefaultVariant`,
   `featuredMedia`, a variant's `title`, `displayName`, `position` and `inventoryQuantity`, an
   option value's `hasVariants`, a variant's `availableForSale` after an inventory change.
@@ -584,7 +591,7 @@ published, Rails' wording otherwise), with their webhooks:
 
 | Mutations | What lsf does | Webhooks |
 |---|---|---|
-| `customerCreate`, `customerUpdate`, `customerSet` | A name, an email or a phone is required; email and phone are unique ("Email has already been taken") and checked ("Email is invalid", "Phone is invalid"). A new customer is `DISABLED`, not subscribed, in the shop's language. `tags` replace the tags; `metafields` set the customer's; the deprecated `addresses` replace the address book. `customerSet` creates, updates by `id`, or upserts by `email`, `phone` or `customId`. | `customers/create` or `customers/update`, `customer.tags_added` / `customer.tags_removed` for the tags that changed, the consent topics for a consent that changed |
+| `customerCreate`, `customerUpdate`, `customerSet` | A name, an email or a phone is required; email and phone are unique ("Email has already been taken") and checked ("Email is invalid", "Phone is invalid"). A new customer is `DISABLED`, not subscribed, in the shop's language. `tags` replace the tags; `metafields` set the customer's, checked as `metafieldsSet` checks them; the deprecated `addresses` replace the address book. `customerSet` creates, updates by `id`, or upserts by `email`, `phone` or `customId`. | `customers/create` or `customers/update`, `customer.tags_added` / `customer.tags_removed` for the tags that changed, the consent topics for a consent that changed |
 | `customerDelete` | Refused for a customer with orders. Its company contacts go with it. | `customers/delete` |
 | `customerAddressCreate`, `customerAddressUpdate`, `customerAddressDelete`, `customerUpdateDefaultAddress` | The first address is the default one; `setAsDefault` changes it; the default address cannot be deleted. `countryCode` gives the country's name; a province keeps its code when its name is not given. | `customers/update` |
 | `customerEmailMarketingConsentUpdate`, `customerSmsMarketingConsentUpdate` | `SUBSCRIBED`, `UNSUBSCRIBED` or `PENDING`, for a customer with an email (a phone); `consentUpdatedAt` is now unless given. | `customers/update`, then `customers_email_marketing_consent/update` or `customers_marketing_consent/update` |
@@ -636,8 +643,10 @@ shop, the app's installation).
   `null`, the metafield must not exist yet.
 - With a definition of the owner type, namespace and key, `type` may be left out, must be the
   definition's when given, and the value must pass its validations (`min`, `max`, `regex`,
-  `choices`, `list.min`, …). Setting a metafield does not create a definition. The store data's
-  metafields come with definitions lsf infers (one per owner type, namespace and key).
+  `choices`, `list.min`, …). Setting a metafield does not create a definition, through
+  `metafieldsSet` or the `metafields` input of a product, a customer or an app discount. The
+  store data's metafields come with definitions lsf infers (one per owner type, namespace and
+  key).
 - The token needs the access of the owner (`write_products` for a product's).
 - A product's metafields (or a variant's) are written to the store: the theme's Liquid and the
   Function inputs read them, as every metafield of an owner the store data has.
@@ -656,7 +665,12 @@ entries), `metaobjectCreate`, `metaobjectUpdate`, `metaobjectUpsert`, `metaobjec
 and `query` (`fields.<key>:value`), `metaobjectByHandle`, `metaobjectDefinitionByType`,
 `Metaobject.field(key:)` and `values`.
 
-- `$app:author` is the app's type. Field values are checked against the field definitions as
+- `$app:author` is the app's type (`app--<app id>--author` in the answers, as on Shopify). Its
+  entries reach the storefront: the theme reads them as `metaobjects['app--<app id>--author']`
+  (with its real app id, which lsf does not need to know) or, in the app's extension,
+  `metaobjects['$app:author']`; a Function as `shop.metaobject(handle: {type: "$app:author", …})`.
+  The store data writes the type `$app:author`.
+- Field values are checked against the field definitions as
   metafield values are; required fields must have one; `fields` patches, `values` replaces.
 - A handle left out is made from the display name (`Jane Austen` → `jane-austen`, then
   `jane-austen-1`).
@@ -674,7 +688,10 @@ pages and articles, menus, and active metaobjects are written to the store the t
 **Files.** `fileCreate` (up to 250, from a URL or a staged upload), `fileUpdate` (alt, filename,
 content, the products a file is a medium of), `fileDelete`; `files` searched by name and alt,
 sorted by `FILENAME`. A file is `READY` as soon as it is created: lsf has nothing to process, so
-a backend that polls `fileStatus` sees it at once. Its URL is the source's.
+a backend that polls `fileStatus` sees it at once. Its URL is the source's. From a staged upload
+(`originalSource` the target's `resourceUrl`, once the file is uploaded), the file has the name
+the target was made for, the MIME type it was uploaded with, and its size (`originalFileSize`,
+`originalSource.fileSize`); its URL serves the bytes.
 
 **Translations.** `translationsRegister` and `translationsRemove`; `translatableResource`,
 `translatableResources(resourceType:)`, `translatableResourcesByIds`, and `translations(locale:)`
@@ -727,7 +744,8 @@ fetches (from the loader of a page, see ["Billing from a page"](#react-router-ap
 
 **Discounts.** `discountAutomaticAppCreate`/`Update` and `discountCodeAppCreate`/`Update` take the
 Function by `functionHandle` (or the deprecated `functionId`), which must be a discount Function
-of the app; their `metafields` are the Function's configuration. The store sync writes an active
+of the app; their `metafields` are the Function's configuration, checked as `metafieldsSet`
+checks them (a definition of the `DISCOUNT` owner type applies). The store sync writes an active
 app discount back to the store data's `checkout.discounts` (its Function, title, first code,
 classes and metafields), so the local checkout runs it. Shopify's own types (basic, buy X get Y,
 free shipping, automatic and code) are kept as records: the local checkout runs Functions only.

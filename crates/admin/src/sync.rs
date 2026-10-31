@@ -698,7 +698,8 @@ impl<'s> Sync<'s> {
     // ---- metafields and references --------------------------------------------------------
 
     /// The namespace of a metafield as the store data writes it: the app's reserved namespace
-    /// `app--<id>--config` is `$app:config`.
+    /// `app--<id>--config` is `$app:config`. The same for a metaobject type of the app
+    /// (`app--<id>--author` is `$app:author`).
     fn namespace(&self, namespace: &str) -> String {
         if let Some(app) = &self.app_namespace {
             if namespace == app {
@@ -827,7 +828,7 @@ impl<'s> Sync<'s> {
                 }
                 "Metaobject" => json!(format!(
                     "{}/{}",
-                    text(record, "type")?,
+                    self.namespace(text(record, "type")?),
                     text(record, "handle")?
                 )),
                 "MediaImage" | "Video" | "GenericFile" if kind == "file_reference" => {
@@ -1921,7 +1922,8 @@ impl<'s> Sync<'s> {
             })
             .collect();
         Some((
-            text(record, "type")?.to_string(),
+            // The app's own type, `app--<id>--author`, is `$app:author` in the store data.
+            self.namespace(text(record, "type")?),
             model::MetaobjectInput {
                 handle: text(record, "handle")?.to_string(),
                 fields,

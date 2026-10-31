@@ -500,14 +500,17 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    blank").code("BLANK")` (the `field` path is the input's, the message Shopify's where it is
    known, Rails' wording otherwise; `code` is ignored by error types that have none). Errors: answer
    the payload with its objects `null` and the errors, and change nothing.
-2. **Change through `m.state_mut()`**: the first call keeps a copy of the shop, which a payload
-   with user errors (`userErrors` or `…UserErrors` not empty) or an error puts back. Validating
-   first costs no copy on failure; a mutation that finds a problem halfway can still answer it.
+2. **Change through `m.state_mut()`**: the first call opens a savepoint of the shop
+   (`ShopState::savepoint`), from which each write keeps what it overwrote; a payload with user
+   errors (`userErrors` or `…UserErrors` not empty) or an error rolls back to it. Validating
+   first costs nothing on failure; a mutation that finds a problem halfway can still answer it.
    A mutation that applies what it can and reports the rest (`productVariantsBulkUpdate` with
    `allowPartialUpdates`, `productCreateMedia`) calls `m.keep_changes()`: its user errors then
    leave the changes in place.
 3. **Keep derived values right** with the domain's functions the seed uses (`refresh_product`,
-   `refresh_customer`; for metafields `content::metafields::set`, which links the definition),
+   `refresh_customer`; for metafields `content::metafields::set`, which links the definition,
+   after `content::metafields::check_owned_inputs` or `check_input`, which check them against it:
+   every family's `metafields` input goes through them, and none creates a definition),
    `touch` what changed (`updatedAt`), and use `new_gid` for new records (or the id lsf-core
    derives, for what store sync writes back without an id: see "Store sync").
 4. **Emit the events of what changed**: `state_mut().emit("products/update", &gid)`; a deletion
@@ -516,8 +519,8 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    about something that is no record (a product on a publication) is
    `emit_with(topic, key, snapshot)`: its key names no record, and the payload is built
    from the snapshot. What a mutation keeps between requests that is not a record (an
-   idempotency key and the answer it gave) is `set_memo`/`memo`: copied and put back with the
-   shop, not seen by the store sync.
+   idempotency key and the answer it gave) is `set_memo`/`memo`: put back with the records
+   when the mutation fails, not seen by the store sync.
 5. **Say what is not simulated**: `m.note("productCreate: lsf does not simulate `media` yet")` for
    an input it ignores; an argument-dependent scope the access table cannot express is checked in
    the mutation (`tagsAdd` needs the write scope of the resource: `access::denied`).
@@ -558,8 +561,19 @@ tags matched one by one in their string; a filter that does not follow the gramm
 
 A mutation is a function from the shop and its arguments to its payload, run while the shop is
 locked. It validates as Shopify does and answers `userErrors` (`field`, `message`, `code`) when
-the input is wrong, changes nothing when it fails (the shop is copied on its first change and
-put back on a failure), and emits the **events** of what it changed. A mutation lsf does not
+the input is wrong, changes nothing when it fails, and emits the **events** of what it changed.
+
+**Rollback** (`ShopState::savepoint`, `rollback`, `release`): from the first write of a mutation
+on, the shop keeps an undo log, each write with what it overwrote: a record's entry before its
+first in-place change (one copy per record and savepoint), a record added (removed again), a
+record removed or retyped (put back at its positions among the records and among those of its
+type), a counter's value, a blob's, a memo's, a setting's. A failure replays the log backwards,
+then truncates the events and the changes tracked for the store sync to their length at the
+savepoint, and puts back the event sequence, the revision and the clock: the shop is as it was,
+the order of every map included. Savepoints nest: a bulk operation's mutation per line opens its
+own, which an outer failure still undoes once released. A success closes the log. The cost is
+what the mutation wrote: a copy of the shop, as it was done first, took 180 to 400 ms on 198,000
+records, before every mutation's first write. A mutation lsf does not
 simulate answers a GraphQL error with `extensions.code = "LSF_NOT_SIMULATED"`, never a silent
 success; `GET /__lsf/admin` lists those it simulates. Simulated so far, as references:
 `productCreate`, `productUpdate`, `productDelete`, `tagsAdd`, `tagsRemove`,
@@ -621,7 +635,7 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | `MediaImage`, `Video`, `GenericFile` of `files/` | `stable_id("image" \| "video" \| "file", path)`, by extension (the ids Liquid gives a `file_reference`) |
 | `CompanyContact` | the customer's id (the checkout's `purchasingCompany.contact.id`) |
 | `Market` | `stable_id("market", handle)` of a declared market, `stable_id("market", "FR")` (upper-case code) of a country in none (the checkout's) |
-| `Metaobject` | `stable_id("metaobject", "<type>/<handle>")` (the checkout's, lsf-core's `metaobject_by_reference`) |
+| `Metaobject` | `stable_id("metaobject", "<type>/<handle>")` (the checkout's, lsf-core's `metaobject_by_reference`), the type as the store data writes it (`$app:author` for the app's `app--<id>--author`: `content::data_type`) |
 | `DiscountAutomaticNode`, `DiscountCodeNode` | `id` of the discount in `checkout.discounts`, its position from 1 by default (the checkout's `discount.id`; `DiscountNode/<n>` of the legacy APIs is the same discount) |
 | `CartTransform`, `DeliveryCustomization`, `PaymentCustomization`, `Validation` | position of the Function in the app from 1 (the checkout's owner ids) |
 | `ShopifyFunction` | no GID: a UUID made of the client id and the handle (`app::function_id`), also its key |
@@ -719,6 +733,15 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
   right for every product a mutation changes: the store sync reads `Collection.products` only.
 - **`@idempotent`**: `inventory::with_idempotency` keeps each key with the arguments' fingerprint
   and the answer (`ShopState::set_memo`), so a retry answers the first answer again.
+- **Metafields** of the catalog's inputs (`productCreate`, `productUpdate`, `productSet` and its
+  variants, `productVariantsBulkCreate`/`Update`, collections, locations, selling plans; and
+  likewise the customers' and the app family's, in `customers::metafields` and
+  `app::metafields`) are
+  checked and kept as `metafieldsSet` checks and keeps them: `records::check_metafields` and
+  `records::set_metafields` run the content family's `content::metafields::check_owned_inputs`
+  and `content::metafields::set` (types, definitions and their validations, the app's
+  namespaces), with the errors at the input's path and their codes fitted to the payload's code
+  enum (`productSet`'s are `INVALID_METAFIELD`). Like `metafieldsSet`, they create no definition.
 - **Partial updates** (`allowPartialUpdates`, `productCreateMedia`) call `m.keep_changes()`.
 - **Publication events** name no record: `emit_with` with the product (or collection) and the
   publication as snapshot (`publications.rs`).
@@ -891,8 +914,9 @@ orders" in `docs/admin.md`) make and keep:
   `metafieldsCount`. None for the app's reserved namespaces: their definitions come from the
   app's configuration, which lsf does not read. Being definitions, they check what
   `metafieldsSet` writes to the same owner type, namespace and key (the type must be theirs).
-- **`Metaobject`**: `type`, `handle`, `displayName` (its `name` or `title` field, else the
-  handle humanized), `definition`, `fields` (inline `MetaobjectField`s: `key`, `type`, `value`,
+- **`Metaobject`**: `type` (an app's own type, `$app:author` in the store data, is
+  `app--<app id>--author`, as Shopify writes it; store sync writes it back as `$app:author`),
+  `handle`, `displayName` (its `name` or `title` field, else the handle humanized), `definition`, `fields` (inline `MetaobjectField`s: `key`, `type`, `value`,
   `jsonValue`, `reference(s)`, `definition`), `capabilities` (published, its template suffix),
   dates. **`MetaobjectDefinition`**, inferred from the entries of a type: `type`, `name`,
   `displayNameKey`, `fieldDefinitions` (every key the entries have, in order, not required),
@@ -925,7 +949,7 @@ rules and the sources):
 | `online_store` | `page*`, `blog*`, `article*` (create, update, delete), `commentApprove`, `commentSpam`, `commentNotSpam`, `commentDelete`. |
 | `navigation` | `menuCreate`, `Update`, `Delete` (a menu created gets `menu_gid(handle)`), `urlRedirectCreate`, `Update`, `Delete` (and `add_redirect`, for `redirectNewHandle`). |
 | `translations` | `translationsRegister`, `translationsRemove`; `translatableResource(s)`, `translatableResourcesByIds`, the resources' `translations(locale:)`. A resource's translations are a `TranslatableResource` record (`resourceId`, `translations`) kept under `translations/<resource GID>`: not store data. |
-| `files` | `fileCreate`, `fileUpdate`, `fileDelete`; `files`' sort keys and search text. The staged uploads are the app family's: its upload endpoint records an upload with `files::record_staged_upload(resource_url, StagedUpload {filename, mime_type, size})`, which `fileCreate` reads (`files::staged_upload`). |
+| `files` | `fileCreate`, `fileUpdate`, `fileDelete`; `files`' sort keys and search text. The staged uploads are the app family's: its upload endpoint keeps the bytes in the shop (a `Blob` under the target's key), and `files::staged_upload(state, resource_url)` reads them back for `fileCreate` and `fileUpdate`: the name is the key's last segment (the target's `filename`), the MIME type the upload's, the size the bytes'. Kept in the shop, an upload goes with a reset and is another shop's only there. |
 
 Error codes the checks of metafield inputs share (`TOO_SHORT`, `APP_NOT_AUTHORIZED`, …) are fitted
 to the code enum of each payload (`content::fit_code`: the code, else `INVALID`), since the
@@ -1132,7 +1156,7 @@ changes. `None` when nothing the store data expresses changed.
 | `menus` | `Menu` (title, items): an item names its resource by its key when the resource is on the storefront, its URL otherwise |
 | `locations` | `Location` (name, address, coordinates, pickup and its time), its metafields. A deactivated location is removed. |
 | `gift_cards` | the cards of the data: balance, initial value, currency, expiry, enabled, customer, recipient, message |
-| `metaobjects` | `Metaobject` (type, handle, fields, template suffix). A draft entry is removed. |
+| `metaobjects` | `Metaobject` (type, handle, fields, template suffix). A draft entry is removed. An app's own type is `$app:<type>`, as its namespaces are; lsf-core finds it by that name and by `app--<any id>--<type>`, the one a theme uses. |
 | `selling_plan_groups` | `SellingPlanGroup` (name, app id, options, products) with its `SellingPlan`s (name, description, options, pricing policies, recurring or not, checkout charge) |
 | metafields | of every owner above, of variants and company locations, of the shop and of the declared markets: the namespace of the app (`app--<id>--config`) as `$app:config`, references as the keys the data names them by (handle, `blog/article`, `type/handle`, path of `files/`, variant id, email, company name), JSON types as JSON |
 | `shop` | name, email, description, the five policies of the data, metafields (merged field by field; a metafield removed is in `removed.shop_metafields`) |
@@ -1259,7 +1283,11 @@ which every mutation would have paid on the Admin request's path, ten times for 
 7. **What the store data refuses** of the overlay: the problems of the store built with it that
    the files alone do not have (`Applied::diagnostics`) are printed when they differ from the
    last build's, and given to `AdminApi::sync_built`, which `GET /__lsf/admin` shows in
-   `storeSync.built`. The store is built from what is valid, as from files with errors.
+   `storeSync.built`. The store is built from what is valid, as from files with errors. Two
+   entities of one key in the overlay (two companies of one name, which Shopify allows and the
+   store data, keyed by name, does not) are both written, so that the build says so: an
+   overlay entity replaces one of its key only when the overlay did not write that one
+   (`lsf_core::store::load`).
 8. The checkout's configuration comes from the store (`config_from_store`): with the synced
    store, it has the discounts and the settings of the Functions the Admin API changed, and a
    scenario's `checkout` still goes on top of them.
@@ -1273,15 +1301,18 @@ yet), `overlay` (`written`: entities by section; `removed`: their keys), `built`
 | Store | Records | Mutation (Admin request) | Next page: projection and build | Page without a change |
 |---|---|---|---|---|
 | Demo (8 products) | 251 | 0.5 ms | 0.5 to 1.3 ms | 0.1 ms |
-| 3,000 products of 12 variants | 198,000 | 400 ms | 290 to 370 ms (projection 70 ms, build 250 to 300 ms) | 0.1 ms |
+| 3,000 products of 12 variants | 198,000 | 0.06 ms (400 ms with the copy of the shop it made then) | 290 to 370 ms (projection 70 ms, build 250 to 300 ms) | 0.1 ms |
 
 - The build was cubic before: a product's default recommendations checked every product against
   the list so far before keeping ten. 2,000 products took 1.2 to 2 s to load, 3,000 products 5 to
   6 s; now 180 ms and 300 to 370 ms (`lsf-core`, `build_recommendations`).
-- The 400 ms of a mutation on the large store are not sync's: the mutation framework clones the
-  whole shop before the first write of a mutation, to undo it on `userErrors`
-  (`resolve::mutation`, `snapshot`). An undo log of the records written (what change tracking
-  keeps already) would make it as cheap as on the demo store.
+- The 400 ms a mutation took on the large store were not sync's: the mutation framework cloned
+  the whole shop before the first write of a mutation, to undo it on `userErrors`. The undo log
+  of "Mutations" replaced it: on an Apple M4 Pro, in release, a `productUpdate` went from 180 ms
+  to 0.06 ms, and a failure that changed a product and its 12 variants and created a product
+  rolls back in 0.04 ms (1.2 ms when it also removed a variant: removing one of 198,000 records
+  shifts the others, forward and back). `tests/mutation_cost.rs` measures it
+  (`cargo test --release -p lsf-admin --test mutation_cost -- --ignored --nocapture`).
 - Seeding 3,000 products takes 1.7 to 3.4 s, at start and on each reseed, not on a mutation.
 
 ## Crate layout

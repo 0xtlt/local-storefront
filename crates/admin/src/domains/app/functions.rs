@@ -365,6 +365,7 @@ fn create(
     metafields::check(
         state,
         None,
+        owner.owner_type,
         &inputs,
         &owner.input.into_iter().collect::<Vec<_>>(),
         Some(metafield_code),
@@ -485,6 +486,7 @@ fn update(
     metafields::check(
         state,
         Some(&id),
+        owner.owner_type,
         &inputs,
         &owner.input.into_iter().collect::<Vec<_>>(),
         Some(metafield_code),

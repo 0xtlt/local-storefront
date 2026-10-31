@@ -15,6 +15,9 @@
 //!   it. Events: `products/create`, `inventory_items/create`, `inventory_levels/connect`.
 //! - `productUpdate` changes the fields given (`tags` replaces the tags), adds the `media`
 //!   given and sets the `metafields` given: `products/update`.
+//! - The `metafields` of both are checked and kept as `metafieldsSet` checks and keeps them
+//!   ([`super::records::check_metafields`]): the `type` is "Required when creating or updating a
+//!   metafield without a definition" (`MetafieldInput.type`), a definition's validations apply.
 //! - `productDelete` removes the product, its options, variants, inventory and media, and the
 //!   references of its collections: `products/delete`, `inventory_items/delete`.
 //! - `productDuplicate` copies a product with its options, variants (their prices, SKUs,
@@ -297,8 +300,10 @@ fn product_create(
     errors.extend(records::check_metafields(
         state,
         None,
+        "PRODUCT",
         &metafields,
         &["metafields"],
+        None,
     ));
     let media_inputs = media::media_arg(ctx);
     let (media_errors, _) = media::check_media(&media_inputs, &["media"]);
@@ -508,8 +513,10 @@ fn product_update(
     errors.extend(records::check_metafields(
         state,
         Some(&product),
+        "PRODUCT",
         &metafields,
         &["metafields"],
+        None,
     ));
     let media_inputs = media::media_arg(ctx);
     let (media_errors, _) = media::check_media(&media_inputs, &["media"]);

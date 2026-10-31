@@ -729,6 +729,14 @@ fn bulk_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             });
         }
         check_fields(input, &path, &mut errors);
+        check_variant_metafields(
+            state,
+            None,
+            input,
+            &path,
+            "ProductVariantsBulkCreateUserErrorCode",
+            &mut errors,
+        );
         let stock = bulk_stock(state, input, &path, &mut errors);
         let values = objects(input, "optionValues");
         match choices(&options, &values, &path, Reader::BulkCreate) {
@@ -803,6 +811,28 @@ fn bulk_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
     ))
 }
 
+/// The `metafields` of a variant input (`path` its place), checked as `metafieldsSet` checks
+/// them ([`records::check_metafields`]), their codes fitted to `code_enum`.
+fn check_variant_metafields(
+    state: &ShopState,
+    variant: Option<&str>,
+    input: &Map<String, Value>,
+    path: &[String],
+    code_enum: &str,
+    errors: &mut Vec<UserError>,
+) {
+    let mut at: Vec<&str> = path.iter().map(String::as_str).collect();
+    at.push("metafields");
+    errors.extend(records::check_metafields(
+        state,
+        variant,
+        "PRODUCTVARIANT",
+        &objects(input, "metafields"),
+        &at,
+        Some(code_enum),
+    ));
+}
+
 /// `productVariantsBulkUpdate`.
 fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"product": null, "productVariants": null});
@@ -863,6 +893,14 @@ fn bulk_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             });
         }
         check_fields(input, &path, &mut own_errors);
+        check_variant_metafields(
+            state,
+            own.contains(&id).then_some(id.as_str()),
+            input,
+            &path,
+            "ProductVariantsBulkUpdateUserErrorCode",
+            &mut own_errors,
+        );
         let mut adjustments = Vec::new();
         for (position, adjustment) in objects(input, "quantityAdjustments").iter().enumerate() {
             let location = text(adjustment, "locationId").unwrap_or_default();

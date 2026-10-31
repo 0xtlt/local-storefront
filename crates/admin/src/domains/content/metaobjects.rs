@@ -24,6 +24,8 @@
 //! Ids: an entry created gets `metaobject_gid(type, handle)`, the id lsf-core gives the
 //! metaobject of the store data (store sync writes it back with that id), else a new one when
 //! another entry holds it (one renamed since). A definition gets `metaobject_definition_gid`.
+//! Both are made of the type as the store data writes it (`$app:author` for the app's
+//! `app--<id>--author`: [`super::data_type`]).
 //!
 //! Messages: Shopify does not publish them; lsf's say what the code's description says
 //! ("No metaobject definition exists for type \"author\"").
@@ -36,7 +38,7 @@ use serde_json::{Map, Value, json};
 
 use super::metafields::shop_currency;
 use super::types::{self, Context};
-use super::{app_id, metaobject_definition_gid, metaobject_gid};
+use super::{app_id, data_type, metaobject_definition_gid, metaobject_gid};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, value};
@@ -515,7 +517,7 @@ fn definition_create(
     }
     let state = mutation.state_mut();
     let now = state.timestamp();
-    let stable = metaobject_definition_gid(&kind);
+    let stable = metaobject_definition_gid(&data_type(app_id(state), &kind));
     let id = if state.contains(&stable) {
         state.new_gid("MetaobjectDefinition")
     } else {
@@ -1243,7 +1245,7 @@ fn plan(
 /// Inserts a new entry of a definition: its id `metaobject_gid(type, handle)`, else a new one.
 fn insert_entry(state: &mut ShopState, definition: &str, kind: &str, planned: Planned) -> String {
     let now = state.timestamp();
-    let stable = metaobject_gid(kind, &planned.handle);
+    let stable = metaobject_gid(&data_type(app_id(state), kind), &planned.handle);
     let id = if state.contains(&stable) {
         state.new_gid("Metaobject")
     } else {

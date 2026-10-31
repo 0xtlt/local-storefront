@@ -797,6 +797,11 @@ in a `url` setting leads to the page.
 The Functions of the [local checkout](checkout.md) read the same metaobjects as
 `shop.metaobject(handle: {type: "designer", handle: "sam"})`, with their `field(key:)`.
 
+The types an app owns are written `$app:<type>` (`"$app:author"`), as its reserved metafield
+namespaces are (`$app:config`). Shopify writes them in full, `app--<app id>--author`, which a
+theme's Liquid uses: `metaobjects['app--1234--author']` and `metaobjects['$app:author']` both
+find them, whatever the id, since the store data does not know it.
+
 
 ## Time and theme settings
 

@@ -158,8 +158,10 @@ fn location_add(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     errors.extend(records::check_metafields(
         state,
         None,
+        "LOCATION",
         &metafields,
         &["input", "metafields"],
+        Some("LocationAddUserErrorCode"),
     ));
     if !errors.is_empty() {
         return Ok(errors_payload(
@@ -242,8 +244,10 @@ fn location_edit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     errors.extend(records::check_metafields(
         state,
         Some(&id),
+        "LOCATION",
         &metafields,
         &["input", "metafields"],
+        Some("LocationEditUserErrorCode"),
     ));
     if !errors.is_empty() {
         return Ok(errors_payload(

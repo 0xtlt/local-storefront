@@ -778,6 +778,32 @@ pub struct Metaobject {
     pub template_suffix: Option<String>,
 }
 
+impl Metaobject {
+    /// Whether the entry is of the type `kind` names: [`same_metaobject_type`].
+    pub fn is_of(&self, kind: &str) -> bool {
+        same_metaobject_type(&self.kind, kind)
+    }
+}
+
+/// Whether two metaobject types name the same one. An app's own types are `$app:<type>` in the
+/// store data and in the app's code (its Function input queries, its theme app extension), and
+/// `app--<app id>--<type>` where Shopify writes them in full (a theme's Liquid, the Admin API):
+/// either names the other, whatever the id, which the store data does not know.
+pub fn same_metaobject_type(a: &str, b: &str) -> bool {
+    a == b || app_metaobject_type(a).is_some_and(|name| app_metaobject_type(b) == Some(name))
+}
+
+/// The name of an app's own metaobject type: `author` for `$app:author` and
+/// `app--1234--author`.
+fn app_metaobject_type(kind: &str) -> Option<&str> {
+    if let Some(name) = kind.strip_prefix("$app:") {
+        return (!name.is_empty()).then_some(name);
+    }
+    let (id, name) = kind.strip_prefix("app--")?.split_once("--")?;
+    (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) && !name.is_empty())
+        .then_some(name)
+}
+
 /// A cart line as stored in a session.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CartLine {
@@ -1106,10 +1132,11 @@ impl Store {
         })
     }
 
+    /// The entry of a type (an app's in either spelling: [`same_metaobject_type`]) and a handle.
     pub fn metaobject(&self, kind: &str, handle: &str) -> Option<&Metaobject> {
         self.metaobjects
             .iter()
-            .find(|entry| entry.kind == kind && entry.handle == handle)
+            .find(|entry| entry.is_of(kind) && entry.handle == handle)
     }
 
     /// The metaobject a setting value points to: `<type>/<handle>`, `<type>.<handle>`, a
@@ -1231,6 +1258,18 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_app_metaobject_type_is_named_either_way() {
+        assert!(same_metaobject_type("$app:author", "app--1234--author"));
+        assert!(same_metaobject_type("app--99--author", "$app:author"));
+        assert!(same_metaobject_type("app--1--author", "app--2--author"));
+        assert!(same_metaobject_type("designer", "designer"));
+        assert!(!same_metaobject_type("$app:author", "author"));
+        assert!(!same_metaobject_type("$app:author", "app--x1--author"));
+        assert!(!same_metaobject_type("$app:author", "$app:book"));
+        assert!(!same_metaobject_type("app--12", "$app:"));
+    }
 
     fn variant(price: i64, compare_at_price: Option<i64>, unit_price: Option<i64>) -> Variant {
         Variant {
