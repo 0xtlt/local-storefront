@@ -6,14 +6,17 @@ use serde_json::{Value, json};
 
 use crate::graphql::{self, Request};
 use crate::resolve::{Registry, ShopResolver};
-use crate::state::ShopState;
+use crate::state::{Clock, ShopState};
 
 fn demo() -> (lsf_core::Store, ShopState) {
     let (store, _) = lsf_core::store::load::load(
         &lsf_core::store::load::DataSource::Demo,
         &Default::default(),
     );
-    let state = ShopState::seeded(&store, None);
+    let mut state = ShopState::seeded(&store, None);
+    // The demo store runs on the system clock: a frozen one gives every change the same time.
+    let now = chrono::DateTime::parse_from_rfc3339("2026-10-31T12:00:00Z").unwrap();
+    state.set_clock(Clock::Frozen(now.with_timezone(&chrono::Utc)));
     (store, state)
 }
 

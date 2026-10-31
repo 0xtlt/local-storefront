@@ -292,6 +292,57 @@ need more than reading records, are listed by family below.
 
 ### Customers and companies
 
+The customers and companies of the store data, and those the backend creates. What the backend
+changes reaches the storefront and the checkout: a customer it creates logs in at the local
+checkout by email, with the addresses, consent, tags and metafields it gave, and buys for the
+company locations its roles give it.
+
+**Queries**: `customers` (sort keys `NAME`, `LOCATION`, `CREATED_AT`, `UPDATED_AT`, `ID`; the
+search filters of 2026-10: `email`, `phone`, `first_name`, `last_name`, `state`, `tag`,
+`tag_not`, `country`, `accepts_marketing`, `orders_count`, `total_spent`, `customer_date`,
+`order_date`, `updated_at`, `id`, and a free term on the names, email, phone and tags),
+`customersCount` (which documents `id` only: another filter is ignored, with Shopify's warning),
+`customer(id:)`, `customerByIdentifier` (`id`, `emailAddress`, `phoneNumber`, `customId`),
+`companies` (sort keys `NAME`, `ORDER_COUNT`, `TOTAL_SPENT`, `SINCE_DATE`, …), `companiesCount`,
+`company`, `companyLocations`, `companyLocation`, `companyContact`, `companyContactRole`, and the
+contacts, locations, roles and role assignments of a company.
+
+**Mutations**, as Shopify validates them (`userErrors` with Shopify's messages where they are
+published, Rails' wording otherwise), with their webhooks:
+
+| Mutations | What lsf does | Webhooks |
+|---|---|---|
+| `customerCreate`, `customerUpdate`, `customerSet` | A name, an email or a phone is required; email and phone are unique ("Email has already been taken") and checked ("Email is invalid", "Phone is invalid"). A new customer is `DISABLED`, not subscribed, in the shop's language. `tags` replace the tags; `metafields` set the customer's; the deprecated `addresses` replace the address book. `customerSet` creates, updates by `id`, or upserts by `email`, `phone` or `customId`. | `customers/create` or `customers/update`, `customer.tags_added` / `customer.tags_removed` for the tags that changed, the consent topics for a consent that changed |
+| `customerDelete` | Refused for a customer with orders. Its company contacts go with it. | `customers/delete` |
+| `customerAddressCreate`, `customerAddressUpdate`, `customerAddressDelete`, `customerUpdateDefaultAddress` | The first address is the default one; `setAsDefault` changes it; the default address cannot be deleted. `countryCode` gives the country's name; a province keeps its code when its name is not given. | `customers/update` |
+| `customerEmailMarketingConsentUpdate`, `customerSmsMarketingConsentUpdate` | `SUBSCRIBED`, `UNSUBSCRIBED` or `PENDING`, for a customer with an email (a phone); `consentUpdatedAt` is now unless given. | `customers/update`, then `customers_email_marketing_consent/update` or `customers_marketing_consent/update` |
+| `customerSendAccountInviteEmail` | The customer is `INVITED`. The email is not sent: `extensions.lsf.notes` says so. | `customers/update` |
+| `customerGenerateAccountActivationUrl` | `https://<shop>/account/activate/<id>/<token>`; refused for an enabled account. | none |
+| `customerAddTaxExemptions`, `customerRemoveTaxExemptions`, `customerReplaceTaxExemptions` | | `customers/update` |
+| `tagsAdd`, `tagsRemove` on a customer | The webhook names only the tags added (removed). | `customers/update`, `customer.tags_added` / `customer.tags_removed` |
+| `companyCreate` | The company with Shopify's two roles ("Location admin", "Ordering only"), a location (named after the company when none is given), and the contact given, a new customer, main contact, "Ordering only" at the location. | `companies/create`, `company_locations/create`, `customers/create`, `company_contacts/create`, `company_contact_roles/assign` |
+| `companyUpdate`, `companyDelete`, `companiesDelete` | Deleting a company deletes its locations, contacts and roles; its customers stay. | `companies/update`; `company_contacts/delete`, `company_locations/delete`, `companies/delete` |
+| `companyLocationCreate`, `companyLocationUpdate`, `companyLocationDelete`, `companyLocationsDelete`, `companyLocationAssignAddress`, `companyAddressDelete`, `companyLocationTaxSettingsUpdate`, `companyLocationAssignTaxExemptions`, `companyLocationRevokeTaxExemptions` | `billingSameAsShipping` (or both address types) gives one address for both. | `company_locations/create`, `/update`, `/delete` |
+| `companyContactCreate`, `companyContactUpdate`, `companyContactDelete`, `companyContactsDelete`, `companyContactRemoveFromCompany`, `companyAssignCustomerAsContact`, `companyAssignMainContact`, `companyRevokeMainContact` | A contact's id is its customer's (the checkout's `purchasingCompany.contact.id`). Deleting a contact keeps its customer. | `company_contacts/create`, `/update`, `/delete`; `companies/update` for the main contact |
+| `companyContactAssignRole(s)`, `companyLocationAssignRoles`, `companyContactRevokeRole(s)`, `companyLocationRevokeRoles` | One role per contact and location; the role and the location must be the contact's company's. | `company_contact_roles/assign`, `/revoke` |
+
+Every id that names nothing answers a `userError` (`Customer does not exist`, `Resource requested
+does not exist.`), and a mutation that fails changes nothing. The order of the webhooks of one
+mutation is lsf's: Shopify does not document it.
+
+**Not simulated yet** (they answer `LSF_NOT_SIMULATED`): `customerMerge` (and the
+`customerMergePreview`, `customerMergeJobStatus` queries), `customerRequestDataErasure`,
+`customerCancelDataErasure`, `customerWhatsAppMarketingConsentUpdate`, the payment methods
+(`customerPaymentMethodCreditCardCreate`, `…CreditCardUpdate`, `…GetUpdateUrl`,
+`…PaypalBillingAgreementCreate`, `…PaypalBillingAgreementUpdate`, `…RemoteCreate`, `…Revoke`,
+`…SendUpdateEmail`), store credit (`storeCreditAccountCredit`, `storeCreditAccountDebit`),
+segments (`segmentCreate`, `segmentUpdate`, `segmentDelete`, `customerSegmentMembersQueryCreate`;
+the `segments` and `customerSegmentMembers` queries answer empty), and the staff and tax
+registrations of a company location (`companyLocationAssignStaffMembers`,
+`companyLocationRemoveStaffMembers`, `companyLocationCreateTaxRegistration`,
+`companyLocationRevokeTaxRegistration`). The WhatsApp consent of `customerCreate` is ignored, with
+a note.
+
 ### Metafields, metaobjects and content
 
 ### The app: billing, discounts, Functions and bulk operations
