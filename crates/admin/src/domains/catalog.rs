@@ -1038,7 +1038,10 @@ fn seed_gift_card(seed: &mut Seed, card: &GiftCard) {
         "balance": value::money_v2(card.balance, &currency),
         "initialValue": value::money_v2(card.initial_value, &currency),
         "enabled": card.enabled,
-        "expiresOn": card.expires_on.map(date),
+        // The day the data gives, in the shop's time zone: lsf-core keeps its start.
+        "expiresOn": card
+            .expires_on
+            .map(|expires| date(expires.with_timezone(&store.shop.timezone).naive_local().and_utc())),
         "isRedeemable": card.enabled && !expired && card.balance > 0,
         "lastCharacters": last,
         "maskedCode": format!("•••• •••• •••• {last}"),

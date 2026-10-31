@@ -745,6 +745,73 @@ type = "function"
     }
 
     #[test]
+    fn an_app_discount_of_the_admin_api_is_in_the_checkout_configuration() {
+        use lsf_admin::domains::{app as admin_app, content};
+        use lsf_admin::state::{ShopState, value};
+        use lsf_core::store::load::{DataSource, LoadOptions, load, load_with_overlays};
+
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../admin/tests/fixtures");
+        let shopify_app = lsf_checkout::app::load(&fixtures.join("app")).unwrap();
+        let source = DataSource::Directory(fixtures.join("rich"));
+        let (store, _) = load(&source, &LoadOptions::default());
+        let mut state = ShopState::seeded(&store, Some(&shopify_app));
+        // What `discountAutomaticAppCreate` makes, with the metafield it was given.
+        let id = state.new_gid("DiscountAutomaticNode");
+        state.insert(value::object(serde_json::json!({
+            "__typename": "DiscountAutomaticNode",
+            "id": id,
+            "automaticDiscount": {
+                "__typename": "DiscountAutomaticApp",
+                "title": "Spring 15",
+                "appDiscountType": {
+                    "functionId": admin_app::function_id(Some(&shopify_app), "volume-discount")
+                },
+                "discountClasses": ["ORDER"],
+                "startsAt": "2026-03-01T00:00:00Z",
+            },
+            "metafields": [],
+        })));
+        let namespace =
+            content::admin_namespace(admin_app::app_id(Some(&shopify_app)), "$app:config");
+        state.insert(value::object(serde_json::json!({
+            "__typename": "Metafield",
+            "id": content::metafield_gid(&id, &namespace, "settings"),
+            "namespace": namespace,
+            "key": "settings",
+            "type": "json",
+            "value": r#"{"percent":15}"#,
+            "owner": id,
+            "ownerType": "DISCOUNT",
+        })));
+
+        let overlay = lsf_admin::sync::overlay(&state, &store).expect("an overlay");
+        let (synced, diagnostics) =
+            load_with_overlays(&source, &LoadOptions::default(), &[overlay]);
+        assert!(!diagnostics.has_errors(), "{diagnostics}");
+        let config = config_from_store(&synced);
+        assert_eq!(config.discounts.len(), 3);
+        let created = &config.discounts[2];
+        let number = lsf_admin::state::parse_gid(&id).unwrap().1;
+        assert_eq!(created.id, Some(number));
+        assert_eq!(
+            (created.function.as_str(), created.title.as_str()),
+            ("volume-discount", "Spring 15")
+        );
+        assert_eq!(created.classes, [DiscountClass::Order]);
+        assert_eq!(
+            (
+                created.metafields[0].namespace.as_str(),
+                created.metafields[0].key.as_str(),
+                created.metafields[0].value.as_str()
+            ),
+            ("$app:config", "settings", r#"{"percent":15}"#)
+        );
+        // The discounts of the data keep the ids their Functions read.
+        assert_eq!(config.discounts[0].id, Some(1));
+        assert_eq!(config.discounts[1].id, Some(2));
+    }
+
+    #[test]
     fn the_default_locale_of_an_extension_is_kept() {
         let dir = std::env::temp_dir().join(format!("lsf-translations-{}", std::process::id()));
         let locales = dir.join("locales");

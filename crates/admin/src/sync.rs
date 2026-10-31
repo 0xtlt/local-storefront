@@ -758,7 +758,25 @@ impl<'s> Sync<'s> {
             Value::Null => return None,
             other => other.to_string(),
         };
-        let json = content::json_value(kind, &text);
+        let mut json = content::json_value(kind, &text);
+        if kind.strip_prefix("list.").unwrap_or(kind) == "money" {
+            // The data writes an amount in the shop's currency without it.
+            let currency = self
+                .state
+                .shop()
+                .and_then(|shop| text_of(shop, "currencyCode"));
+            let strip = |money: &mut Value| {
+                if let Value::Object(money) = money
+                    && money.get("currency_code").and_then(Value::as_str) == currency
+                {
+                    money.remove("currency_code");
+                }
+            };
+            match &mut json {
+                Value::Array(items) => items.iter_mut().for_each(strip),
+                money => strip(money),
+            }
+        }
         if !kind.ends_with("_reference") {
             return Some(json);
         }
@@ -1506,13 +1524,20 @@ impl<'s> Sync<'s> {
             } else {
                 Vec::new()
             },
-            company_contact: contact.filter(|_| company.is_some()).map(|contact| {
-                model::CompanyContactInput {
+            company_contact: contact.zip(company).and_then(|(contact, company)| {
+                let details = model::CompanyContactInput {
                     title: string(contact, "title"),
                     locale: string(contact, "locale"),
                     created_at: string(contact, "createdAt"),
                     updated_at: string(contact, "updatedAt"),
-                }
+                };
+                // Without a title or a language, and with the company's dates, the data says
+                // nothing of the contact.
+                let defaults = details.title.is_none()
+                    && details.locale.is_none()
+                    && details.created_at == string(company, "createdAt")
+                    && details.updated_at == details.created_at;
+                (!defaults).then_some(details)
             }),
             metafields: self.metafields(view, key),
             ..model::CustomerInput::default()
@@ -2128,7 +2153,7 @@ impl<'s> Sync<'s> {
                 if kind == "DiscountCodeApp" && code.is_none() {
                     return None;
                 }
-                let classes = details
+                let mut classes: Vec<model::CheckoutDiscountClass> = details
                     .get("discountClasses")
                     .and_then(Value::as_array)
                     .into_iter()
@@ -2140,6 +2165,10 @@ impl<'s> Sync<'s> {
                         _ => None,
                     })
                     .collect();
+                // All three is what the data says by saying none.
+                if classes.len() == 3 {
+                    classes.clear();
+                }
                 Some(model::CheckoutDiscountInput {
                     id: parse_gid(key).map(|(_, id)| id),
                     function,
@@ -2200,6 +2229,11 @@ impl<'s> Sync<'s> {
 }
 
 // ---- reading records ----------------------------------------------------------------------
+
+/// [`text`], for where a variable is named `text`.
+fn text_of<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
+    text(record, field)
+}
 
 /// A string field of a record, when it is a non-empty string.
 fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
@@ -2450,6 +2484,111 @@ fn strip_nulls(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lsf_core::store::load::{DataSource, LoadOptions, load_with_overlays};
+
+    /// Every entity of a store, projected from the records the seed made of it: the store data
+    /// of the whole store.
+    fn everything(state: &ShopState, store: &Store) -> Value {
+        let sync = Sync::new(state, store, &[]);
+        let mut input = model::StoreInput::default();
+        for type_name in ROOTS {
+            for key in state.keys(type_name) {
+                if let Some(entity) = sync.entity(Era::Now, type_name, key) {
+                    entity.add(&mut input);
+                }
+            }
+        }
+        let mut functions = IndexMap::new();
+        for type_name in FUNCTION_OWNERS {
+            for key in state.keys(type_name) {
+                if let Some(handle) = sync.function_of(&sync.now, key) {
+                    let settings = sync.function_settings(Era::Now, &handle);
+                    if !settings.metafields.is_empty() {
+                        functions.insert(handle, settings);
+                    }
+                }
+            }
+        }
+        input.checkout = Some(model::CheckoutInput {
+            discounts: Some(sync.discounts(Era::Now)),
+            functions,
+            ..model::CheckoutInput::default()
+        });
+        let mut data = serde_json::to_value(&input).unwrap_or(Value::Null);
+        strip_nulls(&mut data);
+        data
+    }
+
+    /// What is compared of two stores: everything the data says, in the order it is.
+    fn summary(store: &Store) -> Vec<String> {
+        vec![
+            format!("{:#?}", store.products),
+            format!("{:#?}", store.unlisted_products),
+            format!("{:#?}", store.collections),
+            format!("{:#?}", store.pages),
+            format!("{:#?}", store.blogs),
+            format!("{:#?}", store.menus),
+            format!("{:#?}", store.customers),
+            format!("{:#?}", store.companies),
+            format!("{:#?}", store.gift_cards),
+            format!("{:#?}", store.locations),
+            format!("{:#?}", store.selling_plan_groups),
+            format!("{:#?}", store.metaobjects),
+            format!("{:#?}", store.markets),
+            format!("{:#?}", store.checkout),
+        ]
+    }
+
+    #[test]
+    fn the_whole_store_projected_from_the_seed_is_the_store() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let app = lsf_checkout::app::load(&fixtures.join("app")).expect("the fixture app");
+        for (source, app) in [
+            (DataSource::Directory(fixtures.join("rich")), Some(&app)),
+            (DataSource::Demo, None),
+        ] {
+            let (store, diagnostics) = load_with_overlays(&source, &LoadOptions::default(), &[]);
+            assert!(!diagnostics.has_errors(), "{diagnostics}");
+            let state = ShopState::seeded(&store, app);
+            let overlay = Overlay::new(OVERLAY_NAME, everything(&state, &store));
+            let (again, diagnostics) = load_with_overlays(
+                &source,
+                &LoadOptions::default(),
+                std::slice::from_ref(&overlay),
+            );
+            let own: Vec<String> = diagnostics
+                .items
+                .iter()
+                .filter(|item| {
+                    item.file == OVERLAY_NAME
+                        || item.severity == lsf_core::diagnostics::Severity::Error
+                })
+                .map(ToString::to_string)
+                .collect();
+            assert!(own.is_empty(), "{own:#?}");
+            for (before, after) in summary(&store).iter().zip(summary(&again)) {
+                if *before != after {
+                    let line = before
+                        .lines()
+                        .zip(after.lines())
+                        .position(|(a, b)| a != b)
+                        .unwrap_or(0);
+                    let context = |text: &str| {
+                        text.lines()
+                            .skip(line.saturating_sub(12))
+                            .take(16)
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    };
+                    panic!(
+                        "{source:?}: differs at line {line}\n--- before\n{}\n--- after\n{}",
+                        context(before),
+                        context(&after)
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn reads_the_paths_of_files() {
