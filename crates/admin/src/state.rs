@@ -52,7 +52,8 @@ pub struct Event {
     pub gid: String,
     /// When it happened, by the clock of the shop.
     pub at: DateTime<Utc>,
-    /// A unique id, `X-Shopify-Event-Id`.
+    /// A unique id, `X-Shopify-Event-Id`: random, so that a backend that remembers the events it
+    /// processed (across server runs, or a reseed) never takes a new one for a duplicate.
     pub id: String,
     /// The record as it was when the event happened: what a `…/delete` topic reports, since the
     /// record is gone by the time the webhook is built. For another topic, the record before the
@@ -129,8 +130,8 @@ pub struct ShopState {
     counters: HashMap<String, u64>,
     clock: Clock,
     events: Vec<Event>,
-    /// How many events the shop emitted, ever: the sequence event ids are made from. It
-    /// survives a reset, so that a webhook receiver never sees an event id twice.
+    /// How many events the shop emitted, ever (a reset does not restart it). Event ids are random
+    /// (`Event::id`), not made from it.
     emitted: u64,
     /// The records as they were before their first change since the seed, by key (`None` for a
     /// record that did not exist), once [`ShopState::track_changes`] turned tracking on: what
@@ -425,7 +426,7 @@ impl ShopState {
             shop: self.domain.clone(),
             gid: gid.to_string(),
             at: self.now(),
-            id: value::uuid(&format!("event/{}/{}", self.domain, self.emitted)),
+            id: crate::webhooks::sign::new_id(),
             snapshot,
         };
         self.events.push(event);
@@ -805,6 +806,18 @@ mod tests {
             Some("ShopifyFunction")
         );
         assert_eq!(gid_type("fr"), None);
+    }
+
+    /// Two runs of the same data (two shops seeded alike) do not repeat event ids: a backend that
+    /// remembers the events it processed would drop the second run's webhooks.
+    #[test]
+    fn event_ids_differ_between_runs_of_the_same_data() {
+        let mut first = ShopState::new("a.myshopify.com", Clock::System);
+        let mut second = ShopState::new("a.myshopify.com", Clock::System);
+        let a = first.emit("products/update", "gid://shopify/Product/1").id.clone();
+        let b = second.emit("products/update", "gid://shopify/Product/1").id.clone();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 36);
     }
 
     #[test]
