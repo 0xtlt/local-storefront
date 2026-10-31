@@ -417,3 +417,33 @@ fn the_local_theme_is_named_by_its_settings_schema() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn theme_webhooks_carry_the_rest_theme() {
+    let (mut shop, root) = shop_with_theme("webhooks");
+    run(
+        &mut shop,
+        "mutation { themeUpdate(id: \"gid://shopify/OnlineStoreTheme/1\", input: {name: \"Renamed\"}) { theme { id } userErrors { message } } }",
+        json!({}),
+    );
+    let events = shop.take_events();
+    assert_eq!(events[0].topic, "themes/update");
+    let record = shop.get(&events[0].gid).unwrap().clone();
+    let lookup = crate::api::samples::ShopLookup(&shop);
+    let payload = crate::webhooks::payload::payload("themes/update", &record, &lookup).unwrap();
+    assert_eq!(
+        payload,
+        json!({
+            "id": 1,
+            "name": "Renamed",
+            "created_at": record["createdAt"],
+            "updated_at": record["updatedAt"],
+            "role": "main",
+            "theme_store_id": null,
+            "previewable": true,
+            "processing": false,
+            "admin_graphql_api_id": "gid://shopify/Theme/1",
+        })
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

@@ -74,6 +74,10 @@ const EXTRA: &[(&str, &str)] = &[
     ("customers/*", ".tags"),
     ("customers/*", ".email_marketing_consent"),
     ("customers/*", ".sms_marketing_consent"),
+    // Shopify documents these with an empty payload (`{}`, the REST reference): lsf sends the
+    // staff member and the KYC information they are about.
+    ("finance_app_staff_member/*", "."),
+    ("finance_kyc_information/*", "."),
 ];
 
 /// The values lsf builds differently from Shopify's example, and why.
@@ -132,6 +136,8 @@ const VALUES: &[(&str, &str)] = &[
     // The example of `out_of_stock` is the same variant with no stock; the sample has some.
     ("variants/out_of_stock", ".inventory_quantity"),
     ("variants/out_of_stock", ".old_inventory_quantity"),
+    // The deletion date of every sample is the samples' own.
+    ("rollouts/delete", ".deleted_at"),
     ("customers/data_request", "."),
     ("customers/redact", "."),
     ("shop/redact", "."),

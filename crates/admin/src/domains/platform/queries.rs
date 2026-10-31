@@ -27,6 +27,7 @@ pub fn register(registry: &mut Registry) {
         .query("appByKey", app_by_key)
         .query("appInstallations", app_installations)
         .query("currentStaffMember", current_staff_member)
+        .query("financeKycInformation", finance_kyc_information)
         .query("staffMember", staff_member)
         .field("App", "appStoreAppUrl", null_field)
         .field("App", "appStoreDeveloperUrl", null_field)
@@ -240,6 +241,22 @@ fn app_installations(
     _object: &Obj,
 ) -> Result<Output<Obj>, FieldError> {
     r.connection(ctx, r.records_of("AppInstallation"))
+}
+
+/// `financeKycInformation`: the shop's KYC information as Shopify Payments has it. A
+/// development store has no Shopify Payments account: `null`, unless a record says otherwise
+/// (what `finance_kyc_information/update` is built from).
+fn finance_kyc_information(
+    r: &ShopResolver<'_>,
+    _ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let key = r
+        .state()
+        .keys("FinanceKycInformation")
+        .next()
+        .map(str::to_string);
+    Ok(key.map_or(Output::Null, |key| Output::Object(Obj::record(&key))))
 }
 
 // ---- staff -------------------------------------------------------------------------------

@@ -120,6 +120,10 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "metaobjects" => (metaobject(), Vec::new()),
         "discounts" if topic.starts_with("discounts/redeemcode") => (code_discount(), Vec::new()),
         "discounts" => (discount(), Vec::new()),
+        "finance_app_staff_member" => (staff_member(), Vec::new()),
+        "finance_kyc_information" => (finance_kyc_information(), Vec::new()),
+        "rollouts" => (rollout(topic), Vec::new()),
+        "themes" => (theme(), Vec::new()),
         _ => return None,
     };
     if topic.ends_with("/delete") {
@@ -1342,6 +1346,104 @@ fn discount() -> Value {
             "createdAt": "2016-08-29T08:00:00-04:00",
             "updatedAt": "2016-08-29T08:00:00-04:00",
         },
+    })
+}
+
+/// The theme of `themes/*`: the example's Comfort, the main theme.
+fn theme() -> Value {
+    json!({
+        "__typename": "OnlineStoreTheme",
+        "id": "gid://shopify/OnlineStoreTheme/512162865275216980",
+        "name": "Comfort",
+        "role": "MAIN",
+        "prefix": "/t/512162865275216980",
+        "processing": false,
+        "processingFailed": false,
+        "themeStoreId": 1234,
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+    })
+}
+
+/// The rollout of `rollouts/*`: the example's, and for the `resource_change_*` topics the
+/// change each example names.
+fn rollout(topic: &str) -> Value {
+    let resource = if topic == "rollouts/resource_change_updated" {
+        "gid://shopify/OnlineStoreTheme/402"
+    } else {
+        "gid://shopify/OnlineStoreTheme/401"
+    };
+    json!({
+        "__typename": "Rollout",
+        "id": "gid://shopify/Rollout/123",
+        "name": "Example rollout",
+        "status": "ACTIVE",
+        "trafficAllocation": 50,
+        "effectiveTrafficAllocation": 50.0,
+        "schedule": {"activateAt": "2026-09-15T12:00:00.000Z", "concludeAt": null},
+        "startedAt": "2026-09-15T12:00:00.000Z",
+        "concludedAt": null,
+        "archivedAt": null,
+        "createdAt": "2026-09-15T12:00:00.000Z",
+        "updatedAt": "2026-09-15T12:00:00.000Z",
+        "treatments": [],
+        "lsfChange": {
+            "treatment": "gid://shopify/RolloutTreatment/456",
+            "change": "gid://shopify/RolloutThemePublishChange/c265076973b138de5ca1d63e4d08860deb31a8903b277cc8575a2035048ccb03",
+            "resource": resource,
+            "occurredAt": "2026-09-21T16:00:00.000000Z",
+        },
+    })
+}
+
+/// The staff member of `finance_app_staff_member/*`: Shopify's reference has no example.
+fn staff_member() -> Value {
+    json!({
+        "__typename": "StaffMember",
+        "id": "gid://shopify/StaffMember/902541635",
+        "firstName": "John",
+        "lastName": "Smith",
+        "name": "John Smith",
+        "email": "j.smith@example.com",
+        "phone": null,
+        "locale": "en",
+        "isShopOwner": true,
+        "accountType": "REGULAR",
+        "active": true,
+        "exists": true,
+    })
+}
+
+/// The KYC information of `finance_kyc_information/update`: Shopify's reference has no
+/// example; the shop is the samples' (Super Toys, its owner John Smith).
+fn finance_kyc_information() -> Value {
+    json!({
+        "__typename": "FinanceKycInformation",
+        "businessAddress": {
+            "addressLine1": "190 MacLaren Street",
+            "addressLine2": null,
+            "city": "Houston",
+            "zone": "TN",
+            "postalCode": "37178",
+            "country": "US",
+        },
+        "businessType": "CORPORATION",
+        "industry": {
+            "id": 5945,
+            "code": 5945,
+            "category": "retail",
+            "categoryLabel": "Retail",
+            "subcategoryLabel": "Toys and games",
+        },
+        "legalName": "Super Toys",
+        "shopOwner": {
+            "id": "gid://shopify/StaffMember/902541635",
+            "email": "super@supertoys.com",
+            "firstName": "John",
+            "lastName": "Smith",
+            "phone": "3213213210",
+        },
+        "taxIdentification": null,
     })
 }
 

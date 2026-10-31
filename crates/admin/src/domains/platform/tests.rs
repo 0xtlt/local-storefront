@@ -708,3 +708,143 @@ fn the_deprecated_upload_targets_are_staged_uploads() {
         Value::Null
     );
 }
+
+/// The selection of every field of `type_name` that takes no required argument and is not
+/// deprecated: leaves by name, objects one level down, connections by their first two nodes.
+fn every_field(type_name: &str, depth: usize) -> String {
+    let schema = crate::schema::admin();
+    let Some(definition) = schema.get(type_name) else {
+        return "__typename".to_string();
+    };
+    if definition.is_abstract() {
+        let members: Vec<String> = definition
+            .possible_types
+            .iter()
+            .map(|member| format!("... on {member} {{ {} }}", every_field(member, depth)))
+            .collect();
+        return format!("__typename {}", members.join(" "));
+    }
+    let mut parts = vec!["__typename".to_string()];
+    for field in definition.fields.values() {
+        if field.deprecation.is_some() || field.args.values().any(|arg| arg.is_required()) {
+            continue;
+        }
+        let named = field.ty.named();
+        let Some(target) = schema.get(named) else {
+            continue;
+        };
+        if target.is_leaf() {
+            parts.push(field.name.clone());
+        } else if depth == 0 {
+            continue;
+        } else if named.ends_with("Connection") && target.field("nodes").is_some() {
+            let node = target.field("nodes").unwrap().ty.named().to_string();
+            let first = if field.args.contains_key("first") {
+                "(first: 2)"
+            } else {
+                ""
+            };
+            parts.push(format!(
+                "{}{first} {{ nodes {{ {} }} }}",
+                field.name,
+                every_field(&node, depth - 1)
+            ));
+        } else {
+            parts.push(format!(
+                "{} {{ {} }}",
+                field.name,
+                every_field(named, depth - 1)
+            ));
+        }
+    }
+    parts.join(" ")
+}
+
+#[test]
+fn the_queries_of_the_platform_answer_every_main_field_without_a_default() {
+    let mut shop = shop();
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    crate::domains::themes::attach(&mut shop, &root);
+    for mutation in [
+        "mutation { scriptTagCreate(input: {src: \"https://js.example.org/a.js\"}) { userErrors { message } } }",
+        "mutation { webPixelCreate(webPixel: {settings: {accountID: \"1\"}}) { userErrors { message } } }",
+        "mutation { serverPixelCreate { userErrors { message } } }",
+        "mutation { storefrontAccessTokenCreate(input: {title: \"t\"}) { userErrors { message } } }",
+        "mutation { savedSearchCreate(input: {name: \"s\", query: \"path:/a\", resourceType: URL_REDIRECT}) { userErrors { message } } }",
+        "mutation { mobilePlatformApplicationCreate(input: {apple: {appId: \"A.b\", universalLinksEnabled: true, sharedWebCredentialsEnabled: false}}) { userErrors { message } } }",
+        "mutation { checkoutBrandingUpsert(checkoutProfileId: \"gid://shopify/CheckoutProfile/1\", checkoutBrandingInput: {designSystem: {cornerRadius: {base: 4}}}) { userErrors { message } } }",
+    ] {
+        let answer = run(&mut shop, mutation, json!({}));
+        assert!(answer.get("errors").is_none(), "{answer}");
+    }
+    shop.put_blob(
+        "tmp/1/redirects/x/r.csv",
+        crate::state::Blob::new("Redirect from,Redirect to\n/a,/b\n", "text/csv"),
+    );
+    let import = run(
+        &mut shop,
+        "mutation { urlRedirectImportCreate(url: \"https://shopify-staged-uploads.storage.googleapis.com/tmp/1/redirects/x/r.csv\") { urlRedirectImport { id } userErrors { message } } }",
+        json!({}),
+    );
+    let import = import["data"]["urlRedirectImportCreate"]["urlRedirectImport"]["id"].clone();
+    let one = |type_name: &str| every_field(type_name, 1);
+    let query = format!(
+        "query($import: ID!) {{
+            theme(id: \"gid://shopify/OnlineStoreTheme/1\") {{ {theme} files(first: 2) {{ nodes {{ {file} }} userErrors {{ code filename }} }} }}
+            themes(first: 2) {{ nodes {{ {theme} }} }}
+            scriptTags(first: 2) {{ nodes {{ {script} }} }}
+            webPixel {{ {pixel} }}
+            serverPixel {{ {server} }}
+            shop {{ storefrontAccessTokens(first: 2) {{ nodes {{ {token} }} }} shopPolicies {{ {policy} }} }}
+            urlRedirectImport(id: $import) {{ {import_fields} }}
+            urlRedirectSavedSearches(first: 2) {{ nodes {{ {saved} }} }}
+            standardMetafieldDefinitionTemplates(first: 2) {{ nodes {{ {template} }} }}
+            currentAppInstallation {{ {installation} }}
+            app {{ {app} }}
+            appByHandle(handle: \"platform-fixtures\") {{ id title }}
+            appByKey(apiKey: \"22222222222222222222222222222222\") {{ id title }}
+            appInstallation {{ id launchUrl }}
+            appInstallations(first: 2) {{ nodes {{ id }} }}
+            mobilePlatformApplications(first: 2) {{ nodes {{ {mobile} }} }}
+            checkoutProfiles(first: 2) {{ nodes {{ {profile} }} }}
+            checkoutProfile(id: \"gid://shopify/CheckoutProfile/1\") {{ id name }}
+            checkoutBranding(checkoutProfileId: \"gid://shopify/CheckoutProfile/1\") {{ designSystem {{ cornerRadius {{ base }} }} }}
+            checkoutAndAccountsConfigurations(first: 2) {{ nodes {{ id name isPublished createdAt editedAt updatedAt }} }}
+            staffMembers(first: 2) {{ nodes {{ {staff} }} }}
+        }}",
+        theme = every_field("OnlineStoreTheme", 0),
+        file = every_field("OnlineStoreThemeFile", 1),
+        script = one("ScriptTag"),
+        pixel = one("WebPixel"),
+        server = one("ServerPixel"),
+        token = one("StorefrontAccessToken"),
+        policy = every_field("ShopPolicy", 0),
+        import_fields = one("UrlRedirectImport"),
+        saved = one("SavedSearch"),
+        template = one("StandardMetafieldDefinitionTemplate"),
+        installation = every_field("AppInstallation", 0),
+        app = every_field("App", 0),
+        mobile = one("MobilePlatformApplication"),
+        profile = one("CheckoutProfile"),
+        staff = one("StaffMember"),
+    );
+    let answer = run(&mut shop, &query, json!({"import": import}));
+    assert!(answer.get("errors").is_none(), "{answer}");
+    assert!(
+        answer["data"]["theme"]["files"]["nodes"][1]["filename"].is_string(),
+        "{answer}"
+    );
+    // The test sees a default when there is one.
+    let defaulted = run(&mut shop, "{ shop { features { giftCards } } }", json!({}));
+    assert!(
+        defaulted["extensions"]["lsf"]["defaultedFields"].is_array(),
+        "{defaulted}"
+    );
+    assert_eq!(
+        answer["extensions"]["lsf"]["defaultedFields"],
+        Value::Null,
+        "{}",
+        answer["extensions"]
+    );
+}

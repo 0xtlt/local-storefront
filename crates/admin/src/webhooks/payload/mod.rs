@@ -20,6 +20,7 @@ mod catalog;
 mod content;
 mod customers;
 mod orders;
+mod platform;
 mod shop;
 
 pub use orders::{
@@ -145,6 +146,11 @@ pub const BUILT_TOPICS: &[&str] = &[
     "draft_orders/create",
     "draft_orders/delete",
     "draft_orders/update",
+    "finance_app_staff_member/delete",
+    "finance_app_staff_member/grant",
+    "finance_app_staff_member/revoke",
+    "finance_app_staff_member/update",
+    "finance_kyc_information/update",
     "fulfillment_events/create",
     "fulfillment_holds/added",
     "fulfillment_holds/released",
@@ -203,11 +209,21 @@ pub const BUILT_TOPICS: &[&str] = &[
     "returns/decline",
     "returns/reopen",
     "returns/request",
+    "rollouts/create",
+    "rollouts/delete",
+    "rollouts/resource_change_added",
+    "rollouts/resource_change_removed",
+    "rollouts/resource_change_updated",
+    "rollouts/update",
     "selling_plan_groups/create",
     "selling_plan_groups/delete",
     "selling_plan_groups/update",
     "shop/redact",
     "shop/update",
+    "themes/create",
+    "themes/delete",
+    "themes/publish",
+    "themes/update",
     "variants/in_stock",
     "variants/out_of_stock",
 ];
@@ -318,6 +334,18 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "customers/data_request" => shop::customer_data_request(record, lookup),
         "customers/redact" => shop::customer_redact(record, lookup),
         "shop/redact" => shop::shop_redact(record, lookup),
+        "themes/create" | "themes/update" | "themes/publish" => platform::theme(record),
+        "themes/delete" => platform::theme_deleted(record),
+        "rollouts/create" | "rollouts/update" => platform::rollout(record),
+        "rollouts/delete" => platform::rollout_deleted(record),
+        "rollouts/resource_change_added"
+        | "rollouts/resource_change_removed"
+        | "rollouts/resource_change_updated" => platform::rollout_change(record),
+        "finance_app_staff_member/delete"
+        | "finance_app_staff_member/grant"
+        | "finance_app_staff_member/revoke"
+        | "finance_app_staff_member/update" => platform::finance_staff_member(record),
+        "finance_kyc_information/update" => platform::finance_kyc_information(record),
         _ => return None,
     })
 }
