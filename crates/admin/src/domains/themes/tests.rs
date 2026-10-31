@@ -738,7 +738,11 @@ pub(crate) fn run_fetching(shop: &mut ShopState, query: &str, variables: Value) 
     if let Value::Object(variables) = variables {
         request.variables = variables;
     }
-    let fetched = crate::sources::prefetch(&crate::sources::urls(&request, &|_| true));
+    // The test's sources are on the loopback, as with `--admin-fetch-local`.
+    let fetched = crate::sources::prefetch(
+        &crate::sources::urls(&request, &|_| true),
+        crate::sources::FetchOptions { allow_local: true },
+    );
     let mut resolver =
         crate::resolve::ShopResolver::new(shop, crate::resolve::Registry::standard())
             .with_fetched(&fetched);

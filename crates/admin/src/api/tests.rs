@@ -296,14 +296,18 @@ fn a_source_downloads_while_the_shop_serves_other_requests() {
         &lsf_core::store::load::DataSource::Demo,
         &Default::default(),
     );
-    let api = std::sync::Arc::new(super::AdminApi::new(
-        &store,
-        super::AdminOptions {
-            throttle: ThrottleSetting::Off,
-            token_seed: Some(6),
-            ..Default::default()
-        },
-    ));
+    let api = std::sync::Arc::new(
+        super::AdminApi::new(
+            &store,
+            super::AdminOptions {
+                throttle: ThrottleSetting::Off,
+                token_seed: Some(6),
+                ..Default::default()
+            },
+        )
+        // The slow source is on the loopback.
+        .with_fetch(crate::sources::FetchOptions { allow_local: true }),
+    );
     let token = api.token(&api.default_shop());
     let delay = std::time::Duration::from_millis(1500);
     let url = slow_source(delay, "body { color: red }");
@@ -347,4 +351,53 @@ fn a_source_downloads_while_the_shop_serves_other_requests() {
         .flatten()
         .expect("the file was written");
     assert_eq!(&body.bytes[..], b"body { color: red }");
+}
+
+/// `themeCreate` from a URL on the loopback answers what an unreachable source answers, and the
+/// URL is never connected to: Shopify cannot reach the developer's machine either.
+#[test]
+fn a_theme_is_not_created_from_the_developers_machine() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/theme.zip", listener.local_addr().unwrap());
+    let hits = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = hits.clone();
+    std::thread::spawn(move || {
+        for _ in listener.incoming() {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+    );
+    let api = super::AdminApi::new(
+        &store,
+        super::AdminOptions {
+            throttle: ThrottleSetting::Off,
+            ..Default::default()
+        },
+    );
+    let token = api.token(&api.default_shop());
+    let (status, answer) = graphql(
+        &api,
+        &token,
+        &format!(
+            r#"mutation {{ themeCreate(source: "{url}") {{ theme {{ id }} userErrors {{ field message code }} }} }}"#
+        ),
+    );
+    assert_eq!(status, 200);
+    let error = &answer["data"]["themeCreate"]["userErrors"][0];
+    assert_eq!(error["code"], "INVALID_ZIP", "{answer}");
+    assert_eq!(error["field"], json!(["source"]));
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.contains("a loopback address") && message.contains("--admin-fetch-local"),
+        "{message}"
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "the URL was never connected to"
+    );
 }

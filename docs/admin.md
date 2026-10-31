@@ -60,6 +60,7 @@ end: every recipe below is checked there.
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The client secret. |
 | `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket: `store` (default), `standard`, `advanced`, `plus`, `enterprise`, `legacy`, `off`. |
 | `--admin-versions <list>` | `LSF_ADMIN_VERSIONS` | The [API versions](#api-versions) served: `2026-10` alone by default, `2026-10,2027-01` with the release candidate. |
+| `--admin-fetch-local` | `LSF_ADMIN_FETCH_LOCAL` | Sources from a URL (`themeCreate`, `themeFilesUpsert`, `urlRedirectImportCreate`) may be on this machine or its network. Off by default. |
 
 ## API versions
 
@@ -1462,6 +1463,19 @@ locks the shop: a slow source holds up no other request of the shop (the storefr
 checkouts included). 8 are fetched at a time, each within 10 s, all of a request's within 30 s;
 one over 50 MB is refused. A URL that only a line of a bulk operation names is not fetched, and
 the line says so.
+
+Only public addresses are fetched from: Shopify downloads a source from the internet and can
+never reach your machine, and lsf refuses the same, or a backend (yours under development, or
+a third party's) could read what your machine serves locally and get it back as a theme file.
+The loopback (`localhost`, `127.0.0.1`, `::1`), private networks (`10/8`, `172.16/12`,
+`192.168/16`, `100.64/10`), link-local (`169.254/16`, `fe80::/10`, cloud metadata endpoints),
+unique-local (`fc00::/7`), unspecified, multicast and reserved addresses are refused, IPv6 ones
+that embed an IPv4 address (`::ffff:127.0.0.1`) as that address. The check is made on the
+addresses a host resolves to, on every redirect, and proxies of the environment are not used.
+A refused source answers what an unreachable one does (`INVALID_ZIP` for `themeCreate`,
+`FILE_VALIDATION_ERROR` for a file, `NOT_FOUND` for an import), its message saying why. To serve
+a theme ZIP from your machine on purpose, start lsf with `--admin-fetch-local`. `file://` and
+the schemes other than `http` and `https` are never fetched.
 
 **Script tags.** `scriptTagCreate`, `scriptTagUpdate`, `scriptTagDelete`; `scriptTag`,
 `scriptTags(src:, query:)`. A script tag shown on the online store (`ONLINE_STORE`, or the

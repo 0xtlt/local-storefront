@@ -14,8 +14,21 @@
 //!   and says so.
 //! - A source has [`MAX_SOURCE_BYTES`] at most: one byte more is read, so that a larger one is
 //!   refused (`ZIP_TOO_LARGE`), not cut.
+//! - **Only public addresses are fetched.** Shopify downloads a source from the internet: it
+//!   can never reach the developer's machine or network. lsf refuses the same, or a backend (an
+//!   app under test, sometimes a third party's) could read what the machine serves locally
+//!   (an admin page, a cloud's metadata endpoint) and get it back as a theme file served on
+//!   `/cdn/…`. An address is checked once resolved ([`PublicOnly`], the resolver of every
+//!   connection, redirects included: what is checked is what is connected to): the loopback,
+//!   private networks, link-local, unique-local, unspecified, multicast and reserved
+//!   addresses are refused, IPv4 and IPv6, and IPv6 addresses that embed an IPv4 one
+//!   (`::ffff:127.0.0.1`) as that one. Proxies of the environment are not used. A developer who
+//!   serves a theme ZIP from their machine on purpose starts lsf with `--admin-fetch-local`
+//!   ([`FetchOptions::allow_local`]). A refused source answers what an unreachable one does
+//!   (`INVALID_ZIP`, `FILE_VALIDATION_ERROR`, `NOT_FOUND`), with why.
 
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -60,6 +73,125 @@ impl std::fmt::Display for SourceError {
             }
             SourceError::Unreadable(why) => f.write_str(why),
         }
+    }
+}
+
+/// What the sources of a server may reach.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FetchOptions {
+    /// `--admin-fetch-local`: the loopback, private networks and link-local addresses too, for
+    /// a developer who serves a source from their machine on purpose.
+    pub allow_local: bool,
+}
+
+/// Why lsf does not fetch from `ip` (`None` for a public address): what Shopify could not reach
+/// either.
+pub fn local_address(ip: IpAddr) -> Option<&'static str> {
+    match ip {
+        IpAddr::V4(ip) => local_v4(ip),
+        IpAddr::V6(ip) => local_v6(ip),
+    }
+}
+
+fn local_v4(ip: Ipv4Addr) -> Option<&'static str> {
+    let [a, b, ..] = ip.octets();
+    Some(match (a, b) {
+        _ if ip.is_unspecified() || a == 0 => "an unspecified address",
+        _ if ip.is_loopback() => "a loopback address",
+        (10, _) | (192, 168) => "a private address",
+        (172, b) if (16..32).contains(&b) => "a private address",
+        (100, b) if (64..128).contains(&b) => "a shared (carrier-grade NAT) address",
+        _ if ip.is_link_local() => "a link-local address",
+        (192, 0) if ip.octets()[2] == 0 => "an IETF protocol address",
+        (198, 18 | 19) => "a benchmarking address",
+        _ if ip.is_multicast() => "a multicast address",
+        _ if ip.is_broadcast() || a >= 240 => "a reserved address",
+        _ => return None,
+    })
+}
+
+fn local_v6(ip: Ipv6Addr) -> Option<&'static str> {
+    if let Some(v4) = embedded_v4(ip) {
+        return local_v4(v4);
+    }
+    let first = ip.segments()[0];
+    Some(match first {
+        _ if ip.is_unspecified() => "an unspecified address",
+        _ if ip.is_loopback() => "a loopback address",
+        _ if first & 0xfe00 == 0xfc00 => "a unique local address",
+        _ if first & 0xffc0 == 0xfe80 => "a link-local address",
+        _ if first & 0xffc0 == 0xfec0 => "a site-local address",
+        _ if first & 0xff00 == 0xff00 => "a multicast address",
+        _ => return None,
+    })
+}
+
+/// The IPv4 address an IPv6 one stands for: mapped (`::ffff:a.b.c.d`), compatible
+/// (`::a.b.c.d`), NAT64 (`64:ff9b::a.b.c.d`), 6to4 (`2002:aabb:ccdd::`).
+fn embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    let segments = ip.segments();
+    let tail = |high: u16, low: u16| {
+        Ipv4Addr::new((high >> 8) as u8, high as u8, (low >> 8) as u8, low as u8)
+    };
+    match segments {
+        [0, 0, 0, 0, 0, 0xffff, high, low] => Some(tail(high, low)),
+        [0, 0, 0, 0, 0, 0, high, low] if !ip.is_loopback() && !ip.is_unspecified() => {
+            Some(tail(high, low))
+        }
+        [0x64, 0xff9b, 0, 0, 0, 0, high, low] => Some(tail(high, low)),
+        [0x2002, high, low, ..] => Some(tail(high, low)),
+        _ => None,
+    }
+}
+
+/// An address lsf does not fetch from, as the resolver refuses it.
+#[derive(Debug)]
+struct Refused {
+    host: String,
+    address: IpAddr,
+    why: &'static str,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} resolves to {}, {}: Shopify cannot reach it, and lsf does not fetch it (start lsf \
+             with --admin-fetch-local to fetch sources from your machine or network)",
+            self.host, self.address, self.why
+        )
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// The resolver of every connection of a source, redirects included: the addresses a host
+/// resolves to, refused when one of them is one `refuse` names.
+#[derive(Debug)]
+struct PublicOnly {
+    inner: ureq::unversioned::resolver::DefaultResolver,
+    refuse: fn(IpAddr) -> Option<&'static str>,
+}
+
+impl ureq::unversioned::resolver::Resolver for PublicOnly {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let addresses = self.inner.resolve(uri, config, timeout)?;
+        if let Some((address, why)) = addresses
+            .iter()
+            .find_map(|address| (self.refuse)(address.ip()).map(|why| (address.ip(), why)))
+        {
+            return Err(ureq::Error::Other(Box::new(Refused {
+                host: uri.host().unwrap_or_default().to_string(),
+                address,
+                why,
+            })));
+        }
+        Ok(addresses)
     }
 }
 
@@ -275,8 +407,18 @@ fn value_of(value: &crate::graphql::ast::Value<'_>, variables: &Map<String, Valu
 }
 
 /// Fetches `urls`, [`PARALLEL_FETCHES`] at a time, each within [`FETCH_TIMEOUT`] and all within
-/// [`REQUEST_FETCH_BUDGET`]: what a request does before it locks its shop. No lock is held.
-pub fn prefetch(urls: &[String]) -> Fetched {
+/// [`REQUEST_FETCH_BUDGET`], from the addresses `options` allow: what a request does before it
+/// locks its shop. No lock is held.
+pub fn prefetch(urls: &[String], options: FetchOptions) -> Fetched {
+    let refuse: fn(IpAddr) -> Option<&'static str> = if options.allow_local {
+        |_| None
+    } else {
+        local_address
+    };
+    prefetch_with(urls, refuse)
+}
+
+fn prefetch_with(urls: &[String], refuse: fn(IpAddr) -> Option<&'static str>) -> Fetched {
     let mut fetched = Fetched::default();
     if urls.is_empty() {
         return fetched;
@@ -293,7 +435,7 @@ pub fn prefetch(urls: &[String]) -> Fetched {
                     let Some(url) = urls.get(index) else {
                         return;
                     };
-                    let result = fetch(url, deadline);
+                    let result = fetch(url, deadline, refuse);
                     if let Ok(mut slot) = results[index].lock() {
                         *slot = Some(result);
                     }
@@ -312,8 +454,9 @@ pub fn prefetch(urls: &[String]) -> Fetched {
     fetched
 }
 
-/// The bytes at an `http(s)` URL, within [`FETCH_TIMEOUT`] and before `deadline`.
-fn fetch(url: &str, deadline: Instant) -> Outcome {
+/// The bytes at an `http(s)` URL, within [`FETCH_TIMEOUT`] and before `deadline`, from an
+/// address `refuse` does not name, on every hop.
+fn fetch(url: &str, deadline: Instant, refuse: fn(IpAddr) -> Option<&'static str>) -> Outcome {
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
         return Err(SourceError::Unreadable(format!(
@@ -321,14 +464,26 @@ fn fetch(url: &str, deadline: Instant) -> Outcome {
             REQUEST_FETCH_BUDGET.as_secs()
         )));
     }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    let config = ureq::Agent::config_builder()
         .timeout_global(Some(FETCH_TIMEOUT.min(left)))
         .timeout_connect(Some(Duration::from_secs(3).min(left)))
         .http_status_as_error(false)
-        .build()
-        .into();
-    let response = agent.get(url).call().map_err(|error| {
-        SourceError::Unreadable(format!("{url} could not be downloaded: {error}"))
+        // A proxy of the environment would be what the resolver checks, not the source.
+        .proxy(None)
+        .build();
+    let agent = ureq::Agent::with_parts(
+        config,
+        ureq::unversioned::transport::DefaultConnector::new(),
+        PublicOnly {
+            inner: Default::default(),
+            refuse,
+        },
+    );
+    let response = agent.get(url).call().map_err(|error| match error {
+        ureq::Error::Other(inner) if inner.is::<Refused>() => {
+            SourceError::Unreadable(format!("{url} is not fetched: {inner}"))
+        }
+        error => SourceError::Unreadable(format!("{url} could not be downloaded: {error}")),
     })?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
@@ -444,5 +599,160 @@ mod tests {
             Some(10)
         );
         assert_eq!(read_at_most(&[0u8; 11][..], 10).unwrap(), None);
+    }
+
+    /// A server on `address` that counts its connections and answers each with `answer`: its
+    /// port and the count.
+    fn server(
+        address: &str,
+        answer: impl Fn(u16) -> String + Send + 'static,
+    ) -> Option<(u16, Arc<AtomicUsize>)> {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind(address).ok()?;
+        let port = listener.local_addr().ok()?.port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                counted.fetch_add(1, Ordering::SeqCst);
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|read| read > 2) {
+                    line.clear();
+                }
+                let _ = stream.write_all(answer(port).as_bytes());
+            }
+        });
+        Some((port, hits))
+    }
+
+    fn ok(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn only_public_addresses_are_fetched_from() {
+        for local in [
+            "127.0.0.1",
+            "127.255.0.1",
+            "0.0.0.0",
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "192.0.0.8",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::127.0.0.1",
+            "64:ff9b::7f00:1",
+            "2002:c0a8:101::",
+        ] {
+            let ip: IpAddr = local.parse().unwrap();
+            assert!(local_address(ip).is_some(), "{local} is not public");
+        }
+        for public in [
+            "8.8.8.8",
+            "93.184.216.34",
+            "172.32.0.1",
+            "100.128.0.1",
+            "2606:4700:4700::1111",
+            "::ffff:8.8.8.8",
+            "2002:808:808::",
+        ] {
+            let ip: IpAddr = public.parse().unwrap();
+            assert_eq!(local_address(ip), None, "{public} is public");
+        }
+    }
+
+    /// Any http(s) URL was fetched, the loopback and private networks included, its body served
+    /// back as a theme file on `/cdn/…`.
+    #[test]
+    fn a_local_source_is_refused_before_it_is_connected_to() {
+        let (port, hits) = server("127.0.0.1:0", |_| ok("secret")).unwrap();
+        let urls = [
+            format!("http://127.0.0.1:{port}/admin"),
+            format!("http://localhost:{port}/admin"),
+            format!("http://LOCALHOST.:{port}/admin"),
+            format!("http://[::ffff:127.0.0.1]:{port}/admin"),
+        ];
+        let fetched = prefetch(&urls, FetchOptions::default());
+        for url in &urls {
+            let answer = fetched.get(url).unwrap();
+            assert!(
+                matches!(answer, Err(SourceError::Unreadable(why)) if why.contains("--admin-fetch-local")),
+                "{url}: {answer:?}"
+            );
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was connected to");
+        // `file://` and the other schemes are not fetched at all.
+        let shop = ShopState::seeded(
+            &lsf_core::store::load::load(
+                &lsf_core::store::load::DataSource::Demo,
+                &Default::default(),
+            )
+            .0,
+            None,
+        );
+        for url in [
+            "file:///etc/passwd",
+            "ftp://example.com/x.zip",
+            "gopher://127.0.0.1/",
+        ] {
+            assert!(
+                matches!(bytes_of(&shop, Some(&fetched), url), Err(SourceError::Unreadable(why)) if why.contains("neither")),
+                "{url}"
+            );
+        }
+        // With `--admin-fetch-local`, it is fetched.
+        let allowed = prefetch(&urls[..1], FetchOptions { allow_local: true });
+        assert_eq!(
+            allowed.get(&urls[0]).unwrap().as_deref().ok(),
+            Some(&b"secret"[..])
+        );
+    }
+
+    /// A public source that redirects to a local one: the address is checked on every hop.
+    #[test]
+    fn every_redirect_hop_is_checked() {
+        let Some((target, hits)) = server("[::1]:0", |_| ok("secret")) else {
+            eprintln!("no IPv6 loopback here: the redirect hop is not tested");
+            return;
+        };
+        let (port, _) = server("127.0.0.1:0", move |_| {
+            format!(
+                "HTTP/1.1 302 Found\r\nlocation: http://[::1]:{target}/admin\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            )
+        })
+        .unwrap();
+        // The first hop's address passes, the second's does not.
+        let only_v6_loopback =
+            |ip: IpAddr| (ip == IpAddr::V6(Ipv6Addr::LOCALHOST)).then_some("a loopback address");
+        let url = format!("http://127.0.0.1:{port}/theme.zip");
+        let fetched = prefetch_with(std::slice::from_ref(&url), only_v6_loopback);
+        let answer = fetched.get(&url).unwrap();
+        assert!(
+            matches!(answer, Err(SourceError::Unreadable(why)) if why.contains("::1")),
+            "{answer:?}"
+        );
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "the redirect was not followed"
+        );
     }
 }

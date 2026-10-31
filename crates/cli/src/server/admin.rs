@@ -28,6 +28,9 @@ pub struct AdminSettings {
     /// `--admin-versions` (`LSF_ADMIN_VERSIONS`): the versions of the Admin API served, the
     /// default one alone unless told others.
     pub versions: Served,
+    /// `--admin-fetch-local` (`LSF_ADMIN_FETCH_LOCAL`): the sources of the theme and redirect
+    /// mutations may be on this machine or its network.
+    pub fetch_local: bool,
 }
 
 /// The Admin API of a server, and where its client secret came from.
@@ -63,6 +66,9 @@ impl Admin {
             },
         )
         .with_versions(settings.versions.clone())
+        .with_fetch(lsf_admin::sources::FetchOptions {
+            allow_local: settings.fetch_local,
+        })
         .with_theme(theme.to_path_buf());
         api.sync_store(store.clone());
         Admin {

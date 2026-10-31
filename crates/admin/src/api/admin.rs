@@ -137,6 +137,8 @@ pub struct AdminApi {
     /// The directory of the theme the storefront serves: the shops' main theme
     /// ([`AdminApi::with_theme`]).
     theme: Option<std::path::PathBuf>,
+    /// What the sources of the mutations may reach.
+    fetch: crate::sources::FetchOptions,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
     test_hooks: TestHooks,
@@ -246,6 +248,7 @@ impl AdminApi {
             sync: StoreSync::default(),
             versions: Served::default(),
             theme: None,
+            fetch: crate::sources::FetchOptions::default(),
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
@@ -290,6 +293,14 @@ impl AdminApi {
     pub fn storefront_theme(&self) -> Option<lsf_core::theme::ThemeIdentity> {
         self.with_default_shop(crate::domains::themes::storefront_identity)
             .flatten()
+    }
+
+    /// What the sources of `themeCreate`, `themeFilesUpsert` and `urlRedirectImportCreate` may
+    /// reach (`--admin-fetch-local`, [`crate::sources::FetchOptions`]): public addresses alone
+    /// otherwise, as Shopify reaches nothing else.
+    pub fn with_fetch(mut self, fetch: crate::sources::FetchOptions) -> AdminApi {
+        self.fetch = fetch;
+        self
     }
 
     /// Serves these versions of the Admin API (`--admin-versions`), for requests and for the
@@ -732,7 +743,7 @@ impl AdminApi {
                 .required_access(crate::auth::scopes::Root::Mutation, field)
                 .is_none_or(|required| first.allows(&required))
         };
-        let fetched = crate::sources::prefetch(&crate::sources::urls(&query, &may_run));
+        let fetched = crate::sources::prefetch(&crate::sources::urls(&query, &may_run), self.fetch);
         let ((grant, generation), shop) = match self.authorized(request) {
             Ok(authorized) => authorized,
             Err(reason) => return unauthorized(reason),

@@ -1744,7 +1744,14 @@ never written to.**
   storefront too), for as long as it took: 500 s for 50 slow bodies, and a URL to lsf itself
   waited on itself until the timeout. lsf's own upload URLs (`/__lsf/admin/uploads/…`) are read
   from the shop's blobs, never fetched; a URL that was not prefetched (a line of a bulk
-  operation) is refused, and says why.
+  operation) is refused, and says why. Only public addresses are fetched from (Shopify cannot
+  reach the developer's machine): `sources::PublicOnly`, the ureq resolver of every connection,
+  redirects included, refuses a host that resolves to the loopback, a private network,
+  link-local, unique-local, unspecified, multicast or reserved addresses (IPv6 ones embedding
+  an IPv4 address as that one), so that what is checked is what is connected to; proxies of the
+  environment are off. `--admin-fetch-local` (`AdminApi::with_fetch`) lifts it. A refused
+  source answers what an unreachable one does: `INVALID_ZIP`, `FILE_VALIDATION_ERROR`,
+  `NOT_FOUND`.
 - *What does not follow*: Shopify processes a theme from a URL in the background
   (`processing: true` until done): lsf's are done when the mutation answers.
 

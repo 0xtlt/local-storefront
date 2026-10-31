@@ -129,6 +129,13 @@ pub struct Args {
     /// Shopify does.
     #[arg(long, env = "LSF_ADMIN_VERSIONS", value_name = "VERSIONS")]
     admin_versions: Option<String>,
+
+    /// Lets `themeCreate`, the `URL` bodies of `themeFilesUpsert` and `urlRedirectImportCreate`
+    /// fetch their source from this machine or its network (the loopback, private and
+    /// link-local addresses), for a theme ZIP served from localhost on purpose. Off by default:
+    /// Shopify cannot reach them, and a backend could otherwise read what the machine serves.
+    #[arg(long, env = "LSF_ADMIN_FETCH_LOCAL")]
+    admin_fetch_local: bool,
 }
 
 /// The port used when `--port` is not given.
@@ -228,6 +235,7 @@ pub fn run(
                 .map_err(|problem| format!("--admin-versions: {problem}"))?,
             None => Default::default(),
         },
+        fetch_local: args.admin_fetch_local,
     };
     // The app's store data when the theme has none.
     let data = crate::app::data_with_app(theme, data, app_dir.as_deref());
