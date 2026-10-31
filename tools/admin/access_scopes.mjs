@@ -111,13 +111,16 @@ function text(item) {
   return value === "" ? null : value;
 }
 
-// The `[name, type]` of each row of the filter table of a `query` argument's description.
+// The `[name, type]` of each row of the filter table of a `query` argument's description. A row
+// may stop after its type or its description (`| enabled | boolean |`): only the name and the
+// type are needed. A line that continues the cell of the row before has no name.
 function filterTable(description) {
   if (!description.includes("| name |")) return [];
   const rows = [];
   for (const line of description.split("\n")) {
     const cells = line.split("|").map((cell) => cell.trim());
-    if (cells.length < 7 || cells[1] === "name" || cells[1].startsWith("--")) continue;
+    if (cells.length < 4 || cells[1] === "" || cells[2] === "") continue;
+    if (cells[1] === "name" || cells[1].startsWith("--")) continue;
     rows.push([cells[1], cells[2]]);
   }
   return rows;

@@ -484,9 +484,11 @@ impl AdminApi {
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
         let mut live = lock(&shop);
+        let origin = origin_of(request);
         let mut resolver = ShopResolver::new(&mut live.state, self.registry)
             .with_grant(&grant)
-            .with_webhooks(&self.webhooks);
+            .with_webhooks(&self.webhooks)
+            .with_origin(&origin);
         let bucket = Bucket {
             throttle: &self.throttle,
             key: &key,
@@ -544,6 +546,9 @@ impl AdminApi {
 
     /// The control endpoints under `/__lsf/admin`.
     fn control(&self, request: &HttpRequest, path: &str) -> HttpResponse {
+        if let Some(response) = super::app::handle(self, request, path) {
+            return response;
+        }
         let method = request.method.to_ascii_uppercase();
         match (method.as_str(), path) {
             ("GET", "/__lsf/admin") => HttpResponse::json(200, &self.status()),
@@ -686,6 +691,8 @@ impl AdminApi {
         }
         let revoked = lock(&self.tokens).uninstall(&domain, &self.auth.client_id);
         self.change_shop(&domain, |state| {
+            // Shopify cancels the app's subscription when it is uninstalled.
+            app_domain::billing::cancel_on_uninstall(state);
             if let Some(shop) = state.shop_gid().map(str::to_string) {
                 state.emit("app/uninstalled", &shop);
             }
@@ -777,6 +784,27 @@ impl AdminApi {
             200,
             &json!({"ok": true, "shop": domain, "token": token, "scopes": scopes, "scopesChanged": changed}),
         )
+    }
+}
+
+/// Where a request reached lsf, `http://<Host>`: the origin of the URLs lsf answers that point
+/// back at itself (a charge's confirmation page, an upload target, a bulk operation's file).
+/// `X-Forwarded-Proto` says the scheme behind a proxy; `X-Forwarded-Host` does not move the
+/// host, since clients send the shop's domain in it (`docs/admin.md`).
+pub(super) fn origin_of(request: &HttpRequest) -> String {
+    let host = request
+        .header("host")
+        .map(str::trim)
+        .filter(|host| !host.is_empty());
+    match host {
+        Some(host) => {
+            let scheme = request
+                .header("x-forwarded-proto")
+                .filter(|scheme| matches!(*scheme, "http" | "https"))
+                .unwrap_or("http");
+            format!("{scheme}://{host}")
+        }
+        None => crate::resolve::DEFAULT_ORIGIN.to_string(),
     }
 }
 

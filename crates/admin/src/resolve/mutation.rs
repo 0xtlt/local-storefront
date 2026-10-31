@@ -39,6 +39,7 @@ pub struct Mutation<'m> {
     grant: Option<&'m Grant>,
     webhooks: Option<&'m Webhooks>,
     api_version: &'m str,
+    origin: &'m str,
     notes: Vec<String>,
 }
 
@@ -75,6 +76,31 @@ impl Mutation<'_> {
     /// The API version of the request: what a subscription created now asks for.
     pub fn api_version(&self) -> &str {
         self.api_version
+    }
+
+    /// Where the request reached lsf (`http://127.0.0.1:9292`): the origin of the URLs a
+    /// mutation answers that point back at lsf (a confirmation page, an upload target).
+    pub fn origin(&self) -> &str {
+        self.origin
+    }
+
+    /// A resolver over the same shop, the same token and webhooks: what runs the GraphQL of a
+    /// bulk operation (its query, or its mutation once per line). What it changes is changed
+    /// here (the shop is copied first, as [`Mutation::state_mut`] does), and its events are the
+    /// request's.
+    pub fn resolver(&mut self) -> ShopResolver<'_> {
+        let (registry, grant, webhooks, api_version, origin) = (
+            self.registry,
+            self.grant,
+            self.webhooks,
+            self.api_version,
+            self.origin,
+        );
+        let mut resolver = ShopResolver::new(self.state_mut(), registry).with_origin(origin);
+        resolver.grant = grant;
+        resolver.webhooks = webhooks;
+        resolver.api_version = api_version;
+        resolver
     }
 
     /// The domain of the shop: `my-shop.myshopify.com`.
@@ -187,6 +213,7 @@ pub(super) fn run(
         grant: resolver.grant,
         webhooks: resolver.webhooks,
         api_version: resolver.api_version,
+        origin: resolver.origin,
         notes: Vec::new(),
     };
     let result = run(&mut mutation, ctx);

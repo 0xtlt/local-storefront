@@ -5,6 +5,7 @@
 //! See `crates/admin/docs/design.md`.
 
 mod admin;
+mod app;
 pub mod samples;
 #[cfg(test)]
 mod tests;

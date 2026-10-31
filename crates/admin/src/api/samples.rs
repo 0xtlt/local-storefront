@@ -49,6 +49,8 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("inventory_levels", _) => &["InventoryLevel"],
         ("locations", _) => &["Location"],
         ("app_subscriptions", _) => &["AppSubscription"],
+        ("app_purchases_one_time", _) => &["AppPurchaseOneTime"],
+        (_, "discounts/redeemcode_added" | "discounts/redeemcode_removed") => &["DiscountCodeNode"],
         ("bulk_operations", _) => &["BulkOperation"],
         ("metafield_definitions", _) => &["MetafieldDefinition"],
         ("metaobjects", _) => &["Metaobject"],

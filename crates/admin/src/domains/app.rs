@@ -7,6 +7,13 @@
 //! the discounts and of the other owners of Functions are those the checkout gives them in the
 //! Function input, so that a backend reads the same GIDs as its Functions.
 
+pub mod billing;
+pub mod bulk;
+pub mod discounts;
+pub mod functions;
+pub mod metafields;
+pub mod uploads;
+
 use lsf_checkout::app::{App, FunctionExtension, TargetKind};
 use lsf_core::store::{CheckoutDiscount, model::CheckoutDiscountClass};
 use lsf_core::util::stable_id;
@@ -365,6 +372,19 @@ fn crate_version() -> &'static str {
 /// Every access scope of the 2026-10 Admin API: what the installation has when there is no
 /// app. The list is [`crate::auth::scopes::ALL_SCOPES`], which the access checks share.
 pub use crate::auth::scopes::ALL_SCOPES;
-/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
-/// a mutation" in `crates/admin/docs/design.md`.
-pub fn register(_registry: &mut crate::resolve::Registry) {}
+/// The topic of the event a change emits when Shopify has no webhook topic for it (a
+/// customization, a validation, a cart transform, a usage record): no subscription receives it
+/// (`webhookSubscriptionCreate` takes only Shopify's topics), but it tells the server that the
+/// shop changed, as every change must ("Writing a resolver or a mutation" in
+/// `crates/admin/docs/design.md`).
+pub const CHANGED: &str = "lsf/changed";
+
+/// The custom resolvers and the mutations of this family: see "Writing a resolver or a
+/// mutation" in `crates/admin/docs/design.md`.
+pub fn register(registry: &mut crate::resolve::Registry) {
+    billing::register(registry);
+    bulk::register(registry);
+    discounts::register(registry);
+    functions::register(registry);
+    uploads::register(registry);
+}

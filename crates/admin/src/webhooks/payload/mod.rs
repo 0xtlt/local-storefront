@@ -98,6 +98,8 @@ pub const PREVIOUS: &str = "__previous";
 pub const BUILT_TOPICS: &[&str] = &[
     "app/scopes_update",
     "app/uninstalled",
+    "app_purchases_one_time/update",
+    "app_subscriptions/approaching_capped_amount",
     "app_subscriptions/update",
     "bulk_operations/finish",
     "collections/create",
@@ -127,6 +129,8 @@ pub const BUILT_TOPICS: &[&str] = &[
     "customers_marketing_consent/update",
     "discounts/create",
     "discounts/delete",
+    "discounts/redeemcode_added",
+    "discounts/redeemcode_removed",
     "discounts/update",
     "draft_orders/create",
     "draft_orders/delete",
@@ -216,6 +220,11 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "app/uninstalled" | "shop/update" => shop::shop(record, lookup),
         "app/scopes_update" => shop::scopes_update(record, lookup),
         "app_subscriptions/update" => shop::app_subscription(record, lookup),
+        "app_subscriptions/approaching_capped_amount" => {
+            shop::approaching_capped_amount(record, lookup)
+        }
+        "app_purchases_one_time/update" => shop::app_purchase_one_time(record, lookup),
+        "discounts/redeemcode_added" | "discounts/redeemcode_removed" => shop::redeem_code(record),
         "bulk_operations/finish" => shop::bulk_operation(record),
         "metafield_definitions/create" | "metafield_definitions/update" => {
             content::metafield_definition(record, lookup)

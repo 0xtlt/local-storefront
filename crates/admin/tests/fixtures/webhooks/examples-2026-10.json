@@ -72,6 +72,28 @@
       "marketing_email_consent_enabled_at_checkout": true,
       "transactional_sms_disabled": false
     },
+    "app_purchases_one_time/update": {
+      "app_purchase_one_time": {
+        "admin_graphql_api_id": "gid://shopify/AppPurchaseOneTime/1017262353",
+        "name": "Webhook Test",
+        "status": "PENDING",
+        "admin_graphql_api_shop_id": "gid://shopify/Shop/548380009",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00"
+      }
+    },
+    "app_subscriptions/approaching_capped_amount": {
+      "app_subscription": {
+        "admin_graphql_api_id": "gid://shopify/AppSubscription/1029266964",
+        "name": "Webhook Test",
+        "balance_used": 0,
+        "capped_amount": "20.0",
+        "currency_code": "USD",
+        "admin_graphql_api_shop_id": "gid://shopify/Shop/548380009",
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "updated_at": "2021-12-31T19:00:00-05:00"
+      }
+    },
     "app_subscriptions/update": {
       "app_subscription": {
         "admin_graphql_api_id": "gid://shopify/AppSubscription/1029266965",
@@ -843,6 +865,22 @@
     "discounts/delete": {
       "admin_graphql_api_id": "gid://shopify/DiscountAutomaticNode/1",
       "deleted_at": "2018-08-29T08:00:00-04:00"
+    },
+    "discounts/redeemcode_added": {
+      "admin_graphql_api_id": "gid://shopify/DiscountCodeNode/1",
+      "redeem_code": {
+        "id": "gid://shopify/DiscountRedeemCode/1",
+        "code": "code1"
+      },
+      "updated_at": "2018-08-29T12:00:00.000Z"
+    },
+    "discounts/redeemcode_removed": {
+      "admin_graphql_api_id": "gid://shopify/DiscountCodeNode/1",
+      "redeem_code": {
+        "id": "gid://shopify/DiscountRedeemCode/1",
+        "code": "code1"
+      },
+      "updated_at": "2018-08-29T12:00:00.000Z"
     },
     "discounts/update": {
       "admin_graphql_api_id": "gid://shopify/DiscountAutomaticNode/1",

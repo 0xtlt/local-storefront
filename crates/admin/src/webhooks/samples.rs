@@ -93,10 +93,16 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "locations" => (location(), Vec::new()),
         "app" if topic == "app/scopes_update" => (installation(), Vec::new()),
         "app" | "shop" => (shop(), Vec::new()),
+        "app_subscriptions" if topic == "app_subscriptions/approaching_capped_amount" => (
+            app_subscription().with("id", json!("gid://shopify/AppSubscription/1029266964")),
+            Vec::new(),
+        ),
         "app_subscriptions" => (app_subscription(), Vec::new()),
+        "app_purchases_one_time" => (app_purchase_one_time(), Vec::new()),
         "bulk_operations" => (bulk_operation(), Vec::new()),
         "metafield_definitions" => (metafield_definition(), Vec::new()),
         "metaobjects" => (metaobject(), Vec::new()),
+        "discounts" if topic.starts_with("discounts/redeemcode") => (code_discount(), Vec::new()),
         "discounts" => (discount(), Vec::new()),
         _ => return None,
     };
@@ -954,9 +960,37 @@ fn app_subscription() -> Value {
             {"id": "gid://shopify/AppSubscriptionLineItem/2", "plan": {"pricingDetails": {
                 "__typename": "AppUsagePricing",
                 "cappedAmount": money("20.0"),
+                "balanceUsed": money("0.0"),
                 "terms": "Usage",
             }}},
         ],
+    })
+}
+
+fn app_purchase_one_time() -> Value {
+    json!({
+        "__typename": "AppPurchaseOneTime",
+        "id": "gid://shopify/AppPurchaseOneTime/1017262353",
+        "name": "Webhook Test",
+        "status": "PENDING",
+        "price": money("10.0"),
+        "test": true,
+        "createdAt": "2021-12-31T19:00:00-05:00",
+        "updatedAt": "2021-12-31T19:00:00-05:00",
+    })
+}
+
+fn code_discount() -> Value {
+    json!({
+        "__typename": "DiscountCodeNode",
+        "id": "gid://shopify/DiscountCodeNode/1",
+        "codeDiscount": {
+            "__typename": "DiscountCodeBasic",
+            "title": "code1",
+            "codes": [{"id": "gid://shopify/DiscountRedeemCode/1", "code": "code1"}],
+            "createdAt": "2018-08-29T12:00:00Z",
+            "updatedAt": "2018-08-29T12:00:00Z",
+        },
     })
 }
 

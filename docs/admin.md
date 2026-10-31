@@ -427,6 +427,75 @@ and staff authors of articles (`author.userId`).
 
 ### The app: billing, discounts, Functions and bulk operations
 
+**Billing.** The billing helpers of the React Router template (`billing.require`,
+`billing.request`, `billing.check`, `billing.cancel`, `createUsageRecord`,
+`updateUsageCappedAmount` of `@shopify/shopify-api`) work unchanged:
+
+- `appSubscriptionCreate` (recurring and usage lines, a discount, `trialDays`, `test`) and
+  `appPurchaseOneTimeCreate` make a `PENDING` charge and answer a `confirmationUrl` on lsf:
+  `http://127.0.0.1:9292/__lsf/admin/charges/<n>?shop=…`. The page shows the charge; **Approve**
+  (or **Decline**) sends the merchant back to `returnUrl` with `charge_id=<n>`, as Shopify does.
+  In a test, `POST /__lsf/admin/charges/<n>/approve` (or `/decline`) does it without the page.
+- Approved, a subscription is `ACTIVE` and the app's other active subscription `CANCELLED`;
+  `currentAppInstallation { activeSubscriptions oneTimePurchases allSubscriptions }` list them. A
+  charge left pending two days (by the shop's clock) is `EXPIRED`. Uninstalling the app
+  (`POST /__lsf/admin/uninstall`) cancels its subscription.
+- `appUsageRecordCreate` charges a usage line of an active subscription, up to its capped amount
+  (`"Failed to create usage charge"` past it); the same `idempotencyKey` gives back the same
+  record. `appSubscriptionLineItemUpdate` asks for a new capped amount, which the merchant
+  approves on the same page. `appSubscriptionTrialExtend` and `appSubscriptionCancel` too.
+- Webhooks: `app_subscriptions/update` (a status or a capped amount changed),
+  `app_purchases_one_time/update`, `app_subscriptions/approaching_capped_amount` (the usage
+  balance crossed 90%).
+- No money moves: `prorate` credits nothing, and there are no billing cycles. A replacement
+  Shopify defers to the next cycle (`APPLY_ON_NEXT_BILLING_CYCLE`, and some `STANDARD` ones)
+  applies at once, and the usage balance never resets. `currentPeriodEnd` is the end of the trial,
+  else 30 days (365 for an annual plan) after the approval.
+
+**Discounts.** `discountAutomaticAppCreate`/`Update` and `discountCodeAppCreate`/`Update` take the
+Function by `functionHandle` (or the deprecated `functionId`), which must be a discount Function
+of the app; their `metafields` are the Function's configuration. The store sync writes an active
+app discount back to the store data's `checkout.discounts` (its Function, title, first code,
+classes and metafields), so the local checkout runs it. Shopify's own types (basic, buy X get Y,
+free shipping, automatic and code) are kept as records: the local checkout runs Functions only.
+Also: `discountAutomaticActivate`/`Deactivate`/`Delete` and the code ones (a discount's `status`
+follows its dates), `discountAutomaticBulkDelete`, `discountCodeBulkActivate`/`Deactivate`/
+`Delete` (done at once: their `job` is `done`), `discountRedeemCodeBulkAdd`,
+`discountCodeRedeemCodeBulkDelete`; the queries `discountNodes` (ids `DiscountNode/<n>`),
+`discountNodesCount`, `discountNode`, `codeDiscountNodeByCode`, `discountCodesCount`,
+`automaticDiscountNodes`, `codeDiscountNodes`, with their sort keys and search filters (`status`,
+`type`, `method`, `title`, `code`, `tag`, the dates, …). Webhooks: `discounts/create`,
+`discounts/update`, `discounts/delete`, `discounts/redeemcode_added`,
+`discounts/redeemcode_removed`.
+
+**Functions.** `shopifyFunctions(apiType:)` lists the app's Functions. Payment and delivery
+customizations (`…Create`, `…Update`, `…Delete`, `…Activation`), validations (`validationCreate`,
+`Update`, `Delete`) and cart transforms (`cartTransformCreate`, `Delete`) take the Function by
+handle or id, check it implements their API, and keep its configuration in their metafields,
+which the store sync writes back as the Function's settings in `checkout.functions` (the
+settings of a disabled one are dropped, but its Function still runs at the local checkout).
+
+**Bulk operations.** `bulkOperationRunQuery` runs the query against the shop, every page of every
+connection, and writes JSON Lines as Shopify does (one line per node, nested connections on lines
+of their own with `__parentId`); Shopify's restrictions are checked (a connection, five at most,
+two levels deep, no top-level `node`). `bulkOperationRunMutation` runs the mutation once per line
+of a staged upload. Both finish within the request: the payload says `CREATED`, as Shopify's
+does, the next query reads `COMPLETED` with its `url`, `objectCount` and `fileSize`, and
+`bulk_operations/finish` is delivered. The file is at
+`http://127.0.0.1:9292/__lsf/admin/bulk/<shop>/<n>.jsonl`. `bulkOperation`, `bulkOperations`
+(filtered by `status`, `operation_type`, `created_at`), `currentBulkOperation`.
+
+**Staged uploads.** `stagedUploadsCreate` answers targets on lsf, in the form of Shopify's Google
+Cloud Storage ones: a `POST` target (`url` and form `parameters`, the `file` last) or a `PUT`
+target (the default). The bytes stay in the shop until it is reset, for
+`bulkOperationRunMutation` (`stagedUploadPath`) and `fileCreate` (`originalSource`, the
+`resourceUrl`).
+
+Not simulated yet (they answer `LSF_NOT_SIMULATED`): `appUninstall`, `appRevokeAccessScopes`,
+`discountBulkTagsAdd`/`Remove`, `fulfillmentConstraintRuleCreate`/`Update`/`Delete`, the
+deprecated `stagedUploadTargetGenerate(s)`. Saved searches (`savedSearchId`), credits,
+revenue attribution records and frozen subscriptions have no data behind them.
+
 ### App proxy
 
 With `--app` and an `[app_proxy]` in `shopify.app.toml`, the storefront forwards
