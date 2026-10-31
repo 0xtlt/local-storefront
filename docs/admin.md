@@ -288,6 +288,97 @@ need more than reading records, are listed by family below.
 
 ### Products, collections and inventory
 
+A backend that manages a catalog through the Admin API works against lsf as against a store:
+what it changes is read back by the queries, delivered as webhooks, and shown by the storefront
+and the checkout (see "Store sync" below).
+
+| Area | Mutations lsf simulates |
+|---|---|
+| Products | `productCreate`, `productUpdate` (with `media` and `metafields`), `productDelete`, `productSet` (synchronous or not, upsert by `id`, `handle` or `customId`), `productDuplicate`, `productChangeStatus` |
+| Variants | `productVariantsBulkCreate` (its `strategy` included), `productVariantsBulkUpdate` (`allowPartialUpdates` included), `productVariantsBulkDelete`, `productVariantsBulkReorder` |
+| Options | `productOptionsCreate` (`LEAVE_AS_IS`, `CREATE`), `productOptionUpdate` (`LEAVE_AS_IS`, `MANAGE`), `productOptionsDelete` (`DEFAULT`, `NON_DESTRUCTIVE`, `POSITION`), `productOptionsReorder` |
+| Media | `productCreateMedia`, `productUpdateMedia`, `productDeleteMedia`, `productReorderMedia`, `productVariantAppendMedia`, `productVariantDetachMedia` |
+| Collections | `collectionCreate`, `collectionUpdate`, `collectionDelete`, `collectionAddProducts`, `collectionAddProductsV2`, `collectionRemoveProducts`, `collectionReorderProducts` |
+| Inventory | `inventoryAdjustQuantities`, `inventorySetQuantities`, `inventoryMoveQuantities`, `inventorySetOnHandQuantities`, `inventoryActivate`, `inventoryDeactivate`, `inventoryBulkToggleActivation`, `inventoryItemUpdate` |
+| Locations | `locationAdd`, `locationEdit`, `locationActivate`, `locationDeactivate`, `locationDelete`, `locationLocalPickupEnable`, `locationLocalPickupDisable` |
+| Publications | `publishablePublish`, `publishableUnpublish` |
+| Selling plans | `sellingPlanGroupCreate`, `sellingPlanGroupUpdate`, `sellingPlanGroupDelete`, `sellingPlanGroupAddProducts`, `sellingPlanGroupRemoveProducts`, `sellingPlanGroupAddProductVariants`, `sellingPlanGroupRemoveProductVariants`, `productJoinSellingPlanGroups`, `productLeaveSellingPlanGroups`, `productVariantJoinSellingPlanGroups`, `productVariantLeaveSellingPlanGroups` |
+| Gift cards | `giftCardCreate`, `giftCardUpdate`, `giftCardCredit`, `giftCardDebit`, `giftCardDeactivate` |
+
+How they behave, as shopify.dev documents it:
+
+- **Validation** answers Shopify's `userErrors` (`field`, `message`, `code`) and changes nothing:
+  "The variant 'Red / S' already exists.", "Option 'Color' already exists.", "Can't manually
+  remove products from a smart collection", "The location cannot be deleted while it is
+  active.", … Where Shopify documents an error by its code only, the message is the code's
+  description in the 2026-10 schema.
+- **Derived values follow**: price ranges, `totalInventory`, `hasOnlyDefaultVariant`,
+  `featuredMedia`, a variant's `title`, `displayName`, `position` and `inventoryQuantity`, an
+  option value's `hasVariants`, a variant's `availableForSale` after an inventory change.
+- **Inventory**: `on_hand` stays the sum of `available`, `committed`, `reserved`, `damaged`,
+  `safety_stock` and `quality_control`; adjusting `available` changes `on_hand` with it, moving
+  between two of them does not. `changeFromQuantity` must be given (`null` skips the check) and a
+  stale one is `CHANGE_FROM_QUANTITY_STALE`. Reasons and ledger documents are checked. The answer
+  is an `InventoryAdjustmentGroup` (`reason: "Inventory correction"`, `quantityAfterChange:
+  null`, as the Admin API answers right after the change).
+- **`@idempotent`**: the inventory mutations, `locationActivate` and `locationDeactivate` require
+  it, as Shopify does since 2026-04. The same key with the same arguments within 24 hours answers
+  the first answer again without doing anything; with other arguments,
+  `IDEMPOTENCY_KEY_PARAMETER_MISMATCH`.
+- **Smart collections** (`ruleSet`) list the products their rules match (`TAG`, `TITLE`, `TYPE`,
+  `VENDOR`, `VARIANT_TITLE`, `VARIANT_PRICE`, `VARIANT_COMPARE_AT_PRICE`, `VARIANT_WEIGHT`,
+  `VARIANT_INVENTORY`, `IS_PRICE_REDUCED`; all of them, or any with `appliedDisjunctively`), and
+  follow the products every mutation changes. Custom collections keep their manual order.
+- **Publishing**: a product created through the Admin API is unpublished; `publishablePublish`
+  on the Online Store sets its `publishedAt` and `onlineStoreUrl`, `publishableUnpublish` clears
+  them.
+- **Asynchronous work is done at once**: `productSet(synchronous: false)` answers a
+  `ProductSetOperation` already `COMPLETE`, `productReorderMedia`, `collectionAddProductsV2`,
+  `collectionRemoveProducts`, `collectionReorderProducts` a `Job` already `done`.
+- **Media given by URL** is recorded, not downloaded: `image.url` is the URL, the size unknown,
+  and the medium is `READY` at once (Shopify answers `UPLOADED` and processes it later).
+- **Queries**: `products` and `productVariants` take their documented sort keys
+  (`INVENTORY_TOTAL`, `FULL_TITLE`, `SKU`, …) and search filters (`sku`, `barcode`, `price`,
+  `inventory_total`, `is_price_reduced`, `out_of_stock_somewhere`, `published_status`,
+  `option1`, `location_id`, …); `productByIdentifier` and `productVariantByIdentifier` find a
+  `customId`; `productTags`, `productTypes`, `productVendors`, `inCollection`,
+  `InventoryItem.inventoryLevel(locationId:)`, `publishedOnPublication`,
+  `resourcePublications`, the `appliesTo…` fields of selling plan groups are answered.
+
+**Webhooks**: `products/create`, `products/update`, `products/delete`, `collections/*`,
+`inventory_items/*`, `inventory_levels/update`, `…/connect`, `…/disconnect`, `locations/*`
+(`activate` and `deactivate` included), `variants/in_stock` and `variants/out_of_stock` (a
+variant whose stock crosses zero), `product_publications/create` and `…/delete` (the same for
+`collection_publications`), `selling_plan_groups/*`. A variant, option or media change is a `products/update`; an inventory
+change is an `inventory_levels/update` only.
+
+**Store sync**: products (with their status and Online Store publication), variants (price,
+SKU, barcode, stock), options, images of `files/`, collections and their products, locations,
+selling plan groups and the gift cards of the store data are written back to the store the
+storefront and the checkout see. Not synced: smart collection rules (a changed smart collection
+becomes a manual one with the products it has), collection publications (an unpublished
+collection stays on the storefront), gift cards the Admin API creates (the store data keys a
+card by its code, which Shopify answers once), media from a URL outside `files/`, SEO, the
+category.
+
+**Not simulated yet** (they answer `LSF_NOT_SIMULATED`): the new collection model of 2026-10
+(`collection.sources`, `sourcesToCreate`, `collectionConditionsSourceCreate`, `…Update`,
+`…Delete`), `collectionDuplicate`, `collectionPublish`, `collectionUnpublish`, `productPublish`,
+`productUnpublish`, `publishablePublishToCurrentChannel`, `publishableUnpublishToCurrentChannel`,
+`publicationCreate`, `publicationUpdate`, `publicationDelete`, bundles and combined listings
+(`productBundleCreate`, `productBundleUpdate`, `combinedListingUpdate`,
+`productVariantRelationshipBulkUpdate`), `productFullSync`, `productFeedCreate`,
+`productFeedDelete`, `bulkProductResourceFeedbackCreate`, quantity rules and price breaks
+(`quantityRulesAdd`, `quantityRulesDelete`, `quantityPricingByVariantUpdate`), inventory
+transfers and shipments (`inventoryTransfer…`, `inventoryShipment…`), fulfillment services
+(`fulfillmentServiceCreate`, `…Update`, `…Delete`), `giftCardProductSet`,
+`giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient`. Inputs a simulated
+mutation ignores (`category`, `linkedMetafield`, `combinedListingRole`, a future `publishDate`,
+…) are said in `extensions.lsf.notes`. The collections of the store data are custom collections
+for the Admin API (lsf-core resolves their rules into products). `productTags`,
+`productTypes` and `productVendors` page 250 at most, as every connection of lsf (Shopify allows
+1000 to 5000).
+
 ### Orders, fulfillments and draft orders
 
 ### Customers and companies
