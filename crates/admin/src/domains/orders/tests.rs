@@ -2239,3 +2239,37 @@ fn a_mutation_sends_one_event_per_topic_and_record() {
     assert!(twice.get("errors").is_none(), "{twice}");
     assert_eq!(topics(&mut shop), ["orders/updated", "orders/updated"]);
 }
+
+/// `DECREMENT_OBEYING_POLICY` checks the stock of the level the order commits from, at the
+/// order's location, not the item's first level.
+#[test]
+fn an_order_obeying_the_policy_checks_the_stock_where_it_commits() {
+    let (store, mut shop) = rich_with_store();
+    let dress = store.product_by_handle("linen-dress").unwrap();
+    let variant = crate::domains::catalog::variant_gid(&dress.variants[0]);
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(quantities(&shop, &item, "available"), [4, 3]);
+    let berlin = crate::state::gid("Location", store.locations[1].id);
+    let order = |shop: &mut ShopState, quantity: i64| {
+        run(
+            shop,
+            ORDER_CREATE,
+            json!({
+                "order": {"lineItems": [{"variantId": variant, "quantity": quantity}], "fulfillment": {"locationId": berlin}},
+                "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+            }),
+        )["data"]["orderCreate"]["userErrors"]
+            .clone()
+    };
+    // Paris has 4, Berlin 3: 4 from Berlin is too many, though the first level has them.
+    assert_eq!(
+        order(&mut shop, 4),
+        json!([{"field": ["order", "lineItems", "0", "quantity"], "message": "Linen Dress is out of stock", "code": "INVENTORY_CLAIM_FAILED"}])
+    );
+    assert_eq!(quantities(&shop, &item, "available"), [4, 3]);
+    assert_eq!(order(&mut shop, 3), json!([]));
+    assert_eq!(quantities(&shop, &item, "available"), [4, 0]);
+}

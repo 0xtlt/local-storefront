@@ -775,7 +775,8 @@ pub fn delete_order(state: &mut ShopState, order: &str) {
 ///   locationId` with its tracking; `RESTOCKED` is not simulated.
 /// - `options.inventoryBehaviour`: `BYPASS` (the default) leaves the stock alone; the two
 ///   `DECREMENT_…` commit the units, `DECREMENT_OBEYING_POLICY` refusing a tracked variant that
-///   does not have them and does not sell when out of stock (`INVENTORY_CLAIM_FAILED`).
+///   does not have them at the order's location (the level it commits from) and does not sell
+///   when out of stock (`INVENTORY_CLAIM_FAILED`).
 /// - Order-level `taxLines`, one `discountCode`, the first shipping line (others are said in
 ///   the notes) make the amounts; line-level tax lines add to the order's tax.
 fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -799,6 +800,24 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_str)
         .unwrap_or("BYPASS")
         .to_string();
+
+    // Where the order is fulfilled from: where its units are committed, and so where its stock
+    // is checked.
+    let fulfillment_input = model::input_of(input.get("fulfillment"));
+    let location = match fulfillment_input.get("locationId").and_then(Value::as_str) {
+        Some(location) if state.type_of(location) == Some("Location") => Some(location.to_string()),
+        Some(_) => {
+            errors.push(
+                UserError::new(
+                    &["order", "fulfillment", "locationId"],
+                    "Location does not exist",
+                )
+                .code("INVALID"),
+            );
+            None
+        }
+        None => state.keys("Location").next().map(str::to_string),
+    };
 
     // The lines.
     let items = array(&input, "lineItems");
@@ -920,7 +939,10 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
                     .and_then(Value::as_bool)
                     == Some(true)
                 && text(variant_record, "inventoryPolicy") != Some("CONTINUE")
-                && model::inventory_quantity(state, item_gid, None, "available") < quantity
+                // The level the order commits from, at its location (whether Shopify routes an
+                // order across locations is not documented: lsf checks the one it commits at).
+                && model::inventory_quantity(state, item_gid, location.as_deref(), "available")
+                    < quantity
             {
                 // lsf's wording.
                 errors.push(
@@ -1065,21 +1087,6 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             }
         },
         None => None,
-    };
-    let fulfillment_input = model::input_of(input.get("fulfillment"));
-    let location = match fulfillment_input.get("locationId").and_then(Value::as_str) {
-        Some(location) if state.type_of(location) == Some("Location") => Some(location.to_string()),
-        Some(_) => {
-            errors.push(
-                UserError::new(
-                    &["order", "fulfillment", "locationId"],
-                    "Location does not exist",
-                )
-                .code("INVALID"),
-            );
-            None
-        }
-        None => state.keys("Location").next().map(str::to_string),
     };
     if !errors.is_empty() {
         return failed(&errors);
