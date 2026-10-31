@@ -120,6 +120,12 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "metaobjects" => (metaobject(), Vec::new()),
         "discounts" if topic.starts_with("discounts/redeemcode") => (code_discount(), Vec::new()),
         "discounts" => (discount(), Vec::new()),
+        "customer_payment_methods" => (customer_payment_method(), Vec::new()),
+        "subscription_contracts" => (subscription_contract(topic), Vec::new()),
+        "subscription_billing_cycles" | "subscription_billing_cycle_edits" => {
+            (subscription_billing_cycle(topic), Vec::new())
+        }
+        "subscription_billing_attempts" => (subscription_billing_attempt(topic), Vec::new()),
         _ => return None,
     };
     if topic.ends_with("/delete") {
@@ -1358,4 +1364,92 @@ mod tests {
         assert!(fixed("carts/create").is_none());
         assert_eq!(FixedSamples.shop(), "shop.myshopify.com");
     }
+}
+
+/// The contract of the `subscription_contracts/*` examples: each topic's id, revision and status.
+fn subscription_contract(topic: &str) -> Value {
+    let (id, revision, status) = match topic {
+        "subscription_contracts/activate" => (9690478828_u64, "6376903497", "ACTIVE"),
+        "subscription_contracts/cancel" => (2673489130, "8944947474", "CANCELLED"),
+        "subscription_contracts/expire" => (9603916533, "816188410", "EXPIRED"),
+        "subscription_contracts/fail" => (9841948086, "655903039", "FAILED"),
+        "subscription_contracts/pause" => (9195165210, "7130883783", "PAUSED"),
+        "subscription_contracts/update" => (2604049127, "8028870838", "ACTIVE"),
+        _ => (1996103578, "1264182236", "ACTIVE"),
+    };
+    json!({
+        "__typename": "SubscriptionContract",
+        "id": format!("gid://shopify/SubscriptionContract/{id}"),
+        "status": status,
+        "currencyCode": "CAD",
+        "customer": "gid://shopify/Customer/1",
+        "originOrder": "gid://shopify/Order/1",
+        "revisionId": revision,
+        "billingPolicy": {"interval": "WEEK", "intervalCount": 4, "minCycles": 1, "maxCycles": 2, "anchors": []},
+        "deliveryPolicy": {"interval": "WEEK", "intervalCount": 2, "anchors": []},
+        "lines": [],
+    })
+}
+
+/// The cycle of the `subscription_billing_cycles/*` and `subscription_billing_cycle_edits/*`
+/// examples (their dates are midnight in the sample shop's New York time).
+fn subscription_billing_cycle(topic: &str) -> Value {
+    let (contract, skipped, edited) = match topic {
+        "subscription_billing_cycles/skip" => (4293861418_u64, true, true),
+        "subscription_billing_cycles/unskip" => (7860842769, false, true),
+        "subscription_billing_cycle_edits/delete" => (2384482033, false, false),
+        "subscription_billing_cycle_edits/update" => (2482887334, false, false),
+        _ => (5876431626, false, false),
+    };
+    json!({
+        "__typename": "SubscriptionBillingCycle",
+        "sourceContract": format!("gid://shopify/SubscriptionContract/{contract}"),
+        "cycleIndex": 1,
+        "cycleStartAt": "2022-10-01T04:00:00Z",
+        "cycleEndAt": "2022-11-01T04:00:00Z",
+        "billingAttemptExpectedDate": "2022-11-01T04:00:00Z",
+        "skipped": skipped,
+        "edited": edited,
+        "editedContract": null,
+    })
+}
+
+/// The attempt of the payloads of Shopify's subscriptions reference app (the reference has no
+/// example of these topics).
+fn subscription_billing_attempt(topic: &str) -> Value {
+    let attempt = json!({
+        "__typename": "SubscriptionBillingAttempt",
+        "id": "gid://shopify/SubscriptionBillingAttempt/1",
+        "idempotencyKey": "foo-bar-baz",
+        "order": "gid://shopify/Order/1",
+        "subscriptionContract": "gid://shopify/SubscriptionContract/1",
+        "ready": true,
+        "errorMessage": null,
+        "errorCode": null,
+    });
+    match topic {
+        "subscription_billing_attempts/failure" => attempt
+            .with("errorCode", json!("INSUFFICIENT_FUNDS"))
+            .with("errorMessage", json!("insufficient_funds")),
+        "subscription_billing_attempts/challenged" => attempt.with("order", Value::Null),
+        _ => attempt,
+    }
+}
+
+/// The payment method of the `customer_payment_methods/*` examples.
+fn customer_payment_method() -> Value {
+    json!({
+        "__typename": "CustomerPaymentMethod",
+        "id": "gid://shopify/CustomerPaymentMethod/0eccccc666aac73efcd31094ddc4ebf0",
+        "customer": "gid://shopify/Customer/82850125",
+        "instrument": {
+            "__typename": "CustomerCreditCard",
+            "lastDigits": "4242",
+            "expiryMonth": 8,
+            "expiryYear": 2060,
+            "name": "Jim Smith",
+            "brand": "Visa",
+        },
+        "revokedAt": null,
+    })
 }

@@ -673,6 +673,51 @@
       ],
       "occurredAt": "2005-05-05T00:00:00.000Z"
     },
+    "customer_payment_methods/create": {
+      "admin_graphql_api_id": "gid://shopify/CustomerPaymentMethod/0eccccc666aac73efcd31094ddc4ebf0",
+      "token": "0eccccc666aac73efcd31094ddc4ebf0",
+      "customer_id": 82850125,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/82850125",
+      "instrument_type": "CustomerCreditCard",
+      "payment_instrument": {
+        "last_digits": "4242",
+        "month": 8,
+        "year": 2060,
+        "name": "Jim Smith",
+        "brand": "Visa"
+      },
+      "resource_type": "Subscriptions"
+    },
+    "customer_payment_methods/revoke": {
+      "admin_graphql_api_id": "gid://shopify/CustomerPaymentMethod/0eccccc666aac73efcd31094ddc4ebf0",
+      "token": "0eccccc666aac73efcd31094ddc4ebf0",
+      "customer_id": 82850125,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/82850125",
+      "instrument_type": "CustomerCreditCard",
+      "payment_instrument": {
+        "last_digits": "4242",
+        "month": 8,
+        "year": 2060,
+        "name": "Jim Smith",
+        "brand": "Visa"
+      },
+      "resource_type": "Subscriptions"
+    },
+    "customer_payment_methods/update": {
+      "admin_graphql_api_id": "gid://shopify/CustomerPaymentMethod/0eccccc666aac73efcd31094ddc4ebf0",
+      "token": "0eccccc666aac73efcd31094ddc4ebf0",
+      "customer_id": 82850125,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/82850125",
+      "instrument_type": "CustomerCreditCard",
+      "payment_instrument": {
+        "last_digits": "4242",
+        "month": 8,
+        "year": 2060,
+        "name": "Jim Smith",
+        "brand": "Visa"
+      },
+      "resource_type": "Subscriptions"
+    },
     "customers/create": {
       "id": 706405506930370084,
       "created_at": "2021-12-31T19:00:00-05:00",
@@ -7000,6 +7045,239 @@
       "marketing_sms_consent_enabled_at_checkout": false,
       "marketing_email_consent_enabled_at_checkout": true,
       "transactional_sms_disabled": false
+    },
+    "subscription_billing_attempts/challenged": {
+      "id": 1,
+      "admin_graphql_api_id": "gid://shopify/SubscriptionBillingAttempt/1",
+      "idempotency_key": "foo-bar-baz",
+      "order_id": null,
+      "admin_graphql_api_order_id": null,
+      "subscription_contract_id": 1,
+      "admin_graphql_api_subscription_contract_id": "gid://shopify/SubscriptionContract/1",
+      "ready": true,
+      "error_message": null,
+      "error_code": null
+    },
+    "subscription_billing_attempts/failure": {
+      "id": 1,
+      "admin_graphql_api_id": "gid://shopify/SubscriptionBillingAttempt/1",
+      "idempotency_key": "foo-bar-baz",
+      "order_id": 1,
+      "admin_graphql_api_order_id": "gid://shopify/Order/1",
+      "subscription_contract_id": 1,
+      "admin_graphql_api_subscription_contract_id": "gid://shopify/SubscriptionContract/1",
+      "ready": true,
+      "error_message": "insufficient_funds",
+      "error_code": "insufficient_funds"
+    },
+    "subscription_billing_attempts/success": {
+      "id": 1,
+      "admin_graphql_api_id": "gid://shopify/SubscriptionBillingAttempt/1",
+      "idempotency_key": "foo-bar-baz",
+      "order_id": 1,
+      "admin_graphql_api_order_id": "gid://shopify/Order/1",
+      "subscription_contract_id": 1,
+      "admin_graphql_api_subscription_contract_id": "gid://shopify/SubscriptionContract/1",
+      "ready": true,
+      "error_message": null,
+      "error_code": null
+    },
+    "subscription_billing_cycle_edits/create": {
+      "subscription_contract_id": 5876431626,
+      "cycle_start_at": "2022-10-01T00:00:00-04:00",
+      "cycle_end_at": "2022-11-01T00:00:00-04:00",
+      "cycle_index": 1,
+      "contract_edit": null,
+      "billing_attempt_expected_date": "2022-11-01T00:00:00-04:00",
+      "skipped": false,
+      "edited": false
+    },
+    "subscription_billing_cycle_edits/delete": {
+      "subscription_contract_id": 2384482033,
+      "cycle_start_at": "2022-10-01T00:00:00-04:00",
+      "cycle_end_at": "2022-11-01T00:00:00-04:00",
+      "cycle_index": 1,
+      "contract_edit": null,
+      "billing_attempt_expected_date": "2022-11-01T00:00:00-04:00",
+      "skipped": false,
+      "edited": false
+    },
+    "subscription_billing_cycle_edits/update": {
+      "subscription_contract_id": 2482887334,
+      "cycle_start_at": "2022-10-01T00:00:00-04:00",
+      "cycle_end_at": "2022-11-01T00:00:00-04:00",
+      "cycle_index": 1,
+      "contract_edit": null,
+      "billing_attempt_expected_date": "2022-11-01T00:00:00-04:00",
+      "skipped": false,
+      "edited": false
+    },
+    "subscription_billing_cycles/skip": {
+      "subscription_contract_id": 4293861418,
+      "cycle_start_at": "2022-10-01T00:00:00-04:00",
+      "cycle_end_at": "2022-11-01T00:00:00-04:00",
+      "cycle_index": 1,
+      "contract_edit": null,
+      "billing_attempt_expected_date": "2022-11-01T00:00:00-04:00",
+      "skipped": true,
+      "edited": true
+    },
+    "subscription_billing_cycles/unskip": {
+      "subscription_contract_id": 7860842769,
+      "cycle_start_at": "2022-10-01T00:00:00-04:00",
+      "cycle_end_at": "2022-11-01T00:00:00-04:00",
+      "cycle_index": 1,
+      "contract_edit": null,
+      "billing_attempt_expected_date": "2022-11-01T00:00:00-04:00",
+      "skipped": false,
+      "edited": true
+    },
+    "subscription_contracts/activate": {
+      "admin_graphql_api_id": "gid://shopify/SubscriptionContract/9690478828",
+      "id": 9690478828,
+      "billing_policy": {
+        "interval": "week",
+        "interval_count": 4,
+        "min_cycles": 1,
+        "max_cycles": 2
+      },
+      "currency_code": "CAD",
+      "customer_id": 1,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/1",
+      "delivery_policy": {
+        "interval": "week",
+        "interval_count": 2
+      },
+      "status": "active",
+      "admin_graphql_api_origin_order_id": "gid://shopify/Order/1",
+      "origin_order_id": 1,
+      "revision_id": "6376903497"
+    },
+    "subscription_contracts/cancel": {
+      "admin_graphql_api_id": "gid://shopify/SubscriptionContract/2673489130",
+      "id": 2673489130,
+      "billing_policy": {
+        "interval": "week",
+        "interval_count": 4,
+        "min_cycles": 1,
+        "max_cycles": 2
+      },
+      "currency_code": "CAD",
+      "customer_id": 1,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/1",
+      "delivery_policy": {
+        "interval": "week",
+        "interval_count": 2
+      },
+      "status": "cancelled",
+      "admin_graphql_api_origin_order_id": "gid://shopify/Order/1",
+      "origin_order_id": 1,
+      "revision_id": "8944947474"
+    },
+    "subscription_contracts/create": {
+      "admin_graphql_api_id": "gid://shopify/SubscriptionContract/1996103578",
+      "id": 1996103578,
+      "billing_policy": {
+        "interval": "week",
+        "interval_count": 4,
+        "min_cycles": 1,
+        "max_cycles": 2
+      },
+      "currency_code": "CAD",
+      "customer_id": 1,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/1",
+      "delivery_policy": {
+        "interval": "week",
+        "interval_count": 2
+      },
+      "status": "active",
+      "admin_graphql_api_origin_order_id": "gid://shopify/Order/1",
+      "origin_order_id": 1,
+      "revision_id": "1264182236"
+    },
+    "subscription_contracts/expire": {
+      "admin_graphql_api_id": "gid://shopify/SubscriptionContract/9603916533",
+      "id": 9603916533,
+      "billing_policy": {
+        "interval": "week",
+        "interval_count": 4,
+        "min_cycles": 1,
+        "max_cycles": 2
+      },
+      "currency_code": "CAD",
+      "customer_id": 1,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/1",
+      "delivery_policy": {
+        "interval": "week",
+        "interval_count": 2
+      },
+      "status": "expired",
+      "admin_graphql_api_origin_order_id": "gid://shopify/Order/1",
+      "origin_order_id": 1,
+      "revision_id": "816188410"
+    },
+    "subscription_contracts/fail": {
+      "admin_graphql_api_id": "gid://shopify/SubscriptionContract/9841948086",
+      "id": 9841948086,
+      "billing_policy": {
+        "interval": "week",
+        "interval_count": 4,
+        "min_cycles": 1,
+        "max_cycles": 2
+      },
+      "currency_code": "CAD",
+      "customer_id": 1,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/1",
+      "delivery_policy": {
+        "interval": "week",
+        "interval_count": 2
+      },
+      "status": "failed",
+      "admin_graphql_api_origin_order_id": "gid://shopify/Order/1",
+      "origin_order_id": 1,
+      "revision_id": "655903039"
+    },
+    "subscription_contracts/pause": {
+      "admin_graphql_api_id": "gid://shopify/SubscriptionContract/9195165210",
+      "id": 9195165210,
+      "billing_policy": {
+        "interval": "week",
+        "interval_count": 4,
+        "min_cycles": 1,
+        "max_cycles": 2
+      },
+      "currency_code": "CAD",
+      "customer_id": 1,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/1",
+      "delivery_policy": {
+        "interval": "week",
+        "interval_count": 2
+      },
+      "status": "paused",
+      "admin_graphql_api_origin_order_id": "gid://shopify/Order/1",
+      "origin_order_id": 1,
+      "revision_id": "7130883783"
+    },
+    "subscription_contracts/update": {
+      "admin_graphql_api_id": "gid://shopify/SubscriptionContract/2604049127",
+      "id": 2604049127,
+      "billing_policy": {
+        "interval": "week",
+        "interval_count": 4,
+        "min_cycles": 1,
+        "max_cycles": 2
+      },
+      "currency_code": "CAD",
+      "customer_id": 1,
+      "admin_graphql_api_customer_id": "gid://shopify/Customer/1",
+      "delivery_policy": {
+        "interval": "week",
+        "interval_count": 2
+      },
+      "status": "active",
+      "admin_graphql_api_origin_order_id": "gid://shopify/Order/1",
+      "origin_order_id": 1,
+      "revision_id": "8028870838"
     },
     "variants/in_stock": {
       "id": 642667041472713922,

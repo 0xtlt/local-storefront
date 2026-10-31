@@ -19,6 +19,7 @@ mod content;
 mod customers;
 mod orders;
 mod shop;
+mod subscriptions;
 
 pub use orders::{
     EDIT_ADDITIONS, EDIT_COMMITTED_AT, EDIT_NOTIFY_CUSTOMER, EDIT_REMOVALS, EDIT_STAFF_NOTE,
@@ -126,6 +127,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "company_locations/update",
     "customer.tags_added",
     "customer.tags_removed",
+    "customer_payment_methods/create",
+    "customer_payment_methods/revoke",
+    "customer_payment_methods/update",
     "customers/create",
     "customers/data_request",
     "customers/delete",
@@ -206,6 +210,21 @@ pub const BUILT_TOPICS: &[&str] = &[
     "selling_plan_groups/update",
     "shop/redact",
     "shop/update",
+    "subscription_billing_attempts/challenged",
+    "subscription_billing_attempts/failure",
+    "subscription_billing_attempts/success",
+    "subscription_billing_cycle_edits/create",
+    "subscription_billing_cycle_edits/delete",
+    "subscription_billing_cycle_edits/update",
+    "subscription_billing_cycles/skip",
+    "subscription_billing_cycles/unskip",
+    "subscription_contracts/activate",
+    "subscription_contracts/cancel",
+    "subscription_contracts/create",
+    "subscription_contracts/expire",
+    "subscription_contracts/fail",
+    "subscription_contracts/pause",
+    "subscription_contracts/update",
     "variants/in_stock",
     "variants/out_of_stock",
 ];
@@ -316,6 +335,24 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "customers/data_request" => shop::customer_data_request(record, lookup),
         "customers/redact" => shop::customer_redact(record, lookup),
         "shop/redact" => shop::shop_redact(record, lookup),
+        "subscription_contracts/activate"
+        | "subscription_contracts/cancel"
+        | "subscription_contracts/create"
+        | "subscription_contracts/expire"
+        | "subscription_contracts/fail"
+        | "subscription_contracts/pause"
+        | "subscription_contracts/update" => subscriptions::contract(record),
+        "subscription_billing_cycles/skip"
+        | "subscription_billing_cycles/unskip"
+        | "subscription_billing_cycle_edits/create"
+        | "subscription_billing_cycle_edits/delete"
+        | "subscription_billing_cycle_edits/update" => subscriptions::billing_cycle(record, lookup),
+        "subscription_billing_attempts/challenged"
+        | "subscription_billing_attempts/failure"
+        | "subscription_billing_attempts/success" => subscriptions::billing_attempt(record),
+        "customer_payment_methods/create"
+        | "customer_payment_methods/revoke"
+        | "customer_payment_methods/update" => subscriptions::payment_method(record),
         _ => return None,
     })
 }
