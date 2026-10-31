@@ -314,8 +314,9 @@ impl Webhooks {
             Destination::Http { url } => Some(url.clone()),
             Destination::Undeliverable { .. } => None,
         };
+        let webhook_id = sign::new_id();
         let delivery = |request: Option<Request>, notes: Vec<String>| NewDelivery {
-            webhook_id: sign::new_id(),
+            webhook_id: webhook_id.clone(),
             event_id: event_id.to_string(),
             topic: topic.to_string(),
             shop: shop.to_string(),
@@ -362,7 +363,6 @@ impl Webhooks {
             }
         }
         let text = serde_json::to_string(&body).unwrap_or_default();
-        let webhook_id = sign::new_id();
         let headers = sign::headers(
             &HeaderValues {
                 topic,
@@ -380,8 +380,7 @@ impl Webhooks {
             headers: headers.into_iter().collect(),
             body: text,
         };
-        let mut new = delivery(Some(request), notes);
-        new.webhook_id = webhook_id;
+        let new = delivery(Some(request), notes);
         if let Some(reason) = filtered_out {
             return self.deliveries.not_sent(new, reason);
         }
