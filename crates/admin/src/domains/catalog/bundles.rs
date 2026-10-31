@@ -177,6 +177,23 @@ fn parents_of_variants(state: &ShopState, variants: &[String]) -> Vec<String> {
     parents
 }
 
+/// `products` and the products of the bundles their variants are components of: what an
+/// inventory change of a component refreshes and compares, since a bundle's quantity is its
+/// components'. `products` as given for a shop without bundles.
+pub fn with_parents(state: &ShopState, mut products: Vec<String>) -> Vec<String> {
+    if state.count(COMPONENT) == 0 {
+        return products;
+    }
+    for product in products.clone() {
+        for parent in parents_of_product(state, &product) {
+            if !products.contains(&parent) {
+                products.push(parent);
+            }
+        }
+    }
+    products
+}
+
 /// What `refresh_product` runs for a product: the products of which its variants are components
 /// derive their inventory again. Nothing for a shop without bundles.
 pub fn refresh_parents(state: &mut ShopState, product: &str) {

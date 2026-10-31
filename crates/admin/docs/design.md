@@ -1062,7 +1062,15 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
   bundle variant's `inventoryQuantity` (the fewest bundles its tracked components make) and
   `availableForSale` (every component sells), and then refreshes the products of which the
   product's variants are components (`bundles::refresh_parents`): every change of a component's
-  stock reaches its bundles. The parent's own inventory item is not tracked.
+  stock reaches its bundles. The parent's own inventory item is not tracked: an order's line of
+  a bundle takes its components' stock instead (`orders::model::stock_parts`: each component's
+  item, its quantity per bundle), committed, shipped, moved and restocked part by part, and kept
+  on the line per component item (`lsfStock.parts.<item> = {variant, perUnit, committed,
+  shipped}`); `short_parts` is what `DECREMENT_OBEYING_POLICY` and billing attempts check. An
+  inventory change of a component refreshes and compares its bundles' products too
+  (`bundles::with_parents`, in `move_inventory` and the inventory mutations), and a bundle is in
+  stock while its components make one, so it gets its own `variants/in_stock` and
+  `variants/out_of_stock`.
 - **Combined listings** (`combined_listings.rs`): `combinedListingRole` on the products, the
   parent's children under `lsfCombinedListing` (`[{product, parentVariant}]`), a child's parent
   under `lsfCombinedListingParent`.
@@ -1252,7 +1260,8 @@ orders" in `docs/admin.md`) make and keep:
 - **Stock** (the levels of the catalog, changed in place): an order that claims stock commits it
   (`available` to `committed`: `orderCreate` with a `DECREMENT_…` behaviour, a completed draft
   order, units an edit adds), and each line item records what it committed, by location, and
-  what of it shipped (`lsfStock`: `{"committed": {"<location GID>": 2}, "shipped": 0}`).
+  what of it shipped (`lsfStock`: `{"committed": {"<location GID>": 2}, "shipped": 0}`; a
+  bundle's line, its components', under `parts`: see "Bundles").
   Shipping takes units out of `committed` and `on_hand` as far as the line committed them at
   that location; a restock puts back what the line took (`CANCEL` from what it committed,
   `RETURN` to `on_hand` as far as its units had shipped from stock); a fulfillment order moved

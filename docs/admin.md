@@ -548,7 +548,12 @@ How they behave, as shopify.dev documents it:
   `ProductBundleOperation` already `COMPLETE` (`productOperation` reads it). A bundle's inventory
   is the bundles its components make ("the minimum of the component's inventory quantities",
   each divided by the quantity it takes), and it sells while they do: it follows every change of
-  their stock. `Product.bundleComponents`, `productComponents`, `productParents` and
+  their stock. Selling a bundle takes its components' units: an order that claims stock
+  (`orderCreate` with `DECREMENT_…`, a completed draft, an edit, a subscription's billing)
+  commits each component's quantity times the bundle's, `DECREMENT_OBEYING_POLICY` and billing
+  attempts check the components, and fulfilling, cancelling with a restock or refunding with a
+  restock move the components' units; the bundle's quantity, `availableForSale` and
+  `variants/in_stock` / `variants/out_of_stock` follow. `Product.bundleComponents`, `productComponents`, `productParents` and
   `ProductVariant.productParents` read the relation both ways. Nested bundles, more than 30
   components or 3 options are refused, as Shopify documents.
 - **Combined listings**: a product created with `combinedListingRole: PARENT` takes children

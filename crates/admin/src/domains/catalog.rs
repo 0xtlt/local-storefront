@@ -36,6 +36,7 @@ mod records;
 mod selling_plans;
 mod variants;
 
+pub use bundles::{components_of, with_parents};
 pub use collections::apply_rules;
 pub use inventory::with_idempotency;
 pub use media::done_job;

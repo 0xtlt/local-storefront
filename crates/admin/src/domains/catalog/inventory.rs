@@ -433,7 +433,8 @@ fn check_change_from(
     }
 }
 
-/// The products of the items of changes.
+/// The products of the items of changes, and the bundles they are components of
+/// ([`super::with_parents`]).
 fn products_of(state: &ShopState, items: &[String]) -> Vec<String> {
     let mut products: Vec<String> = Vec::new();
     for item in items {
@@ -447,7 +448,7 @@ fn products_of(state: &ShopState, items: &[String]) -> Vec<String> {
             products.push(product.to_string());
         }
     }
-    products
+    super::with_parents(state, products)
 }
 
 /// Applies changes to levels: their quantities (and `on_hand` or `available` with them), the

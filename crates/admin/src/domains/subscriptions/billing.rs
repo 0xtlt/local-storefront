@@ -159,19 +159,15 @@ fn billed_contract(
 }
 
 /// The variants of the lines that lack stock: tracked, not sold when out of stock, and with
-/// less available at the shop's location than the line takes.
+/// less available at the shop's location than the line takes (a bundle: one of its components,
+/// `orders::model::short_parts`).
 fn short_variants(state: &ShopState, billed: &Record, location: Option<&str>) -> Vec<String> {
     lines(billed)
         .iter()
         .filter_map(|line| {
             let variant = line.get("variantId")?.as_str()?;
-            let record = state.get(variant)?;
-            let item = text(record, "inventoryItem")?;
-            let tracked = state.get(item)?.get("tracked").and_then(Value::as_bool) == Some(true);
             let quantity = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
-            let short = tracked
-                && text(record, "inventoryPolicy") != Some("CONTINUE")
-                && orders_model::inventory_quantity(state, item, location, "available") < quantity;
+            let short = !orders_model::short_parts(state, variant, location, quantity).is_empty();
             short.then(|| variant.to_string())
         })
         .collect()

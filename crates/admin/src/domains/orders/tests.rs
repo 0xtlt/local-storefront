@@ -2401,3 +2401,191 @@ fn an_order_created_with_a_discount_code_records_its_application_and_allocations
         json!([])
     );
 }
+
+/// The sum of a quantity of an item over its levels.
+fn quantity_of(shop: &ShopState, item: &str, name: &str) -> i64 {
+    crate::domains::catalog::gids(shop.get(item).unwrap().get("inventoryLevels"))
+        .iter()
+        .filter_map(|level| shop.get(level).unwrap()["quantities"].as_array())
+        .flatten()
+        .filter(|quantity| quantity["name"] == json!(name))
+        .map(|quantity| quantity["quantity"].as_i64().unwrap())
+        .sum()
+}
+
+/// A bundle of the demo store's tote (×1) and socks (×2): the parent variant, and the
+/// components' variants and inventory items.
+fn gift_set(shop: &mut ShopState) -> (String, [(String, String); 2]) {
+    let created = run(
+        shop,
+        r#"mutation { productCreate(product: {title: "Gift set"}) { product { id variants(first: 1) { nodes { id } } } } }"#,
+        json!({}),
+    );
+    let product = created["data"]["productCreate"]["product"].clone();
+    let parent = product["variants"]["nodes"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let component = |shop: &ShopState, handle: &str| {
+        let product = shop
+            .all("Product")
+            .find(|product| product["handle"] == json!(handle))
+            .unwrap();
+        let variant = product["variants"][0].as_str().unwrap().to_string();
+        let item = shop.get(&variant).unwrap()["inventoryItem"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        (variant, item)
+    };
+    let tote = component(shop, "canvas-tote-bag");
+    let socks = component(shop, "merino-crew-socks");
+    let bundled = run(
+        shop,
+        r#"mutation($input: [ProductVariantRelationshipUpdateInput!]!) { productVariantRelationshipBulkUpdate(input: $input) { userErrors { message } } }"#,
+        json!({"input": [{"parentProductId": product["id"],
+            "productVariantRelationshipsToCreate": [{"id": tote.0, "quantity": 1}, {"id": socks.0, "quantity": 2}]}]}),
+    );
+    assert_eq!(
+        bundled["data"]["productVariantRelationshipBulkUpdate"]["userErrors"],
+        json!([]),
+        "{bundled}"
+    );
+    (parent, [tote, socks])
+}
+
+fn bundle_quantity(shop: &mut ShopState, parent: &str) -> Value {
+    run(
+        shop,
+        "query($id: ID!) { productVariant(id: $id) { inventoryQuantity availableForSale } }",
+        json!({"id": parent}),
+    )["data"]["productVariant"]
+        .clone()
+}
+
+/// A bundle sold takes its components' units: committed when the order claims them, checked by
+/// `DECREMENT_OBEYING_POLICY`, shipped by a fulfillment and put back by a restock, and the
+/// bundle's quantity follows them.
+#[test]
+fn a_bundle_sold_takes_its_components_stock() {
+    let mut shop = demo();
+    let (parent, [(_, tote), (socks_variant, socks)]) = gift_set(&mut shop);
+    let before = |shop: &ShopState, item: &str| {
+        (
+            quantity_of(shop, item, "available"),
+            quantity_of(shop, item, "committed"),
+            quantity_of(shop, item, "on_hand"),
+        )
+    };
+    let (tote_available, tote_committed, tote_on_hand) = before(&shop, &tote);
+    let (socks_available, socks_committed, socks_on_hand) = before(&shop, &socks);
+    assert_eq!(
+        bundle_quantity(&mut shop, &parent),
+        json!({"inventoryQuantity": 30, "availableForSale": true})
+    );
+    shop.take_events();
+
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": parent, "quantity": 3}]},
+            "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let order_id = answer["data"]["orderCreate"]["order"]["id"].clone();
+    assert_eq!(quantity_of(&shop, &tote, "committed"), tote_committed + 3);
+    assert_eq!(quantity_of(&shop, &tote, "available"), tote_available - 3);
+    assert_eq!(quantity_of(&shop, &socks, "committed"), socks_committed + 6);
+    assert_eq!(quantity_of(&shop, &socks, "available"), socks_available - 6);
+    // min(37 totes, 54 / 2 socks).
+    assert_eq!(
+        bundle_quantity(&mut shop, &parent),
+        json!({"inventoryQuantity": 27, "availableForSale": true})
+    );
+    let fired = events(&mut shop);
+    assert!(
+        fired
+            .iter()
+            .filter(|(topic, _)| topic == "inventory_levels/update")
+            .count()
+            >= 2,
+        "{fired:?}"
+    );
+
+    // 28 bundles take 56 socks, of 54: refused for the socks, though the bundle's own item is
+    // not tracked.
+    let refused = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": parent, "quantity": 28}]},
+            "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        refused["data"]["orderCreate"]["userErrors"][0]["code"],
+        json!("INVENTORY_CLAIM_FAILED"),
+        "{refused}"
+    );
+
+    // Shipped: the components' committed units leave the stock.
+    let fulfillment_order = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 1) { nodes { id lineItems(first: 1) { nodes { id } } } } } }",
+        json!({"id": order_id}),
+    )["data"]["order"]["fulfillmentOrders"]["nodes"][0]
+        .clone();
+    let shipped = run(
+        &mut shop,
+        FULFILLMENT_CREATE,
+        json!({"input": {"lineItemsByFulfillmentOrder": [{
+            "fulfillmentOrderId": fulfillment_order["id"],
+            "fulfillmentOrderLineItems": [{"id": fulfillment_order["lineItems"]["nodes"][0]["id"], "quantity": 1}],
+        }]}}),
+    );
+    assert_eq!(
+        shipped["data"]["fulfillmentCreate"]["userErrors"],
+        json!([]),
+        "{shipped}"
+    );
+    assert_eq!(quantity_of(&shop, &tote, "committed"), tote_committed + 2);
+    assert_eq!(quantity_of(&shop, &tote, "on_hand"), tote_on_hand - 1);
+    assert_eq!(quantity_of(&shop, &socks, "committed"), socks_committed + 4);
+    assert_eq!(quantity_of(&shop, &socks, "on_hand"), socks_on_hand - 2);
+
+    // Cancelled with a restock: what had not shipped goes back to `available`.
+    let cancelled = run(
+        &mut shop,
+        ORDER_CANCEL,
+        json!({"id": order_id, "restock": true, "refund": false}),
+    );
+    assert_eq!(
+        cancelled["data"]["orderCancel"]["orderCancelUserErrors"],
+        json!([]),
+        "{cancelled}"
+    );
+    assert_eq!(quantity_of(&shop, &tote, "committed"), tote_committed);
+    assert_eq!(quantity_of(&shop, &tote, "available"), tote_available - 1);
+    assert_eq!(quantity_of(&shop, &socks, "committed"), socks_committed);
+    assert_eq!(quantity_of(&shop, &socks, "available"), socks_available - 2);
+    assert_eq!(
+        bundle_quantity(&mut shop, &parent),
+        json!({"inventoryQuantity": 29, "availableForSale": true})
+    );
+    // The socks' own variant reads the same stock.
+    let socks_read = run(
+        &mut shop,
+        "query($id: ID!) { productVariant(id: $id) { inventoryQuantity } }",
+        json!({"id": socks_variant}),
+    );
+    assert_eq!(
+        socks_read["data"]["productVariant"]["inventoryQuantity"],
+        json!(socks_available - 2)
+    );
+}

@@ -415,11 +415,15 @@ pub fn stock_of(state: &ShopState, products: &[String]) -> Vec<(String, bool)> {
         .collect()
 }
 
-/// Whether a tracked variant has stock (an untracked one always has).
+/// Whether a tracked variant has stock (an untracked one always has; a bundle has while its
+/// components make one).
 fn in_stock(state: &ShopState, variant: &str) -> bool {
     let Some(record) = state.get(variant) else {
         return false;
     };
+    if let Some((quantity, _)) = super::bundles::bundle_inventory(state, variant) {
+        return quantity.is_none_or(|quantity| quantity > 0);
+    }
     let tracked = field(record, "inventoryItem")
         .and_then(|item| state.get(item))
         .and_then(|item| item.get("tracked"))
