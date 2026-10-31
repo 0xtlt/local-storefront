@@ -366,6 +366,7 @@ pub fn config_from_settings(settings: &CheckoutSettings) -> CheckoutConfig {
             .discounts
             .iter()
             .map(|discount| DiscountConfig {
+                id: Some(discount.id),
                 function: discount.function.clone(),
                 title: discount.title.clone(),
                 code: discount.code.clone(),

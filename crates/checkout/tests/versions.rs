@@ -16,6 +16,7 @@ fn run(app: &lsf_checkout::app::App, lines: &[(u64, u32)]) -> CheckoutResult {
     let session = session(&store, lines);
     let mut config = config();
     config.discounts = vec![DiscountConfig {
+        id: None,
         function: "volume-discount".to_string(),
         title: "Volume".to_string(),
         code: None,

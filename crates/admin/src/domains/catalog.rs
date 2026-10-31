@@ -170,7 +170,8 @@ pub fn seed(seed: &mut Seed) {
         .iter()
         .map(selling_plan_group_gid)
         .collect();
-    for product in &store.products {
+    // The products not on the storefront too: the Admin API lists them, with their status.
+    for product in store.products.iter().chain(&store.unlisted_products) {
         seed_product(seed, product, &locations, &selling_plan_groups);
     }
     let mut collections = Vec::new();
@@ -186,14 +187,26 @@ pub fn seed(seed: &mut Seed) {
     for card in &store.gift_cards {
         seed_gift_card(seed, card);
     }
-    let products: Vec<String> = store.products.iter().map(product_gid).collect();
+    let published: Vec<String> = store
+        .products
+        .iter()
+        .chain(&store.unlisted_products)
+        .filter(|product| product.published)
+        .map(product_gid)
+        .collect();
     seed.insert(json!({
         "__typename": "Publication",
         "id": online_store_publication_gid(),
         "name": "Online Store",
-        "products": products,
+        "products": published,
         "collections": collections,
     }));
+    let products: Vec<String> = store
+        .products
+        .iter()
+        .chain(&store.unlisted_products)
+        .map(product_gid)
+        .collect();
     for product in &products {
         refresh_product(&mut seed.state, product);
     }
@@ -369,10 +382,11 @@ fn seed_product(
         "vendor": product.vendor,
         "productType": product.product_type,
         "tags": product.tags,
-        "status": "ACTIVE",
+        "status": product.status.admin_name(),
         "createdAt": created,
         "updatedAt": updated,
-        "publishedAt": date_time(product.published_at),
+        // When the product was published on the Online Store: none when it is not.
+        "publishedAt": product.published.then(|| date_time(product.published_at)),
         "templateSuffix": optional(product.template_suffix.as_deref()),
         "giftCardTemplateSuffix": null,
         "isGiftCard": product.gift_card,
@@ -383,7 +397,10 @@ fn seed_product(
         "media": media,
         "images": images,
         "seo": {"title": null, "description": null},
-        "onlineStoreUrl": seed.url(&format!("/products/{}", product.handle)),
+        // Shopify gives no URL to a product that is not on the Online Store.
+        "onlineStoreUrl": product
+            .listed()
+            .then(|| seed.url(&format!("/products/{}", product.handle))),
         "onlineStorePreviewUrl": seed.url(&format!("/products/{}", product.handle)),
         "collections": collections,
         "sellingPlanGroups": groups,

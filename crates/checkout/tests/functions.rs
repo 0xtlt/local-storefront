@@ -17,6 +17,7 @@ fn discount(
     settings_json: serde_json::Value,
 ) -> DiscountConfig {
     DiscountConfig {
+        id: None,
         function: function.to_string(),
         title: title.to_string(),
         code: code.map(str::to_string),
@@ -1357,6 +1358,31 @@ fn the_input_builder_gets_the_context_of_each_run() {
     assert_eq!(id, "gid://shopify/Validation/4");
     assert_eq!(*kind, lsf_checkout::input::OwnerKind::Validation);
     assert!(triggering.is_none());
+
+    // A discount with an id of its own (the one the Admin API gave it) is read under it.
+    config.discounts[0].id = Some(7);
+    let seen_with_id = std::cell::RefCell::new(Vec::new());
+    let build = |_: &str,
+                 _: Option<&serde_json::Value>,
+                 ctx: &lsf_checkout::input::InputContext| {
+        seen_with_id.borrow_mut().push(ctx.owner.id.clone());
+        Ok(
+            json!({"cart": {"lines": [], "deliveryGroups": [], "cost": {"subtotalAmount": {"amount": "1.00"}}}}),
+        )
+    };
+    compute_with(
+        &app,
+        &Selection::only(["volume-discount"]),
+        &store,
+        &session,
+        &state,
+        &config,
+        &build,
+    );
+    assert_eq!(
+        seen_with_id.into_inner().first().map(String::as_str),
+        Some("gid://shopify/DiscountCodeNode/7")
+    );
 }
 
 #[test]
@@ -1366,6 +1392,7 @@ fn the_metafield_of_the_variables_must_be_json() {
     let session = session(&store, &[(TEE, 1)]);
     let mut config = config();
     config.discounts = vec![DiscountConfig {
+        id: None,
         function: "volume-discount".into(),
         title: "Broken".into(),
         code: None,

@@ -1373,6 +1373,86 @@ mod tests {
     }
 
     #[test]
+    fn only_active_published_products_are_on_the_storefront() {
+        let (store, diagnostics) = inline(serde_json::json!({
+            "products": [
+                {"title": "Draft dress", "price": 100, "status": "draft",
+                 "variants": [{"sku": "DRAFT-1"}], "collections": ["frontpage"]},
+                {"title": "Old hat", "price": 100, "status": "archived"},
+                {"title": "Hidden mug", "price": 100, "published": false},
+                {"title": "Live candle", "price": 100, "status": "active", "published": true}
+            ],
+            "collections": [{"title": "Picks", "products": ["draft-dress", "live-candle"]}],
+            "menus": {"picks": {"links": [{"title": "Dress", "product": "draft-dress"}]}},
+            "customers": [{"email": "ann@example.com", "orders": [
+                {"line_items": [{"variant": "DRAFT-1"}, {"variant": "live-candle"}],
+                 "returns": [{"line_items": [{"variant": "draft-dress"}]}]}
+            ]}]
+        }));
+        // What names a product that is not on the storefront leaves it out, without an error.
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let unlisted: Vec<(&str, model::ProductStatus, bool)> = store
+            .unlisted_products
+            .iter()
+            .map(|product| (product.handle.as_str(), product.status, product.published))
+            .collect();
+        assert_eq!(
+            unlisted,
+            [
+                ("draft-dress", model::ProductStatus::Draft, true),
+                ("old-hat", model::ProductStatus::Archived, true),
+                ("hidden-mug", model::ProductStatus::Active, false)
+            ]
+        );
+        assert!(store.product_by_handle("draft-dress").is_none());
+        assert!(store.product_by_handle("live-candle").is_some());
+        let picks = store.collection_by_handle("picks").expect("picks");
+        assert_eq!(picks.products.len(), 1);
+        assert!(
+            !store
+                .collection_by_handle("frontpage")
+                .expect("frontpage")
+                .products
+                .iter()
+                .any(|index| store.products[*index].handle == "draft-dress")
+        );
+        let link = &store.menu("picks").expect("menu").links[0];
+        assert_eq!(
+            (link.url.as_str(), &link.target),
+            ("/products/draft-dress", &crate::store::LinkTarget::Http)
+        );
+        let order = &store
+            .customer_by_email("ann@example.com")
+            .expect("ann")
+            .orders[0];
+        assert_eq!(order.line_items.len(), 1);
+        assert!(order.returns[0].lines.is_empty());
+        // The ids of the products on the storefront are those they would have anyway.
+        assert_eq!(
+            store.product_by_handle("live-candle").expect("candle").id,
+            crate::util::stable_id("product", "live-candle")
+        );
+    }
+
+    #[test]
+    fn discounts_have_ids() {
+        let (store, diagnostics) = inline(serde_json::json!({"checkout": {"discounts": [
+            {"function": "volume-discount"},
+            {"function": "volume-discount", "code": "SAVE", "id": 7},
+            {"function": "volume-discount"}
+        ]}}));
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let ids: Vec<u64> = store.checkout.discounts.iter().map(|d| d.id).collect();
+        assert_eq!(ids, [1, 7, 3]);
+        let (_, diagnostics) = inline(serde_json::json!({"checkout": {"discounts": [
+            {"function": "volume-discount"},
+            {"function": "volume-discount", "id": 1}
+        ]}}));
+        assert_eq!(diagnostics.items[0].code, "duplicate_id");
+        assert_eq!(diagnostics.items[0].path, "/checkout/discounts/1/id");
+    }
+
+    #[test]
     fn the_checkout_section_has_defaults() {
         let (store, diagnostics) = load(&DataSource::Demo, &LoadOptions::default());
         assert!(diagnostics.is_empty(), "{diagnostics}");

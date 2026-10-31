@@ -178,6 +178,7 @@ fn run(kind: Kind, request: Value, fetcher: Option<&dyn Fetcher>) -> Outcome {
     let session = session(&store, &[(TEE, 2)]);
     let mut config = config();
     config.discounts = vec![DiscountConfig {
+        id: None,
         function: "volume-discount".to_string(),
         title: "Remote".to_string(),
         code: None,
