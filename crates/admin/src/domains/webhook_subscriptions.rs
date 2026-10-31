@@ -7,10 +7,9 @@
 //! those of `shopify.app.toml` are the app's and are not listed ("app-specific subscriptions").
 //! A subscription is not a record of the shop: the store data reloading keeps it (it is the
 //! app's setup of the shop), `DELETE /__lsf/admin` forgets it. A subscription requires the
-//! access scope its topic
-//! names (the description of each `WebhookSubscriptionTopic` value, read into
-//! [`crate::webhooks::topics`]); without it, the mutation answers a user error on `topic`, worded
-//! by lsf.
+//! access scope its topic names (the description of each `WebhookSubscriptionTopic` value, read
+//! into [`crate::webhooks::topics`]); without it, the mutation answers a user error on `topic`,
+//! worded by lsf.
 
 use serde_json::{Value, json};
 
