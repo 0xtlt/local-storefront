@@ -553,7 +553,9 @@ How they behave, as shopify.dev documents it:
   commits each component's quantity times the bundle's, `DECREMENT_OBEYING_POLICY` and billing
   attempts check the components, and fulfilling, cancelling with a restock or refunding with a
   restock move the components' units; the bundle's quantity, `availableForSale` and
-  `variants/in_stock` / `variants/out_of_stock` follow. `Product.bundleComponents`, `productComponents`, `productParents` and
+  `variants/in_stock` / `variants/out_of_stock` follow. A component deleted (its variant or its
+  product) leaves its bundles (`products/update`); one with none left no longer
+  `requiresComponents`. `Product.bundleComponents`, `productComponents`, `productParents` and
   `ProductVariant.productParents` read the relation both ways. Nested bundles, more than 30
   components or 3 options are refused, as Shopify documents.
 - **Combined listings**: a product created with `combinedListingRole: PARENT` takes children

@@ -672,6 +672,94 @@ fn a_variant_fixed_bundle_takes_its_price_and_inventory_from_its_components() {
     assert_eq!(shop.count("ProductVariantComponent"), 0);
 }
 
+/// A component deleted (a variant, or its product) leaves its bundles: they read without it,
+/// and a bundle with none left no longer requires components.
+#[test]
+fn a_deleted_component_leaves_its_bundles() {
+    let mut shop = demo();
+    let (gift, parent) = new_product(&mut shop, "Gift set");
+    let tote_product = product(&shop, "canvas-tote-bag");
+    let socks_product = product(&shop, "merino-crew-socks");
+    let tote = variant_ids(&shop, "canvas-tote-bag")[0].clone();
+    let socks = variant_ids(&shop, "merino-crew-socks")[0].clone();
+    assert!(variant_ids(&shop, "merino-crew-socks").len() > 1);
+    ok(
+        &run_with(
+            &mut shop,
+            r#"mutation($input: [ProductVariantRelationshipUpdateInput!]!) { productVariantRelationshipBulkUpdate(input: $input) { userErrors { field message code } } }"#,
+            json!({"input": [{"parentProductId": gift,
+                "productVariantRelationshipsToCreate": [{"id": tote, "quantity": 1}, {"id": socks, "quantity": 2}]}]}),
+        ),
+        "productVariantRelationshipBulkUpdate",
+    );
+    shop.take_events();
+    let read = |shop: &mut crate::state::ShopState| {
+        let answer = run_with(
+            shop,
+            r#"query($id: ID!) { productVariant(id: $id) { requiresComponents inventoryQuantity
+                productVariantComponents(first: 5) { nodes { quantity productVariant { id } } } } }"#,
+            json!({"id": parent}),
+        );
+        assert!(answer.get("errors").is_none(), "{answer}");
+        answer["data"]["productVariant"].clone()
+    };
+
+    // A variant of the socks deleted: the bundle keeps the tote.
+    let deleted = run_with(
+        &mut shop,
+        r#"mutation($product: ID!, $socks: ID!) { productVariantsBulkDelete(productId: $product, variantsIds: [$socks]) { userErrors { field message } } }"#,
+        json!({"product": socks_product, "socks": socks}),
+    );
+    ok(&deleted, "productVariantsBulkDelete");
+    let bundle = read(&mut shop);
+    assert_eq!(bundle["requiresComponents"], json!(true));
+    assert_eq!(
+        bundle["productVariantComponents"]["nodes"],
+        json!([{"quantity": 1, "productVariant": {"id": tote}}])
+    );
+    assert!(
+        topics(&mut shop)
+            .iter()
+            .any(|topic| topic == "products/update"),
+        "the bundle's product is updated"
+    );
+
+    // The tote's product deleted: the bundle has no component left.
+    let deleted = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productDelete(input: {id: $id}) { deletedProductId userErrors { field message } } }"#,
+        json!({"id": tote_product}),
+    );
+    ok(&deleted, "productDelete");
+    let bundle = read(&mut shop);
+    assert_eq!(bundle["requiresComponents"], json!(false));
+    assert_eq!(bundle["productVariantComponents"]["nodes"], json!([]));
+    assert_eq!(shop.count("ProductVariantComponent"), 0);
+
+    // A bundle deleted takes its components along.
+    let (other, other_parent) = new_product(&mut shop, "Sock pair");
+    let socks_left = variant_ids(&shop, "merino-crew-socks")[0].clone();
+    ok(
+        &run_with(
+            &mut shop,
+            r#"mutation($input: [ProductVariantRelationshipUpdateInput!]!) { productVariantRelationshipBulkUpdate(input: $input) { userErrors { field message code } } }"#,
+            json!({"input": [{"parentProductVariantId": other_parent,
+                "productVariantRelationshipsToCreate": [{"id": socks_left, "quantity": 2}]}]}),
+        ),
+        "productVariantRelationshipBulkUpdate",
+    );
+    assert_eq!(shop.count("ProductVariantComponent"), 1);
+    ok(
+        &run_with(
+            &mut shop,
+            r#"mutation($id: ID!) { productDelete(input: {id: $id}) { deletedProductId userErrors { field message } } }"#,
+            json!({"id": other}),
+        ),
+        "productDelete",
+    );
+    assert_eq!(shop.count("ProductVariantComponent"), 0);
+}
+
 #[test]
 fn a_variant_relationship_that_is_wrong_is_refused_and_nothing_changes() {
     let mut shop = demo();

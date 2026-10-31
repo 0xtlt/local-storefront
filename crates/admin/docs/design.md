@@ -1070,7 +1070,10 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
   inventory change of a component refreshes and compares its bundles' products too
   (`bundles::with_parents`, in `move_inventory` and the inventory mutations), and a bundle is in
   stock while its components make one, so it gets its own `variants/in_stock` and
-  `variants/out_of_stock`.
+  `variants/out_of_stock`. A deleted variant (`remove_variant`, `delete_product`) leaves the
+  bundles it was a component of first (`bundles::removing_variants`: their component lists, then
+  their products refreshed, with `products/update`), and a deleted bundle takes its
+  `ProductVariantComponent`s along, so that no component names a variant that is gone.
 - **Combined listings** (`combined_listings.rs`): `combinedListingRole` on the products, the
   parent's children under `lsfCombinedListing` (`[{product, parentVariant}]`), a child's parent
   under `lsfCombinedListingParent`.

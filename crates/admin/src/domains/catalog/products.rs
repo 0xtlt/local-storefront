@@ -885,6 +885,8 @@ pub fn delete_product(state: &mut ShopState, product: &str) {
     }
     let mut metafields = gids(record.get("metafields"));
     let variants = gids(record.get("variants"));
+    // The bundles they were components of no longer list them.
+    super::bundles::removing_variants(state, &variants);
     for variant in &variants {
         if let Some(variant_record) = state.get(variant).cloned() {
             metafields.extend(gids(variant_record.get("metafields")));
