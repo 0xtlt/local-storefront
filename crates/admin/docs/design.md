@@ -236,7 +236,8 @@ for the REST Admin API; `unsupported_version` and `rest_not_served` are the JSON
   days, an online token and a client credentials token 24 hours (`expires_in` 86399). Refresh
   tokens rotate as Shopify documents: the one presented stays usable until the app uses its
   successor, a new grant is acquired, 30 days pass after its first use, or it expires.
-  Uninstalling (`Tokens::uninstall`) revokes every token of the app on the shop.
+  Uninstalling (`Tokens::uninstall`) revokes every token of the app on the shop; the webhooks
+  of the shop stop (see "Events and webhooks").
 - **OAuth**, as Shopify (`auth::oauth`): `GET /admin/oauth/authorize` approves at once and
   redirects to the `redirect_uri` with `code`, `hmac`, `host`, `shop`, `state`, `timestamp`;
   `POST /admin/oauth/access_token` (JSON, form, or query parameters) exchanges the code (once,
@@ -1024,6 +1025,17 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   (`webhookSubscriptionCreate`, per shop, in `webhooks::Registry`, which gives the
   `WebhookSubscription` record of each). Compliance topics (`customers/data_request`,
   `customers/redact`, `shop/redact`) are only triggered on demand.
+- **Uninstall** (`POST /__lsf/admin/uninstall`), as shopify.dev describes it: `app/uninstalled`
+  is delivered through the subscriptions the shop has, then those made with
+  `webhookSubscriptionCreate` are deleted ("When an app uninstalls, Shopify automatically
+  performs cleanup tasks, such as deleting WebhookSubscription objects", `appUninstall`), and
+  `Webhooks::emit` delivers nothing more for the shop (`Registry::is_installed`): the
+  subscriptions of `shopify.app.toml` are "applied uniformly across every shop that installs
+  your app" ("Manage webhook subscriptions"), and stay the app's. Installing it again (the
+  control endpoint, OAuth, a token exchange: `AdminApi::note_installs` after each, the tokens
+  locked) brings them back; the shop's are gone. `shop/redact`, "48 hours after a store owner
+  uninstalls your app" ("Privacy law compliance"), is sent on demand. A trigger is not an
+  event: it is sent whether the app is installed or not.
 - **Where**: a `uri` starting with `/` joins the app URL (`--app-url`, else `application_url`),
   trailing slashes removed, as Shopify's CLI prepends `application_url`; an absolute one under
   `application_url` (or on its origin) moves to `--app-url` when it is given; another HTTP(S) URL

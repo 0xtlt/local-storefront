@@ -447,6 +447,21 @@ impl AdminApi {
         Ok((domain, token))
     }
 
+    /// Tells the webhooks the shops the app was installed on again, as `tokens` has them: the
+    /// subscriptions of `shopify.app.toml` deliver for them again. Called with the tokens locked,
+    /// which come before the registry of the webhooks.
+    fn note_installs(&self, tokens: &Tokens) {
+        let mut registry = self.webhooks.registry();
+        for shop in registry.uninstalled_shops() {
+            if tokens
+                .installed_scopes(&shop, &self.auth.client_id)
+                .is_some()
+            {
+                registry.set_installed(&shop, true);
+            }
+        }
+    }
+
     /// Delivers the webhooks of events of a shop.
     fn emit(&self, state: &ShopState, events: &[Event]) {
         let lookup = ShopLookup(state);
@@ -489,7 +504,11 @@ impl AdminApi {
                 shops: &names,
                 now: Utc::now(),
             };
-            return oauth::handle(request, &cx, &mut lock(&self.tokens));
+            let mut tokens = lock(&self.tokens);
+            let response = oauth::handle(request, &cx, &mut tokens);
+            // An authorization or a token exchange installs the app where it was not.
+            self.note_installs(&tokens);
+            return response;
         }
         let trimmed = path.trim_end_matches('/');
         if trimmed == "/__lsf/admin" || trimmed.starts_with("/__lsf/admin/") {
@@ -739,8 +758,20 @@ impl AdminApi {
         })
     }
 
-    /// `POST /__lsf/admin/uninstall`: the app's tokens on the shop are revoked, and
-    /// `app/uninstalled` is delivered.
+    /// `POST /__lsf/admin/uninstall`: the app's tokens on the shop are revoked, `app/uninstalled`
+    /// is delivered, then the subscriptions the backend made on the shop are deleted and nothing
+    /// more is delivered for it until the app is installed again (`POST /__lsf/admin/install`,
+    /// OAuth, a token exchange), which brings back those of `shopify.app.toml`.
+    ///
+    /// As Shopify does: "When an app uninstalls, Shopify automatically performs cleanup tasks,
+    /// such as deleting WebhookSubscription objects and admin links associated with the app"
+    /// (shopify.dev, `appUninstall`,
+    /// <https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall>), and the
+    /// subscriptions of `shopify.app.toml` are "applied uniformly across every shop that
+    /// installs your app" (<https://shopify.dev/docs/apps/build/webhooks/subscribe>).
+    /// `shop/redact` comes "48 hours after a store owner uninstalls your app"
+    /// (<https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance>): lsf does not
+    /// wait, it is sent on demand (`POST /__lsf/webhooks/trigger`).
     fn uninstall(&self, request: &HttpRequest) -> HttpResponse {
         let body: InstallBody = match body_of(request) {
             Ok(body) => body,
@@ -756,17 +787,29 @@ impl AdminApi {
                 &json!({"error": format!("there is no shop {domain}")}),
             );
         }
-        let revoked = lock(&self.tokens).uninstall(&domain, &self.auth.client_id);
-        self.change_shop(&domain, |state| {
-            // Shopify cancels the app's subscription when it is uninstalled.
-            app_domain::billing::cancel_on_uninstall(state);
-            if let Some(shop) = state.shop_gid().map(str::to_string) {
-                state.emit("app/uninstalled", &shop);
-            }
-        });
+        let (installed, revoked) = {
+            let mut tokens = lock(&self.tokens);
+            let installed = tokens
+                .installed_scopes(&domain, &self.auth.client_id)
+                .is_some();
+            (installed, tokens.uninstall(&domain, &self.auth.client_id))
+        };
+        // From now on only `app/uninstalled` is delivered for the shop, through the
+        // subscriptions it had; an app uninstalled already is not uninstalled again.
+        self.webhooks.registry().set_installed(&domain, false);
+        if installed {
+            self.change_shop(&domain, |state| {
+                // Shopify cancels the app's subscription when it is uninstalled.
+                app_domain::billing::cancel_on_uninstall(state);
+                if let Some(shop) = state.shop_gid().map(str::to_string) {
+                    state.emit("app/uninstalled", &shop);
+                }
+            });
+        }
+        let deleted = self.webhooks.registry().clear(&domain);
         HttpResponse::json(
             200,
-            &json!({"ok": true, "shop": domain, "revoked": revoked}),
+            &json!({"ok": true, "shop": domain, "revoked": revoked, "deletedSubscriptions": deleted}),
         )
     }
 
@@ -814,6 +857,7 @@ impl AdminApi {
                 .installed_scopes(&domain, &self.auth.client_id)
                 .map(<[String]>::to_vec);
             let token = tokens.install(&domain, &self.auth.client_id, &scopes, Utc::now());
+            self.note_installs(&tokens);
             (token, before)
         };
         let changed = before

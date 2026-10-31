@@ -236,14 +236,24 @@ an `X-Lsf-Reason` header saying why in plain words.
 scopes: `POST /__lsf/admin/install {"scopes": "read_orders"}` installs the app again with them
 (the same token now reads less, and `app/scopes_update` is delivered).
 
-**Uninstall.** `POST /__lsf/admin/uninstall` revokes the app's tokens on the shop and delivers
-`app/uninstalled`; `POST /__lsf/admin/install` installs it again.
+**Uninstall.** `POST /__lsf/admin/uninstall` does what Shopify does when a merchant uninstalls
+the app: it revokes the app's tokens on the shop, cancels its subscription, delivers
+`app/uninstalled` (through the subscriptions the shop had), then deletes the subscriptions the
+backend made with `webhookSubscriptionCreate` ("Shopify automatically performs cleanup tasks,
+such as deleting WebhookSubscription objects", [`appUninstall`](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/appUninstall)).
+From then on nothing is delivered for the shop: an order placed at the checkout is recorded, and
+no `orders/create` goes out, not even through `shopify.app.toml`, whose subscriptions apply to
+"every shop that installs your app". Installing it again (`POST /__lsf/admin/install`, OAuth, or a
+token exchange) brings back the subscriptions of `shopify.app.toml`; those of the shop are gone,
+for the backend to make again, as on Shopify. `shop/redact`, which Shopify sends 48 hours after
+an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/redact"}`.
 
 ## Webhooks
 
-- **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, every shop), and
-  those the backend makes with `webhookSubscriptionCreate` (per shop; listed by
-  `webhookSubscriptions`, which, as on Shopify, does not list those of the file). A subscription
+- **Subscriptions**: those of `shopify.app.toml` (`[[webhooks.subscriptions]]`, every shop the
+  app is installed on), and those the backend makes with `webhookSubscriptionCreate` (per shop,
+  deleted when the app is uninstalled; listed by `webhookSubscriptions`, which, as on Shopify,
+  does not list those of the file). A subscription
   made through the Admin API takes `https://` and, locally, `http://` to this machine.
 - **Events**: what the Admin API changes (`productCreate` → `products/create`,
   `inventory_items/create`, `inventory_levels/connect`; `productUpdate` and `tagsAdd` →

@@ -144,6 +144,11 @@ fn subscribe(api: &AdminApi, receiver: &Receiver, topics: &[&str]) {
 
 /// An order of two mugs placed in the local checkout, paid by card.
 fn place_order(api: &AdminApi) -> String {
+    place_order_numbered(api, 1004).expect("the order is recorded")
+}
+
+/// [`place_order`] as the order `number`; `None` when the Admin API did not record it.
+fn place_order_numbered(api: &AdminApi, number: u64) -> Option<String> {
     let store = support::demo_store();
     let jane = store.customer_by_email("jane.doe@example.com").unwrap();
     let mug = store.product_by_handle("ceramic-mug").unwrap();
@@ -199,9 +204,10 @@ fn place_order(api: &AdminApi) -> String {
         zip: Some("97201".into()),
         ..Address::default()
     };
+    let id = format!("gid://shopify/Order/{number}");
     api.record_order(&PlacedOrder {
-        id: Some("gid://shopify/Order/1004"),
-        number: 1004,
+        id: Some(&id),
+        number,
         processed_at: "2026-05-01T09:30:00Z".parse().unwrap(),
         result: &result,
         customer_id: Some(jane.id),
@@ -212,7 +218,6 @@ fn place_order(api: &AdminApi) -> String {
         attributes: &[],
         payment: Some("Credit card"),
     })
-    .expect("the order is recorded")
 }
 
 #[test]
@@ -370,4 +375,145 @@ fn a_checkout_order_is_delivered_then_fulfilled_refunded_and_edited() {
         json!([{"id": lsf_admin::state::parse_gid(lines[1]["id"].as_str().unwrap()).unwrap().1, "delta": 1}])
     );
     assert_eq!(delivered[1].1["line_items"].as_array().unwrap().len(), 2);
+}
+
+/// The deliveries of the log, by topic, oldest first.
+fn delivered_topics(api: &AdminApi) -> Vec<String> {
+    let response = api
+        .handle(&HttpRequest {
+            method: "GET".into(),
+            path: "/__lsf/webhooks".into(),
+            query: Vec::new(),
+            headers: HashMap::new(),
+            body: Vec::new(),
+        })
+        .expect("the log is routed");
+    let log: Value = serde_json::from_slice(&response.body).unwrap();
+    let mut deliveries: Vec<&Value> = log["deliveries"].as_array().unwrap().iter().collect();
+    deliveries.sort_by_key(|delivery| delivery["id"].as_u64());
+    deliveries
+        .iter()
+        .map(|delivery| delivery["topic"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn after_an_uninstall_an_order_delivers_nothing_and_a_reinstall_brings_the_app_subscriptions_back()
+{
+    let receiver = Receiver::start();
+    let app = lsf_checkout::app::load(&support::fixture("app")).unwrap();
+    let api = AdminApi::new(
+        &support::demo_store(),
+        AdminOptions {
+            app: Some(app),
+            client_secret: SECRET.to_string(),
+            app_url: Some(receiver.url.clone()),
+            throttle: ThrottleSetting::Store,
+            delivery: DeliveryOptions {
+                timeout: Duration::from_secs(3),
+                retry_delays: Vec::new(),
+                ..DeliveryOptions::default()
+            },
+            token_seed: Some(7),
+        },
+    );
+    let post = |path: &str, body: Value| {
+        let response = api
+            .handle(&HttpRequest {
+                method: "POST".into(),
+                path: path.into(),
+                query: Vec::new(),
+                headers: HashMap::from([(
+                    "content-type".to_string(),
+                    "application/json".to_string(),
+                )]),
+                body: if body.is_null() {
+                    Vec::new()
+                } else {
+                    body.to_string().into_bytes()
+                },
+            })
+            .expect("routed");
+        assert_eq!(
+            response.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&response.body)
+        );
+        serde_json::from_slice::<Value>(&response.body).unwrap()
+    };
+    let control = |method: &str, path: &str| {
+        assert_eq!(method, "POST");
+        post(path, Value::Null)
+    };
+    // `orders/create` of `shopify.app.toml`, and two subscriptions of the shop.
+    subscribe(&api, &receiver, &["ORDERS_CREATE", "APP_UNINSTALLED"]);
+    place_order_numbered(&api, 1004).unwrap();
+    let topics: Vec<String> = receiver
+        .take(2)
+        .into_iter()
+        .map(|(topic, _)| topic)
+        .collect();
+    assert_eq!(topics, ["orders/create", "orders/create"]);
+
+    // Uninstalled: `app/uninstalled` through the subscription the shop had, which is deleted.
+    let uninstalled = control("POST", "/__lsf/admin/uninstall");
+    assert_eq!(uninstalled["deletedSubscriptions"], json!(2));
+    let (topic, payload) = receiver.next();
+    assert_eq!(topic, "app/uninstalled");
+    assert_eq!(payload["myshopify_domain"], json!(api.default_shop()));
+
+    // An order placed at the checkout now delivers nothing, the app's subscription included.
+    place_order_numbered(&api, 1005).expect("the shop still records it");
+    assert_eq!(
+        delivered_topics(&api),
+        ["orders/create", "orders/create", "app/uninstalled"]
+    );
+    // Uninstalling again says nothing more.
+    let again = control("POST", "/__lsf/admin/uninstall");
+    assert_eq!(again["revoked"], json!(0));
+    assert_eq!(delivered_topics(&api).len(), 3);
+
+    // Installed again: the subscriptions of `shopify.app.toml` deliver, the shop's are gone.
+    control("POST", "/__lsf/admin/install");
+    let listed = graphql(
+        &api,
+        "{ webhookSubscriptions(first: 10) { nodes { topic } } }",
+        json!({}),
+    );
+    assert_eq!(listed["data"]["webhookSubscriptions"]["nodes"], json!([]));
+    place_order_numbered(&api, 1006).unwrap();
+    let (topic, payload) = receiver.next();
+    assert_eq!(topic, "orders/create");
+    assert_eq!(payload["name"], json!("#1006"));
+    assert_eq!(
+        delivered_topics(&api),
+        [
+            "orders/create",
+            "orders/create",
+            "app/uninstalled",
+            "orders/create"
+        ]
+    );
+
+    // A token exchange installs the app as well (App Bridge runs once Shopify installed it).
+    control("POST", "/__lsf/admin/uninstall");
+    place_order_numbered(&api, 1007).unwrap();
+    assert_eq!(delivered_topics(&api).len(), 4);
+    let minted = post("/__lsf/admin/session-token", json!({}));
+    post(
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": minted["token"],
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+        }),
+    );
+    place_order_numbered(&api, 1008).unwrap();
+    let (topic, payload) = receiver.next();
+    assert_eq!(topic, "orders/create");
+    assert_eq!(payload["name"], json!("#1008"));
 }

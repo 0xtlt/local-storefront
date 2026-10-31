@@ -187,13 +187,27 @@ impl Webhooks {
     /// Something changed: a delivery for each subscription of the shop to the topic of the event
     /// (the compliance topics are only sent on demand). Their ids in the log.
     ///
+    /// Nothing is delivered for a shop the app is not installed on ([`Registry::is_installed`])
+    /// but `app/uninstalled`, which says so: the subscriptions of `shopify.app.toml` apply "across
+    /// every shop that installs your app" (shopify.dev, "Manage webhook subscriptions",
+    /// <https://shopify.dev/docs/apps/build/webhooks/subscribe>), and those made through the
+    /// Admin API are deleted on uninstall.
+    ///
     /// The payload is built now, from the record the event names as `lookup` has it: the record
     /// as the change left it. For a `…/delete` topic (and `inventory_levels/disconnect`), the
     /// event's snapshot is used, the record being gone. For `app/scopes_update`, the snapshot is
     /// the installation before the change, whose scopes are `previous`.
     pub fn emit(&self, event: &Event, lookup: &dyn Lookup) -> Vec<u64> {
-        let subscriptions: Vec<Subscription> = self
-            .subscriptions(&event.shop)
+        let subscriptions: Vec<Subscription> = {
+            let registry = self.registry();
+            if !registry.is_installed(&event.shop) && event.topic != "app/uninstalled" {
+                return Vec::new();
+            }
+            let mut all = self.app_subscriptions.clone();
+            all.extend(registry.list(&event.shop).iter().cloned());
+            all
+        };
+        let subscriptions: Vec<Subscription> = subscriptions
             .into_iter()
             .filter(|subscription| {
                 subscription.topic == event.topic && !subscription.is_compliance()
