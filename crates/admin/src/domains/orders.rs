@@ -930,7 +930,9 @@ pub struct PlacedOrder<'a> {
 
 /// Records an order placed in the local checkout: the order, its lines, its fulfillment order,
 /// the transaction of what was paid now; the customer's counters follow. Emits `orders/create`,
-/// then `orders/paid`, as Shopify does for a paid order. Returns the GID of the order.
+/// `order_transactions/create` for the payment, then `orders/paid` when paid in full, as Shopify
+/// does for a paid order. The stock is left as it is: the local checkout keeps the stock of the
+/// data, so that test purchases never sell a product out. Returns the GID of the order.
 pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> String {
     let result = placed.result;
     let id = placed
@@ -1090,6 +1092,15 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Strin
     };
     let order = insert_order(state, &draft);
     state.emit("orders/create", &order);
+    // What Shopify fires for a paid online order: the order, the transaction of the payment,
+    // then `orders/paid`.
+    for transaction in state
+        .get(&order)
+        .map(|record| gids(record.get("transactions")))
+        .unwrap_or_default()
+    {
+        state.emit("order_transactions/create", &transaction);
+    }
     if draft.financial == FinancialStatus::Paid {
         state.emit("orders/paid", &order);
     }

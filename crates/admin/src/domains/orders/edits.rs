@@ -37,6 +37,9 @@ use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::webhooks::payload::{
+    EDIT_ADDITIONS, EDIT_COMMITTED_AT, EDIT_NOTIFY_CUSTOMER, EDIT_REMOVALS, EDIT_STAFF_NOTE,
+};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -131,6 +134,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         "addedDiscountApplications": [],
         "stagedChanges": [],
         "shippingLines": [],
+        "createdAt": state.timestamp(),
         "notificationPreviewTitle": format!("Order {name} has been updated"),
         "notificationPreviewHtml": null,
     })));
@@ -838,6 +842,8 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             .first()
             .map_or("", String::as_str),
     );
+    let mut additions: Vec<Value> = Vec::new();
+    let mut removed: Vec<Value> = Vec::new();
     let mut removals = RefundSpec {
         note: staff_note.clone(),
         ..RefundSpec::default()
@@ -849,6 +855,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                 let current = state.get(item_id).map_or(0, |item| int(item, "currentQuantity"));
                 if units > current {
                     let delta = units - current;
+                    additions.push(json!({"id": item_id, "delta": delta}));
                     if let Some(item) = state.get_mut(item_id) {
                         let ordered = int(item, "quantity") + delta;
                         let unit = field_cents(item, "originalUnitPriceSet");
@@ -869,6 +876,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                         model::commit_inventory(state, &inventory, location.as_deref(), delta);
                     }
                 } else if units < current {
+                    removed.push(json!({"id": item_id, "delta": current - units}));
                     let restock = line.get("restocking").and_then(Value::as_bool) == Some(true);
                     removals.lines.push(RefundLine {
                         line: item_id.to_string(),
@@ -942,6 +950,7 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
                     );
                 }
                 state.insert(item);
+                additions.push(json!({"id": id, "delta": units}));
                 model::push_key(state, &order, "lineItems", &id);
                 let location = line
                     .get("lsfLocation")
@@ -980,8 +989,14 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         item.insert("taxLines".into(), json!(tax_lines));
         item.insert("edited".into(), json!(true));
     }
+    let notify = ctx.arg_bool("notifyCustomer") == Some(true);
     if let Some(record) = state.get_mut(&calculated) {
         record.insert("committed".into(), json!(true));
+        record.insert(EDIT_COMMITTED_AT.into(), json!(now));
+        record.insert(EDIT_NOTIFY_CUSTOMER.into(), json!(notify));
+        record.insert(EDIT_STAFF_NOTE.into(), json!(staff_note));
+        record.insert(EDIT_ADDITIONS.into(), json!(additions));
+        record.insert(EDIT_REMOVALS.into(), json!(removed));
     }
     model::settle_financial_status(state, &order);
     let current_tax = state
@@ -995,7 +1010,8 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         item.insert("currentTaxLines".into(), json!(current_lines));
     }
     state.touch(&order);
-    state.emit("orders/edited", &order);
+    // `orders/edited` is about the edit: its payload is the committed calculated order's.
+    state.emit("orders/edited", &calculated);
     state.emit("orders/updated", &order);
     Ok(payload(
         json!({"order": order, "successMessages": []}),

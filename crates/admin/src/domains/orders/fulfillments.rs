@@ -50,6 +50,7 @@ use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{ShopState, parse_gid, value};
+use crate::webhooks::payload::FULFILLMENT_ORDER_EVENT;
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -511,6 +512,7 @@ pub fn split_off(
     record.insert("lineItems".into(), json!(lines));
     record.insert("fulfillments".into(), json!([]));
     record.insert("fulfillmentHolds".into(), json!([]));
+    record.remove(FULFILLMENT_ORDER_EVENT);
     record.insert("createdAt".into(), json!(now));
     record.insert("updatedAt".into(), json!(now));
     if let Some(location) = location {
@@ -787,8 +789,38 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
     })));
     model::push_key(state, &id, "fulfillmentHolds", &hold);
     let was_on_hold = text(&record, "status") == Some("ON_HOLD");
+    let held: Vec<Value> = if picked.is_empty() {
+        the_rest(state, &record, &[])
+    } else {
+        picked.clone()
+    }
+    .iter()
+    .map(|(line, quantity)| json!({"id": line, "quantity": quantity}))
+    .collect();
     if let Some(record) = state.get_mut(&id) {
         record.insert("status".into(), json!("ON_HOLD"));
+        record.insert(
+            FULFILLMENT_ORDER_EVENT.into(),
+            json!({"hold": hold, "remaining": remaining, "lineItems": held}),
+        );
+    }
+    if let Some(remaining) = &remaining {
+        let split: Vec<Value> = state
+            .get(remaining)
+            .map(|record| gids(record.get("lineItems")))
+            .unwrap_or_default()
+            .iter()
+            .map(|line| {
+                let quantity = state.get(line).map_or(0, |item| int(item, "totalQuantity"));
+                json!({"id": line, "quantity": quantity})
+            })
+            .collect();
+        if let Some(record) = state.get_mut(remaining) {
+            record.insert(
+                FULFILLMENT_ORDER_EVENT.into(),
+                json!({"original": id, "lineItems": split, "replacement": null}),
+            );
+        }
     }
     state.touch(&id);
     if let Some(order) = model::order_of(state, &id) {
@@ -955,6 +987,16 @@ fn move_fulfillment_order(
             model::commit_inventory(state, &item, Some(&location), units);
         }
     }
+    let requested: Vec<Value> = picked
+        .iter()
+        .map(|(line, quantity)| json!({"id": line, "quantity": quantity}))
+        .collect();
+    if let Some(record) = state.get_mut(&moved) {
+        record.insert(
+            FULFILLMENT_ORDER_EVENT.into(),
+            json!({"original": id, "source": from, "lineItems": requested}),
+        );
+    }
     model::refresh_order(state, &order);
     state.emit("fulfillment_orders/moved", &moved);
     Ok(payload(
@@ -997,6 +1039,10 @@ fn cancel_fulfillment_order(
     if let Some(record) = state.get_mut(&id) {
         record.insert("status".into(), json!("CLOSED"));
         record.insert("requestStatus".into(), json!("CANCELLATION_ACCEPTED"));
+        record.insert(
+            FULFILLMENT_ORDER_EVENT.into(),
+            json!({"replacement": replacement}),
+        );
     }
     if let Some(lines) = state.get(&id).map(|record| gids(record.get("lineItems"))) {
         for line in lines {

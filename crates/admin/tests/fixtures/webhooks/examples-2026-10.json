@@ -781,6 +781,175 @@
         }
       }
     },
+    "fulfillment_events/create": {
+      "id": 1234567,
+      "fulfillment_id": 123456,
+      "status": "in_transit",
+      "message": "Item is now in transit",
+      "happened_at": "2021-12-31T19:00:00-05:00",
+      "city": null,
+      "province": null,
+      "country": "CA",
+      "zip": null,
+      "address1": null,
+      "latitude": null,
+      "longitude": null,
+      "shop_id": 548380009,
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "updated_at": "2021-12-31T19:00:00-05:00",
+      "estimated_delivery_at": null,
+      "order_id": 820982911946154508,
+      "admin_graphql_api_id": "gid://shopify/FulfillmentEvent/1234567"
+    },
+    "fulfillment_holds/added": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1"
+      },
+      "fulfillment_hold": {
+        "id": "gid://shopify/FulfillmentHold/1",
+        "reason": "other",
+        "reason_notes": "Waiting for some more details from the customer before this can be fulfilled.",
+        "held_by_requesting_app": false,
+        "handle": "test_handle",
+        "held_by_app": {
+          "id": "gid://shopify/App/12345"
+        }
+      }
+    },
+    "fulfillment_holds/released": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1"
+      },
+      "fulfillment_hold": {
+        "id": "gid://shopify/FulfillmentHold/1",
+        "reason": "other",
+        "reason_notes": "Waiting for some more details from the customer before this can be fulfilled.",
+        "held_by_requesting_app": false,
+        "handle": "fulfillment_hold_1",
+        "held_by_app": {
+          "id": "gid://shopify/App/12345"
+        }
+      }
+    },
+    "fulfillment_orders/cancelled": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "cancelled"
+      },
+      "replacement_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/2",
+        "status": "open"
+      }
+    },
+    "fulfillment_orders/hold_released": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open"
+      }
+    },
+    "fulfillment_orders/moved": {
+      "original_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "closed",
+        "assigned_location_id": "gid://shopify/Location/0"
+      },
+      "moved_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/2",
+        "status": "open",
+        "assigned_location_id": "gid://shopify/Location/1"
+      },
+      "destination_location_id": "gid://shopify/Location/1",
+      "fulfillment_order_line_items_requested": [
+        {
+          "id": "gid://shopify/FulfillmentOrderLineItem/1",
+          "quantity": 1
+        }
+      ],
+      "source_location": {
+        "id": "gid://shopify/Location/0"
+      }
+    },
+    "fulfillment_orders/placed_on_hold": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "on_hold",
+        "fulfillment_holds": [
+          {
+            "id": "gid://shopify/FulfillmentHold/1",
+            "reason": "other",
+            "reason_notes": "example",
+            "held_by_requesting_app": false,
+            "handle": "example-hold-1",
+            "held_by_app": {
+              "id": "gid://shopify/App/12345"
+            }
+          },
+          {
+            "id": "gid://shopify/FulfillmentHold/2",
+            "reason": "inventory_out_of_stock",
+            "reason_notes": "Stacked hold",
+            "held_by_requesting_app": false,
+            "handle": "example-hold-2",
+            "held_by_app": {
+              "id": "gid://shopify/App/12345"
+            }
+          }
+        ]
+      },
+      "remaining_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/2",
+        "status": "open"
+      },
+      "held_fulfillment_order_line_items": [
+        {
+          "id": "gid://shopify/FulfillmentOrderLineItem/3",
+          "quantity": 4
+        }
+      ],
+      "created_fulfillment_hold": {
+        "id": "gid://shopify/FulfillmentHold/1",
+        "reason": "other",
+        "reason_notes": "example",
+        "held_by_requesting_app": false,
+        "handle": "example-hold-1",
+        "held_by_app": {
+          "id": "gid://shopify/App/12345"
+        }
+      }
+    },
+    "fulfillment_orders/rescheduled": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "scheduled",
+        "fulfill_at": "2021-12-31T19:00:00-05:00"
+      }
+    },
+    "fulfillment_orders/scheduled_fulfillment_order_ready": {
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open"
+      }
+    },
+    "fulfillment_orders/split": {
+      "split_line_items": [
+        {
+          "id": "gid://shopify/FulfillmentOrderLineItem/1",
+          "quantity": 1
+        }
+      ],
+      "fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/1",
+        "status": "open"
+      },
+      "remaining_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/2",
+        "status": "open"
+      },
+      "replacement_fulfillment_order": {
+        "id": "gid://shopify/FulfillmentOrder/3",
+        "status": "open"
+      }
+    },
     "fulfillments/create": {
       "id": 123456,
       "order_id": 820982911946154508,
@@ -1537,6 +1706,54 @@
           "status": "draft"
         }
       }
+    },
+    "order_transactions/create": {
+      "id": 120560818172775265,
+      "order_id": 820982911946154508,
+      "kind": "authorization",
+      "gateway": "visa",
+      "status": "success",
+      "message": null,
+      "created_at": "2021-12-31T19:00:00-05:00",
+      "test": false,
+      "authorization": "1001",
+      "location_id": null,
+      "user_id": null,
+      "parent_id": null,
+      "processed_at": null,
+      "device_id": null,
+      "error_code": null,
+      "source_name": "web",
+      "payment_details": {
+        "credit_card_bin": null,
+        "avs_result_code": null,
+        "cvv_result_code": null,
+        "credit_card_number": "•••• •••• •••• 1234",
+        "credit_card_company": "Visa",
+        "buyer_action_info": null,
+        "credit_card_name": null,
+        "credit_card_wallet": null,
+        "credit_card_expiration_month": null,
+        "credit_card_expiration_year": null,
+        "payment_method_name": "visa"
+      },
+      "receipt": {},
+      "amount": "419.95",
+      "currency": "USD",
+      "payment_id": "#9999.1",
+      "total_unsettled_set": {
+        "presentment_money": {
+          "amount": "419.95",
+          "currency": "USD"
+        },
+        "shop_money": {
+          "amount": "419.95",
+          "currency": "USD"
+        }
+      },
+      "manual_payment_gateway": true,
+      "amount_rounding": null,
+      "admin_graphql_api_id": "gid://shopify/OrderTransaction/120560818172775265"
     },
     "orders/cancelled": {
       "id": 820982911946154508,
@@ -2716,6 +2933,45 @@
     },
     "orders/delete": {
       "id": 820982911946154508
+    },
+    "orders/edited": {
+      "order_edit": {
+        "id": 78912328793123782,
+        "app_id": null,
+        "created_at": "2021-12-31T19:00:00-05:00",
+        "committed_at": "2021-12-31T19:00:00-05:00",
+        "notify_customer": false,
+        "order_id": 820982911946154508,
+        "staff_note": "",
+        "user_id": null,
+        "line_items": {
+          "additions": [
+            {
+              "id": 78643924236718232,
+              "delta": 1
+            }
+          ],
+          "removals": [
+            {
+              "id": 487817672276298554,
+              "delta": 1
+            }
+          ]
+        },
+        "discounts": {
+          "line_item": {
+            "additions": [],
+            "removals": []
+          }
+        },
+        "shipping_lines": {
+          "additions": [],
+          "removals": []
+        },
+        "shipping_address": {
+          "changed": false
+        }
+      }
     },
     "orders/fulfilled": {
       "id": 820982911946154508,
@@ -5738,6 +5994,90 @@
           "admin_graphql_api_id": "gid://shopify/OrderTransaction/839212141605670573"
         }
       ]
+    },
+    "returns/approve": {
+      "id": 123134564567890,
+      "admin_graphql_api_id": "gid://shopify/Return/123134564567890",
+      "status": "open",
+      "order": {
+        "id": 4783296544821,
+        "admin_graphql_api_id": "gid://shopify/Order/4783296544821"
+      },
+      "total_return_line_items": 2,
+      "name": null,
+      "return_line_items": [],
+      "return_shipping_fees": [
+        {
+          "id": 987654321547866,
+          "admin_graphql_api_id": "gid://shopify/ReturnShippingFee/987654321547866",
+          "price": {
+            "shop_money": {
+              "amount": "10.0",
+              "currency_code": "XXX"
+            },
+            "presentment_money": {
+              "amount": "10.0",
+              "currency_code": "XXX"
+            }
+          }
+        }
+      ],
+      "exchange_line_items": [
+        {
+          "id": 987654321283476,
+          "admin_graphql_api_id": "gid://shopify/ExchangeLineItem/987654321283476",
+          "line_item": null
+        }
+      ],
+      "total_exchange_line_items": 1,
+      "requested_at": "2026-01-15T07:00:00-05:00"
+    },
+    "returns/cancel": {
+      "id": 123134564567890,
+      "admin_graphql_api_id": "gid://shopify/Return/123134564567890",
+      "order_id": 4783296544821,
+      "status": "canceled"
+    },
+    "returns/close": {
+      "id": 123134564567890,
+      "admin_graphql_api_id": "gid://shopify/Return/123134564567890",
+      "order_id": 4783296544821,
+      "status": "closed"
+    },
+    "returns/decline": {
+      "id": 123134564567890,
+      "admin_graphql_api_id": "gid://shopify/Return/123134564567890",
+      "status": "declined",
+      "order": {
+        "id": 4783296544821,
+        "admin_graphql_api_id": "gid://shopify/Order/4783296544821"
+      },
+      "decline": {
+        "reason": "return_period_ended",
+        "note": "As discussed on the phone, the 30-day return window has ended."
+      }
+    },
+    "returns/reopen": {
+      "id": 123134564567890,
+      "admin_graphql_api_id": "gid://shopify/Return/123134564567890",
+      "order_id": 4783296544821,
+      "status": "open"
+    },
+    "returns/request": {
+      "id": 123134564567890,
+      "admin_graphql_api_id": "gid://shopify/Return/123134564567890",
+      "status": "requested",
+      "order": {
+        "id": 4783296544821,
+        "admin_graphql_api_id": "gid://shopify/Order/4783296544821"
+      },
+      "total_return_line_items": 2,
+      "name": null,
+      "return_line_items": [],
+      "return_shipping_fees": [],
+      "exchange_line_items": [],
+      "total_exchange_line_items": 0,
+      "requested_at": "2026-01-15T07:00:00-05:00"
     },
     "shop/redact": {
       "shop_id": 954889,

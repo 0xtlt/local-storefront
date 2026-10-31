@@ -1281,3 +1281,74 @@ fn draft_orders_answer_shopifys_errors_and_are_deleted() {
     assert!(fired[0].snapshot.is_some());
     assert_eq!(shop.count("DraftOrderLineItem"), 0);
 }
+
+/// The payload of an event of the shop, as the webhooks build it.
+fn payload_of(shop: &ShopState, topic: &str, gid: &str) -> Value {
+    let record = shop.get(gid).unwrap_or_else(|| panic!("no record {gid}"));
+    crate::webhooks::payload::payload(topic, record, &crate::api::samples::ShopLookup(shop))
+        .unwrap_or_else(|| panic!("no payload for {topic}"))
+}
+
+#[test]
+fn the_events_of_the_family_have_their_payloads() {
+    let mut shop = demo();
+    let id = order_named(&shop, "#1002");
+    let fo = order(&mut shop, &id)["fulfillmentOrders"]["nodes"][0].clone();
+    let fo_id = fo["id"].as_str().unwrap().to_string();
+    run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentOrderHold(id: $id, fulfillmentHold: {reason: INCORRECT_ADDRESS, handle: \"address\"}) { userErrors { message } } }",
+        json!({"id": fo_id}),
+    );
+    let fired = events(&mut shop);
+    let built: Vec<Value> = fired
+        .iter()
+        .map(|(topic, gid)| payload_of(&shop, topic, gid))
+        .collect();
+    assert_eq!(fired[0].0, "fulfillment_holds/added");
+    assert_eq!(built[0]["fulfillment_order"]["id"], json!(fo_id));
+    assert_eq!(built[0]["fulfillment_hold"]["reason"], json!("incorrect_address"));
+    assert_eq!(built[0]["fulfillment_hold"]["handle"], json!("address"));
+    assert_eq!(fired[1].0, "fulfillment_orders/placed_on_hold");
+    assert_eq!(built[1]["fulfillment_order"]["status"], json!("on_hold"));
+    assert_eq!(built[1]["remaining_fulfillment_order"], Value::Null);
+    assert_eq!(built[1]["created_fulfillment_hold"], built[0]["fulfillment_hold"]);
+    run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentOrderReleaseHold(id: $id) { userErrors { message } } }",
+        json!({"id": fo_id}),
+    );
+    events(&mut shop);
+    let other = shop
+        .keys("Location")
+        .find(|location| json!(location) != fo["assignedLocation"]["location"]["id"])
+        .unwrap()
+        .to_string();
+    run(
+        &mut shop,
+        "mutation($id: ID!, $to: ID!) { fulfillmentOrderMove(id: $id, newLocationId: $to) { userErrors { message } } }",
+        json!({"id": fo_id, "to": other}),
+    );
+    let (topic, gid) = events(&mut shop).remove(0);
+    let moved = payload_of(&shop, &topic, &gid);
+    assert_eq!(moved["destination_location_id"], json!(other));
+    assert_eq!(moved["source_location"]["id"], fo["assignedLocation"]["location"]["id"]);
+    assert_eq!(moved["original_fulfillment_order"]["id"], json!(fo_id));
+
+    let (variant, _) = first_variant(&shop);
+    let created = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({"order": {"lineItems": [{"variantId": variant, "quantity": 1}], "transactions": [{"kind": "AUTHORIZATION", "gateway": "bogus", "amountSet": {"shopMoney": {"amount": "3.00", "currencyCode": "EUR"}}}]}}),
+    );
+    assert_eq!(created["data"]["orderCreate"]["userErrors"], json!([]), "{created}");
+    let transaction = events(&mut shop)
+        .into_iter()
+        .find(|(topic, _)| topic == "order_transactions/create")
+        .unwrap();
+    let payload = payload_of(&shop, &transaction.0, &transaction.1);
+    assert_eq!(payload["kind"], json!("authorization"));
+    assert_eq!(payload["gateway"], json!("bogus"));
+    assert_eq!(payload["amount"], json!("3.00"));
+    assert_eq!(payload["payment_details"], Value::Null);
+}

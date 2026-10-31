@@ -19,6 +19,11 @@ mod customers;
 mod orders;
 mod shop;
 
+pub use orders::{
+    EDIT_ADDITIONS, EDIT_COMMITTED_AT, EDIT_NOTIFY_CUSTOMER, EDIT_REMOVALS, EDIT_STAFF_NOTE,
+    FULFILLMENT_ORDER_EVENT,
+};
+
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
@@ -109,6 +114,16 @@ pub const BUILT_TOPICS: &[&str] = &[
     "draft_orders/create",
     "draft_orders/delete",
     "draft_orders/update",
+    "fulfillment_events/create",
+    "fulfillment_holds/added",
+    "fulfillment_holds/released",
+    "fulfillment_orders/cancelled",
+    "fulfillment_orders/hold_released",
+    "fulfillment_orders/moved",
+    "fulfillment_orders/placed_on_hold",
+    "fulfillment_orders/rescheduled",
+    "fulfillment_orders/scheduled_fulfillment_order_ready",
+    "fulfillment_orders/split",
     "fulfillments/create",
     "fulfillments/update",
     "inventory_items/create",
@@ -123,9 +138,11 @@ pub const BUILT_TOPICS: &[&str] = &[
     "metaobjects/create",
     "metaobjects/delete",
     "metaobjects/update",
+    "order_transactions/create",
     "orders/cancelled",
     "orders/create",
     "orders/delete",
+    "orders/edited",
     "orders/fulfilled",
     "orders/paid",
     "orders/partially_fulfilled",
@@ -134,6 +151,12 @@ pub const BUILT_TOPICS: &[&str] = &[
     "products/delete",
     "products/update",
     "refunds/create",
+    "returns/approve",
+    "returns/cancel",
+    "returns/close",
+    "returns/decline",
+    "returns/reopen",
+    "returns/request",
     "shop/redact",
     "shop/update",
 ];
@@ -174,6 +197,21 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "draft_orders/create" | "draft_orders/update" => orders::draft_order(record, lookup),
         "fulfillments/create" | "fulfillments/update" => orders::fulfillment(record, None, lookup),
         "refunds/create" => orders::refund(record, lookup),
+        "order_transactions/create" => orders::order_transaction(record),
+        "orders/edited" => orders::order_edit(record),
+        "fulfillment_events/create" => orders::fulfillment_event(record, lookup),
+        "fulfillment_holds/added" | "fulfillment_holds/released" => {
+            orders::fulfillment_hold(record)
+        }
+        "fulfillment_orders/cancelled"
+        | "fulfillment_orders/hold_released"
+        | "fulfillment_orders/moved"
+        | "fulfillment_orders/placed_on_hold"
+        | "fulfillment_orders/rescheduled"
+        | "fulfillment_orders/scheduled_fulfillment_order_ready"
+        | "fulfillment_orders/split" => orders::fulfillment_order_event(topic, record, lookup),
+        "returns/approve" | "returns/cancel" | "returns/close" | "returns/decline"
+        | "returns/reopen" | "returns/request" => orders::return_event(topic, record),
         "app/uninstalled" | "shop/update" => shop::shop(record, lookup),
         "app/scopes_update" => shop::scopes_update(record, lookup),
         "app_subscriptions/update" => shop::app_subscription(record, lookup),
