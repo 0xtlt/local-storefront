@@ -88,6 +88,12 @@ fn epoch() -> DateTime<Utc> {
         .expect("valid date")
 }
 
+/// The date of an undated product, collection, page or company: one day after
+/// [`epoch`] per entity before it of its kind, so that their order is that of the data.
+pub(super) fn undated(index: usize) -> DateTime<Utc> {
+    epoch() + Duration::days(index as i64)
+}
+
 struct Builder<'a> {
     options: &'a BuildOptions<'a>,
     diagnostics: Diagnostics,
@@ -690,7 +696,7 @@ fn build_products(
             origin,
             &mut seen_handles,
         );
-        let created_default = epoch() + Duration::days(index as i64);
+        let created_default = undated(index);
 
         // Media: `images` is shorthand for image-only `media`.
         if !input.images.is_empty() && !input.media.is_empty() {
@@ -1282,7 +1288,7 @@ fn build_collections(
         let published_at = builder.date(
             &input.published_at,
             &origin.child("published_at"),
-            epoch() + Duration::days(index as i64),
+            undated(index),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), published_at);
         store.collections.push(Collection {
@@ -1724,7 +1730,7 @@ fn build_pages(builder: &mut Builder<'_>, store: &mut Store, inputs: &[Sourced<m
         let published_at = builder.date(
             &input.published_at,
             &origin.child("published_at"),
-            epoch() + Duration::days(index as i64),
+            undated(index),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), published_at);
         store.pages.push(Page {
@@ -2269,7 +2275,7 @@ fn build_companies(
         let created_at = builder.date(
             &input.created_at,
             &origin.child("created_at"),
-            epoch() + Duration::days(store.companies.len() as i64),
+            undated(store.companies.len()),
         );
         let updated_at = builder.date(&input.updated_at, &origin.child("updated_at"), created_at);
         let mut names = HashSet::new();
