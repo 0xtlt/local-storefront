@@ -270,10 +270,8 @@ fn the_demo_store_seeds_its_content() {
     assert_eq!(metafield["ownerType"], json!("SHOP"));
     let definition = record(&state, metafield["definition"].as_str().unwrap());
     assert_eq!(definition["ownerType"], json!("SHOP"));
-    assert_eq!(
-        definition["type"],
-        json!({"name": "single_line_text_field", "category": "TEXT"})
-    );
+    assert_eq!(definition["type"]["name"], json!("single_line_text_field"));
+    assert_eq!(definition["type"]["category"], json!("TEXT"));
     assert_eq!(definition["metafields"], json!([metafield["id"]]));
 
     assert_eq!(state.count("Page"), store.pages.len());

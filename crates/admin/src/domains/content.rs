@@ -4,6 +4,14 @@
 //!
 //! The records and their ids: the "Records" section of `crates/admin/docs/design.md`.
 
+mod metafield_definitions;
+pub mod metafields;
+#[cfg(test)]
+mod tests;
+pub mod types;
+
+pub use metafields::{owner_type, owner_types_of};
+
 use chrono::Offset;
 use lsf_core::store::{
     Article, Blog, CheckoutMetafield, Link, LinkTarget, Metafield, Metafields, Metaobject, Page,
@@ -516,34 +524,9 @@ fn field_definition(key: &str, kind: &str) -> Value {
     })
 }
 
-/// A `MetafieldDefinitionType`: the name of a metafield type and its category.
+/// A `MetafieldDefinitionType`, by the name of a metafield type.
 fn definition_type(kind: &str) -> Value {
-    let mut definition = json!({"name": kind});
-    if let Some(category) = category(kind) {
-        definition["category"] = json!(category);
-    }
-    definition
-}
-
-/// The category Shopify files a metafield type under (`metafieldDefinitionTypes`).
-fn category(kind: &str) -> Option<&'static str> {
-    let base = kind.strip_prefix("list.").unwrap_or(kind);
-    Some(match base {
-        "single_line_text_field" | "multi_line_text_field" | "rich_text_field" => "TEXT",
-        "number_integer" | "number_decimal" => "NUMBER",
-        "boolean" => "TRUE_FALSE",
-        "date" | "date_time" => "DATE_TIME",
-        "color" => "COLOR",
-        "url" => "URL",
-        "json" => "JSON",
-        "money" => "MONEY",
-        "rating" => "RATING",
-        "link" => "LINK",
-        "language" => "LANGUAGE",
-        base if base.ends_with("_reference") => "REFERENCE",
-        base if lsf_core::drops::metafield::is_measurement(base) => "MEASUREMENT",
-        _ => return None,
-    })
+    types::definition_type(kind)
 }
 
 fn seed_metaobject(
@@ -1143,6 +1126,16 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
             "validationStatus": "ALL_VALID",
             "pinnedPosition": null,
             "useAsCollectionCondition": false,
+            "access": {"admin": "PUBLIC_READ_WRITE", "storefront": "PUBLIC_READ", "customerAccount": "NONE"},
+            "capabilities": {
+                "adminFilterable": {"eligible": true, "enabled": false, "status": "NOT_FILTERABLE"},
+                "analyticsQueryable": {"eligible": true, "enabled": false},
+                "cartToOrderCopyable": {"eligible": true, "enabled": false},
+                "smartCollectionCondition": {"eligible": true, "enabled": false},
+                "uniqueValues": {"eligible": true, "enabled": false},
+            },
+            "constraints": null,
+            "standardTemplate": null,
             "metafields": [],
             "metafieldsCount": 0,
         })));
@@ -1171,12 +1164,24 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
     Some(id)
 }
 
-/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
-/// a mutation" in `crates/admin/docs/design.md`.
-pub fn register(_registry: &mut crate::resolve::Registry) {}
+/// The numeric id of the app (`gid://shopify/App/<id>`), which its reserved namespaces name.
+pub fn app_id(state: &ShopState) -> u64 {
+    state
+        .keys("App")
+        .next()
+        .and_then(crate::state::parse_gid)
+        .map_or(0, |(_, id)| id)
+}
+
+/// The custom resolvers and the mutations of this family: see "Writing a resolver or a
+/// mutation" in `crates/admin/docs/design.md`.
+pub fn register(registry: &mut crate::resolve::Registry) {
+    metafields::register(registry);
+    metafield_definitions::register(registry);
+}
 
 #[cfg(test)]
-mod tests {
+mod seed_tests {
     use super::*;
 
     #[test]
@@ -1200,8 +1205,8 @@ mod tests {
             json_value("list.product_reference", r#"["gid://shopify/Product/1"]"#),
             json!(["gid://shopify/Product/1"])
         );
-        assert_eq!(category("list.weight"), Some("MEASUREMENT"));
-        assert_eq!(category("product_reference"), Some("REFERENCE"));
-        assert_eq!(category("id"), None);
+        assert_eq!(types::category("list.weight"), Some("MEASUREMENT"));
+        assert_eq!(types::category("product_reference"), Some("REFERENCE"));
+        assert_eq!(types::category("id"), Some("TEXT"));
     }
 }

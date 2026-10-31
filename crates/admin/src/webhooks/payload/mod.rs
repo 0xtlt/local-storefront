@@ -15,6 +15,7 @@
 //! is not built rather than sending a body made up for it.
 
 mod catalog;
+mod content;
 mod customers;
 mod orders;
 mod shop;
@@ -120,6 +121,9 @@ pub const BUILT_TOPICS: &[&str] = &[
     "locations/create",
     "locations/delete",
     "locations/update",
+    "metafield_definitions/create",
+    "metafield_definitions/delete",
+    "metafield_definitions/update",
     "metaobjects/create",
     "metaobjects/delete",
     "metaobjects/update",
@@ -178,6 +182,10 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "app/scopes_update" => shop::scopes_update(record, lookup),
         "app_subscriptions/update" => shop::app_subscription(record, lookup),
         "bulk_operations/finish" => shop::bulk_operation(record),
+        "metafield_definitions/create" | "metafield_definitions/update" => {
+            content::metafield_definition(record, lookup)
+        }
+        "metafield_definitions/delete" => content::metafield_definition_deleted(record, lookup),
         "metaobjects/create" | "metaobjects/update" => shop::metaobject(record),
         "metaobjects/delete" => shop::metaobject_deleted(record),
         "discounts/create" | "discounts/update" => shop::discount(record, lookup),

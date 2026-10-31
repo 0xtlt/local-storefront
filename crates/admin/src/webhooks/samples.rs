@@ -73,6 +73,7 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "app" | "shop" => (shop(), Vec::new()),
         "app_subscriptions" => (app_subscription(), Vec::new()),
         "bulk_operations" => (bulk_operation(), Vec::new()),
+        "metafield_definitions" => (metafield_definition(), Vec::new()),
         "metaobjects" => (metaobject(), Vec::new()),
         "discounts" => (discount(), Vec::new()),
         _ => return None,
@@ -857,6 +858,23 @@ fn bulk_operation() -> Value {
         "errorCode": null,
         "createdAt": "2026-10-01T10:20:57-04:00",
         "completedAt": "2024-01-01T07:34:56-05:00",
+    })
+}
+
+fn metafield_definition() -> Value {
+    json!({
+        "__typename": "MetafieldDefinition",
+        "id": "gid://shopify/MetafieldDefinition/1",
+        "namespace": "example-type",
+        "key": "example-key",
+        "name": "Example Field",
+        "description": null,
+        "ownerType": "CUSTOMER",
+        "type": {"name": "single_line_text_field", "category": "TEXT"},
+        "validations": [],
+        "validationStatus": "ALL_VALID",
+        "pinnedPosition": null,
+        "useAsCollectionCondition": false,
     })
 }
 

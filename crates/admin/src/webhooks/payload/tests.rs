@@ -111,6 +111,10 @@ const VALUES: &[(&str, &str)] = &[
         "shop/update",
         ".marketing_email_consent_enabled_at_checkout",
     ),
+    // The example's definition has no id (nor dates): lsf sends the id of the definition, which
+    // `metafield_definitions/delete` names by its GID.
+    ("metafield_definitions/create", ".id"),
+    ("metafield_definitions/update", ".id"),
     // The compliance examples are of another shop and customer (`{shop}.myshopify.com`), and of
     // a data request lsf has no record of.
     ("customers/data_request", "."),
