@@ -1276,6 +1276,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         source_name: Some(source),
         returns: Vec::new(),
         location: state.keys("Location").next().map(str::to_string),
+        presentment: None,
     };
     let order = super::insert_order(state, &draft);
     if let Some(order_record) = state.get_mut(&order) {

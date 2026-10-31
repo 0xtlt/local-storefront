@@ -91,6 +91,9 @@ pub struct OrderDraft {
     pub returns: Vec<(String, Vec<(usize, u32)>)>,
     /// The GID of the location that fulfills the order.
     pub location: Option<String>,
+    /// The currency the order is presented in, when it is not the shop's: the amounts above
+    /// are the shop's, converted to it at its rate ([`model::Presentment`]).
+    pub presentment: Option<model::Presentment>,
 }
 
 /// A line of an [`OrderDraft`].
@@ -327,6 +330,7 @@ pub fn seed(seed: &mut Seed) {
                     .map(|sent| (sent.status.clone(), sent.lines.clone()))
                     .collect(),
                 location: location.clone(),
+                presentment: None,
             };
             insert_order(&mut seed.state, &draft);
         }
@@ -800,7 +804,10 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         "purchasingEntity": draft.customer,
         "customerAcceptsMarketing": draft.accepts_marketing,
         "currencyCode": currency,
-        "presentmentCurrencyCode": currency,
+        "presentmentCurrencyCode": draft
+            .presentment
+            .as_ref()
+            .map_or(currency.as_str(), |presentment| presentment.currency.as_str()),
         "taxesIncluded": taxes_included,
         "taxExempt": draft.tax_exempt,
         "estimatedTaxes": false,
@@ -874,7 +881,12 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
         "paymentTerms": null,
         "shopifyProtect": null,
     })));
+    if let Some(presentment) = &draft.presentment {
+        record.insert(model::PRESENTMENT.into(), presentment.to_value());
+    }
     state.insert(record);
+    // The amounts in the presentment currency, on the order and its records.
+    model::apply_presentment(state, &order);
     if let Some(customer) = &draft.customer {
         customers::refresh_customer(state, customer);
     }
@@ -1198,6 +1210,7 @@ pub fn record_placed_order(state: &mut ShopState, placed: &PlacedOrder) -> Recor
         source_name: Some("web".to_string()),
         returns: Vec::new(),
         location,
+        presentment: None,
     };
     let order = insert_order(state, &draft);
     record_discounts(state, &order, result);

@@ -42,6 +42,166 @@ pub fn currency(state: &ShopState) -> String {
         .to_string()
 }
 
+/// The key of an order presented in another currency than the shop's ([`Presentment`]).
+pub const PRESENTMENT: &str = "lsfPresentment";
+
+/// The currency an order is presented in, when it is not the shop's (an order a subscription
+/// contract in a presentment currency bills), and the rate from the shop's currency to it in
+/// basis points (`markets::rate_bps`: a market's manual rate, else 1.0). The family computes
+/// every amount in the shop's currency, as `shopMoney`; `presentmentMoney` is that amount
+/// converted at the rate ([`apply_presentment`]). Kept on the order under [`PRESENTMENT`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Presentment {
+    pub currency: String,
+    pub rate_bps: i64,
+}
+
+impl Presentment {
+    /// The presentment of an order, `None` for an order in the shop's currency.
+    pub fn of(order: &Record) -> Option<Presentment> {
+        let kept = order.get(PRESENTMENT)?;
+        Some(Presentment {
+            currency: kept.get("currency")?.as_str()?.to_string(),
+            rate_bps: kept.get("rateBps")?.as_i64().filter(|rate| *rate > 0)?,
+        })
+    }
+
+    pub fn to_value(&self) -> Value {
+        json!({"currency": self.currency, "rateBps": self.rate_bps})
+    }
+
+    /// An amount of the presentment currency in the shop's, in cents, rounded half away from
+    /// zero.
+    pub fn to_shop(&self, cents: i64) -> i64 {
+        rounded_ratio(i128::from(cents) * 10_000, i128::from(self.rate_bps.max(1)))
+    }
+
+    /// An amount of the shop's currency in the presentment currency, in cents.
+    pub fn from_shop(&self, cents: i64) -> i64 {
+        rounded_ratio(i128::from(cents) * i128::from(self.rate_bps), 10_000)
+    }
+}
+
+/// `numerator / denominator` (positive), rounded half away from zero, within `i64`.
+fn rounded_ratio(numerator: i128, denominator: i128) -> i64 {
+    let rounded = (numerator + numerator.signum() * denominator / 2) / denominator;
+    i64::try_from(rounded).unwrap_or(if rounded < 0 { i64::MIN } else { i64::MAX })
+}
+
+/// Rewrites the `presentmentMoney` of every `MoneyBag` of an order presented in another
+/// currency ([`Presentment`]) from its `shopMoney`: on the order and on the records it holds
+/// (its line items, transactions, refunds and their lines, fulfillments, fulfillment orders,
+/// returns, …, followed from the order two records deep). [`refresh_order`] runs it, so that
+/// every flow of the family, which builds its amounts in the shop's currency, leaves the order
+/// in its presentment currency. Writes only what differs; nothing for an order in the shop's
+/// currency.
+pub fn apply_presentment(state: &mut ShopState, order: &str) {
+    let Some(presentment) = state.get(order).and_then(Presentment::of) else {
+        return;
+    };
+    fn present(value: &mut Value, presentment: &Presentment) -> bool {
+        match value {
+            Value::Object(map) => {
+                if let (Some(shop), true) =
+                    (map.get("shopMoney"), map.contains_key("presentmentMoney"))
+                {
+                    let cents = cents(shop.get("amount"));
+                    let converted =
+                        value::money_v2(presentment.from_shop(cents), &presentment.currency);
+                    if map.get("presentmentMoney") != Some(&converted) {
+                        map.insert("presentmentMoney".into(), converted);
+                        return true;
+                    }
+                    return false;
+                }
+                let mut changed = false;
+                for value in map.values_mut() {
+                    changed |= present(value, presentment);
+                }
+                changed
+            }
+            Value::Array(values) => {
+                let mut changed = false;
+                for value in values {
+                    changed |= present(value, presentment);
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+    fn references(record: &Record, into: &mut Vec<String>) {
+        fn walk(value: &Value, into: &mut Vec<String>) {
+            match value {
+                Value::String(text) if text.starts_with("gid://shopify/") => {
+                    if !into.contains(text) {
+                        into.push(text.clone());
+                    }
+                }
+                Value::Array(values) => values.iter().for_each(|value| walk(value, into)),
+                _ => {}
+            }
+        }
+        for (key, value) in record {
+            // What the order holds, not what it points at (its customer, its location).
+            if !matches!(key.as_str(), "customer" | "purchasingEntity" | "app" | "id") {
+                walk(value, into);
+            }
+        }
+    }
+    let mut keys = vec![order.to_string()];
+    let mut depth = 0;
+    let mut frontier = vec![order.to_string()];
+    while depth < 2 && !frontier.is_empty() {
+        let mut next = Vec::new();
+        for key in &frontier {
+            if let Some(record) = state.get(key) {
+                references(record, &mut next);
+            }
+        }
+        next.retain(|key| {
+            !keys.contains(key)
+                && state.get(key).is_some_and(|record| {
+                    // A record of the order: its own (`order`), or one of its line items'.
+                    text(record, "order") == Some(order)
+                        || matches!(
+                            state.type_of(key),
+                            Some(
+                                "LineItem"
+                                    | "RefundLineItem"
+                                    | "FulfillmentLineItem"
+                                    | "FulfillmentOrderLineItem"
+                                    | "ReturnLineItem"
+                                    | "UnverifiedReturnLineItem"
+                                    | "OrderTransaction"
+                                    | "Refund"
+                                    | "Fulfillment"
+                                    | "FulfillmentOrder"
+                                    | "Return"
+                            )
+                        )
+                })
+        });
+        keys.extend(next.iter().cloned());
+        frontier = next;
+        depth += 1;
+    }
+    for key in keys {
+        let Some(mut record) = state.get(&key).cloned() else {
+            continue;
+        };
+        let mut changed = false;
+        for (field, value) in record.iter_mut() {
+            if !field.starts_with("lsf") {
+                changed |= present(value, &presentment);
+            }
+        }
+        if changed && let Some(target) = state.get_mut(&key) {
+            *target = record;
+        }
+    }
+}
+
 /// A decimal amount (`"19.99"`, `"20"`, `"0.125"`) in cents, rounded half away from zero.
 /// `None` when it is not a number.
 pub fn parse_cents(text: &str) -> Option<i64> {
@@ -618,6 +778,7 @@ pub fn refresh_order(state: &mut ShopState, order: &str) {
     {
         super::payments::refresh_terms(state, &terms);
     }
+    apply_presentment(state, order);
 }
 
 /// Recomputes `displayFinancialStatus` from the money of an order, after a change of money (a

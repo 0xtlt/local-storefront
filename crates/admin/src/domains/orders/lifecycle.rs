@@ -1429,6 +1429,7 @@ fn order_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             .map(str::to_string),
         returns: Vec::new(),
         location: location.clone(),
+        presentment: None,
     };
     let order = super::insert_order(state, &draft);
     if let Some(applied) = &applied_code {

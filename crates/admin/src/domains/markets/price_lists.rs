@@ -119,8 +119,9 @@ fn scale(cents: i64, bps: i64) -> i64 {
 
 /// The rate from the shop's currency to `currency`, in basis points: 1.0 for the shop's own,
 /// else the manual rate of a market that sells in it. `None` when lsf has no rate (1.0 is
-/// used).
-fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
+/// used). What every conversion of lsf uses: prices of price lists, contextual prices, the
+/// orders a subscription bills in its currency.
+pub fn rate_bps(state: &ShopState, currency: &str) -> Option<i64> {
     if currency == shop_currency(state) {
         return Some(10_000);
     }

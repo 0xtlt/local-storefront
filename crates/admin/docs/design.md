@@ -1187,7 +1187,8 @@ records, so both are the same shape.
 - **`Order`**: `name`, `number` (1001 for `#1001`), `createdAt`, `processedAt`, `updatedAt`,
   `cancelledAt` (the creation date of a cancelled order, the only date the data has) with
   `cancelReason: OTHER` *(chosen)*, `confirmed`, `test: false`, `email`, `phone`, `customer`,
-  `purchasingEntity`, `customerAcceptsMarketing`, `currencyCode`, `presentmentCurrencyCode`,
+  `purchasingEntity`, `customerAcceptsMarketing`, `currencyCode`, `presentmentCurrencyCode` (the
+  shop's currency, unless the order is presented in another: `lsfPresentment`, see below),
   `taxesIncluded`, `taxExempt`, `note`, `tags: []`, `customAttributes`, `discountCode(s)`,
   `sourceName` (`web` for the checkout's), `lineItems`, `shippingAddress`, `billingAddress`,
   `displayAddress`, `billingAddressMatchesShippingAddress`, `shippingLine`/`shippingLines` (the
@@ -1257,6 +1258,14 @@ orders" in `docs/admin.md`) make and keep:
   `ReturnLineItem`, `CalculatedOrder` (its `CalculatedLineItem`s inline) and `OrderEditSession`
   of the same number, `OrderCancelJobResult`, `DraftOrder` (`#D1`) and `DraftOrderLineItem`,
   `FulfillmentService` and its `Location`. Their ids come from `new_gid`.
+- **Presentment** (`model::Presentment`, an order a subscription contract in another currency
+  bills): the family computes every amount in the shop's currency, as `shopMoney`;
+  `model::apply_presentment`, which `insert_order` and `refresh_order` run, rewrites the
+  `presentmentMoney` of every `MoneyBag` of the order and of the records it holds (two records
+  deep: line items, transactions, refunds and their lines, fulfillments, fulfillment orders,
+  returns) as the shop amount at the order's rate, rounded per amount. A flow that builds its
+  amounts in the shop's currency (a refund, an edit, a return) therefore leaves the order in its
+  presentment currency once it refreshes it. Orders in the shop's currency are untouched.
 - **Stock** (the levels of the catalog, changed in place): an order that claims stock commits it
   (`available` to `committed`: `orderCreate` with a `DECREMENT_…` behaviour, a completed draft
   order, units an edit adds), and each line item records what it committed, by location, and
@@ -1651,7 +1660,11 @@ succeeds and as it refuses (the shop left as it was).
   mutation answers the record pending, inline; the record has the outcome. Its order is made by
   `orders::insert_order` from an `OrderDraft` of the cycle's contract, its stock committed with
   `orders::model::commit_line`, `orders/create`, `order_transactions/create` and `orders/paid`
-  emitted as `orderCreate` emits them.
+  emitted as `orderCreate` emits them. A contract in a presentment currency (another than the
+  shop's that the shop enables) bills an order presented in it: the draft's amounts are the
+  contract's converted to the shop's currency at `markets::rate_bps` (a market's manual rate,
+  else 1.0), and the order keeps its currency and rate (`OrderDraft.presentment`,
+  `lsfPresentment: {currency, rateBps}`, `presentmentCurrencyCode`).
 - **`Job`** of a bulk charge or search: done, the cycles it found under `lsfBillingCycles`.
 - **The emails** lsf does not send are the memo `subscriptions/emails`, which
   `GET /__lsf/admin/subscriptions` reads with the charges (the billing attempts).

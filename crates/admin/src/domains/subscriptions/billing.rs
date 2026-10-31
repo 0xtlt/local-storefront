@@ -235,7 +235,27 @@ fn create_order(
     location: Option<&str>,
 ) -> String {
     let currency_lines = lines(billed);
+    // A contract in another currency than the shop's bills an order presented in it: its
+    // amounts in the shop's currency at lsf's rate (a market's manual rate, else 1.0).
+    let currency = text(billed, "currencyCode").unwrap_or_default().to_string();
+    let presentment =
+        (!currency.is_empty() && currency != orders_model::currency(state)).then(|| {
+            orders_model::Presentment {
+                rate_bps: crate::domains::markets::rate_bps(state, &currency).unwrap_or(10_000),
+                currency: currency.clone(),
+            }
+        });
+    let shop_cents = |cents: i64| {
+        presentment
+            .as_ref()
+            .map_or(cents, |presentment| presentment.to_shop(cents))
+    };
     let (_, _, delivery, delivery_discounts, tax, _) = model::amounts(state, billed);
+    let (delivery, delivery_discounts, tax) = (
+        shop_cents(delivery),
+        shop_cents(delivery_discounts),
+        shop_cents(tax),
+    );
     let customer = text(billed, "customer").map(str::to_string);
     let customer_record = customer
         .as_deref()
@@ -247,8 +267,8 @@ fn create_order(
         .iter()
         .map(|line| {
             let quantity = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
-            let unit = orders_model::cents(line.get("currentPrice"));
-            let discounted = orders_model::cents(line.get("lineDiscountedPrice"));
+            let unit = shop_cents(orders_model::cents(line.get("currentPrice")));
+            let discounted = shop_cents(orders_model::cents(line.get("lineDiscountedPrice")));
             let variant = line
                 .get("variantId")
                 .and_then(Value::as_str)
@@ -411,6 +431,7 @@ fn create_order(
         source_name: Some("subscription_contract".to_string()),
         returns: Vec::new(),
         location: location.map(str::to_string),
+        presentment,
     };
     let order = orders::insert_order(state, &draft);
     let now = state.timestamp();

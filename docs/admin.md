@@ -1081,7 +1081,10 @@ How they behave, as shopify.dev documents it:
   before the answer: the next query reads its outcome. A success creates the order as the orders
   family does (the cycle's lines, discounts, delivery, tax at the store data's rate, a sale of the
   total, `sourceName: subscription_contract`) and commits its stock; the contract lists it and is
-  `lastPaymentStatus: SUCCEEDED`. A failure has Shopify's codes (`CARD_DECLINED`,
+  `lastPaymentStatus: SUCCEEDED`. A contract in a presentment currency bills an order presented
+  in it (`presentmentCurrencyCode`, every `presentmentMoney` in the contract's currency), its
+  `shopMoney` the contract's amounts at a market's manual rate (`baseCurrencyManualRate`), else
+  at 1.0: lsf has no exchange rates. A failure has Shopify's codes (`CARD_DECLINED`,
   `INSUFFICIENT_FUNDS`, `INSUFFICIENT_INVENTORY` with the variants short of stock unless
   `ALLOW_OVERSELLING`, `PAYMENT_METHOD_NOT_SPECIFIED`, `EXPIRED_CARD`, …) in its `state` and the
   deprecated `errorCode`; the contract's status is the app's to change (dunning). The same
