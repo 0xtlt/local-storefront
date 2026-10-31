@@ -11,8 +11,11 @@ use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
 mod collections;
+#[cfg(test)]
+mod extras_tests;
 mod gift_cards;
 mod inventory;
+mod legacy_publications;
 mod locations;
 mod media;
 #[cfg(test)]
@@ -1306,6 +1309,7 @@ pub fn register(registry: &mut crate::resolve::Registry) {
     selling_plans::register(registry);
     publications::register(registry);
     gift_cards::register(registry);
+    legacy_publications::register(registry);
     queries::register(registry);
     registry.field("InventoryLevel", "quantities", level_quantities);
 }
