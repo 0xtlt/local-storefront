@@ -266,7 +266,10 @@ choices are radios named by their title, and the buttons say what they do ("Pay 
 store data, one after the other, whatever the other sessions do, and placed at `now` when the
 data sets it: the thank-you page and the customer account (`/account`) read the same number and
 date on every run. An order lives as long as its session; only the last one a session placed is
-kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every one.
+kept. `DELETE /__lsf/session` resets one session, `DELETE /__lsf/sessions` every one. With an
+app, the [Admin API](admin.md) records each order too, under the same number unless another
+session or the backend took it first (then under its next one, so that its orders have unique
+names).
 
 **In CI, without a browser:**
 

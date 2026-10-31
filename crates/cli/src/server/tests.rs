@@ -8511,19 +8511,25 @@ fn the_checkout_and_the_admin_api_number_orders_as_one() {
         created["data"]["orderCreate"]["order"]["name"], "#1004",
         "{created}"
     );
-    // Two sessions after it: each order has a number of its own, after the Admin API's.
+    // Two sessions after it: each numbers its order after the store data's, whatever the
+    // others do (a test reads the same number every run), and the Admin API, where #1004 is
+    // taken, records each under its next number: no two of its orders share a name.
     let a = place_an_order(&state, "numbered-a", json!({}));
     let b = place_an_order(&state, "numbered-b", json!({}));
-    assert_eq!(a["order"]["number"], "#1005");
-    assert_eq!(b["order"]["number"], "#1006");
-    let recorded = admin_query(
-        &state,
-        &format!(
-            r#"{{ order(id: "{}") {{ name }} }}"#,
-            b["order"]["id"].as_str().unwrap()
-        ),
-    );
-    assert_eq!(recorded["data"]["order"]["name"], "#1006", "{recorded}");
+    assert_eq!(a["order"]["number"], "#1004");
+    assert_eq!(b["order"]["number"], "#1004");
+    let name = |order: &Json| {
+        admin_query(
+            &state,
+            &format!(
+                r#"{{ order(id: "{}") {{ name }} }}"#,
+                order["order"]["id"].as_str().unwrap()
+            ),
+        )["data"]["order"]["name"]
+            .clone()
+    };
+    assert_eq!(name(&a), "#1005");
+    assert_eq!(name(&b), "#1006");
     // Its id is the Admin API's, of the counter `orderCreate` takes ids from: not its number.
     assert_ne!(b["order"]["id"], "gid://shopify/Order/1006");
     let created_id = admin_query(

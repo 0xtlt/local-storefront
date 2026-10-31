@@ -353,9 +353,12 @@ The full list, field by field, is in the design notes of `lsf-admin`
   Admin API's changes.
 - **An order placed at the checkout** is recorded in the Admin API, and the store is not built
   again for it: orders do not sync (the account pages show it from the checkout, as they do
-  without the Admin API). The Admin API numbers it, as it numbers the orders of `orderCreate` and
-  of draft orders: no two orders share a name, and the thank-you page shows that number.
-  Without the Admin API, each session numbers its orders after the store data's, as before. A
+  without the Admin API). Its number is the session's: each session numbers its orders after
+  the store data's, whatever the others do, so a test reads the same number on the thank-you
+  page every run ([testing](testing.md)). The Admin API records it under that number when none
+  of its orders has it, else under its next one, that of `orderCreate` and draft orders: no two
+  orders share a name there. Two sessions, or a session after an `orderCreate`, can so show
+  `#1004` on their thank-you pages while the Admin API names their orders `#1005` and `#1006`. A
   guest whose email is a customer's places the order as that customer, as on Shopify: the
   customer's `numberOfOrders` and `amountSpent` count it.
 - **When the store data refuses a change** (an email it does not take, two variants with the

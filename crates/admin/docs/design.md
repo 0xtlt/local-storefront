@@ -870,11 +870,13 @@ records, so both are the same shape.
 - **Orders of the checkout**: `orders::record_placed_order(state, &PlacedOrder)` takes what the
   server's `place_order` has (the `CheckoutResult`, the time, the customer, the contact, the
   address, the note, the attributes, the payment method's name as the gateway, the company
-  location of a B2B buyer, which makes `purchasingEntity` a `PurchasingCompany`), gives the order
-  the shop's next number (`model::next_order_number`, which `orderCreate` and a completed draft
-  order take too: one numbering; a number or an id given and taken gets a new one), a GID of the
+  location of a B2B buyer, which makes `purchasingEntity` a `PurchasingCompany`), keeps the
+  session's number when no order of the shop has it, else gives the shop's next one
+  (`model::next_order_number`, which `orderCreate` and a completed draft order take too: no two
+  orders share a name; an id given and taken gets a new one too), a GID of the
   shop's counter, as `orderCreate`'s (not made of the number), answers its GID and number
-  (`RecordedOrder`), which the checkout shows on its thank-you page, links a guest whose email
+  (`RecordedOrder`; the checkout links its thank-you page to that GID and shows the session's
+  number, which a test reads the same every run), links a guest whose email
   is a customer's (ignoring case) to that customer, as Shopify does (Help Center behaviour, not
   on shopify.dev), refreshes the customer, and emits `orders/create`,
   `order_transactions/create` for the payment and, when paid in full, `orders/paid`. It commits

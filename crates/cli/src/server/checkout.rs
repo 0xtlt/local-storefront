@@ -1671,12 +1671,12 @@ pub(super) fn place_order(
         return Reply::json(422, &computed.json).cached(cache::PRIVATE);
     }
     let mut order = computed.json;
-    // Without the Admin API, the orders of a session are numbered after the last one of the
-    // store data (#1001 when it has none), one after the other, whatever the other sessions do:
-    // a test reads the same number every time. With it, the Admin API's default shop numbers
-    // them when it records them, as it numbers the orders `orderCreate` makes: one numbering, no
-    // two orders with the same name. They are placed at the frozen clock of the data, if it has
-    // one.
+    // The orders of a session are numbered after the last one of the store data (#1001 when it
+    // has none), one after the other, whatever the other sessions do: a test reads the same
+    // number every time on the thank-you page and the account. The Admin API records the order
+    // under that number when no order of the shop has it, else under its next one (that of
+    // `orderCreate`): no two of its orders share a name. They are placed at the frozen clock of
+    // the data, if it has one.
     let (_, store) = state.snapshot(id);
     let last = store
         .customers
@@ -1714,21 +1714,20 @@ pub(super) fn place_order(
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
         };
-        // Recorded while the cart is taken, so that the thank-you page shows the number the
-        // Admin API gave the order. The Admin API never takes a session's lock: holding this
-        // one while it records cannot deadlock.
-        let (number, order_id) = match record_in_admin(
+        let number = last + entry.checkout.placed + 1;
+        // Recorded while the cart is taken, so that the page links to the order the Admin API
+        // keeps. The Admin API never takes a session's lock: holding this one while it records
+        // cannot deadlock.
+        let order_id = match record_in_admin(
             state,
             &computed.result,
             &computed.checkout,
             &own,
+            number,
             processed_at,
         ) {
-            Some(recorded) => (recorded.number, recorded.id),
-            None => {
-                let number = last + entry.checkout.placed + 1;
-                (number, format!("gid://shopify/Order/{number}"))
-            }
+            Some(recorded) => recorded.id,
+            None => format!("gid://shopify/Order/{number}"),
         };
         order["status"] = json!("completed");
         // The order costs the whole price: what is paid now is received, and what a selling
@@ -1775,14 +1774,16 @@ struct Placed {
     attributes: Vec<(String, String)>,
 }
 
-/// Records a placed order in the default shop of the Admin API, which numbers it and delivers
-/// its `orders/create` webhook (and `orders/paid`, when it is paid in full) to the backend of the
+/// Records a placed order in the default shop of the Admin API, under the session's `number`
+/// unless an order of the shop has it (then under the shop's next one), and delivers its
+/// `orders/create` webhook (and `orders/paid`, when it is paid in full) to the backend of the
 /// app. `None` without the Admin API.
 fn record_in_admin(
     state: &ServerState,
     result: &lsf_checkout::CheckoutResult,
     checkout: &CheckoutState,
     placed: &Placed,
+    number: u64,
     processed_at: chrono::DateTime<chrono::Utc>,
 ) -> Option<lsf_admin::domains::orders::RecordedOrder> {
     let admin = state.admin.as_ref()?;
@@ -1797,7 +1798,7 @@ fn record_in_admin(
         .api
         .record_order(&lsf_admin::domains::orders::PlacedOrder {
             id: None,
-            number: None,
+            number: Some(number),
             processed_at,
             result,
             customer_id: placed.customer_id,
