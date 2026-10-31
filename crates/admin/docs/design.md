@@ -984,9 +984,12 @@ Every id is a function of the data: the same data gives the same records every r
 #### The catalog's mutations (`domains/catalog/`)
 
 One submodule per area, each with its mutations and its custom fields: `products`,
-`product_set`, `variants`, `options`, `media`, `collections`, `inventory`, `locations`,
-`publications`, `selling_plans`, `gift_cards`, and `queries` (sort keys, search filters, the
-fields that take an argument). `records` is what they share: reading inputs, and making
+`product_set`, `variants`, `options`, `media`, `collections`, `collection_sources` (the sources
+of 2026-10 and the shareable ones), `collection_duplicate`, `bundles`, `combined_listings`,
+`feeds` (product feeds), `inventory`, `locations`, `publications`, `legacy_publications` (the
+deprecated `productPublish` and the three others), `selling_plans`, `gift_cards`,
+`gift_card_extras`, `queries` (sort keys, search filters, the fields that take an argument) and
+`extra_queries`. `records` is what they share: reading inputs, and making
 variants, inventory items and levels, option values and metafields in the seed's shapes. Each
 module's header says what shopify.dev documents of its mutations (validations, side effects,
 events) and its sources; `mutation_tests` tests them all over the demo store.
@@ -1011,6 +1014,39 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
 - **Partial updates** (`allowPartialUpdates`, `productCreateMedia`) call `m.keep_changes()`.
 - **Publication events** name no record: `emit_with` with the product (or collection) and the
   publication as snapshot (`publications.rs`).
+- **Collection sources**: a conditions source (`CollectionConditionsSource/<n>`) keeps its
+  inclusion and exclusion inline (`matchType`, `conditions`: inline objects of their type with
+  ids of it, `CollectionSourceInclusionConditionProductTag/<n>`; `selections`: `{product,
+  variantIds}`), `shareable`, `app` (a shareable one's) and the collection that owns it
+  (`lsfCollection`); a sub-collection source (`CollectionSubCollectionsSource/<n>`) its
+  `collections`. A collection lists them in `sources`, and is then a smart collection whose
+  membership is their union (`collection_sources::member`); `apply_rules` evaluates the
+  collections whose sources read other collections after the others. A collection without
+  source records answers the one source it amounts to, built (`legacy_source`: its rules as
+  typed conditions, else its products as selections), and makes it a record when it gets more
+  sources.
+- **Bundles** (`bundles.rs`): a component is a `ProductVariantComponent` record
+  (`productVariant`, `quantity`), which the parent variant lists in `productVariantComponents`
+  (`requiresComponents: true`; the product's `hasVariantsThatRequiresComponents`). A product
+  fixed bundle keeps its components on the product (`bundleComponents`, inline, as the schema
+  reads them; `bundleConsolidatedOptions`) and the input it was made from (`lsfBundle`), which
+  `productBundleUpdate` makes its options and variants again from. `refresh_product` derives a
+  bundle variant's `inventoryQuantity` (the fewest bundles its tracked components make) and
+  `availableForSale` (every component sells), and then refreshes the products of which the
+  product's variants are components (`bundles::refresh_parents`): every change of a component's
+  stock reaches its bundles. The parent's own inventory item is not tracked.
+- **Combined listings** (`combined_listings.rs`): `combinedListingRole` on the products, the
+  parent's children under `lsfCombinedListing` (`[{product, parentVariant}]`), a child's parent
+  under `lsfCombinedListingParent`.
+- **Product feeds** (`feeds.rs`): `ProductFeed` records (`channelId`, `country`, `language`,
+  `status`). A sync event names no record (`<feed GID>?product_id=<n>&sync=<uuid>`): its
+  snapshot is the feed, the product (and a copy, for a deleted one) and the metadata, which
+  `webhooks::payload::feeds` builds the payload from. `catalog::after_mutation` (run by the
+  resolver after `markets::after_mutation`) turns the listing events of a mutation on a
+  channel's publication (`product_listings/*`) and its stock changes into incremental syncs, and
+  recomputes the feeds' statuses when a market, a locale or a channel changed.
+- **The outside world**: the notifications of a gift card are written to its `lsfNotifications`,
+  never sent.
 
 ### Customers (`domains/customers.rs` and `domains/customers/`)
 
@@ -1584,6 +1620,26 @@ succeeds and as it refuses (the shop left as it was).
 - Events without a webhook topic (a draft changed, a calculation made, a challenge opened, a bulk
   job) emit `domains::app::CHANGED`.
 
+### Point of sale (`domains/pos.rs`)
+
+The seed runs last (`pos::seed`): it reads the locations and the staff another family made.
+
+- **`PointOfSaleDevice`**, one per active location that is no fulfillment service:
+  `stable_id("point_of_sale_device", <location GID>)` *(chosen: the Admin API cannot make one)*,
+  `cashDrawer`, `activePaymentSession`, `fiscalDeviceIdentifier: null`, the location under
+  `lsfLocation`, and `lsfDeviceLog` (`[{at, message}]`): what lsf would have pushed to the POS
+  app, which it never sends.
+- **`StaffMember`**, the shop owner, `stable_id("staff_member", "owner")`, when no family seeded
+  staff: `name` "Shop owner" *(chosen)*, the shop's email, `isShopOwner: true`, the primary locale.
+- **Reason codes**: a `CashManagementDefaultReasonCode` per value of its enum and a
+  `CashManagementSystemReasonCode` per system value (`stable_id("cash_management_reason_code",
+  "default/<CODE>" | "system/<CODE>")`); the custom ones the mutation makes.
+- What the mutations make: `CashDrawer` (`name`, `location`, `balance`),
+  `PointOfSaleDevicePaymentSession` (the times, staff, notes, counted and expected amounts, the
+  totals, and `cashActivities` inline: `CashCountActivity` and `CashAdjustmentActivity` with
+  their `__typename`). `cashTrackingSession(s)` read the same sessions as `CashTrackingSession`s
+  of their number. Events have topics no subscription can name (`cash_drawers/create`, …).
+
 ## Events and webhooks (`webhooks`)
 
 A change emits events: `{topic, shop, gid, at, id, snapshot}` (`products/update`, `orders/create`,
@@ -1761,7 +1817,10 @@ Kept here so that nobody invents a field for it; each would need the store data 
 - **Turning a Function off**: a disabled customization or validation is left out of the
   settings, but its Function still runs (only a scenario's `extensions` chooses which run). Two
   owners of one Function share one set of settings.
-- **Products**: SEO, the category, bundles and combined listings, the inventory item's cost and
+- **Products**: SEO, the category, bundle components (a bundle syncs as a product of its own,
+  available while its components are: the checkout sells it as one line, which a cart transform
+  Function may expand, `tests/bundles.rs`) and combined listings, product feeds, the inventory
+  item's cost and
   customs data, media taken from a URL outside `files/`, the recommendations a product of the
   data sets (written again, it gets the default ones), whether an untracked variant is in stock
   at one location and not another (it is wherever it is stocked once its inventory changed).
@@ -1794,6 +1853,8 @@ Kept here so that nobody invents a field for it; each would need the store data 
   consent policies and privacy settings, abandoned checkouts and abandonments, staff assignments:
   none is store data. A merge, an erasure, a data sale opt-out and a WhatsApp consent change
   customers, which sync as customers do (the WhatsApp and the opt-out are not in the data).
+- **Point of sale**: devices, cash drawers, reason codes, payment sessions; collection sources
+  (a collection made of sources is written as a manual one with the products it has).
 - Metafield and metaobject definitions, files (`files/` is on disk), translations, webhooks,
   publications other than the Online Store, inventory transfers and shipments (the stock they
   move syncs), fulfillment orders, fulfillment constraint rules, shipping labels, carrier
@@ -1942,7 +2003,7 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
-| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`, `segments`, `customer_merge`, `privacy`, `marketing`, `analytics`, `staff`, `checkouts`, `outbox`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
+| `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`, `markets`, `subscriptions`, `logistics`, `segments`, `customer_merge`, `privacy`, `marketing`, `analytics`, `staff`, `checkouts`, `outbox`, `pos`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |
 | `auth` | Tokens, OAuth, token exchange, session tokens, access scopes, HMAC. |
 | `webhooks` | Topics, subscriptions and their registry, payloads (by family), signing, the delivery worker and its log, the `/__lsf/webhooks` endpoints, the sample records of `lsf app webhook trigger`. |

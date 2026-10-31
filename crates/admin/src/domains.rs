@@ -14,6 +14,7 @@ pub mod marketing;
 pub mod markets;
 pub mod orders;
 pub mod outbox;
+pub mod pos;
 pub mod privacy;
 pub mod segments;
 pub mod staff;
@@ -37,6 +38,7 @@ pub fn register(registry: &mut Registry) {
     marketing::register(registry);
     markets::register(registry);
     orders::register(registry);
+    pos::register(registry);
     privacy::register(registry);
     segments::register(registry);
     staff::register(registry);

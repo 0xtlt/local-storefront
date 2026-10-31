@@ -68,7 +68,7 @@ const NODE_TYPES: &[&str] = &["DiscountNode", "DiscountAutomaticNode", "Discount
 
 /// The most tags a discount takes (`TOO_MANY_TAGS`: "The number of tags exceeds the maximum of
 /// 5.").
-const MAX_TAGS: usize = 5;
+pub(super) const MAX_TAGS: usize = 5;
 
 /// The most codes `discountRedeemCodeBulkAdd` takes ("Maximum: 250 codes.").
 const MAX_CODES: usize = 250;
@@ -249,7 +249,7 @@ pub fn inner(record: &Record) -> Option<&Record> {
         .and_then(Value::as_object)
 }
 
-fn inner_mut(record: &mut Record) -> Option<&mut Record> {
+pub(super) fn inner_mut(record: &mut Record) -> Option<&mut Record> {
     let field = ["automaticDiscount", "codeDiscount"]
         .into_iter()
         .find(|field| record.contains_key(*field))?;
@@ -283,7 +283,7 @@ pub fn status_at(discount: &Record, now: &str) -> &'static str {
 
 /// The node of the number of a discount GID (`DiscountNode/<n>`, `DiscountAutomaticNode/<n>`,
 /// `DiscountCodeNode/<n>`), among the node types given.
-fn node_of(state: &ShopState, id: &str, types: &[&str]) -> Option<String> {
+pub(super) fn node_of(state: &ShopState, id: &str, types: &[&str]) -> Option<String> {
     let (kind, number) = parse_gid(id)?;
     if !NODE_TYPES.contains(&kind) {
         return None;
@@ -982,7 +982,7 @@ fn summary(discount: &Record) -> String {
 }
 
 /// Normalizes a list of tags: trimmed, no blanks, no repeats.
-fn tags_of(value: Option<&Value>) -> Vec<String> {
+pub(super) fn tags_of(value: Option<&Value>) -> Vec<String> {
     let mut tags: Vec<String> = Vec::new();
     for tag in value
         .and_then(Value::as_array)
@@ -1839,8 +1839,29 @@ fn targets(
         .collect())
 }
 
+/// The nodes of `types` a search query of `discountNodes` matches, in creation order.
+pub(super) fn search_nodes(state: &ShopState, search: &str, types: &[&str]) -> Vec<String> {
+    let query = Query::parse(search);
+    let options = crate::search::Options::utc(state.now());
+    types
+        .iter()
+        .flat_map(|node_type| state.keys(node_type))
+        .filter(|key| {
+            state.get(key).is_some_and(|record| {
+                let searched = Searched {
+                    state,
+                    record,
+                    id: parse_gid(key).map_or(0, |(_, id)| id),
+                };
+                query.matches(&searched, &options)
+            })
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 /// A `Job` that is done: what lsf's bulk discount mutations answer, having done the work.
-fn done_job(state: &ShopState, name: &str) -> Value {
+pub(super) fn done_job(state: &ShopState, name: &str) -> Value {
     json!({
         "id": format!("gid://shopify/Job/{}", value::uuid(&format!("job/{}/{name}/{}", state.domain(), state.events().len()))),
         "done": true,

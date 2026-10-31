@@ -129,6 +129,18 @@ const VALUES: &[(&str, &str)] = &[
     ("selling_plan_groups/update", ".admin_graphql_api_id"),
     ("selling_plan_groups/delete", "."),
     ("selling_plan_groups/*", ".admin_graphql_api_app"),
+    // The examples of a feed have no number in their id and an empty status; the syncs' are of
+    // another shop than the other examples' (`gid://shopify/Shop/12345`). lsf computes no
+    // delivery estimates of a variant.
+    ("product_feeds/create", ".id"),
+    ("product_feeds/create", ".status"),
+    ("product_feeds/update", ".id"),
+    ("product_feeds/update", ".status"),
+    ("product_feeds/*", ".productFeed.shop_id"),
+    (
+        "product_feeds/*",
+        ".product.variants.edges[0].node.deliveryOptionEstimates",
+    ),
     // The example of `out_of_stock` is the same variant with no stock; the sample has some.
     ("variants/out_of_stock", ".inventory_quantity"),
     ("variants/out_of_stock", ".old_inventory_quantity"),

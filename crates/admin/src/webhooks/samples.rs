@@ -176,6 +176,7 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         "domains" => (domain(), Vec::new()),
         "channels" => (channel(), Vec::new()),
         "collection_listings" => (collection_listing(), Vec::new()),
+        "product_feeds" => product_feed_sample(topic),
         "product_listings" | "scheduled_product_listings" => (
             product().with("options", json!([LISTING_OPTION])),
             [variants(), vec![listing_option()]].concat(),
@@ -1781,6 +1782,108 @@ fn channel() -> Value {
         "name": "Example channel",
         "handle": "example-channel",
     })
+}
+
+/// The feed of `product_feeds/*` and, for a sync, the sync with the coffee of the examples and
+/// what it refers to.
+fn product_feed_sample(topic: &str) -> (Value, Vec<Value>) {
+    let feed = json!({
+        "__typename": "ProductFeed",
+        "id": "gid://shopify/ProductFeed/12345",
+        "channelId": "gid://shopify/Channel/123456789",
+        "country": "CA",
+        "language": "EN",
+        "status": "ACTIVE",
+    });
+    if topic == "product_feeds/create" || topic == "product_feeds/update" {
+        return (feed, Vec::new());
+    }
+    let full = topic != "product_feeds/incremental_sync";
+    let occurred = if full {
+        "2022-01-01T00:00:00Z"
+    } else {
+        "2021-12-31T19:00:00-05:00"
+    };
+    let mut metadata = json!({"action": "CREATE", "type": if full { "FULL" } else { "INCREMENTAL" },
+        "occurredAt": occurred});
+    if full {
+        metadata["fullSyncId"] = json!("gid://shopify/ProductFullSync/1123511235");
+        metadata["count"] = json!(12);
+        metadata["createdAt"] = json!("2021-12-31T19:00:00-05:00");
+    }
+    let sync = json!({
+        "__typename": "ProductFeedSync",
+        "feed": feed,
+        "product": "gid://shopify/Product/12345",
+        "metadata": metadata,
+    });
+    let date = "2021-12-31T19:00:00-05:00";
+    let image = json!({
+        "id": "gid://shopify/ProductImage/394",
+        "url": "https://cdn.shopify.com/s/files/1/0262/9117/5446/products/IMG_0022.jpg?v=1675101331",
+        "height": 3024,
+        "width": 4032,
+    });
+    let product = json!({
+        "__typename": "Product",
+        "id": "gid://shopify/Product/12345",
+        "title": "Coffee",
+        "description": "The best coffee in the world",
+        "onlineStoreUrl": "https://example.com/products/coffee",
+        "createdAt": date,
+        "updatedAt": date,
+        "publishedAt": date,
+        "productType": "Coffee",
+        "vendor": "Cawfee Inc",
+        "handle": "",
+        "images": [image],
+        "media": ["gid://shopify/MediaImage/395"],
+        "options": ["gid://shopify/ProductOption/1"],
+        "seo": {"title": "seo title", "description": "seo description"},
+        "tags": ["tag1", "tag2"],
+        "category": {
+            "id": "gid://shopify/TaxonomyCategory/aa-1",
+            "name": "Coffee",
+            "fullName": "Food, Beverages & Tobacco > Beverages > Coffee",
+            "isLeaf": true,
+            "isRoot": false,
+        },
+        "metafields": ["gid://shopify/Metafield/1"],
+        "hasVariantsThatRequiresComponents": false,
+        "variants": ["gid://shopify/ProductVariant/1"],
+    });
+    let others = vec![
+        product,
+        json!({"__typename": "MediaImage", "id": "gid://shopify/MediaImage/395", "mediaContentType": "IMAGE",
+            "image": {"url": image["url"]}}),
+        json!({"__typename": "ProductOption", "id": "gid://shopify/ProductOption/1", "name": "Title",
+            "values": ["151cm", "155cm", "158cm"]}),
+        json!({"__typename": "Metafield", "id": "gid://shopify/Metafield/1", "namespace": "custom",
+            "key": "external_id", "value": "coffee-123", "type": "id"}),
+        json!({"__typename": "Metafield", "id": "gid://shopify/Metafield/2", "namespace": "custom",
+            "key": "external_variant_id", "value": "coffee-151", "type": "id"}),
+        json!({"__typename": "InventoryItem", "id": "gid://shopify/InventoryItem/1", "requiresShipping": true,
+            "measurement": {"weight": {"value": 2.3, "unit": "KILOGRAMS"}}}),
+        json!({
+            "__typename": "ProductVariant",
+            "id": "gid://shopify/ProductVariant/1",
+            "title": "151cm",
+            "price": {"amount": "100.00", "currencyCode": "CAD"},
+            "compareAtPrice": null,
+            "sku": "12345",
+            "barcode": null,
+            "inventoryQuantity": 10,
+            "availableForSale": true,
+            "inventoryItem": "gid://shopify/InventoryItem/1",
+            "inventoryPolicy": "DENY",
+            "createdAt": date,
+            "updatedAt": date,
+            "image": image,
+            "selectedOptions": [{"name": "Title", "value": "151cm"}],
+            "metafields": ["gid://shopify/Metafield/2"],
+        }),
+    ];
+    (sync, others)
 }
 
 /// The collection of `collection_listings/*`, listed on the date of the example.

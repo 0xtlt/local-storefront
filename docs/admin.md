@@ -402,7 +402,7 @@ What the backend changes through the Admin API is what the storefront and the
 | Products: title, handle, description, vendor, type, tags, status and publication, options, variants (price, SKU, barcode, inventory policy, weight), stock per location, media from `files/`, collections and selling plan groups they are in | Orders and what belongs to them (`orderCreate`, draft orders, fulfillments, refunds, returns): the account pages show the orders of the data and of the checkout |
 | Collections: title, handle, description, image, products in order | Discounts that are not app discounts (`DiscountCodeBasic`, …): the local checkout runs Functions only; of an app discount, `combinesWith`, usage limits and every code but the first |
 | Customers: email, names, phone, tags, marketing consent, account state, addresses, their company | Gift cards the Admin API creates (changes to the data's cards sync) |
-| Companies and their locations, pages, blogs and articles, menus, locations, metaobjects, selling plan groups | SEO, product categories, bundles, collection rules (a changed automated collection becomes a manual one) |
+| Companies and their locations, pages, blogs and articles, menus, locations, metaobjects, selling plan groups | SEO, product categories, bundle components and combined listings (a bundle is a product of its own there), collection rules and sources (a changed automated collection becomes a manual one), product feeds, point of sale |
 | Metafields of all of these, of the shop and of markets; markets, their countries and their currency; the published languages | Metafield and metaobject definitions, files, translations, publications other than the Online Store; catalogs, price lists, quantity rules, web presences, channels |
 | Shop: name, email, description, policies | Domains, currency, time zone, plan; turning a Function off (its settings go, it still runs) |
 
@@ -479,13 +479,15 @@ and the checkout (see "Store sync" below).
 | Area | Mutations lsf simulates |
 |---|---|
 | Products | `productCreate`, `productUpdate` (with `media` and `metafields`), `productDelete`, `productSet` (synchronous or not, upsert by `id`, `handle` or `customId`), `productDuplicate`, `productChangeStatus` |
+| Bundles and combined listings | `productBundleCreate`, `productBundleUpdate`, `productVariantRelationshipBulkUpdate`, `combinedListingUpdate` |
 | Variants | `productVariantsBulkCreate` (its `strategy` included), `productVariantsBulkUpdate` (`allowPartialUpdates` included), `productVariantsBulkDelete`, `productVariantsBulkReorder` |
 | Options | `productOptionsCreate` (`LEAVE_AS_IS`, `CREATE`), `productOptionUpdate` (`LEAVE_AS_IS`, `MANAGE`), `productOptionsDelete` (`DEFAULT`, `NON_DESTRUCTIVE`, `POSITION`), `productOptionsReorder` |
 | Media | `productCreateMedia`, `productUpdateMedia`, `productDeleteMedia`, `productReorderMedia`, `productVariantAppendMedia`, `productVariantDetachMedia` |
-| Collections | `collectionCreate`, `collectionUpdate`, `collectionDelete`, `collectionAddProducts`, `collectionAddProductsV2`, `collectionRemoveProducts`, `collectionReorderProducts` |
+| Collections | `collectionCreate`, `collectionUpdate` (with the `sources` of 2026-10), `collectionDelete`, `collectionDuplicate`, `collectionAddProducts`, `collectionAddProductsV2`, `collectionRemoveProducts`, `collectionReorderProducts`, `collectionConditionsSourceCreate`, `collectionConditionsSourceUpdate`, `collectionConditionsSourceDelete` |
 | Inventory | `inventoryAdjustQuantities`, `inventorySetQuantities`, `inventoryMoveQuantities`, `inventorySetOnHandQuantities`, `inventoryActivate`, `inventoryDeactivate`, `inventoryBulkToggleActivation`, `inventoryItemUpdate` |
 | Locations | `locationAdd`, `locationEdit`, `locationActivate`, `locationDeactivate`, `locationDelete`, `locationLocalPickupEnable`, `locationLocalPickupDisable` |
-| Publications | `publishablePublish`, `publishableUnpublish` |
+| Publications | `publishablePublish`, `publishableUnpublish`; the deprecated `productPublish`, `productUnpublish`, `collectionPublish`, `collectionUnpublish` |
+| Product feeds | `productFeedCreate`, `productFeedDelete`, `productFullSync` |
 | Selling plans | `sellingPlanGroupCreate`, `sellingPlanGroupUpdate`, `sellingPlanGroupDelete`, `sellingPlanGroupAddProducts`, `sellingPlanGroupRemoveProducts`, `sellingPlanGroupAddProductVariants`, `sellingPlanGroupRemoveProductVariants`, `productJoinSellingPlanGroups`, `productLeaveSellingPlanGroups`, `productVariantJoinSellingPlanGroups`, `productVariantLeaveSellingPlanGroups` |
 | Gift cards | `giftCardCreate`, `giftCardUpdate`, `giftCardCredit`, `giftCardDebit`, `giftCardDeactivate`, `giftCardProductSet` (`productSet` for a gift card product: its variants untaxed, unshipped, untracked), `giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient` (the email in the shop's outbox, see "Emails") |
 
@@ -525,6 +527,44 @@ How they behave, as shopify.dev documents it:
 - **Asynchronous work is done at once**: `productSet(synchronous: false)` answers a
   `ProductSetOperation` already `COMPLETE`, `productReorderMedia`, `collectionAddProductsV2`,
   `collectionRemoveProducts`, `collectionReorderProducts` a `Job` already `done`.
+- **Bundles**: a fixed bundle's variants have components (`productVariantComponents`, each a
+  variant and a quantity; `requiresComponents` is then `true`). `productVariantRelationshipBulkUpdate`
+  gives a variant its components and prices it (`COMPONENTS_SUM`, `FIXED`, `NONE`);
+  `productBundleCreate` makes a product whose options are the components' option selections
+  (or their `consolidatedOptions`, and a component's `quantityOption`) and whose variants are
+  their combinations, priced at the sum of their components *(lsf's choice)*, and answers a
+  `ProductBundleOperation` already `COMPLETE` (`productOperation` reads it). A bundle's inventory
+  is the bundles its components make ("the minimum of the component's inventory quantities",
+  each divided by the quantity it takes), and it sells while they do: it follows every change of
+  their stock. `Product.bundleComponents`, `productComponents`, `productParents` and
+  `ProductVariant.productParents` read the relation both ways. Nested bundles, more than 30
+  components or 3 options are refused, as Shopify documents.
+- **Combined listings**: a product created with `combinedListingRole: PARENT` takes children
+  with `combinedListingUpdate` (`productsAdded`, `productsEdited`, `productsRemovedIds`,
+  `optionsAndValues` for the order of its options and values): a parent variant per child, the
+  child `CHILD`. `Product.combinedListing` answers the listing for the parent and its children;
+  `products(query: "combined_listing_role:PARENT")` finds the parents.
+- **Collection sources** (2026-10): a collection is the union of its sources: conditions
+  sources (typed conditions on tags, titles, types, vendors, statuses, the variants' prices,
+  compare-at prices, inventory, titles and weights, and metafields of a definition; manual
+  selections; exclusions by tag, type, vendor, collection or selection), sub-collection sources
+  (the members of other collections, one level deep) and an app's shareable sources
+  (`collectionConditionsSourceCreate`; changing one changes every collection that links it,
+  deleting it unlinks it). A collection of the store data reads as the one source it amounts to
+  (`Collection.sources`), and keeps it when it gets more. `collectionDuplicate` copies a
+  collection with its products, sources, metafields and, unless `copyPublications: false`, its
+  publications.
+- **Product feeds**: a feed is a country and a language of the app's channel (`channelCreate`),
+  `ACTIVE` while its market is active and its language published. `productFullSync` (and
+  `channelFullSync`) sends `product_feeds/full_sync` for each product published on the channel,
+  then `product_feeds/full_sync_finish`; a product listed, changed (its stock included) or
+  unlisted on the channel sends `product_feeds/incremental_sync` (`CREATE`, `UPDATE`,
+  `DELETE`); a feed whose status changes `product_feeds/update`. The payloads are in the shop's
+  currency, without delivery estimates.
+- **Gift card products and notifications**: `giftCardProductSet` runs `productSet` for a gift
+  card product (with its `issuanceCurrency`, set at creation only). The notifications are not
+  sent: each is written to the card's `lsfNotifications` (`{at, kind, to, channel}`) and said in
+  `extensions.lsf.notes`.
 - **Media given by URL** is recorded, not downloaded: `image.url` is the URL, the size unknown,
   and the medium is `READY` at once (Shopify answers `UPLOADED` and processes it later).
 - **Queries**: `products` and `productVariants` take their documented sort keys
@@ -539,7 +579,8 @@ How they behave, as shopify.dev documents it:
 `inventory_items/*`, `inventory_levels/update`, `…/connect`, `…/disconnect`, `locations/*`
 (`activate` and `deactivate` included), `variants/in_stock` and `variants/out_of_stock` (a
 variant whose stock crosses zero), `product_publications/create` and `…/delete` (the same for
-`collection_publications`), `selling_plan_groups/*`. A variant, option or media change is a `products/update`; an inventory
+`collection_publications`), `selling_plan_groups/*`, `product_feeds/*` (`create`, `update`,
+`full_sync`, `full_sync_finish`, `incremental_sync`). A variant, option or media change is a `products/update`; an inventory
 change is an `inventory_levels/update` only.
 
 **Store sync**: products (with their status and Online Store publication), variants (price,
@@ -551,15 +592,10 @@ collection stays on the storefront), gift cards the Admin API creates (the store
 card by its code, which Shopify answers once), media from a URL outside `files/`, SEO, the
 category.
 
-**Not simulated yet** (they answer `LSF_NOT_SIMULATED`): the new collection model of 2026-10
-(`collection.sources`, `sourcesToCreate`, `collectionConditionsSourceCreate`, `…Update`,
-`…Delete`), `collectionDuplicate`, `collectionPublish`, `collectionUnpublish`, `productPublish`,
-`productUnpublish`, bundles and combined listings
-(`productBundleCreate`, `productBundleUpdate`, `combinedListingUpdate`,
-`productVariantRelationshipBulkUpdate`), `productFullSync`, `productFeedCreate`,
-`productFeedDelete`. Inputs a simulated
-mutation ignores (`category`, `linkedMetafield`, `combinedListingRole`, a future `publishDate`,
-…) are said in `extensions.lsf.notes`. The collections of the store data are custom collections
+Inputs a simulated mutation ignores (`category`, `linkedMetafield`, a
+future `publishDate`, …) are said in `extensions.lsf.notes`; a product category condition of a
+collection source matches no product (lsf keeps no category), and a variant-scoped source
+(`targetType: VARIANTS`) puts in the products one of whose variants matches. The collections of the store data are custom collections
 for the Admin API (lsf-core resolves their rules into products). `productTags`,
 `productTypes` and `productVendors` page 250 at most, as every connection of lsf (Shopify allows
 1000 to 5000).
@@ -590,7 +626,8 @@ specific webhooks").
   `orderMarkAsPaid`, `orderCapture`, `transactionVoid`, `orderCustomerSet`,
   `orderCustomerRemove`, `orderInvoiceSend` (nothing sent), `orderDelete` (a cancelled or closed
   order).
-- **Fulfillment**: `fulfillmentCreate` (with `lineItemsByFulfillmentOrder`, partial or whole;
+- **Fulfillment**: the deprecated `fulfillmentCreateV2` and `fulfillmentTrackingInfoUpdateV2` run
+  their successors below. `fulfillmentCreate` (with `lineItemsByFulfillmentOrder`, partial or whole;
   fulfillment orders close or stay in progress, the order is fulfilled or partially fulfilled),
   `fulfillmentTrackingInfoUpdate`, `fulfillmentCancel`, `fulfillmentEventCreate`;
   `fulfillmentOrderHold` and `ReleaseHold` (several holds, a hold of some items splits the
@@ -1264,10 +1301,41 @@ gives everyone), web presences (the storefront has one address), channels and th
 market localizations.
 
 **Differences**: lsf has no exchange rates: a price converted to another currency uses the
-market's `baseCurrencyManualRate`, else 1.0, and `extensions.lsf.notes` says so. The product
-feed webhooks of a channel (`product_feeds/*`) are not sent. Where shopify.dev documents a user
+market's `baseCurrencyManualRate`, else 1.0, and `extensions.lsf.notes` says so.
+`channelFullSync` syncs the channel's product feeds (see "Products, collections and inventory"). Where shopify.dev documents a user
 error by its code only, the message is the code's description in the schema or lsf's (the source
 of each is in the code).
+
+### Point of sale: cash drawers and payment sessions
+
+Shopify POS runs on phones and tablets the Admin API cannot make: the seed gives each active
+location one `PointOfSaleDevice`, and the shop its owner (a `StaffMember`) when nothing else
+seeded staff, so that a backend that manages cash works against lsf as against a store with POS.
+
+| Area | Mutations lsf simulates |
+|---|---|
+| Cash drawers | `cashDrawerCreate`, `cashDrawerFindOrCreate`, `cashDrawerUpdate`, `pointOfSaleDeviceAssignToCashDrawer` |
+| Reason codes | `cashManagementReasonCodeCreate`, `cashManagementReasonCodeDelete` |
+| Payment sessions | `pointOfSaleDevicePaymentSessionOpen`, `…Count`, `…Adjust`, `…Close` |
+
+- **Drawers** have a name unique at their location and a `balance` in the shop's currency; a
+  device is assigned to one drawer of its location ("must be in the same location").
+- **Sessions**: a device with a drawer opens one session at a time (`ALREADY_OPEN`). Counts
+  (opening, mid-session, closing) set the drawer's balance to what was counted and record the
+  discrepancy; adjustments add or take cash. `totalDiscrepancy`, `totalAdjustments`,
+  `closingAdjustment`, `cashCountedAtClose` and the activities (`cashActivities`) follow, as do
+  the drawer's `totalAdjustments(dateRange:)` and `totalDiscrepancies`, and
+  `cashManagementLocationSummary`, `cashManagementShopSummary` (sessions opened and closed,
+  balances at the start and the end, net cash). lsf has no POS sales: sales and refunds are 0.
+- **Reason codes**: Shopify's default and system codes are seeded; only custom ones can be
+  deleted.
+- **Queries**: `cashDrawer(s)`, `pointOfSaleDevice`, `pointOfSaleDevicePaymentSession(s)`
+  (`is_open`, `location_id`, `point_of_sale_device_id`, the times), `cashManagementReasonCodes`,
+  the deprecated `cashTrackingSession(s)`, read from the same sessions.
+- **Nothing reaches a device**: what Shopify would push to the POS app (a drawer assigned, a
+  session opened or closed) is written to the device's `lsfDeviceLog` and said in
+  `extensions.lsf.notes`. Shopify has no webhook topic for any of it. Nothing syncs to the
+  storefront.
 
 ### The app: billing, discounts, Functions and bulk operations
 
@@ -1307,7 +1375,8 @@ free shipping, automatic and code) are kept as records: the local checkout runs 
 Also: `discountAutomaticActivate`/`Deactivate`/`Delete` and the code ones (a discount's `status`
 follows its dates), `discountAutomaticBulkDelete`, `discountCodeBulkActivate`/`Deactivate`/
 `Delete` (done at once: their `job` is `done`), `discountRedeemCodeBulkAdd`,
-`discountCodeRedeemCodeBulkDelete`; the queries `discountNodes` (ids `DiscountNode/<n>`),
+`discountCodeRedeemCodeBulkDelete`, `discountBulkTagsAdd`/`Remove` (the discounts of `ids`,
+`search` or a saved search, 5 tags at most each; done at once); the queries `discountNodes` (ids `DiscountNode/<n>`),
 `discountNodesCount`, `discountNode`, `codeDiscountNodeByCode`, `discountCodesCount`,
 `automaticDiscountNodes`, `codeDiscountNodes`, with their sort keys and search filters (`status`,
 `type`, `method`, `title`, `code`, `tag`, the dates, …). Webhooks: `discounts/create`,
@@ -1335,11 +1404,11 @@ does, the next query reads `COMPLETED` with its `url`, `objectCount` and `fileSi
 Cloud Storage ones: a `POST` target (`url` and form `parameters`, the `file` last) or a `PUT`
 target (the default). The bytes stay in the shop until it is reset, for
 `bulkOperationRunMutation` (`stagedUploadPath`) and `fileCreate` (`originalSource`, the
-`resourceUrl`).
+`resourceUrl`). The deprecated `stagedUploadTargetGenerate` (one target) and
+`stagedUploadTargetsGenerate` (`urls`) answer the same targets.
 
 Not simulated yet (they answer `LSF_NOT_SIMULATED`): `appUninstall`, `appRevokeAccessScopes`,
-`discountBulkTagsAdd`/`Remove`, `fulfillmentConstraintRuleCreate`/`Update`/`Delete`, the
-deprecated `stagedUploadTargetGenerate(s)`. Saved searches (`savedSearchId`), credits,
+`fulfillmentConstraintRuleCreate`/`Update`/`Delete`. Saved searches (`savedSearchId`), credits,
 revenue attribution records and frozen subscriptions have no data behind them.
 
 ### App proxy

@@ -1042,6 +1042,8 @@ impl ShopResolver<'_> {
             crate::domains::segments::follow(self.state, start, &|topic| {
                 webhooks.is_some_and(|webhooks| webhooks.subscribes(&shop, topic))
             });
+            // The product feeds' syncs, from the listings (`domains::catalog`).
+            crate::domains::catalog::after_mutation(self.state, start);
             self.state.merge_events_from(start);
             return output;
         }

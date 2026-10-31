@@ -45,13 +45,26 @@ pub fn register(registry: &mut Registry) {
         );
 }
 
-/// The shop's owner, when no staff member is seeded yet.
+/// The GID of the shop's owner, the one staff member the seed makes.
+pub fn owner_gid() -> String {
+    gid("StaffMember", stable_id("staff_member", "account-owner"))
+}
+
+/// The shop's owner, when no staff member is seeded yet: the shop's `accountOwner`, and the staff
+/// member point of sale opens sessions with.
 pub fn seed(seed: &mut Seed) {
     if seed.state.count("StaffMember") > 0 {
         return;
     }
     let shop = &seed.store.shop;
-    let id = gid("StaffMember", stable_id("staff_member", "account-owner"));
+    let id = owner_gid();
+    let handle = seed
+        .state
+        .shop()
+        .and_then(|record| record.get("myshopifyDomain")?.as_str())
+        .and_then(|domain| domain.split('.').next())
+        .unwrap_or_default()
+        .to_string();
     let name = if shop.name.is_empty() {
         "Shop owner".to_string()
     } else {
@@ -72,6 +85,11 @@ pub fn seed(seed: &mut Seed) {
         "accountType": "REGULAR",
         "locale": locale,
         "initials": [name.chars().next().map(|c| c.to_string()).unwrap_or_default()],
+        "privateData": {
+            "accountSettingsUrl": format!("https://admin.shopify.com/store/{handle}/settings/account"),
+            "createdAt": Seed::epoch_string(),
+            "permissions": [],
+        },
     }));
     if let Some(shop_gid) = seed.state.shop_gid().map(str::to_string)
         && let Some(record) = seed.state.get_mut(&shop_gid)

@@ -19,8 +19,9 @@
 //! - `channelDelete` removes it ("All associated product feeds are removed"), with
 //!   `channels/delete`; `channelUpdate` changes its account and specification.
 //! - `channelFullSync` "triggers a full product resync": one trace per country and language it
-//!   covers (or those given), with the id of the sync operation. The product feed webhooks of
-//!   the sync (`product_feeds/full_sync`) are not sent by lsf, which says so.
+//!   covers (or those given), with the id of the sync operation, and the full sync of the
+//!   channel's product feeds of that country and language (`catalog::feeds`:
+//!   `product_feeds/full_sync` per product, then `product_feeds/full_sync_finish`).
 //! - `publishablePublishToCurrentChannel` publishes on "the current Channel associated with the
 //!   requesting app": every channel of the app here (its example answers `publishable`, `shop`
 //!   and `userErrors`, "Resource does not exist" for an unknown id).
@@ -986,14 +987,17 @@ fn full_sync(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     for country in &countries {
         for language in &languages {
             let operation = state.new_gid("ProductFullSync");
+            catalog::feeds::channel_full_sync(state, &channel, country, language, &operation);
             traces
                 .push(json!({"country": country, "language": language, "operationId": operation}));
         }
     }
     state.emit("channels/full_sync", &channel);
-    mutation.note(format!(
-        "channelFullSync: lsf does not send the product feed webhooks of the sync (`product_feeds/full_sync`) of the {products} products of the channel"
-    ));
+    if catalog::feeds::feeds_of(state, &channel).is_empty() {
+        mutation.note(format!(
+            "channelFullSync: the channel has no product feed (`productFeedCreate`): no `product_feeds/full_sync` was sent for its {products} products"
+        ));
+    }
     Ok(payload(json!({"fullSyncTraceInfo": traces}), &[]))
 }
 

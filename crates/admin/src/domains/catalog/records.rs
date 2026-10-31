@@ -385,6 +385,10 @@ pub fn available_for_sale(state: &ShopState, variant: &str) -> bool {
     let Some(record) = state.get(variant) else {
         return false;
     };
+    // A bundle can be sold while its components can.
+    if let Some((_, sellable)) = super::bundles::bundle_inventory(state, variant) {
+        return sellable;
+    }
     let tracked = field(record, "inventoryItem")
         .and_then(|item| state.get(item))
         .and_then(|item| item.get("tracked"))

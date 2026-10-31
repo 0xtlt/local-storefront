@@ -90,6 +90,7 @@ pub fn record_types(topic: &str) -> &'static [&'static str] {
         ("subscription_billing_attempts", _) => &["SubscriptionBillingAttempt"],
         ("disputes", _) => &["ShopifyPaymentsDispute"],
         ("tax_services", _) => &["TaxAppConfiguration"],
+        ("product_feeds", _) => &["ProductFeed"],
         _ => &[],
     }
 }
@@ -136,6 +137,10 @@ pub fn sample(shop: &ShopState, topic: &str, id: Option<&str>) -> Result<Sample,
             DELETED_AT.into(),
             json!(crate::state::value::date_time(Utc::now())),
         );
+    }
+    // A sync of a feed is of one of the products of its channel.
+    if let Some(sync) = crate::domains::catalog::feeds::trigger_snapshot(shop, &record, topic) {
+        record = sync;
     }
     if topic == "app/scopes_update" && !record.contains_key(PREVIOUS_ACCESS_SCOPES) {
         let scopes = record

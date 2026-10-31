@@ -9,9 +9,11 @@
 
 pub mod billing;
 pub mod bulk;
+mod discount_tags;
 pub mod discounts;
 pub mod functions;
 pub mod metafields;
+mod staged_targets;
 pub mod uploads;
 
 use lsf_checkout::app::{App, FunctionExtension, TargetKind};
@@ -384,7 +386,9 @@ pub const CHANGED: &str = "lsf/changed";
 pub fn register(registry: &mut crate::resolve::Registry) {
     billing::register(registry);
     bulk::register(registry);
+    discount_tags::register(registry);
     discounts::register(registry);
     functions::register(registry);
+    staged_targets::register(registry);
     uploads::register(registry);
 }
