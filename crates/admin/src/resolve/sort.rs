@@ -16,7 +16,7 @@
 
 use std::cmp::Ordering;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{ShopResolver, camel_case};
 use crate::graphql::FieldContext;
@@ -49,7 +49,30 @@ impl SortValue {
         }
     }
 
-    fn compare(&self, other: &SortValue) -> Ordering {
+    /// The value as a cursor keeps it: `null`, `{"number": "19.5"}` (a string, so that any
+    /// `f64` comes back the same), `{"text": "hat"}`.
+    pub(super) fn to_json(&self) -> Value {
+        match self {
+            SortValue::Missing => Value::Null,
+            SortValue::Number(number) => json!({"number": number.to_string()}),
+            SortValue::Text(text) => json!({"text": text}),
+        }
+    }
+
+    /// The value [`SortValue::to_json`] wrote, `None` for anything else.
+    pub(super) fn from_json(value: &Value) -> Option<SortValue> {
+        match value {
+            Value::Null => Some(SortValue::Missing),
+            Value::Object(map) => match (map.get("number"), map.get("text")) {
+                (Some(Value::String(number)), None) => number.parse().ok().map(SortValue::Number),
+                (None, Some(Value::String(text))) => Some(SortValue::Text(text.clone())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub(super) fn compare(&self, other: &SortValue) -> Ordering {
         match (self, other) {
             (SortValue::Missing, SortValue::Missing) => Ordering::Equal,
             (SortValue::Missing, _) => Ordering::Less,
@@ -71,16 +94,59 @@ fn id_of(resolver: &ShopResolver<'_>, item: &Value) -> u64 {
             .and_then(|map| map.get("id"))
             .and_then(Value::as_str),
     };
-    key.and_then(parse_gid).map_or(0, |(_, id)| id)
+    tie_of(key)
 }
 
-/// Sorts the items of a connection by the field's `sortKey` (see the module's documentation).
+/// The number of a GID, which breaks ties (0 without one).
+pub(super) fn tie_of(gid: Option<&str>) -> u64 {
+    gid.and_then(parse_gid).map_or(0, |(_, id)| id)
+}
+
+/// How an item compares with another in a sorted list: its value, then its id.
+pub(super) fn compare(a: &(SortValue, u64), b: &(SortValue, u64)) -> Ordering {
+    a.0.compare(&b.0).then(a.1.cmp(&b.1))
+}
+
+/// The order [`sort`] put a list in: its key (`ID`, `TITLE`), and the value and the id number of
+/// each item, in the order of the list. Cursors keep an item's, to resume after it when it is
+/// gone.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Order {
+    pub key: String,
+    pub values: Vec<(SortValue, u64)>,
+    /// Sorted from the last to the first (`reverse: true`).
+    pub reversed: bool,
+}
+
+impl Order {
+    /// The order of `values`, flipped.
+    pub fn reverse(&mut self) {
+        self.values.reverse();
+        self.reversed = !self.reversed;
+    }
+
+    /// How many items of the list come strictly before an item with `value`: the index of the
+    /// first one after it.
+    pub fn before(&self, value: &(SortValue, u64)) -> usize {
+        self.values.partition_point(|item| {
+            let ordering = compare(item, value);
+            if self.reversed {
+                ordering == Ordering::Greater
+            } else {
+                ordering == Ordering::Less
+            }
+        })
+    }
+}
+
+/// Sorts the items of a connection by the field's `sortKey` (see the module's documentation),
+/// and answers the order it put them in; `None` when the list keeps its own order.
 pub(super) fn sort(
     resolver: &ShopResolver<'_>,
     ctx: &FieldContext<'_>,
     node_type: &str,
     items: &mut [Value],
-) {
+) -> Option<Order> {
     let root = ctx.parent_type() == ctx.schema().query_type();
     let default = ctx
         .definition()
@@ -89,9 +155,9 @@ pub(super) fn sort(
         .and_then(Value::as_str);
     let key = match ctx.arg_str("sortKey") {
         Some(key) if root || Some(key) != default => key.to_string(),
-        Some(_) => return,
+        Some(_) => return None,
         None if root && ctx.definition().arg("sortKey").is_none() => "ID".to_string(),
-        None => return,
+        None => return None,
     };
     let key = key.to_ascii_uppercase();
     let custom = resolver.registry.sort_fn(node_type, &key);
@@ -110,7 +176,7 @@ pub(super) fn sort(
         resolver.note(format!(
             "lsf does not sort {node_type} by {key}: the order is the order of creation"
         ));
-        return;
+        return None;
     }
     let mut keyed: Vec<(SortValue, u64, Value)> = items
         .iter()
@@ -125,9 +191,16 @@ pub(super) fn sort(
         })
         .collect();
     keyed.sort_by(|(a, a_id, _), (b, b_id, _)| a.compare(b).then(a_id.cmp(b_id)));
-    for (slot, (_, _, item)) in items.iter_mut().zip(keyed) {
+    let mut values = Vec::with_capacity(keyed.len());
+    for (slot, (value, id, item)) in items.iter_mut().zip(keyed) {
         *slot = item;
+        values.push((value, id));
     }
+    Some(Order {
+        key,
+        values,
+        reversed: false,
+    })
 }
 
 #[cfg(test)]

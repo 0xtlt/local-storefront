@@ -423,8 +423,15 @@ should be used instead.\nSee https://shopify.dev/api/usage/bulk-operations/queri
 details.\n` (an Admin API answer quoted on community.shopify.dev; `last` by analogy), a cursor
 lsf did not make is `Malformed cursor` with empty `extensions` (also quoted there); each is a
 field error, the connection `null`, even when the record has nothing to page. A cursor is the
-base64 of `{"position", "id"}`: `after` finds its item by id, else by position. `pageInfo` is
-exact both ways.
+base64 of `{"position", "id", "sortKey", "value"}` (`connection::Cursor`): the item's place, its
+GID (or an inline object's `id`), and, when the list was sorted, the key and the item's value
+under it, as Shopify's cursors hold the sort value and the id of their item. `after` finds its
+item by id; when the item is gone (deleted, or filtered out by the `query`), it resumes at the
+first item that sorts strictly after the value and the id, in the list's direction (`reverse`
+included), and `before` ends at the last one strictly before them: deleting the page just read
+does not make the next one skip ahead. A list in its own order (a record's array without
+`sortKey`) or sorted by another key than the cursor's has no value to compare: the position,
+where the item that took a removed one's place comes next. `pageInfo` is exact both ways.
 
 **Sort keys** (`resolve::sort`): root connections sort by their `sortKey`, its default included
 (`products` by `ID`, `orders` by `PROCESSED_AT`), and by `ID` when they take none; a record's
@@ -432,7 +439,8 @@ array keeps its order unless the query asks for another key than the default. `I
 `RELEVANCE` sort by the number of the GID; another key by the camelCase field of its name
 (`TITLE` → `title`, `metaobjects(sortKey: "updated_at")` → `updatedAt`), numbers and decimal
 strings by value, text ignoring case, ties by id. A key the type does not have keeps the order,
-with a note in `extensions.lsf.notes`.
+with a note in `extensions.lsf.notes`. `sort::sort` answers the order it applied
+(`sort::Order`: the key, each item's value and id), which the cursors keep.
 
 **Search** (`resolve::search`): the `query` argument is `search::Query`, matched through a
 `Searchable` that reads the filters `search.json` documents for the connection, by their

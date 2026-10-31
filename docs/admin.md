@@ -323,6 +323,9 @@ The full list, field by field, is in the design notes of `lsf-admin`
   computes them, from a leaky bucket per shop and app (`--admin-throttle`).
 - `extensions.search`: Shopify's warnings when a `query:` names a field the connection does not
   have ("Invalid search field for this query."); the field is then ignored, as on Shopify.
+- Cursors are opaque, and resume as Shopify's do: right after their item in the connection's
+  sort order, even when the item was deleted in between (delete a page of products while paging,
+  and `after: endCursor` answers the next ones, not those a page further).
 - `extensions.lsf`, only lsf's, only when there is something to say: `defaulted`, the paths of
   the fields answered with a default because the store data does not give them (and
   `defaultedFields`, as `Type.field`), and `notes`, what lsf did not simulate in the request (an

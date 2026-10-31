@@ -590,7 +590,7 @@ impl<'a> ShopResolver<'a> {
                             ids.partition_point(|known| *known < id)
                         })
                         .unwrap_or(0);
-                    Output::value(connection::cursor(position, Some(key)))
+                    Output::value(connection::id_cursor(position, key))
                 }));
             }
             _ => {}
