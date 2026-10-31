@@ -21,8 +21,11 @@ hmac = "0.13"
 sha2 = "0.11"
 # The query strings and form bodies of the OAuth endpoints.
 form_urlencoded = "1"
-# Parses the queries the Admin API is sent, and its schema.
+# Parses the schema of the Admin API (its SDL). The queries have a parser of their own
+# (`graphql::parse`), which keeps what graphql-ruby's errors report: see `docs/design.md`.
 graphql-parser = "0.4"
+# The schema is embedded compressed (`schemas/<version>/admin.graphql.br`).
+brotli = { version = "9", default-features = false, features = ["std"] }
 # Delivers the webhooks, as lsf-checkout sends the requests of Functions: `http://localhost` needs
 # no TLS, an `https` subscription the `rustls` lsf-checkout already builds.
 ureq = { version = "3", default-features = false, features = ["rustls"] }

@@ -63,15 +63,157 @@ from the app when there is one (`--app`).
   `missingRequiredArguments`, …), variable errors with `extensions.problems`, field errors with
   `path`, `ACCESS_DENIED`, `THROTTLED`, `MAX_COST_EXCEEDED`, `NOT_FOUND`. The messages are
   graphql-ruby's and Shopify's, word for word where we can know them.
-- `extensions.cost` on every answer: `requestedQueryCost`, `actualQueryCost`, `throttleStatus`
-  (`maximumAvailable`, `currentlyAvailable`, `restoreRate`), computed as Shopify documents it
-  (scalars and enums 0, objects 1, connections 2 + `first`/`last` × the cost of a node, a
-  mutation 10), a leaky bucket per shop and app. A query over 1000 points is refused
-  (`MAX_COST_EXCEEDED`), an empty bucket answers `THROTTLED`. `--admin-throttle off` (or the store
-  data) turns it off; the plan sets the size of the bucket.
+- `extensions.cost` on every answer that ran, or that was refused for its cost or by the
+  throttle: `requestedQueryCost`, `actualQueryCost`, `throttleStatus` (`maximumAvailable`,
+  `currentlyAvailable`, `restoreRate`), computed as Shopify documents it (scalars and enums 0,
+  objects 1, connections 2 + `first`/`last` × the cost of a node, a mutation 10), a leaky bucket
+  per shop and app. A query over 1000 points is refused (`MAX_COST_EXCEEDED`), an empty bucket
+  answers `THROTTLED`. `--admin-throttle off` (or the store data) turns it off; the plan sets the
+  size of the bucket. A request that does not parse or validate, or whose variables are wrong,
+  answers its errors alone (no `data`, no `extensions`): graphql-ruby does not cost a query it
+  does not run. See "The GraphQL engine" below.
 - `extensions.lsf` (only lsf adds it, and only when there is something to say): the fields that
   were answered with a default because lsf does not simulate them (`defaulted`: their paths), so
   that a developer never mistakes a default for data.
+
+## The GraphQL engine (`schema`, `graphql`, `throttle`, `version`)
+
+`graphql` is a GraphQL server over a `Resolver` trait; it knows the schema, not the data. The
+resolver of the records (`resolve`) implements it; the HTTP side (`api`) calls
+`graphql::run(schema, resolver, request, Some(bucket))` and sends `Response::to_json()`.
+
+```rust
+pub trait Resolver {
+    type Object: Clone;                              // an opaque handle on an object
+    fn query_root(&mut self) -> Self::Object;
+    fn mutation_root(&mut self) -> Self::Object;     // its fields run one after the other
+    fn type_name(&self, object: &Self::Object) -> String; // asked for interface and union fields
+    fn field(&mut self, ctx: &FieldContext<'_>, object: &Self::Object)
+        -> Result<Output<Self::Object>, FieldError>;
+}
+pub enum Output<O> { Null, Value(serde_json::Value), Object(O), List(Vec<Output<O>>) }
+pub struct FieldError { pub message: String, pub extensions: Option<Map<String, Value>> }
+```
+
+`FieldContext` gives the parent type (always an object type), the field name, its definition
+and type (`ty()`), the response key and path, the arguments (`arguments()`, `arg_str`, …:
+coerced, the schema's defaults filled in, enum values as names, a single value given for a list
+as a list of one, `Decimal`/`Money`/`BigInt`/`UnsignedInt64` as strings), the directives of the
+field (`directive("idempotent")`), and a lookahead (`selection().field("edges").field("node")
+.names()`). The executor completes what the resolver answers: a `null` in a non-null field goes
+up to the nearest nullable one with graphql-ruby's error, an enum value must be one of the enum,
+`__typename` and introspection are answered without the resolver. A `FieldError` is the field's
+`null` and an error with its `locations` and `path`. Scalars are passed as the resolver gives
+them.
+
+Stages, for a caller that needs them apart: `graphql::prepare` (parse, select the operation,
+validate, coerce the variables) then `Prepared::requested_cost` and `Prepared::execute`.
+
+### Schema
+
+`tools/admin/admin_schema.mjs` (`mise run admin:schema`) writes `schemas/2026-10/admin.graphql`
+from the introspection of the pinned `@shopify/dev-mcp@1.17.0` (SHA-256 checked): every
+description, deprecation reason, default value, `@oneOf`, and the six directives the schema
+declares (`@idempotent`, `@oneOf`, `@include`, `@skip`, `@deprecated`, `@specifiedBy`), in the
+order of Shopify's introspection. The introspection types (`__Schema`, …) are in
+`introspection.graphql`: names starting with `__` are not valid SDL. A description is written as
+a block string when graphql-parser reads it back the same, as a quoted string otherwise (4 of
+them).
+
+The SDL is 3,982,241 bytes. Embedded with `include_str!`, it would be 4 MB of the binary; the
+generator also writes `admin.graphql.br` (Brotli, quality 11, 393,867 bytes), which the crate
+embeds and decompresses on first use: 0.4 MB of the binary. A Brotli step in a `build.rs` was
+rejected: build scripts run unoptimized, where quality 11 takes 46 s for this file (quality 9:
+1.8 s for 440 KB), and the build would compile `brotli` a second time for the host. A test checks
+that the `.br` is the `.graphql`. `schema::admin()` parses it once (`OnceLock`): 24 ms in
+release on an Apple M4 Pro (decompression about 5 ms, graphql-parser about 18 ms, the
+model the rest); `prepare` and the requested cost of a typical query take about 5 µs.
+
+Shopify's introspection lists four possible types that the schema does not define (`ExchangeV2`
+under `Node`, three user errors under `DisplayableError`). graphql-js's `buildClientSchema`
+refuses a schema that names a type it lacks, so lsf's `possibleTypes` are the object types that
+declare the interface. Everything else is Shopify's, which the tests check: graphql-js's
+`getIntrospectionQuery()` (descriptions, `specifiedByURL`, `isOneOf`, `isRepeatable`, input value
+deprecation) is compared with the dev-mcp introspection for a few types, and
+`LSF_ADMIN_INTROSPECTION=<file> cargo test -p lsf-admin --test introspection` compares all 3699
+(`node tools/admin/admin_schema.mjs --introspection <file>` writes the file).
+
+### Parsing and validation
+
+Queries have a parser of their own (`graphql::parse`), not graphql-parser's: graphql-parser 0.4
+keeps the fields of an input object in a `BTreeMap` (sorted, duplicates lost, so
+`inputFieldNotUnique` could not be reported) and has no position for arguments and values, which
+graphql-ruby's errors point at. graphql-parser still reads the SDL. Parse errors are those of
+graphql-ruby's C parser, which keeps the messages of its Racc grammar:
+`Parse error on "}" (RCURLY) at [1, 9]` with the token's location, `Unexpected end of document`
+with `"locations": []`. A document nested more than 100 deep (selections or values, fragments
+included) answers graphql-ruby's `This query is too large to execute.`, rather than running out
+of stack.
+
+Validation is graphql-ruby 2.6's `StaticValidation::ALL_RULES` (read in its source, tag of
+2026-10-30), as one walk of the document, each rule's errors in its order, with its messages,
+`extensions` and `path` (`["query Q", "products", "first"]`); the rules that need the whole
+document report at the end, in the reverse order of the list, as graphql-ruby's do. Where
+graphql-ruby keeps a legacy behaviour behind a schema setting whose value on Shopify is unknown
+(`allow_legacy_invalid_*`), lsf follows the spec: a union without selections, fields that cannot
+merge and a variable used in a fragment where its type is not allowed are refused. graphql-ruby
+adds "Did you mean" suggestions when the `did_you_mean` gem is loaded; Shopify's messages have
+none, nor do lsf's. The operation is selected before validation, as graphql-ruby does:
+`An operation name is required`, `No operation named "X"`.
+
+### Variables and scalars
+
+Variables are checked and coerced as graphql-ruby's `Query::Variables`:
+`Variable $id of type ID! was provided invalid value` (followed by ` for path (explanation), …`
+for the problems inside the value), `locations` at the variable, `extensions.value` and
+`extensions.problems` (`path`, `explanation`, and `message` for a scalar's own error). What each
+scalar accepts is in the doc comment of `graphql/input.rs`. An `ID` must be a GID; one that is
+not fails as Shopify's does, ``Invalid global id `123` `` (the format of the Storefront API's
+answers, from the same graphql-ruby stack: the Admin API's exact wording is not published).
+
+### Answers
+
+`{"errors": [...], "data": ..., "extensions": {"cost": ...}}`: `errors` first, as graphql-ruby
+builds the hash, and only when there are some. A field error: `message`, `locations`, `path`,
+`extensions`. Operation, parse, validation and variable errors: the errors alone.
+
+### Cost
+
+As shopify.dev's "GraphQL Admin API rate limits" (read in 2026-10, with its versions of 2023 to
+2025 on the Web Archive, and Shopify's engineering post on query complexity): scalars and enums 0,
+objects 1, a connection 2 + `first` (or `last`) × one node (edges, `cursor` and `pageInfo` are
+free), an interface or a union the most of its possible types, a mutation 10 plus its payload.
+`products(first: 1) { edges { node { title } } }` costs 3, shopify.dev's example. The actual cost
+is what was returned: the nodes a connection really has, nothing for a `null` object, 10 for a
+mutation that answered `null` (a forum answer of Shopify shows requested 72, actual 10 for a
+`productCreate` that failed). lsf's choices where shopify.dev is silent: a list that is not a
+connection costs one item; a connection given neither `first` nor `last` costs 2; introspection
+and `__typename` are free; no field has a manual cost.
+
+Over 1000 points (`cost::MAX_COST`), the query does not run: the error of the Admin API
+reference's sample, word for word (`Query cost is 2003, which exceeds the single query max cost
+limit (1000).` and the links that follow), with `extensions` `code: MAX_COST_EXCEEDED`, `cost`,
+`maxCost`, `documentation`, and `actualQueryCost: null`.
+
+### Throttle
+
+A leaky bucket per shop and app (`throttle::key(shop, app)`): a query runs only if the bucket has
+its requested cost, which it takes; afterwards the bucket gets back requested − actual. Refused:
+`{"message": "Throttled", "extensions": {"code": "THROTTLED", "documentation":
+"https://shopify.dev/api/usage/rate-limits"}}`, no `data`, `actualQueryCost: null`, as the Admin
+API answers it. `throttleStatus` writes the size and the rate as floats and what is available as
+an integer (`{"maximumAvailable": 1000.0, "currentlyAvailable": 997, "restoreRate": 50.0}`, as
+shopify.dev's examples). Restore rates by plan are shopify.dev's: Standard 100, Advanced 200, Plus
+1000, Enterprise 2000 points a second; bucket sizes are not published, and lsf gives each plan 20
+seconds of restore (2000, 4000, 20000, 40000; the stores of the current plans report 2000.0 with
+100.0). `Plan::LEGACY` is the 1000/50 of the examples. The clock is injected (`ManualClock` in
+tests); `Throttle::set_enabled(false)` turns it off (a full bucket, nothing refused).
+
+### Versions
+
+`version::parse_path` reads `/admin/api/<version>/graphql.json`: `Graphql("2026-10")`,
+`UnsupportedVersion(v)` for any other version (and for `/admin/api/graphql.json` without one), `Rest`
+for the REST Admin API; `unsupported_version` and `rest_not_served` are the JSON of their 404s.
 
 ## Shops, apps and tokens
 
@@ -596,8 +738,8 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | Module | Role |
 |---|---|
 | `version` | The API versions lsf serves (2026-10), from the path of a request. |
-| `schema` | The schema of the Admin API, parsed once from `schemas/2026-10/admin.graphql` (generated by `tools/admin/admin_schema.mjs` from the pinned `@shopify/dev-mcp`, with its descriptions, for introspection). |
-| `graphql` | Parsing, validation, execution, introspection, cost: a GraphQL server over a `Resolver`. Knows nothing of Shopify's data. |
+| `schema` | The schema of the Admin API, parsed once from `schemas/2026-10/admin.graphql` (generated by `tools/admin/admin_schema.mjs` from the pinned `@shopify/dev-mcp`, with its descriptions, for introspection; embedded Brotli-compressed). |
+| `graphql` | Parsing (a parser of its own), validation, variables, execution, introspection, cost: a GraphQL server over a `Resolver`. Knows nothing of Shopify's data. |
 | `state` | Shops, records, ids, the clock, events; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
 | `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
