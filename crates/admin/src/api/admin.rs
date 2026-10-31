@@ -168,11 +168,12 @@ impl AdminApi {
                 },
             ),
         };
-        let webhooks = webhooks.with_filter(Arc::new(|filter: &str, payload: &Value| {
+        // A relative date of a filter counts from the event, by the shop's clock.
+        let webhooks = webhooks.with_filter(Arc::new(|filter: &str, payload: &Value, now| {
             crate::search::filter::webhook_filter_matches(
                 filter,
                 payload,
-                &crate::search::Options::utc(Utc::now()),
+                &crate::search::Options::utc(now),
             )
             .map_err(|error| error.to_string())
         }));
@@ -342,6 +343,29 @@ impl AdminApi {
             self.emit(&live.state, &events);
         }
         Some(result)
+    }
+
+    /// Does what the shop's clock passed since the last time (`domains::tick`), while the shop
+    /// is locked, and triggers the `customers/redact` of the data erasures it processed, at the
+    /// shop's time (a compliance topic: triggered, not emitted). The other events it emitted
+    /// are the caller's to take and deliver, with its own.
+    pub(super) fn tick(&self, state: &mut ShopState) -> crate::domains::Ticked {
+        let ticked = crate::domains::tick(state);
+        let lookup = samples::ShopLookup(state);
+        for customer in &ticked.erased {
+            if let Some(payload) =
+                crate::webhooks::payload::payload("customers/redact", customer, &lookup)
+            {
+                self.webhooks.trigger(&crate::webhooks::Trigger {
+                    topic: "customers/redact",
+                    shop: state.domain(),
+                    payload: &payload,
+                    address: None,
+                    at: state.now(),
+                });
+            }
+        }
+        ticked
     }
 
     /// Counts a change of the default shop for store sync, when a record of it was written since
@@ -673,10 +697,11 @@ impl AdminApi {
         };
         let key = throttle::key(&grant.shop, &grant.client_id);
         let mut live = lock(&shop);
-        // What the shop's clock passed since the last request (a payment schedule that came due).
-        crate::domains::orders::tick(&mut live.state);
-        let origin = origin_of(request);
         let revision = live.state.revision();
+        // What the shop's clock passed since the last request (a payment schedule that came due,
+        // a data erasure ten days old, a scheduled listing): a change like the request's own.
+        self.tick(&mut live.state);
+        let origin = origin_of(request);
         let mut resolver = ShopResolver::new(&mut live.state, self.registry)
             .with_version(version)
             .with_grant(&grant)

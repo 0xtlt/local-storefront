@@ -877,7 +877,7 @@ app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
 
 | Path | What answers |
 |---|---|
-| `POST\|GET /admin/api/<version>/graphql.json` | The version (`Served::resolve`: served, fallen forward, or `404`), the token (`401` as Shopify, `X-Lsf-Reason` saying why), what the shop's clock passed since the last request (`domains::orders::tick`: schedules due, store credit expired, payouts), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
+| `POST\|GET /admin/api/<version>/graphql.json` | The version (`Served::resolve`: served, fallen forward, or `404`), the token (`401` as Shopify, `X-Lsf-Reason` saying why), what the shop's clock passed since the last request (`domains::tick`, see "The shop's clock"), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
 | other `/admin/api/<v>/…` | `404`: another version, or the REST Admin API, which lsf does not serve. |
 | `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
 | `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
@@ -1155,10 +1155,8 @@ two events. It also emits `customers/purchasing_summary` when an order of the cu
 and their numbers did, only when the app subscribes to the topic (`Webhooks::subscribes`): the
 topic follows every order flow, which the other families' tests and webhooks do not expect.
 
-**Time** (`POST /__lsf/admin/clock`, `api::clock`): freezes a shop's clock at a later instant,
-then runs what time brings (the due erasures, with `customers/redact` through the app's
-compliance subscriptions, made from the customer before the redaction; the abandoned checkouts
-past three months). **Audit events** (`api::audit`): after each GraphQL request, when the app
+**Time**: the due erasures and the abandoned checkouts past three months are the shop's tick's
+(see "The shop's clock"). **Audit events** (`api::audit`): after each GraphQL request, when the app
 subscribes to `audit_events/admin_api_activity`, an event built from the request (no change of
 the shop) is handed to the webhooks.
 
@@ -1311,12 +1309,9 @@ what shopify.dev documents and what lsf chose. What they keep:
   **risk assessments** (inline in the order's `lsfRiskAssessments`), **attribution definitions**
   (`OrderAttributionDefinition`), **the tax app's configuration** (a `TaxAppConfiguration` under
   the key `TaxAppConfiguration/<app id>`: its type has no id).
-- **The clock**: `domains::orders::tick` does what the shop's clock passing does, before every
-  GraphQL request (before its revision is read: what it writes is not the request's change) and
-  when `POST /__lsf/admin/clock` moves the clock (`ShopState::set_clock`, a frozen clock; a reset
-  puts the store data's back): `payment_schedules/due` once per schedule that came due
-  (`lsfDueSent`), store credit that expired, a payout per day of Shopify Payments the shop's
-  day left behind.
+- **The clock**: `orders::tick`, the family's part of the shop's tick (see "The shop's clock"):
+  `payment_schedules/due` once per schedule that came due (`lsfDueSent`), store credit that
+  expired, a payout per day of Shopify Payments the shop's day left behind.
 - **The emails** Shopify would send (reminders, invoices, store credit, return labels, order
   links) are in the shop's outbox (see "The outbox").
 - **What the outside world does** that no mutation does (a bank's dispute and its decision,
@@ -1744,6 +1739,30 @@ never written to.**
   with_arguments`); `stagedUploadTargetGenerate(s)` run `stagedUploadsCreate`; bulk deletes and
   bulk tags by search run the `urlRedirects` and `discountNodes` connections. One set of checks,
   of records and of events, the deprecated shapes kept in the payloads.
+
+## The shop's clock (`domains::tick`)
+
+A shop's time is its clock (`ShopState::now`): the system's, or frozen at an instant (the store
+data's `now`, or `POST /__lsf/admin/clock`, which `api::simulate` answers; a reset puts the store
+data's back). What waits on time is done by one function, `domains::tick`, which each family's
+work joins:
+
+- `orders::tick`: payment schedules due, store credit expired, Shopify Payments payouts;
+- `app::billing::expire_stale`: charges pending for more than two days;
+- `markets::publish_due_listings`: the scheduled listings whose date passed (also after every
+  mutation that emitted events);
+- `privacy::process_due_erasures`: the data erasures ten days old, answered as the customers
+  were before, for `customers/redact` (a compliance topic: `AdminApi::tick` triggers it to the
+  app's compliance subscriptions, at the shop's time);
+- `checkouts::delete_expired`: the abandoned checkouts three months old (also when a checkout is
+  recorded).
+
+It runs before every GraphQL request and when the clock is moved, under the shop's lock; what it
+writes is a change like a mutation's: its events are delivered with the request's, and store
+sync is told (a listing published, a customer redacted). What is worked out when it is read (an
+abandoned checkout's ten minutes, a subscription's next billing date, a discount's or a gift
+card's dates, `PaymentTerms.overdue`) needs no tick. A webhook's `filter` counts `now` from the
+event, by the shop's clock.
 
 ## The outbox (`outbox`)
 

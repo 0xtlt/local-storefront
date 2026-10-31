@@ -193,8 +193,9 @@ fn subscription_of_line(line: &str) -> Option<String> {
     (kind == "AppSubscriptionLineItem").then(|| gid("AppSubscription", number))
 }
 
-/// Marks the pending charges older than two days as `EXPIRED`, and emits their update.
-fn expire_stale(state: &mut ShopState) {
+/// Marks the pending charges older than two days as `EXPIRED`, and emits their update. Run by
+/// the shop's tick (`domains::tick`), and before a charge is made or decided.
+pub fn expire_stale(state: &mut ShopState) {
     let now = state.now();
     let stale: Vec<(String, &'static str)> = state
         .keys("AppSubscription")

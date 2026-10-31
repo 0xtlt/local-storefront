@@ -46,17 +46,18 @@ use sign::HeaderValues;
 /// `lsf_admin::search` plugs in here. Without an evaluator, a subscription's filter is taken to
 /// match, and its deliveries say that it was not evaluated.
 pub trait PayloadFilter: Send + Sync {
-    /// Whether the payload matches. An error is a filter that cannot be evaluated (a field the
-    /// payload does not have, a syntax error): Shopify then delivers nothing.
-    fn matches(&self, filter: &str, payload: &Value) -> Result<bool, String>;
+    /// Whether the payload matches, `now` the time of the event by the shop's clock (what a
+    /// relative date of the filter counts from). An error is a filter that cannot be evaluated
+    /// (a field the payload does not have, a syntax error): Shopify then delivers nothing.
+    fn matches(&self, filter: &str, payload: &Value, now: DateTime<Utc>) -> Result<bool, String>;
 }
 
 impl<F> PayloadFilter for F
 where
-    F: Fn(&str, &Value) -> Result<bool, String> + Send + Sync,
+    F: Fn(&str, &Value, DateTime<Utc>) -> Result<bool, String> + Send + Sync,
 {
-    fn matches(&self, filter: &str, payload: &Value) -> Result<bool, String> {
-        self(filter, payload)
+    fn matches(&self, filter: &str, payload: &Value, now: DateTime<Utc>) -> Result<bool, String> {
+        self(filter, payload, now)
     }
 }
 
@@ -413,7 +414,7 @@ impl Webhooks {
                 None => notes.push(format!(
                     "the filter `{filter}` was not evaluated: lsf delivered as if it matched"
                 )),
-                Some(evaluator) => match evaluator.matches(filter, &body) {
+                Some(evaluator) => match evaluator.matches(filter, &body, at) {
                     Ok(true) => {}
                     Ok(false) => {
                         filtered_out =

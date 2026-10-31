@@ -65,7 +65,10 @@ fn changes_of_the_default_shop_are_projected_when_the_server_asks() {
     let synced = api.synced().expect("on");
     assert_eq!((synced.generation, synced.overlay.is_none()), (0, true));
 
-    // A query writes nothing: nothing to count.
+    // The first request does what the clock passed since the seed (the demo store's orders of
+    // past days are paid out), a change like any other. A query then writes nothing: nothing to
+    // count.
+    graphql(&api, &token, "{ shop { name } }");
     let changes = api.store_changes();
     graphql(&api, &token, "{ products(first: 2) { nodes { title } } }");
     assert_eq!(api.store_changes(), changes);

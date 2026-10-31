@@ -40,7 +40,7 @@ mod publications;
 mod tests;
 mod web_presences;
 
-pub use channels::{LISTING, after_mutation, listed, removing, scheduled};
+pub use channels::{LISTING, after_mutation, listed, publish_due_listings, removing, scheduled};
 pub use price_lists::contextual_price;
 
 use lsf_core::store::reference;

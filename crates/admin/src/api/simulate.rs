@@ -53,42 +53,25 @@ pub(super) fn handle(api: &AdminApi, request: &HttpRequest, path: &str) -> Optio
                         .to_string()
                 })?;
                 state.set_clock(Clock::Frozen(now));
-                orders::tick(state);
-                // The data erasures the clock made due, with the `customers/redact` payloads they
-                // send, and the checkouts old enough to be deleted.
-                let due = crate::domains::privacy::due_erasures(state);
-                let mut redact = Vec::new();
-                for customer in &due {
-                    if let Ok(payload) =
-                        super::samples::payload_of(state, "customers/redact", Some(customer))
-                    {
-                        redact.push(payload);
-                    }
-                }
-                let erased = crate::domains::privacy::process_due_erasures(state);
-                let deleted = crate::domains::checkouts::delete_expired(state);
+                let ticked = api.tick(state);
+                let erased: Vec<&Value> = ticked
+                    .erased
+                    .iter()
+                    .filter_map(|customer| customer.get("id"))
+                    .collect();
                 let mut answer = clock_json(state);
                 answer["ok"] = json!(true);
                 answer["erased"] = json!(erased);
-                answer["deletedCheckouts"] = json!(deleted);
-                Ok::<_, String>((answer, redact))
+                answer["deletedCheckouts"] = json!(ticked.deleted_checkouts);
+                Ok::<_, String>(answer)
             });
-            let (answer, redact) = match moved {
+            let answer = match moved {
                 None => return Some(no_shop()),
                 Some(Err(error)) => {
                     return Some(HttpResponse::json(422, &json!({ "error": error })));
                 }
-                Some(Ok(moved)) => moved,
+                Some(Ok(answer)) => answer,
             };
-            for payload in &redact {
-                api.webhooks().trigger(&crate::webhooks::Trigger {
-                    topic: "customers/redact",
-                    shop: &shop,
-                    payload,
-                    address: None,
-                    at: Utc::now(),
-                });
-            }
             HttpResponse::json(200, &answer)
         }
         ("outbox" | "emails", "GET" | "DELETE") => {

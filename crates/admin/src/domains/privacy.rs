@@ -67,8 +67,11 @@ pub fn register(registry: &mut Registry) {
         .query("privacySettings", privacy_settings);
 }
 
+/// The prefix of the memos of the data erasures, by customer.
+const ERASURE_PREFIX: &str = "privacy/erasure/";
+
 fn erasure_memo(customer: &str) -> String {
-    format!("privacy/erasure/{customer}")
+    format!("{ERASURE_PREFIX}{customer}")
 }
 
 /// Whether a customer's data erasure is pending.
@@ -156,8 +159,15 @@ fn cancel_data_erasure(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
     Ok(payload(json!({"customerId": customer}), &[]))
 }
 
-/// The customers whose data erasure is due by the shop's clock.
+/// The customers whose data erasure is due by the shop's clock, in the order of the customers.
+/// Cheap when none is pending, as it is checked before every request.
 pub fn due_erasures(state: &ShopState) -> Vec<String> {
+    let pending = state
+        .memos_with_prefix(ERASURE_PREFIX)
+        .any(|(_, request)| request.get("status").and_then(Value::as_str) == Some("PENDING"));
+    if !pending {
+        return Vec::new();
+    }
     let now = state.now();
     state
         .keys("Customer")
@@ -174,12 +184,16 @@ pub fn due_erasures(state: &ShopState) -> Vec<String> {
 }
 
 /// Processes the data erasures whose 10 days passed by the shop's clock: the customers'
-/// personal data is redacted. Answers the customers erased, for the `customers/redact` the
-/// server sends.
-pub fn process_due_erasures(state: &mut ShopState) -> Vec<String> {
+/// personal data is redacted. Answers the customers erased as they were before, for the
+/// `customers/redact` the server sends.
+pub fn process_due_erasures(state: &mut ShopState) -> Vec<Record> {
     let now = state.now();
     let due = due_erasures(state);
+    let mut erased = Vec::new();
     for customer in &due {
+        if let Some(record) = state.get(customer) {
+            erased.push(record.clone());
+        }
         let email = state
             .get(customer)
             .and_then(|record| record.get("email"))
@@ -215,7 +229,7 @@ pub fn process_due_erasures(state: &mut ShopState) -> Vec<String> {
         );
         state.emit("customers/update", customer);
     }
-    due
+    erased
 }
 
 fn data_sale_opt_out(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -650,10 +664,10 @@ mod tests {
         let later = shop.now() + chrono::Duration::days(11);
         shop.set_clock(crate::state::Clock::Frozen(later));
         shop.take_events();
-        assert_eq!(
-            super::process_due_erasures(&mut shop),
-            std::slice::from_ref(&alex)
-        );
+        let erased = super::process_due_erasures(&mut shop);
+        assert_eq!(erased.len(), 1);
+        assert_eq!(erased[0]["id"], json!(alex));
+        assert_eq!(erased[0]["email"], "alex.morgan@example.com");
         let record = shop.get(&alex).unwrap();
         assert_eq!(record["email"], Value::Null);
         assert_eq!(record["emailMarketingConsent"], Value::Null);
