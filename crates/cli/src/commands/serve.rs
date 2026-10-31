@@ -349,6 +349,9 @@ pub fn run(
                 eprintln!("{line}");
             }
         }
+        if let Some(proxy) = &state.app_proxy {
+            eprintln!("{}", proxy.banner(&format!("http://{local}")));
+        }
         if args.watch {
             eprintln!("watch:  the Functions build again when their files change, and the pages reload (Ctrl-C to stop)");
         }
