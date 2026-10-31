@@ -443,7 +443,7 @@ Discount API (`shopifyFunctions` example). Not verified, chosen by analogy: the 
 | `CompanyContact` | the customer's id (the checkout's `purchasingCompany.contact.id`) |
 | `Market` | `stable_id("market", handle)` of a declared market, `stable_id("market", "FR")` (upper-case code) of a country in none (the checkout's) |
 | `Metaobject` | `stable_id("metaobject", "<type>/<handle>")` (the checkout's, lsf-core's `metaobject_by_reference`) |
-| `DiscountAutomaticNode`, `DiscountCodeNode` | position in `checkout.discounts` from 1 (the checkout's `discount.id`; `DiscountNode/<n>` of the legacy APIs is the same discount) |
+| `DiscountAutomaticNode`, `DiscountCodeNode` | `id` of the discount in `checkout.discounts`, its position from 1 by default (the checkout's `discount.id`; `DiscountNode/<n>` of the legacy APIs is the same discount) |
 | `CartTransform`, `DeliveryCustomization`, `PaymentCustomization`, `Validation` | position of the Function in the app from 1 (the checkout's owner ids) |
 | `ShopifyFunction` | no GID: a UUID made of the client id and the handle (`app::function_id`), also its key |
 | `App` | `stable_id("app", client_id)`; `AppInstallation`: `stable_id("app_installation", client_id)` |
@@ -472,13 +472,15 @@ Every id is a function of the data: the same data gives the same records every r
   `fulfillsOnlineOrders`, `shipsInventory`, `hasActiveInventory` *(chosen: true)*,
   `isFulfillmentService: false`, `localPickupSettingsV2` when pickup is on and its time is one of
   Shopify's (`Usually ready in 2 hours` → `TWO_HOURS`), `inventoryLevels`, `metafields`.
-- **`Product`**: `title`, `handle`, `descriptionHtml` and `bodyHtml`, `description` (the text of
-  the HTML), `vendor`, `productType`, `tags`, `status: ACTIVE` *(chosen: a product of the data is
-  live)*, `createdAt`, `updatedAt`, `publishedAt`, `templateSuffix`, `giftCardTemplateSuffix:
-  null`, `isGiftCard`, `requiresSellingPlan`, `options`, `variants`, `media`, `images` (inline),
-  `seo` (`title` and `description` null: no override), `onlineStoreUrl`,
-  `onlineStorePreviewUrl`, `collections` (without `all`), `sellingPlanGroups`, `metafields`, and
-  what `refresh_product` derives.
+- **`Product`**, those on the storefront and the others (`Store::unlisted_products`): `title`,
+  `handle`, `descriptionHtml` and `bodyHtml`, `description` (the text of the HTML), `vendor`,
+  `productType`, `tags`, `status` (the data's `status`, `ACTIVE` by default), `createdAt`,
+  `updatedAt`, `publishedAt` (when it was published on the Online Store: `null` when the data
+  says `published: false`), `templateSuffix`, `giftCardTemplateSuffix: null`, `isGiftCard`,
+  `requiresSellingPlan`, `options`, `variants`, `media`, `images` (inline), `seo` (`title` and
+  `description` null: no override), `onlineStoreUrl` (`null` for a product not on the
+  storefront), `onlineStorePreviewUrl`, `collections` (without `all`), `sellingPlanGroups`,
+  `metafields`, and what `refresh_product` derives.
 - **`ProductOption`** (`name`, `position`, `values`, `optionValues`, `createdAt`) and
   **`ProductOptionValue`** (`name`, `hasVariants`, `swatch` with its `color` and the file of its
   image).
@@ -503,7 +505,8 @@ Every id is a function of the data: the same data gives the same records every r
   `templateSuffix`, `seo`, `createdAt` (= `publishedAt` of the data), `updatedAt`, `metafields`.
   The `all` collection lsf-core adds is left out: `/collections/all` is not a collection on
   Shopify.
-- **`Publication`**: the Online Store's (`name`), with every product and collection.
+- **`Publication`**: the Online Store's (`name`), with every published product and every
+  collection.
 - **`SellingPlanGroup`**: `name`, `appId`, `options`, `products`, `sellingPlans`, `createdAt`.
   **`SellingPlan`**: `name`, `description`, `options`, `position`, `pricingPolicies` (the first
   adjustment a `SellingPlanFixedPricingPolicy`, the second a `SellingPlanRecurringPricingPolicy`
@@ -512,7 +515,8 @@ Every id is a function of the data: the same data gives the same records every r
   options say (`Every 2 weeks` → `WEEK`, 2; `monthly`), a month otherwise *(chosen: the data has
   no interval)*, and is a `SUBSCRIPTION`; a plan that does not recur has a fixed billing policy
   with its checkout charge and is a `PRE_ORDER` when it takes a deposit, `OTHER` otherwise.
-- **`GiftCard`**: `balance`, `initialValue` (in the card's currency), `enabled`, `expiresOn`,
+- **`GiftCard`**: `balance`, `initialValue` (in the card's currency), `enabled`, `expiresOn` (the
+  day of the data, in the shop's time zone),
   `isRedeemable` (enabled, not expired by the shop's clock, a balance left), `lastCharacters`,
   `maskedCode`, `customer`, `recipientAttributes` when the recipient is a customer (`recipient`
   is a `Customer!`: the message and nickname of a card for someone else are not kept),
@@ -719,15 +723,189 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   "wait"?}`: the api layer builds the payload from the state, `payload` gives it as is), as
   `lsf app webhook trigger` does from the command line.
 
-## Store sync
+## Store sync (`sync`)
 
-Admin API changes that the store data can express are written back into the store the
-storefront and the checkout see: a product created by the backend is on the theme's collection
-page, an app discount created with `discountAutomaticAppCreate` runs its Function at the
-checkout with the metafields it was given, a customer created is one the checkout can log in as.
-The state projects its changed records to a store-data overlay, applied with
-`lsf_core::store::load::load_with_overlay` (which learns to remove entities). The checkout
-reports placed orders to the state, which records them and emits `orders/create`.
+What the backend changes through the Admin API shows in the storefront and the local checkout,
+as far as the store data can say it: a product it creates is on the theme's pages, a customer it
+creates can log in at the checkout, a metafield it sets is read by Liquid and by the Function
+inputs, an app discount it creates with `discountAutomaticAppCreate` runs its Function at the
+checkout with the metafields it was given. The state is the truth: the store the storefront
+sees is the files with the Admin API's changes on top, never seeded back from.
+
+**Only the default shop syncs.** The other shops (`POST /__lsf/admin/shops`) exist to isolate
+tests from one another; what they change stays in the Admin API.
+
+### How
+
+```rust
+pub fn sync::overlay(state: &ShopState, store: &Store) -> Option<lsf_core::store::load::Overlay>;
+pub const sync::OVERLAY_NAME: &str = "(admin api)";
+```
+
+`store` is the store the shop was seeded from: the files, loaded without any overlay. The
+overlay is `{name: "(admin api)", removed, data}`: the entities to remove (by the key the data
+names them by: handle, email, name, code), then store data (the format of a data file) to add
+and replace. `load_with_overlays(source, options, &[overlay])` gives the store with the
+changes. `None` when nothing the store data expresses changed.
+
+- **Change tracking** (`ShopState`): once the seed is made it calls `track_changes`; from then
+  on the first change of a record (`insert`, `insert_as`, `remove`, `get_mut`, `touch`) keeps a
+  copy of the record as the seed made it. `changes()` lists the records created, changed or
+  removed (a change undone, or a record read through `get_mut` and left as it was, is not one),
+  `original(key)` gives the seed's record. One copy per record changed; nothing at all for a shop
+  nothing changed (`touched()` is false, and `overlay` returns at once). Moving a shop to its
+  domain is not a change; a reset or a reseed forgets them.
+- **What is projected**: the entity of the store data each changed record belongs to (a variant,
+  an option, a medium, an inventory item or level belongs to its product; a metafield to its
+  owner; an article and its comments to their blog; a company location to its company; a
+  company contact and its role assignments to their customer; a policy to the shop).
+- **Projected twice**, from the records as they are and as the seed made them, the same way.
+  The same store data both times: the change does not show in the store (a derived field such
+  as `amountSpent` after an order placed at the checkout, a change undone), and nothing is
+  written. Different: the entity is written whole. None now: it is removed by the key the seed's
+  projection gives (the key the files name it by). A diff of the whole state against the seed
+  would find the same changes, but would compare every record; the tracker gives the few that
+  changed, and the seed's copies of them are what the projection compares and removes by.
+- **Renames**: an entity whose key changed (a product's handle, a customer's email, a company's
+  or a location's name) is written with its `id`, which replaces it where it is (an overlay
+  entity that gives its id replaces the one with that id). An entity without an `id` in the data
+  (menu, metaobject, selling plan group) is removed under its old key and added under the new
+  one.
+- **What names it**: the data names entities by their keys (a collection lists products by
+  handle, an order names variants by SKU, a metafield names a product by handle, a customer
+  names their company). When an entity is removed or its key changes (or a variant's SKU), every
+  entity whose records name it by GID is written again, with the keys as they are now, even if
+  it projects the same: a renamed product is renamed in the collections, selling plan groups,
+  metafields, menus and orders of the data. A product that joined or left a collection or a
+  selling plan group is written again too: its own data may name them.
+- **Fidelity**: every entity of the rich fixture and of the demo store, projected from the
+  seed's records, loads back to the same store (`sync::tests`): the projection writes what
+  lsf-core reads, the fields the records do not hold come from `store` (a variant's quantity
+  rule and price breaks, an image's focal point, a page's author, a gift card's code, the
+  orders of a customer), and the ids are those lsf-core gave.
+
+### What syncs
+
+| Store data | From |
+|---|---|
+| `products` | `Product` (title, handle, `descriptionHtml`, vendor, type, tags, template suffix, dates, gift card, `requiresSellingPlan`, `status`, `published` = `publishedAt` set), its `options` and their values (order, swatch color and image), its `variants` (title, options, price, compare-at price, SKU, barcode, taxable, inventory policy, unit price and measurement; tracked, weight and shipping of the `InventoryItem`; the stock is the `available` quantity of its `InventoryLevel`s, `available` is written when `availableForSale` differs from what lsf-core derives; the locations that stock it are the data's while its inventory is the seed's, its levels once the Admin API changed them, in stock where the quantity is above 0 or the variant is not tracked), its `media` (images of `files/` with alt, size, id and focal point; videos and 3D models with their sources and preview; external videos), the `collections` and `selling_plan_groups` whose records list it, its metafields. A `DRAFT` or `ARCHIVED` product, or one whose `publishedAt` is `null`, is in the data with its status and leaves the storefront. |
+| `collections` | `Collection` (title, handle, `descriptionHtml`, image, sort order, template suffix, dates, `products` in their order), its metafields |
+| `customers` | `Customer` (email, names, phone, tags, `accepts_marketing` from the email consent, `has_account` from `state: ENABLED`, tax exempt, `addressesV2` with their ids and the default first), the company of its `CompanyContact` with the locations its role assignments give and its title, language and dates, its metafields; the orders are those of the data, their lines naming variants by id, without the lines of variants no longer on the storefront |
+| `companies` | `Company` (name, external id, dates), its locations (name, external id, shipping address, tax registration, language, dates, orders count, total spent, metafields), its metafields |
+| `pages`, `blogs` | `Page` (title, handle, body, template suffix, dates); `Blog` (title, handle, comment policy, template suffix) with its published `Article`s (title, handle, author, body, summary, image, tags, template suffix, dates, published comments); their metafields. An unpublished page or article leaves the storefront. |
+| `menus` | `Menu` (title, items): an item names its resource by its key when the resource is on the storefront, its URL otherwise |
+| `locations` | `Location` (name, address, coordinates, pickup and its time), its metafields. A deactivated location is removed. |
+| `gift_cards` | the cards of the data: balance, initial value, currency, expiry, enabled, customer, recipient, message |
+| `metaobjects` | `Metaobject` (type, handle, fields, template suffix). A draft entry is removed. |
+| `selling_plan_groups` | `SellingPlanGroup` (name, app id, options, products) with its `SellingPlan`s (name, description, options, pricing policies, recurring or not, checkout charge) |
+| metafields | of every owner above, of variants and company locations, of the shop and of the declared markets: the namespace of the app (`app--<id>--config`) as `$app:config`, references as the keys the data names them by (handle, `blog/article`, `type/handle`, path of `files/`, variant id, email, company name), JSON types as JSON |
+| `shop` | name, email, description, the five policies of the data, metafields (merged field by field; a metafield removed is in `removed.shop_metafields`) |
+| `localization` | rewritten with the data's countries and languages when a market changed: the markets declared in the data or created by the Admin API (id `market_gid(handle)`), enabled, with their countries (a country they add is added) and metafields |
+| `checkout.discounts` | rewritten when an app discount changed: every `DiscountAutomaticApp` and `DiscountCodeApp` active by the shop's clock (`startsAt` ≤ now < `endsAt`), in id order, with its `id`, the handle of its Function (`appDiscountType.functionId`), title, first code, classes and metafields |
+| `checkout.functions` | the settings of a Function whose owner changed: the metafields of its enabled `CartTransform`, `DeliveryCustomization`, `PaymentCustomization` and `Validation` objects, in creation order, a later one's taking the place of an earlier one's |
+
+### What does not sync
+
+Kept here so that nobody invents a field for it; each would need the store data to say more.
+
+- **Orders**, and what belongs to them: an order the Admin API creates (`orderCreate`, draft
+  orders) or changes (tags, note, cancellation, fulfillments, refunds, returns) is not in the
+  store data. The account pages show the orders of the data and the checkout's.
+- **Gift cards the Admin API creates**: the data keys a card by its code, which Shopify returns
+  only once and the record does not keep. Changes to the cards of the data sync.
+- **Discounts that are not app discounts** (`DiscountCodeBasic`, `…Bxgy`, `…FreeShipping`, the
+  automatic ones): the local checkout runs Functions only. Of app discounts: `combinesWith`,
+  usage limits, `appliesOncePerCustomer`, the buyers they apply to (`context`), every code but
+  the first.
+- **Turning a Function off**: a disabled customization or validation is left out of the
+  settings, but its Function still runs (only a scenario's `extensions` chooses which run). Two
+  owners of one Function share one set of settings.
+- **Products**: SEO, the category, bundles and combined listings, the inventory item's cost and
+  customs data, media taken from a URL outside `files/`, the recommendations a product of the
+  data sets (written again, it gets the default ones), whether an untracked variant is in stock
+  at one location and not another (it is wherever it is stocked once its inventory changed).
+- **Collections**: rules (lsf-core resolves them; a changed automated collection is written as
+  a manual one with the products it has), publication (an unpublished collection stays), SEO.
+- **Customers**: the note, the language, tax exemptions, SMS consent, a customer without an
+  email (removed from the storefront), the roles of a contact beyond the locations it orders
+  for, a second contact.
+- **Companies**: the note, the billing address, catalogs and price lists.
+- **Content**: a blog's feed, comments that are not published, menu items of a type the data
+  has no field for (a metaobject, a customer account page: written by URL); `main-menu` and
+  `footer` always exist (lsf-core adds them back).
+- **Markets**: a country's market of its own (its metafields, its currency), currency settings,
+  web presences, catalogs, price lists.
+- **Locations**: fulfillment services; the "Shop location" lsf adds to a store without locations
+  becomes a location of the data once it changes.
+- **The shop**: anything else (domains, currency, time zone, plan: the Admin API does not
+  change them).
+- Metafield and metaobject definitions, files (`files/` is on disk), translations, webhooks,
+  publications other than the Online Store, inventory transfers and shipments, fulfillment
+  orders.
+- The `session` of the data and the scenarios of `checkouts/` are not written: a product,
+  variant or customer they name by a key the Admin API changed or removed is reported as unknown
+  there.
+
+### What the projection reads, for the mutations
+
+- A product is on the storefront when its `status` is `ACTIVE` and its `publishedAt` is set:
+  publishing it on the Online Store sets `publishedAt` (and adds it to the publication's
+  `products`), unpublishing clears it. Its collections are the `Collection.products` that list
+  it, its selling plan groups the `SellingPlanGroup.products` that list it.
+- Stock is the `available` quantity of the `InventoryLevel`s of the variant's `InventoryItem`;
+  `availableForSale` follows Shopify's rule (not tracked, or stock above 0, or `CONTINUE`).
+- A metafield belongs to its `owner`; a company contact to its `customer` and `company`, the
+  locations its `roleAssignments` name; an article to its `blog`.
+- A discount runs the Function of `appDiscountType.functionId` (the key of a `ShopifyFunction`
+  record); an owner of a Function names it in `functionId` (or `shopifyFunction`) and is
+  disabled by `enabled: false`.
+- Pages and articles: `isPublished`; metaobjects: `capabilities.publishable.status`; locations:
+  `isActive`.
+- **Ids**: a record created with an id of the counter keeps it in the store, for the entities
+  whose data has an `id` (products, variants, collections, pages, blogs, articles, comments,
+  customers and their addresses, companies and their locations, locations, selling plans,
+  images, media other than images, discounts). The others take the id lsf-core derives from
+  their key, which the mutation that creates one must give it: `metaobject_gid(type, handle)`,
+  `menu_gid(handle)`, `market_gid(handle)`, a gift card `stable_id("gift_card", code)`, an image
+  of a product `stable_id("media", "<handle>/<position>")`. Their id changes in the store when
+  their key does (a metaobject's handle, a menu's handle), and the images of a product follow
+  their positions.
+
+### Ids
+
+The ids of what the Admin API did not touch do not change: the overlay writes only what
+changed, every entity it writes carries its id, a renamed entity stays where it was, and a
+removal keeps the ids and the dates of the others (an undated entity after a removed one keeps
+the date its position gave it). Sessions and carts that name variants by id keep working.
+
+### Server wiring (the next wave)
+
+1. **At start**, load the store from the files (`load`, no overlay) and keep it as the *base*:
+   it seeds the shops (`Shops::new(&base, app)`) and every projection reads it. The store the
+   storefront sees starts as the base.
+2. **After a request that changed the default shop** (an Admin API mutation, a webhook trigger
+   that changes records, an order placed at the checkout recorded with
+   `record_placed_order`), compute `sync::overlay(default_shop, &base)` while the shop is
+   locked (cheap), and compare it with the last one (`Overlay` is `PartialEq`). Only when it
+   differs, mark the store stale; rebuild it lazily, on the next request that reads the store,
+   with `load_with_overlays(&source, &options, &[overlay])`, outside the shop's lock, and swap
+   it into `Loaded` as `reload` does (sessions keep their carts and customers). The base and the
+   files' fingerprint do not change. Print the diagnostics whose `file` is `sync::OVERLAY_NAME`
+   (there should be none): they are lsf's mistakes, not the user's.
+3. **Sessions with their own data** (`PUT /__lsf/session` with data): their store is
+   `load_with_overlays(&source, &options, &[sync_overlay, Overlay::new(OVERLAY_FILE, data)])`,
+   the session's data on top of the Admin API's, its diagnostics told apart by name as now. Keep
+   the session's data in its entry (today only its built store is kept) so that its store is
+   rebuilt when the sync overlay changes.
+4. **Live reload**: a rebuild with a new overlay changes the token live reload watches, so open
+   pages reload as when the data changes on disk.
+5. **The files change** (`--watch`): load the new base, `Shops::reseed(&base, app)` (the Admin
+   API's changes are dropped, and the terminal says so), and the store is the new base: the
+   overlay is `None`. `DELETE /__lsf/admin` resets the shops: the overlay is `None`, the store
+   the base.
+6. The checkout's configuration comes from the store (`config_from_store`): with the synced
+   store, it has the discounts and the settings of the Functions the Admin API changed, and a
+   scenario's `checkout` still goes on top of them.
 
 ## Crate layout
 
@@ -740,7 +918,8 @@ serves nothing itself: `lsf` routes the requests to [`api`], as it does for the 
 | `version` | The API versions lsf serves (2026-10), from the path of a request. |
 | `schema` | The schema of the Admin API, parsed once from `schemas/2026-10/admin.graphql` (generated by `tools/admin/admin_schema.mjs` from the pinned `@shopify/dev-mcp`, with its descriptions, for introspection; embedded Brotli-compressed). |
 | `graphql` | Parsing (a parser of its own), validation, variables, execution, introspection, cost: a GraphQL server over a `Resolver`. Knows nothing of Shopify's data. |
-| `state` | Shops, records, ids, the clock, events; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
+| `state` | Shops, records, ids, the clock, events, the changes since the seed; the seed from `lsf_core::Store` (`state::seed`, which runs the seed of each domain). |
+| `sync` | Store sync: the records changed since the seed, projected to an overlay of the store data. |
 | `resolve` | The generic resolution of records, connections and root fields, and the registry of custom resolvers. |
 | `domains/` | One module per family of resources: its seed, its custom resolvers, its mutations (`catalog`, `orders`, `customers`, `content`, `app`). Its webhook payloads are in `webhooks::payload`, built from records alone. |
 | `search` | Shopify's search syntax. |

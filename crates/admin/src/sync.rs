@@ -378,7 +378,7 @@ impl<'s> Sync<'s> {
             if change.kind == ChangeKind::Removed
                 && let Some(type_name) = change
                     .original
-                    .and_then(|record| text(record, "__typename"))
+                    .and_then(|record| type_of(change.key, record))
             {
                 removed
                     .entry(type_name.to_string())
@@ -388,7 +388,7 @@ impl<'s> Sync<'s> {
         }
         let mut parents = HashMap::new();
         let mut index = |record: &'s Record, key: &'s str| {
-            let Some(type_name) = text(record, "__typename") else {
+            let Some(type_name) = type_of(key, record) else {
                 return;
             };
             for (parent_type, field) in CHILD_LISTS {
@@ -417,7 +417,7 @@ impl<'s> Sync<'s> {
                 state
                     .get(change.key)
                     .or(change.original)
-                    .and_then(|record| text(record, "__typename"))
+                    .and_then(|record| type_of(change.key, record))
                     == Some("Location")
             });
         Sync {
@@ -443,7 +443,7 @@ impl<'s> Sync<'s> {
         let mut key = key;
         for _ in 0..8 {
             let record = self.now.get(key).or_else(|| self.seed.get(key))?;
-            let type_name = text(record, "__typename")?;
+            let type_name = type_of(key, record)?;
             if ROOTS.contains(&type_name) {
                 return Some((type_name, key));
             }
@@ -612,7 +612,7 @@ impl<'s> Sync<'s> {
             .filter(|change| {
                 change
                     .original
-                    .and_then(|record| text(record, "__typename"))
+                    .and_then(|record| type_of(change.key, record))
                     == Some("ProductVariant")
             })
             .filter(|change| {
@@ -2137,13 +2137,25 @@ impl<'s> Sync<'s> {
                 if !active {
                     return None;
                 }
+                let number = parse_gid(key).map(|(_, id)| id);
+                // The Function of the app it runs; a discount of the data whose Function the app
+                // does not have keeps the handle the data gives (the checkout says it is missing).
                 let function = details
                     .get("appDiscountType")
                     .and_then(|kind| kind.get("functionId"))
                     .or_else(|| details.get("functionId"))
                     .and_then(Value::as_str)
                     .and_then(|function| self.state.get(function))
-                    .and_then(|function| string(function, "handle"))?;
+                    .and_then(|function| string(function, "handle"))
+                    .or_else(|| {
+                        let discount = self
+                            .store
+                            .checkout
+                            .discounts
+                            .iter()
+                            .find(|discount| Some(discount.id) == number)?;
+                        Some(discount.function.clone())
+                    })?;
                 let code = details
                     .get("codes")
                     .and_then(Value::as_array)
@@ -2170,7 +2182,7 @@ impl<'s> Sync<'s> {
                     classes.clear();
                 }
                 Some(model::CheckoutDiscountInput {
-                    id: parse_gid(key).map(|(_, id)| id),
+                    id: number,
                     function,
                     title: details
                         .get("title")
@@ -2215,7 +2227,7 @@ impl<'s> Sync<'s> {
             }
             if let Some(type_name) = change
                 .original
-                .and_then(|record| text(record, "__typename"))
+                .and_then(|record| type_of(change.key, record))
                 && types.contains(&type_name)
             {
                 removed
@@ -2229,6 +2241,11 @@ impl<'s> Sync<'s> {
 }
 
 // ---- reading records ----------------------------------------------------------------------
+
+/// The type of a record: its `__typename`, else the type its GID names.
+fn type_of<'r>(key: &'r str, record: &'r Record) -> Option<&'r str> {
+    text(record, "__typename").or_else(|| gid_type(key))
+}
 
 /// [`text`], for where a variable is named `text`.
 fn text_of<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
