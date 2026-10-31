@@ -378,3 +378,6 @@ pub fn refresh_customer(state: &mut ShopState, customer: &str) {
     record.insert("canDelete".to_string(), json!(ids.is_empty()));
     record.insert("orders".to_string(), json!(ids));
 }
+/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
+/// a mutation" in `crates/admin/docs/design.md`.
+pub fn register(_registry: &mut crate::resolve::Registry) {}

@@ -360,7 +360,9 @@ impl std::fmt::Display for Throttle {
 /// it asks for sections. `None` for what is never delayed: the control API, which tests use
 /// to set things up.
 pub fn classify(method: &str, path: &str, wants_sections: bool) -> Option<Kind> {
-    if path.starts_with("/__lsf") {
+    // The control API, and the Admin API and OAuth of the backend: not the storefront, whose
+    // latency the throttle simulates (the Admin API has its own cost bucket).
+    if path.starts_with("/__lsf") || path.starts_with("/admin/") {
         return None;
     }
     if let Some(rest) = path.strip_prefix("/cdn/") {
@@ -586,5 +588,8 @@ mod tests {
             Some(Kind::Asset)
         );
         assert_eq!(kind("PUT", "/__lsf/session", false), None);
+        // The Admin API has its own cost bucket.
+        assert_eq!(kind("POST", "/admin/api/2026-10/graphql.json", false), None);
+        assert_eq!(kind("POST", "/admin/oauth/access_token", false), None);
     }
 }

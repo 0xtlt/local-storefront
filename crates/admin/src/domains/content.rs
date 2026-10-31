@@ -1171,6 +1171,10 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
     Some(id)
 }
 
+/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
+/// a mutation" in `crates/admin/docs/design.md`.
+pub fn register(_registry: &mut crate::resolve::Registry) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

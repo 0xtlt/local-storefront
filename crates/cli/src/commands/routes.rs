@@ -15,6 +15,7 @@ pub fn run(
     let (state, _) = ServerState::new(
         app,
         ServeOptions {
+            admin: None,
             live_reload: false,
             watch: false,
             quiet: true,

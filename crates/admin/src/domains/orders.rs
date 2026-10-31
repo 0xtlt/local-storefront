@@ -1054,3 +1054,6 @@ pub fn line_items(state: &ShopState, order: &str) -> Vec<String> {
         .map(|record| gids(record.get("lineItems")))
         .unwrap_or_default()
 }
+/// The custom resolvers and the mutations of this family (none yet): see "Writing a resolver or
+/// a mutation" in `crates/admin/docs/design.md`.
+pub fn register(_registry: &mut crate::resolve::Registry) {}

@@ -50,12 +50,26 @@ npx local-storefront serve --port 9292 --static --quiet --strict
 | `--build` | | With `--app`: runs the build command of each Function first. |
 | `--watch` | | With `--app`: builds a Function again when its files change, and reloads the open pages (it implies `--live-reload`). At start, builds only the Functions that have no module or changed since the last watch; with `--build`, all of them. See [watch mode](checkout.md#watch-mode). |
 | `--variant <standard\|shop>` | | With `--app`: the look of the checkout page, `standard` by default. |
+| `--app-url <url>` | `LSF_APP_URL` | Where the backend of the app listens (`http://localhost:3000`). The webhooks of `shopify.app.toml` go there (a relative `uri` is joined to it; an absolute one on the origin of `application_url` is moved to it), and so do the OAuth redirects and the launch of the embedded app. Without it, `application_url`. See [Admin API](admin.md). |
+| `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret webhooks, OAuth and session tokens are signed with. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else `lsf-local-client-secret`, printed at start. |
+| `--admin-throttle <plan>` | `LSF_ADMIN_THROTTLE` | The cost bucket of the Admin API, per shop and app: `store` (the default: Plus for store data with companies, Standard otherwise), `standard` (2000 points, 100 a second), `advanced` (4000, 200), `plus` (20000, 1000), `enterprise` (40000, 2000), `legacy` (1000, 50), or `off`. |
 
 When it is ready, the server prints a line to stderr that starts with
 `ready:  http://127.0.0.1:<port>/`. With `--port 0`, read the port from that line. It runs
 until it is stopped. With `--app`, it also prints how many checkout scenarios the data has and,
 with a theme, the address of the home page of the checkout
-(`home:   http://127.0.0.1:<port>/__lsf/checkouts`).
+(`home:   http://127.0.0.1:<port>/__lsf/checkouts`). Then the [Admin API](admin.md) of the
+store, which every server serves, and the webhooks of the app:
+
+```text
+admin:  http://127.0.0.1:9292/admin/api/2026-10/graphql.json
+        X-Shopify-Access-Token: shpat_…   (shop: local-supply-co.myshopify.com)
+webhooks: 1 subscription of shopify.app.toml → http://localhost:3000
+```
+
+The token is the same every run for a shop and an app. When the data changes on disk (or
+`POST /__lsf/reload`), the shops of the Admin API are seeded again, and the server says when
+that drops what the Admin API had changed.
 
 While it runs, tests talk to it through the [control API](control-api.md).
 
@@ -193,10 +207,15 @@ TypeScript without a build command is built by lsf, without Node: its types
 `npx local-storefront app webhook trigger --topic <topic> [--address <url>] [--app <dir>]`
 
 Sends one webhook, as `shopify app webhook trigger` does, without Shopify: lsf builds the
-payload of the topic (the REST representation Shopify sends, from a record of each family
-modelled on Shopify's example payload: the order `#9999`, the T-shirt of `products/create`…),
-signs it with the client secret (`X-Shopify-Hmac-Sha256`), and posts it with Shopify's headers.
-It prints the request it sent and the answer of the backend.
+payload of the topic (the REST representation Shopify sends) from a record of the store data, as
+the [Admin API](admin.md) seeds it (`--data`, else the `shopify-local/` of the theme or of the
+app, else the demo store): the first product for `products/update`, the first order for
+`orders/create`, the shop for `app/uninstalled`. A topic whose type the data has no record of
+(a refund, a draft order) is built from lsf's sample, modelled on Shopify's example payload. lsf
+signs it with the client secret (`X-Shopify-Hmac-Sha256`), and posts it with Shopify's headers,
+`X-Shopify-Shop-Domain` the shop of the data. It prints the request it sent and the answer of the
+backend. To send the webhook of a given record, use `POST /__lsf/webhooks/trigger` with its
+`id` while a server runs.
 
 ```bash
 npx local-storefront app webhook trigger --topic orders/create --address http://localhost:3000/webhooks

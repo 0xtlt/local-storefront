@@ -43,6 +43,7 @@ Webhooks   3 subscriptions of shopify.app.toml → http://localhost:3000
 |---|---|
 | `--app-url <url>` (`LSF_APP_URL`) | Where the backend of the app listens. Relative webhook `uri`s are joined to it, and an absolute one on the origin of `application_url` is moved to it. Without it, `application_url` is used. |
 | `--client-secret <secret>` (`LSF_CLIENT_SECRET`) | The secret webhooks, OAuth and session tokens are signed with. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else a fixed local secret printed at start. |
+| `--admin-throttle <plan>` (`LSF_ADMIN_THROTTLE`) | The cost bucket: `store` (the default: Plus for store data with companies, as the seed's `plan.shopifyPlus`, Standard otherwise), a plan (`standard`, `advanced`, `plus`, `enterprise`, `legacy`), or `off`. |
 
 The client id is `client_id` of `shopify.app.toml` (a fixed local one without an app). The
 Admin API is served whenever the server runs; the webhooks, the scopes and the client id come
@@ -362,23 +363,153 @@ storefront, the checkout and the Function inputs already use.
 
 ### How a field is resolved (`resolve`)
 
-The executor asks the resolver for each field. The resolver of the domain owning a type
-handles what needs code (arguments, computed values, filters); everything else is generic:
+`resolve::ShopResolver` implements the engine's `Resolver` over one shop, for one request (the
+api layer holds the shop's lock meanwhile). Its objects (`resolve::Obj`) are the two roots, a
+record by its key, and an inline object with its type (a value nested in a record, an item of an
+array of inline objects, a connection and its edges, a `Count`, a mutation payload). For each
+field, in order:
 
-1. A custom resolver registered for `(type, field)` answers it.
-2. Otherwise the record's own value, converted by the schema type: a GID for an object type is the
-   record it names (`null` when the record is gone), an array for a connection type is paginated
-   (`first`, `last`, `after`, `before`, `reverse`, `sortKey`, `query`), an array for a list is
-   mapped.
-3. Otherwise a default: `null` for a nullable field; for a non-null one, an empty list or
-   connection, `""`, `false`, `0`, `"0.0"` for `Money`/`Decimal`, the first enum value, or the
-   defaults of an object type, recursively. The path goes into `extensions.lsf.defaulted`, except
-   for fields that are empty by nature (an empty connection of a record that has none).
+1. **Access**: a field the token's scopes do not cover answers `ACCESS_DENIED`
+   (`resolve::access`): a root field what `auth::scopes::required_access` says; a nested field
+   its own `requiredAccess` text and that of the type it answers (`Order.customer` needs
+   `read_customers`), read as a query's, in a payload too; `node` and `nodes` what the type of the
+   record they find requires. The requirements are read once per field and kept.
+2. **A mutation** runs its registered function (see "Mutations" below); one without answers
+   `LSF_NOT_SIMULATED`.
+3. **A custom resolver** registered for `(type, field)` answers it (see "Writing a resolver or a
+   mutation").
+4. **Root conventions**: `node(id:)` and `nodes(ids:)` read any record (aliases followed:
+   `DiscountNode/<n>` is the `DiscountAutomaticNode/<n>` or `DiscountCodeNode/<n>`); a connection
+   (`products`) pages over every record of its node type, or of every type of an interface
+   (`files`); `<x>Count` counts what the connection `<x>` lists, with the same `query`, `AT_LEAST`
+   past `limit`; a field answering an object type reads `id:` (`product(id:)`), `handle:` for
+   `…ByHandle`, `identifier:` for `…ByIdentifier` (`id`, `handle`, `emailAddress` as `email`,
+   `phoneNumber` as `phone`, `customId` as a metafield the record owns, any other field by
+   equality); a list of an object type without required arguments lists its records
+   (`shopLocales`); a field without required arguments answers the only record of its type
+   (`shop`, `app`, `currentAppInstallation`). Otherwise a default.
+5. **The object's value**, converted by the field's type: a string for an object type is the key
+   of a record (`null` when it is gone, or not of a possible type), an object is an inline object
+   (its type the field's, or its `__typename` for an abstract one), an array of a connection is
+   paged, an array of a list is mapped (cut to `first` when the list takes one, as
+   `Product.options(first:)`). Before the value: `metafield(namespace:, key:)` and
+   `metafields(namespace:, keys:)` of any owner read its `metafields`, `$app` and `$app:x` being
+   the app's reserved namespaces (`app--<id>`, `app--<id>--x`; `metafield` without a namespace is
+   in the app's). After it, when there is none: `legacyResourceId` (the number of the GID),
+   `defaultCursor` (the cursor of the record in the `ID` order of its type), and the `Count` of an
+   array (`variantsCount` of `variants`, with the field's `query`).
+6. **A default**: `null`; for a non-null field an empty list, `""`, `0`, `false`, `"0.00"` for
+   `Money` and `"0.0"` for `Decimal`, the seed's fixed date for `DateTime`, the first enum value,
+   or an object of defaults (the first possible type of an abstract one). Its path goes into
+   `extensions.lsf.defaulted` (the first 50, with `defaultedCount` past them) and its `Type.field`
+   into `defaultedFields`, except for lists and connections (empty by nature) and inside what lsf
+   builds whole (payloads, objects of defaults). An explicit `null` in a non-null field is a
+   default too.
 
-Root fields follow conventions before custom code: `products` (a connection of `Product`) lists
-every record of the type; `product(id:)` reads one; `node(id:)` and `nodes(ids:)` read any;
-`productsCount` counts with the same `query`. Cursors are opaque (base64 of the position and the
-GID), stable across requests while the list does not change.
+**Connections** (`resolve::connection`): the items (GIDs or inline objects) go through the
+field's `query`, its `sortKey`, `reverse`, then `after`/`before`, then `first`/`last`. Shopify's
+errors, as the Admin API answers them: neither `first` nor `last` is `you must provide one of
+first or last` (quoted from an answer on zenn.dev, with `path` and `locations`), more than 250 is
+`first cannot exceed 250. To query larger amounts of data with fewer limits, bulk operations
+should be used instead.\nSee https://shopify.dev/api/usage/bulk-operations/queries for usage
+details.\n` (an Admin API answer quoted on community.shopify.dev; `last` by analogy), a cursor
+lsf did not make is `Malformed cursor` with empty `extensions` (also quoted there); each is a
+field error, the connection `null`, even when the record has nothing to page. A cursor is the
+base64 of `{"position", "id"}`: `after` finds its item by id, else by position. `pageInfo` is
+exact both ways.
+
+**Sort keys** (`resolve::sort`): root connections sort by their `sortKey`, its default included
+(`products` by `ID`, `orders` by `PROCESSED_AT`), and by `ID` when they take none; a record's
+array keeps its order unless the query asks for another key than the default. `ID` and
+`RELEVANCE` sort by the number of the GID; another key by the camelCase field of its name
+(`TITLE` → `title`, `metaobjects(sortKey: "updated_at")` → `updatedAt`), numbers and decimal
+strings by value, text ignoring case, ties by id. A key the type does not have keeps the order,
+with a note in `extensions.lsf.notes`.
+
+**Search** (`resolve::search`): the `query` argument is `search::Query`, matched through a
+`Searchable` that reads the filters `search.json` documents for the connection, by their
+documented type: `id`; `<x>_id` from the GID in `x` or the GIDs in `xs`; `tag` from `tags`
+(`tag_not:x` is `NOT tag:x`, for any `<f>_not` whose `<f>` is documented); dates, booleans
+(`gift_card` → `giftCard`, else `isGiftCard`) and numbers from the camelCase field; strings from it
+or its plural, tokenized for `title`, `name`, `body`, `description`, `note`, `display_name`, whole
+otherwise; `metafields.{namespace}.{key}` from the owner's metafield. A free term searches the
+title, name, handle, email, vendor, product type, SKU and tags. A field the connection does not
+document is ignored with Shopify's warning in `extensions.search` (`path`, `query`, `parsed`,
+`warnings`, the keys and order of shopify.dev's example); a documented one lsf cannot read is
+ignored with a note in `extensions.lsf.notes`.
+
+### Writing a resolver or a mutation
+
+The domains plug in what the generic rules do not answer through `resolve::Registry`. Each
+module of `domains/` has a `register(&mut Registry)`, which `domains::register` calls and
+`Registry::standard()` holds. Functions are plain `fn` pointers (a closure that captures nothing
+is one): what they need is in what they are given.
+
+```rust
+pub fn register(registry: &mut Registry) {
+    registry
+        .query("productVariantsCount", variants_count)          // a root field (QueryRoot)
+        .field("Product", "totalVariants", total_variants)     // any (type, field)
+        .mutation("productVariantsBulkCreate", bulk_create)
+        .sort_key("Product", "INVENTORY_TOTAL", |r, item| {
+            SortValue::of(r.item_map(item).and_then(|product| product.get("totalInventory")))
+        })
+        .search_field("Product", "sku", |r, _item, product| {
+            Some(catalog::gids(product.get("variants")).iter()
+                .filter_map(|variant| r.state().get(variant)?.get("sku")?.as_str())
+                .map(|sku| SearchValue::Keyword(sku.to_string()))
+                .collect())
+        })
+        .default_text("Product", |_r, product| vec![/* what a free term searches */]);
+}
+```
+
+A **field resolver** is `fn(&ShopResolver, &FieldContext, &Obj) -> Result<Output<Obj>,
+FieldError>`. It reads the shop (`r.state()`, read-only), the arguments (`ctx.arg_str("id")`,
+`ctx.arguments()`), the object (`r.map_of(object)`: the record or the inline value) and answers
+with the generic tools rather than building outputs by hand:
+
+| Tool | What it gives |
+|---|---|
+| `r.generic(ctx, object)` | The generic answer: fall back to it for the cases the resolver does not handle. |
+| `r.convert(ctx, &value, true)` | A JSON value as the field's type wants it: GIDs as records, objects inline, arrays paged or mapped. |
+| `r.connection(ctx, items)` | A page of items (GIDs or inline objects) with the field's `query`, `sortKey`, `reverse`, cursors and Shopify's errors. |
+| `r.search(ctx, node_type, items)`, `r.count(ctx, n)` | The items a `query` keeps; a `Count` (`AT_LEAST` past `limit`). |
+| `r.reference(gid, type)`, `r.lookup(gid)`, `r.find(type, predicate)`, `r.by_identifier(type, input)` | A record as an object (aliases followed), its key, the first record that matches, the record of an `…Identifier` input. |
+| `r.records_of(type)`, `r.items_of(object, field)`, `r.item_map(item)` | The keys of the records of a type (or interface), the array of a field, the record of an item. |
+| `r.app_namespace("$app:x")` | `app--<id>--x`. |
+| `r.default(ctx, true)` | The default of the field, reported in `extensions.lsf.defaulted`. |
+| `r.note("…")` | A line of `extensions.lsf.notes`: what lsf did not simulate. |
+| `Obj::record(key)`, `Obj::inline(type, map)`, `Obj::built(type, map)` | An object: a record, an inline value whose missing fields are reported, one lsf builds whole. |
+
+A **mutation** is `fn(&mut Mutation, &FieldContext) -> Result<Value, FieldError>`: it answers its
+payload as JSON, record references as GIDs (`json!({"product": gid})`), which the resolver then
+resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the framework fills
+`shop` when the payload type has it. The rules, which `domains/catalog/products.rs` (the model),
+`domains/tags.rs` and `domains/webhook_subscriptions.rs` follow:
+
+1. **Validate against `m.state()`**, collecting `UserError::new(&["title"], "Title can't be
+   blank").code("BLANK")` (the `field` path is the input's, the message Shopify's where it is
+   known, Rails' wording otherwise; `code` is ignored by error types that have none). Errors: answer
+   the payload with its objects `null` and the errors, and change nothing.
+2. **Change through `m.state_mut()`**: the first call keeps a copy of the shop, which a payload
+   with user errors (`userErrors` or `…UserErrors` not empty) or an error puts back. Validating
+   first costs no copy on failure; a mutation that finds a problem halfway can still answer it.
+3. **Keep derived values right** with the domain's functions the seed uses (`refresh_product`,
+   `refresh_customer`, `attach_definition`), `touch` what changed (`updatedAt`), and use
+   `new_gid` for new records.
+4. **Emit the events of what changed**: `state_mut().emit("products/update", &gid)`; a deletion
+   with `state_mut().delete(&gid, "products/delete")`, which keeps the record for the payload. A
+   change always emits an event: that is also how the api layer knows a shop changed.
+5. **Say what is not simulated**: `m.note("productCreate: lsf does not simulate `media` yet")` for
+   an input it ignores; an argument-dependent scope the access table cannot express is checked in
+   the mutation (`tagsAdd` needs the write scope of the resource: `access::denied`).
+
+`m.webhooks()` gives the app's webhooks (their registry of subscriptions), `m.grant()` the token's
+scopes, `m.api_version()`, `m.now()` and `m.timestamp()` the shop's clock.
+
+**Checking a registry**: `Registry::check(schema)` lists what is registered for a field, a
+mutation or a type the schema does not have; a test runs it on `Registry::standard()`.
 
 ### Search syntax (`search`)
 
@@ -406,13 +537,41 @@ deliveries" says: dotted paths through arrays (`variants.price:>=10.00`), case-s
 equality, a missing field or a type mismatch makes its term false (no delivery, unless negated),
 tags matched one by one in their string; a filter that does not follow the grammar is refused.
 
-### Mutations (`mutations`)
+### Mutations (`resolve::mutation`)
 
-A mutation is a function from the state and its arguments to its payload, run while the shop is
+A mutation is a function from the shop and its arguments to its payload, run while the shop is
 locked. It validates as Shopify does and answers `userErrors` (`field`, `message`, `code`) when
-the input is wrong, changes nothing when it fails, and returns the **events** of what it
-changed. A mutation lsf does not simulate answers a GraphQL error with
-`extensions.code = "LSF_NOT_SIMULATED"`, never a silent success.
+the input is wrong, changes nothing when it fails (the shop is copied on its first change and
+put back on a failure), and emits the **events** of what it changed. A mutation lsf does not
+simulate answers a GraphQL error with `extensions.code = "LSF_NOT_SIMULATED"`, never a silent
+success; `GET /__lsf/admin` lists those it simulates. Simulated so far, as references:
+`productCreate`, `productUpdate`, `productDelete`, `tagsAdd`, `tagsRemove`,
+`webhookSubscriptionCreate`, `webhookSubscriptionUpdate`, `webhookSubscriptionDelete` (and the
+`webhookSubscription`, `webhookSubscriptions`, `webhookSubscriptionsCount` queries).
+
+## The HTTP side (`api`)
+
+`api::AdminApi` holds the server's shops, each behind a lock of its own (the seed in
+`state::Shops`, which makes new ones with `new_shop` and resets them with `reset_shop`), the
+tokens (`auth::Tokens`, the app installed on every shop with its scopes and its default token),
+the webhooks (`Webhooks::for_app`, with `search::filter` plugged in as the `PayloadFilter`), the
+throttle, and the app (`auth::AppAuth`: the client id, the secret of `auth::client_secret`, the
+app URL). `AdminApi::handle(&HttpRequest) -> Option<HttpResponse>` answers:
+
+| Path | What answers |
+|---|---|
+| `POST\|GET /admin/api/2026-10/graphql.json` | The token (`401` as Shopify, `X-Lsf-Reason` saying why), the GraphQL request (JSON, `application/graphql`, `?query=`; `400` `{"errors": {"query": "Required parameter missing or invalid"}}` without one), then `graphql::run` with the bucket of the shop and app, `X-Shopify-API-Version` and `X-Request-Id`. The events the request emitted are handed to `Webhooks::emit` with a lookup over the shop: the payloads are built then, the deliveries queued for the worker, nothing waits on the backend. |
+| other `/admin/api/<v>/…` | `404`: another version, or the REST Admin API, which lsf does not serve. |
+| `/admin/oauth/*`, `/__lsf/admin/session-token`, `/__lsf/admin/launch` | `auth::oauth::handle`, with `oauth::Shops` over the shops and the system clock. |
+| `/__lsf/admin` (`GET` status, `DELETE` reset), `/__lsf/admin/shops`, `/__lsf/admin/uninstall`, `/__lsf/admin/install` | The control endpoints of `docs/control-api.md`. |
+| `/__lsf/webhooks*` | `Webhooks::handle`, the payload of a trigger built from the record named, else the first record of the topic's type (`api::samples`), else lsf's sample of the topic. |
+
+`lsf` builds one in `ServerState` (`crates/cli/src/server/admin.rs`), routes its paths before the
+storefront, the checkout and the control API, records the orders `place_order` places
+(`AdminApi::record_order`), and reseeds it when the store data reloads (`AdminApi::reseed`:
+what the Admin API changed is dropped and the terminal says so; the subscriptions the backend made
+stay, as the app's setup of the shop). `lsf app webhook trigger` builds its payloads with
+`api::samples::ShopSamples` over the shop seeded from the store data.
 
 ## Records
 
@@ -585,7 +744,7 @@ records, so both are the same shape.
   the customer, the contact, the address, the note, the attributes, the payment method's name as
   the gateway), keeps the checkout's id when it is free (sessions number their orders on their
   own: a taken id gets a new one), refreshes the customer, and emits `orders/create` and, when
-  paid, `orders/paid`. Not wired yet.
+  paid, `orders/paid`. `lsf`'s `place_order` calls it through `AdminApi::record_order`.
 
 ### Content (`domains/content.rs`)
 
@@ -641,7 +800,8 @@ records, so both are the same shape.
   (the client id, `lsf-local-client-id` without one), `embedded`, `developerType: PARTNER`,
   `requestedAccessScopes`, `availableAccessScopes`, `optionalAccessScopes`, `installation`,
   `webhookApiVersion`. **`AppInstallation`**: `app`, `accessScopes` (`[access_scopes] scopes`;
-  without an app every scope the 2026-10 schema names, `app::ALL_SCOPES`), `launchUrl`.
+  without an app every scope of the 2026-10 schema, `auth::scopes::ALL_SCOPES`, the list the access
+  checks share), `launchUrl`.
 - **`ShopifyFunction`** per Function of the app: `id`, `title`, `handle`, `apiType`,
   `apiVersion`, `app`, `appKey`, `inputQuery`.
 - **Discounts** of `checkout.discounts`: a `DiscountAutomaticNode` (`automaticDiscount`: a
@@ -696,8 +856,8 @@ for each subscription of the shop whose topic matches and whose `filter` matches
 - **Filter**: evaluated on the payload after `include_fields` (Shopify requires the fields of the
   filter to be included), through `webhooks::PayloadFilter`, where `search` plugs in. Filters
   differ from searches: `:` is equality, case counts, a field the payload does not have sends
-  nothing. Until an evaluator is plugged in, a filter matches, and the delivery notes that it was
-  not evaluated.
+  nothing. The api layer plugs in `search::filter::webhook_filter_matches`; without an evaluator
+  (the webhooks used alone), a filter matches, and the delivery notes that it was not evaluated.
 - **Headers**: `Content-Type: application/json`, `X-Shopify-Topic`, `X-Shopify-Hmac-Sha256`
   (base64 HMAC-SHA256 of the body with the client secret), `X-Shopify-Shop-Domain`,
   `X-Shopify-API-Version` (`2026-10`, whatever the subscription asks, with a note when it asks

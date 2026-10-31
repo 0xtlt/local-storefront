@@ -500,6 +500,23 @@ impl Shops {
         Ok(self.shops.entry(domain).or_insert(shop))
     }
 
+    /// A shop seeded from the same data under the domain of `name`, as [`Shops::create`] makes
+    /// it, but not kept here: for a server that keeps each shop behind a lock of its own.
+    pub fn new_shop(&self, name: &str) -> Result<ShopState, String> {
+        let domain = shop_domain(name)?;
+        let mut shop = self.seed.clone();
+        if domain != self.seed.domain() {
+            shop.rehost(&domain);
+        }
+        Ok(shop)
+    }
+
+    /// Puts a shop kept outside back to the seed, as [`Shops::reset`] does to those kept here:
+    /// its domain and its event sequence stay.
+    pub fn reset_shop(&self, shop: &mut ShopState) {
+        shop.reset_from(&self.seed);
+    }
+
     /// Forgets a shop other than the default one. Returns whether it existed.
     pub fn remove(&mut self, domain: &str) -> bool {
         let domain = domain.to_ascii_lowercase();

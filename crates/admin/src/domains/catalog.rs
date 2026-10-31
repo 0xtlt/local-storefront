@@ -10,6 +10,10 @@ use lsf_core::store::{
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
+mod products;
+
+pub use products::{delete_product, tags_of};
+
 use crate::state::seed::Seed;
 use crate::state::value::{self, date, date_time, money, optional, text};
 use crate::state::{Record, ShopState, gid};
@@ -1169,6 +1173,40 @@ pub fn gids(value: Option<&Value>) -> Vec<String> {
 pub fn cents_of(value: Option<&Value>) -> Option<i64> {
     let text = value?.as_str()?;
     lsf_core::store::model::Money::Decimal(text.to_string()).cents()
+}
+
+/// The custom resolvers and the mutations of the catalog: see "Writing a resolver or a mutation"
+/// in `crates/admin/docs/design.md`.
+pub fn register(registry: &mut crate::resolve::Registry) {
+    products::register(registry);
+    registry.field("InventoryLevel", "quantities", level_quantities);
+}
+
+/// `InventoryLevel.quantities(names:)`: the quantities of the names asked, in their order (the
+/// level keeps all eight).
+fn level_quantities(
+    r: &crate::resolve::ShopResolver<'_>,
+    ctx: &crate::graphql::FieldContext<'_>,
+    object: &crate::resolve::Obj,
+) -> Result<crate::graphql::Output<crate::resolve::Obj>, crate::graphql::FieldError> {
+    let quantities = r.items_of(object, "quantities");
+    let names: Vec<&str> = ctx
+        .arg("names")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let asked: Vec<Value> = names
+        .iter()
+        .filter_map(|name| {
+            quantities
+                .iter()
+                .find(|quantity| quantity.get("name").and_then(Value::as_str) == Some(name))
+                .cloned()
+        })
+        .collect();
+    r.convert(ctx, &Value::Array(asked), true)
 }
 
 #[cfg(test)]
