@@ -69,7 +69,7 @@ pub fn register(registry: &mut Registry) {
                 .filter_map(|field| customer.get(*field).and_then(Value::as_str))
                 .map(str::to_string)
                 .collect();
-            texts.extend(gids_of(Some(customer), "tags"));
+            texts.extend(crate::domains::catalog::tags_of(customer.get("tags")));
             texts
         })
         // "Sort by the `name` value": the name the customer is shown by.

@@ -94,16 +94,37 @@ pub fn normalized_phone(phone: &str) -> Option<String> {
         .then(|| if plus { format!("+{digits}") } else { digits })
 }
 
-/// The customer other than `except` whose `field` (`email`, `phone`) is `value`.
-fn taken(state: &ShopState, field: &str, value: &str, except: Option<&str>) -> bool {
-    state.keys("Customer").any(|key| {
-        Some(key) != except
+/// Whether two values of `field` (`email`, `phone`) are the same: emails ignoring case, phones
+/// without their separators (the store data may write `+1 555 010 9988`).
+fn same(field: &str, a: &str, b: &str) -> bool {
+    if field == "phone"
+        && let (Some(a), Some(b)) = (normalized_phone(a), normalized_phone(b))
+    {
+        return a == b;
+    }
+    a.eq_ignore_ascii_case(b)
+}
+
+/// The first customer other than `except` whose `field` (`email`, `phone`) is `value`.
+fn holder<'s>(
+    state: &'s ShopState,
+    field: &str,
+    value: &str,
+    except: Option<&str>,
+) -> Option<&'s str> {
+    state.keys("Customer").find(|key| {
+        Some(*key) != except
             && state
                 .get(key)
                 .and_then(|customer| customer.get(field))
                 .and_then(Value::as_str)
-                .is_some_and(|other| other.eq_ignore_ascii_case(value))
+                .is_some_and(|other| same(field, other, value))
     })
+}
+
+/// Whether a customer other than `except` has `value` as its `field`.
+fn taken(state: &ShopState, field: &str, value: &str, except: Option<&str>) -> bool {
+    holder(state, field, value, except).is_some()
 }
 
 /// An error, with the code the payload's error type has (`CustomerSetUserError`), which the
@@ -504,30 +525,21 @@ fn customer_set(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         } else {
             wanted
         };
-        if let Some(given) = given_text(&input, key).flatten() {
-            let given = if key == "phone" {
-                normalized_phone(&given).unwrap_or(given)
-            } else {
-                given
-            };
-            if !given.eq_ignore_ascii_case(&wanted) {
-                return failed(vec![error(
-                    &["input", key],
-                    "The identifier value does not match the value of the corresponding field in the input",
-                    "INPUT_MISMATCH",
-                )]);
-            }
+        if let Some(given) = given_text(&input, key).flatten()
+            && !same(key, &given, &wanted)
+        {
+            return failed(vec![error(
+                &["input", key],
+                "The identifier value does not match the value of the corresponding field in the input",
+                "INPUT_MISMATCH",
+            )]);
         }
-        let found = state.keys("Customer").find(|customer| {
-            state
-                .get(customer)
-                .and_then(|record| record.get(key))
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.eq_ignore_ascii_case(&wanted))
-        });
-        // Created with that value when there is none.
-        input.insert(key.to_string(), json!(wanted));
-        found.map(str::to_string)
+        let found = holder(state, key, &wanted, None).map(str::to_string);
+        // Created with that value when there is none; the one found keeps its own.
+        if found.is_none() {
+            input.insert(key.to_string(), json!(wanted));
+        }
+        found
     } else if let Some(custom) = identifier.get("customId").and_then(Value::as_object) {
         let found = by_custom_id(state, custom);
         if found.is_none() {

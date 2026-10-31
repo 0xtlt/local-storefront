@@ -278,6 +278,7 @@ fn customer_set_creates_updates_and_upserts() {
     );
     assert_eq!(upserted["customer"]["id"], json!(jane));
     assert_eq!(upserted["customer"]["firstName"], json!("Janet"));
+    assert_eq!(upserted["customer"]["email"], json!("jane.doe@example.com"));
     assert_eq!(topics(&mut shop), ["customers/update"]);
     // By an email no customer has: created with it.
     let fresh = set(
@@ -287,6 +288,13 @@ fn customer_set_creates_updates_and_upserts() {
     );
     assert_eq!(fresh["customer"]["email"], json!("fresh@example.com"));
     assert_ne!(fresh["customer"]["id"], id);
+    // By phone, whatever its separators: Jane's is `+1 555 010 9988` in the data.
+    let by_phone = set(
+        &mut shop,
+        json!({"phone": "+15550109988"}),
+        json!({"lastName": "D."}),
+    );
+    assert_eq!(by_phone["customer"]["id"], json!(jane));
     // By id.
     let by_id = set(
         &mut shop,

@@ -169,7 +169,7 @@ fn position(record: &Record, id: &str) -> Option<usize> {
     })
 }
 
-/// Whether the address at `index` is the customer's default.
+/// Whether `address` is the customer's default one.
 fn is_default(record: &Record, address: &Value) -> bool {
     let id = |value: &Value| {
         value
