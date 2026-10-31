@@ -150,17 +150,12 @@ fn scalar(name: &str, value: &Value) -> Result<Value, ScalarError> {
             }
             _ => invalid,
         },
-        "JSON" => Ok(value.clone()),
-        // String, HTML, FormattedString, StorefrontID, and any scalar lsf does not know.
-        _ => match value {
+        "String" | "HTML" | "FormattedString" | "StorefrontID" => match value {
             Value::String(_) => Ok(value.clone()),
-            _ if name == "String"
-                || matches!(name, "HTML" | "FormattedString" | "StorefrontID") =>
-            {
-                invalid
-            }
-            _ => Ok(value.clone()),
+            _ => invalid,
         },
+        // `JSON`, and a scalar lsf does not know: anything.
+        _ => Ok(value.clone()),
     }
 }
 

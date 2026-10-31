@@ -255,6 +255,31 @@ impl<'a> FieldContext<'a> {
         segments.join(".")
     }
 
+    /// The arguments of a directive the query puts on the field, coerced (`None` when the
+    /// field does not have it): `directive("idempotent")` gives `{"key": "..."}`.
+    pub fn directive(&self, name: &str) -> Option<Map<String, Value>> {
+        let schema = self.context.schema;
+        let def = schema.directive(name)?;
+        let directive = self
+            .nodes
+            .iter()
+            .flat_map(|node| &node.directives)
+            .find(|directive| directive.name == name)?;
+        let mut arguments = Map::new();
+        for arg in def.args.values() {
+            let given = directive.arguments.iter().find(|a| a.name == arg.name);
+            let value = given
+                .and_then(|given| {
+                    input::coerce_literal(schema, &given.value, &arg.ty, self.context.variables)
+                })
+                .or_else(|| arg.default_value.clone());
+            if let Some(value) = value {
+                arguments.insert(arg.name.clone(), value);
+            }
+        }
+        Some(arguments)
+    }
+
     /// What the query selects below the field.
     pub fn selection(&self) -> Lookahead<'a> {
         Lookahead {

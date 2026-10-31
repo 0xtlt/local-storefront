@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use super::ast::{Field, Operation, OperationKind, SelectionSet};
 use super::error::Error;
 use super::execute::{self, Context};
+use super::parse::MAX_DEPTH;
 use crate::schema::{Field as FieldDef, Schema, TypeDef};
 
 /// The most a single query may cost, whatever the plan.
@@ -96,7 +97,7 @@ pub(crate) fn requested(context: &Context<'_>, operation: &Operation<'_>) -> u64
     let Some(root) = root.and_then(|name| schema.get(name)) else {
         return 0;
     };
-    selection(context, root, &[&operation.selection_set], mutation, 1)
+    selection(context, root, &[&operation.selection_set], mutation, 1, 0)
 }
 
 /// What a selection costs on an object of a type: for an interface or a union, the most it
@@ -107,14 +108,19 @@ fn selection<'a>(
     sets: &[&'a SelectionSet<'a>],
     mutation_root: bool,
     items: u64,
+    depth: usize,
 ) -> u64 {
+    // Deeper than a query may nest (through fragments), the executor refuses it.
+    if depth > MAX_DEPTH {
+        return 0;
+    }
     if !ty.is_abstract() {
-        return object(context, ty, sets, mutation_root, items);
+        return object(context, ty, sets, mutation_root, items, depth);
     }
     ty.possible_types
         .iter()
         .filter_map(|name| context.schema.get(name))
-        .map(|possible| object(context, possible, sets, false, items))
+        .map(|possible| object(context, possible, sets, false, items, depth))
         .max()
         .unwrap_or(0)
 }
@@ -125,10 +131,11 @@ fn object<'a>(
     sets: &[&'a SelectionSet<'a>],
     mutation_root: bool,
     items: u64,
+    depth: usize,
 ) -> u64 {
     execute::collect_fields(context, Some(&ty.name), sets)
         .values()
-        .map(|nodes| field(context, ty, nodes, mutation_root, items))
+        .map(|nodes| field(context, ty, nodes, mutation_root, items, depth))
         .sum()
 }
 
@@ -140,6 +147,7 @@ fn field<'a>(
     nodes: &[&'a Field<'a>],
     mutation_root: bool,
     items: u64,
+    depth: usize,
 ) -> u64 {
     let schema = context.schema;
     let node = nodes[0];
@@ -162,7 +170,7 @@ fn field<'a>(
         0
     } else {
         let sets: Vec<&'a SelectionSet<'a>> = nodes.iter().map(|n| &n.selection_set).collect();
-        selection(context, ty, &sets, false, size)
+        selection(context, ty, &sets, false, size, depth + 1)
     };
     let one = shape.per_object + children;
     shape.fixed + if shape.sum_items { one * items } else { one }

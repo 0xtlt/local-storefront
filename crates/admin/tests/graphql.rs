@@ -144,6 +144,10 @@ impl Resolver for Toy {
                     .with_extension("requiredAccess", "`read_reports` access scope."))
             }
             ("Mutation", "productCreate") => {
+                if let Some(idempotent) = ctx.directive("idempotent") {
+                    self.lookahead
+                        .push(format!("idempotent:{}", idempotent["key"]));
+                }
                 let input = ctx.arg("product").unwrap();
                 let id = format!("gid://shopify/Product/{}", self.products.len() + 1);
                 let product = json!({"id": id, "title": input["title"], "status": input.get("status").cloned().unwrap_or(json!("ACTIVE")), "tags": []});
@@ -332,6 +336,13 @@ fn runs_mutations_one_after_the_other() {
         })
     );
     assert_eq!(toy.products.len(), 5);
+    // A resolver reads the directives of its field.
+    run(
+        &mut toy,
+        "mutation($k: String!) { productCreate(product: {title: \"x\"}) @idempotent(key: $k) { product { id } } }",
+        json!({"k": "123e4567"}),
+    );
+    assert_eq!(toy.lookahead, ["idempotent:\"123e4567\""]);
 }
 
 #[test]

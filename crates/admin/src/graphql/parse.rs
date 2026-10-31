@@ -11,11 +11,17 @@ use super::ast::*;
 use super::error::Error;
 use crate::schema::TypeRef;
 
+/// How deeply selections and values may nest. A query nested deeper is refused, with the
+/// error graphql-ruby answers when its stack runs out, rather than running out of stack here
+/// (the deepest real queries, graphql-js's introspection query among them, nest about 15 deep).
+pub const MAX_DEPTH: usize = 100;
+
 /// Parses a document.
 pub fn parse(source: &str) -> Result<Document<'_>, Box<Error>> {
     let mut parser = Parser {
         lexer: Lexer::new(source),
         token: Token::end(Pos { line: 1, column: 1 }),
+        depth: 0,
     };
     parser.advance()?;
     if parser.token.kind == Kind::End {
@@ -26,6 +32,10 @@ pub fn parse(source: &str) -> Result<Document<'_>, Box<Error>> {
         definitions.push(parser.definition()?);
     }
     Ok(Document { definitions })
+}
+
+fn too_large() -> Box<Error> {
+    Box::new(Error::new("This query is too large to execute."))
 }
 
 fn end_of_document() -> Box<Error> {
@@ -140,9 +150,10 @@ struct Lexer<'q> {
     source: &'q str,
     /// The byte offset of the next character.
     offset: usize,
+    /// Where the next character is: kept as the lexer moves, so that a long line (a minified
+    /// query) costs no more than a short one.
     line: usize,
-    /// The byte offset where the current line starts.
-    line_start: usize,
+    column: usize,
 }
 
 impl<'q> Lexer<'q> {
@@ -151,16 +162,30 @@ impl<'q> Lexer<'q> {
             source,
             offset: 0,
             line: 1,
-            line_start: 0,
+            column: 1,
         }
     }
 
     fn pos(&self) -> Pos {
-        let column = self.source[self.line_start..self.offset].chars().count() + 1;
         Pos {
             line: self.line,
-            column,
+            column: self.column,
         }
+    }
+
+    /// Moves over `count` ASCII characters on the line.
+    fn skip(&mut self, count: usize) {
+        self.offset += count;
+        self.column += count;
+    }
+
+    /// Goes back to where a token started, then over its first character: what is left of an
+    /// unterminated string is read again as tokens.
+    fn rewind(&mut self, start: usize, pos: Pos) {
+        self.offset = start;
+        self.line = pos.line;
+        self.column = pos.column;
+        self.bump();
     }
 
     fn peek(&self) -> Option<char> {
@@ -170,12 +195,13 @@ impl<'q> Lexer<'q> {
     fn bump(&mut self) -> Option<char> {
         let c = self.peek()?;
         self.offset += c.len_utf8();
+        self.column += 1;
         Some(c)
     }
 
     fn newline(&mut self) {
         self.line += 1;
-        self.line_start = self.offset;
+        self.column = 1;
     }
 
     /// Skips what GraphQL ignores: white space, line terminators, commas, comments, the BOM.
@@ -231,7 +257,7 @@ impl<'q> Lexer<'q> {
             '|' => Kind::Pipe,
             '&' => Kind::Amp,
             '.' if self.source[self.offset..].starts_with("..") => {
-                self.offset += 2;
+                self.skip(2);
                 Kind::Ellipsis
             }
             '_' | 'a'..='z' | 'A'..='Z' => {
@@ -307,7 +333,7 @@ impl<'q> Lexer<'q> {
 
     fn string(&mut self, start: usize, pos: Pos) -> Token<'q> {
         if self.source[self.offset..].starts_with("\"\"") {
-            self.offset += 2;
+            self.skip(2);
             return self.block_string(start, pos);
         }
         let mut value = String::new();
@@ -316,7 +342,7 @@ impl<'q> Lexer<'q> {
             match self.bump() {
                 None | Some('\n' | '\r') => {
                     // Unterminated: graphql-ruby's lexer stops at the quote.
-                    self.offset = start + 1;
+                    self.rewind(start, pos);
                     return Token {
                         kind: Kind::UnknownChar,
                         text: "\"",
@@ -366,18 +392,18 @@ impl<'q> Lexer<'q> {
         if let Some(braced) = rest.strip_prefix('{') {
             let end = braced.find('}')?;
             let code = u32::from_str_radix(&braced[..end], 16).ok()?;
-            self.offset += end + 2;
+            self.skip(end + 2);
             return char::from_u32(code);
         }
         let code = u32::from_str_radix(rest.get(..4)?, 16).ok()?;
-        self.offset += 4;
+        self.skip(4);
         if (0xD800..0xDC00).contains(&code) {
             let low = self.source[self.offset..].strip_prefix("\\u")?;
             let low = u32::from_str_radix(low.get(..4)?, 16).ok()?;
             if !(0xDC00..0xE000).contains(&low) {
                 return None;
             }
-            self.offset += 6;
+            self.skip(6);
             return char::from_u32(0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00));
         }
         char::from_u32(code)
@@ -388,17 +414,17 @@ impl<'q> Lexer<'q> {
         loop {
             let rest = &self.source[self.offset..];
             if rest.starts_with("\"\"\"") {
-                self.offset += 3;
+                self.skip(3);
                 break;
             }
             if rest.starts_with("\\\"\"\"") {
-                self.offset += 4;
+                self.skip(4);
                 raw.push_str("\"\"\"");
                 continue;
             }
             match self.bump() {
                 None => {
-                    self.offset = start + 1;
+                    self.rewind(start, pos);
                     return Token {
                         kind: Kind::UnknownChar,
                         text: "\"",
@@ -465,6 +491,8 @@ fn block_string_value(raw: &str) -> String {
 struct Parser<'q> {
     lexer: Lexer<'q>,
     token: Token<'q>,
+    /// How deep the selection sets and values being read are.
+    depth: usize,
 }
 
 type Parsed<T> = Result<T, Box<Error>>;
@@ -673,14 +701,24 @@ impl<'q> Parser<'q> {
 
     fn selection_set(&mut self) -> Parsed<SelectionSet<'q>> {
         self.expect(Kind::LCurly)?;
+        self.enter()?;
         let mut items = Vec::new();
         loop {
             items.push(self.selection()?);
             if self.token.is(Kind::RCurly) {
                 self.advance()?;
+                self.depth -= 1;
                 return Ok(SelectionSet { items });
             }
         }
+    }
+
+    fn enter(&mut self) -> Parsed<()> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(too_large());
+        }
+        Ok(())
     }
 
     fn selection(&mut self) -> Parsed<Selection<'q>> {
@@ -799,20 +837,24 @@ impl<'q> Parser<'q> {
             }
             Kind::LBracket => {
                 self.advance()?;
+                self.enter()?;
                 let mut items = Vec::new();
                 while !self.token.is(Kind::RBracket) {
                     items.push(self.value()?);
                 }
                 self.advance()?;
+                self.depth -= 1;
                 ValueKind::List(items)
             }
             Kind::LCurly => {
                 self.advance()?;
+                self.enter()?;
                 let mut fields = Vec::new();
                 while !self.token.is(Kind::RCurly) {
                     fields.push(self.argument()?);
                 }
                 self.advance()?;
+                self.depth -= 1;
                 ValueKind::Object(fields)
             }
             _ => return Err(self.unexpected()),
@@ -847,8 +889,11 @@ fn starts_definition(name: &str) -> bool {
 pub(super) fn ruby_inspect(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
-    for c in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
         match c {
+            // `#{`, `#$` and `#@` would interpolate in Ruby: `inspect` escapes them.
+            '#' if matches!(chars.peek(), Some('{' | '$' | '@')) => out.push_str("\\#"),
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
@@ -859,7 +904,6 @@ pub(super) fn ruby_inspect(text: &str) -> String {
             '\u{8}' => out.push_str("\\b"),
             '\u{7}' => out.push_str("\\a"),
             '\u{1b}' => out.push_str("\\e"),
-            '#' => out.push('#'),
             c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
             c => out.push(c),
         }
@@ -980,6 +1024,48 @@ mod tests {
             error("{ a ? }")["message"],
             "Parse error on \"?\" (UNKNOWN_CHAR) at [1, 5]"
         );
+    }
+
+    #[test]
+    fn counts_columns_on_long_lines() {
+        let fields = "a ".repeat(50_000);
+        let source = format!("{{ {fields}b(c: \"é\" d: [1 2 3]) }}");
+        let start = std::time::Instant::now();
+        let document = parse(&source).unwrap();
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        let Some(Definition::Operation(operation)) = document.definitions.first() else {
+            panic!()
+        };
+        let Some(Selection::Field(b)) = operation.selection_set.items.last() else {
+            panic!()
+        };
+        assert_eq!(b.pos.column, 100_003);
+        assert_eq!(b.arguments[1].pos.column, 100_012);
+    }
+
+    #[test]
+    fn refuses_a_query_nested_too_deeply() {
+        let deep = format!(
+            "{}{}",
+            "{ a ".repeat(MAX_DEPTH + 1),
+            "}".repeat(MAX_DEPTH + 1)
+        );
+        assert_eq!(
+            error(&deep),
+            serde_json::json!({"message": "This query is too large to execute."})
+        );
+        let fine = format!("{}{}", "{ a ".repeat(MAX_DEPTH), "}".repeat(MAX_DEPTH));
+        assert!(parse(&fine).is_ok());
+        let values = format!(
+            "{{ a(b: {}{}) }}",
+            "[".repeat(MAX_DEPTH + 1),
+            "]".repeat(MAX_DEPTH + 1)
+        );
+        assert_eq!(
+            error(&values)["message"],
+            "This query is too large to execute."
+        );
+        assert_eq!(ruby_inspect("#{x} #a"), "\"\\#{x} #a\"");
     }
 
     #[test]

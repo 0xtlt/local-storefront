@@ -17,6 +17,7 @@ use super::cost::{self, Shape};
 use super::error::Error;
 use super::input;
 use super::introspection::{Introspection, Meta};
+use super::parse::MAX_DEPTH;
 use super::{FieldContext, Output, Resolver};
 use crate::schema::{Field as FieldDef, Kind, Schema, TypeDef, TypeRef};
 
@@ -39,7 +40,7 @@ pub(crate) fn collect_fields<'a>(
     let mut fields = IndexMap::new();
     let mut visited = Vec::new();
     for set in sets {
-        collect(context, object_type, set, &mut fields, &mut visited);
+        collect(context, object_type, set, &mut fields, &mut visited, 0);
     }
     fields
 }
@@ -50,7 +51,13 @@ fn collect<'a>(
     set: &'a SelectionSet<'a>,
     fields: &mut IndexMap<&'a str, Vec<&'a Field<'a>>>,
     visited: &mut Vec<&'a str>,
+    depth: usize,
 ) {
+    // Fragments in fragments nest deeper than the parser sees: past its limit, the rest is
+    // left out (and the executor refuses the query).
+    if depth > MAX_DEPTH {
+        return;
+    }
     let applies = |condition: &str| {
         object_type.is_none_or(|object| context.schema.is_possible(condition, object))
     };
@@ -65,7 +72,14 @@ fn collect<'a>(
                 if included(context, &inline.directives)
                     && inline.type_condition.is_none_or(applies)
                 {
-                    collect(context, object_type, &inline.selection_set, fields, visited);
+                    collect(
+                        context,
+                        object_type,
+                        &inline.selection_set,
+                        fields,
+                        visited,
+                        depth + 1,
+                    );
                 }
             }
             Selection::FragmentSpread(spread) => {
@@ -82,6 +96,7 @@ fn collect<'a>(
                         &fragment.selection_set,
                         fields,
                         visited,
+                        depth + 1,
                     );
                 }
             }
@@ -133,6 +148,8 @@ pub(crate) struct Executor<'c, 'a> {
     errors: Vec<Error>,
     /// The path of the value being completed, in the response.
     path: Vec<Value>,
+    /// Whether the query nested too deeply, through its fragments, to run.
+    too_large: bool,
 }
 
 impl<'c, 'a> Executor<'c, 'a> {
@@ -145,6 +162,7 @@ impl<'c, 'a> Executor<'c, 'a> {
             context,
             errors: Vec::new(),
             path: Vec::new(),
+            too_large: false,
         };
         let schema = context.schema;
         let (root, root_type) = match operation.kind {
@@ -167,6 +185,14 @@ impl<'c, 'a> Executor<'c, 'a> {
             mutation,
         );
         let (data, actual_cost) = result.unwrap_or((Value::Null, 0));
+        if executor.too_large {
+            // graphql-ruby's answer when its stack runs out: the error alone.
+            return Executed {
+                data: Value::Null,
+                errors: vec![Error::new("This query is too large to execute.")],
+                actual_cost,
+            };
+        }
         Executed {
             data,
             errors: executor.errors,
@@ -183,6 +209,11 @@ impl<'c, 'a> Executor<'c, 'a> {
         sets: &[&'a SelectionSet<'a>],
         mutation_root: bool,
     ) -> Completed {
+        // A field and a list index per level, at most.
+        if self.path.len() > 2 * MAX_DEPTH {
+            self.too_large = true;
+            return Ok((Value::Null, 0));
+        }
         let fields = collect_fields(self.context, Some(&object_type.name), sets);
         let mut result = Map::new();
         let mut cost = 0;

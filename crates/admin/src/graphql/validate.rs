@@ -20,6 +20,7 @@ use serde_json::Value;
 
 use super::ast::*;
 use super::error::Error;
+use super::parse::MAX_DEPTH;
 use super::{input, print};
 use crate::schema::{
     DirectiveLocation, Field as FieldDef, InputValue, Kind, Schema, TypeDef, TypeRef,
@@ -1120,7 +1121,7 @@ impl<'a, 'q> Validator<'a, 'q> {
         for index in operations {
             let mut variables = self.usages[&index].variables.clone();
             let mut visited = Vec::new();
-            self.follow_spreads(index, &mut variables, &mut visited);
+            self.follow_spreads(index, &mut variables, &mut visited, 0);
             let Definition::Operation(operation) = &document.definitions[index] else {
                 continue;
             };
@@ -1167,8 +1168,9 @@ impl<'a, 'q> Validator<'a, 'q> {
         definition: usize,
         variables: &mut IndexMap<&'q str, VariableUse>,
         visited: &mut Vec<&'q str>,
+        depth: usize,
     ) {
-        let Some(usage) = self.usages.get(&definition) else {
+        let Some(usage) = self.usages.get(&definition).filter(|_| depth <= MAX_DEPTH) else {
             return;
         };
         let spreads: Vec<&'q str> = usage
@@ -1191,7 +1193,7 @@ impl<'a, 'q> Validator<'a, 'q> {
                     parent.used.clone_from(&child.used);
                 }
             }
-            self.follow_spreads(fragment, variables, visited);
+            self.follow_spreads(fragment, variables, visited, depth + 1);
         }
     }
 
@@ -1303,12 +1305,12 @@ impl<'a, 'q> Validator<'a, 'q> {
     /// return values of the same shape.
     fn check_merge(&mut self, set: &'a SelectionSet<'q>, parent: &'a TypeDef) {
         let mut fields = IndexMap::new();
-        self.collect_fields(set, parent, &mut fields, &mut Vec::new());
+        self.collect_fields(set, parent, &mut fields, &mut Vec::new(), 0);
         let mut conflicts = Conflicts::default();
         for (key, group) in &fields {
             for (i, first) in group.iter().enumerate() {
                 for second in &group[i + 1..] {
-                    self.find_conflict(key, first, second, false, &mut conflicts);
+                    self.find_conflict(key, first, second, false, &mut conflicts, 0);
                 }
             }
         }
@@ -1334,7 +1336,11 @@ impl<'a, 'q> Validator<'a, 'q> {
         parent: &'a TypeDef,
         out: &mut IndexMap<&'q str, Vec<MergeField<'a, 'q>>>,
         visited: &mut Vec<&'q str>,
+        depth: usize,
     ) {
+        if depth > MAX_DEPTH {
+            return;
+        }
         let mut spreads = Vec::new();
         for selection in &set.items {
             match selection {
@@ -1353,7 +1359,7 @@ impl<'a, 'q> Validator<'a, 'q> {
                         None => Some(parent),
                     };
                     if let Some(ty) = ty {
-                        self.collect_fields(&inline.selection_set, ty, out, visited);
+                        self.collect_fields(&inline.selection_set, ty, out, visited, depth + 1);
                     }
                 }
                 Selection::FragmentSpread(spread) => spreads.push(spread.name),
@@ -1368,7 +1374,7 @@ impl<'a, 'q> Validator<'a, 'q> {
                 continue;
             };
             if let Some(ty) = self.schema.get(fragment.type_condition) {
-                self.collect_fields(&fragment.selection_set, ty, out, visited);
+                self.collect_fields(&fragment.selection_set, ty, out, visited, depth + 1);
             }
         }
     }
@@ -1380,10 +1386,14 @@ impl<'a, 'q> Validator<'a, 'q> {
         second: &MergeField<'a, 'q>,
         parents_exclusive: bool,
         conflicts: &mut Conflicts<'q>,
+        depth: usize,
     ) {
         let (Some(first_def), Some(second_def)) = (first.def, second.def) else {
             return;
         };
+        if depth > MAX_DEPTH {
+            return;
+        }
         if std::ptr::eq(first.node, second.node) {
             return;
         }
@@ -1452,6 +1462,7 @@ impl<'a, 'q> Validator<'a, 'q> {
             first_type,
             &mut first_fields,
             &mut Vec::new(),
+            0,
         );
         let mut second_fields = IndexMap::new();
         self.collect_fields(
@@ -1459,6 +1470,7 @@ impl<'a, 'q> Validator<'a, 'q> {
             second_type,
             &mut second_fields,
             &mut Vec::new(),
+            0,
         );
         for (sub_key, firsts) in &first_fields {
             let Some(seconds) = second_fields.get(sub_key) else {
@@ -1466,7 +1478,7 @@ impl<'a, 'q> Validator<'a, 'q> {
             };
             for a in firsts {
                 for b in seconds {
-                    self.find_conflict(sub_key, a, b, exclusive, conflicts);
+                    self.find_conflict(sub_key, a, b, exclusive, conflicts, depth + 1);
                 }
             }
         }
@@ -2098,6 +2110,16 @@ mod tests {
             "Directive 'skip' is missing required arguments: if"
         );
         assert!(errors("mutation { productCreate(product: {title: \"a\"}) @idempotent(key: \"k\") { product { id } } }").is_empty());
+    }
+
+    #[test]
+    fn a_long_chain_of_fragments_does_not_run_out_of_stack() {
+        let mut query = String::from("{ shop { ...F0 } }\n");
+        for i in 0..2000 {
+            query.push_str(&format!("fragment F{i} on Shop {{ name ...F{} }}\n", i + 1));
+        }
+        query.push_str("fragment F2000 on Shop { id }");
+        assert!(errors(&query).is_empty());
     }
 
     #[test]
