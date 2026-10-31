@@ -8,6 +8,8 @@
 //!   table cannot say): `write_products` for a product, `write_customers` for a customer,
 //!   `write_orders` for an order, `write_draft_orders` for a draft order, `write_content` for an
 //!   article. lsf checks it, as the `ACCESS_DENIED` of the field.
+//! - Derived values follow, as the resource's own update mutation keeps them: a product's smart
+//!   collections (`catalog::product_changed`), an article's blog's `tags`.
 //! - Events: the update topic of the resource (`products/update`, `customers/update`,
 //!   `orders/updated`, `draft_orders/update`, `articles/update`), and for a customer
 //!   `customer.tags_added` or `customer.tags_removed`.
@@ -111,6 +113,20 @@ fn change(
     let changed = current.len() != before;
     record.insert("tags".into(), json!(current));
     if changed {
+        match state.type_of(&id) {
+            Some("Product") => super::catalog::product_changed(state, &id),
+            Some("Article") => {
+                let blog = state
+                    .get(&id)
+                    .and_then(|article| article.get("blog"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if let Some(blog) = blog {
+                    super::content::refresh_blog(state, &blog);
+                }
+            }
+            _ => {}
+        }
         state.touch(&id);
         state.emit(topic, &id);
         if let (Some((added, removed)), Some(previous)) = (customer_topics, previous) {

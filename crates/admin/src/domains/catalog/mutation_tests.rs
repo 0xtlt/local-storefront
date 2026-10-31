@@ -1888,3 +1888,55 @@ fn a_price_past_the_bound_is_refused() {
     assert_eq!(shop.get(&variant), before.get(&variant));
     assert!(shop.take_events().is_empty());
 }
+
+/// `tagsAdd` and `tagsRemove` on a product move it in and out of the smart collections its
+/// tags match, as `productUpdate(tags:)` does.
+#[test]
+fn tags_added_to_a_product_follow_the_smart_collections() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let smart = run(
+        &mut shop,
+        r#"mutation { collectionCreate(input: {title: "Sale", ruleSet: {appliedDisjunctively: false, rules: [
+            {column: TAG, relation: EQUALS, condition: "zz-sale"}]}}) { collection { id productsCount { count } } userErrors { message } } }"#,
+    );
+    let collection = ok(&smart, "collectionCreate")["collection"].clone();
+    assert_eq!(collection["productsCount"]["count"], json!(0));
+    let count = |shop: &mut ShopState| {
+        run_with(
+            shop,
+            "query($id: ID!) { collection(id: $id) { productsCount { count } products(first: 5) { nodes { id } } } }",
+            json!({"id": collection["id"]}),
+        )["data"]["collection"]
+            .clone()
+    };
+    let tags = "mutation($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { message } } }";
+    run_with(&mut shop, tags, json!({"id": mug, "tags": ["zz-sale"]}));
+    assert_eq!(
+        count(&mut shop),
+        json!({"productsCount": {"count": 1}, "products": {"nodes": [{"id": mug}]}})
+    );
+    run_with(
+        &mut shop,
+        &tags.replace("tagsAdd", "tagsRemove"),
+        json!({"id": mug, "tags": ["ZZ-SALE"]}),
+    );
+    assert_eq!(
+        count(&mut shop),
+        json!({"productsCount": {"count": 0}, "products": {"nodes": []}})
+    );
+
+    // An article's tags are its blog's too.
+    let article = shop.keys("Article").next().unwrap().to_string();
+    let blog = shop.get(&article).unwrap()["blog"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    run_with(&mut shop, tags, json!({"id": article, "tags": ["zz-new"]}));
+    assert!(
+        shop.get(&blog).unwrap()["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("zz-new"))
+    );
+}
