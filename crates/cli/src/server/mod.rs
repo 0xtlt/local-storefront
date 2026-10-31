@@ -39,6 +39,7 @@ use axum::extract::State;
 use axum::extract::ws::{WebSocketUpgrade, rejection::WebSocketUpgradeRejection};
 use axum::http::{HeaderName, HeaderValue, Request as HttpRequest, Response, StatusCode};
 use lsf_core::diagnostics::Diagnostics;
+use lsf_core::store::load::{LoadOptions, SourceData};
 use lsf_core::theme::THEME_DIRECTORIES;
 use lsf_core::{Request, Session, Store};
 use serde_json::Value as Json;
@@ -100,6 +101,12 @@ pub struct Loaded {
     /// store sync projects their changes onto. `store` itself while the Admin API changed
     /// nothing the store data shows.
     pub base: Arc<Store>,
+    /// The data the files gave when `base` was built, and the options it was built with: store
+    /// sync and the sessions with data of their own build on them, never on the files again.
+    /// `--static` reads the files once; without `--watch`, a file changed on disk is not seen
+    /// until the store is reloaded, by the storefront or by what is built on top of it.
+    pub source: Arc<SourceData>,
+    pub load_options: LoadOptions,
     /// What the Admin API changed, as `store` has it.
     pub synced: store_sync::Applied,
 }
@@ -236,7 +243,9 @@ fn fingerprint(root: &Path) -> u64 {
 
 impl ServerState {
     pub fn new(app: App, options: ServeOptions) -> (ServerState, Diagnostics) {
-        let (store, diagnostics) = app.load_store();
+        let source = Arc::new(app.read_store());
+        let load_options = app.load_options();
+        let (store, diagnostics) = source.build(&load_options, &[]);
         let base = Arc::new(store);
         let fingerprint = app
             .data_dir()
@@ -259,6 +268,8 @@ impl ServerState {
                 diagnostics: diagnostics.clone(),
                 fingerprint,
                 base,
+                source,
+                load_options,
                 synced: Default::default(),
             })),
             rebuilding: Mutex::new(()),
@@ -303,7 +314,9 @@ impl ServerState {
             .rebuilding
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (store, diagnostics) = self.app.load_store();
+        let source = Arc::new(self.app.read_store());
+        let load_options = self.app.load_options();
+        let (store, diagnostics) = source.build(&load_options, &[]);
         let base = Arc::new(store);
         let files = Loaded {
             store: base.clone(),
@@ -313,6 +326,8 @@ impl ServerState {
                 .data_dir()
                 .map_or(0, |directory| fingerprint(&directory)),
             base,
+            source,
+            load_options,
             synced: Default::default(),
         };
         let loaded = match &self.admin {

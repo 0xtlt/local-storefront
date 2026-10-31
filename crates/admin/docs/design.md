@@ -1094,8 +1094,9 @@ pub const sync::OVERLAY_NAME: &str = "(admin api)";
 `store` is the store the shop was seeded from: the files, loaded without any overlay. The
 overlay is `{name: "(admin api)", removed, data}`: the entities to remove (by the key the data
 names them by: handle, email, name, code), then store data (the format of a data file) to add
-and replace. `load_with_overlays(source, options, &[overlay])` gives the store with the
-changes. `None` when nothing the store data expresses changed.
+and replace. `SourceData::build(options, &[overlay])` over the data the files gave (or
+`load_with_overlays(source, options, &[overlay])`, which reads them first) gives the store with
+the changes. `None` when nothing the store data expresses changed.
 
 - **Change tracking** (`ShopState`): once the seed is made it calls `track_changes`; from then
   on the first change of a record (`insert`, `insert_as`, `remove`, `get_mut`, `touch`) keeps a
@@ -1231,12 +1232,17 @@ the date its position gave it). Sessions and carts that name variants by id keep
 ### Server wiring (done)
 
 The plan was to project after each change, under the shop's lock, and to build the store lazily.
-The projection is lazy too: on the store of 3,000 products of the timing below it takes 70 ms,
+The projection is lazy too: on the store of 3,000 products of the timing below it takes 40 to 70 ms,
 which every mutation would have paid on the Admin request's path, ten times for a burst of ten.
 
-1. **At start** (`ServerState::new`), the store of the files is loaded once and kept as the
-   *base* (`Loaded::base`): it seeds the shops (`AdminApi::new`) and turns sync on
-   (`AdminApi::sync_store(base)`). The store the storefront sees starts as the base.
+1. **At start** (`ServerState::new`), the files are read once (`lsf_core::store::load::
+   SourceData::read`: parsed, checked and merged) and kept (`Loaded::source`, with the
+   `LoadOptions` the store was built with); the store built from them is the *base*
+   (`Loaded::base`): it seeds the shops (`AdminApi::new`) and turns sync on
+   (`AdminApi::sync_store(base)`). The store the storefront sees starts as the base. Every
+   later build starts from that data, never from the files on disk: `--static` reads them once,
+   and without `--watch` a file changed on disk but not reloaded does not leak into a store
+   whose overlay was computed against the old base (the files' image sizes are kept too).
 2. **A change of the default shop is counted, not projected.** `ShopState::revision` grows with
    every write (`insert`, `insert_as`, `remove`, `get_mut`, `touch`, a reset), so `graphql` and
    `change_shop` (an order the checkout records goes through it) tell a request that wrote from
@@ -1253,20 +1259,21 @@ which every mutation would have paid on the Admin request's path, ten times for 
    `AdminApi::synced`, which projects the shop under its lock when the count moved since the
    last projection (`api::sync::StoreSync::update`), keeps the overlay when it is the same
    (`Overlay: PartialEq`), and moves the generation on only when it is not. A new generation is
-   built (`load_with_overlays(&source, &options, &[overlay])`, or the base itself for no
+   built (`loaded.source.build(&loaded.load_options, &[overlay])`, or the base itself for no
    overlay) outside the shop's lock, and swapped into `Loaded` whole: a page rendered meanwhile
    has the `Arc<Loaded>` it started with. A burst of mutations is projected and built once, by
    the first request that follows it; an order recorded at the checkout makes the same overlay
    and builds nothing (`an_order_placed_at_the_checkout_does_not_build_the_store_again`).
 4. **Sessions with their own data** keep it (`SessionEntry::data`, with the generation their
-   store was built at). Their store is `[sync_overlay, Overlay::new(OVERLAY_FILE, data)]`
-   (`ServerState::session_store`, which `PUT /__lsf/session` uses too), built again on the
+   store was built at). Their store is `[sync_overlay, Overlay::new(OVERLAY_FILE, data)]` on
+   the same data (`ServerState::session_store`, which `PUT /__lsf/session` uses too), built again on the
    session's next request when the generation moved. A session named only by
    `GET /__lsf/checkout?session=` sees its store as of its own last request.
 5. **Live reload**: the token has the generation of the store built (`Loaded::synced`), and
    `observe_changes` builds before it computes the token: the pages reload once the store is
    built, and find it so.
-6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` loads the new base, reseeds
+6. **The files change** (`--watch`, `POST /__lsf/reload`): `reload` reads the files again and
+   loads the new base, reseeds
    (`AdminApi::reseed`; the terminal says what was dropped), moves sync to the new base
    (`sync_store`, which counts a change), and builds from `synced()`: the store is the new base,
    unless the backend changed the shop in between.
@@ -1286,8 +1293,15 @@ yet), `overlay` (`written`: entities by section; `removed`: their keys), `built`
 
 | Store | Records | Mutation (Admin request) | Next page: projection and build | Page without a change |
 |---|---|---|---|---|
-| Demo (8 products) | 251 | 0.5 ms | 0.5 to 1.3 ms | 0.1 ms |
-| 3,000 products of 12 variants | 198,000 | 400 ms | 290 to 370 ms (projection 70 ms, build 250 to 300 ms) | 0.1 ms |
+| Demo (8 products) | 251 | 0.5 ms | 0.3 ms (build 0.1 to 0.2 ms) | 0.1 ms |
+| 3,000 products of 12 variants | 198,000 | 300 ms | 100 ms (build 56 to 58 ms, the projection most of the rest) | 0.1 ms |
+
+- Measured on 2026-10-31 (three alternated runs, medians, a loaded machine): the build was
+  0.3 to 0.4 ms and 170 to 210 ms when it read the files again (`load_with_overlays` on the
+  source), the next page 0.5 ms and 240 to 270 ms. Building from the data read once
+  (`SourceData::build`: a copy of the merged data, the overlay, the build) skips reading,
+  parsing and checking 3,000 files. An earlier measure, before the build's recommendations were
+  fixed and on another machine, had the large store at 290 to 370 ms.
 
 - The build was cubic before: a product's default recommendations checked every product against
   the list so far before keeping ten. 2,000 products took 1.2 to 2 s to load, 3,000 products 5 to

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use lsf_core::diagnostics::Diagnostics;
-use lsf_core::store::load::{DataSource, LoadOptions, load};
+use lsf_core::store::load::{DataSource, LoadOptions, SourceData, load};
 use lsf_core::theme::Revalidate;
 use lsf_core::{Preview, Renderer, Store, Theme};
 
@@ -174,6 +174,13 @@ impl App {
 
     pub fn load_store(&self) -> (Store, Diagnostics) {
         load(&self.source(), &self.load_options())
+    }
+
+    /// The store data as the files give it now, read once: what a server builds its store
+    /// from, and builds it again from with what the Admin API changed, without reading the
+    /// files again.
+    pub fn read_store(&self) -> SourceData {
+        SourceData::read(&self.source())
     }
 
     pub fn describe_source(&self) -> String {

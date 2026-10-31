@@ -307,9 +307,11 @@ The full list, field by field, is in the design notes of `lsf-admin`
   same options), the storefront shows the rest, the terminal says what was refused (once), and so
   does `GET /__lsf/admin` (`storeSync.built.diagnostics`).
 - **What it costs**: a request of the backend only counts the change. The next request that
-  reads the store builds it again, once for a burst of mutations: under 2 ms on the demo store,
-  about 0.3 s for 3,000 products of 12 variants. Pages served without a change in between cost
-  nothing more. `GET /__lsf/admin` gives `storeSync`: the generation of the changes, whether a
+  reads the store builds it again, once for a burst of mutations: under 1 ms on the demo store,
+  about 0.1 s for 3,000 products of 12 variants. It builds on the files as the server read them
+  at start (or at the last reload), never on the files on disk: with `--static`, or without
+  `--watch`, a data file edited since is not seen until a reload. Pages served without a change
+  in between cost nothing more. `GET /__lsf/admin` gives `storeSync`: the generation of the changes, whether a
   change waits for the next page (`pending`), what the overlay writes and removes, and how long
   the last build took.
 

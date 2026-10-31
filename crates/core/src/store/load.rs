@@ -14,7 +14,9 @@
 //!   schema/           JSON Schemas written by `lsf init` for editor support (ignored here)
 //! ```
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
@@ -901,34 +903,85 @@ pub fn load_with_overlays(
     options: &LoadOptions,
     overlays: &[Overlay],
 ) -> (Store, Diagnostics) {
-    let mut diagnostics = Diagnostics::new();
-    let (files, files_directory) = match source {
-        DataSource::Directory(root) => (
-            read_directory(root, &mut diagnostics),
-            Some(root.join("files")),
-        ),
-        DataSource::Demo => (demo_files(), None),
-    };
-    let mut merged = merge(files, &mut diagnostics);
-    for overlay in overlays {
-        apply_removals(&mut merged, &overlay.removed);
-        if !overlay.data.is_null() {
-            apply_overlay(&mut merged, &overlay.name, &overlay.data, &mut diagnostics);
+    SourceData::read(source).build(options, overlays)
+}
+
+/// The store data as its files gave it: read, checked and merged once, before any overlay.
+/// [`SourceData::build`] makes a store of it, with overlays on top, as often as needed and
+/// without reading the files again: a server builds its store again whenever the Admin API
+/// changes it, on top of the files it started from (`lsf serve --static` never looks at them
+/// again, and a file changed on disk that was not reloaded must not leak in). The pixel sizes
+/// of the images of `files/` are read once too, by the first build that needs each.
+pub struct SourceData {
+    merged: MergedInput,
+    /// The problems of reading and merging the files.
+    diagnostics: Diagnostics,
+    /// `files/`, for the sizes of the images.
+    files_directory: Option<PathBuf>,
+    /// The sizes read so far, by path in `files/` (`None`: not an image there).
+    images: Mutex<HashMap<String, Option<(u32, u32)>>>,
+}
+
+impl SourceData {
+    /// Reads the files of `source`.
+    pub fn read(source: &DataSource) -> SourceData {
+        let mut diagnostics = Diagnostics::new();
+        let (files, files_directory) = match source {
+            DataSource::Directory(root) => (
+                read_directory(root, &mut diagnostics),
+                Some(root.join("files")),
+            ),
+            DataSource::Demo => (demo_files(), None),
+        };
+        let merged = merge(files, &mut diagnostics);
+        SourceData {
+            merged,
+            diagnostics,
+            files_directory,
+            images: Mutex::new(HashMap::new()),
         }
     }
-    let probe = |src: &str| -> Option<(u32, u32)> {
-        let path = files_directory.as_ref()?.join(src);
-        image::image_dimensions(path).ok()
-    };
-    let (store, build_diagnostics) = build(
-        merged,
-        &BuildOptions {
-            theme_locales: options.theme_locales.clone(),
-            probe_image: &probe,
-        },
-    );
-    diagnostics.extend(build_diagnostics);
-    (store, diagnostics)
+
+    /// The problems of the files themselves, before any overlay or build.
+    pub fn diagnostics(&self) -> &Diagnostics {
+        &self.diagnostics
+    }
+
+    /// The store of the files with `overlays` applied on top, one after the other, and its
+    /// problems: those of the files, then those of each overlay, then those of the build.
+    pub fn build(&self, options: &LoadOptions, overlays: &[Overlay]) -> (Store, Diagnostics) {
+        let mut diagnostics = self.diagnostics.clone();
+        let mut merged = self.merged.clone();
+        for overlay in overlays {
+            apply_removals(&mut merged, &overlay.removed);
+            if !overlay.data.is_null() {
+                apply_overlay(&mut merged, &overlay.name, &overlay.data, &mut diagnostics);
+            }
+        }
+        let probe = |src: &str| -> Option<(u32, u32)> {
+            let directory = self.files_directory.as_ref()?;
+            let images = || {
+                self.images
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+            };
+            if let Some(known) = images().get(src) {
+                return *known;
+            }
+            let size = image::image_dimensions(directory.join(src)).ok();
+            images().insert(src.to_string(), size);
+            size
+        };
+        let (store, build_diagnostics) = build(
+            merged,
+            &BuildOptions {
+                theme_locales: options.theme_locales.clone(),
+                probe_image: &probe,
+            },
+        );
+        diagnostics.extend(build_diagnostics);
+        (store, diagnostics)
+    }
 }
 
 #[cfg(test)]
@@ -1319,6 +1372,44 @@ mod tests {
         let tote = store.product_by_handle("canvas-tote-bag").expect("tote");
         assert_eq!(tote.variants[0].price, 100);
         assert!(!tote.available());
+    }
+
+    #[test]
+    fn the_data_read_once_builds_the_store_again_without_reading_the_files() {
+        let directory =
+            std::env::temp_dir().join(format!("lsf-source-data-{}", std::process::id()));
+        std::fs::create_dir_all(directory.join("products")).expect("directory");
+        std::fs::write(
+            directory.join("products/thing.json"),
+            r#"{"title": "Thing", "price": 100}"#,
+        )
+        .expect("product");
+        let source = DataSource::Directory(directory.clone());
+        let data = SourceData::read(&source);
+        // A file added and one changed after the read are not in the stores built from it.
+        std::fs::write(
+            directory.join("products/other.json"),
+            r#"{"title": "Other", "price": 200}"#,
+        )
+        .expect("product");
+        std::fs::write(directory.join("products/thing.json"), "{ not json").expect("product");
+        let overlay = Overlay::new(
+            OVERLAY_FILE,
+            serde_json::json!({"products": [{"title": "Added", "price": 300}]}),
+        );
+        let (store, diagnostics) = data.build(&LoadOptions::default(), &[overlay]);
+        assert!(diagnostics.is_empty(), "{diagnostics}");
+        let handles: Vec<&str> = store.products.iter().map(|p| p.handle.as_str()).collect();
+        assert_eq!(handles, ["thing", "added"]);
+        let (again, _) = data.build(&LoadOptions::default(), &[]);
+        assert_eq!(again.products.len(), 1);
+        assert_eq!(again.products[0].id, store.products[0].id);
+        // Loading reads the files as they are now.
+        let (now, diagnostics) = load(&source, &LoadOptions::default());
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(diagnostics.has_errors());
+        assert_eq!(now.products.len(), 1);
+        assert_eq!(now.products[0].handle, "other");
     }
 
     #[test]
