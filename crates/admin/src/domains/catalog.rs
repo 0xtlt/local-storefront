@@ -258,7 +258,7 @@ fn seed_location(seed: &mut Seed, location: &Location) {
 
 /// The `DeliveryLocalPickupTime` of the text lsf-core keeps ("Usually ready in 24 hours", the
 /// way Shopify words each value).
-fn pickup_time(text: &str) -> Option<&'static str> {
+pub fn pickup_time(text: &str) -> Option<&'static str> {
     let text = text.to_lowercase();
     [
         ("1 hour", "ONE_HOUR"),
