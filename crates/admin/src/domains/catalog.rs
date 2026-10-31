@@ -28,6 +28,7 @@ mod variants;
 
 pub use collections::apply_rules;
 pub use products::{delete_product, tags_of};
+pub use records::{after_inventory_change, stock_of};
 
 use crate::state::seed::Seed;
 use crate::state::value::{self, date, date_time, money, optional, text};

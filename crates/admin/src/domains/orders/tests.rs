@@ -1762,3 +1762,94 @@ fn a_fulfillment_service_receives_accepts_and_cancels_requests() {
     let moved_back = order(&mut shop, &id)["fulfillmentOrders"]["nodes"][1]["assignedLocation"]["location"]["id"].clone();
     assert!(shop.keys("Location").any(|key| json!(key) == moved_back));
 }
+
+/// The rich fixture's store and the shop seeded from it.
+fn rich_with_store() -> (lsf_core::Store, ShopState) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Directory(path),
+        &Default::default(),
+    );
+    let shop = ShopState::seeded(&store, None);
+    (store, shop)
+}
+
+/// Sets the `available` and `on_hand` quantities of an inventory level, as
+/// `inventorySetQuantities` would, and refreshes its product.
+fn set_stock(shop: &mut ShopState, level: &str, product: &str, quantity: i64) {
+    for entry in shop.get_mut(level).unwrap()["quantities"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if entry["name"] == json!("available") || entry["name"] == json!("on_hand") {
+            entry["quantity"] = json!(quantity);
+        }
+    }
+    crate::domains::catalog::refresh_product(shop, product);
+}
+
+/// The linen dress of the rich fixture (tracked, `DENY`), its first variant and its inventory
+/// item, with 4 units at Paris and none at Berlin.
+fn dress_with_four_at_paris(store: &lsf_core::Store, shop: &mut ShopState) -> (String, String) {
+    use crate::domains::catalog;
+    let dress = store.product_by_handle("linen-dress").unwrap();
+    let variant = &dress.variants[0];
+    let product = catalog::product_gid(dress);
+    for (location, quantity) in [(&store.locations[0], 4), (&store.locations[1], 0)] {
+        let level = catalog::inventory_level_gid(variant.id, location.id);
+        set_stock(shop, &level, &product, quantity);
+    }
+    let variant = catalog::variant_gid(variant);
+    let item = shop.get(&variant).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (variant, item)
+}
+
+/// An order that takes a variant's last units sells it out as an inventory mutation does: its
+/// `availableForSale` turns false, `variants/out_of_stock` is emitted, and the storefront shows
+/// it out of stock.
+#[test]
+fn an_order_that_takes_the_last_units_sells_the_variant_out() {
+    let (store, mut shop) = rich_with_store();
+    let (variant, _) = dress_with_four_at_paris(&store, &mut shop);
+    shop.take_events();
+    let answer = run(
+        &mut shop,
+        ORDER_CREATE,
+        json!({
+            "order": {"lineItems": [{"variantId": variant, "quantity": 4}]},
+            "options": {"inventoryBehaviour": "DECREMENT_OBEYING_POLICY"},
+        }),
+    );
+    assert_eq!(
+        answer["data"]["orderCreate"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { productVariant(id: $id) { inventoryQuantity availableForSale } }",
+        json!({"id": variant}),
+    );
+    assert_eq!(
+        read["data"]["productVariant"],
+        json!({"inventoryQuantity": 0, "availableForSale": false})
+    );
+    let fired = events(&mut shop);
+    assert!(
+        fired.contains(&("variants/out_of_stock".to_string(), variant.clone())),
+        "{fired:?}"
+    );
+    let overlay = crate::sync::overlay(&shop, &store).expect("the stock changed");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+    let (synced, _) = lsf_core::store::load::load_with_overlays(
+        &lsf_core::store::load::DataSource::Directory(path),
+        &Default::default(),
+        &[overlay],
+    );
+    let after = &synced.product_by_handle("linen-dress").unwrap().variants[0];
+    assert_eq!(after.inventory_quantity, 0);
+    assert!(!after.available);
+}

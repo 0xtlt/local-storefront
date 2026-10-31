@@ -849,7 +849,10 @@ orders" in `docs/admin.md`) make and keep:
   (`available` to `committed`: `orderCreate` with a `DECREMENT_…` behaviour, a completed draft
   order, units an edit adds); shipping takes units out of `committed` and `on_hand` as far as
   they were committed; a restock puts them back (`CANCEL` from `committed`, `RETURN` to
-  `on_hand`). `inventory_levels/update` follows each change of a tracked item.
+  `on_hand`). Each change of a tracked item is followed as an inventory mutation of the catalog
+  follows one (`catalog::after_inventory_change`, then `catalog::product_changed`): the
+  variants' `availableForSale`, `variants/in_stock` or `variants/out_of_stock` when the stock
+  crossed zero, the smart collections of `VARIANT_INVENTORY`, then `inventory_levels/update`.
 - **What a webhook needs beyond the record**, kept on it under `lsf…` keys, which GraphQL never
   reads: the fulfillment order of a `FulfillmentHold` (`fulfillmentOrder`) and the fulfillment
   of a `FulfillmentEvent` (`fulfillment`); the context of a `fulfillment_orders/…` topic on its

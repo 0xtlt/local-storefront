@@ -743,8 +743,12 @@ fn inventory_level(state: &ShopState, item: &str, location: Option<&str>) -> Opt
 
 /// Changes the quantities of an inventory item at a location (`[("available", -2),
 /// ("committed", 2)]`), as an order that commits, ships or restocks units does: a tracked item
-/// only, at its level at that location (else its first). The level's `updatedAt`, the product's
-/// derived fields and `inventory_levels/update` follow. Returns whether a level changed.
+/// only, at its level at that location (else its first). What an inventory mutation of the
+/// catalog runs follows: the level's `updatedAt`, the product's derived fields and smart
+/// collections (`catalog::product_changed`), the variants' `availableForSale` and
+/// `variants/in_stock` or `variants/out_of_stock` when the stock crossed zero
+/// (`catalog::after_inventory_change`), then `inventory_levels/update`. Returns whether a level
+/// changed.
 pub fn move_inventory(
     state: &mut ShopState,
     item: &str,
@@ -762,6 +766,16 @@ pub fn move_inventory(
     let Some(level) = inventory_level(state, item, location) else {
         return false;
     };
+    let product = state
+        .get(item)
+        .and_then(|item| item.get("variant"))
+        .and_then(Value::as_str)
+        .and_then(|variant| state.get(variant))
+        .and_then(|variant| variant.get("product"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let products: Vec<String> = product.into_iter().collect();
+    let before = catalog::stock_of(state, &products);
     let now = state.timestamp();
     let Some(record) = state.get_mut(&level) else {
         return false;
@@ -782,16 +796,9 @@ pub fn move_inventory(
         }
     }
     state.touch(&level);
-    let product = state
-        .get(item)
-        .and_then(|item| item.get("variant"))
-        .and_then(Value::as_str)
-        .and_then(|variant| state.get(variant))
-        .and_then(|variant| variant.get("product"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    if let Some(product) = product {
-        catalog::refresh_product(state, &product);
+    catalog::after_inventory_change(state, &products, &before);
+    for product in &products {
+        catalog::product_changed(state, product);
     }
     state.emit("inventory_levels/update", &level);
     true
