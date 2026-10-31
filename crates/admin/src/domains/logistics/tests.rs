@@ -1117,6 +1117,37 @@ fn a_fulfillment_constraint_rule_runs_a_function_of_the_api() {
     assert!(shop.get(&id).is_none());
 }
 
+/// A shipping date is a day of the shop: at 01:30 in Paris, 00:10 the same day has not passed,
+/// though it is the day before in UTC; 23:50 the evening before has.
+#[test]
+fn a_shipping_date_is_a_day_of_the_shop() {
+    let mut shop = rich();
+    let (_, fo) = order_with_stock(&mut shop);
+    let now = chrono::DateTime::parse_from_rfc3339("2026-03-16T00:30:00Z").unwrap();
+    shop.set_clock(crate::state::Clock::Frozen(now.with_timezone(&chrono::Utc)));
+    let purchase = "mutation($input: ShippingLabelPurchaseInput!) { shippingLabelPurchase(shippingLabelPurchase: $input) {
+        shippingLabelPurchaseResult { status } userErrors { code } } }";
+    let answer = run(
+        &mut shop,
+        purchase,
+        json!({"input": {"fulfillmentOrderId": fo, "shippingDatetime": "2026-03-15T23:50:00+01:00"}}),
+    );
+    assert_eq!(
+        answer["data"]["shippingLabelPurchase"]["userErrors"],
+        json!([{"code": "SHIPPING_DATE_IN_THE_PAST"}])
+    );
+    let answer = run(
+        &mut shop,
+        purchase,
+        json!({"input": {"fulfillmentOrderId": fo, "shippingDatetime": "2026-03-16T00:10:00+01:00"}}),
+    );
+    assert_eq!(
+        answer["data"]["shippingLabelPurchase"]["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+}
+
 #[test]
 fn a_shipping_label_is_purchased_at_once_and_fulfills_the_fulfillment_order() {
     let mut shop = rich();

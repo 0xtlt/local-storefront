@@ -1653,3 +1653,24 @@ fn nothing_of_the_area_is_defaulted_on_the_demo_store() {
         );
     }
 }
+
+/// A credit's `expiresAt` given as a day expires at the start of that day in the shop's time
+/// zone, not in UTC's.
+#[test]
+fn a_credit_expiring_on_a_day_expires_at_the_shops_midnight() {
+    let mut shop = demo();
+    let customer = shop.keys("Customer").next().unwrap().to_string();
+    let credited = run(
+        &mut shop,
+        CREDIT,
+        json!({"id": customer, "input": {"creditAmount": usd("5.00"), "expiresAt": "2099-01-01"}}),
+    )["data"]["storeCreditAccountCredit"]
+        .clone();
+    assert_eq!(credited["userErrors"], json!([]), "{credited}");
+    let zone = crate::search::Options::of(&shop);
+    let midnight = zone.day_start(chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap());
+    assert_eq!(
+        credited["storeCreditAccountTransaction"]["expiresAt"],
+        json!(crate::state::value::date_time(midnight))
+    );
+}

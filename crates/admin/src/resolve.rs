@@ -965,17 +965,7 @@ impl<'a> ShopResolver<'a> {
 
     /// The options of a search at the shop's clock, in the shop's time zone.
     pub fn search_options(&self) -> crate::search::Options {
-        let offset_minutes = self
-            .state
-            .shop()
-            .and_then(|shop| shop.get("timezoneOffsetMinutes"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        crate::search::Options {
-            now: self.state.now(),
-            offset: chrono::FixedOffset::east_opt(i32::try_from(offset_minutes * 60).unwrap_or(0))
-                .unwrap_or_else(|| chrono::FixedOffset::east_opt(0).expect("UTC is an offset")),
-        }
+        crate::search::Options::of(self.state)
     }
 
     fn report_search(&self, entry: Value) {

@@ -147,39 +147,34 @@ pub fn register(registry: &mut Registry) {
             "presentmentExpectedValue",
             presentment_expected_value,
         )
-        .search_field("AnalyticsAnnotation", "started_at", |_r, _item, record| {
-            Some(date_values(record.get("startedAt")))
+        .search_field("AnalyticsAnnotation", "started_at", |r, _item, record| {
+            Some(date_values(&r.search_options(), record.get("startedAt")))
         })
-        .search_field("AnalyticsAnnotation", "ended_at", |_r, _item, record| {
-            Some(date_values(record.get("endedAt")))
+        .search_field("AnalyticsAnnotation", "ended_at", |r, _item, record| {
+            Some(date_values(&r.search_options(), record.get("endedAt")))
         })
-        .search_field("AnalyticsAnnotation", "updated_at", |_r, _item, record| {
-            Some(date_values(record.get("updatedAt")))
+        .search_field("AnalyticsAnnotation", "updated_at", |r, _item, record| {
+            Some(date_values(&r.search_options(), record.get("updatedAt")))
         })
-        .search_field("AnalyticsTarget", "start_date", |_r, _item, record| {
-            Some(date_values(record.get("startDate")))
+        .search_field("AnalyticsTarget", "start_date", |r, _item, record| {
+            Some(date_values(&r.search_options(), record.get("startDate")))
         })
-        .search_field("AnalyticsTarget", "end_date", |_r, _item, record| {
-            Some(date_values(record.get("endDate")))
+        .search_field("AnalyticsTarget", "end_date", |r, _item, record| {
+            Some(date_values(&r.search_options(), record.get("endDate")))
         })
         .query("shopifyqlQuery", shopifyql::resolve);
 }
 
-/// A `DateTime` or a `Date` as search values.
-fn date_values(value: Option<&Value>) -> Vec<crate::search::SearchValue> {
-    let Some(text) = value.and_then(Value::as_str) else {
-        return Vec::new();
-    };
-    let at = chrono::DateTime::parse_from_rfc3339(text)
-        .map(|at| at.with_timezone(&chrono::Utc))
-        .ok()
-        .or_else(|| {
-            NaiveDate::parse_from_str(text, "%Y-%m-%d")
-                .ok()
-                .and_then(|day| day.and_hms_opt(0, 0, 0))
-                .map(|at| at.and_utc())
-        });
-    at.map(crate::search::SearchValue::Date)
+/// A `DateTime` or a `Date` (the start of that day of the shop, as the query's day) as search
+/// values.
+fn date_values(
+    zone: &crate::search::Options,
+    value: Option<&Value>,
+) -> Vec<crate::search::SearchValue> {
+    value
+        .and_then(Value::as_str)
+        .and_then(|text| zone.instant(text))
+        .map(crate::search::SearchValue::Date)
         .into_iter()
         .collect()
 }

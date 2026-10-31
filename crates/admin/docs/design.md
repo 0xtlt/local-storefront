@@ -813,7 +813,12 @@ search syntax (shopify.dev, "Search query syntax"): terms, `field:value`, compar
 (`field:*`), backslash escapes. Dates are what the reference documents: `now`, a year, a month,
 a day, a time with or without a zone, and ranges (`2021-01-01..2021-01-02`), each a period
 (`created_at:<=2024` is up to the end of 2024), in the shop's time zone. Shopify documents no
-relative date (`-7d`) for search; lsf has none.
+relative date (`-7d`) for search; lsf has none. That zone (`search::Options::of`: the shop's
+clock and `timezoneOffsetMinutes`) is also how every input or record that gives a day without a
+time is read (`day_start`, `day_end`, `day_of`, `instant`): a gift card's `expiresOn` and an
+analytics target's dates as search values, a store credit's `expiresAt` given as a date, a
+shipping label's date (`SHIPPING_DATE_IN_THE_PAST` compares days of the shop), the point of
+sale's `startDate`/`endDate`.
 
 `search` parses a query into a tree (`Query::parse`, never an error: a malformed query is read
 as far as it goes, with warnings, each given once) and matches a record through the `Searchable` trait, which

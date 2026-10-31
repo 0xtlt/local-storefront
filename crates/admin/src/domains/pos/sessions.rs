@@ -545,16 +545,19 @@ fn drawer_total(
 }
 
 /// The start and the end of a period of `Date`s: from the start of the first day to the end of
-/// the last, in UTC.
-fn period(ctx: &FieldContext<'_>) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+/// the last, days of the shop's time zone (`search::Options`).
+fn period(
+    state: &ShopState,
+    ctx: &FieldContext<'_>,
+) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    let zone = crate::search::Options::of(state);
     let day = |name: &str, end: bool| {
         let date = NaiveDate::parse_from_str(ctx.arg_str(name)?, "%Y-%m-%d").ok()?;
-        let time = if end {
-            date.and_hms_opt(23, 59, 59)?
+        Some(if end {
+            zone.day_end(date)
         } else {
-            date.and_hms_opt(0, 0, 0)?
-        };
-        Some(time.and_utc())
+            zone.day_start(date)
+        })
     };
     (day("startDate", false), day("endDate", true))
 }
@@ -641,7 +644,7 @@ fn location_summary(
         })
         .map(str::to_string)
         .collect();
-    let (start, end) = period(ctx);
+    let (start, end) = period(state, ctx);
     r.convert(ctx, &summary(state, &drawers, start, end), false)
 }
 
@@ -658,7 +661,7 @@ fn shop_summary(
     } else {
         Vec::new()
     };
-    let (start, end) = period(ctx);
+    let (start, end) = period(state, ctx);
     r.convert(ctx, &summary(state, &drawers, start, end), false)
 }
 

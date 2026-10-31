@@ -38,7 +38,7 @@ mod syntax;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -353,6 +353,61 @@ impl Options {
             offset: FixedOffset::east_opt(0).expect("UTC is an offset"),
         }
     }
+
+    /// At the shop's clock, in the shop's time zone (`Shop.timezoneOffsetMinutes`, UTC without
+    /// one): how a search reads a date without a zone, and how every input that gives a day
+    /// without a time (`2026-03-15`) is read, so that a day is the shop's everywhere.
+    pub fn of(state: &crate::state::ShopState) -> Options {
+        let offset_minutes = state
+            .shop()
+            .and_then(|shop| shop.get("timezoneOffsetMinutes"))
+            .and_then(Json::as_i64)
+            .unwrap_or(0);
+        Options {
+            now: state.now(),
+            offset: i32::try_from(offset_minutes * 60)
+                .ok()
+                .and_then(FixedOffset::east_opt)
+                .unwrap_or_else(|| FixedOffset::east_opt(0).expect("UTC is an offset")),
+        }
+    }
+
+    /// The first instant of a day of the shop.
+    pub fn day_start(&self, day: NaiveDate) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        self.offset
+            .from_local_datetime(&day.and_time(chrono::NaiveTime::MIN))
+            .single()
+            .map_or_else(
+                || day.and_time(chrono::NaiveTime::MIN).and_utc(),
+                |at| at.with_timezone(&Utc),
+            )
+    }
+
+    /// The last second of a day of the shop.
+    pub fn day_end(&self, day: NaiveDate) -> DateTime<Utc> {
+        day.succ_opt().map_or_else(
+            || self.day_start(day),
+            |next| self.day_start(next) - chrono::Duration::seconds(1),
+        )
+    }
+
+    /// The shop's day of an instant (`today` for its clock).
+    pub fn day_of(&self, at: DateTime<Utc>) -> NaiveDate {
+        at.with_timezone(&self.offset).date_naive()
+    }
+
+    /// A `DateTime` as written, or a `Date` at the start of that day of the shop.
+    pub fn instant(&self, text: &str) -> Option<DateTime<Utc>> {
+        DateTime::parse_from_rfc3339(text.trim())
+            .map(|at| at.with_timezone(&Utc))
+            .ok()
+            .or_else(|| {
+                NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d")
+                    .ok()
+                    .map(|day| self.day_start(day))
+            })
+    }
 }
 
 /// A value of a field of a record, typed by how a search compares it.
@@ -552,6 +607,27 @@ fn compare_number(comparator: Comparator, value: f64, wanted: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_day_without_a_time_is_the_shops() {
+        let zone = Options {
+            now: "2026-03-16T00:30:00Z".parse().unwrap(),
+            offset: FixedOffset::west_opt(4 * 3600).unwrap(),
+        };
+        let day = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        assert_eq!(
+            zone.day_start(day).to_rfc3339(),
+            "2026-03-15T04:00:00+00:00"
+        );
+        assert_eq!(zone.day_end(day).to_rfc3339(), "2026-03-16T03:59:59+00:00");
+        assert_eq!(zone.day_of(zone.now), day);
+        assert_eq!(zone.instant("2026-03-15"), Some(zone.day_start(day)));
+        assert_eq!(
+            zone.instant("2026-03-15T12:00:00Z")
+                .map(|at| at.to_rfc3339()),
+            Some("2026-03-15T12:00:00+00:00".to_string())
+        );
+    }
 
     fn word(text: &str) -> Value {
         Value::Word(text.to_string())

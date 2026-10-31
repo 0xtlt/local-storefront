@@ -129,13 +129,15 @@ fn purchase(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
     if units == 0 {
         return fail(&at("fulfillmentOrderId"), "AT_LEAST_1_ITEM_REQUIRED");
     }
-    let today = state.now().date_naive();
+    // Days of the shop's time zone: a shipping time later today there is not in the past.
+    let zone = crate::search::Options::of(state);
+    let today = zone.day_of(state.now());
     let shipping_date = text(&input, "shippingDatetime")
         .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
         .map(|at| at.with_timezone(&chrono::Utc));
     match shipping_date {
         None => return fail(&at("shippingDatetime"), "MISSING_SHIPPING_DATE"),
-        Some(date) if date.date_naive() < today => {
+        Some(date) if zone.day_of(date) < today => {
             return fail(&at("shippingDatetime"), "SHIPPING_DATE_IN_THE_PAST");
         }
         Some(_) => {}
