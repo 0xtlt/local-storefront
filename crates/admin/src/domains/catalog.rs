@@ -10,6 +10,7 @@ use lsf_core::store::{
 use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
+mod bundles;
 mod collection_duplicate;
 mod collection_sources;
 mod collections;
@@ -1084,8 +1085,10 @@ fn seed_gift_card(seed: &mut Seed, card: &GiftCard) {
 /// Recomputes what a product derives from its variants, media and inventory: its price ranges,
 /// `totalInventory`, `tracksInventory`, `hasOutOfStockVariants`, `hasOnlyDefaultVariant`,
 /// `featuredMedia` and `featuredImage`, and the `inventoryQuantity` of each variant (the
-/// `available` quantity of its levels). The seed runs it on every product; a mutation that
-/// changes a variant, a level or the media of a product runs it after.
+/// `available` quantity of its levels; a bundle's, the bundles its components make, and its
+/// `availableForSale`). The seed runs it on every product; a mutation that changes a variant, a
+/// level or the media of a product runs it after, and the bundles of which the product's
+/// variants are components follow.
 pub fn refresh_product(state: &mut ShopState, product: &str) {
     let Some(record) = state.get(product) else {
         return;
@@ -1107,6 +1110,7 @@ pub fn refresh_product(state: &mut ShopState, product: &str) {
     let mut out_of_stock = false;
     let mut default_only = variants.len() == 1;
     let mut quantities = Vec::new();
+    let mut bundle_availability = Vec::new();
     for variant in &variants {
         let Some(record) = state.get(variant) else {
             continue;
@@ -1126,15 +1130,24 @@ pub fn refresh_product(state: &mut ShopState, product: &str) {
             .and_then(|item| item.get("tracked"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let available: i64 = item
+        let mut available: i64 = item
             .map(|item| gids(item.get("inventoryLevels")))
             .unwrap_or_default()
             .iter()
             .filter_map(|level| state.get(level))
             .map(available_of)
             .sum();
-        tracked |= item_tracked;
-        out_of_stock |= item_tracked && available <= 0;
+        // A bundle's quantity is its components' (`bundles`).
+        let bundle = bundles::bundle_inventory(state, variant);
+        if let Some((quantity, sellable)) = bundle {
+            available = quantity.unwrap_or(available);
+            tracked |= quantity.is_some();
+            out_of_stock |= !sellable;
+            bundle_availability.push((variant.clone(), sellable));
+        } else {
+            tracked |= item_tracked;
+            out_of_stock |= item_tracked && available <= 0;
+        }
         total += available;
         quantities.push((variant.clone(), available));
     }
@@ -1170,6 +1183,11 @@ pub fn refresh_product(state: &mut ShopState, product: &str) {
             record.insert("inventoryQuantity".to_string(), json!(available));
         }
     }
+    for (variant, sellable) in bundle_availability {
+        if let Some(record) = state.get_mut(&variant) {
+            record.insert("availableForSale".to_string(), json!(sellable));
+        }
+    }
     if let Some(record) = state.get_mut(product) {
         record.insert("priceRangeV2".to_string(), price_range.clone());
         record.insert("priceRange".to_string(), price_range);
@@ -1187,6 +1205,7 @@ pub fn refresh_product(state: &mut ShopState, product: &str) {
             featured_image.unwrap_or(Value::Null),
         );
     }
+    bundles::refresh_parents(state, product);
 }
 
 /// What a mutation runs after it changed a product's variants, options, media or fields: the
@@ -1301,6 +1320,7 @@ pub fn cents_of(value: Option<&Value>) -> Option<i64> {
 /// in `crates/admin/docs/design.md`.
 pub fn register(registry: &mut crate::resolve::Registry) {
     products::register(registry);
+    bundles::register(registry);
     product_set::register(registry);
     variants::register(registry);
     options::register(registry);

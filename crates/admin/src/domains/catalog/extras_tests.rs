@@ -521,3 +521,332 @@ fn collection_duplicate_copies_a_collection_and_its_publications() {
     unchanged(&mut shop, &before, &[&frontpage, &online_store]);
     assert_eq!(shop.count("Collection"), before.count("Collection"));
 }
+
+/// The variants of a product of the demo store, by handle.
+fn variant_ids(shop: &crate::state::ShopState, handle: &str) -> Vec<String> {
+    super::mutation_tests::variants(shop, &product(shop, handle))
+}
+
+/// A product made with `productCreate`: its GID and its one variant's.
+fn new_product(shop: &mut crate::state::ShopState, title: &str) -> (String, String) {
+    let answer = run_with(
+        shop,
+        r#"mutation($title: String!) { productCreate(product: {title: $title}) { product { id variants(first: 1) { nodes { id } } } } }"#,
+        json!({"title": title}),
+    );
+    let product = &answer["data"]["productCreate"]["product"];
+    (
+        product["id"].as_str().unwrap().to_string(),
+        product["variants"]["nodes"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    )
+}
+
+#[test]
+fn a_variant_fixed_bundle_takes_its_price_and_inventory_from_its_components() {
+    let mut shop = demo();
+    let (gift, parent) = new_product(&mut shop, "Gift set");
+    let tote = variant_ids(&shop, "canvas-tote-bag")[0].clone();
+    let socks = variant_ids(&shop, "merino-crew-socks")[0].clone();
+    shop.take_events();
+    let created = run_with(
+        &mut shop,
+        r#"mutation($input: [ProductVariantRelationshipUpdateInput!]!) { productVariantRelationshipBulkUpdate(input: $input) {
+            parentProductVariants { id price requiresComponents inventoryQuantity availableForSale
+                productVariantComponents(first: 5) { nodes { id quantity productVariant { id } } } }
+            userErrors { field message code } } }"#,
+        json!({"input": [{"parentProductId": gift,
+            "productVariantRelationshipsToCreate": [{"id": tote, "quantity": 1}, {"id": socks, "quantity": 2}],
+            "priceInput": {"calculation": "COMPONENTS_SUM"}}]}),
+    );
+    let parent_variant =
+        &ok(&created, "productVariantRelationshipBulkUpdate")["parentProductVariants"][0];
+    assert_eq!(parent_variant["id"], json!(parent));
+    // 24.00 + 2 × 16.00.
+    assert_eq!(parent_variant["price"], json!("56.00"));
+    assert_eq!(parent_variant["requiresComponents"], json!(true));
+    // min(40 totes, 60 / 2 socks).
+    assert_eq!(parent_variant["inventoryQuantity"], json!(30));
+    assert_eq!(parent_variant["availableForSale"], json!(true));
+    let components = parent_variant["productVariantComponents"]["nodes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(components.len(), 2);
+    assert!(
+        components[0]["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("gid://shopify/ProductVariantComponent/")
+    );
+    assert_eq!(components[1]["quantity"], json!(2));
+    assert_eq!(topics(&mut shop), ["products/update"]);
+
+    // The components' stock moves the bundle's.
+    let level = shop
+        .get(shop.get(&socks).unwrap()["inventoryItem"].as_str().unwrap())
+        .unwrap()["inventoryLevels"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let location = shop.get(&level).unwrap()["location"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let item = shop.get(&socks).unwrap()["inventoryItem"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let adjusted = run_with(
+        &mut shop,
+        r#"mutation($item: ID!, $location: ID!) { inventorySetQuantities(input: {name: "available", reason: "correction",
+            quantities: [{inventoryItemId: $item, locationId: $location, quantity: 5, changeFromQuantity: null}]}) @idempotent(key: "bundle-test") { userErrors { message } } }"#,
+        json!({"item": item, "location": location}),
+    );
+    assert!(adjusted.get("errors").is_none(), "{adjusted}");
+    let total: i64 = super::mutation_tests::variants(&shop, &product(&shop, "merino-crew-socks"))
+        .iter()
+        .take(1)
+        .map(|variant| {
+            shop.get(variant).unwrap()["inventoryQuantity"]
+                .as_i64()
+                .unwrap()
+        })
+        .sum();
+    let read = run_with(
+        &mut shop,
+        r#"query($id: ID!, $socks: ID!) { productVariant(id: $id) { inventoryQuantity availableForSale product { totalInventory hasVariantsThatRequiresComponents productComponents(first: 5) { nodes { product { handle } componentVariantsCount { count } nonComponentVariantsCount { count } } } productComponentsCount { count } } }
+            socks: productVariant(id: $socks) { productParents(first: 5) { nodes { title } } } }"#,
+        json!({"id": parent, "socks": socks}),
+    );
+    assert!(read.get("errors").is_none(), "{read}");
+    let variant = &read["data"]["productVariant"];
+    assert_eq!(variant["inventoryQuantity"], json!(total / 2));
+    assert_eq!(variant["product"]["totalInventory"], json!(total / 2));
+    assert_eq!(
+        variant["product"]["hasVariantsThatRequiresComponents"],
+        json!(true)
+    );
+    assert_eq!(
+        variant["product"]["productComponents"]["nodes"],
+        json!([{"product": {"handle": "canvas-tote-bag"}, "componentVariantsCount": {"count": 1}, "nonComponentVariantsCount": {"count": 0}},
+            {"product": {"handle": "merino-crew-socks"}, "componentVariantsCount": {"count": 1}, "nonComponentVariantsCount": {"count": 1}}])
+    );
+    assert_eq!(
+        variant["product"]["productComponentsCount"]["count"],
+        json!(2)
+    );
+    assert_eq!(
+        read["data"]["socks"]["productParents"]["nodes"],
+        json!([{"title": "Gift set"}])
+    );
+    shop.take_events();
+
+    // A quantity updated, a component removed, a fixed price; then all removed.
+    let updated = run_with(
+        &mut shop,
+        r#"mutation($parent: ID!, $tote: ID!, $socks: ID!) { productVariantRelationshipBulkUpdate(input: [{parentProductVariantId: $parent,
+            productVariantRelationshipsToUpdate: [{id: $socks, quantity: 1}], productVariantRelationshipsToRemove: [$tote],
+            priceInput: {calculation: FIXED, price: "19.99"}}]) {
+            parentProductVariants { price productVariantComponents(first: 5) { nodes { quantity productVariant { id } } } } userErrors { field message code } } }"#,
+        json!({"parent": parent, "tote": tote, "socks": socks}),
+    );
+    let parent_variant =
+        &ok(&updated, "productVariantRelationshipBulkUpdate")["parentProductVariants"][0];
+    assert_eq!(parent_variant["price"], json!("19.99"));
+    assert_eq!(
+        parent_variant["productVariantComponents"]["nodes"],
+        json!([{"quantity": 1, "productVariant": {"id": socks}}])
+    );
+    let removed = run_with(
+        &mut shop,
+        r#"mutation($parent: ID!) { productVariantRelationshipBulkUpdate(input: [{parentProductVariantId: $parent, removeAllProductVariantRelationships: true}]) {
+            parentProductVariants { requiresComponents productVariantComponents(first: 5) { nodes { id } } } userErrors { field message code } } }"#,
+        json!({"parent": parent}),
+    );
+    assert_eq!(
+        ok(&removed, "productVariantRelationshipBulkUpdate")["parentProductVariants"][0],
+        json!({"requiresComponents": false, "productVariantComponents": {"nodes": []}})
+    );
+    assert_eq!(shop.count("ProductVariantComponent"), 0);
+}
+
+#[test]
+fn a_variant_relationship_that_is_wrong_is_refused_and_nothing_changes() {
+    let mut shop = demo();
+    let (_, parent) = new_product(&mut shop, "Gift set");
+    let tote = variant_ids(&shop, "canvas-tote-bag")[0].clone();
+    shop.take_events();
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($parent: ID!, $tote: ID!) { productVariantRelationshipBulkUpdate(input: [
+            {parentProductVariantId: $parent, productVariantRelationshipsToCreate: [{id: $parent, quantity: 1}, {id: $tote, quantity: 0}],
+                productVariantRelationshipsToRemove: [$tote]},
+            {productVariantRelationshipsToCreate: [{id: $tote, quantity: 1}]},
+            {parentProductVariantId: $parent, priceInput: {calculation: FIXED}, productVariantRelationshipsToCreate: [{id: $tote, quantity: 1}]}]) {
+            parentProductVariants { id } userErrors { field code message } } }"#,
+        json!({"parent": parent, "tote": tote}),
+    );
+    let payload = &refused["data"]["productVariantRelationshipBulkUpdate"];
+    assert_eq!(payload["parentProductVariants"], json!(null));
+    let codes: Vec<&str> = payload["userErrors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "PRODUCT_VARIANTS_NOT_COMPONENTS",
+            "CIRCULAR_REFERENCE",
+            "INVALID_QUANTITY",
+            "PARENT_REQUIRED",
+            "UPDATE_PARENT_VARIANT_PRICE_REQUIRED"
+        ]
+    );
+    assert_eq!(
+        payload["userErrors"][1],
+        json!({"field": ["input", "0", "productVariantRelationshipsToCreate", "0"], "code": "CIRCULAR_REFERENCE",
+            "message": "A parent product variant cannot contain itself as a component."})
+    );
+    unchanged(&mut shop, &before, &[&parent, &tote]);
+    assert_eq!(shop.count("ProductVariantComponent"), 0);
+}
+
+#[test]
+fn a_product_fixed_bundle_has_a_variant_per_combination_of_its_components() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let socks = product(&shop, "merino-crew-socks");
+    let glaze = super::gids(shop.get(&mug).unwrap().get("options"))[0].clone();
+    let created = run_with(
+        &mut shop,
+        r#"mutation($input: ProductBundleCreateInput!) { productBundleCreate(input: $input) {
+            productBundleOperation { id status product { id } } userErrors { field message } } }"#,
+        json!({"input": {"title": "Morning kit", "components": [
+            {"productId": mug, "quantity": 1, "optionSelections": [{"componentOptionId": glaze, "name": "Mug glaze", "values": ["Oat", "Slate"]}]},
+            {"productId": socks, "optionSelections": [], "quantityOption": {"name": "Pack", "values": [{"name": "One pair", "quantity": 1}, {"name": "Three pairs", "quantity": 3}]}},
+        ]}}),
+    );
+    let operation = &ok(&created, "productBundleCreate")["productBundleOperation"];
+    assert_eq!(operation["status"], json!("COMPLETE"));
+    let bundle = operation["product"]["id"].as_str().unwrap().to_string();
+    let polled = run_with(
+        &mut shop,
+        r#"query($id: ID!, $bundle: ID!) { productOperation(id: $id) { status product { id } ... on ProductBundleOperation { userErrors { message } } }
+            product(id: $bundle) { title options { name values } hasVariantsThatRequiresComponents
+                variants(first: 10) { nodes { title price requiresComponents inventoryQuantity
+                    productVariantComponents(first: 5) { nodes { quantity productVariant { displayName } } } } }
+                bundleComponents(first: 5) { nodes { componentProduct { handle } quantity quantityOption { name values { name quantity } }
+                    optionSelections { componentOption { name } parentOption { name } values { value selectionStatus } }
+                    componentVariantsCount { count } } } } }"#,
+        json!({"id": operation["id"], "bundle": bundle}),
+    );
+    assert_eq!(
+        polled["data"]["productOperation"],
+        json!({"status": "COMPLETE", "product": {"id": bundle}, "userErrors": []})
+    );
+    let product = &polled["data"]["product"];
+    assert_eq!(
+        product["options"],
+        json!([{"name": "Mug glaze", "values": ["Oat", "Slate"]}, {"name": "Pack", "values": ["One pair", "Three pairs"]}])
+    );
+    let variants = product["variants"]["nodes"].as_array().unwrap();
+    assert_eq!(
+        variants
+            .iter()
+            .map(|variant| variant["title"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "Oat / One pair",
+            "Oat / Three pairs",
+            "Slate / One pair",
+            "Slate / Three pairs"
+        ]
+    );
+    // The mug is 22.00, a pair of socks 16.00.
+    assert_eq!(variants[1]["price"], json!("70.00"));
+    assert!(
+        variants
+            .iter()
+            .all(|variant| variant["requiresComponents"] == json!(true))
+    );
+    // Slate: 18 mugs; three pairs of 36-40: 60 / 3.
+    assert_eq!(variants[3]["inventoryQuantity"], json!(18));
+    assert_eq!(
+        variants[1]["productVariantComponents"]["nodes"],
+        json!([{"quantity": 1, "productVariant": {"displayName": "Ceramic Mug - Oat"}},
+            {"quantity": 3, "productVariant": {"displayName": "Merino Crew Socks - 36-40"}}])
+    );
+    let components = &product["bundleComponents"]["nodes"];
+    assert_eq!(
+        components[0]["optionSelections"][0],
+        json!({"componentOption": {"name": "Glaze"}, "parentOption": {"name": "Mug glaze"}, "values": [
+            {"value": "Oat", "selectionStatus": "SELECTED"}, {"value": "Slate", "selectionStatus": "SELECTED"},
+            {"value": "Rust", "selectionStatus": "DESELECTED"}]})
+    );
+    assert_eq!(
+        components[1]["quantityOption"],
+        json!({"name": "Pack", "values": [{"name": "One pair", "quantity": 1}, {"name": "Three pairs", "quantity": 3}]})
+    );
+    assert_eq!(components[0]["componentVariantsCount"]["count"], json!(2));
+    let events = topics(&mut shop);
+    assert_eq!(
+        events.first().map(String::as_str),
+        Some("inventory_items/create")
+    );
+    assert!(events.contains(&"products/create".to_string()));
+
+    // Updated: the title, and the mug alone; the variants are made again.
+    let updated = run_with(
+        &mut shop,
+        r#"mutation($input: ProductBundleUpdateInput!) { productBundleUpdate(input: $input) {
+            productBundleOperation { status product { title variants(first: 5) { nodes { title price } } } } userErrors { field message } } }"#,
+        json!({"input": {"productId": bundle, "title": "Mug kit", "components": [
+            {"productId": mug, "quantity": 2, "optionSelections": [{"componentOptionId": glaze, "name": "Glaze", "values": ["Rust"]}]}]}}),
+    );
+    assert_eq!(
+        ok(&updated, "productBundleUpdate")["productBundleOperation"]["product"],
+        json!({"title": "Mug kit", "variants": {"nodes": [{"title": "Rust", "price": "44.00"}]}})
+    );
+    let events = topics(&mut shop);
+    assert!(events.contains(&"inventory_items/delete".to_string()));
+    assert!(events.contains(&"products/update".to_string()));
+}
+
+#[test]
+fn a_product_bundle_that_is_wrong_is_refused_and_nothing_changes() {
+    let mut shop = demo();
+    let mug = product(&shop, "ceramic-mug");
+    let glaze = super::gids(shop.get(&mug).unwrap().get("options"))[0].clone();
+    let before = shop.clone();
+    let refused = run_with(
+        &mut shop,
+        r#"mutation($input: ProductBundleCreateInput!) { productBundleCreate(input: $input) { productBundleOperation { id } userErrors { field message } } }"#,
+        json!({"input": {"title": "", "components": [
+            {"productId": mug, "optionSelections": [{"componentOptionId": glaze, "name": "Glaze", "values": ["Teal"]}]},
+            {"productId": "gid://shopify/Product/1", "optionSelections": []}]}}),
+    );
+    assert_eq!(
+        refused["data"]["productBundleCreate"],
+        json!({"productBundleOperation": null, "userErrors": [
+            {"field": ["input", "title"], "message": "Title can't be blank"},
+            {"field": ["input", "components", "0", "optionSelections", "0", "values", "0"], "message": "Option value 'Teal' does not exist"},
+            {"field": ["input", "components", "1", "productId"], "message": "Product does not exist"},
+        ]})
+    );
+    let not_a_bundle = run_with(
+        &mut shop,
+        r#"mutation($id: ID!) { productBundleUpdate(input: {productId: $id, title: "x"}) { productBundleOperation { id } userErrors { field message } } }"#,
+        json!({"id": mug}),
+    );
+    assert_eq!(
+        not_a_bundle["data"]["productBundleUpdate"]["userErrors"],
+        json!([{"field": ["input", "productId"], "message": "Product does not exist"}])
+    );
+    unchanged(&mut shop, &before, &[&mug]);
+    assert_eq!(shop.count("Product"), before.count("Product"));
+}

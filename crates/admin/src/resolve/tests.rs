@@ -539,10 +539,18 @@ fn tags_and_mutations_lsf_does_not_simulate() {
         json!("ACCESS_DENIED")
     );
 
-    let unknown = run(
-        &mut shop,
-        r#"mutation { productBundleCreate(input: {title: "X", components: []}) { productBundleOperation { id } } }"#,
-    );
+    // A mutation no domain registered (an empty registry: which ones are simulated changes).
+    let empty = Registry::new();
+    let mut resolver = ShopResolver::new(&mut shop, &empty);
+    let unknown = graphql::run(
+        crate::schema::admin(),
+        &mut resolver,
+        &Request::new(
+            r#"mutation { productBundleCreate(input: {title: "X", components: []}) { productBundleOperation { id } } }"#,
+        ),
+        None,
+    )
+    .to_json();
     assert_eq!(unknown["data"]["productBundleCreate"], Value::Null);
     assert_eq!(
         unknown["errors"][0]["extensions"]["code"],
