@@ -13,6 +13,9 @@
 //!   (their current quantities: variants at their price now, custom items at theirs), its
 //!   customer (or company location), contact, addresses, shipping line, note, tags and custom
 //!   attributes: `draft_orders/create`.
+//! - `draftOrderAvailableDeliveryOptions` and `draftOrderCalculate`'s `availableShippingRates` answer the
+//!   checkout's delivery rates of the store data (`checkout.shipping_rates`, every address
+//!   charged the same) and the locations that offer local pickup.
 //! - `draftOrderInvoicePreview` answers the invoice email as `draftOrderInvoiceSend` would send
 //!   it, in the HTML of the reference's examples ("Invoice #D1 from <shop>", the custom message
 //!   with its line breaks), the subject given or "Draft Order #D1"; a completed draft answers the
@@ -36,7 +39,89 @@ pub fn register(registry: &mut Registry) {
         .mutation("draftOrderBulkDelete", bulk_delete)
         .mutation("draftOrderBulkRemoveTags", |m, ctx| tags(m, ctx, false))
         .mutation("draftOrderCreateFromOrder", create_from_order)
-        .mutation("draftOrderInvoicePreview", invoice_preview);
+        .mutation("draftOrderInvoicePreview", invoice_preview)
+        .query("draftOrderAvailableDeliveryOptions", delivery_options);
+}
+
+/// The checkout's delivery rates of a kind (`SHIPPING`, `LOCAL`, `PICK_UP`), as
+/// `DraftOrderShippingRate`s (and `ShippingRate`s, which read the same fields).
+pub(super) fn shipping_rates(state: &ShopState, kind: &str) -> Vec<Value> {
+    let currency = model::currency(state);
+    state
+        .setting(super::DELIVERY_RATES_SETTING)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|rate| rate.get("kind").and_then(Value::as_str) == Some(kind))
+        .map(|rate| {
+            json!({
+                "handle": rate.get("handle"),
+                "code": rate.get("handle"),
+                "title": rate.get("title"),
+                "source": "shopify",
+                "price": value::money_v2(rate.get("price").and_then(Value::as_i64).unwrap_or(0), &currency),
+            })
+        })
+        .collect()
+}
+
+/// `draftOrderAvailableDeliveryOptions`: the checkout's shipping and local delivery rates (lsf
+/// charges every address the same), and the locations that offer pickup, `localPickupCount` of
+/// them from `localPickupFrom`, those whose name has the `search` term.
+fn delivery_options(
+    r: &crate::resolve::ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    _object: &crate::resolve::Obj,
+) -> Result<crate::graphql::Output<crate::resolve::Obj>, FieldError> {
+    let state = r.state();
+    let search = ctx.arg_str("search").map(str::to_ascii_lowercase);
+    let pickup: Vec<Value> = state
+        .keys("Location")
+        .filter_map(|key| {
+            let location = state.get(key)?;
+            let settings = location.get("localPickupSettingsV2").filter(|settings| !settings.is_null())?;
+            if location.get("isActive").and_then(Value::as_bool) == Some(false) {
+                return None;
+            }
+            let name = text(location, "name").unwrap_or_default();
+            if search.as_ref().is_some_and(|search| !name.to_ascii_lowercase().contains(search)) {
+                return None;
+            }
+            let handle = format!("pickup-{}", crate::state::parse_gid(key).map_or(0, |(_, n)| n));
+            Some(json!({
+                "code": handle,
+                "handle": handle,
+                "title": name,
+                "source": "shopify",
+                "locationId": key,
+                "instructions": settings.get("instructions").and_then(Value::as_str).unwrap_or_default(),
+                "distanceFromBuyer": null,
+            }))
+        })
+        .collect();
+    let from = usize::try_from(ctx.arg_i64("localPickupFrom").unwrap_or(0).max(0)).unwrap_or(0);
+    let count = ctx
+        .arg_i64("localPickupCount")
+        .map_or(pickup.len(), |count| {
+            usize::try_from(count.max(0)).unwrap_or(0)
+        });
+    let page: Vec<Value> = pickup.iter().skip(from).take(count).cloned().collect();
+    let has_next = from + page.len() < pickup.len();
+    let answer = value::object(json!({
+        "availableShippingRates": shipping_rates(state, "SHIPPING"),
+        "availableLocalDeliveryRates": shipping_rates(state, "LOCAL"),
+        "availableLocalPickupOptions": page,
+        "pageInfo": {
+            "hasNextPage": has_next,
+            "hasPreviousPage": from > 0,
+            "startCursor": null,
+            "endCursor": null,
+        },
+    }));
+    Ok(crate::graphql::Output::Object(crate::resolve::Obj::built(
+        "DraftOrderAvailableDeliveryOptions",
+        answer,
+    )))
 }
 
 /// The drafts a bulk mutation names: `ids`, or those `search` matches.

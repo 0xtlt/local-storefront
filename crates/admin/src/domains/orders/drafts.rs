@@ -28,8 +28,8 @@
 //!
 //! Messages: "Add at least 1 product", "Draft order not found", "Invalid payment gateway" and
 //! "To is invalid" are the reference's examples; the others are Rails' wording or lsf's. Not
-//! simulated (said in `extensions.lsf.notes`): deposits, discount codes and automatic discounts, metafields, the shipping rates of
-//! `availableShippingRates`.
+//! simulated (said in `extensions.lsf.notes`): deposits, discount codes and automatic discounts,
+//! metafields.
 
 use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
@@ -1100,7 +1100,10 @@ fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     calculated.insert("platformDiscounts".into(), json!([]));
     calculated.insert("warnings".into(), json!([]));
     calculated.insert("alerts".into(), json!([]));
-    calculated.insert("availableShippingRates".into(), json!([]));
+    calculated.insert(
+        "availableShippingRates".into(),
+        json!(super::draft_extras::shipping_rates(state, "SHIPPING")),
+    );
     calculated.insert("billingAddressMatchesShippingAddress".into(), json!(false));
     calculated.entry("customer").or_insert(Value::Null);
     calculated.entry("shippingLine").or_insert(Value::Null);

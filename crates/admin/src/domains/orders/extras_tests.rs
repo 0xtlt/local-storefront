@@ -1029,3 +1029,99 @@ fn what_the_area_makes_is_never_a_default() {
         answer["extensions"]
     );
 }
+
+#[test]
+fn a_requested_edit_is_calculated_without_being_made() {
+    let mut shop = demo();
+    let order = order_named(&shop, "#1002");
+    let line = super::line_items(&shop, &order)[0].clone();
+    let answer = run(
+        &mut shop,
+        "query($input: CalculateRequestedOrderEditInput!) { requestedOrderEditCalculate(input: $input) {
+            financialSummary { editSubtotalSet { shopMoney { amount } } editTotalTaxSet { shopMoney { amount } } editTotalSet { shopMoney { amount } } }
+            lineItems { removals(first: 5) { nodes { quantity lineItem { id } subtotalSet { shopMoney { amount } } } } } } }",
+        json!({"input": {"orderId": order, "lineItems": {"removals": [{"lineItemId": line, "quantity": 1}]}}}),
+    );
+    assert!(answer.get("extensions").is_none(), "{answer}");
+    let calculated = &answer["data"]["requestedOrderEditCalculate"];
+    let removal = &calculated["lineItems"]["removals"]["nodes"][0];
+    assert_eq!(removal["lineItem"]["id"], json!(line));
+    let summary = &calculated["financialSummary"];
+    assert_eq!(
+        cents(amount(&summary["editTotalSet"])),
+        cents(amount(&removal["subtotalSet"])) + cents(amount(&summary["editTotalTaxSet"]))
+    );
+    assert_eq!(shop.count("RequestedOrderEdit"), 0);
+    let too_many = run(
+        &mut shop,
+        "query($input: CalculateRequestedOrderEditInput!) { requestedOrderEditCalculate(input: $input) { lineItems { removals(first: 1) { nodes { quantity } } } } }",
+        json!({"input": {"orderId": order, "lineItems": {"removals": [{"lineItemId": line, "quantity": 99}]}}}),
+    );
+    assert!(too_many["errors"].is_array(), "{too_many}");
+}
+
+#[test]
+fn a_draft_is_offered_the_checkouts_delivery_rates_and_pickup_locations() {
+    let mut shop = demo();
+    let answer = run(
+        &mut shop,
+        "{ draftOrderAvailableDeliveryOptions(input: {}) {
+            availableShippingRates { handle code title source price { amount } }
+            availableLocalDeliveryRates { handle }
+            availableLocalPickupOptions { handle title locationId instructions }
+            pageInfo { hasNextPage hasPreviousPage } } }",
+        json!({}),
+    );
+    assert!(answer.get("extensions").is_none(), "{answer}");
+    let options = &answer["data"]["draftOrderAvailableDeliveryOptions"];
+    let rates = options["availableShippingRates"].as_array().unwrap();
+    let expected: Vec<Value> = shop
+        .setting(super::DELIVERY_RATES_SETTING)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rate| rate["kind"] == "SHIPPING")
+        .map(|rate| rate["handle"].clone())
+        .collect();
+    assert!(!rates.is_empty());
+    assert_eq!(
+        rates
+            .iter()
+            .map(|rate| rate["handle"].clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    let pickup = options["availableLocalPickupOptions"].as_array().unwrap();
+    let pickup_locations = shop
+        .all("Location")
+        .filter(|location| {
+            !location["localPickupSettingsV2"].is_null()
+                && location.contains_key("localPickupSettingsV2")
+        })
+        .count();
+    assert_eq!(pickup.len(), pickup_locations);
+    let first = run(
+        &mut shop,
+        "{ draftOrderAvailableDeliveryOptions(input: {}, localPickupCount: 0) { availableLocalPickupOptions { handle } pageInfo { hasNextPage } } }",
+        json!({}),
+    );
+    assert_eq!(
+        first["data"]["draftOrderAvailableDeliveryOptions"]["pageInfo"]["hasNextPage"],
+        json!(pickup_locations > 0)
+    );
+    // A draft's calculation offers the same shipping rates.
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let read = run(
+        &mut shop,
+        "mutation($input: DraftOrderInput!) { draftOrderCalculate(input: $input) { calculatedDraftOrder { availableShippingRates { handle price { amount } } } } }",
+        json!({"input": {"lineItems": [{"variantId": variant, "quantity": 1}]}}),
+    );
+    assert_eq!(
+        read["data"]["draftOrderCalculate"]["calculatedDraftOrder"]["availableShippingRates"]
+            .as_array()
+            .map(Vec::len),
+        Some(rates.len()),
+        "{read}"
+    );
+}

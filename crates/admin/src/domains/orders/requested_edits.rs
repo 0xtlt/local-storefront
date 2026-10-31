@@ -13,6 +13,9 @@
 //!   (`requestDeclinedAt`), and the buyer's notice, with the note, goes to the shop's outbox.
 //! - `Order.displayRequestedEditStatus`: `REQUESTED` while one is pending, else the status of the
 //!   latest, `NONE` without one. `Order.requestedOrderEdits` lists them.
+//! - `requestedOrderEditCalculate` answers what removing the units would take off the order:
+//!   each line's subtotal (after the order's discounts) and tax, the order's discount they bore,
+//!   the total.
 //! - Events: `requested_order_edit/created`, `…/declined`, `…/resolved`.
 //!
 //! Messages: lsf's wording, with the codes of the payloads' error types.
@@ -24,6 +27,7 @@ use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Email};
 use crate::resolve::{Mutation, Registry, UserError, payload};
+use crate::resolve::{Obj, ShopResolver};
 use crate::state::{ShopState, value};
 
 pub fn register(registry: &mut Registry) {
@@ -35,6 +39,7 @@ pub fn register(registry: &mut Registry) {
         .mutation("requestedOrderEditResolve", |m, ctx| {
             close(m, ctx, "RESOLVED")
         })
+        .query("requestedOrderEditCalculate", calculate)
         .field("Order", "displayRequestedEditStatus", |r, _ctx, object| {
             let state = r.state();
             let statuses: Vec<String> = r
@@ -286,4 +291,87 @@ fn notify_decline(state: &mut ShopState, to: &str, name: &str, note: Option<&str
             resource: Some(id),
         },
     );
+}
+
+/// `requestedOrderEditCalculate`. Lines that are not of the order, or more units than are left
+/// to fulfill, answer a GraphQL error.
+fn calculate(
+    r: &ShopResolver<'_>,
+    ctx: &FieldContext<'_>,
+    _object: &Obj,
+) -> Result<Output<Obj>, FieldError> {
+    let input = model::input_of(ctx.arg("input"));
+    let state = r.state();
+    let order_id = input
+        .get("orderId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let Some(order) = state
+        .get(&order_id)
+        .filter(|_| state.type_of(&order_id) == Some("Order"))
+    else {
+        return Ok(Output::Null);
+    };
+    let currency = model::currency(state);
+    let bag = |cents: i64| value::money_bag(cents, &currency);
+    let lines = gids(order.get("lineItems"));
+    let (mut subtotal, mut before, mut tax) = (0, 0, 0);
+    let mut removals = Vec::new();
+    for (index, removal) in input
+        .get("lineItems")
+        .and_then(|items| items.get("removals"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let line = removal
+            .get("lineItemId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let quantity = removal.get("quantity").and_then(Value::as_i64).unwrap_or(0);
+        let Some(item) = state
+            .get(line)
+            .filter(|_| lines.iter().any(|known| known == line))
+        else {
+            return Err(FieldError::new(format!(
+                "lineItems.removals[{index}]: the line item is not of the order"
+            )));
+        };
+        if quantity <= 0 || quantity > int(item, "unfulfilledQuantity") {
+            return Err(FieldError::new(format!(
+                "lineItems.removals[{index}]: the quantity is more than what is left to fulfill"
+            )));
+        }
+        let (_, line_subtotal, line_tax) =
+            super::refunds::line_amounts(state, order, line, quantity);
+        subtotal += line_subtotal;
+        tax += line_tax;
+        before += model::share(
+            model::field_cents(item, "discountedTotalSet"),
+            quantity,
+            int(item, "quantity").max(1),
+        );
+        removals.push(json!({
+            "lineItem": line,
+            "quantity": quantity,
+            "subtotalSet": bag(line_subtotal),
+            "totalTaxSet": bag(line_tax),
+        }));
+    }
+    Ok(Output::Object(Obj::built(
+        "CalculatedRequestedOrderEdit",
+        value::object(json!({
+            "lineItems": {"removals": removals},
+            "financialSummary": {
+                "editSubtotalBeforeTargetAllDiscountsSet": bag(before),
+                "editOrderLevelDiscountSubtotalSet": bag((before - subtotal).max(0)),
+                "editSubtotalSet": bag(before),
+                "editSubtotalWithCartDiscountSet": bag(subtotal),
+                "editTotalTaxSet": bag(tax),
+                "editTotalSet": bag(subtotal + tax),
+            },
+        })),
+    )))
 }

@@ -422,7 +422,7 @@ and the checkout (see "Store sync" below).
 | Locations | `locationAdd`, `locationEdit`, `locationActivate`, `locationDeactivate`, `locationDelete`, `locationLocalPickupEnable`, `locationLocalPickupDisable` |
 | Publications | `publishablePublish`, `publishableUnpublish` |
 | Selling plans | `sellingPlanGroupCreate`, `sellingPlanGroupUpdate`, `sellingPlanGroupDelete`, `sellingPlanGroupAddProducts`, `sellingPlanGroupRemoveProducts`, `sellingPlanGroupAddProductVariants`, `sellingPlanGroupRemoveProductVariants`, `productJoinSellingPlanGroups`, `productLeaveSellingPlanGroups`, `productVariantJoinSellingPlanGroups`, `productVariantLeaveSellingPlanGroups` |
-| Gift cards | `giftCardCreate`, `giftCardUpdate`, `giftCardCredit`, `giftCardDebit`, `giftCardDeactivate` |
+| Gift cards | `giftCardCreate`, `giftCardUpdate`, `giftCardCredit`, `giftCardDebit`, `giftCardDeactivate`, `giftCardProductSet` (`productSet` for a gift card product: its variants untaxed, unshipped, untracked), `giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient` (the email in the shop's outbox, see "Emails") |
 
 How they behave, as shopify.dev documents it:
 
@@ -496,8 +496,7 @@ category.
 `productFeedDelete`, `bulkProductResourceFeedbackCreate`, quantity rules and price breaks
 (`quantityRulesAdd`, `quantityRulesDelete`, `quantityPricingByVariantUpdate`), inventory
 transfers and shipments (`inventoryTransfer…`, `inventoryShipment…`), fulfillment services
-(`fulfillmentServiceCreate`, `…Update`, `…Delete`), `giftCardProductSet`,
-`giftCardSendNotificationToCustomer`, `giftCardSendNotificationToRecipient`. Inputs a simulated
+(`fulfillmentServiceCreate`, `…Update`, `…Delete`). Inputs a simulated
 mutation ignores (`category`, `linkedMetafield`, `combinedListingRole`, a future `publishDate`,
 …) are said in `extensions.lsf.notes`. The collections of the store data are custom collections
 for the Admin API (lsf-core resolves their rules into products). `productTags`,
@@ -542,24 +541,79 @@ specific webhooks").
   `RejectCancellationRequest`, `fulfillmentOrderClose`. lsf does not call the service's
   `callbackUrl`: the service reads `assignedFulfillmentOrders`.
 - **Refunds**: `refundCreate` (line items with `CANCEL`, `RETURN` or `NO_RESTOCK`, shipping,
-  transactions against the order's payments; a refund without transactions moves no money, as
-  on Shopify).
-- **Returns**: `returnRequest`, `returnApproveRequest`, `returnDeclineRequest`, `returnCreate`,
-  `returnProcess` (with its refund), `returnClose`, `returnReopen`, `returnCancel`.
+  transactions against the order's payments, `refundMethods.storeCreditRefund` to the
+  customer's store credit; a refund without transactions moves no money, as on Shopify).
+- **Returns**: `returnRequest`, `returnApproveRequest`, `returnDeclineRequest`, `returnCreate`
+  (with exchange line items, restocking fees and a return shipping fee), `returnProcess` (with
+  its refund, its exchanges, its dispositions), `returnClose`, `returnReopen`, `returnCancel`,
+  `removeFromReturn`, `returnLineItemRemoveFromReturn`, `returnRefund`; reverse fulfillment
+  orders: `reverseDeliveryCreateWithShipping`, `reverseDeliveryShippingUpdate`,
+  `reverseFulfillmentOrderDispose`. `returnCalculate`, `Return.suggestedFinancialOutcome` and
+  `Return.suggestedRefund` compute what a return gives back.
 - **Order edits**: `orderEditBegin`, `orderEditAddVariant`, `orderEditAddCustomItem`,
-  `orderEditSetQuantity`, `orderEditAddLineItemDiscount`, `orderEditRemoveDiscount`,
-  `orderEditCommit` (`orders/edited`, with the lines added and removed).
+  `orderEditSetQuantity`, `orderEditAddLineItemDiscount`, `orderEditUpdateDiscount`,
+  `orderEditRemoveDiscount`, `orderEditRemoveLineItemDiscount`, `orderEditAddShippingLine`,
+  `orderEditUpdateShippingLine`, `orderEditRemoveShippingLine`, `orderEditCommit`
+  (`orders/edited`, with the lines added and removed); requested edits:
+  `requestedOrderEditCreate`, `requestedOrderEditResolve`, `requestedOrderEditDecline`.
 - **Draft orders**: `draftOrderCreate`, `draftOrderUpdate`, `draftOrderDelete`,
-  `draftOrderCalculate`, `draftOrderComplete` (an order, paid unless `paymentPending`),
-  `draftOrderDuplicate`, `draftOrderInvoiceSend` (recorded as sent, nothing sent). Taxes are at
-  the store data's `checkout.tax_rate`.
+  `draftOrderCalculate`, `draftOrderComplete` (an order, paid unless `paymentPending` or payment
+  terms), `draftOrderDuplicate`, `draftOrderInvoiceSend` and `orderInvoiceSend` (the invoice in
+  the shop's outbox), `draftOrderInvoicePreview`, `draftOrderCreateFromOrder`,
+  `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`, `draftOrderBulkDelete`; B2B drafts
+  (`purchasingEntity.purchasingCompany`: the location's addresses and payment terms). Taxes are
+  at the store data's `checkout.tax_rate`.
+- **Payments**: `paymentTermsCreate`, `paymentTermsUpdate`, `paymentTermsDelete` and a draft's
+  `paymentTerms` (the nine templates of `paymentTermsTemplates`; one schedule, due `dueInDays`
+  after it is issued, on a fixed date, on receipt or on fulfillment), `orderCreateManualPayment`,
+  `orderCreateMandatePayment` (idempotent by its key), `paymentScheduleCapture` (a due schedule,
+  through the order's vaulted payment method: the card of a checkout that left a balance, the
+  customer's payment methods), `paymentReminderSend` (in the outbox). `Order.paymentTerms`,
+  `paymentCollectionDetails`, `PaymentTerms.due` and `overdue` follow the money and the clock.
+  Every sale, capture and refund is a `TenderTransaction` (`tenderTransactions`).
+- **Store credit**: `storeCreditAccountCredit`, `storeCreditAccountDebit` (one account per owner
+  and currency, credits that expire, Shopify's messages); `orderCreate` takes a payment through
+  the gateway `shopify_store_credit` from the customer's account; refunds, returns and
+  cancellations give money back as store credit.
+- **Risk and attribution**: `orderRiskAssessmentCreate` (`Order.risk` with its recommendation),
+  `orderAttributionDefinitionUpsert`, `orderAttributionDefinitionDelete`
+  (`orderAttributionDefinitions`, `Order.attribution` from the order's `sourceName`).
+- **Shopify Payments**: `shopifyPaymentsAccount` (balance transactions of the money it processed,
+  daily payouts, its balance), disputes (`disputes`, `dispute`, `Order.disputes`,
+  `disputeEvidenceUpdate`), `shopifyPaymentsPayoutAlternateCurrencyCreate`.
+- **Tax apps**: `taxAppConfigure`, `taxSummaryCreate`.
 - **Webhooks**: `orders/create`, `/updated`, `/paid`, `/cancelled`, `/fulfilled`,
-  `/partially_fulfilled`, `/edited`, `/delete`; `order_transactions/create`;
-  `fulfillments/create`, `/update`; `fulfillment_events/create`; `fulfillment_holds/added`,
-  `/released`; `fulfillment_orders/*` (holds, moves, splits, cancellations, requests to a
-  service); `refunds/create`; `returns/request`, `/approve`, `/decline`, `/close`, `/reopen`,
-  `/cancel` (`returns/process` fires, but has no example payload to build it from: it is logged
-  as not sent); `draft_orders/create`, `/update`, `/delete`.
+  `/partially_fulfilled`, `/edited`, `/delete`, `/risk_assessment_changed`,
+  `/shopify_protect_eligibility_changed`, `/link_requested`; `order_transactions/create`;
+  `tender_transactions/create`; `payment_terms/create`, `/update`, `/delete`;
+  `payment_schedules/due`; `fulfillments/create`, `/update`; `fulfillment_events/create`;
+  `fulfillment_holds/added`, `/released`; `fulfillment_orders/*` (holds, moves, splits,
+  cancellations, requests to a service); `refunds/create`; `returns/request`, `/approve`,
+  `/decline`, `/close`, `/reopen`, `/cancel`, `/update` (`returns/process` fires, but neither
+  the webhook reference nor dev-mcp has an example payload to build it from: it is logged as
+  not sent); `reverse_deliveries/attach_deliverable`; `reverse_fulfillment_orders/dispose`;
+  `requested_order_edit/created`, `/declined`, `/resolved`; `draft_orders/create`, `/update`,
+  `/delete`; `disputes/create`, `/update`; `tax_services/create`, `/update`.
+
+**The shop's clock** moves what is due: `POST /__lsf/admin/clock` with `{"advance": "31d"}` (or
+`{"now": "2026-12-01T00:00:00Z"}`) freezes it later, and what the time passing does happens at
+once, as it does before every request of the Admin API: a payment schedule that came due fires
+`payment_schedules/due` (once), store credit that expired leaves its account, the days Shopify
+Payments processed are paid out. `GET /__lsf/admin/clock` reads it; a reset puts the store
+data's back.
+
+**Emails**: lsf sends none. What Shopify would email (payment reminders, invoices, gift cards,
+store credit, return labels, a requested edit declined, a new order link) is recorded in the
+shop's outbox: `GET /__lsf/admin/emails` (`{count, emails: [{id, template, to, subject, body,
+resource, sentAt}]}`), `DELETE /__lsf/admin/emails` to forget them.
+
+**What buyers, banks and Shopify do**, which no mutation makes, is a control endpoint: `POST
+/__lsf/admin/disputes` (`{"order", "amount"?, "type"?, "reason"?}`) opens a chargeback or an
+inquiry (`disputes/create`), `POST /__lsf/admin/disputes/<n>/won` or `/lost` decides it;
+`POST /__lsf/admin/orders/protect` (`{"order", "status", "eligibility"}`) changes Shopify
+Protect's view of an order; `POST /__lsf/admin/orders/link-request` (`{"order"}`) is a buyer
+asking for a new order link; `POST /__lsf/admin/tax-app/activate` is the merchant turning on
+the tax app. See [the control API](control-api.md).
 
 What lsf chose where Shopify does not say, or where a local tool must differ:
 
@@ -581,26 +635,34 @@ What lsf chose where Shopify does not say, or where a local tool must differ:
   reference's examples, or quoted from real answers) are word for word. The sources are in the
   doc comments of `crates/admin/src/domains/orders/`.
 - The `returns/*` payloads list no return line items (Shopify's examples have none, and lsf does
-  not know their shape): read them through the API.
+  not know their shape): read them through the API. `returns/update` lists the return line
+  items a change removed, as its example does.
+- Money: Shopify Payments processes every payment that is not through a manual gateway (the
+  checkout's cards, mandates, the orders of the store data), at 2.9 % + 0.30 a charge and 15.00
+  a chargeback; it pays out each day once the shop's clock left it behind. Every amount is in
+  the shop's currency: an alternate currency payout of another currency finds no balance.
+- Payment terms have one schedule; a schedule is `due` once its date passed and `overdue` from
+  the day after, by the shop's clock. A mandate is the card of a checkout that left a balance to
+  pay later, or one of the customer's payment methods; the payments through it are Shopify
+  Payments' and succeed.
+- An exchange is processed as Shopify's returns do it: its items become line items of the order
+  and the returned units are taken back by a refund, so that the order owes (or is owed) the
+  difference. Restocking and return shipping fees are taken off what a return suggests to
+  refund.
+- Risk recommendations are lsf's rule (cancel for a high risk, investigate for a medium one,
+  accept for a low one); lsf makes no fraud analysis of its own, nor any Shopify Protect
+  decision. A store credit balance stays below 100,000 of its currency (Shopify does not publish
+  its limit).
 
-Not simulated yet (they answer `LSF_NOT_SIMULATED`): `orderCreateManualPayment`,
-`orderCreateMandatePayment`, `orderRiskAssessmentCreate`, `orderAttributionDefinitionUpsert`,
-`orderAttributionDefinitionDelete`, `orderEditAddShippingLine`, `orderEditUpdateShippingLine`,
-`orderEditRemoveShippingLine`, `orderEditRemoveLineItemDiscount`, `orderEditUpdateDiscount`,
-`requestedOrderEditCreate`, `requestedOrderEditDecline`, `requestedOrderEditResolve`,
-`fulfillmentOrderSplit`, `fulfillmentOrderMerge`, `fulfillmentOrderReportProgress`,
+Not simulated yet (they answer `LSF_NOT_SIMULATED`): `fulfillmentOrderSplit`,
+`fulfillmentOrderMerge`, `fulfillmentOrderReportProgress`,
 `fulfillmentOrderLineItemsPreparedForPickup`, `fulfillmentOrdersReroute`,
 `fulfillmentOrdersSetFulfillmentDeadline`, `fulfillmentConstraintRuleCreate`,
 `fulfillmentConstraintRuleUpdate`, `fulfillmentConstraintRuleDelete`, `shippingLabelPurchase`,
-`shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete`, `returnRefund`, `returnLineItemRemoveFromReturn`, `removeFromReturn`,
-`reverseDeliveryCreateWithShipping`, `reverseDeliveryShippingUpdate`,
-`reverseFulfillmentOrderDispose`, `draftOrderBulkAddTags`, `draftOrderBulkRemoveTags`,
-`draftOrderBulkDelete`, `draftOrderCreateFromOrder`, `draftOrderInvoicePreview`,
-`paymentTermsCreate`, `paymentTermsUpdate`, `paymentTermsDelete`, `paymentReminderSend`,
-`paymentScheduleCapture`, `disputeEvidenceUpdate`. Not computed yet: `returnCalculate`,
-`Return.suggestedFinancialOutcome`, `requestedOrderEditCalculate`,
-`draftOrderAvailableDeliveryOptions`, exchanges and reverse fulfillment orders of returns,
-duties, store credit refunds, B2B draft orders, payment terms.
+`shippingPackageUpdate`, `shippingPackageMakeDefault`, `shippingPackageDelete`. Not computed yet:
+`requestedOrderEditCalculate`, `draftOrderAvailableDeliveryOptions`, duties (lsf's orders have
+none: `currentTotalDutiesSet` is `null`). Not built: the `returns/process` payload (no example
+to build it from), `tax_summaries/create` (not a topic of the 2026-10 enum).
 
 ### Customers and companies
 

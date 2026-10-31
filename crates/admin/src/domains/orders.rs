@@ -229,10 +229,36 @@ fn derived(type_name: &str, kind: &str, order: &str, key: &str) -> String {
 /// draft orders compute their taxes with it.
 pub const TAX_RATE_SETTING: &str = "taxRateBps";
 
+/// The setting of the shop that holds the checkout's delivery rates (`checkout.shipping_rates`:
+/// `[{handle, title, price (cents), description, kind}]`): what a draft order may be delivered
+/// by.
+pub const DELIVERY_RATES_SETTING: &str = "deliveryRates";
+
 pub fn seed(seed: &mut Seed) {
     let store = seed.store;
     seed.state
         .set_setting(TAX_RATE_SETTING, json!(store.checkout.tax_rate_bps));
+    // The checkout's delivery rates: what a draft order may be delivered by.
+    let rates: Vec<Value> = store
+        .checkout
+        .shipping_rates
+        .iter()
+        .map(|rate| {
+            json!({
+                "handle": rate.handle,
+                "title": rate.title,
+                "price": rate.price,
+                "description": rate.description,
+                "kind": match rate.kind {
+                    lsf_core::store::model::CheckoutDeliveryKind::Shipping => "SHIPPING",
+                    lsf_core::store::model::CheckoutDeliveryKind::PickUp => "PICK_UP",
+                    lsf_core::store::model::CheckoutDeliveryKind::Local => "LOCAL",
+                },
+            })
+        })
+        .collect();
+    seed.state
+        .set_setting(DELIVERY_RATES_SETTING, Value::Array(rates));
     payments::seed(&mut seed.state);
     shopify_payments::seed(&mut seed.state);
     let location = catalog::locations(store).first().map(catalog::location_gid);
