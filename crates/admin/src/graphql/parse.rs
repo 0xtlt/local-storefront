@@ -627,8 +627,10 @@ impl<'q> Parser<'q> {
     fn type_ref(&mut self) -> Parsed<TypeRef> {
         let ty = if self.token.is(Kind::LBracket) {
             self.advance()?;
+            self.enter()?;
             let inner = self.type_ref()?;
             self.expect(Kind::RBracket)?;
+            self.depth -= 1;
             TypeRef::List(Box::new(inner))
         } else {
             TypeRef::Named(self.name()?.to_string())
@@ -1065,6 +1067,22 @@ mod tests {
             error(&values)["message"],
             "This query is too large to execute."
         );
+        // The type of a variable: 20,000 levels overflowed the stack.
+        let types = format!(
+            "query($a: {}Int{}) {{ a }}",
+            "[".repeat(20_000),
+            "]".repeat(20_000)
+        );
+        assert_eq!(
+            error(&types)["message"],
+            "This query is too large to execute."
+        );
+        let fine = format!(
+            "query($a: {}Int{}) {{ a }}",
+            "[".repeat(MAX_DEPTH),
+            "]".repeat(MAX_DEPTH)
+        );
+        assert!(parse(&fine).is_ok());
         assert_eq!(ruby_inspect("#{x} #a"), "\"\\#{x} #a\"");
     }
 

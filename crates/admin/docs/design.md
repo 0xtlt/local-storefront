@@ -147,9 +147,10 @@ keeps the fields of an input object in a `BTreeMap` (sorted, duplicates lost, so
 graphql-ruby's errors point at. graphql-parser still reads the SDL. Parse errors are those of
 graphql-ruby's C parser, which keeps the messages of its Racc grammar:
 `Parse error on "}" (RCURLY) at [1, 9]` with the token's location, `Unexpected end of document`
-with `"locations": []`. A document nested more than 100 deep (selections or values, fragments
-included) answers graphql-ruby's `This query is too large to execute.`, rather than running out
-of stack.
+with `"locations": []`. A document nested more than 100 deep (selections, values or the type of
+a variable, `[[Int]]`; fragments included) answers graphql-ruby's `This query is too large to
+execute.`, rather than running out of stack. Variables are JSON, which `serde_json` reads 128
+deep at most (deeper, the body is not read: `400`), so their coercion recurses no further.
 
 Validation is graphql-ruby 2.6's `StaticValidation::ALL_RULES` (read in its source, tag of
 2026-10-30), as one walk of the document, each rule's errors in its order, with its messages,
@@ -540,7 +541,7 @@ a day, a time with or without a zone, and ranges (`2021-01-01..2021-01-02`), eac
 relative date (`-7d`) for search; lsf has none.
 
 `search` parses a query into a tree (`Query::parse`, never an error: a malformed query is read
-as far as it goes, with warnings) and matches a record through the `Searchable` trait, which
+as far as it goes, with warnings, each given once) and matches a record through the `Searchable` trait, which
 each domain implements from the filters its connections document (`documented_filters`, from
 the reference of 2026-10: `schemas/2026-10/search.json`). A value is tokenized text, a keyword,
 a number, a date, a boolean or an id, which says how `:` compares it. **A field the connection
@@ -548,6 +549,11 @@ does not know is ignored**, as shopify.dev says ("If you specify an invalid fiel
 is ignored and all results are returned"; an earlier draft of this design said it matched
 nothing), with the warning Shopify returns in `extensions.search` ("Invalid search field for
 this query.", `Query::invalid_fields`). A free term matches the type's default text fields.
+
+Parentheses nest 100 deep at most (`syntax::MAX_DEPTH`: the parser recurses once per `(`, on
+the stack of the request's thread, which 20,000 of them overflowed): a deeper group is ignored
+with the warning "Parentheses nest more than 100 deep: what they hold is ignored.", and refused
+in a filter. A chain of `NOT` and `-` is counted, not nested (`NOT NOT x` is `x`).
 
 A webhook `filter` (`search::Filter`) runs on the payload, as shopify.dev's "Filter webhook
 deliveries" says: dotted paths through arrays (`variants.price:>=10.00`), case-sensitive

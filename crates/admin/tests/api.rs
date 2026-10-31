@@ -808,3 +808,94 @@ fn delivers_the_webhooks_of_metafields_and_metaobjects() {
             .ends_with("--badge")
     );
 }
+
+#[test]
+fn a_request_nested_too_deeply_is_answered_not_crashed() {
+    // Each of these, 20,000 levels deep, overflowed the stack of the request's thread, and the
+    // server aborted.
+    let api = demo_api();
+    let token = default_token(&api);
+    let deep = "(".repeat(20_000);
+
+    // A search query is read up to the limit: the rest is ignored, with a warning.
+    let (status, searched) = graphql(
+        &api,
+        &token,
+        "query($q: String) { products(first: 1, query: $q) { nodes { id } } }",
+        json!({"q": deep}),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(
+        searched["data"]["products"]["nodes"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        searched["extensions"]["search"][0]["warnings"],
+        json!([
+            {"message": "Parentheses nest more than 100 deep: what they hold is ignored."},
+            {"message": "A `(` is not closed."},
+        ])
+    );
+    let (_, negated) = graphql(
+        &api,
+        &token,
+        "query($q: String) { products(first: 1, query: $q) { nodes { id } } }",
+        json!({"q": format!("{}title:nothing", "NOT ".repeat(20_001))}),
+    );
+    assert_eq!(
+        negated["data"]["products"]["nodes"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+
+    // A webhook filter must follow the grammar: it is refused.
+    let (_, subscribed) = graphql(
+        &api,
+        &token,
+        "mutation($f: String) { webhookSubscriptionCreate(topic: PRODUCTS_UPDATE, webhookSubscription: {uri: \"https://example.com/hooks\", filter: $f}) { webhookSubscription { id } userErrors { field message } } }",
+        json!({"f": format!("{deep}title:a{}", ")".repeat(20_000))}),
+    );
+    let errors = &subscribed["data"]["webhookSubscriptionCreate"]["userErrors"];
+    assert_eq!(errors[0]["field"], json!(["webhookSubscription", "filter"]));
+    assert!(
+        errors[0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("nest more than 100 deep")),
+        "{subscribed}"
+    );
+
+    // The type of a variable is GraphQL's nesting: the query is too large.
+    let (_, typed) = graphql(
+        &api,
+        &token,
+        &format!(
+            "query($a: {}Int{}) {{ shop {{ name }} }}",
+            "[".repeat(20_000),
+            "]".repeat(20_000)
+        ),
+        Value::Null,
+    );
+    assert_eq!(
+        typed,
+        json!({"errors": [{"message": "This query is too large to execute."}]})
+    );
+
+    // Variables nested past serde_json's limit (128) are no JSON body lsf reads.
+    let variables = format!("{}1{}", "[".repeat(20_000), "]".repeat(20_000));
+    let response = api
+        .handle(&request(
+            "POST",
+            GRAPHQL,
+            &[
+                ("content-type", "application/json"),
+                ("x-shopify-access-token", &token),
+            ],
+            format!(r#"{{"query": "{{ shop {{ name }} }}", "variables": {{"a": {variables}}}}}"#)
+                .as_bytes(),
+        ))
+        .unwrap();
+    assert_eq!(response.status, 400);
+}

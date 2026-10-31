@@ -14,8 +14,17 @@
 //! A name can contain `-`, `'` and `"` but not start with them; a value can contain `:`
 //! (`id:gid://shopify/Product/1`, `created_at:>2020-10-21T23:39:20Z`). `first_name: Bob`, with a
 //! space, is the two terms `first_name` and `Bob`.
+//!
+//! Parentheses nest at most [`MAX_DEPTH`] deep: the parser recurses once per `(`, on the stack
+//! of the request's thread. A chain of modifiers (`NOT NOT -x`) is counted, not recursed into.
 
 use super::{Comparator, Node, SyntaxError, Term, Value, Warning};
+
+/// How deeply parentheses may nest. A group deeper than this is not read: lenient parsing
+/// ignores it with a warning, as Shopify ignores what it cannot read of a query, and strict
+/// parsing (a webhook filter) refuses it. Real queries nest a few levels; this is the GraphQL
+/// parser's limit too.
+pub(super) const MAX_DEPTH: usize = 100;
 
 /// A token of a query.
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +60,7 @@ pub(super) fn parse(
     let mut parser = Parser {
         tokens,
         at: 0,
+        depth: 0,
         strict,
         warnings,
     };
@@ -282,6 +292,8 @@ fn value(chunk: &[Char]) -> Value {
 struct Parser {
     tokens: Vec<Token>,
     at: usize,
+    /// The parentheses open around the token at `at`.
+    depth: usize,
     strict: bool,
     warnings: Vec<Warning>,
 }
@@ -291,7 +303,8 @@ impl Parser {
         self.tokens.get(self.at)
     }
 
-    /// Something the grammar does not allow: an error when strict, a warning otherwise.
+    /// Something the grammar does not allow: an error when strict, a warning otherwise (once:
+    /// the groups a query nested too deeply leaves unclosed say so in one warning).
     fn problem(&mut self, message: &str) -> Result<(), SyntaxError> {
         if self.strict {
             return Err(SyntaxError::new(message, self.at));
@@ -300,8 +313,10 @@ impl Parser {
         if let Some(first) = sentence.get(..1) {
             sentence.replace_range(..1, &first.to_uppercase());
         }
-        self.warnings
-            .push(Warning::new(None, &format!("{sentence}.")));
+        let warning = Warning::new(None, &format!("{sentence}."));
+        if !self.warnings.contains(&warning) {
+            self.warnings.push(warning);
+        }
         Ok(())
     }
 
@@ -352,39 +367,68 @@ impl Parser {
         Ok(node)
     }
 
-    /// A term, with its modifiers.
+    /// A term, with its modifiers: `NOT NOT x` is `x`.
     fn unary(&mut self) -> Result<Option<Node>, SyntaxError> {
-        match self.peek() {
-            Some(Token::Not) => {
-                self.at += 1;
-                if matches!(
-                    self.peek(),
-                    None | Some(Token::Close | Token::And | Token::Or)
-                ) {
-                    self.problem("`NOT` or `-` applies to nothing")?;
-                    return Ok(None);
-                }
-                Ok(self.unary()?.map(|node| match node {
-                    Node::Not(inner) => *inner,
-                    node => Node::Not(Box::new(node)),
-                }))
+        let mut negated = false;
+        while self.peek() == Some(&Token::Not) {
+            self.at += 1;
+            negated = !negated;
+            if matches!(
+                self.peek(),
+                None | Some(Token::Close | Token::And | Token::Or)
+            ) {
+                self.problem("`NOT` or `-` applies to nothing")?;
+                return Ok(None);
             }
+        }
+        let node = match self.peek() {
             Some(Token::Open) => {
                 self.at += 1;
-                let inner = self.and()?;
+                if self.depth >= MAX_DEPTH {
+                    self.problem(&format!(
+                        "parentheses nest more than {MAX_DEPTH} deep: what they hold is ignored"
+                    ))?;
+                    self.skip_group();
+                    return Ok(None);
+                }
+                self.depth += 1;
+                let inner = self.and();
+                self.depth -= 1;
+                let inner = inner?;
                 if self.peek() == Some(&Token::Close) {
                     self.at += 1;
                 } else {
                     self.problem("a `(` is not closed")?;
                 }
-                Ok(inner)
+                inner
             }
             Some(Token::Term(term)) => {
                 let term = term.clone();
                 self.at += 1;
-                Ok(Some(Node::Term(term)))
+                Some(Node::Term(term))
             }
-            _ => Ok(None),
+            _ => None,
+        };
+        Ok(node.map(|node| match node {
+            Node::Not(inner) if negated => *inner,
+            node if negated => Node::Not(Box::new(node)),
+            node => node,
+        }))
+    }
+
+    /// Moves past the group whose `(` was just read: up to its `)`, or the end.
+    fn skip_group(&mut self) {
+        let mut open = 1usize;
+        while let Some(token) = self.peek() {
+            match token {
+                Token::Open => open += 1,
+                Token::Close => open -= 1,
+                _ => {}
+            }
+            self.at += 1;
+            if open == 0 {
+                return;
+            }
         }
     }
 }
