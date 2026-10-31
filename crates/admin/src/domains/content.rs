@@ -1113,8 +1113,10 @@ pub fn infer_metafield_definitions(state: &mut ShopState) {
 }
 
 /// Links a metafield to the definition of its owner type, namespace and key, creating the
-/// definition when there is none (with the metafield's type). What a mutation that creates a
-/// metafield runs. Returns the GID of the definition, `None` for an app-reserved namespace.
+/// definition when there is none (with the metafield's type). What the seed runs
+/// ([`infer_metafield_definitions`]); a mutation links a metafield to a definition that exists
+/// and creates none ([`metafields::link_definition`]). Returns the GID of the definition, `None`
+/// for an app-reserved namespace.
 pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<String> {
     let record = state.get(metafield)?;
     let field = |name: &str| {
@@ -1133,7 +1135,10 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
     if namespace.starts_with("app--") {
         return None;
     }
-    let id = metafield_definition_gid(&owner_type, &namespace, &key);
+    // The definition of the owner type, namespace and key, whatever its id
+    // (`metafieldDefinitionCreate` gives one of the counter), else the seed's.
+    let id = metafields::find_definition(state, &owner_type, &namespace, &key)
+        .unwrap_or_else(|| metafield_definition_gid(&owner_type, &namespace, &key));
     if !state.contains(&id) {
         state.insert(value::object(json!({
             "__typename": "MetafieldDefinition",

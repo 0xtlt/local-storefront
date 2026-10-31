@@ -508,7 +508,9 @@ resolves like any object; `payload(fields, &errors)` adds `userErrors`, and the 
    `allowPartialUpdates`, `productCreateMedia`) calls `m.keep_changes()`: its user errors then
    leave the changes in place.
 3. **Keep derived values right** with the domain's functions the seed uses (`refresh_product`,
-   `refresh_customer`; for metafields `content::metafields::set`, which links the definition),
+   `refresh_customer`; for metafields `content::metafields::set`, which links the definition,
+   after `content::metafields::check_owned_inputs` or `check_input`, which check them against it:
+   every family's `metafields` input goes through them, and none creates a definition),
    `touch` what changed (`updatedAt`), and use `new_gid` for new records (or the id lsf-core
    derives, for what store sync writes back without an id: see "Store sync").
 4. **Emit the events of what changed**: `state_mut().emit("products/update", &gid)`; a deletion
@@ -732,7 +734,9 @@ events) and its sources; `mutation_tests` tests them all over the demo store.
 - **`@idempotent`**: `inventory::with_idempotency` keeps each key with the arguments' fingerprint
   and the answer (`ShopState::set_memo`), so a retry answers the first answer again.
 - **Metafields** of the catalog's inputs (`productCreate`, `productUpdate`, `productSet` and its
-  variants, `productVariantsBulkCreate`/`Update`, collections, locations, selling plans) are
+  variants, `productVariantsBulkCreate`/`Update`, collections, locations, selling plans; and
+  likewise the customers' and the app family's, in `customers::metafields` and
+  `app::metafields`) are
   checked and kept as `metafieldsSet` checks and keeps them: `records::check_metafields` and
   `records::set_metafields` run the content family's `content::metafields::check_owned_inputs`
   and `content::metafields::set` (types, definitions and their validations, the app's

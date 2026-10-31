@@ -364,7 +364,8 @@ How they behave, as shopify.dev documents it:
   active.", … Where Shopify documents an error by its code only, the message is the code's
   description in the 2026-10 schema.
 - **Metafields** given to `productCreate`, `productUpdate`, `productSet`, the variant
-  mutations, collections, locations and selling plans are checked as `metafieldsSet` checks them
+  mutations, collections, locations and selling plans (and to customers, app discounts and the
+  owners of Functions) are checked as `metafieldsSet` checks them
   (see "Metafields, metaobjects and content"): the type and the value, a definition's type and
   validations, `$app` and another app's namespaces. The errors are the mutation's, at the path of
   the input (`["metafields", "0", "value"]`; `productSet`'s with the code `INVALID_METAFIELD`).
@@ -548,7 +549,7 @@ published, Rails' wording otherwise), with their webhooks:
 
 | Mutations | What lsf does | Webhooks |
 |---|---|---|
-| `customerCreate`, `customerUpdate`, `customerSet` | A name, an email or a phone is required; email and phone are unique ("Email has already been taken") and checked ("Email is invalid", "Phone is invalid"). A new customer is `DISABLED`, not subscribed, in the shop's language. `tags` replace the tags; `metafields` set the customer's; the deprecated `addresses` replace the address book. `customerSet` creates, updates by `id`, or upserts by `email`, `phone` or `customId`. | `customers/create` or `customers/update`, `customer.tags_added` / `customer.tags_removed` for the tags that changed, the consent topics for a consent that changed |
+| `customerCreate`, `customerUpdate`, `customerSet` | A name, an email or a phone is required; email and phone are unique ("Email has already been taken") and checked ("Email is invalid", "Phone is invalid"). A new customer is `DISABLED`, not subscribed, in the shop's language. `tags` replace the tags; `metafields` set the customer's, checked as `metafieldsSet` checks them; the deprecated `addresses` replace the address book. `customerSet` creates, updates by `id`, or upserts by `email`, `phone` or `customId`. | `customers/create` or `customers/update`, `customer.tags_added` / `customer.tags_removed` for the tags that changed, the consent topics for a consent that changed |
 | `customerDelete` | Refused for a customer with orders. Its company contacts go with it. | `customers/delete` |
 | `customerAddressCreate`, `customerAddressUpdate`, `customerAddressDelete`, `customerUpdateDefaultAddress` | The first address is the default one; `setAsDefault` changes it; the default address cannot be deleted. `countryCode` gives the country's name; a province keeps its code when its name is not given. | `customers/update` |
 | `customerEmailMarketingConsentUpdate`, `customerSmsMarketingConsentUpdate` | `SUBSCRIBED`, `UNSUBSCRIBED` or `PENDING`, for a customer with an email (a phone); `consentUpdatedAt` is now unless given. | `customers/update`, then `customers_email_marketing_consent/update` or `customers_marketing_consent/update` |
@@ -600,8 +601,10 @@ shop, the app's installation).
   `null`, the metafield must not exist yet.
 - With a definition of the owner type, namespace and key, `type` may be left out, must be the
   definition's when given, and the value must pass its validations (`min`, `max`, `regex`,
-  `choices`, `list.min`, …). Setting a metafield does not create a definition. The store data's
-  metafields come with definitions lsf infers (one per owner type, namespace and key).
+  `choices`, `list.min`, …). Setting a metafield does not create a definition, through
+  `metafieldsSet` or the `metafields` input of a product, a customer or an app discount. The
+  store data's metafields come with definitions lsf infers (one per owner type, namespace and
+  key).
 - The token needs the access of the owner (`write_products` for a product's).
 - A product's metafields (or a variant's) are written to the store: the theme's Liquid and the
   Function inputs read them, as every metafield of an owner the store data has.
@@ -698,7 +701,8 @@ and staff authors of articles (`author.userId`).
 
 **Discounts.** `discountAutomaticAppCreate`/`Update` and `discountCodeAppCreate`/`Update` take the
 Function by `functionHandle` (or the deprecated `functionId`), which must be a discount Function
-of the app; their `metafields` are the Function's configuration. The store sync writes an active
+of the app; their `metafields` are the Function's configuration, checked as `metafieldsSet`
+checks them (a definition of the `DISCOUNT` owner type applies). The store sync writes an active
 app discount back to the store data's `checkout.discounts` (its Function, title, first code,
 classes and metafields), so the local checkout runs it. Shopify's own types (basic, buy X get Y,
 free shipping, automatic and code) are kept as records: the local checkout runs Functions only.

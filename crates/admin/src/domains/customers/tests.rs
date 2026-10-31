@@ -188,7 +188,7 @@ fn customer_create_update_and_delete() {
         ),
         json!({"input": {"id": id, "lastName": "Smith", "tags": ["vip", "returning"],
             "emailMarketingConsent": {"marketingState": "UNSUBSCRIBED"},
-            "metafields": [{"namespace": "custom", "key": "tier", "value": "silver"}]}}),
+            "metafields": [{"namespace": "custom", "key": "tier", "type": "single_line_text_field", "value": "silver"}]}}),
     );
     let steve = &data(&updated, "customerUpdate")["customer"];
     assert_eq!(steve["displayName"], json!("Steve Smith"));

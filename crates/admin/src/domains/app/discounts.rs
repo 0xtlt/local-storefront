@@ -1497,6 +1497,7 @@ fn create(
     metafields::check(
         state,
         None,
+        "DISCOUNT",
         &inputs,
         &[kind.input],
         Some("INVALID"),
@@ -1616,6 +1617,7 @@ fn update(
     metafields::check(
         state,
         Some(&node),
+        "DISCOUNT",
         &inputs,
         &[kind.input],
         Some("INVALID"),
