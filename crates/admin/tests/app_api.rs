@@ -708,3 +708,121 @@ fn a_bulk_import_goes_from_a_staged_upload_to_its_results_file() {
     );
     assert_eq!(back.body, b"hello");
 }
+
+/// A multipart form of a POST target's parameters, then the file, as clients post it to Google's
+/// storage.
+fn upload_form(target: &Value, file_name: &str, mime: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+    let boundary = "lsfboundary";
+    let mut body = Vec::new();
+    for parameter in target["parameters"].as_array().unwrap() {
+        let (name, value) = (
+            parameter["name"].as_str().unwrap(),
+            parameter["value"].as_str().unwrap(),
+        );
+        body.extend(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend(
+        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: {mime}\r\n\r\n")
+            .as_bytes(),
+    );
+    body.extend(bytes);
+    body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+#[test]
+fn a_file_uploaded_to_a_staged_target_is_created_with_its_name_type_and_size() {
+    let api = api(&support::demo_store(), None);
+    let staged = graphql(
+        &api,
+        r#"mutation { stagedUploadsCreate(input: [
+            {resource: IMAGE, filename: "hero.png", mimeType: "image/png", httpMethod: POST},
+            {resource: FILE, filename: "manual.pdf", mimeType: "application/pdf"}
+        ]) { stagedTargets { url resourceUrl parameters { name value } } userErrors { field message } } }"#,
+        Value::Null,
+    );
+    let targets = &staged["data"]["stagedUploadsCreate"]["stagedTargets"];
+    let (image, manual) = (&targets[0], &targets[1]);
+
+    // The image as a form (its part named as the client's disk names it: the target's name
+    // counts), the PDF as the body of a PUT.
+    let png = b"\x89PNG\r\n\x1a\n0123456789abcdef";
+    let (content_type, form) = upload_form(image, "IMG_0001.PNG", "image/png", png);
+    let posted = send(
+        &api,
+        "POST",
+        image["url"].as_str().unwrap(),
+        &[("content-type", &content_type)],
+        &form,
+    );
+    assert_eq!(posted.status, 201);
+    let pdf = vec![b'%'; 2048];
+    let put = send(
+        &api,
+        "PUT",
+        manual["url"].as_str().unwrap(),
+        &[("content-type", "application/pdf")],
+        &pdf,
+    );
+    assert_eq!(put.status, 200);
+
+    // A name that does not keep the upload's extension is refused, as for a URL.
+    const FILE_CREATE: &str = "mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) {
+        files { id fileStatus } userErrors { field message code } } }";
+    let mismatched = graphql(
+        &api,
+        FILE_CREATE,
+        json!({"files": [{"originalSource": image["resourceUrl"], "filename": "cover.jpg"}]}),
+    );
+    assert_eq!(
+        mismatched["data"]["fileCreate"]["userErrors"][0]["code"],
+        "MISMATCHED_FILENAME_AND_ORIGINAL_SOURCE"
+    );
+    let created = graphql(
+        &api,
+        FILE_CREATE,
+        json!({"files": [
+            {"originalSource": image["resourceUrl"], "alt": "Hero"},
+            {"originalSource": manual["resourceUrl"]}
+        ]}),
+    );
+    assert_eq!(created["data"]["fileCreate"]["userErrors"], json!([]));
+
+    // Read back as a backend polls them: by name, ready, with the upload's type and size.
+    const FILES: &str = "query($name: String!) { files(first: 5, query: $name) { nodes {
+        __typename fileStatus alt
+        ... on MediaImage { mimeType image { url } originalSource { url fileSize } }
+        ... on GenericFile { mimeType url originalFileSize } } } }";
+    let hero = graphql(&api, FILES, json!({"name": "hero.png"}));
+    assert_eq!(
+        hero["data"]["files"]["nodes"],
+        json!([{
+            "__typename": "MediaImage", "fileStatus": "READY", "alt": "Hero",
+            "mimeType": "image/png", "image": {"url": image["resourceUrl"]},
+            "originalSource": {"url": image["resourceUrl"], "fileSize": png.len()},
+        }])
+    );
+    let found = graphql(&api, FILES, json!({"name": "manual.pdf"}));
+    assert_eq!(
+        found["data"]["files"]["nodes"],
+        json!([{
+            "__typename": "GenericFile", "fileStatus": "READY", "alt": "",
+            "mimeType": "application/pdf", "url": manual["resourceUrl"],
+            "originalFileSize": 2048,
+        }])
+    );
+    // Its URL serves the bytes uploaded.
+    let back = send(
+        &api,
+        "GET",
+        manual["resourceUrl"].as_str().unwrap(),
+        &[],
+        b"",
+    );
+    assert_eq!((back.status, back.body.len()), (200, 2048));
+}

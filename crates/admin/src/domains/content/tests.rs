@@ -1205,20 +1205,23 @@ const FILE_CREATE: &str = "mutation($files: [FileCreateInput!]!) { fileCreate(fi
 fn creates_updates_and_deletes_files() {
     let mut shop = rich();
     shop.take_events();
-    super::files::record_staged_upload(
-        "https://127.0.0.1:9292/__lsf/staged/42/manual.pdf",
-        super::files::StagedUpload {
-            filename: "manual.pdf".into(),
-            mime_type: "application/pdf".into(),
-            size: 2048,
-        },
+    // A file uploaded to a staged target: its bytes, under the target's key.
+    crate::domains::app::uploads::store(
+        &mut shop,
+        "tmp/42/files/0f1e/manual.pdf",
+        vec![0; 2048],
+        "application/pdf",
+    );
+    let staged = format!(
+        "http://127.0.0.1:9292/__lsf/admin/uploads/{}/tmp/42/files/0f1e/manual.pdf",
+        shop.domain()
     );
     let created = run(
         &mut shop,
         FILE_CREATE,
         json!({"files": [
             {"originalSource": "https://cdn.example/photos/zebra.jpg?v=3", "alt": "Hero"},
-            {"originalSource": "https://127.0.0.1:9292/__lsf/staged/42/manual.pdf"},
+            {"originalSource": staged},
             {"originalSource": "https://cdn.example/clip.mp4", "contentType": "VIDEO", "filename": "launch.mp4"},
         ]}),
     );

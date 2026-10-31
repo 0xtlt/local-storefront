@@ -937,7 +937,7 @@ rules and the sources):
 | `online_store` | `page*`, `blog*`, `article*` (create, update, delete), `commentApprove`, `commentSpam`, `commentNotSpam`, `commentDelete`. |
 | `navigation` | `menuCreate`, `Update`, `Delete` (a menu created gets `menu_gid(handle)`), `urlRedirectCreate`, `Update`, `Delete` (and `add_redirect`, for `redirectNewHandle`). |
 | `translations` | `translationsRegister`, `translationsRemove`; `translatableResource(s)`, `translatableResourcesByIds`, the resources' `translations(locale:)`. A resource's translations are a `TranslatableResource` record (`resourceId`, `translations`) kept under `translations/<resource GID>`: not store data. |
-| `files` | `fileCreate`, `fileUpdate`, `fileDelete`; `files`' sort keys and search text. The staged uploads are the app family's: its upload endpoint records an upload with `files::record_staged_upload(resource_url, StagedUpload {filename, mime_type, size})`, which `fileCreate` reads (`files::staged_upload`). |
+| `files` | `fileCreate`, `fileUpdate`, `fileDelete`; `files`' sort keys and search text. The staged uploads are the app family's: its upload endpoint keeps the bytes in the shop (a `Blob` under the target's key), and `files::staged_upload(state, resource_url)` reads them back for `fileCreate` and `fileUpdate`: the name is the key's last segment (the target's `filename`), the MIME type the upload's, the size the bytes'. Kept in the shop, an upload goes with a reset and is another shop's only there. |
 
 Error codes the checks of metafield inputs share (`TOO_SHORT`, `APP_NOT_AUTHORIZED`, …) are fitted
 to the code enum of each payload (`content::fit_code`: the code, else `INVALID`), since the

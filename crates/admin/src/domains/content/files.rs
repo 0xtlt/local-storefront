@@ -22,19 +22,20 @@
 //! - `fileDelete` removes the files, and from the media of the products that have them.
 //!
 //! Staged uploads (`stagedUploadsCreate` and lsf's upload endpoint) are the app family's. When a
-//! source is an upload of lsf, what the upload endpoint recorded with [`record_staged_upload`]
-//! gives the file its name, type and size; without a record, the URL is read like any other.
+//! source is the `resourceUrl` of a staged target that received a file, the bytes the shop keeps
+//! for it ([`crate::domains::app::uploads::bytes`]) give the file its name (the last segment of
+//! the key, the `filename` the target was made for), its MIME type (the one it was uploaded with)
+//! and its size ([`staged_upload`]). Before anything was uploaded there, the URL is read like any
+//! other.
 //!
 //! Messages: the descriptions of the codes where Shopify does not publish them.
 //!
 //! Events: Shopify has no webhook topic for files in 2026-10: their changes are the events
 //! `files/create`, `files/update`, `files/delete`, which no subscription can name.
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, RwLock};
-
 use serde_json::{Map, Value, json};
 
+use crate::domains::app::uploads;
 use crate::domains::catalog::{gids, mime_type};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::sort::SortValue;
@@ -76,8 +77,8 @@ pub fn register(registry: &mut Registry) {
 /// The most files one `fileCreate` creates.
 const MAX_FILES: usize = 250;
 
-/// What lsf's upload endpoint knows of a staged upload: the name of the file uploaded, its MIME
-/// type, its size in bytes.
+/// What the shop knows of a file uploaded to a staged target: its name, its MIME type, its size
+/// in bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StagedUpload {
     pub filename: String,
@@ -85,27 +86,29 @@ pub struct StagedUpload {
     pub size: u64,
 }
 
-/// The staged uploads of the server, by the URL `fileCreate` is given (`resourceUrl` of the
-/// staged target).
-static STAGED: LazyLock<RwLock<HashMap<String, StagedUpload>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
-/// Records an upload received at lsf's staged upload endpoint, under the URL a `fileCreate` will
-/// name it by (`resourceUrl`). What the app family's upload endpoint calls once it has the bytes.
-pub fn record_staged_upload(resource_url: &str, upload: StagedUpload) {
-    STAGED
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(resource_url.to_string(), upload);
-}
-
-/// The upload of a staged upload URL of lsf, when its endpoint recorded one.
-pub fn staged_upload(url: &str) -> Option<StagedUpload> {
-    STAGED
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(url)
-        .cloned()
+/// The upload behind a staged target's `resourceUrl` (or its key), when a file was uploaded
+/// there: the name is the last segment of the key (`tmp/<shop>/files/<uuid>/manual.pdf`), the
+/// target's `filename`; the MIME type is the one the upload was sent with, without its
+/// parameters (`text/plain; charset=utf-8` is `text/plain`).
+pub fn staged_upload(state: &ShopState, url: &str) -> Option<StagedUpload> {
+    let blob = uploads::bytes(state, url)?;
+    let key = uploads::key_of(url)?;
+    let mime_type = blob
+        .content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    Some(StagedUpload {
+        filename: last_segment(&key),
+        mime_type: if mime_type.is_empty() {
+            "application/octet-stream".to_string()
+        } else {
+            mime_type
+        },
+        size: blob.bytes.len() as u64,
+    })
 }
 
 /// The URL of a file's bytes.
@@ -359,7 +362,7 @@ fn file_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             );
             continue;
         }
-        let staged = staged_upload(&url);
+        let staged = staged_upload(state, &url);
         let source_name = staged
             .as_ref()
             .map_or_else(|| last_segment(&url), |upload| upload.filename.clone());
@@ -615,7 +618,7 @@ fn file_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Va
             .and_then(Value::as_str)
             .map_or_else(|| filename_of(&record), str::to_string);
         if let Some(source) = input.get("originalSource").and_then(Value::as_str) {
-            let staged = staged_upload(source);
+            let staged = staged_upload(state, source);
             let mime = staged
                 .as_ref()
                 .map_or_else(|| mime_type(&name), |upload| upload.mime_type.clone());

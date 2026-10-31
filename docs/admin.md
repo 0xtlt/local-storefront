@@ -633,7 +633,10 @@ pages and articles, menus, and active metaobjects are written to the store the t
 **Files.** `fileCreate` (up to 250, from a URL or a staged upload), `fileUpdate` (alt, filename,
 content, the products a file is a medium of), `fileDelete`; `files` searched by name and alt,
 sorted by `FILENAME`. A file is `READY` as soon as it is created: lsf has nothing to process, so
-a backend that polls `fileStatus` sees it at once. Its URL is the source's.
+a backend that polls `fileStatus` sees it at once. Its URL is the source's. From a staged upload
+(`originalSource` the target's `resourceUrl`, once the file is uploaded), the file has the name
+the target was made for, the MIME type it was uploaded with, and its size (`originalFileSize`,
+`originalSource.fileSize`); its URL serves the bytes.
 
 **Translations.** `translationsRegister` and `translationsRemove`; `translatableResource`,
 `translatableResources(resourceType:)`, `translatableResourcesByIds`, and `translations(locale:)`
