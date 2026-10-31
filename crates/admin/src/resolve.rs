@@ -344,6 +344,9 @@ impl<'a> ShopResolver<'a> {
         if let Some(output) = self.metafields(ctx, map)? {
             return Ok(output);
         }
+        if let Some(output) = self.live_count(ctx, map) {
+            return Ok(output);
+        }
         match map.get(name) {
             Some(Value::Null) if !ctx.ty().is_non_null() => return Ok(Output::Null),
             Some(value) if !value.is_null() => return self.convert(ctx, value, reported),
@@ -353,6 +356,38 @@ impl<'a> ShopResolver<'a> {
             return Ok(output);
         }
         self.default(ctx, reported)
+    }
+
+    /// An `Int` count of the records of an array of the object (`MetafieldDefinition
+    /// .metafieldsCount` of `metafields`): the records that are still there, as the list shows
+    /// them, rather than a count stored when the array was written.
+    fn live_count(&self, ctx: &FieldContext<'_>, map: &Record) -> Option<Output<Obj>> {
+        let base = ctx.field_name().strip_suffix("Count")?;
+        if ctx.ty().named() != "Int" {
+            return None;
+        }
+        let Some(Value::Array(items)) = map.get(base) else {
+            return None;
+        };
+        let schema = ctx.schema();
+        let listed = schema.field(ctx.parent_type(), base)?.ty.named();
+        let node_type = schema.connection_node(listed).unwrap_or(listed);
+        let count = items
+            .iter()
+            .filter(|item| !self.gone(schema, node_type, item))
+            .count();
+        Some(Output::value(count))
+    }
+
+    /// Whether an item of a list or a connection of records of type `named` names a record
+    /// that is no more (or is not of the type): Shopify never lists a deleted resource, and a
+    /// `null` in a list of non-null records would null the whole answer.
+    fn gone(&self, schema: &Schema, named: &str, item: &Value) -> bool {
+        let Value::String(key) = item else {
+            return false;
+        };
+        schema.get(named).is_some_and(|def| def.is_composite())
+            && self.reference(key, named).is_none()
     }
 
     /// Whether the missing fields of an object are reported.
@@ -401,6 +436,9 @@ impl<'a> ShopResolver<'a> {
             };
             let mut outputs = Vec::with_capacity(items.len());
             for value in items {
+                if self.gone(schema, item.named(), value) {
+                    continue;
+                }
                 outputs.push(self.convert_type(ctx, item, value, reported)?);
             }
             return Ok(Output::List(outputs));
@@ -469,6 +507,14 @@ impl<'a> ShopResolver<'a> {
         items: Vec<Value>,
         reported: bool,
     ) -> Result<Output<Obj>, FieldError> {
+        let schema = ctx.schema();
+        let items = match schema.connection_node(ctx.ty().named()) {
+            Some(node_type) => items
+                .into_iter()
+                .filter(|item| !self.gone(schema, node_type, item))
+                .collect(),
+            None => items,
+        };
         connection::page(self, ctx, items, reported)
     }
 
@@ -611,7 +657,12 @@ impl<'a> ShopResolver<'a> {
                         .to_string()
                 })
                 .unwrap_or_default();
-            let items = self.search(ctx, &node_type, items.clone());
+            let items = items
+                .iter()
+                .filter(|item| !self.gone(ctx.schema(), &node_type, item))
+                .cloned()
+                .collect();
+            let items = self.search(ctx, &node_type, items);
             return Ok(Some(self.count(ctx, items.len())));
         }
         Ok(None)

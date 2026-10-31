@@ -401,7 +401,9 @@ field, in order:
    (`shopLocales`); a field without required arguments answers the only record of its type
    (`shop`, `app`, `currentAppInstallation`). Otherwise a default.
 5. **The object's value**, converted by the field's type: a string for an object type is the key
-   of a record (`null` when it is gone, or not of a possible type), an object is an inline object
+   of a record (`null` when it is gone, or not of a possible type; left out of a list or a
+   connection, as Shopify never lists a deleted resource, and not counted by the `Count` or the
+   `Int` count of the array: `MetafieldDefinition.metafieldsCount`), an object is an inline object
    (its type the field's, or its `__typename` for an abstract one), an array of a connection is
    paged, an array of a list is mapped (cut to `first` when the list takes one, as
    `Product.options(first:)`). Before the value: `metafield(namespace:, key:)` and

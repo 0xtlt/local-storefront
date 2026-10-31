@@ -865,10 +865,11 @@ pub fn delete_product(state: &mut ShopState, product: &str) {
     for media in gids(record.get("media")) {
         owned.push(media);
     }
-    owned.extend(gids(record.get("metafields")));
-    for variant in gids(record.get("variants")) {
-        if let Some(variant_record) = state.get(&variant).cloned() {
-            owned.extend(gids(variant_record.get("metafields")));
+    let mut metafields = gids(record.get("metafields"));
+    let variants = gids(record.get("variants"));
+    for variant in &variants {
+        if let Some(variant_record) = state.get(variant).cloned() {
+            metafields.extend(gids(variant_record.get("metafields")));
             if let Some(item) = variant_record.get("inventoryItem").and_then(Value::as_str) {
                 let levels = state
                     .get(item)
@@ -891,7 +892,11 @@ pub fn delete_product(state: &mut ShopState, product: &str) {
                 state.delete(item, "inventory_items/delete");
             }
         }
-        state.remove(&variant);
+        state.remove(variant);
+    }
+    // Through the content family, so that their definitions no longer list them.
+    for metafield in metafields {
+        crate::domains::content::metafields::remove(state, &metafield);
     }
     for key in owned {
         state.remove(&key);
@@ -906,11 +911,18 @@ pub fn delete_product(state: &mut ShopState, product: &str) {
         })
         .collect();
     for referrer in referrers {
-        if let Some(Value::Array(products)) = state
-            .get_mut(&referrer)
-            .and_then(|record| record.get_mut("products"))
-        {
-            products.retain(|item| item.as_str() != Some(product));
+        if let Some(record) = state.get_mut(&referrer) {
+            if let Some(Value::Array(products)) = record.get_mut("products") {
+                products.retain(|item| item.as_str() != Some(product));
+            }
+            // A selling plan group lists the variants it has apart (as `remove_variant` keeps).
+            if let Some(Value::Array(listed)) = record.get_mut("productVariants") {
+                listed.retain(|item| {
+                    !item
+                        .as_str()
+                        .is_some_and(|known| variants.iter().any(|variant| variant == known))
+                });
+            }
         }
     }
     state.delete(product, "products/delete");

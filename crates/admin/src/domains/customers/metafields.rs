@@ -212,6 +212,7 @@ pub fn apply(state: &mut ShopState, owner: &str, owner_type: &str, inputs: Optio
 
 /// Removes the metafields of a record being deleted.
 pub fn remove_all(state: &mut ShopState, owner: &Map<String, Value>) {
+    // Through the content family, so that their definitions no longer list them.
     for id in owner
         .get("metafields")
         .and_then(Value::as_array)
@@ -219,6 +220,6 @@ pub fn remove_all(state: &mut ShopState, owner: &Map<String, Value>) {
         .flatten()
         .filter_map(Value::as_str)
     {
-        state.remove(id);
+        crate::domains::content::metafields::remove(state, id);
     }
 }

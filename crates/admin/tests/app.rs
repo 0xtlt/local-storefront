@@ -1360,3 +1360,133 @@ fn buy_x_get_y_and_free_shipping_discounts_are_records() {
     );
     assert_eq!(topics(&mut shop), ["discounts/create", "discounts/create"]);
 }
+
+/// A record deleted while a list still names it leaves that list, as Shopify never lists a
+/// deleted resource: the answer is not `data: null` for a `null` in a list of non-null records,
+/// and the counts follow what is listed.
+#[test]
+fn deleted_records_leave_the_lists_that_named_them() {
+    let (store, mut shop) = rich();
+    let dress =
+        lsf_admin::domains::catalog::product_gid(store.product_by_handle("linen-dress").unwrap());
+    let variant = lsf_admin::domains::catalog::variant_gid(
+        &store.product_by_handle("linen-dress").unwrap().variants[0],
+    );
+    let definition = run(
+        &mut shop,
+        r#"mutation { metafieldDefinitionCreate(definition: {name: "VIP", namespace: "custom", key: "zz_tier", type: "single_line_text_field", ownerType: CUSTOMER}) { createdDefinition { id } userErrors { message } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        data(&definition, "metafieldDefinitionCreate")["userErrors"],
+        json!([])
+    );
+    let customer = run(
+        &mut shop,
+        r#"mutation { customerCreate(input: {email: "gone@rich.example", metafields: [{namespace: "custom", key: "zz_tier", type: "single_line_text_field", value: "gold"}]}) { customer { id } userErrors { message } } }"#,
+        Value::Null,
+    );
+    let customer = data(&customer, "customerCreate")["customer"]["id"].clone();
+    let discount = run(
+        &mut shop,
+        r#"mutation($input: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $input) { codeDiscountNode { id } userErrors { field message } } }"#,
+        json!({"input": {"title": "Dress", "code": "DRESS", "startsAt": "2026-01-01T00:00:00Z",
+            "customerGets": {"value": {"percentage": 0.1}, "items": {"products": {"productsToAdd": [dress]}}},
+            "context": {"customers": {"add": [customer]}}}}),
+    );
+    assert_eq!(
+        data(&discount, "discountCodeBasicCreate")["userErrors"],
+        json!([])
+    );
+    let group = shop.keys("SellingPlanGroup").next().unwrap().to_string();
+    let added = run(
+        &mut shop,
+        r#"mutation($id: ID!, $variants: [ID!]!) { sellingPlanGroupAddProductVariants(id: $id, productVariantIds: $variants) { userErrors { message } } }"#,
+        json!({"id": group, "variants": [variant]}),
+    );
+    assert_eq!(
+        data(&added, "sellingPlanGroupAddProductVariants")["userErrors"],
+        json!([])
+    );
+
+    let counts = run(
+        &mut shop,
+        r#"{ product: metafieldDefinitions(first: 5, ownerType: PRODUCT, namespace: "custom", key: "care") { nodes { metafieldsCount } }
+            customer: metafieldDefinitions(first: 5, ownerType: CUSTOMER, namespace: "custom", key: "zz_tier") { nodes { metafieldsCount } } }"#,
+        Value::Null,
+    );
+    assert_eq!(
+        counts["data"]["product"]["nodes"][0]["metafieldsCount"],
+        json!(1),
+        "{counts}"
+    );
+    assert_eq!(
+        counts["data"]["customer"]["nodes"][0]["metafieldsCount"],
+        json!(1),
+        "{counts}"
+    );
+    let deleted = run(
+        &mut shop,
+        r#"mutation($product: ID!, $customer: ID!) {
+            productDelete(input: {id: $product}) { deletedProductId userErrors { message } }
+            customerDelete(input: {id: $customer}) { deletedCustomerId userErrors { message } } }"#,
+        json!({"product": dress, "customer": customer}),
+    );
+    assert_eq!(
+        data(&deleted, "productDelete")["userErrors"],
+        json!([]),
+        "{deleted}"
+    );
+    assert_eq!(
+        data(&deleted, "customerDelete")["userErrors"],
+        json!([]),
+        "{deleted}"
+    );
+
+    let answer = run(
+        &mut shop,
+        r#"query($group: ID!) {
+            codeDiscountNodes(first: 10, query: "title:Dress") { nodes { codeDiscount { ... on DiscountCodeBasic {
+                customerGets { items { ... on DiscountProducts { products(first: 5) { nodes { id } } } } }
+                context { ... on DiscountCustomers { customers { id } } } } } } }
+            sellingPlanGroup(id: $group) { productVariants(first: 5) { nodes { id } } productVariantsCount { count } }
+            product: metafieldDefinitions(first: 5, ownerType: PRODUCT, namespace: "custom", key: "care") { nodes { metafieldsCount metafields(first: 5) { nodes { id } } } }
+            customer: metafieldDefinitions(first: 5, ownerType: CUSTOMER, namespace: "custom", key: "zz_tier") { nodes { metafieldsCount metafields(first: 5) { nodes { id } } } }
+        }"#,
+        json!({"group": group}),
+    );
+    assert!(answer.get("errors").is_none(), "{answer}");
+    assert_eq!(
+        answer["data"]["codeDiscountNodes"]["nodes"][0]["codeDiscount"],
+        json!({"customerGets": {"items": {"products": {"nodes": []}}}, "context": {"customers": []}})
+    );
+    assert_eq!(
+        answer["data"]["sellingPlanGroup"],
+        json!({"productVariants": {"nodes": []}, "productVariantsCount": {"count": 0}})
+    );
+    for owner in ["product", "customer"] {
+        assert_eq!(
+            answer["data"][owner]["nodes"][0],
+            json!({"metafieldsCount": 0, "metafields": {"nodes": []}}),
+            "{owner}"
+        );
+    }
+    // The definitions and the selling plan group no longer name what was deleted.
+    let named = |shop: &ShopState, key: &str, field: &str| -> usize {
+        shop.get(key).unwrap()[field].as_array().map_or(0, Vec::len)
+    };
+    assert_eq!(named(&shop, &group, "productVariants"), 0);
+    for definition in shop
+        .keys("MetafieldDefinition")
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+    {
+        let record = shop.get(&definition).unwrap();
+        for metafield in record["metafields"].as_array().unwrap() {
+            assert!(
+                shop.contains(metafield.as_str().unwrap()),
+                "{definition} names {metafield}"
+            );
+        }
+    }
+}
