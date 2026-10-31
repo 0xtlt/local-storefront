@@ -108,8 +108,20 @@ pub fn content_type(filename: &str) -> &'static str {
     }
 }
 
-/// Why a filename is not one of a theme: it is in one of the theme's directories, without `..`.
+/// Why a filename is not one of a theme: it is in one of the theme's directories, without `..`,
+/// and has none of what a path could read as something else on some system (a backslash, which
+/// separates components on Windows, a colon, which names a drive or a stream there, NUL and
+/// the control characters): the same filename is refused everywhere.
 pub fn check_filename(filename: &str) -> Result<(), String> {
+    if let Some(character) = filename
+        .chars()
+        .find(|character| matches!(character, '\\' | ':') || character.is_control())
+    {
+        return Err(format!(
+            "{} is not a valid theme filename: it has {character:?}",
+            filename.escape_debug()
+        ));
+    }
     let Some((directory, rest)) = filename.split_once('/') else {
         return Err(format!(
             "{filename} is not in a theme directory ({})",
@@ -247,6 +259,14 @@ pub fn list(state: &ShopState, theme: &Record) -> Vec<ThemeFile> {
     files
 }
 
+/// Where a file of the local theme is on disk: a filename of a theme ([`check_filename`]),
+/// resolved component by component in the directory (`lsf_core::theme::resolve_in`), so that
+/// nothing outside the theme directory is ever read, whatever the system's separator.
+fn disk_path(state: &ShopState, filename: &str) -> Option<std::path::PathBuf> {
+    check_filename(filename).ok()?;
+    lsf_core::theme::resolve_in(&root(state)?, filename)
+}
+
 /// One file of a theme.
 pub fn read(state: &ShopState, theme: &Record, filename: &str) -> Option<ThemeFile> {
     if let Some(entry) = theme.get(FILES).and_then(|files| files.get(filename)) {
@@ -255,9 +275,7 @@ pub fn read(state: &ShopState, theme: &Record, filename: &str) -> Option<ThemeFi
     if !is_local(theme) {
         return None;
     }
-    let root = root(state)?;
-    check_filename(filename).ok()?;
-    let path = root.join(filename);
+    let path = disk_path(state, filename)?;
     let bytes = std::fs::read(&path).ok()?;
     let created = theme_created(theme);
     let updated = std::fs::metadata(&path)
@@ -318,8 +336,8 @@ pub fn remove(state: &mut ShopState, theme_id: &str, filename: &str) {
     let on_disk = state
         .get(theme_id)
         .filter(|theme| is_local(theme))
-        .and_then(|_| root(state))
-        .is_some_and(|root| root.join(filename).is_file());
+        .and_then(|_| disk_path(state, filename))
+        .is_some_and(|path| path.is_file());
     if let Some(theme) = state.get_mut(theme_id) {
         let mut files: Map<String, Value> = theme
             .get(FILES)

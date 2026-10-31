@@ -557,3 +557,77 @@ fn a_source_over_50_mb_is_refused_not_cut() {
     );
     assert!(topics(&mut shop).is_empty(), "nothing was written");
 }
+
+/// `check_filename` split on `/` only and the read joined the filename to the directory: on
+/// Windows `assets/..\..\x` read a file outside the theme. Both separators, and what else a
+/// system could read as a path (a drive, a stream, NUL), are refused on every system.
+#[test]
+fn no_file_outside_the_theme_is_read_whatever_the_separator() {
+    let (mut shop, root) = shop_with_theme("separators");
+    let secret = root
+        .parent()
+        .unwrap()
+        .join(format!("lsf-themes-secret-{}.txt", std::process::id()));
+    std::fs::write(&secret, "outside the theme").unwrap();
+    let name = secret.file_name().unwrap().to_str().unwrap().to_string();
+    let before = snapshot(&root);
+    for source in [
+        format!("assets/../../{name}"),
+        format!("assets/..\\..\\{name}"),
+        format!("assets\\..\\..\\{name}"),
+        format!("assets/..\\../{name}"),
+        "assets/C:\\x".to_string(),
+        "layout/theme.liquid:stream".to_string(),
+        "layout/theme.liquid\u{0}".to_string(),
+    ] {
+        let answer = run(
+            &mut shop,
+            "mutation($src: String!) { themeFilesCopy(themeId: \"gid://shopify/OnlineStoreTheme/1\", files: [{srcFilename: $src, dstFilename: \"assets/copy.txt\"}]) { copiedThemeFiles { filename } userErrors { code filename } } }",
+            json!({"src": source}),
+        );
+        assert_eq!(
+            answer["data"]["themeFilesCopy"]["userErrors"][0]["code"], "NOT_FOUND",
+            "{source:?}: {answer}"
+        );
+        let read = run(
+            &mut shop,
+            "query($name: String!) { theme(id: \"gid://shopify/OnlineStoreTheme/1\") { files(filenames: [$name], first: 1) { nodes { filename } userErrors { code } } } }",
+            json!({"name": source}),
+        );
+        assert_eq!(
+            read["data"]["theme"]["files"]["nodes"],
+            json!([]),
+            "{source:?}: {read}"
+        );
+    }
+    for filename in [
+        "assets/a\\b.css",
+        "assets/..\\..\\x.css",
+        "assets/a:b.css",
+        "assets/a\u{0}b.css",
+        "assets/a\nb.css",
+    ] {
+        let answer = run(
+            &mut shop,
+            "mutation($name: String!) { themeFilesUpsert(themeId: \"gid://shopify/OnlineStoreTheme/1\", files: [{filename: $name, body: {type: TEXT, value: \"x\"}}]) { upsertedThemeFiles { filename } userErrors { code } } }",
+            json!({"name": filename}),
+        );
+        assert_eq!(
+            answer["data"]["themeFilesUpsert"]["userErrors"][0]["code"], "FILE_VALIDATION_ERROR",
+            "{filename:?}: {answer}"
+        );
+        let deleted = run(
+            &mut shop,
+            "mutation($name: String!) { themeFilesDelete(themeId: \"gid://shopify/OnlineStoreTheme/1\", files: [$name]) { deletedThemeFiles { filename } userErrors { code } } }",
+            json!({"name": filename}),
+        );
+        assert_eq!(
+            deleted["data"]["themeFilesDelete"]["userErrors"][0]["code"], "NOT_FOUND",
+            "{filename:?}: {deleted}"
+        );
+    }
+    assert!(topics(&mut shop).is_empty(), "nothing was written");
+    assert_eq!(snapshot(&root), before, "the directory is not written to");
+    let _ = std::fs::remove_file(secret);
+    let _ = std::fs::remove_dir_all(root);
+}

@@ -23,6 +23,26 @@ struct Entry {
     checked: Instant,
 }
 
+/// The path of `relative` in the theme directory `root`, or `None` when it could name something
+/// else: a component that is not a plain name (`..`, a root, a drive), or a name with a
+/// backslash, a colon, NUL or a control character. Those are refused on every system, so that
+/// what a path reads is the same on all of them: on Windows `\` separates components and
+/// `a.css:x` is a stream of `a.css`.
+pub fn resolve_in(root: &Path, relative: &str) -> Option<PathBuf> {
+    let refused = |character: char| matches!(character, '\\' | ':') || character.is_control();
+    if relative.chars().any(refused) {
+        return None;
+    }
+    let relative = Path::new(relative);
+    let escapes = relative.components().any(|component| {
+        !matches!(
+            component,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    });
+    (!escapes).then(|| root.join(relative))
+}
+
 /// Files that are served in place of those of the directory, or on top of them: what the
 /// Admin API wrote into the theme the storefront serves (`themeFilesUpsert` on the local
 /// theme), or the whole of another theme it published. The directory is never written to.
@@ -178,16 +198,10 @@ impl ThemeFiles {
         &self.root
     }
 
-    /// Resolves a theme-relative path, refusing anything that escapes the theme directory.
+    /// Resolves a theme-relative path, refusing anything that escapes the theme directory
+    /// ([`resolve_in`]).
     pub fn resolve(&self, relative: &str) -> Option<PathBuf> {
-        let relative = Path::new(relative);
-        let escapes = relative.components().any(|component| {
-            !matches!(
-                component,
-                std::path::Component::Normal(_) | std::path::Component::CurDir
-            )
-        });
-        (!escapes).then(|| self.root.join(relative))
+        resolve_in(&self.root, relative)
     }
 
     /// Whether something checked at `checked` can be used without looking at the file system.
@@ -404,6 +418,36 @@ fn content_version(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_resolves_only_to_a_plain_name_in_the_directory_with_either_separator() {
+        let root = Path::new("theme");
+        assert_eq!(
+            resolve_in(root, "assets/base.css"),
+            Some(root.join("assets/base.css"))
+        );
+        assert_eq!(
+            resolve_in(root, "./assets/base.css"),
+            Some(root.join("./assets/base.css"))
+        );
+        for escaping in [
+            "../x",
+            "assets/../../x",
+            "assets/..\\..\\x",
+            "assets\\..\\..\\x",
+            "..\\x",
+            "/etc/passwd",
+            "\\etc\\passwd",
+            "C:\\x",
+            "C:x",
+            "assets/base.css:stream",
+            "assets/a\0b",
+            "assets/a\nb",
+            "assets/a\u{7f}b",
+        ] {
+            assert_eq!(resolve_in(root, escaping), None, "{escaping:?}");
+        }
+    }
 
     #[test]
     fn an_overlay_is_read_on_top_of_the_directory_and_never_written_to_it() {

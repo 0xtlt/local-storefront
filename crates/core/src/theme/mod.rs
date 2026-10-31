@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use lsf_liquid::{Environment, Template};
 use serde_json::Value as Json;
 
-pub use files::{FileOverlay, OverlayFile, Revalidate, ThemeFiles};
+pub use files::{FileOverlay, OverlayFile, Revalidate, ThemeFiles, resolve_in};
 pub use locales::Translations;
 pub use schema::{Schema, SettingDef, Wrapper};
 pub use template_json::{BlockInstance, Layout, SectionInstance, TemplateJson};

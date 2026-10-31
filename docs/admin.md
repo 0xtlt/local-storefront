@@ -1437,8 +1437,10 @@ the connection's `userErrors` (`NOT_FOUND`).
   is published: it is the directory, which would be gone until a reset), `themePublish`. A
   published theme is what the storefront serves, alone; publishing the local theme again serves
   the directory.
-- `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories,
-  JSON files valid JSON (`FILE_VALIDATION_ERROR`, `DUPLICATE_FILE_INPUT`,
+- `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories
+  (no `..`, and no `\`, `:`, NUL or control character: what Windows would read as another
+  path is refused on every system, and no file outside the directory is ever read), JSON files
+  valid JSON (`FILE_VALIDATION_ERROR`, `DUPLICATE_FILE_INPUT`,
   `LESS_THAN_OR_EQUAL_TO`); `TEXT`, `BASE64` and `URL` bodies (a `URL` file comes through the
   `job`, done, as in Shopify's example; one over 50 MB is refused, `FILE_VALIDATION_ERROR`, never
   cut). Nothing is written when a file is refused.
