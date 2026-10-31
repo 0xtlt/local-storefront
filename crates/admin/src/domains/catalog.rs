@@ -28,6 +28,7 @@ mod variants;
 
 pub use collections::apply_rules;
 pub use inventory::with_idempotency;
+pub use media::done_job;
 pub use products::{delete_product, tags_of};
 pub use records::{
     after_inventory_change, check_metafields, is_active_location, level_at, new_level, quantity,

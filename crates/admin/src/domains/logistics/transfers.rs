@@ -1025,7 +1025,7 @@ fn remove_items(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .iter()
         .filter(|line| {
             !asked.contains(line)
-                || state.get(*line).is_some_and(|record| {
+                || state.get(line).is_some_and(|record| {
                     int(record, "processableQuantity") < int(record, "totalQuantity")
                 })
         })

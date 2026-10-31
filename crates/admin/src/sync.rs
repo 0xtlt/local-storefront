@@ -25,7 +25,7 @@ use lsf_core::store::model::{self, Money};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use crate::domains::{catalog, content};
+use crate::domains::{catalog, content, logistics};
 use crate::state::{ChangeKind, Record, ShopState, gid, gid_type, parse_gid};
 
 /// What diagnostics name the overlay of the Admin API's changes.
@@ -487,6 +487,14 @@ impl<'s> Sync<'s> {
         // there are no more. Those are written even when what they project is the same: the data
         // names the entity by the key that changed (a handle, a SKU), they by what does not (an
         // id).
+        // A change of the delivery profiles may change the checkout's shipping rates.
+        let shipping = changes.iter().any(|change| {
+            self.now
+                .get(change.key)
+                .or(change.original)
+                .and_then(|record| type_of(change.key, record))
+                .is_some_and(|type_name| logistics::profiles::RECORD_TYPES.contains(&type_name))
+        });
         let mut queue: Vec<(&'s str, &'s str)> = roots.into_iter().collect();
         let mut naming: HashSet<&'s str> = HashSet::new();
         let mut variants = self.moved_variants();
@@ -581,7 +589,23 @@ impl<'s> Sync<'s> {
                 checkout.functions.insert(handle, now);
             }
         }
-        if checkout.discounts.is_some() || !checkout.functions.is_empty() {
+        if shipping {
+            let rates = |era: Era| {
+                let view = self.view(era);
+                logistics::profiles::checkout_rates(
+                    &|key| view.get(key),
+                    &self.store.checkout.shipping_rates,
+                )
+            };
+            let now = rates(Era::Now);
+            if serde_json::to_value(&now).ok() != serde_json::to_value(rates(Era::Seed)).ok() {
+                checkout.shipping_rates = Some(now);
+            }
+        }
+        if checkout.discounts.is_some()
+            || !checkout.functions.is_empty()
+            || checkout.shipping_rates.is_some()
+        {
             input.checkout = Some(checkout);
         }
 

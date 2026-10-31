@@ -369,17 +369,20 @@ fn split(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     Ok(payload(json!({"fulfillmentOrderSplits": results}), &[]))
 }
 
+/// A fulfillment order of a merge, with the units `(line, quantity)` it gives.
+type Member = (String, Vec<(String, i64)>);
+
 /// `fulfillmentOrderMerge`.
 fn merge(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let empty = json!({"fulfillmentOrderMerges": null});
     let inputs = objects(ctx.arg("fulfillmentOrderMergeInputs"));
     let state = mutation.state();
     let mut errors = Vec::new();
-    // Per set: the target, then each other fulfillment order with the units it gives.
-    let mut plans: Vec<(String, Vec<(String, Vec<(String, i64)>)>)> = Vec::new();
+    // Per set: the target, then each fulfillment order with the units it gives.
+    let mut plans: Vec<(String, Vec<Member>)> = Vec::new();
     for (set, input) in inputs.iter().enumerate() {
         let intents = objects(input.get("mergeIntents"));
-        let mut members: Vec<(String, Vec<(String, i64)>)> = Vec::new();
+        let mut members: Vec<Member> = Vec::new();
         for (index, intent) in intents.iter().enumerate() {
             let path = |field: &str| -> Vec<String> {
                 vec![

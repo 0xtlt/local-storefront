@@ -390,8 +390,9 @@ fn order_with_stock(shop: &mut ShopState) -> (String, String) {
     let answer = run(
         shop,
         ORDER_CREATE,
-        json!({"order": {"lineItems": [{"variantId": red, "quantity": 3}, {"variantId": floral, "quantity": 1}],
-            "shippingAddress": {"address1": "1 Main St", "city": "Lyon", "countryCode": "FR", "zip": "69001"}},
+        json!({"order": {"lineItems": [{"variantId": red, "quantity": 3, "requiresShipping": true}, {"variantId": floral, "quantity": 1, "requiresShipping": true}],
+            "shippingAddress": {"address1": "1 Main St", "city": "Lyon", "countryCode": "FR", "zip": "69001"},
+            "shippingLines": [{"title": "Standard", "priceSet": {"shopMoney": {"amount": "5.00", "currencyCode": "EUR"}}}]},
             "options": {"inventoryBehaviour": "DECREMENT_IGNORING_POLICY"}}),
     );
     let order = &answer["data"]["orderCreate"]["order"];
@@ -694,4 +695,550 @@ fn a_fulfillment_deadline_is_set_on_fulfillment_orders() {
         "FULFILLMENT_ORDERS_NOT_FOUND"
     );
     assert_eq!(shop.picture(), before);
+}
+
+/// The extensions an answer reports about defaults (`defaulted`, `defaultedFields`).
+fn defaulted(answer: &Value) -> Value {
+    answer
+        .pointer("/extensions/lsf/defaulted")
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+#[test]
+fn the_demo_store_answers_the_logistics_queries_with_real_values() {
+    let mut shop = demo();
+    let location = shop.keys("Location").next().unwrap().to_string();
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let answer = run(
+        &mut shop,
+        "query($location: ID!, $variant: ID!) {
+          inventoryTransfers(first: 5) { nodes { id name status } }
+          inventoryShipments(first: 5) { nodes { id name status } }
+          carrierServices(first: 5) { nodes { id name active } }
+          availableCarrierServices { carrierService { id } locations { id } }
+          fulfillmentConstraintRules { id deliveryMethodTypes }
+          deliveryPromiseSettings { deliveryDatesEnabled processingTime }
+          deliveryPromiseProvider(locationId: $location) { id }
+          deliveryPromiseParticipants(brandedPromiseHandle: \"shop_promise\", first: 5) { nodes { id } }
+          locationsAvailableForDeliveryProfiles { id name }
+          locationsAvailableForDeliveryProfilesConnection(first: 5) { nodes { id } }
+          deliveryProfiles(first: 5) { nodes { id name default version activeMethodDefinitionsCount
+            originLocationCount locationsWithoutRatesCount zoneCountryCount createdAt
+            productVariantsCount { count precision }
+            unassignedLocations { id }
+            profileItems(first: 3) { nodes { id product { id } variants(first: 2) { nodes { id } } } }
+            profileLocationGroups { locationGroup { id locationsCount { count } locations(first: 5) { nodes { id } } }
+              countriesInAnyZone { zone country { name code { restOfWorld countryCode } } }
+              locationGroupZones(first: 5) { nodes { zone { id name countries { id name code { restOfWorld } provinces { code } } }
+                methodDefinitionCounts { rateDefinitionsCount participantDefinitionsCount }
+                methodDefinitions(first: 5) { nodes { id name description active
+                  rateProvider { ... on DeliveryRateDefinition { id price { amount currencyCode } } } methodConditions { id } } } } } } } }
+          productVariant(id: $variant) { deliveryProfile { id name default } }
+        }",
+        json!({"location": location, "variant": variant}),
+    );
+    assert!(answer.get("errors").is_none(), "{answer}");
+    assert_eq!(defaulted(&answer), Value::Null, "{answer}");
+    let data = &answer["data"];
+    assert_eq!(
+        data["deliveryPromiseSettings"],
+        json!({"deliveryDatesEnabled": false, "processingTime": null})
+    );
+    let profile = &data["deliveryProfiles"]["nodes"][0];
+    assert_eq!(profile["name"], "General profile");
+    assert_eq!(profile["default"], true);
+    assert_eq!(
+        profile["productVariantsCount"]["count"],
+        json!(shop.count("ProductVariant"))
+    );
+    assert_eq!(profile["unassignedLocations"], json!([]));
+    let zone = &profile["profileLocationGroups"][0]["locationGroupZones"]["nodes"][0];
+    assert_eq!(zone["zone"]["countries"][0]["code"]["restOfWorld"], true);
+    // The store data's shipping rates are the general profile's.
+    let (store, _) = lsf_core::store::load::load(
+        &lsf_core::store::load::DataSource::Demo,
+        &Default::default(),
+    );
+    let shipping: Vec<&str> = store
+        .checkout
+        .shipping_rates
+        .iter()
+        .filter(|rate| rate.kind == lsf_core::store::model::CheckoutDeliveryKind::Shipping)
+        .map(|rate| rate.title.as_str())
+        .collect();
+    let names: Vec<&str> = zone["methodDefinitions"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|method| method["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, shipping);
+    assert_eq!(
+        data["productVariant"]["deliveryProfile"]["id"],
+        profile["id"]
+    );
+}
+
+const PROFILE_CREATE: &str = "mutation($profile: DeliveryProfileInput!) { deliveryProfileCreate(profile: $profile) {
+    profile { id name version productVariantsCount { count }
+      profileLocationGroups { locationGroup { id } locationGroupZones(first: 5) { nodes { zone { id name countries { code { countryCode } provinces { code } } }
+        methodDefinitions(first: 5) { nodes { id name active methodConditions { field operator conditionCriteria { ... on Weight { unit value } } }
+          rateProvider { ... on DeliveryRateDefinition { price { amount currencyCode } } ... on DeliveryParticipant { carrierService { id } } } } } } } } }
+    userErrors { field message } } }";
+
+#[test]
+fn a_delivery_profile_is_created_updated_and_removed_with_its_variants() {
+    let mut shop = demo();
+    let location = shop.keys("Location").next().unwrap().to_string();
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let answer = run(
+        &mut shop,
+        PROFILE_CREATE,
+        json!({"profile": {"name": "Heavy goods", "variantsToAssociate": [variant],
+            "locationGroupsToCreate": [{"locationsToAdd": [location], "zonesToCreate": [{
+                "name": "Canada Zone", "countries": {"code": "CA", "provinces": [{"code": "ON"}]},
+                "methodDefinitionsToCreate": [{"name": "Standard", "rateDefinition": {"price": {"amount": 1, "currencyCode": "USD"}},
+                    "weightConditionsToCreate": [{"operator": "LESS_THAN_OR_EQUAL_TO", "criteria": {"value": 15, "unit": "KILOGRAMS"}}]}]}]}]}}),
+    );
+    let created = &answer["data"]["deliveryProfileCreate"];
+    assert_eq!(created["userErrors"], json!([]), "{answer}");
+    let profile = created["profile"]["id"].as_str().unwrap().to_string();
+    assert_eq!(created["profile"]["productVariantsCount"]["count"], 1);
+    let zone = &created["profile"]["profileLocationGroups"][0]["locationGroupZones"]["nodes"][0];
+    assert_eq!(zone["zone"]["name"], "Canada Zone");
+    assert_eq!(zone["zone"]["countries"][0]["provinces"][0]["code"], "ON");
+    let method = &zone["methodDefinitions"]["nodes"][0];
+    assert_eq!(method["rateProvider"]["price"]["amount"], "1.0");
+    assert_eq!(
+        method["methodConditions"][0]["conditionCriteria"]["value"],
+        15.0
+    );
+    let payload = last_payload(&mut shop, "profiles/create");
+    assert_eq!(payload["name"], "Heavy goods");
+    assert_eq!(payload["default"], false);
+    let read = |shop: &mut ShopState| {
+        run(
+            shop,
+            "query($id: ID!) { productVariant(id: $id) { deliveryProfile { id } } }",
+            json!({"id": variant}),
+        )["data"]["productVariant"]["deliveryProfile"]["id"]
+            .clone()
+    };
+    assert_eq!(read(&mut shop), json!(profile));
+
+    // Renamed, a rate added: its version moves on.
+    let group = created["profile"]["profileLocationGroups"][0]["locationGroup"]["id"].clone();
+    let zone_id = zone["zone"]["id"].clone();
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!, $profile: DeliveryProfileInput!) { deliveryProfileUpdate(id: $id, profile: $profile) {
+            profile { name version activeMethodDefinitionsCount } userErrors { field message } } }",
+        json!({"id": profile, "profile": {"name": "Bulky", "locationGroupsToUpdate": [{"id": group,
+            "zonesToUpdate": [{"id": zone_id, "methodDefinitionsToCreate": [{"name": "Express", "rateDefinition": {"price": {"amount": "9.50", "currencyCode": "USD"}}}]}]}]}}),
+    );
+    assert_eq!(
+        answer["data"]["deliveryProfileUpdate"]["profile"],
+        json!({"name": "Bulky", "version": 2, "activeMethodDefinitionsCount": 2}),
+        "{answer}"
+    );
+    assert_eq!(last_payload(&mut shop, "profiles/update")["version"], 2);
+
+    // A blank name: refused, nothing changed.
+    let before = shop.picture();
+    let answer = run(
+        &mut shop,
+        PROFILE_CREATE,
+        json!({"profile": {"name": " ", "variantsToAssociate": [variant]}}),
+    );
+    assert_eq!(
+        answer["data"]["deliveryProfileCreate"]["userErrors"],
+        json!([{"field": ["profile", "name"], "message": "Name can't be blank"}])
+    );
+    assert_eq!(shop.picture(), before);
+
+    // The general profile cannot go; this one can, and its variant goes back to the general one.
+    let general = super::profiles::general_profile_gid();
+    let remove = "mutation($id: ID!) { deliveryProfileRemove(id: $id) { job { id done } userErrors { field message } } }";
+    let answer = run(&mut shop, remove, json!({"id": general}));
+    assert_eq!(
+        answer["data"]["deliveryProfileRemove"]["userErrors"][0]["message"],
+        "The general profile can't be removed"
+    );
+    let answer = run(&mut shop, remove, json!({"id": profile}));
+    assert_eq!(
+        answer["data"]["deliveryProfileRemove"]["job"]["done"], true,
+        "{answer}"
+    );
+    assert_eq!(read(&mut shop), json!(general));
+    assert_eq!(
+        last_payload(&mut shop, "profiles/delete")["admin_graphql_api_id"],
+        json!(profile)
+    );
+    assert!(shop.get(&profile).is_none());
+}
+
+#[test]
+fn a_carrier_service_is_created_listed_updated_and_deleted_with_its_rates() {
+    let mut shop = demo();
+    let create = "mutation($input: DeliveryCarrierServiceCreateInput!) { carrierServiceCreate(input: $input) {
+        carrierService { id name formattedName callbackUrl active supportsServiceDiscovery } userErrors { field message code } } }";
+    let answer = run(
+        &mut shop,
+        create,
+        json!({"input": {"name": "test carrier service", "callbackUrl": "https://example.com/", "supportsServiceDiscovery": true, "active": true}}),
+    );
+    let service = &answer["data"]["carrierServiceCreate"]["carrierService"];
+    assert_eq!(service["name"], "test carrier service", "{answer}");
+    assert_eq!(service["callbackUrl"], "https://example.com/");
+    let id = service["id"].as_str().unwrap().to_string();
+
+    // The same name again, and a callback that is no URL: refused, nothing changed.
+    let before = shop.picture();
+    let answer = run(
+        &mut shop,
+        create,
+        json!({"input": {"name": "Test carrier service", "callbackUrl": "ftp://x", "supportsServiceDiscovery": false, "active": true}}),
+    );
+    assert_eq!(
+        answer["data"]["carrierServiceCreate"]["userErrors"],
+        json!([
+            {"field": ["input", "name"], "message": "Name has already been taken", "code": "CARRIER_SERVICE_CREATE_FAILED"},
+            {"field": ["input", "callbackUrl"], "message": "Callback url is invalid", "code": "CARRIER_SERVICE_CREATE_FAILED"},
+        ])
+    );
+    assert_eq!(shop.picture(), before);
+
+    let answer = run(
+        &mut shop,
+        "query { carrierServices(first: 5, query: \"active:true\") { nodes { id } } availableCarrierServices { carrierService { id } locations { id } } }",
+        json!({}),
+    );
+    assert_eq!(
+        answer["data"]["carrierServices"]["nodes"][0]["id"],
+        json!(id)
+    );
+    assert_eq!(
+        answer["data"]["availableCarrierServices"][0]["locations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        shop.count("Location")
+    );
+    let answer = run(
+        &mut shop,
+        "mutation($input: DeliveryCarrierServiceUpdateInput!) { carrierServiceUpdate(input: $input) { carrierService { name active } userErrors { message } } }",
+        json!({"input": {"id": id, "name": "new test carrier service", "active": false}}),
+    );
+    assert_eq!(
+        answer["data"]["carrierServiceUpdate"]["carrierService"],
+        json!({"name": "new test carrier service", "active": false})
+    );
+
+    // A rate of the general profile from the carrier service goes with it.
+    let general = super::profiles::general_profile_gid();
+    let group = shop.get(&general).unwrap()["profileLocationGroups"][0]["locationGroup"].clone();
+    let zone =
+        shop.get(&general).unwrap()["profileLocationGroups"][0]["locationGroupZones"][0]["zone"]
+            .clone();
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!, $profile: DeliveryProfileInput!) { deliveryProfileUpdate(id: $id, profile: $profile) {
+            profile { activeMethodDefinitionsCount } userErrors { field message } } }",
+        json!({"id": general, "profile": {"locationGroupsToUpdate": [{"id": group, "zonesToUpdate": [{"id": zone,
+            "methodDefinitionsToCreate": [{"name": "Live rates", "participant": {"carrierServiceId": id, "adaptToNewServices": true}}]}]}]}}),
+    );
+    let with_carrier =
+        answer["data"]["deliveryProfileUpdate"]["profile"]["activeMethodDefinitionsCount"]
+            .as_i64()
+            .unwrap_or_else(|| panic!("{answer}"));
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { carrierServiceDelete(id: $id) { deletedId userErrors { message } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        answer["data"]["carrierServiceDelete"]["deletedId"],
+        json!(id)
+    );
+    assert_eq!(
+        super::profiles::method_count(&shop, &general),
+        usize::try_from(with_carrier - 1).unwrap()
+    );
+}
+
+#[test]
+fn a_fulfillment_constraint_rule_runs_a_function_of_the_api() {
+    let mut shop = demo();
+    let create = "mutation($handle: String, $types: [DeliveryMethodType!]!) {
+        fulfillmentConstraintRuleCreate(functionHandle: $handle, deliveryMethodTypes: $types) {
+          fulfillmentConstraintRule { id deliveryMethodTypes function { id handle } } userErrors { field message code } } }";
+    let before = shop.picture();
+    let answer = run(
+        &mut shop,
+        create,
+        json!({"handle": "keep-together", "types": ["SHIPPING"]}),
+    );
+    assert_eq!(
+        answer["data"]["fulfillmentConstraintRuleCreate"]["userErrors"],
+        json!([{"field": ["functionHandle"], "message": "No Shopify Function found for provided function_id.", "code": "FUNCTION_NOT_FOUND"}])
+    );
+    assert_eq!(shop.picture(), before);
+
+    let function = "4b8d6d2e-1f6a-4c3e-9d1c-000000000001";
+    shop.insert_as(
+        function,
+        crate::state::value::object(json!({
+            "__typename": "ShopifyFunction", "id": function, "handle": "keep-together",
+            "title": "Keep together", "apiType": "fulfillment_constraints",
+        })),
+    );
+    let answer = run(
+        &mut shop,
+        create,
+        json!({"handle": "keep-together", "types": ["SHIPPING", "LOCAL"]}),
+    );
+    let rule = &answer["data"]["fulfillmentConstraintRuleCreate"]["fulfillmentConstraintRule"];
+    assert_eq!(rule["function"]["handle"], "keep-together", "{answer}");
+    let id = rule["id"].as_str().unwrap().to_string();
+    let again = run(
+        &mut shop,
+        create,
+        json!({"handle": "keep-together", "types": ["SHIPPING"]}),
+    );
+    assert_eq!(
+        again["data"]["fulfillmentConstraintRuleCreate"]["userErrors"][0]["code"],
+        "FUNCTION_ALREADY_REGISTERED"
+    );
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentConstraintRuleUpdate(id: $id, deliveryMethodTypes: [PICK_UP]) { fulfillmentConstraintRule { deliveryMethodTypes } userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        answer["data"]["fulfillmentConstraintRuleUpdate"]["fulfillmentConstraintRule"]["deliveryMethodTypes"],
+        json!(["PICK_UP"])
+    );
+    let listed = run(
+        &mut shop,
+        "{ fulfillmentConstraintRules { id } }",
+        json!({}),
+    );
+    assert_eq!(
+        listed["data"]["fulfillmentConstraintRules"][0]["id"],
+        json!(id)
+    );
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { fulfillmentConstraintRuleDelete(id: $id) { success userErrors { code } } }",
+        json!({"id": id}),
+    );
+    assert_eq!(
+        answer["data"]["fulfillmentConstraintRuleDelete"]["success"],
+        true
+    );
+    assert!(shop.get(&id).is_none());
+}
+
+#[test]
+fn a_shipping_label_is_purchased_at_once_and_fulfills_the_fulfillment_order() {
+    let mut shop = rich();
+    let (order, fo) = order_with_stock(&mut shop);
+    let purchase = "mutation($input: ShippingLabelPurchaseInput!) { shippingLabelPurchase(shippingLabelPurchase: $input) {
+        shippingLabelPurchaseResult { id done status errors { message } shippingLabels { id printed cancellable location { id }
+          trackingInfo { company number } shippingDocuments { documentType format } } }
+        userErrors { field message code } } }";
+    let today = shop.timestamp();
+    let before = shop.picture();
+    let answer = run(
+        &mut shop,
+        purchase,
+        json!({"input": {"fulfillmentOrderId": fo, "shippingDatetime": "2001-01-01T00:00:00Z"}}),
+    );
+    assert_eq!(
+        answer["data"]["shippingLabelPurchase"]["userErrors"],
+        json!([{"field": ["shippingLabelPurchase", "shippingDatetime"], "message": "Shipping date has already passed.", "code": "SHIPPING_DATE_IN_THE_PAST"}])
+    );
+    assert_eq!(shop.picture(), before);
+
+    let answer = run(
+        &mut shop,
+        purchase,
+        json!({"input": {"fulfillmentOrderId": fo, "shippingDatetime": today, "notifyCustomer": true,
+            "preferredRateSelection": {"carrierCode": "ups", "serviceCode": "ground"}}}),
+    );
+    let result = &answer["data"]["shippingLabelPurchase"]["shippingLabelPurchaseResult"];
+    assert_eq!(result["status"], "PURCHASED", "{answer}");
+    assert_eq!(result["done"], true);
+    let label = &result["shippingLabels"][0];
+    assert_eq!(label["trackingInfo"]["company"], "UPS");
+    assert_eq!(label["shippingDocuments"][0]["documentType"], "LABEL");
+    let number = label["trackingInfo"]["number"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // The units are fulfilled with the label's tracking.
+    assert_eq!(read_fo(&mut shop, &fo)["status"], "CLOSED");
+    let fulfillments = run(
+        &mut shop,
+        "query($id: ID!) { order(id: $id) { displayFulfillmentStatus fulfillments { trackingInfo { number } } } }",
+        json!({"id": order}),
+    );
+    assert_eq!(
+        fulfillments["data"]["order"]["displayFulfillmentStatus"],
+        "FULFILLED"
+    );
+    assert_eq!(
+        fulfillments["data"]["order"]["fulfillments"][0]["trackingInfo"][0]["number"],
+        json!(number)
+    );
+    let outbox = super::outbox(&shop);
+    let kinds: Vec<&str> = outbox
+        .iter()
+        .map(|entry| entry["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["shipping_label", "notification"]);
+    assert_eq!(outbox[0]["details"]["serviceCode"], "ground");
+    let read = run(
+        &mut shop,
+        "query($id: ID!) { node(id: $id) { ... on ShippingLabelPurchaseResult { status } } }",
+        json!({"id": result["id"]}),
+    );
+    assert_eq!(read["data"]["node"]["status"], "PURCHASED");
+}
+
+#[test]
+fn delivery_promises_settings_and_packages() {
+    let mut shop = demo();
+    let location = shop.keys("Location").next().unwrap().to_string();
+    let upsert = "mutation($location: ID!, $zone: String) { deliveryPromiseProviderUpsert(locationId: $location, timeZone: $zone, fulfillmentDelay: 3600) {
+        deliveryPromiseProvider { id active timeZone fulfillmentDelay location { id } } userErrors { field message code } } }";
+    let before = shop.picture();
+    let answer = run(&mut shop, upsert, json!({"location": location}));
+    assert_eq!(
+        answer["data"]["deliveryPromiseProviderUpsert"]["userErrors"][0]["code"],
+        "MUST_BELONG_TO_APP"
+    );
+    assert_eq!(shop.picture(), before);
+    // A fulfillment service's location is the app's.
+    let service = run(
+        &mut shop,
+        "mutation { fulfillmentServiceCreate(name: \"Warehouse partner\", callbackUrl: \"https://example.com/fulfillment\") {
+            fulfillmentService { location { id } } userErrors { message } } }",
+        json!({}),
+    );
+    let partner =
+        service["data"]["fulfillmentServiceCreate"]["fulfillmentService"]["location"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{service}"))
+            .to_string();
+    let answer = run(
+        &mut shop,
+        upsert,
+        json!({"location": partner, "zone": "Mars/Olympus"}),
+    );
+    assert_eq!(
+        answer["data"]["deliveryPromiseProviderUpsert"]["userErrors"][0]["code"],
+        "INVALID_TIME_ZONE"
+    );
+    let answer = run(
+        &mut shop,
+        upsert,
+        json!({"location": partner, "zone": "America/Toronto"}),
+    );
+    let provider = &answer["data"]["deliveryPromiseProviderUpsert"]["deliveryPromiseProvider"];
+    assert_eq!(provider["timeZone"], "America/Toronto", "{answer}");
+    assert_eq!(provider["active"], true);
+    let read = run(
+        &mut shop,
+        "query($location: ID!) { deliveryPromiseProvider(locationId: $location) { id fulfillmentDelay } }",
+        json!({"location": partner}),
+    );
+    assert_eq!(
+        read["data"]["deliveryPromiseProvider"]["fulfillmentDelay"],
+        3600
+    );
+
+    // Participants of a branded promise.
+    let variant = shop.keys("ProductVariant").next().unwrap().to_string();
+    let update = "mutation($add: [ID!], $remove: [ID!]) { deliveryPromiseParticipantsUpdate(brandedPromiseHandle: \"express\", ownersToAdd: $add, ownersToRemove: $remove) {
+        promiseParticipants { id owner { ... on ProductVariant { id } } ownerType } userErrors { field message } } }";
+    let answer = run(&mut shop, update, json!({"add": [variant]}));
+    assert_eq!(
+        answer["data"]["deliveryPromiseParticipantsUpdate"]["promiseParticipants"][0]["owner"]["id"],
+        json!(variant),
+        "{answer}"
+    );
+    let listed = run(
+        &mut shop,
+        "{ deliveryPromiseParticipants(brandedPromiseHandle: \"express\", first: 5) { nodes { ownerType } } }",
+        json!({}),
+    );
+    assert_eq!(
+        listed["data"]["deliveryPromiseParticipants"]["nodes"][0]["ownerType"],
+        "PRODUCTVARIANT"
+    );
+    run(&mut shop, update, json!({"remove": [variant]}));
+    assert_eq!(shop.count("DeliveryPromiseParticipant"), 0);
+
+    // Settings and the legacy shipping origin.
+    let answer = run(
+        &mut shop,
+        "mutation { deliverySettingUpdate { userErrors { message } } }",
+        json!({}),
+    );
+    assert_eq!(
+        answer["data"]["deliverySettingUpdate"]["userErrors"],
+        json!([])
+    );
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { deliveryShippingOriginAssign(locationId: $id) { userErrors { field message } } }",
+        json!({"id": location}),
+    );
+    assert_eq!(
+        answer["data"]["deliveryShippingOriginAssign"]["userErrors"][0]["message"],
+        "Single origin shipping mode is no longer supported."
+    );
+
+    // The sample box: updated, made default, deleted.
+    let package = "gid://shopify/ShippingPackage/1";
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { shippingPackageUpdate(id: $id, shippingPackage: {name: \"Small box\", dimensions: {length: 20, width: 10, height: 5, unit: CENTIMETERS}}) { userErrors { message } } }",
+        json!({"id": package}),
+    );
+    assert_eq!(
+        answer["data"]["shippingPackageUpdate"]["userErrors"],
+        json!([])
+    );
+    assert_eq!(super::delivery::packages(&shop)[0]["name"], "Small box");
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { shippingPackageMakeDefault(id: $id) { userErrors { field message } } }",
+        json!({"id": "gid://shopify/ShippingPackage/9"}),
+    );
+    assert_eq!(
+        answer["data"]["shippingPackageMakeDefault"]["userErrors"],
+        json!([{"field": ["id"], "message": "Shipping package not found."}])
+    );
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { shippingPackageMakeDefault(id: $id) { userErrors { message } } }",
+        json!({"id": package}),
+    );
+    assert_eq!(
+        answer["data"]["shippingPackageMakeDefault"]["userErrors"],
+        json!([])
+    );
+    let answer = run(
+        &mut shop,
+        "mutation($id: ID!) { shippingPackageDelete(id: $id) { deletedId userErrors { message } } }",
+        json!({"id": package}),
+    );
+    assert_eq!(
+        answer["data"]["shippingPackageDelete"]["deletedId"],
+        json!(package)
+    );
+    assert!(super::delivery::packages(&shop).is_empty());
 }
