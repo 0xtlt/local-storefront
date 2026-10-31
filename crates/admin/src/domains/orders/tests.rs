@@ -2073,3 +2073,40 @@ fn amounts_past_the_bound_answer_user_errors() {
     );
     assert!(shop.take_events().is_empty());
 }
+
+/// A fulfillment service's location is the service's, not one of the store: the storefront
+/// does not get it.
+#[test]
+fn a_fulfillment_service_location_does_not_reach_the_storefront() {
+    let (store, mut shop) = rich_with_store();
+    let created = run(
+        &mut shop,
+        "mutation { fulfillmentServiceCreate(name: \"Acme 3PL\", callbackUrl: \"https://3pl.example/callback\", inventoryManagement: true) {
+            fulfillmentService { location { id isFulfillmentService } } userErrors { field message } } }",
+        Value::Null,
+    );
+    assert_eq!(
+        created["data"]["fulfillmentServiceCreate"]["fulfillmentService"]["location"]["isFulfillmentService"],
+        json!(true),
+        "{created}"
+    );
+    let names = |store: &lsf_core::Store| -> Vec<String> {
+        store
+            .locations
+            .iter()
+            .map(|location| location.name.clone())
+            .collect()
+    };
+    match crate::sync::overlay(&shop, &store) {
+        None => {}
+        Some(overlay) => {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rich");
+            let (synced, _) = lsf_core::store::load::load_with_overlays(
+                &lsf_core::store::load::DataSource::Directory(path),
+                &Default::default(),
+                &[overlay],
+            );
+            assert_eq!(names(&synced), names(&store));
+        }
+    }
+}

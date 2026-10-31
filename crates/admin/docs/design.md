@@ -1211,7 +1211,8 @@ Kept here so that nobody invents a field for it; each would need the store data 
   record); an owner of a Function names it in `functionId` (or `shopifyFunction`) and is
   disabled by `enabled: false`.
 - Pages and articles: `isPublished`; metaobjects: `capabilities.publishable.status`; locations:
-  `isActive`.
+  `isActive`, and `isFulfillmentService: false` (a fulfillment service's location is not one of
+  the store data).
 - **Ids**: a record created with an id of the counter keeps it in the store, for the entities
   whose data has an `id` (products, variants, collections, pages, blogs, articles, comments,
   customers and their addresses, companies and their locations, locations, selling plans,

@@ -231,9 +231,13 @@ impl<'s> View<'s> {
             .is_some_and(|record| flag(record, "isPublished") != Some(false))
     }
 
-    fn location_active(&self, key: &str) -> bool {
-        self.get(key)
-            .is_some_and(|record| flag(record, "isActive") != Some(false))
+    /// Whether a location is one of the store data: active, and not a fulfillment service's
+    /// (`fulfillmentServiceCreate` makes one, which the storefront does not have).
+    fn location_listed(&self, key: &str) -> bool {
+        self.get(key).is_some_and(|record| {
+            flag(record, "isActive") != Some(false)
+                && flag(record, "isFulfillmentService") != Some(true)
+        })
     }
 }
 
@@ -1133,7 +1137,7 @@ impl<'s> Sync<'s> {
                     .filter_map(|(index, in_stock)| {
                         let location = self.store.locations.get(*index)?;
                         let key = catalog::location_gid(location);
-                        let record = view.get(&key).filter(|_| view.location_active(&key))?;
+                        let record = view.get(&key).filter(|_| view.location_listed(&key))?;
                         Some((text(record, "name")?.to_string(), *in_stock))
                     })
                     .collect(),
@@ -1144,7 +1148,7 @@ impl<'s> Sync<'s> {
                     .iter()
                     .filter_map(|(_, level)| {
                         let location =
-                            text(level, "location").filter(|key| view.location_active(key))?;
+                            text(level, "location").filter(|key| view.location_listed(key))?;
                         let name = text(view.get(location)?, "name")?.to_string();
                         let in_stock = catalog::available_of(level) > 0
                             || !tracked
@@ -1267,7 +1271,7 @@ impl<'s> Sync<'s> {
 
     fn location(&self, view: &View<'s>, key: &str) -> Option<model::LocationInput> {
         let record = view.get(key)?;
-        if !view.location_active(key) {
+        if !view.location_listed(key) {
             return None;
         }
         let id = parse_gid(key)?.1;
