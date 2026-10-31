@@ -2210,3 +2210,125 @@ fn the_familys_records_do_not_reach_the_store_data() {
     let _ = draft;
     assert!(crate::sync::overlay(&shop, &store).is_none());
 }
+
+/// A selection of every field of a type that takes no required argument, `depth` levels down
+/// (connections through `nodes`, abstract types through their possible types).
+fn selection(type_name: &str, depth: usize) -> String {
+    let schema = crate::schema::admin();
+    let Some(def) = schema.get(type_name) else {
+        return String::new();
+    };
+    // The family's types and what they hold; the records of other families are theirs.
+    let own = [
+        "Subscription",
+        "CustomerPaymentMethod",
+        "CustomerCreditCard",
+        "CustomerPaypal",
+        "CustomerShopPay",
+        "CustomerPaymentInstrument",
+        "SellingPlan",
+        "MoneyV2",
+        "MailingAddress",
+        "Attribute",
+        "Count",
+        "Weight",
+    ]
+    .iter()
+    .any(|prefix| type_name.starts_with(prefix));
+    if !own {
+        return "__typename".into();
+    }
+    if def.is_abstract() {
+        if depth == 0 {
+            return "__typename".into();
+        }
+        let parts: Vec<String> = schema
+            .possible_types(type_name)
+            .iter()
+            .map(|possible| format!("... on {possible} {{ {} }}", selection(possible, depth)))
+            .collect();
+        return format!("__typename {}", parts.join(" "));
+    }
+    let mut parts = vec!["__typename".to_string()];
+    for (name, field) in &def.fields {
+        if field.args.values().any(|arg| arg.is_required()) {
+            continue;
+        }
+        let named = field.ty.named();
+        let Some(target) = schema.get(named) else {
+            continue;
+        };
+        // Aliased by the type: the fields of two possible types of one union may differ.
+        let alias = format!("{type_name}_{name}: {name}");
+        if target.is_leaf() {
+            parts.push(alias);
+        } else if depth > 0 {
+            if schema.is_connection(named) {
+                let node = schema
+                    .connection_node(named)
+                    .unwrap_or_default()
+                    .to_string();
+                parts.push(format!(
+                    "{alias}(first: 2) {{ nodes {{ {} }} }}",
+                    selection(&node, depth - 1)
+                ));
+            } else {
+                parts.push(format!("{alias} {{ {} }}", selection(named, depth - 1)));
+            }
+        }
+    }
+    parts.join(" ")
+}
+
+#[test]
+fn the_fields_of_the_family_are_answered_from_the_records() {
+    let mut shop = shop();
+    let method = card(&mut shop, "4242424242424242");
+    let id = contract(&mut shop, Some(&method));
+    let (made, _) = bill(&mut shop, &id, "a");
+    let attempt = made["subscriptionBillingAttempt"]["id"].clone();
+    let draft = draft_of_contract(&mut shop, &id);
+    let input = calculation_input(&shop);
+    let answer = run(&mut shop, CREATE_CALCULATE, json!({"input": input}));
+    let calculation = data(&answer, "subscriptionContractCreateCalculate")["subscriptionContractCalculation"]["id"].clone();
+    let variables = json!({"id": id, "attempt": attempt, "method": method, "draft": draft, "calculation": calculation});
+    let mut defaulted = Vec::new();
+    for (root, variable, type_name) in [
+        (
+            "subscriptionContract(id: $id)",
+            "id",
+            "SubscriptionContract",
+        ),
+        (
+            "subscriptionBillingAttempt(id: $id)",
+            "attempt",
+            "SubscriptionBillingAttempt",
+        ),
+        (
+            "customerPaymentMethod(id: $id)",
+            "method",
+            "CustomerPaymentMethod",
+        ),
+        ("subscriptionDraft(id: $id)", "draft", "SubscriptionDraft"),
+        (
+            "subscriptionContractCalculation(id: $id)",
+            "calculation",
+            "SubscriptionContractCalculation",
+        ),
+        (
+            "subscriptionBillingCycle(billingCycleInput: {contractId: $id, selector: {index: 1}})",
+            "id",
+            "SubscriptionBillingCycle",
+        ),
+    ] {
+        let query = format!(
+            "query($id: ID!) {{ {root} {{ {} }} }}",
+            selection(type_name, 3)
+        );
+        let answer = run(&mut shop, &query, json!({"id": variables[variable]}));
+        if let Some(fields) = answer["extensions"]["lsf"]["defaultedFields"].as_array() {
+            defaulted.extend(fields.iter().cloned());
+        }
+    }
+    assert!(defaulted.is_empty(), "{defaulted:#?}");
+}

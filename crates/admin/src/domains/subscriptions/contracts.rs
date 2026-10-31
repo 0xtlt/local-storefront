@@ -25,10 +25,7 @@
 use serde_json::{Value, json};
 
 use super::cycles;
-use super::model::{
-    self, CONTRACT, DRAFT, draft_error, lines, object, refresh, status_error, text,
-};
-use crate::domains::catalog::gids;
+use super::model::{self, CONTRACT, draft_error, lines, object, refresh, status_error, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
@@ -446,20 +443,4 @@ fn customer_contracts(
         .filter_map(|contract| contract.get("id").cloned())
         .collect();
     r.connection(ctx, items)
-}
-
-/// The drafts of a contract that are not committed: what a commit of another revision leaves
-/// stale.
-pub fn open_drafts(state: &ShopState, contract: &str) -> Vec<String> {
-    state
-        .all(DRAFT)
-        .filter(|draft| text(draft, "originalContract") == Some(contract))
-        .filter(|draft| draft.get("lsfCommitted").and_then(Value::as_bool) != Some(true))
-        .filter_map(|draft| text(draft, "id").map(str::to_string))
-        .collect()
-}
-
-/// The orders of a contract, as GIDs.
-pub fn orders_of(contract: &Record) -> Vec<String> {
-    gids(contract.get("orders"))
 }

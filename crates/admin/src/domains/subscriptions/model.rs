@@ -413,6 +413,26 @@ pub fn address(state: &mut ShopState, input: &Value) -> Option<Value> {
         input,
         &format!("gid://shopify/MailingAddress/{number}?model_name=Address"),
     )
+    .map(located)
+}
+
+/// An address with what lsf does not know of it said: no coordinates, no time zone, not
+/// validated (Shopify geocodes and validates addresses; lsf does not).
+pub fn located(mut address: Value) -> Value {
+    if let Some(map) = address.as_object_mut() {
+        let code = map.get("countryCodeV2").cloned().unwrap_or(Value::Null);
+        map.entry("countryCode").or_insert(code);
+        map.entry("coordinatesValidated").or_insert(json!(false));
+        for field in [
+            "latitude",
+            "longitude",
+            "timeZone",
+            "validationResultSummary",
+        ] {
+            map.entry(field).or_insert(Value::Null);
+        }
+    }
+    address
 }
 
 /// A `SubscriptionDeliveryMethod` from the draft API's input (`shipping`, `localDelivery`,
@@ -436,10 +456,13 @@ pub fn delivery_method(
             .get("address")
             .and_then(|address| self::address(state, address))
             .unwrap_or(Value::Null);
+        let mut shipping_option = option(shipping.get("shippingOption"));
+        // Deprecated: "This field has never been implemented."
+        shipping_option["carrierService"] = Value::Null;
         return Ok(json!({
             "__typename": "SubscriptionDeliveryMethodShipping",
             "address": address,
-            "shippingOption": option(shipping.get("shippingOption")),
+            "shippingOption": shipping_option,
         }));
     }
     if let Some(local) = input.get("localDelivery").filter(|value| !value.is_null()) {

@@ -823,13 +823,3 @@ fn commit(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     }
     Ok(payload(json!({"contract": answer}), &[]))
 }
-
-/// Whether a key is one of a calculation.
-pub fn is_calculation(state: &ShopState, id: &str) -> bool {
-    state.get(id).is_some_and(|record| {
-        matches!(
-            text(record, "__typename"),
-            Some(CALCULATION | "SubscriptionContractCalculationFailure")
-        )
-    })
-}

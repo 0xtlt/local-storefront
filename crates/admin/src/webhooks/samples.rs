@@ -1351,21 +1351,6 @@ fn discount() -> Value {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_built_topic_has_a_sample() {
-        for topic in payload::BUILT_TOPICS {
-            let sample = fixed(topic).unwrap_or_else(|| panic!("no sample for {topic}"));
-            assert!(sample.payload(topic).is_some(), "{topic}");
-        }
-        assert!(fixed("carts/create").is_none());
-        assert_eq!(FixedSamples.shop(), "shop.myshopify.com");
-    }
-}
-
 /// The contract of the `subscription_contracts/*` examples: each topic's id, revision and status.
 fn subscription_contract(topic: &str) -> Value {
     let (id, revision, status) = match topic {
@@ -1452,4 +1437,19 @@ fn customer_payment_method() -> Value {
         },
         "revokedAt": null,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_built_topic_has_a_sample() {
+        for topic in payload::BUILT_TOPICS {
+            let sample = fixed(topic).unwrap_or_else(|| panic!("no sample for {topic}"));
+            assert!(sample.payload(topic).is_some(), "{topic}");
+        }
+        assert!(fixed("carts/create").is_none());
+        assert_eq!(FixedSamples.shop(), "shop.myshopify.com");
+    }
 }

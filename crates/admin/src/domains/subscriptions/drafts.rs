@@ -32,11 +32,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::contracts::{self, commit_new, commit_update, contract_arg};
+use super::contracts::{commit_new, commit_update, contract_arg};
 use super::cycles;
 use super::model::{
-    self, CONTRACT, DRAFT, Pointer, draft_error, lines, manual_discount, object, objects, refresh,
-    text,
+    self, DRAFT, Pointer, draft_error, lines, manual_discount, object, objects, refresh, text,
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -1558,33 +1557,4 @@ fn delivery_options(
         })
     };
     r.convert(ctx, &result, false)
-}
-
-/// What every contract-like record takes from the contract it is the cycle draft of: nothing
-/// more than [`cycle_contract`] gives. Kept for the calculation API's cycle edits.
-pub fn contract_of_cycle(state: &ShopState, contract: &str, index: i64) -> Option<Record> {
-    let record = contract_arg(state, contract)?;
-    let mut cycle = cycle_contract(&record, index);
-    for field in [
-        "customer",
-        "currencyCode",
-        "billingPolicy",
-        "deliveryPolicy",
-    ] {
-        cycle.insert(
-            field.into(),
-            record.get(field).cloned().unwrap_or(Value::Null),
-        );
-    }
-    Some(cycle)
-}
-
-/// Whether a contract-like record names a contract of the shop.
-pub fn is_contract(state: &ShopState, id: &str) -> bool {
-    state.type_of(id) == Some(CONTRACT)
-}
-
-/// The drafts of a contract that commits made stale: kept for `contracts::open_drafts`.
-pub fn stale_drafts(state: &ShopState, contract: &str) -> Vec<String> {
-    contracts::open_drafts(state, contract)
 }

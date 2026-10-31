@@ -549,7 +549,7 @@ pub fn cycles_between(
 // ---- edits ----------------------------------------------------------------------------------
 
 /// The edits of a cycle, when it has some.
-pub fn edits<'c>(contract: &'c Record, index: i64) -> Option<&'c Map<String, Value>> {
+pub fn edits(contract: &Record, index: i64) -> Option<&Map<String, Value>> {
     contract
         .get("lsfCycleEdits")
         .and_then(|edits| edits.get(index.to_string()))

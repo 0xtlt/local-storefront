@@ -81,7 +81,8 @@ pub fn contracts_from_order(
     let address = order_record
         .get("shippingAddress")
         .filter(|address| !address.is_null())
-        .cloned();
+        .cloned()
+        .map(model::located);
     let mut made = Vec::new();
     for (position, plan) in plans.iter().enumerate() {
         let plan_record = state.get(plan).cloned().unwrap_or_default();
@@ -129,6 +130,7 @@ pub fn contracts_from_order(
                     "title": shipping.as_ref().map(|(option, _)| option.title.clone()),
                     "presentmentTitle": shipping.as_ref().map(|(option, _)| option.title.clone()),
                     "description": shipping.as_ref().and_then(|(option, _)| option.description.clone()),
+                    "carrierService": null,
                 },
             })
         });
