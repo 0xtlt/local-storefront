@@ -473,9 +473,10 @@ impl<'a> ShopResolver<'a> {
         let schema = crate::schema::admin();
         let possible = schema.possible_types(type_name);
         if possible.len() <= 1 {
+            let only = possible.first().map_or(type_name, String::as_str);
             return self
                 .state
-                .keys(type_name)
+                .keys(only)
                 .map(|key| Value::String(key.to_string()))
                 .collect();
         }

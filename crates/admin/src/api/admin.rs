@@ -1,7 +1,6 @@
 //! [`AdminApi`]: the shops, the tokens, the webhooks and the throttle of a server, and the one
 //! function that answers their HTTP requests.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use chrono::Utc;
@@ -105,7 +104,6 @@ pub struct AdminApi {
     /// The scopes the app is installed with: `[access_scopes] scopes`, every scope without an
     /// app.
     scopes: Vec<String>,
-    requests: AtomicU64,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -198,7 +196,6 @@ impl AdminApi {
             auth,
             app,
             scopes,
-            requests: AtomicU64::new(0),
         }
     }
 
@@ -444,7 +441,6 @@ impl AdminApi {
 
     /// The headers of every answer of the Admin API.
     fn api_headers(&self, response: HttpResponse) -> HttpResponse {
-        self.requests.fetch_add(1, Ordering::Relaxed);
         response
             .header("x-shopify-api-version", ADMIN_2026_10)
             .header("x-request-id", crate::webhooks::sign::new_id())
