@@ -1440,7 +1440,8 @@ the connection's `userErrors` (`NOT_FOUND`).
 - `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories,
   JSON files valid JSON (`FILE_VALIDATION_ERROR`, `DUPLICATE_FILE_INPUT`,
   `LESS_THAN_OR_EQUAL_TO`); `TEXT`, `BASE64` and `URL` bodies (a `URL` file comes through the
-  `job`, done, as in Shopify's example). Nothing is written when a file is refused.
+  `job`, done, as in Shopify's example; one over 50 MB is refused, `FILE_VALIDATION_ERROR`, never
+  cut). Nothing is written when a file is refused.
   `layout/theme.liquid` cannot be deleted.
 - Webhooks: `themes/create`, `themes/update`, `themes/publish`, `themes/delete` (none for files,
   as on Shopify).

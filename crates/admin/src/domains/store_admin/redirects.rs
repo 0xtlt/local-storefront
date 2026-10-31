@@ -199,16 +199,41 @@ fn delete_by_saved_search(
 
 // ---- imports -----------------------------------------------------------------------------
 
+/// The most bytes a source fetched from a URL may have: "May not be used to fetch a file bigger
+/// than 50MB" (`ZIP_TOO_LARGE`).
+pub const MAX_SOURCE_BYTES: usize = 50 << 20;
+
+/// Why the bytes at a URL could not be read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SourceError {
+    /// More than [`MAX_SOURCE_BYTES`] were there.
+    TooLarge,
+    /// Not there, not an upload nor an `http(s)` URL, not reachable: why, for the message.
+    Unreadable(String),
+}
+
+impl std::fmt::Display for SourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceError::TooLarge => {
+                f.write_str("May not be used to fetch a file bigger than 50MB")
+            }
+            SourceError::Unreadable(why) => f.write_str(why),
+        }
+    }
+}
+
 /// The bytes at `url`: a staged upload of the shop, else a download (an `http(s)` URL, 10 s at
-/// most, 50 MB at most).
-pub fn source_bytes(state: &ShopState, url: &str) -> Result<Vec<u8>, String> {
+/// most, [`MAX_SOURCE_BYTES`] at most: one byte more is read, so that a larger file is refused
+/// rather than cut).
+pub fn source_bytes(state: &ShopState, url: &str) -> Result<Vec<u8>, SourceError> {
     if let Some(blob) = crate::domains::app::uploads::bytes(state, url) {
         return Ok(blob.bytes.to_vec());
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(format!(
+        return Err(SourceError::Unreadable(format!(
             "{url} is neither a staged upload nor an http(s) URL"
-        ));
+        )));
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(10)))
@@ -216,21 +241,26 @@ pub fn source_bytes(state: &ShopState, url: &str) -> Result<Vec<u8>, String> {
         .http_status_as_error(false)
         .build()
         .into();
-    let response = agent
-        .get(url)
-        .call()
-        .map_err(|error| format!("{url} could not be downloaded: {error}"))?;
+    let response = agent.get(url).call().map_err(|error| {
+        SourceError::Unreadable(format!("{url} could not be downloaded: {error}"))
+    })?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
-        return Err(format!("{url} answered {status}"));
+        return Err(SourceError::Unreadable(format!("{url} answered {status}")));
     }
+    read_at_most(response.into_body().as_reader(), MAX_SOURCE_BYTES)
+        .map_err(|error| SourceError::Unreadable(format!("{url} could not be read: {error}")))?
+        .ok_or(SourceError::TooLarge)
+}
+
+/// Everything `reader` has, or `None` when it has more than `limit` bytes.
+pub fn read_at_most(reader: impl std::io::Read, limit: usize) -> std::io::Result<Option<Vec<u8>>> {
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(
-        &mut std::io::Read::take(response.into_body().as_reader(), 50 << 20),
+        &mut std::io::Read::take(reader, limit as u64 + 1),
         &mut bytes,
-    )
-    .map_err(|error| format!("{url} could not be read: {error}"))?;
-    Ok(bytes)
+    )?;
+    Ok((bytes.len() <= limit).then_some(bytes))
 }
 
 /// The cells of a CSV line, quotes and escaped quotes read as RFC 4180 has them.
@@ -303,7 +333,7 @@ fn import_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     };
     let bytes = match source_bytes(m.state(), &url) {
         Ok(bytes) => bytes,
-        Err(message) => return refuse(message),
+        Err(error) => return refuse(error.to_string()),
     };
     let rows = match rows(&String::from_utf8_lossy(&bytes)) {
         Ok(rows) => rows,

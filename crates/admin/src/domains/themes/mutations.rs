@@ -48,7 +48,7 @@ use serde_json::{Value, json};
 use super::files::{self, ThemeFile, check_filename};
 use super::{FILES, LOCAL, is_local, local_theme_gid, theme_name, theme_of};
 use crate::domains::store_admin::done_job;
-use crate::domains::store_admin::redirects::source_bytes;
+use crate::domains::store_admin::redirects::{SourceError, source_bytes};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{ShopState, value};
@@ -119,6 +119,13 @@ fn theme_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     let source = ctx.arg_str("source").unwrap_or_default().trim().to_string();
     let bytes = match source_bytes(m.state(), &source) {
         Ok(bytes) => bytes,
+        Err(SourceError::TooLarge) => {
+            return refuse(
+                &["source"],
+                "May not be used to fetch a file bigger than 50MB",
+                "ZIP_TOO_LARGE",
+            );
+        }
         Err(why) => {
             return refuse(
                 &["source"],
@@ -448,7 +455,12 @@ fn files_upsert(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
                 base64::Engine::decode(&base64::engine::general_purpose::STANDARD, given.trim())
                     .map_err(|_| format!("The body of {filename} is not Base64"))
             }
-            "URL" => source_bytes(m.state(), given),
+            "URL" => source_bytes(m.state(), given).map_err(|error| match error {
+                SourceError::TooLarge => {
+                    format!("The body of {filename} at {given} is bigger than 50MB")
+                }
+                SourceError::Unreadable(why) => why,
+            }),
             _ => Ok(given.as_bytes().to_vec()),
         };
         let bytes = match bytes.and_then(|bytes| check_content(filename, &bytes).map(|_| bytes)) {

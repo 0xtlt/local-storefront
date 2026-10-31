@@ -490,3 +490,70 @@ fn the_local_theme_cannot_be_deleted_even_when_another_is_published() {
     assert!(super::storefront_overlay(&shop).is_none());
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A server on the loopback that answers every request with `size` bytes of `x`: the URL of it.
+pub(crate) fn serve_bytes(size: usize) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/theme.zip", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 2) {
+                line.clear();
+            }
+            let head =
+                format!("HTTP/1.1 200 OK\r\ncontent-length: {size}\r\nconnection: close\r\n\r\n");
+            let _ = stream.write_all(head.as_bytes());
+            let chunk = vec![b'x'; 1 << 16];
+            let mut left = size;
+            while left > 0 {
+                let part = left.min(chunk.len());
+                if stream.write_all(&chunk[..part]).is_err() {
+                    break;
+                }
+                left -= part;
+            }
+        }
+    });
+    url
+}
+
+/// A source of 50 MB was read whole and one byte more was cut, so `ZIP_TOO_LARGE` never came
+/// and a large file body was stored truncated.
+#[test]
+fn a_source_over_50_mb_is_refused_not_cut() {
+    let limit = crate::domains::store_admin::redirects::MAX_SOURCE_BYTES;
+    let read = |size: usize, limit: usize| {
+        crate::domains::store_admin::redirects::read_at_most(&vec![0u8; size][..], limit)
+            .unwrap()
+            .map(|bytes| bytes.len())
+    };
+    assert_eq!(read(10, 10), Some(10));
+    assert_eq!(read(11, 10), None);
+
+    let mut shop = shop();
+    let url = serve_bytes(limit + 1);
+    let answer = run(&mut shop, CREATE, json!({"source": url}));
+    assert_eq!(
+        answer["data"]["themeCreate"]["userErrors"][0]["code"], "ZIP_TOO_LARGE",
+        "{answer}"
+    );
+    let answer = run(
+        &mut shop,
+        "mutation($url: String!) { themeFilesUpsert(themeId: \"gid://shopify/OnlineStoreTheme/1\", files: [{filename: \"assets/big.bin\", body: {type: URL, value: $url}}]) { upsertedThemeFiles { filename } userErrors { code message filename } } }",
+        json!({"url": url}),
+    );
+    let error = &answer["data"]["themeFilesUpsert"]["userErrors"][0];
+    assert_eq!(error["code"], "FILE_VALIDATION_ERROR", "{answer}");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("bigger than 50MB"),
+        "{answer}"
+    );
+    assert!(topics(&mut shop).is_empty(), "nothing was written");
+}
