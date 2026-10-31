@@ -226,6 +226,9 @@ enum Undo {
 #[must_use = "a savepoint is closed by `rollback` or `release`"]
 pub struct Savepoint {
     steps: usize,
+    /// How many savepoints were open before this one: what a rollback after a panic closes
+    /// the inner ones it left open down to.
+    depth: usize,
     events: usize,
     emitted: u64,
     revision: u64,
@@ -638,9 +641,11 @@ impl ShopState {
     /// ([`ShopState::take_events`]) are not put back, nor what a reset or [`Shops`] does.
     pub fn savepoint(&mut self) -> Savepoint {
         let journal = self.journal.get_or_insert_with(Journal::default);
+        let depth = journal.starts.len();
         journal.starts.push(journal.steps.len());
         Savepoint {
             steps: journal.steps.len(),
+            depth,
             events: self.events.len(),
             emitted: self.emitted,
             revision: self.revision,
@@ -697,6 +702,35 @@ impl ShopState {
             (None, Some(_)) => {}
         }
         self.clock = savepoint.clock;
+    }
+
+    /// [`ShopState::rollback`] after a panic: the savepoints opened after `savepoint` that the
+    /// panic left open are closed first, and undone with it.
+    pub fn rollback_unwound(&mut self, savepoint: Savepoint) {
+        if let Some(journal) = &mut self.journal {
+            journal.starts.truncate(savepoint.depth + 1);
+        }
+        self.rollback(savepoint);
+    }
+
+    /// Runs `change` on the shop and, when it panics, puts the shop back as it was before it
+    /// (see [`ShopState::savepoint`]) and answers the panic: a bug in a mutation, or in what
+    /// follows one, then leaves no half-made change behind for every later request to trip on.
+    pub fn unwinding<T>(
+        &mut self,
+        change: impl FnOnce(&mut ShopState) -> T,
+    ) -> Result<T, Box<dyn std::any::Any + Send>> {
+        let savepoint = self.savepoint();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| change(self))) {
+            Ok(value) => {
+                self.release(savepoint);
+                Ok(value)
+            }
+            Err(panic) => {
+                self.rollback_unwound(savepoint);
+                Err(panic)
+            }
+        }
     }
 
     /// Adds a step to the journal, when a savepoint is open.

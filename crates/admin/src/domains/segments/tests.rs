@@ -196,6 +196,63 @@ fn a_bad_segment_changes_nothing() {
 }
 
 #[test]
+fn a_date_offset_past_the_calendar_is_refused_and_a_stored_one_breaks_nothing() {
+    let mut shop = demo();
+    let before = shop.picture();
+    for query in [
+        "last_order_date > -99999999999d",
+        "customer_added_date < +9999999w",
+        "first_order_date = -10001y",
+        "orders_placed MATCHES (date > -99999999999m)",
+    ] {
+        let answer = run(&mut shop, CREATE, json!({"name": "Far", "query": query}));
+        let payload = data(&answer, "segmentCreate");
+        assert_eq!(payload["segment"], Value::Null, "{answer}");
+        let message = payload["userErrors"][0]["message"].as_str().unwrap();
+        assert!(
+            message.starts_with("Query Line 1 Column ")
+                && message.ends_with("is not a valid value."),
+            "{message}"
+        );
+    }
+    assert_eq!(shop.picture(), before);
+    let members = run(
+        &mut shop,
+        "{ customerSegmentMembers(first: 1, query: \"last_order_date > -99999999999d\") { totalCount } }",
+        json!({}),
+    );
+    assert!(members.get("errors").is_some(), "{members}");
+
+    // The furthest offset lsf takes is evaluated.
+    let answer = run(
+        &mut shop,
+        CREATE,
+        json!({"name": "Ever", "query": "last_order_date > -10000y AND customer_added_date < +3660000d"}),
+    );
+    assert_eq!(
+        data(&answer, "segmentCreate")["userErrors"],
+        json!([]),
+        "{answer}"
+    );
+
+    // A segment the parser would refuse, as an older lsf stored it: the customers' mutations
+    // still answer, and the segment keeps no one.
+    let mut record = crate::state::Record::new();
+    record.insert("__typename".into(), json!("Segment"));
+    record.insert("name".into(), json!("Broken"));
+    record.insert("query".into(), json!("last_order_date > -99999999999d"));
+    shop.insert(record);
+    shop.take_events();
+    let jane = customer(&shop, "jane.doe@example.com");
+    let added = run(
+        &mut shop,
+        "mutation($id: ID!) { tagsAdd(id: $id, tags: [\"far\"]) { userErrors { message } } }",
+        json!({"id": jane}),
+    );
+    assert_eq!(data(&added, "tagsAdd")["userErrors"], json!([]), "{added}");
+}
+
+#[test]
 fn members_are_the_customers_a_query_keeps() {
     let mut shop = demo();
     let found = members(

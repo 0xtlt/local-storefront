@@ -31,6 +31,22 @@ use super::filters::{self, Filter, Kind, ParamKind};
 /// The most clauses a segment query has: shopify.dev's reference shows a query of 11 as invalid.
 pub const MAX_CLAUSES: usize = 10;
 
+/// The furthest a date offset (`-7d`, `+1y`) reaches, in years either way. Shopify publishes no
+/// bound; lsf's keeps every date it computes within what a date holds: `-99999999999d` is not
+/// a valid value.
+pub const MAX_OFFSET_YEARS: i64 = 10_000;
+
+/// Whether `n` units from today stay within [`MAX_OFFSET_YEARS`].
+pub fn offset_in_range(n: i64, unit: Unit) -> bool {
+    let most = match unit {
+        Unit::Day => MAX_OFFSET_YEARS * 366,
+        Unit::Week => MAX_OFFSET_YEARS * 53,
+        Unit::Month => MAX_OFFSET_YEARS * 12,
+        Unit::Year => MAX_OFFSET_YEARS,
+    };
+    n.unsigned_abs() <= most.unsigned_abs()
+}
+
 /// A query, parsed and checked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Query {
@@ -491,7 +507,7 @@ fn number_or_date(word: &str) -> Option<Value> {
                 'm' => Unit::Month,
                 _ => Unit::Year,
             };
-            return Some(Value::Date(DateValue::Offset(n, unit)));
+            return offset_in_range(n, unit).then_some(Value::Date(DateValue::Offset(n, unit)));
         }
         return None;
     }

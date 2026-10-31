@@ -1034,16 +1034,29 @@ impl ShopResolver<'_> {
             }
             // One webhook per topic and record of this mutation (`ShopState::merge_events_from`).
             let start = self.state.event_count();
-            let output = mutation::run(self, ctx);
-            // What follows a change on its own: listings, auto-publishing (`domains::markets`).
-            crate::domains::markets::after_mutation(self.state, start);
-            // The segments the customers it changed joined or left, and their sales.
+            // The mutation and what follows it are one change: a panic in either puts the shop
+            // back as it was before the mutation (`mutation::internal_error`).
+            let savepoint = self.state.savepoint();
+            let mut output = mutation::run(self, ctx);
             let (webhooks, shop) = (self.webhooks, self.state.domain().to_string());
-            crate::domains::segments::follow(self.state, start, &|topic| {
-                webhooks.is_some_and(|webhooks| webhooks.subscribes(&shop, topic))
-            });
-            // The product feeds' syncs, from the listings (`domains::catalog`).
-            crate::domains::catalog::after_mutation(self.state, start);
+            let followed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // What follows a change on its own: listings, auto-publishing
+                // (`domains::markets`).
+                crate::domains::markets::after_mutation(self.state, start);
+                // The segments the customers it changed joined or left, and their sales.
+                crate::domains::segments::follow(self.state, start, &|topic| {
+                    webhooks.is_some_and(|webhooks| webhooks.subscribes(&shop, topic))
+                });
+                // The product feeds' syncs, from the listings (`domains::catalog`).
+                crate::domains::catalog::after_mutation(self.state, start);
+            }));
+            match followed {
+                Ok(()) => self.state.release(savepoint),
+                Err(panic) => {
+                    self.state.rollback_unwound(savepoint);
+                    output = Err(mutation::internal_error(&*panic));
+                }
+            }
             self.state.merge_events_from(start);
             return output;
         }

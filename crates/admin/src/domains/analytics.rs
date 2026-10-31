@@ -755,6 +755,30 @@ mod tests {
             "FROM sales SHOW net_sales GROUP BY product_title SINCE 2020-01-01 ORDER BY net_sales DESC LIMIT 2",
         );
         assert_eq!(products["tableData"]["rows"].as_array().unwrap().len(), 2);
+        // A date past the calendar is not a date, whatever writes it.
+        for (query, error) in [
+            (
+                "FROM sales SHOW orders SINCE -99999999999d",
+                "Syntax Error: '-99999999999d' is not a date",
+            ),
+            (
+                "FROM sales SHOW orders UNTIL +99999999999h",
+                "Syntax Error: '+99999999999h' is not a date",
+            ),
+            (
+                "FROM sales SHOW orders SINCE startOfMonth(-9999999999m)",
+                "Syntax Error: 'startOfMonth(-9999999999m)' is not a date",
+            ),
+            (
+                "FROM sales SHOW orders DURING bfcm999999",
+                "Syntax Error: 'bfcm999999' is not a period",
+            ),
+        ] {
+            let answer = ql(&mut shop, query);
+            assert_eq!(answer["parseErrors"], json!([error]), "{query}");
+        }
+        let far = ql(&mut shop, "FROM sales SHOW orders SINCE -10000y");
+        assert_eq!(far["parseErrors"], json!([]), "{far}");
         // The reference's error.
         let error = ql(&mut shop, "FROM sales SHOW total_sale");
         assert_eq!(error["tableData"], Value::Null);

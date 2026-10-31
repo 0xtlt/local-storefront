@@ -331,10 +331,18 @@ impl AdminApi {
         let mut live = lock(&shop);
         let revision = live.state.revision();
         let start = live.state.event_count();
-        let result = change(&mut live.state);
-        crate::domains::segments::follow(&mut live.state, start, &|topic| {
-            self.webhooks.subscribes(domain, topic)
-        });
+        // A panic in the change or in what follows it puts the shop back as it was before
+        // (`ShopState::unwinding`), then goes on as the panic it is.
+        let result = live
+            .state
+            .unwinding(|state| {
+                let result = change(state);
+                crate::domains::segments::follow(state, start, &|topic| {
+                    self.webhooks.subscribes(domain, topic)
+                });
+                result
+            })
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         self.count_change(&live, revision);
         let events = live.state.take_events();
         if !events.is_empty() {

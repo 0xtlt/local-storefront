@@ -468,7 +468,12 @@ The full list, field by field, is in the design notes of `lsf-admin`
   ("Price must be less than 10000000000000") and changes nothing. Shopify publishes no limit:
   this one is lsf's, so that no total overflows.
 - A mutation lsf does not simulate answers an error with `extensions.code: LSF_NOT_SIMULATED`, never
-  a silent success. `GET /__lsf/admin` lists those it simulates. The REST Admin API
+  a silent success. `GET /__lsf/admin` lists those it simulates.
+- A bug of lsf while a mutation runs (a panic, in the mutation or in what follows it: segments,
+  listings, product feeds) answers Shopify's internal error: `Internal error. Looks like
+  something went wrong on our end.` with `extensions.code: INTERNAL_SERVER_ERROR`, a
+  `requestId`, and what went wrong in `extensions.lsf.panic`. The shop is put back as it was
+  before the mutation, so the next request finds it intact; the terminal shows the panic. The REST Admin API
   (`/admin/api/2026-10/products.json`) answers `404`: lsf serves the GraphQL Admin API only.
 
 ## What lsf simulates
@@ -923,8 +928,9 @@ what Shopify would send to the outside world is recorded in an outbox, never sen
 - The query language of shopify.dev's "Segment query language reference": clauses joined by
   `AND` (tighter) and `OR`, parentheses, `=`, `!=`, `>`, `>=`, `<`, `<=`, `BETWEEN … AND …`,
   `CONTAINS`, `NOT CONTAINS`, `IS NULL`, `IS NOT NULL`, `MATCHES (…)` and `NOT MATCHES (…)`;
-  quoted strings, numbers, dates, date-times, offsets (`-7d`, `-2w`, `-1m`, `+1y`), `today`,
-  `yesterday`, the deprecated `30_days_ago`; at most 10 clauses. Dates are whole days in the
+  quoted strings, numbers, dates, date-times, offsets (`-7d`, `-2w`, `-1m`, `+1y`, at most
+  10,000 years either way: lsf's bound, past it the value is not valid), `today`, `yesterday`,
+  the deprecated `30_days_ago`; at most 10 clauses. Dates are whole days in the
   shop's time zone (`customerSegmentMembers(timezone:)` for that query, UTC by default).
 - The filters: `amount_spent`, `number_of_orders`, `customer_added_date`, `first_order_date`,
   `last_order_date`, `abandoned_checkout_date` (the local checkout's), `customer_account_status`,
@@ -1004,7 +1010,8 @@ currency). `shopifyqlQuery` answers `FROM sales` over the shop's orders and refu
 `net_items_sold`, `customers`, `new_customers`, `returning_customers`, … and the dimensions of
 time, order, customer, product and address; a column it does not know is the reference's
 `Column Not Found: Column 'total_sale' not found`. `VISUALIZE` and `COMPARE TO` are ignored, with
-a note; another schema than `sales` is a parse error.
+a note; another schema than `sales` is a parse error, and so is an offset past 10,000 years
+(`Syntax Error: '-99999999999d' is not a date`, lsf's bound).
 
 **Privacy**: `consentPolicyUpdate` (once `privacyFeaturesDisable([COOKIE_BANNER])` turned
 Shopify's banner off, as Shopify requires), `consentPolicy`, `consentPolicyRegions`;

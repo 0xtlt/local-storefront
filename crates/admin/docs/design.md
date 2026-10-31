@@ -848,7 +848,17 @@ record removed or retyped (put back at its positions among the records and among
 type), a counter's value, a blob's, a memo's, a setting's. A failure replays the log backwards,
 then truncates the events and the changes tracked for the store sync to their length at the
 savepoint, and puts back the event sequence, the revision and the clock: the shop is as it was,
-the order of every map included. Savepoints nest: a bulk operation's mutation per line opens its
+the order of every map included. **A panic** (a bug of lsf) is a failure too: `mutation::run`
+catches it, rolls back (`ShopState::rollback_unwound`, which also closes the savepoints the
+panic left open) and answers Shopify's internal error (`mutation::internal_error`: its message,
+`extensions.code = "INTERNAL_SERVER_ERROR"`, a `requestId`, and the panic's message in
+`extensions.lsf.panic`). The resolver runs the mutation and what follows it
+(`markets::after_mutation`, `segments::follow`, `catalog::after_mutation`) within one more
+savepoint, so that a panic in a follow-up undoes the mutation as well; `AdminApi::change_shop`
+does the same for its change (`ShopState::unwinding`), then lets the panic go on. Without this,
+a mutation that panicked after its first write kept it, and a follow-up that panicked on what a
+mutation stored (a segment whose date overflowed) failed every later request. The shop lock's
+poisoning is still recovered (`api::admin::lock`). Savepoints nest: a bulk operation's mutation per line opens its
 own, which an outer failure still undoes once released. A success closes the log. The cost is
 what the mutation wrote: a copy of the shop, as it was done first, took 180 to 400 ms on 198,000
 records, before every mutation's first write. A mutation lsf does not
@@ -1127,12 +1137,12 @@ Each in a module of its own, whose header has the rules and their sources:
 
 | Module | What |
 |---|---|
-| `segments` | `Segment` records (ids of the counter); `segments::language` parses the segment query language (a lexer and a recursive parser, errors `Query Line L Column C: …` at the clause at fault), `segments::filters` lists the 33 filters of the reference (type, enum values, function parameters), `segments::evaluate` reads them on a customer (`Facts`: computed once per customer and request, from the customer, their addresses, orders and line items, company contacts, store credit accounts, abandoned checkouts and metafields; dates as whole days in the shop's zone). `customerSegmentMembers` pages the generic connection without its `query`, `sortKey` and `reverse` (they are the segment's), then adds `totalCount` and `statistics`. |
+| `segments` | `Segment` records (ids of the counter); `segments::language` parses the segment query language (a lexer and a recursive parser, errors `Query Line L Column C: …` at the clause at fault; an offset reaches 10,000 years at most, `MAX_OFFSET_YEARS`, and the evaluator's date arithmetic is checked: a date past chrono's matches nothing), `segments::filters` lists the 33 filters of the reference (type, enum values, function parameters), `segments::evaluate` reads them on a customer (`Facts`: computed once per customer and request, from the customer, their addresses, orders and line items, company contacts, store credit accounts, abandoned checkouts and metafields; dates as whole days in the shop's zone). `customerSegmentMembers` pages the generic connection without its `query`, `sortKey` and `reverse` (they are the segment's), then adds `totalCount` and `statistics`. |
 | `segments::saved_searches` | `SavedSearch` records (`searchTerms` and `filters` split from the query by `search::Query`); `resolve::search` applies the query of a connection's `savedSearchId` under the connection's own (`(saved) AND (query)`). |
 | `customer_merge` | `customerMerge` (the kept customer by shopify.dev's rules; the other's orders, draft orders, addresses, metafields, tags and note moved, then deleted), `customerMergePreview`, `customerMergeJobStatus` (a memo per job), `Customer.mergeable`; `customers/purchasing_summary`. |
 | `privacy` | Data erasure (a memo per customer: pending 10 days, then redacted by `process_due_erasures`), `dataSaleOptOut`, the WhatsApp consent (on the customer, copied to `defaultPhoneNumber` by `customers::contact_fields`), `ConsentPolicy` records, the privacy features (a memo). |
 | `marketing` | `MarketingActivity` and `MarketingEvent` records (the app's remote id, channel handle and engagements under `lsf…` keys), the errors of `MarketingActivityUserErrorCode` with the code's description as message. |
-| `analytics` | `AnalyticsAnnotation`, `AnalyticsTarget` records; `analytics::shopifyql`, a ShopifyQL subset (`FROM sales`) over a row per line sold, per order (its shipping and taxes) and per refund. |
+| `analytics` | `AnalyticsAnnotation`, `AnalyticsTarget` records; `analytics::shopifyql`, a ShopifyQL subset (`FROM sales`) over a row per line sold, per order (its shipping and taxes) and per refund; offsets within 10,000 years (`MAX_OFFSET_YEARS`), the date arithmetic checked (a date past chrono's is `Syntax Error: '…' is not a date`). |
 | `staff` | The shop's owner (`StaffMember`, seeded last, when no family seeded staff), `CompanyLocationStaffMemberAssignment` records, and the deprecated tax registration mutations on the companies family's `change_tax_settings`. |
 | `checkouts` | `AbandonedCheckout` records of the local checkout (one per cart token and order generation, a memo naming it), `Abandonment` records for checkouts of customers, the cart events (no record: the event's snapshot), what is abandoned when read (`is_listed`: contact, and more than ten minutes since the last change by the shop's clock), the three-month cleanup. |
 | `outbox` | What Shopify would send the outside world: a memo of the shop, listed by `GET /__lsf/admin`. |

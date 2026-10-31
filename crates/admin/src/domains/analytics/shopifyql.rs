@@ -667,7 +667,11 @@ impl Clock {
 /// The first day of the period of `unit` that holds `day`.
 fn start_of(day: NaiveDate, unit: &str) -> NaiveDate {
     match unit {
-        "week" => day - Duration::days(i64::from(day.weekday().num_days_from_monday())),
+        "week" => day
+            .checked_sub_signed(Duration::days(i64::from(
+                day.weekday().num_days_from_monday(),
+            )))
+            .unwrap_or(day),
         "month" => day.with_day(1).unwrap_or(day),
         "quarter" => {
             NaiveDate::from_ymd_opt(day.year(), ((day.month() - 1) / 3) * 3 + 1, 1).unwrap_or(day)
@@ -677,24 +681,24 @@ fn start_of(day: NaiveDate, unit: &str) -> NaiveDate {
     }
 }
 
-/// The day after the period of `unit` that starts on `day`.
-fn next_period(day: NaiveDate, unit: &str) -> NaiveDate {
+/// The day after the period of `unit` that starts on `day`; `None` past the dates chrono
+/// holds.
+fn next_period(day: NaiveDate, unit: &str) -> Option<NaiveDate> {
     match unit {
-        "week" => day + Duration::days(7),
-        "month" => day
-            .checked_add_months(chrono::Months::new(1))
-            .unwrap_or(day),
-        "quarter" => day
-            .checked_add_months(chrono::Months::new(3))
-            .unwrap_or(day),
-        "year" => day
-            .checked_add_months(chrono::Months::new(12))
-            .unwrap_or(day),
-        _ => day + Duration::days(1),
+        "week" => day.checked_add_signed(Duration::days(7)),
+        "month" => day.checked_add_months(chrono::Months::new(1)),
+        "quarter" => day.checked_add_months(chrono::Months::new(3)),
+        "year" => day.checked_add_months(chrono::Months::new(12)),
+        _ => day.succ_opt(),
     }
 }
 
-/// `-30d`, `+2w`, `-3m`, `-1q`, `-1y`: the unit and the count.
+/// The furthest an offset (`-30d`, `+1y`) reaches, in years either way. The reference
+/// publishes no bound; lsf's keeps every date it computes within what a date holds, and an
+/// offset past it is not a date (`Syntax Error: '-99999999999d' is not a date`).
+pub const MAX_OFFSET_YEARS: i64 = 10_000;
+
+/// `-30d`, `+2w`, `-3m`, `-1q`, `-1y`: the unit and the count, within [`MAX_OFFSET_YEARS`].
 fn offset(text: &str) -> Option<(i64, &'static str)> {
     let (number, unit) = [
         ("min", "minute"),
@@ -707,24 +711,35 @@ fn offset(text: &str) -> Option<(i64, &'static str)> {
     ]
     .iter()
     .find_map(|(suffix, unit)| text.strip_suffix(suffix).map(|number| (number, *unit)))?;
-    Some((number.parse().ok()?, unit))
+    let n: i64 = number.parse().ok()?;
+    let per_year: i64 = match unit {
+        "minute" => 366 * 24 * 60,
+        "hour" => 366 * 24,
+        "day" => 366,
+        "week" => 53,
+        "month" => 12,
+        "quarter" => 4,
+        _ => 1,
+    };
+    (n.unsigned_abs() <= (MAX_OFFSET_YEARS * per_year).unsigned_abs()).then_some((n, unit))
 }
 
-fn shift(day: NaiveDate, n: i64, unit: &str) -> NaiveDate {
+/// A day moved by `n` units; `None` past the dates chrono holds.
+fn shift(day: NaiveDate, n: i64, unit: &str) -> Option<NaiveDate> {
     let months = |months: i64| {
+        let count = chrono::Months::new(u32::try_from(months.unsigned_abs()).ok()?);
         if months >= 0 {
-            day.checked_add_months(chrono::Months::new(months as u32))
+            day.checked_add_months(count)
         } else {
-            day.checked_sub_months(chrono::Months::new(months.unsigned_abs() as u32))
+            day.checked_sub_months(count)
         }
-        .unwrap_or(day)
     };
     match unit {
-        "week" => day + Duration::weeks(n),
+        "week" => day.checked_add_signed(Duration::try_weeks(n)?),
         "month" => months(n),
-        "quarter" => months(n * 3),
-        "year" => months(n * 12),
-        _ => day + Duration::days(n),
+        "quarter" => months(n.checked_mul(3)?),
+        "year" => months(n.checked_mul(12)?),
+        _ => day.checked_add_signed(Duration::try_days(n)?),
     }
 }
 
@@ -732,31 +747,32 @@ fn shift(day: NaiveDate, n: i64, unit: &str) -> NaiveDate {
 fn bound(tokens: &[Tok], clock: &Clock, end: bool) -> Result<DateTime<Utc>, String> {
     let text: String = tokens.iter().map(Tok::written).collect::<Vec<_>>().join("");
     let invalid = || format!("Syntax Error: '{text}' is not a date");
-    let day_bounds = |day: NaiveDate| {
+    let day_bounds = |day: NaiveDate| -> Result<DateTime<Utc>, String> {
         let start = clock.utc(day.and_hms_opt(0, 0, 0).unwrap_or_default());
-        if end {
+        Ok(if end {
             clock.utc(
                 next_period(day, "day")
+                    .ok_or_else(invalid)?
                     .and_hms_opt(0, 0, 0)
                     .unwrap_or_default(),
             ) - Duration::seconds(1)
         } else {
             start
-        }
+        })
     };
     let lower = text.to_ascii_lowercase();
     if lower == "now" {
         return Ok(clock.now);
     }
     if lower == "today" {
-        return Ok(if end {
-            clock.now
+        return if end {
+            Ok(clock.now)
         } else {
             day_bounds(clock.today())
-        });
+        };
     }
     if lower == "yesterday" {
-        return Ok(day_bounds(clock.today() - Duration::days(1)));
+        return day_bounds(clock.today().pred_opt().ok_or_else(invalid)?);
     }
     // `startOfMonth(-1m)`, `endOfDay(-1d)`.
     for (prefix, at_end) in [("startof", false), ("endof", true)] {
@@ -764,11 +780,12 @@ fn bound(tokens: &[Tok], clock: &Clock, end: bool) -> Result<DateTime<Utc>, Stri
             let (unit, inner) = rest.split_once('(').ok_or_else(invalid)?;
             let inner = inner.strip_suffix(')').ok_or_else(invalid)?;
             let (n, _) = offset(inner).ok_or_else(invalid)?;
-            let day = start_of(shift(clock.today(), n, unit), unit);
+            let day = start_of(shift(clock.today(), n, unit).ok_or_else(invalid)?, unit);
             let start = clock.utc(day.and_hms_opt(0, 0, 0).unwrap_or_default());
             return Ok(if at_end {
                 clock.utc(
                     next_period(day, unit)
+                        .ok_or_else(invalid)?
                         .and_hms_opt(0, 0, 0)
                         .unwrap_or_default(),
                 ) - Duration::seconds(1)
@@ -778,14 +795,18 @@ fn bound(tokens: &[Tok], clock: &Clock, end: bool) -> Result<DateTime<Utc>, Stri
         }
     }
     if let Some((n, unit)) = offset(&lower) {
-        return Ok(match unit {
-            "minute" => clock.now + Duration::minutes(n),
-            "hour" => clock.now + Duration::hours(n),
-            unit => day_bounds(shift(clock.today(), n, unit)),
-        });
+        return match unit {
+            "minute" => Duration::try_minutes(n)
+                .and_then(|span| clock.now.checked_add_signed(span))
+                .ok_or_else(invalid),
+            "hour" => Duration::try_hours(n)
+                .and_then(|span| clock.now.checked_add_signed(span))
+                .ok_or_else(invalid),
+            unit => day_bounds(shift(clock.today(), n, unit).ok_or_else(invalid)?),
+        };
     }
     if let Ok(day) = NaiveDate::parse_from_str(&text, "%Y-%m-%d") {
-        return Ok(day_bounds(day));
+        return day_bounds(day);
     }
     if let Ok(time) = NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") {
         return Ok(clock.utc(time));
@@ -796,23 +817,25 @@ fn bound(tokens: &[Tok], clock: &Clock, end: bool) -> Result<DateTime<Utc>, Stri
 /// The period a `DURING` names.
 fn during(name: &str, clock: &Clock) -> Result<(DateTime<Utc>, DateTime<Utc>), String> {
     let today = clock.today();
-    let span = |start: NaiveDate, end: NaiveDate| {
-        (
+    let invalid = || format!("Syntax Error: '{name}' is not a period");
+    let span = |start: NaiveDate, end: Option<NaiveDate>| {
+        let end = end.ok_or_else(invalid)?;
+        Ok::<_, String>((
             clock.utc(start.and_hms_opt(0, 0, 0).unwrap_or_default()),
             clock.utc(end.and_hms_opt(0, 0, 0).unwrap_or_default()) - Duration::seconds(1),
-        )
+        ))
     };
     let this = |unit: &str| {
         let start = start_of(today, unit);
         span(start, next_period(start, unit))
     };
     let last = |unit: &str| {
-        let start = start_of(shift(today, -1, unit), unit);
+        let start = start_of(shift(today, -1, unit).ok_or_else(invalid)?, unit);
         span(start, next_period(start, unit))
     };
-    Ok(match name {
-        "today" => span(today, today + Duration::days(1)),
-        "yesterday" => span(today - Duration::days(1), today),
+    match name {
+        "today" => span(today, today.succ_opt()),
+        "yesterday" => span(today.pred_opt().ok_or_else(invalid)?, Some(today)),
         "this_week" => this("week"),
         "this_month" => this("month"),
         "this_quarter" => this("quarter"),
@@ -823,16 +846,16 @@ fn during(name: &str, clock: &Clock) -> Result<(DateTime<Utc>, DateTime<Utc>), S
         "last_year" => last("year"),
         name if name.starts_with("bfcm") => {
             // Black Friday (the day after the fourth Thursday of November) to Cyber Monday.
-            let year: i32 = name[4..]
-                .parse()
-                .map_err(|_| format!("Syntax Error: '{name}' is not a period"))?;
-            let first = NaiveDate::from_ymd_opt(year, 11, 1).unwrap_or(today);
+            let year: i32 = name[4..].parse().map_err(|_| invalid())?;
+            let first = NaiveDate::from_ymd_opt(year, 11, 1).ok_or_else(invalid)?;
             let thursday = (3 - first.weekday().num_days_from_monday() as i64 + 7) % 7;
-            let friday = first + Duration::days(thursday + 21 + 1);
-            span(friday, friday + Duration::days(4))
+            let friday = first
+                .checked_add_signed(Duration::days(thursday + 21 + 1))
+                .ok_or_else(invalid)?;
+            span(friday, friday.checked_add_signed(Duration::days(4)))
         }
-        _ => return Err(format!("Syntax Error: '{name}' is not a period")),
-    })
+        _ => Err(invalid()),
+    }
 }
 
 // --- Sales ---
@@ -1340,7 +1363,7 @@ fn run(state: &ShopState, text: &str) -> Result<(Value, Vec<String>), Vec<String
                     "quarter" => (-4, "quarter"),
                     _ => (if unit == "year" { -3 } else { -1 }, "year"),
                 };
-                let day = start_of(shift(clock.today(), n, unit), unit);
+                let day = start_of(shift(clock.today(), n, unit)?, unit);
                 Some(clock.utc(day.and_hms_opt(0, 0, 0).unwrap_or_default()))
             };
             let since = since.or_else(default_since);
@@ -1399,7 +1422,10 @@ fn run(state: &ShopState, text: &str) -> Result<(Value, Vec<String>), Vec<String
             groups
                 .entry(key)
                 .or_insert_with(|| (key_values, Vec::new()));
-            day = next_period(day, unit);
+            let Some(next) = next_period(day, unit) else {
+                break;
+            };
+            day = next;
         }
     }
     let totals = metrics(&kept);

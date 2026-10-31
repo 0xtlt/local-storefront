@@ -84,21 +84,23 @@ impl Context {
             )
     }
 
-    /// The day a date condition names, or the instant of a date-time.
-    fn bounds(&self, date: &DateValue) -> (DateTime<Utc>, DateTime<Utc>) {
-        let day = |day: NaiveDate| (self.start_of(day), self.start_of(day + Duration::days(1)));
+    /// The day a date condition names, or the instant of a date-time; `None` past the dates
+    /// chrono holds (the parser keeps offsets well within them: [`super::language::
+    /// MAX_OFFSET_YEARS`]).
+    fn bounds(&self, date: &DateValue) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let day = |day: NaiveDate| Some((self.start_of(day), self.start_of(day.succ_opt()?)));
         match date {
             DateValue::Day(d) => day(*d),
             DateValue::Today => day(self.today()),
-            DateValue::Yesterday => day(self.today() - Duration::days(1)),
-            DateValue::Offset(n, unit) => day(offset(self.today(), *n, *unit)),
+            DateValue::Yesterday => day(self.today().pred_opt()?),
+            DateValue::Offset(n, unit) => day(offset(self.today(), *n, *unit)?),
             DateValue::Time(time) => {
                 let at = self
                     .zone
                     .from_local_datetime(time)
                     .earliest()
                     .map_or_else(|| Utc.from_utc_datetime(time), |at| at.with_timezone(&Utc));
-                (at, at + Duration::seconds(1))
+                Some((at, at.checked_add_signed(Duration::seconds(1))?))
             }
         }
     }
@@ -109,27 +111,33 @@ impl Context {
     }
 }
 
-/// A day moved by `n` units.
-fn offset(day: NaiveDate, n: i64, unit: Unit) -> NaiveDate {
+/// A day moved by `n` units; `None` past the dates chrono holds.
+fn offset(day: NaiveDate, n: i64, unit: Unit) -> Option<NaiveDate> {
     match unit {
-        Unit::Day => day + Duration::days(n),
-        Unit::Week => day + Duration::weeks(n),
+        Unit::Day => day.checked_add_signed(Duration::try_days(n)?),
+        Unit::Week => day.checked_add_signed(Duration::try_weeks(n)?),
         Unit::Month | Unit::Year => {
-            let months = if unit == Unit::Year { n * 12 } else { n };
-            let shifted = if months >= 0 {
-                day.checked_add_months(chrono::Months::new(months.unsigned_abs() as u32))
+            let months = if unit == Unit::Year {
+                n.checked_mul(12)?
             } else {
-                day.checked_sub_months(chrono::Months::new(months.unsigned_abs() as u32))
+                n
             };
-            shifted.unwrap_or(day)
+            let count = chrono::Months::new(u32::try_from(months.unsigned_abs()).ok()?);
+            if months >= 0 {
+                day.checked_add_months(count)
+            } else {
+                day.checked_sub_months(count)
+            }
         }
     }
 }
 
 /// Whether an instant compares to a date condition as `op` asks: on the day, after its end,
-/// before its start, …
+/// before its start, … A date past what chrono holds matches nothing.
 fn compare_date(context: &Context, at: DateTime<Utc>, op: Op, date: &DateValue) -> bool {
-    let (start, end) = context.bounds(date);
+    let Some((start, end)) = context.bounds(date) else {
+        return false;
+    };
     match op {
         Op::Eq => start <= at && at < end,
         Op::Ne => !(start <= at && at < end),
@@ -141,8 +149,9 @@ fn compare_date(context: &Context, at: DateTime<Utc>, op: Op, date: &DateValue) 
 }
 
 fn between_dates(context: &Context, at: DateTime<Utc>, from: &DateValue, to: &DateValue) -> bool {
-    let (start, _) = context.bounds(from);
-    let (_, end) = context.bounds(to);
+    let (Some((start, _)), Some((_, end))) = (context.bounds(from), context.bounds(to)) else {
+        return false;
+    };
     start <= at && at < end
 }
 
