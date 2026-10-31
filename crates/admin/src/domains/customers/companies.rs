@@ -32,10 +32,7 @@ use lsf_core::store::reference::country_name;
 use serde_json::{Map, Value, json};
 
 use super::contacts::{self, delete_contact};
-use super::{
-    CONTACT_ROLES, contact_role_gid_of, field_path, gids_of, given_text, primary_locale,
-    shop_currency,
-};
+use super::{CONTACT_ROLES, contact_role_gid_of, field_path, gids_of, given_text, primary_locale};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, parse_gid, value};
@@ -325,7 +322,7 @@ fn create_location(
         "externalId": null,
         "company": company,
         "locale": primary_locale(state),
-        "currency": shop_currency(state),
+        "currency": crate::domains::orders::model::currency(state),
         "phone": null,
         "note": null,
         "buyerExperienceConfiguration": null,
@@ -340,7 +337,7 @@ fn create_location(
         "taxExemptions": exemptions,
         "ordersCount": {"count": 0, "precision": "EXACT"},
         "orderCount": 0,
-        "totalSpent": value::money_v2(0, &shop_currency(state)),
+        "totalSpent": value::money_v2(0, &crate::domains::orders::model::currency(state)),
         "roleAssignments": [],
         "createdAt": now,
         "updatedAt": now,
@@ -430,7 +427,7 @@ fn company_create(
         "mainContact": null,
         "contactRoles": roles,
         "defaultRole": contact_role_gid_of(number, CONTACT_ROLES[1].0),
-        "totalSpent": value::money_v2(0, &shop_currency(state)),
+        "totalSpent": value::money_v2(0, &crate::domains::orders::model::currency(state)),
         "metafields": [],
     }));
     apply_company(&mut record, &company_input);

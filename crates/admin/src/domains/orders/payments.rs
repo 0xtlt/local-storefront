@@ -788,18 +788,6 @@ fn terms_delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
 
 // --- Payments ---
 
-/// A `MoneyInput` argument: its cents and its currency. `None` when it is not given.
-fn money_input(value: Option<&Value>) -> Option<(i64, Option<String>)> {
-    let value = value.filter(|value| !value.is_null())?;
-    Some((
-        model::cents(Some(value)),
-        value
-            .get("currencyCode")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    ))
-}
-
 /// The amount of a payment: the one given (in the shop's currency, above 0, at most what is
 /// outstanding), else the outstanding amount. The errors are at `field`.
 fn payment_amount(
@@ -884,8 +872,12 @@ fn manual_payment(
             "AMOUNT_EXCEEDS_BALANCE",
         );
     }
-    let amount = match payment_amount(state, money_input(ctx.arg("amount")), outstanding, "amount")
-    {
+    let amount = match payment_amount(
+        state,
+        model::money_input(ctx.arg("amount")),
+        outstanding,
+        "amount",
+    ) {
         Ok(amount) => amount,
         Err((field, message, code)) => {
             let field: Vec<&str> = field.iter().map(String::as_str).collect();
@@ -1195,8 +1187,12 @@ fn mandate_payment(
     if outstanding <= 0 {
         return failed(&["id"], "The order has no outstanding balance to pay");
     }
-    let amount = match payment_amount(state, money_input(ctx.arg("amount")), outstanding, "amount")
-    {
+    let amount = match payment_amount(
+        state,
+        model::money_input(ctx.arg("amount")),
+        outstanding,
+        "amount",
+    ) {
         Ok(amount) => amount,
         Err((field, message, _)) => {
             let field: Vec<&str> = field.iter().map(String::as_str).collect();

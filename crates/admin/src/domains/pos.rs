@@ -125,19 +125,9 @@ pub fn register(registry: &mut Registry) {
     sessions::register(registry);
 }
 
-/// The currency of the shop: every drawer's.
-fn currency(state: &ShopState) -> String {
-    state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string()
-}
-
 /// A `MoneyV2` of the shop's currency.
 fn money(state: &ShopState, cents: i64) -> Value {
-    value::money_v2(cents, &currency(state))
+    value::money_v2(cents, &crate::domains::orders::model::currency(state))
 }
 
 /// The cents of a `MoneyV2` (or a `MoneyInput`).

@@ -423,7 +423,7 @@ fn target_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         return Ok(payload(json!({"analyticsTarget": null}), &errors));
     }
     let now = m.timestamp();
-    let currency = crate::domains::customers::shop_currency(m.state());
+    let currency = crate::domains::orders::model::currency(m.state());
     let text = |field: &str| input.get(field).and_then(Value::as_str).unwrap_or_default();
     let query = target_query(
         text("metric"),

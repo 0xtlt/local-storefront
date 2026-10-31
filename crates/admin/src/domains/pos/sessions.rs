@@ -31,7 +31,8 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::{Value, json};
 
-use super::{cents, currency, is_reason_code, money, tell_device, text};
+use super::{cents, is_reason_code, money, tell_device, text};
+use crate::domains::orders::model::currency;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::SearchValue;
