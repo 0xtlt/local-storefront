@@ -400,6 +400,10 @@ impl ServerState {
         for src in self.app.theme.script_tags().iter() {
             hasher.write(src.as_bytes());
         }
+        if let Some(identity) = self.app.theme.identity() {
+            hasher.write_u64(identity.id);
+            hasher.write(identity.name.as_deref().unwrap_or_default().as_bytes());
+        }
         let root = self.app.theme.files().root();
         for directory in THEME_DIRECTORIES {
             hasher.write_u64(fingerprint(&root.join(directory)));

@@ -36,8 +36,8 @@ use crate::resolve::Registry;
 use crate::state::seed::Seed;
 use crate::state::{Record, ShopState, gid};
 
-/// The id of the local theme: `Shopify.theme.id` of `content_for_header`
-/// (`lsf_core::urls::THEME_ID`).
+/// The id of the local theme: `Shopify.theme.id` of `content_for_header` while it is the main
+/// theme (`lsf_core::urls::THEME_ID`; another main theme is named by [`storefront_identity`]).
 pub const LOCAL_THEME_ID: u64 = lsf_core::urls::THEME_ID;
 
 /// The setting of the shop that holds the directory of the local theme.
@@ -50,6 +50,10 @@ pub const FILES: &str = "lsfFiles";
 
 /// The field of a theme record that says it is the directory's.
 pub const LOCAL: &str = "lsfLocal";
+
+/// The field of the local theme's record that says `themeUpdate` named it: until then, its name
+/// is the one its files give, which the storefront reads from them.
+pub const RENAMED: &str = "lsfRenamed";
 
 /// The name lsf-core gives a theme without `theme_info`.
 pub const DEFAULT_NAME: &str = "Local theme";
@@ -177,6 +181,31 @@ pub fn storefront_overlay(state: &ShopState) -> Option<FileOverlay> {
     }
     overlay.generation = lsf_core::util::stable_id("theme-overlay", &fingerprint).max(1);
     Some(overlay)
+}
+
+/// Which theme the storefront serves, as `Shopify.theme`, the `theme` object and the asset URLs
+/// name it: the shop's main theme. `None` while it is the local theme as its files name it (the
+/// directory alone: id 1, the name of its `theme_info`).
+pub fn storefront_identity(state: &ShopState) -> Option<lsf_core::theme::ThemeIdentity> {
+    let main = main_theme(state)?;
+    let theme = state.get(&main)?;
+    let renamed = theme.get(RENAMED).and_then(Value::as_bool) == Some(true);
+    if is_local(theme) && !renamed {
+        return None;
+    }
+    let (_, id) = crate::state::parse_gid(&main)?;
+    Some(lsf_core::theme::ThemeIdentity {
+        id,
+        name: theme
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        role: theme
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("MAIN")
+            .to_ascii_lowercase(),
+    })
 }
 
 pub fn register(registry: &mut Registry) {

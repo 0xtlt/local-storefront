@@ -87,9 +87,10 @@ impl ServerState {
 
     /// What the Admin API changed of the theme the storefront serves: the files written over
     /// the theme directory or deleted from it, or the whole of another theme it published
-    /// (`lsf_admin::domains::themes`), and the script tags `content_for_header` loads. The
-    /// directory is never written to. Applied when they changed, while `rebuilding` is held:
-    /// after a change of the default shop, and after a reseed (`ServerState::reload`).
+    /// (`lsf_admin::domains::themes`), the script tags `content_for_header` loads, and which
+    /// theme `Shopify.theme` names (its id, its name). The directory is never written to.
+    /// Applied when they changed, while `rebuilding` is held: after a change of the default
+    /// shop, and after a reseed (`ServerState::reload`).
     pub(super) fn sync_theme(&self, api: &lsf_admin::api::AdminApi) {
         let files = self.app.theme.files();
         let overlay = api.storefront_overlay();
@@ -100,6 +101,11 @@ impl ServerState {
         let scripts = api.storefront_scripts();
         if *self.app.theme.script_tags() != *scripts {
             self.app.theme.set_script_tags(scripts);
+        }
+        // Which theme `Shopify.theme`, the `theme` object and the asset URLs name.
+        let identity = api.storefront_theme();
+        if self.app.theme.identity().as_deref() != identity.as_ref() {
+            self.app.theme.set_identity(identity);
         }
     }
 

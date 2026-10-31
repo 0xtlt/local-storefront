@@ -236,6 +236,13 @@ impl AdminApi {
             .flatten()
     }
 
+    /// Which theme of the default shop the storefront serves (`domains::themes::
+    /// storefront_identity`): `None` for the theme directory as its files name it.
+    pub fn storefront_theme(&self) -> Option<lsf_core::theme::ThemeIdentity> {
+        self.with_default_shop(crate::domains::themes::storefront_identity)
+            .flatten()
+    }
+
     /// Serves these versions of the Admin API (`--admin-versions`), for requests and for the
     /// payloads of webhooks: [`version::DEFAULT`] alone otherwise.
     pub fn with_versions(mut self, versions: Served) -> AdminApi {

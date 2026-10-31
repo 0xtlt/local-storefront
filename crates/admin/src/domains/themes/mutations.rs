@@ -230,6 +230,8 @@ fn theme_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         && let Some(theme) = state.get_mut(&id)
     {
         theme.insert("name".into(), json!(name));
+        // The storefront's `Shopify.theme.name` follows it from now on.
+        theme.insert(super::RENAMED.into(), json!(true));
     }
     state.touch(&id);
     state.emit("themes/update", &id);

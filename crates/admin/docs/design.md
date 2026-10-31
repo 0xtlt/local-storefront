@@ -1713,9 +1713,13 @@ never written to.**
   within ±5 µs (±1.5 %) either way, which is the noise. With an overlay of two files and a script
   tag, `/` renders in 163 to 172 µs against 161 to 165 µs before (alternated runs): a few µs,
   most of it the 640 bytes of the script tag's loader.
-- *What does not follow*: `Shopify.theme` of `content_for_header` keeps id 1 and the name of the
-  directory's `settings_schema.json` while another theme is published (its files are served); a
-  `URL` body of `themeFilesUpsert` and a `themeCreate` from a URL are downloaded within the
+- *Which theme the page names*: `Shopify.theme` of `content_for_header`, the `theme` object and
+  the asset URLs (`/cdn/shop/t/<id>/…`) name the main theme (`themes::storefront_identity`,
+  `AdminApi::storefront_theme`, given to `lsf_core::theme::Theme::set_identity` by
+  `sync_theme`): its id and name while another theme is published, the name `themeUpdate` gave
+  the local theme. `schema_name` stays the files' `theme_info`. Without either, the directory:
+  id 1, the name its files give.
+- *What does not follow*: a `URL` body of `themeFilesUpsert` and a `themeCreate` from a URL are downloaded within the
   request (10 s), where Shopify processes them in the background (`processing: true` until done):
   lsf's are done when the mutation answers.
 

@@ -175,6 +175,20 @@ pub fn global_asset(name: &str) -> Option<GlobalAsset> {
         })
 }
 
+/// The id, name and role of the theme served (`Shopify.theme`, the `theme` object): the shop's
+/// main theme when the Admin API says which, else the directory, named by its files.
+pub fn served_theme(theme: &Theme) -> (u64, String, String) {
+    let identity = theme.identity();
+    let name = identity
+        .as_ref()
+        .and_then(|identity| identity.name.clone())
+        .unwrap_or_else(|| theme_info(theme).0);
+    match identity {
+        Some(identity) => (identity.id, name, identity.role.clone()),
+        None => (urls::THEME_ID, name, "main".to_string()),
+    }
+}
+
 /// `theme_name` and `theme_version` of `config/settings_schema.json`.
 pub fn theme_info(theme: &Theme) -> (String, String) {
     let info = theme
@@ -316,7 +330,7 @@ pub fn compiled_stylesheet_url(site: &Site) -> Option<String> {
         format!(
             "{}/cdn/shop/t/{}/compiled_assets/styles.css?v={}",
             urls::cdn_origin(site),
-            urls::THEME_ID,
+            site.theme.id(),
             super::compiled_version(&site.theme)
         )
     })
@@ -389,13 +403,14 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
         })),
     ));
 
+    let (theme_id, served_name, role) = served_theme(&site.theme);
     let theme = json!({
-        "name": theme_name,
-        "id": urls::THEME_ID,
+        "name": served_name,
+        "id": theme_id,
         "schema_name": theme_name,
         "schema_version": theme_version,
         "theme_store_id": null,
-        "role": "main",
+        "role": role,
     });
     out.push(script(
         "",
@@ -486,7 +501,7 @@ pub fn content_for_header(site: &Site, page: &Page) -> String {
     ));
 
     let bundles = bundles(&site.theme);
-    let compiled = format!("{cdn}/cdn/shop/t/{}/compiled_assets", urls::THEME_ID);
+    let compiled = format!("{cdn}/cdn/shop/t/{}/compiled_assets", site.theme.id());
     let version = super::compiled_version(&site.theme);
     if let Some(stylesheet) = compiled_stylesheet_url(site) {
         out.push(format!(

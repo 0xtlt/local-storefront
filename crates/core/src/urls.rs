@@ -6,7 +6,8 @@
 use crate::site::Site;
 use crate::util::short_hash;
 
-/// The id of the theme in asset URLs.
+/// The id of the theme directory in asset URLs, when the Admin API says nothing of the theme
+/// served (`Theme::id`).
 pub const THEME_ID: u64 = 1;
 
 /// Percent-encodes a query component like Ruby's `CGI.escape`, with spaces as `+`.
@@ -62,8 +63,9 @@ pub fn asset_url(site: &Site, name: &str) -> String {
         version => version,
     };
     format!(
-        "{}/cdn/shop/t/{THEME_ID}/assets/{}?v={version}",
+        "{}/cdn/shop/t/{}/assets/{}?v={version}",
         cdn_origin(site),
+        site.theme.id(),
         encode_path(name),
     )
 }

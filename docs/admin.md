@@ -1441,8 +1441,9 @@ the connection's `userErrors` (`NOT_FOUND`).
   `DEVELOPMENT`), `themeDuplicate` (all the files, "Copy of …"), `themeUpdate` (the name, 50
   characters), `themeDelete` (not the main theme, and never the local theme, even once another
   is published: it is the directory, which would be gone until a reset), `themePublish`. A
-  published theme is what the storefront serves, alone; publishing the local theme again serves
-  the directory.
+  published theme is what the storefront serves, alone, and what the page names: `Shopify.theme`
+  and the `theme` object have its id and name, and asset URLs are under `/cdn/shop/t/<id>/`;
+  publishing the local theme again serves the directory, id 1.
 - `themeFilesUpsert`: 50 files at most, one input per filename, files in the theme's directories
   (no `..`, and no `\`, `:`, NUL or control character: what Windows would read as another
   path is refused on every system, and no file outside the directory is ever read), JSON files
