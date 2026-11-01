@@ -21,11 +21,6 @@ pub(super) fn market(record: &Map<String, Value>) -> Value {
     })
 }
 
-/// `markets/delete`: the id of the market.
-pub(super) fn market_deleted(record: &Map<String, Value>) -> Value {
-    json!({"id": id(record)})
-}
-
 /// `markets_backup_region/update`: the region, its GID written `MarketRegion` as the example
 /// writes it.
 pub(super) fn backup_region(record: &Map<String, Value>) -> Value {

@@ -354,9 +354,16 @@ pub fn is_built(topic: &str) -> bool {
 pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Value> {
     Some(match topic {
         "products/create" | "products/update" => catalog::product(record, lookup),
-        "products/delete" | "orders/delete" | "draft_orders/delete" | "locations/delete" => {
-            json!({ "id": id(record) })
-        }
+        "products/delete"
+        | "orders/delete"
+        | "draft_orders/delete"
+        | "locations/delete"
+        | "segments/delete"
+        | "customer_groups/delete"
+        | "markets/delete"
+        | "checkouts/delete"
+        | "payment_terms/delete"
+        | "themes/delete" => json!({ "id": id(record) }),
         "collections/create" | "collections/update" => catalog::collection(record),
         "collections/delete" => catalog::collection_deleted(record),
         "inventory_items/create" | "inventory_items/update" => catalog::inventory_item(record),
@@ -435,9 +442,7 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         | "fulfillment_orders/manually_reported_progress_stopped"
         | "fulfillment_orders/merged"
         | "fulfillment_orders/order_routing_complete"
-        | "fulfillment_orders/progress_reported" => {
-            logistics::fulfillment_order(topic, record, lookup)
-        }
+        | "fulfillment_orders/progress_reported" => logistics::fulfillment_order(topic, record),
         _ if topic.starts_with("inventory_transfers/") && is_built(topic) => {
             logistics::transfer(topic, record)
         }
@@ -450,7 +455,6 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "delivery_promise_settings/update" => logistics::delivery_promise_settings(record, lookup),
         "payment_schedules/due" => payments::payment_schedule(record),
         "payment_terms/create" | "payment_terms/update" => payments::payment_terms(record, lookup),
-        "payment_terms/delete" => payments::payment_terms_deleted(record),
         "tender_transactions/create" => payments::tender_transaction(record),
         "disputes/create" | "disputes/update" => payments::dispute(record),
         "tax_services/create" | "tax_services/update" => payments::tax_service(record),
@@ -480,7 +484,6 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "discounts/create" | "discounts/update" => shop::discount(record, lookup),
         "discounts/delete" => shop::discount_deleted(record),
         "segments/create" | "segments/update" => marketing::segment(record),
-        "segments/delete" | "customer_groups/delete" => json!({ "id": id(record) }),
         "customer.joined_segment" | "customer.left_segment" => {
             marketing::segment_membership(record, lookup)
         }
@@ -494,12 +497,10 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         "audit_events/admin_api_activity" => marketing::admin_api_activity(record),
         "carts/create" | "carts/update" => checkouts::cart(record),
         "checkouts/create" | "checkouts/update" => checkouts::checkout(record, lookup),
-        "checkouts/delete" => checkouts::checkout_deleted(record),
         "customers/data_request" => shop::customer_data_request(record, lookup),
         "customers/redact" => shop::customer_redact(record, lookup),
         "shop/redact" => shop::shop_redact(record, lookup),
         "markets/create" | "markets/update" => markets::market(record),
-        "markets/delete" => markets::market_deleted(record),
         "markets_backup_region/update" => markets::backup_region(record),
         "locales/create" | "locales/update" | "locales/destroy" => markets::locale(record),
         "domains/create" | "domains/update" | "domains/destroy" => markets::domain(record),
@@ -539,7 +540,6 @@ pub fn payload(topic: &str, record: &Record, lookup: &dyn Lookup) -> Option<Valu
         | "customer_payment_methods/revoke"
         | "customer_payment_methods/update" => subscriptions::payment_method(record),
         "themes/create" | "themes/update" | "themes/publish" => platform::theme(record),
-        "themes/delete" => platform::theme_deleted(record),
         "rollouts/create" | "rollouts/update" => platform::rollout(record),
         "rollouts/delete" => platform::rollout_deleted(record),
         "rollouts/resource_change_added"

@@ -7,8 +7,7 @@ use serde_json::{Map, Value, json};
 
 use super::customers::{embedded, order_address};
 use super::{
-    Lookup, bag_amount, field, grams, id, millis, numeric, price, price_or_zero, resolve, text,
-    time,
+    Lookup, bag_amount, field, grams, millis, numeric, price, price_or_zero, resolve, text, time,
 };
 
 /// A price in the cart's currency as a `MoneyBag`, as REST writes `*_set`.
@@ -333,9 +332,4 @@ pub(super) fn checkout(record: &Map<String, Value>, lookup: &dyn Lookup) -> Valu
         "customer": customer_value,
     });
     super::merge([head, rest])
-}
-
-/// `checkouts/delete`: the checkout's id.
-pub(super) fn checkout_deleted(record: &Map<String, Value>) -> Value {
-    json!({ "id": id(record) })
 }

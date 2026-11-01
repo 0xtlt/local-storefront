@@ -178,11 +178,7 @@ fn reference(value: &Value) -> Value {
 
 /// The `fulfillment_orders/…` topics of the family: a `FulfillmentOrder`, with the context of
 /// the change.
-pub(super) fn fulfillment_order(
-    topic: &str,
-    record: &Map<String, Value>,
-    lookup: &dyn Lookup,
-) -> Value {
+pub(super) fn fulfillment_order(topic: &str, record: &Map<String, Value>) -> Value {
     let context = context(record);
     let head = fulfillment_order_head(record);
     match topic {
@@ -241,10 +237,7 @@ pub(super) fn fulfillment_order(
             })
         }
         // `order_routing_complete`.
-        _ => {
-            let _ = lookup;
-            json!({"fulfillment_order": head})
-        }
+        _ => json!({"fulfillment_order": head}),
     }
 }
 

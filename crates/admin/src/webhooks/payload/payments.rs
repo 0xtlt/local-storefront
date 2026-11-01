@@ -72,11 +72,6 @@ pub(super) fn payment_terms(terms: &Map<String, Value>, lookup: &dyn Lookup) -> 
     })
 }
 
-/// `payment_terms/delete`: the id alone.
-pub(super) fn payment_terms_deleted(terms: &Map<String, Value>) -> Value {
-    json!({"id": id(terms)})
-}
-
 /// `tender_transactions/create`: a `TenderTransaction`. Its amount is negative for a refund;
 /// REST names its payment method `unknown` when the record has none.
 pub(super) fn tender_transaction(tender: &Map<String, Value>) -> Value {

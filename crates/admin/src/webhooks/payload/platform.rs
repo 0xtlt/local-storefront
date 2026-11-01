@@ -39,11 +39,6 @@ pub fn theme(record: &Map<String, Value>) -> Value {
     })
 }
 
-/// `themes/delete`.
-pub fn theme_deleted(record: &Map<String, Value>) -> Value {
-    json!({ "id": id(record) })
-}
-
 /// `rollouts/create`, `rollouts/update`.
 pub fn rollout(record: &Map<String, Value>) -> Value {
     let schedule = field(record, "schedule");
