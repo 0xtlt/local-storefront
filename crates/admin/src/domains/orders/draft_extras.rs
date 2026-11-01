@@ -337,10 +337,7 @@ fn create_from_order(
 
 /// HTML of a text: escaped, its line breaks `<br>`.
 fn html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    crate::api::escape_html(text)
         .replace("\r\n", "<br>")
         .replace('\n', "<br>")
 }
