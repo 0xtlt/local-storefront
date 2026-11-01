@@ -319,7 +319,9 @@ curl -s http://127.0.0.1:9292/admin/api/2026-10/graphql.json \
 Every access token is `shpat_` and 32 hex digits, as Shopify's. A token belongs to one shop. A
 request without a valid token is answered `401`
 `{"errors": "[API] Invalid API key or access token (unrecognized login or wrong password)"}`, with
-an `X-Lsf-Reason` header saying why in plain words.
+an `X-Lsf-Reason` header saying why in plain words. A token or a code that expired, and a refresh
+token that was retired, are refused as such for a day; then lsf forgets them, and refuses them as
+tokens it never issued.
 
 **Scopes are enforced.** A field or a mutation the token's scopes do not cover answers
 `ACCESS_DENIED` with Shopify's message ("Access denied for products field. Required access:
