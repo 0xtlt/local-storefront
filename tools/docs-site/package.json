@@ -1,0 +1,15 @@
+{
+  "name": "local-storefront-docs-site",
+  "private": true,
+  "description": "The documentation site of local-storefront: the guides of docs/, rendered by VitePress",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "github-slugger": "^2.0.0",
+    "vitepress": "^1.6.4"
+  }
+}
