@@ -247,25 +247,6 @@ fn gateway(state: &ShopState, billed: &Record) -> String {
     }
 }
 
-/// The keys and values of `customAttributes`, as an order draft takes them.
-fn attribute_pairs(attributes: Option<&Value>) -> Vec<(String, String)> {
-    attributes
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|attribute| {
-            Some((
-                attribute.get("key")?.as_str()?.to_string(),
-                attribute
-                    .get("value")?
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-            ))
-        })
-        .collect()
-}
-
 /// The order of a billed cycle, made through the orders family: lines, delivery, tax, the sale.
 fn create_order(
     state: &mut ShopState,
@@ -353,7 +334,9 @@ fn create_order(
                     .filter(|weight| !weight.is_null())
                     .cloned(),
                 grams: 0,
-                attributes: attribute_pairs(line.get("customAttributes")),
+                attributes: crate::domains::orders::model::attribute_pairs(
+                    line.get("customAttributes"),
+                ),
             }
         })
         .collect();
@@ -427,7 +410,7 @@ fn create_order(
             })
             .collect(),
         note: text(billed, "note").map(str::to_string),
-        attributes: attribute_pairs(billed.get("customAttributes")),
+        attributes: crate::domains::orders::model::attribute_pairs(billed.get("customAttributes")),
         financial: if paid {
             FinancialStatus::Paid
         } else {
