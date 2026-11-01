@@ -411,26 +411,17 @@ fn unpaid(state: &ShopState) -> Vec<(String, i64)> {
         .collect()
 }
 
-/// The shop's time zone, for its days.
-fn zone(state: &ShopState) -> chrono_tz::Tz {
-    state
-        .shop()
-        .and_then(|shop| text(shop, "ianaTimezone"))
-        .and_then(|zone| zone.parse().ok())
-        .unwrap_or(chrono_tz::UTC)
-}
-
 /// The shop's day of a balance transaction.
 fn day_of(state: &ShopState, record: &Record) -> Option<NaiveDate> {
     let at = value::parse_date_time(text(record, "transactionDate")?)?;
-    Some(at.with_timezone(&zone(state)).date_naive())
+    Some(state.day_of(at))
 }
 
 /// Pays out what the account processed on each day before the shop's day now: one payout per
 /// day, issued the next day.
 pub fn tick(state: &mut ShopState) {
-    let tz = zone(state);
-    let today = state.now().with_timezone(&tz).date_naive();
+    let tz = state.time_zone();
+    let today = state.today();
     let mut days: Vec<(NaiveDate, Vec<String>)> = Vec::new();
     for (id, _) in unpaid(state) {
         let Some(day) = state.get(&id).and_then(|record| day_of(state, record)) else {

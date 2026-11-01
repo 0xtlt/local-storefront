@@ -124,15 +124,6 @@ impl Miss {
 
 // ---- time -----------------------------------------------------------------------------------
 
-/// The shop's time zone (`Shop.ianaTimezone`), UTC when it has none.
-pub fn zone(state: &ShopState) -> Tz {
-    state
-        .shop()
-        .and_then(|shop| text(shop, "ianaTimezone"))
-        .and_then(|zone| zone.parse::<Tz>().ok())
-        .unwrap_or(Tz::UTC)
-}
-
 /// A local date and time of the zone as an instant (the first of an ambiguous time, an hour
 /// later for one a change of offset skips).
 fn instant(zone: Tz, local: NaiveDateTime) -> DateTime<Utc> {
@@ -377,14 +368,14 @@ fn segment(
 
 /// The schedule of a new contract created at `created` with a billing policy.
 pub fn new_schedule(state: &ShopState, policy: &Value, created: DateTime<Utc>) -> Value {
-    json!([segment(zone(state), policy, 1, created, None).to_value()])
+    json!([segment(state.time_zone(), policy, 1, created, None).to_value()])
 }
 
 /// Follows a change of a contract's billing policy: the current cycle keeps its start and
 /// ends one new interval later (not before now), the next ones follow the new cadence.
 pub fn reschedule(state: &ShopState, contract: &mut Record, policy: &Value) {
     let now = state.now();
-    let zone = zone(state);
+    let zone = state.time_zone();
     let current = current(state, contract);
     let mut segments = segments(contract);
     segments.retain(|segment| segment.from_index < current.index);
@@ -427,7 +418,7 @@ fn schedule(state: &ShopState, contract: &Record) -> Vec<Segment> {
         .get("billingPolicy")
         .cloned()
         .unwrap_or(Value::Null);
-    vec![segment(zone(state), &policy, 1, created, None)]
+    vec![segment(state.time_zone(), &policy, 1, created, None)]
 }
 
 /// The last index a contract has: `maxCycles`, else none.
@@ -443,7 +434,7 @@ pub fn cycle(state: &ShopState, contract: &Record, index: i64) -> Option<Cycle> 
     if index < 1 || last_index(contract).is_some_and(|last| index > last) {
         return None;
     }
-    let zone = zone(state);
+    let zone = state.time_zone();
     let segments = schedule(state, contract);
     let segment = segments
         .iter()

@@ -274,15 +274,7 @@ fn templates(
 
 /// The shop's day of an instant (`2026-03-15`), in its time zone.
 fn day_of(state: &ShopState, at: DateTime<Utc>) -> String {
-    let shop = state.shop();
-    if let Some(zone) = shop
-        .and_then(|shop| shop.get("ianaTimezone"))
-        .and_then(Value::as_str)
-        .and_then(|zone| zone.parse::<chrono_tz::Tz>().ok())
-    {
-        return at.with_timezone(&zone).format("%Y-%m-%d").to_string();
-    }
-    at.format("%Y-%m-%d").to_string()
+    state.day_of(at).format("%Y-%m-%d").to_string()
 }
 
 /// Whether a schedule is due: not paid, its due date passed.

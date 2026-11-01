@@ -71,15 +71,11 @@ fn cents_in(record: &Record, name: &str) -> i64 {
 /// at the end of the shop's day, not of UTC's.
 pub fn today(state: &ShopState) -> String {
     let now = state.now();
-    let shop = state.shop();
-    if let Some(zone) = shop
-        .and_then(|shop| shop.get("ianaTimezone"))
-        .and_then(Value::as_str)
-        .and_then(|zone| zone.parse::<chrono_tz::Tz>().ok())
-    {
+    if let Some(zone) = state.iana_time_zone() {
         return now.with_timezone(&zone).format("%Y-%m-%d").to_string();
     }
-    let offset = shop
+    let offset = state
+        .shop()
         .and_then(|shop| shop.get("timezoneOffsetMinutes"))
         .and_then(Value::as_i64)
         .and_then(|minutes| i32::try_from(minutes * 60).ok())

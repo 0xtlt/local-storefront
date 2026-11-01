@@ -10,7 +10,8 @@ pub mod value;
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, SubsecRound, Utc};
+use chrono::{DateTime, NaiveDate, SubsecRound, Utc};
+use chrono_tz::Tz;
 use indexmap::{IndexMap, IndexSet};
 use lsf_checkout::app::App;
 use lsf_core::Store;
@@ -347,6 +348,29 @@ impl ShopState {
     /// [`ShopState::now`] as a GraphQL `DateTime`: `2026-01-01T00:00:00Z`.
     pub fn timestamp(&self) -> String {
         value::date_time(self.now())
+    }
+
+    /// The shop's time zone, `Shop.ianaTimezone`: `None` when it names none chrono-tz knows.
+    pub fn iana_time_zone(&self) -> Option<Tz> {
+        self.shop()
+            .and_then(|shop| shop.get("ianaTimezone"))
+            .and_then(Value::as_str)
+            .and_then(|zone| zone.parse::<Tz>().ok())
+    }
+
+    /// The zone of the shop's days: [`ShopState::iana_time_zone`], UTC without one.
+    pub fn time_zone(&self) -> Tz {
+        self.iana_time_zone().unwrap_or(Tz::UTC)
+    }
+
+    /// The shop's day of an instant, in [`ShopState::time_zone`].
+    pub fn day_of(&self, at: DateTime<Utc>) -> NaiveDate {
+        at.with_timezone(&self.time_zone()).date_naive()
+    }
+
+    /// The shop's date today: [`ShopState::day_of`] its clock.
+    pub fn today(&self) -> NaiveDate {
+        self.day_of(self.now())
     }
 
     /// The record of a GID (or of the key a record without a GID is kept under, see
@@ -1223,6 +1247,26 @@ mod tests {
             Value::Object(map) => map,
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn reads_the_days_of_the_shop_in_its_time_zone() {
+        let now = DateTime::parse_from_rfc3339("2026-03-01T02:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut state = ShopState::new("a.myshopify.com", Clock::Frozen(now));
+        assert_eq!(state.iana_time_zone(), None);
+        assert_eq!(state.today().to_string(), "2026-03-01");
+        let shop = state.insert(record(json!({
+            "__typename": "Shop",
+            "id": "gid://shopify/Shop/1",
+            "ianaTimezone": "America/New_York",
+        })));
+        assert_eq!(state.time_zone(), chrono_tz::America::New_York);
+        assert_eq!(state.today().to_string(), "2026-02-28");
+        state.get_mut(&shop).unwrap()["ianaTimezone"] = json!("Mars/Olympus");
+        assert_eq!(state.iana_time_zone(), None);
+        assert_eq!(state.time_zone(), Tz::UTC);
     }
 
     #[test]

@@ -1318,15 +1318,9 @@ fn run(state: &ShopState, text: &str) -> Result<(Value, Vec<String>), Vec<String
             query.from
         )]);
     }
-    let zone = state
-        .shop()
-        .and_then(|shop| shop.get("ianaTimezone"))
-        .and_then(Value::as_str)
-        .and_then(|zone| zone.parse::<Tz>().ok())
-        .unwrap_or(Tz::UTC);
     let clock = Clock {
         now: state.now(),
-        zone,
+        zone: state.time_zone(),
     };
     let mut dims: Vec<String> = Vec::new();
     if let Some(unit) = &query.timeseries {

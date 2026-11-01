@@ -56,15 +56,9 @@ pub struct Context {
 impl Context {
     /// The shop's clock, in the shop's time zone (`Shop.ianaTimezone`, UTC without one).
     pub fn of(state: &ShopState) -> Context {
-        let zone = state
-            .shop()
-            .and_then(|shop| shop.get("ianaTimezone"))
-            .and_then(Json::as_str)
-            .and_then(|name| name.parse::<Tz>().ok())
-            .unwrap_or(Tz::UTC);
         Context {
             now: state.now(),
-            zone,
+            zone: state.time_zone(),
         }
     }
 
