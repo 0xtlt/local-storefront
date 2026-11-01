@@ -1103,6 +1103,26 @@ fn calculate(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     Ok(payload(json!({"calculatedDraftOrder": calculated}), &[]))
 }
 
+/// `(key, value)` of each attribute of a record's `customAttributes`.
+fn attribute_pairs(record: &Record) -> Vec<(String, String)> {
+    record
+        .get("customAttributes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|attribute| {
+            Some((
+                attribute.get("key")?.as_str()?.to_string(),
+                attribute
+                    .get("value")?
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            ))
+        })
+        .collect()
+}
+
 /// `draftOrderComplete`.
 fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -1177,22 +1197,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
                 .filter(|weight| !weight.is_null())
                 .cloned(),
             grams: 0,
-            attributes: line
-                .get("customAttributes")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|attribute| {
-                    Some((
-                        attribute.get("key")?.as_str()?.to_string(),
-                        attribute
-                            .get("value")?
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                    ))
-                })
-                .collect(),
+            attributes: attribute_pairs(line),
         })
         .collect();
     let line_subtotal = field_cents(&record, "lineItemsSubtotalPrice");
@@ -1253,22 +1258,7 @@ fn complete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         order_discount: line_subtotal - subtotal,
         discount_codes: Vec::new(),
         note: text(&record, "note2").map(str::to_string),
-        attributes: record
-            .get("customAttributes")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|attribute| {
-                Some((
-                    attribute.get("key")?.as_str()?.to_string(),
-                    attribute
-                        .get("value")?
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                ))
-            })
-            .collect(),
+        attributes: attribute_pairs(&record),
         financial: FinancialStatus::Pending,
         fulfillment: FulfillmentState::Unfulfilled,
         cancelled: false,
