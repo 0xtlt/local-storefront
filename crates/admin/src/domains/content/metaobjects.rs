@@ -89,7 +89,6 @@ pub fn definition_of(state: &ShopState, kind: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The entry of a type with a handle.
 fn entry_of(state: &ShopState, kind: &str, handle: &str) -> Option<String> {
     state
         .keys("Metaobject")
@@ -1249,7 +1248,6 @@ fn insert_entry(state: &mut ShopState, definition: &str, kind: &str, planned: Pl
     id
 }
 
-/// Writes what an update planned into an entry.
 fn write_entry(state: &mut ShopState, id: &str, planned: Planned) {
     if let Some(record) = state.get_mut(id) {
         record.insert("handle".into(), json!(planned.handle));

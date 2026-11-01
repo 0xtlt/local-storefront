@@ -182,7 +182,6 @@ fn content(state: &ShopState, key: &str) -> Option<Vec<(String, String, &'static
     })
 }
 
-/// The shop's primary locale.
 fn primary_locale(state: &ShopState) -> String {
     state
         .all("ShopLocale")

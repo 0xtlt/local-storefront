@@ -212,7 +212,6 @@ fn files(state: &ShopState) -> Vec<String> {
     .collect()
 }
 
-/// The file with a filename.
 fn file_named(state: &ShopState, name: &str) -> Option<String> {
     files(state).into_iter().find(|id| {
         state

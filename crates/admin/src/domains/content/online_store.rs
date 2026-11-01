@@ -205,7 +205,6 @@ fn template_suffix(input: &Map<String, Value>) -> Option<Value> {
         .map(|suffix| json!(suffix.as_str().filter(|suffix| !suffix.is_empty())))
 }
 
-/// Removes the metafields of a record.
 fn remove_metafields(state: &mut ShopState, record: &Record) {
     for metafield in gids(record.get("metafields")) {
         metafields::remove(state, &metafield);
