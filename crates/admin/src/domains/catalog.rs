@@ -527,18 +527,22 @@ fn seed_media(seed: &mut Seed, media: &Media, created: &str, updated: &str) -> S
 }
 
 /// The file name at the end of a path or URL.
-fn file_name(path: &str) -> &str {
+pub fn file_name(path: &str) -> &str {
     let path = path.split(['?', '#']).next().unwrap_or(path);
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// The MIME type of a file, from its extension.
-pub fn mime_type(path: &str) -> String {
-    let extension = file_name(path)
+/// The extension of the file at the end of a path or URL, in lower case.
+fn extension(path: &str) -> String {
+    file_name(path)
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
-        .unwrap_or_default();
-    match extension.as_str() {
+        .unwrap_or_default()
+}
+
+/// The MIME type of a file, from its extension.
+pub fn mime_type(path: &str) -> String {
+    match extension(path).as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
@@ -564,11 +568,7 @@ pub fn mime_type(path: &str) -> String {
 /// The kind of file a path of `files/` is, by its extension: the GID type its record has and
 /// the kind lsf-core's `stable_id` takes for it (the ids Liquid shows for a `file_reference`).
 pub fn file_kind(path: &str) -> (&'static str, &'static str) {
-    let extension = file_name(path)
-        .rsplit_once('.')
-        .map(|(_, extension)| extension.to_ascii_lowercase())
-        .unwrap_or_default();
-    match extension.as_str() {
+    match extension(path).as_str() {
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "svg" | "bmp" => ("MediaImage", "image"),
         "mp4" | "mov" | "webm" | "m4v" => ("Video", "video"),
         _ => ("GenericFile", "file"),
@@ -619,30 +619,12 @@ fn seed_variant(
     let mut levels = Vec::new();
     for ((location, _), quantity) in stocked.iter().zip(quantities) {
         let level = inventory_level_gid(variant.id, location.id);
-        let quantities: Vec<Value> = QUANTITY_NAMES
-            .iter()
-            .map(|name| {
-                let amount = match *name {
-                    "available" | "on_hand" => quantity,
-                    _ => 0,
-                };
-                json!({
-                    "id": gid(
-                        "InventoryQuantity",
-                        stable_id("inventory_quantity", &format!("{level}/{name}")),
-                    ),
-                    "name": name,
-                    "quantity": amount,
-                    "updatedAt": updated,
-                })
-            })
-            .collect();
         seed.insert(json!({
             "__typename": "InventoryLevel",
             "id": level,
             "item": item,
             "location": location_gid(location),
-            "quantities": quantities,
+            "quantities": records::new_quantities(&level, quantity, &updated),
             "isActive": true,
             "canDeactivate": true,
             "createdAt": created,
@@ -1052,15 +1034,7 @@ fn seed_gift_card(seed: &mut Seed, card: &GiftCard) {
     let created = Seed::epoch_string();
     let currency = card.currency.to_ascii_uppercase();
     let expired = card.expires_on.is_some_and(|expires| expires < now);
-    let last = card
-        .code
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
+    let (last, masked) = gift_cards::masked(&card.code);
     let recipient = card.recipient.as_ref().and_then(|recipient| {
         let customer = store.customer_by_email(&recipient.email)?;
         Some(json!({
@@ -1082,7 +1056,7 @@ fn seed_gift_card(seed: &mut Seed, card: &GiftCard) {
             .map(|expires| date(expires.with_timezone(&store.shop.timezone).naive_local().and_utc())),
         "isRedeemable": card.enabled && !expired && card.balance > 0,
         "lastCharacters": last,
-        "maskedCode": format!("•••• •••• •••• {last}"),
+        "maskedCode": masked,
         "customer": card.customer.map(|customer| gid("Customer", customer)),
         "recipientAttributes": recipient,
         "templateSuffix": optional(card.template_suffix.as_deref()),
@@ -1297,15 +1271,7 @@ pub fn product_changed(state: &mut ShopState, product: &str) {
 
 /// The `available` quantity of an inventory level record.
 pub fn available_of(level: &Record) -> i64 {
-    level
-        .get("quantities")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|quantity| quantity.get("name").and_then(Value::as_str) == Some("available"))
-        .and_then(|quantity| quantity.get("quantity"))
-        .and_then(Value::as_i64)
-        .unwrap_or(0)
+    quantity(level, "available")
 }
 
 /// The GIDs of a list field of a record.

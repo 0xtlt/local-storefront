@@ -51,11 +51,7 @@ pub fn register(registry: &mut Registry) {
 /// The cents of a `MoneyInput` (`{amount, currencyCode}`) and its currency.
 fn money_input(value: Option<&Value>) -> Option<(i64, Option<String>)> {
     let value = value?;
-    let amount = value.get("amount")?;
-    let cents = match amount {
-        Value::Number(number) => cents_of(Some(&json!(number.to_string()))),
-        _ => cents_of(Some(amount)),
-    }?;
+    let cents = super::variants::money_cents(value.get("amount")?)?;
     Some((
         cents,
         value
@@ -105,7 +101,7 @@ pub fn redeemable(record: &Record, today: &str) -> bool {
 }
 
 /// The last four characters of a code, and its masked form.
-fn masked(code: &str) -> (String, String) {
+pub fn masked(code: &str) -> (String, String) {
     let last: String = code
         .chars()
         .rev()
@@ -437,7 +433,7 @@ fn transaction(
 
 /// A `DateTime` input in UTC, as the Admin API answers it (`2024-09-09T12:48:33-04:00` is
 /// `2024-09-09T16:48:33Z`, the reference's example).
-fn normalize_time(time: &str) -> String {
+pub fn normalize_time(time: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(time)
         .map(|time| value::date_time(time.with_timezone(&chrono::Utc)))
         .unwrap_or_else(|_| time.to_string())
