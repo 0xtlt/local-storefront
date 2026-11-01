@@ -29,7 +29,7 @@ use std::fmt;
 use super::filters::{self, Filter, Kind, ParamKind};
 
 /// The most clauses a segment query has: shopify.dev's reference shows a query of 11 as invalid.
-pub const MAX_CLAUSES: usize = 10;
+const MAX_CLAUSES: usize = 10;
 
 /// How deep parentheses nest: Shopify publishes no bound; lsf's is the search syntax's
 /// (`search::syntax::MAX_DEPTH`), as the parser recurses once per `(` on the request's stack,
@@ -42,7 +42,7 @@ pub const MAX_DEPTH: usize = 100;
 pub const MAX_OFFSET_YEARS: i64 = 10_000;
 
 /// Whether `n` units from today stay within [`MAX_OFFSET_YEARS`].
-pub fn offset_in_range(n: i64, unit: Unit) -> bool {
+fn offset_in_range(n: i64, unit: Unit) -> bool {
     let most = match unit {
         Unit::Day => MAX_OFFSET_YEARS * 366,
         Unit::Week => MAX_OFFSET_YEARS * 53,

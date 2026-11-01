@@ -29,7 +29,7 @@ use lsf_core::store::Address;
 use lsf_core::store::reference::{country_code_from_name, country_name, is_country_code};
 use serde_json::{Map, Value, json};
 
-use super::given_text;
+use super::{given_text, object_arg};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, parse_gid, value};
@@ -136,7 +136,7 @@ pub fn address_of(input: &Map<String, Value>, id: u64, base: Option<&Value>) -> 
 }
 
 /// A new address id, from the shop's counter of `MailingAddress`.
-pub fn new_address_id(state: &mut ShopState) -> u64 {
+fn new_address_id(state: &mut ShopState) -> u64 {
     parse_gid(&state.new_gid("MailingAddress")).map_or(1, |(_, id)| id)
 }
 
@@ -184,7 +184,7 @@ fn is_default(record: &Record, address: &Value) -> bool {
 
 /// Writes a customer's address book: `addresses` and `addressesV2`, the default (`default`, an
 /// index into `list`; the first when `None`) first, and `defaultAddress`.
-pub fn write_addresses(record: &mut Record, mut list: Vec<Value>, default: Option<usize>) {
+fn write_addresses(record: &mut Record, mut list: Vec<Value>, default: Option<usize>) {
     if let Some(index) = default.filter(|index| *index < list.len()) {
         let address = list.remove(index);
         list.insert(0, address);
@@ -266,7 +266,17 @@ fn address_index(record: &Record, ctx: &FieldContext<'_>) -> Result<usize, UserE
     position(record, id).ok_or_else(|| UserError::new(&["addressId"], "Address does not exist"))
 }
 
-/// `customerAddressCreate`.
+/// The customer of the arguments, its record, and the index of the address they name.
+fn customer_address(
+    state: &ShopState,
+    ctx: &FieldContext<'_>,
+) -> Result<(String, Record, usize), UserError> {
+    let customer = customer_of(state, ctx)?;
+    let record = state.get(&customer).cloned().unwrap_or_default();
+    let index = address_index(&record, ctx)?;
+    Ok((customer, record, index))
+}
+
 fn address_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -275,11 +285,7 @@ fn address_create(
         Ok(customer) => customer,
         Err(error) => return Ok(payload(json!({"address": null}), &[error])),
     };
-    let input = ctx
-        .arg("address")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = object_arg(ctx, "address");
     let set_as_default = ctx.arg("setAsDefault").and_then(Value::as_bool) == Some(true);
     let state = mutation.state_mut();
     let id = new_address_id(state);
@@ -300,25 +306,15 @@ fn address_create(
     Ok(payload(json!({"address": address}), &[]))
 }
 
-/// `customerAddressUpdate`.
 fn address_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let state = mutation.state();
-    let found = customer_of(state, ctx).and_then(|customer| {
-        let record = state.get(&customer).cloned().unwrap_or_default();
-        address_index(&record, ctx).map(|index| (customer, record, index))
-    });
-    let (customer, record, index) = match found {
+    let (customer, record, index) = match customer_address(mutation.state(), ctx) {
         Ok(found) => found,
         Err(error) => return Ok(payload(json!({"address": null}), &[error])),
     };
-    let input = ctx
-        .arg("address")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let input = object_arg(ctx, "address");
     let mut list = addresses(&record);
     let base = list[index].clone();
     let id = base
@@ -342,17 +338,11 @@ fn address_update(
     Ok(payload(json!({"address": address}), &[]))
 }
 
-/// `customerAddressDelete`.
 fn address_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let state = mutation.state();
-    let found = customer_of(state, ctx).and_then(|customer| {
-        let record = state.get(&customer).cloned().unwrap_or_default();
-        address_index(&record, ctx).map(|index| (customer, record, index))
-    });
-    let (customer, record, index) = match found {
+    let (customer, record, index) = match customer_address(mutation.state(), ctx) {
         Ok(found) => found,
         Err(error) => return Ok(payload(json!({"deletedAddressId": null}), &[error])),
     };
@@ -375,17 +365,11 @@ fn address_delete(
     Ok(payload(json!({"deletedAddressId": removed.get("id")}), &[]))
 }
 
-/// `customerUpdateDefaultAddress`.
 fn update_default_address(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let state = mutation.state();
-    let found = customer_of(state, ctx).and_then(|customer| {
-        let record = state.get(&customer).cloned().unwrap_or_default();
-        address_index(&record, ctx).map(|index| (customer, record, index))
-    });
-    let (customer, record, index) = match found {
+    let (customer, record, index) = match customer_address(mutation.state(), ctx) {
         Ok(found) => found,
         Err(error) => return Ok(payload(json!({"customer": null}), &[error])),
     };

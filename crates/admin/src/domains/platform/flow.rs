@@ -26,30 +26,10 @@ use crate::state::{ShopState, gid};
 pub const FLOW_TRIGGERS: &str = "flowTriggers";
 
 /// The most a trigger's payload may weigh, keys included.
-pub const MAX_PAYLOAD_BYTES: usize = 50_000;
+const MAX_PAYLOAD_BYTES: usize = 50_000;
 
 pub fn register(registry: &mut Registry) {
     registry.mutation("flowTriggerReceive", flow_trigger_receive);
-}
-
-/// The record type a reference field's id names.
-fn reference_type(kind: &str) -> Option<&'static str> {
-    Some(match kind {
-        "customer_reference" => "Customer",
-        "order_reference" => "Order",
-        "product_reference" => "Product",
-        "company_reference" => "Company",
-        "company_contact_reference" => "CompanyContact",
-        _ => return None,
-    })
-}
-
-fn triggers(state: &ShopState) -> Vec<Value> {
-    state
-        .setting(FLOW_TRIGGERS)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// The checks of a trigger's payload against its fields.
@@ -79,7 +59,7 @@ fn check_payload(
             ));
             continue;
         };
-        if let Some(type_name) = reference_type(kind) {
+        if let Some((type_name, _)) = super::extensions::reference_field(kind) {
             let id = match given {
                 Value::Number(number) => number.as_u64(),
                 Value::String(text) => text.trim().parse().ok(),
@@ -95,7 +75,6 @@ fn check_payload(
     }
 }
 
-/// `flowTriggerReceive(handle:, payload:)` (or the deprecated `body:`).
 fn flow_trigger_receive(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let mut errors = Vec::new();
     let (handle, given) = match (ctx.arg_str("handle"), ctx.arg_str("body")) {
@@ -122,23 +101,24 @@ fn flow_trigger_receive(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     if !errors.is_empty() {
         return Ok(payload(json!({}), &errors));
     }
-    let payload_object = match given {
-        None | Some(Value::Null) => Map::new(),
-        Some(Value::Object(object)) => object,
+    let object = match given {
+        None | Some(Value::Null) => Some(Map::new()),
+        Some(Value::Object(object)) => Some(object),
         Some(Value::String(text)) => match serde_json::from_str::<Value>(&text) {
-            Ok(Value::Object(object)) => object,
-            _ => {
-                let error = UserError::new(&["payload"], "Payload must be a JSON object");
-                return Ok(payload(json!({}), &[error]));
-            }
+            Ok(Value::Object(object)) => Some(object),
+            _ => None,
         },
-        Some(_) => {
-            let error = UserError::new(&["payload"], "Payload must be a JSON object");
-            return Ok(payload(json!({}), &[error]));
-        }
+        Some(_) => None,
+    };
+    let Some(payload_object) = object else {
+        let error = UserError::new(&["payload"], "Payload must be a JSON object");
+        return Ok(payload(json!({}), &[error]));
     };
     let state = m.state();
-    let triggers = triggers(state);
+    let triggers = state
+        .setting(FLOW_TRIGGERS)
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
     let Some(trigger) = triggers
         .iter()
         .find(|trigger| trigger.get("handle").and_then(Value::as_str) == Some(handle.as_str()))
@@ -160,7 +140,7 @@ fn flow_trigger_receive(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         );
         return Ok(payload(json!({}), &[error]));
     };
-    let size = Value::Object(payload_object.clone()).to_string().len();
+    let size = serde_json::to_string(&payload_object).map_or(0, |text| text.len());
     if size >= MAX_PAYLOAD_BYTES {
         let error = UserError::new(
             &["payload"],

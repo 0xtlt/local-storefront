@@ -500,7 +500,6 @@ fn merge_into(state: &mut ShopState, keep: &str, gone: &str, overrides: &Map<Str
     state.delete(gone, "customers/delete");
 }
 
-/// `customerMergePreview`.
 fn customer_merge_preview(
     r: &ShopResolver<'_>,
     ctx: &FieldContext<'_>,
@@ -672,13 +671,12 @@ fn customer_merge_job_status(
 }
 
 /// A customer's sales, as `customers/purchasing_summary` reports them.
-fn summary(state: &ShopState, customer: &str) -> Option<Value> {
-    let record = state.get(customer)?;
-    Some(json!({
+fn summary(record: &Record) -> Value {
+    json!({
         "numberOfOrders": record.get("numberOfOrders"),
         "amountSpent": record.get("amountSpent"),
         "lastOrder": record.get("lastOrder"),
-    }))
+    })
 }
 
 /// Emits `customers/purchasing_summary` for the customers whose sales the events since `start`
@@ -695,19 +693,13 @@ pub fn follow_purchases(state: &mut ShopState, start: usize, customers: &[String
         return;
     }
     for customer in customers {
-        let Some(now) = summary(state, customer) else {
+        let Some(now) = state.get(customer).map(summary) else {
             continue;
         };
         let memo = format!("purchasing-summary/{customer}");
         let before = match state.memo(&memo) {
             Some(before) => Some(before.clone()),
-            None => state.original(customer).map(|seeded| {
-                json!({
-                    "numberOfOrders": seeded.get("numberOfOrders"),
-                    "amountSpent": seeded.get("amountSpent"),
-                    "lastOrder": seeded.get("lastOrder"),
-                })
-            }),
+            None => state.original(customer).map(summary),
         };
         if before.as_ref() == Some(&now) {
             continue;

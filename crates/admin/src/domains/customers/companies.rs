@@ -32,7 +32,11 @@ use lsf_core::store::reference::country_name;
 use serde_json::{Map, Value, json};
 
 use super::contacts::{self, delete_contact};
-use super::{CONTACT_ROLES, contact_role_gid_of, field_path, gids_of, given_text, primary_locale};
+use super::{
+    CONTACT_ROLES, contact_role_gid_of, exemptions_changed, field_path, gids_of, given_text,
+    object_arg, primary_locale,
+};
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::{Record, ShopState, parse_gid, value};
@@ -72,14 +76,6 @@ pub fn record_arg(
     } else {
         Err(not_found(&[name]))
     }
-}
-
-/// The object argument `name`.
-fn object_arg(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
-    ctx.arg(name)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// The company whose `externalId` is `external`, other than `except`.
@@ -151,9 +147,14 @@ fn apply_company(record: &mut Record, input: &Map<String, Value>) {
 /// non-null).
 fn check_address(input: &Map<String, Value>, path: &[&str], errors: &mut Vec<UserError>) {
     if given_text(input, "countryCode").flatten().is_none() {
-        let field: Vec<&str> = path.iter().copied().chain(["countryCode"]).collect();
         // Not published: Rails' wording, with the payload's code.
-        errors.push(UserError::new(&field, "Country code can't be blank").code("BLANK"));
+        errors.push(
+            UserError::new(
+                &field_path(path, "countryCode"),
+                "Country code can't be blank",
+            )
+            .code("BLANK"),
+        );
     }
 }
 
@@ -186,9 +187,9 @@ fn company_address(
         // Shopify writes the zone's name (`QC` is `Quebec`): lsf has no table of zones and
         // keeps the code *(chosen)*.
         province: zone.clone().unwrap_or_default(),
-        province_code: zone.clone().unwrap_or_default(),
+        province_code: zone.unwrap_or_default(),
         country: country_name(&code).unwrap_or(&code).to_string(),
-        country_code: code.clone(),
+        country_code: code,
         zip: field("zip").unwrap_or_default(),
         phone: field("phone").unwrap_or_default(),
         ..Address::default()
@@ -200,26 +201,7 @@ fn company_address(
     let created = base
         .and_then(|base| base.get("createdAt").cloned())
         .unwrap_or_else(|| json!(now));
-    json!({
-        "id": id,
-        "address1": address.address1,
-        "address2": value::text(&address.address2),
-        "city": value::text(&address.city),
-        "province": value::text(&address.province),
-        "zoneCode": zone,
-        "country": value::text(&address.country),
-        "countryCode": code,
-        "zip": value::text(&address.zip),
-        "phone": value::text(&address.phone),
-        "firstName": value::text(&address.first_name),
-        "lastName": value::text(&address.last_name),
-        "recipient": recipient,
-        "companyName": company,
-        "formattedAddress": value::formatted(&address),
-        "formattedArea": value::formatted_area(&address),
-        "createdAt": created,
-        "updatedAt": now,
-    })
+    super::company_address(id, &address, recipient, company, created, now)
 }
 
 /// The name of a company.
@@ -355,7 +337,6 @@ fn create_location(
     location
 }
 
-/// `companyCreate`.
 fn company_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -452,7 +433,6 @@ fn company_create(
     Ok(payload(json!({"company": company}), &[]))
 }
 
-/// `companyUpdate`.
 fn company_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -528,7 +508,6 @@ fn delete_company(state: &mut ShopState, company: &str) {
     state.delete(company, "companies/delete");
 }
 
-/// `companyDelete`.
 fn company_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -542,21 +521,14 @@ fn company_delete(
 }
 
 /// The ids of a list argument, each checked to name a record of `type_name`.
-fn ids_arg(
+pub(super) fn ids_arg(
     state: &ShopState,
     ctx: &FieldContext<'_>,
     name: &str,
     type_name: &str,
     errors: &mut Vec<UserError>,
 ) -> Vec<String> {
-    let ids: Vec<String> = ctx
-        .arg(name)
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let ids = gids(ctx.arg(name));
     for (index, id) in ids.iter().enumerate() {
         if state.type_of(id) != Some(type_name) {
             errors.push(not_found(&[name, &index.to_string()]));
@@ -565,7 +537,6 @@ fn ids_arg(
     ids
 }
 
-/// `companiesDelete`.
 fn companies_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -582,7 +553,6 @@ fn companies_delete(
     Ok(payload(json!({"deletedCompanyIds": ids}), &[]))
 }
 
-/// `companyLocationCreate`.
 fn location_create(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -603,7 +573,6 @@ fn location_create(
     Ok(payload(json!({"companyLocation": location}), &[]))
 }
 
-/// `companyLocationUpdate`.
 fn location_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -631,10 +600,7 @@ fn location_update(
 /// company. No event: the caller emits the deletion.
 fn remove_location(state: &mut ShopState, location: &str) {
     let record = state.get(location).cloned().unwrap_or_default();
-    for assignment in gids_of(Some(&record), "roleAssignments") {
-        contacts::unlink_assignment(state, &assignment);
-        state.remove(&assignment);
-    }
+    contacts::remove_assignments(state, &record);
     if let Some(company) = record.get("company").and_then(Value::as_str)
         && let Some(Value::Array(locations)) = state
             .get_mut(company)
@@ -656,7 +622,6 @@ fn delete_location(state: &mut ShopState, location: &str) {
     state.remove(location);
 }
 
-/// `companyLocationDelete`.
 fn location_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -674,7 +639,6 @@ fn location_delete(
     Ok(payload(json!({"deletedCompanyLocationId": location}), &[]))
 }
 
-/// `companyLocationsDelete`.
 fn locations_delete(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -853,22 +817,6 @@ fn exemptions_arg(ctx: &FieldContext<'_>, name: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// Adds and removes exemptions from a list of them.
-fn exemptions_changed(current: Option<&Value>, add: &[Value], remove: &[Value]) -> Value {
-    let mut list: Vec<Value> = current
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for exemption in add {
-        if !list.contains(exemption) {
-            list.push(exemption.clone());
-        }
-    }
-    list.retain(|exemption| !remove.contains(exemption));
-    json!(list)
-}
-
-/// `companyLocationTaxSettingsUpdate`.
 fn tax_settings_update(
     mutation: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,

@@ -9,6 +9,7 @@
 
 use serde_json::{Value, json};
 
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 
@@ -29,14 +30,7 @@ fn acknowledge_update_failed(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
 ) -> Result<Value, FieldError> {
-    let ids: Vec<String> = ctx
-        .arg("fileIds")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let ids = gids(ctx.arg("fileIds"));
     let mut errors = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         let position = index.to_string();

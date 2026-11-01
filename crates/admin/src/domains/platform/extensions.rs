@@ -27,17 +27,26 @@ pub struct Extensions {
     pub flow_triggers: Vec<Value>,
 }
 
-/// The payload key of a Flow reference field: "Reference field types" of the trigger
-/// reference.
-pub fn reference_key(kind: &str) -> Option<&'static str> {
-    Some(match kind {
-        "customer_reference" => "customer_id",
-        "order_reference" => "order_id",
-        "product_reference" => "product_id",
-        "company_reference" => "company_id",
-        "company_contact_reference" => "company_contact_id",
-        _ => return None,
-    })
+/// The Flow reference fields ("Reference field types" of the trigger reference): each type, the
+/// record type its id names, and its payload key.
+const REFERENCE_FIELDS: [(&str, &str, &str); 5] = [
+    ("customer_reference", "Customer", "customer_id"),
+    ("order_reference", "Order", "order_id"),
+    ("product_reference", "Product", "product_id"),
+    ("company_reference", "Company", "company_id"),
+    (
+        "company_contact_reference",
+        "CompanyContact",
+        "company_contact_id",
+    ),
+];
+
+/// The record type and the payload key of a Flow reference field.
+pub fn reference_field(kind: &str) -> Option<(&'static str, &'static str)> {
+    REFERENCE_FIELDS
+        .iter()
+        .find(|(name, _, _)| *name == kind)
+        .map(|(_, type_name, key)| (*type_name, *key))
 }
 
 /// The extensions of the app in `root`: every `extensions/*/shopify.extension.toml`. A file that
@@ -126,7 +135,7 @@ fn flow_trigger(handle: &str, entry: &toml::Table, settings: Option<&toml::Value
             .filter_map(|field| {
                 let kind = field.get("type")?.as_str()?;
                 let key = field.get("key").and_then(|v| v.as_str());
-                let payload_key = reference_key(kind).or(key)?;
+                let payload_key = reference_field(kind).map(|(_, key)| key).or(key)?;
                 Some(json!({"type": kind, "key": key, "payloadKey": payload_key}))
             })
             .collect(),

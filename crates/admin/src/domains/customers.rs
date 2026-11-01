@@ -27,7 +27,8 @@ use lsf_core::store::{Address, Company, CompanyLocation, Customer};
 use lsf_core::util::stable_id;
 use serde_json::{Map, Value, json};
 
-use super::catalog::cents_of;
+use super::catalog::{cents_of, gids};
+use crate::graphql::FieldContext;
 use crate::resolve::Registry;
 use crate::state::seed::Seed;
 use crate::state::value::{self, date_time, text};
@@ -48,7 +49,7 @@ pub fn company_gid(company: &Company) -> String {
     gid("Company", company.id)
 }
 
-pub fn company_location_gid(location: &CompanyLocation) -> String {
+fn company_location_gid(location: &CompanyLocation) -> String {
     gid("CompanyLocation", location.id)
 }
 
@@ -59,7 +60,7 @@ pub fn company_contact_gid(customer: &Customer) -> String {
 }
 
 /// One of the [`CONTACT_ROLES`] of a company.
-pub fn contact_role_gid(company: &Company, role: &str) -> String {
+fn contact_role_gid(company: &Company, role: &str) -> String {
     contact_role_gid_of(company.id, role)
 }
 
@@ -72,7 +73,7 @@ pub fn contact_role_gid_of(company: u64, role: &str) -> String {
     )
 }
 
-pub fn role_assignment_gid(customer: &Customer, location: &CompanyLocation) -> String {
+fn role_assignment_gid(customer: &Customer, location: &CompanyLocation) -> String {
     gid(
         "CompanyContactRoleAssignment",
         stable_id(
@@ -82,7 +83,7 @@ pub fn role_assignment_gid(customer: &Customer, location: &CompanyLocation) -> S
     )
 }
 
-pub fn company_address_gid(location: &CompanyLocation, address: &Address) -> String {
+fn company_address_gid(location: &CompanyLocation, address: &Address) -> String {
     gid(
         "CompanyAddress",
         stable_id(
@@ -275,14 +276,30 @@ pub fn primary_locale(state: &ShopState) -> String {
 
 /// The GIDs of an array of a record (`locations`, `contacts`, `roleAssignments`).
 pub fn gids_of(record: Option<&Record>, field: &str) -> Vec<String> {
-    record
-        .and_then(|record| record.get(field))
+    gids(record.and_then(|record| record.get(field)))
+}
+
+/// The object argument `name` (empty when it is not given).
+fn object_arg(ctx: &FieldContext<'_>, name: &str) -> Map<String, Value> {
+    ctx.arg(name)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Adds then removes exemptions from a list of them.
+fn exemptions_changed(current: Option<&Value>, add: &[Value], remove: &[Value]) -> Value {
+    let mut list: Vec<Value> = current
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect()
+        .cloned()
+        .unwrap_or_default();
+    for exemption in add {
+        if !list.contains(exemption) {
+            list.push(exemption.clone());
+        }
+    }
+    list.retain(|exemption| !remove.contains(exemption));
+    json!(list)
 }
 
 /// The path of `field` in an input at `path`: what a user error names.
@@ -376,10 +393,16 @@ fn seed_company(seed: &mut Seed, company: &Company) {
     for location in &company.locations {
         let location_id = company_location_gid(location);
         let location_created = date_time(location.created_at);
-        let shipping = location
-            .shipping_address
-            .as_ref()
-            .map(|address| company_address(location, address, &company.name, &location_created));
+        let shipping = location.shipping_address.as_ref().map(|address| {
+            company_address(
+                &company_address_gid(location, address),
+                address,
+                value::full_name(&address.first_name, &address.last_name),
+                &company.name,
+                json!(location_created),
+                &location_created,
+            )
+        });
         let role_assignments: Vec<&String> = assignments
             .iter()
             .filter(|(owner, _, _)| *owner == location_id)
@@ -444,15 +467,17 @@ fn seed_company(seed: &mut Seed, company: &Company) {
 }
 
 /// The address of a company location: a `CompanyAddress`, which is an object of its own on
-/// Shopify (with an id), held inline by the location.
+/// Shopify (with an id), held inline by the location. The seed's and the mutations' shape.
 fn company_address(
-    location: &CompanyLocation,
+    id: &str,
     address: &Address,
+    recipient: Value,
     company: &str,
-    created: &str,
+    created: Value,
+    updated: &str,
 ) -> Value {
     json!({
-        "id": company_address_gid(location, address),
+        "id": id,
         "address1": address.address1,
         "address2": text(&address.address2),
         "city": text(&address.city),
@@ -464,13 +489,25 @@ fn company_address(
         "phone": text(&address.phone),
         "firstName": text(&address.first_name),
         "lastName": text(&address.last_name),
-        "recipient": value::full_name(&address.first_name, &address.last_name),
+        "recipient": recipient,
         "companyName": if address.company.is_empty() { company } else { &address.company },
         "formattedAddress": value::formatted(address),
         "formattedArea": value::formatted_area(address),
         "createdAt": created,
-        "updatedAt": created,
+        "updatedAt": updated,
     })
+}
+
+/// What an order costs its customer or company location, in cents, and whether it is
+/// cancelled (it then costs nothing).
+fn order_total(order: &Record) -> (i64, bool) {
+    let total = order
+        .get("totalPriceSet")
+        .and_then(|set| set.get("shopMoney"))
+        .and_then(|money| cents_of(money.get("amount")))
+        .unwrap_or(0);
+    let cancelled = order.get("cancelledAt").is_some_and(|at| !at.is_null());
+    (total, cancelled)
 }
 
 /// Recomputes what a customer derives from their orders: `orders`, `numberOfOrders`,
@@ -478,22 +515,12 @@ fn company_address(
 /// `Customer.amountSpent`), `lastOrder` and `canDelete`. The seed runs it once the orders
 /// exist; a mutation that creates, cancels or deletes an order runs it after.
 pub fn refresh_customer(state: &mut ShopState, customer: &str) {
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
+    let currency = super::orders::model::currency(state);
     let orders: Vec<(String, i64, bool, String)> = state
         .all("Order")
         .filter(|order| order.get("customer").and_then(Value::as_str) == Some(customer))
         .map(|order| {
-            let total = order
-                .get("totalPriceSet")
-                .and_then(|set| set.get("shopMoney"))
-                .and_then(|money| cents_of(money.get("amount")))
-                .unwrap_or(0);
-            let cancelled = order.get("cancelledAt").is_some_and(|at| !at.is_null());
+            let (total, cancelled) = order_total(order);
             let processed = order
                 .get("processedAt")
                 .and_then(Value::as_str)
@@ -534,7 +561,7 @@ pub fn refresh_customer(state: &mut ShopState, customer: &str) {
 /// What a company location's counters start from, kept on it under this key, which GraphQL
 /// never reads: `{"count", "spent"}` (cents), the store data's `orders_count` and `total_spent`,
 /// which it gives without the orders behind them (0 for a location the Admin API creates).
-pub const ORDERS_BASE: &str = "lsfOrdersBase";
+const ORDERS_BASE: &str = "lsfOrdersBase";
 
 /// The company location an order was placed for: its `purchasingEntity` when it is a
 /// `PurchasingCompany`.
@@ -554,12 +581,7 @@ pub fn refresh_company_location(state: &mut ShopState, location: &str) {
     let Some(record) = state.get(location) else {
         return;
     };
-    let currency = state
-        .shop()
-        .and_then(|shop| shop.get("currencyCode"))
-        .and_then(Value::as_str)
-        .unwrap_or("USD")
-        .to_string();
+    let currency = super::orders::model::currency(state);
     let base = record.get(ORDERS_BASE);
     let base_count = base
         .and_then(|base| base.get("count"))
@@ -576,15 +598,7 @@ pub fn refresh_company_location(state: &mut ShopState, location: &str) {
     let orders: Vec<(i64, bool)> = state
         .all("Order")
         .filter(|order| order_company_location(order) == Some(location))
-        .map(|order| {
-            let total = order
-                .get("totalPriceSet")
-                .and_then(|set| set.get("shopMoney"))
-                .and_then(|money| cents_of(money.get("amount")))
-                .unwrap_or(0);
-            let cancelled = order.get("cancelledAt").is_some_and(|at| !at.is_null());
-            (total, cancelled)
-        })
+        .map(order_total)
         .collect();
     let count = base_count + orders.len() as i64;
     let spent = orders
@@ -602,15 +616,8 @@ pub fn refresh_company_location(state: &mut ShopState, location: &str) {
     let Some(company) = company else {
         return;
     };
-    let locations = state
-        .get(&company)
-        .and_then(|record| record.get("locations"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let total = locations
+    let total = gids_of(state.get(&company), "locations")
         .iter()
-        .filter_map(Value::as_str)
         .filter_map(|location| state.get(location))
         .filter_map(|location| {
             location

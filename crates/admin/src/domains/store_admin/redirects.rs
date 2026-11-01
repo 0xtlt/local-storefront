@@ -25,6 +25,7 @@
 
 use serde_json::{Value, json};
 
+use crate::domains::catalog::gids;
 use crate::domains::content::navigation::set_redirect;
 use crate::graphql::{self, FieldContext, FieldError, Output, Request};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, done_job, payload};
@@ -57,7 +58,6 @@ fn delete_all_of(m: &mut Mutation<'_>, ids: &[String], kind: &str) -> Value {
     payload(json!({"job": job}), &[])
 }
 
-/// `urlRedirectBulkDeleteAll`.
 fn delete_all(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let ids: Vec<String> = m.state().keys("UrlRedirect").map(str::to_string).collect();
     Ok(delete_all_of(m, &ids, "url_redirect_bulk_delete_all"))
@@ -65,14 +65,7 @@ fn delete_all(m: &mut Mutation<'_>, _ctx: &FieldContext<'_>) -> Result<Value, Fi
 
 /// `urlRedirectBulkDeleteByIds`: ids that are not redirects are skipped, as a deleted one is.
 fn delete_by_ids(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let ids: Vec<String> = ctx
-        .arg("ids")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let ids = gids(ctx.arg("ids"));
     if ids.is_empty() {
         let error = UserError::new(
             &["ids"],
@@ -144,7 +137,6 @@ fn search(m: &mut Mutation<'_>, query: &str) -> Result<Vec<String>, Vec<String>>
     }
 }
 
-/// `urlRedirectBulkDeleteBySearch`.
 fn delete_by_search(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let query = ctx.arg_str("search").unwrap_or_default().trim().to_string();
     let refuse = |message: String| {
@@ -165,7 +157,6 @@ fn delete_by_search(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     }
 }
 
-/// `urlRedirectBulkDeleteBySavedSearch`.
 fn delete_by_saved_search(
     m: &mut Mutation<'_>,
     ctx: &FieldContext<'_>,
@@ -266,7 +257,6 @@ fn rows(csv: &str) -> Result<Vec<(String, String)>, String> {
         .collect())
 }
 
-/// `urlRedirectImportCreate(url:)`.
 fn import_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let url = ctx.arg_str("url").unwrap_or_default().trim().to_string();
     let refuse = |message: String| {
@@ -304,12 +294,12 @@ fn import_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     Ok(payload(json!({"urlRedirectImport": id}), &[]))
 }
 
-/// `urlRedirectImportSubmit(id:)`.
 fn import_submit(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
-    let Some(import) = (m.state().type_of(&id) == Some("UrlRedirectImport"))
-        .then(|| m.state().get(&id).cloned())
-        .flatten()
+    let state = m.state();
+    let Some(import) = state
+        .get(&id)
+        .filter(|_| state.type_of(&id) == Some("UrlRedirectImport"))
     else {
         let error = UserError::new(&["id"], "Import not found").code("NOT_FOUND");
         return Ok(payload(json!({"job": null}), &[error]));

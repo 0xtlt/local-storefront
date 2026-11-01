@@ -30,7 +30,7 @@ use crate::search::{Node, Query};
 use crate::state::{Record, ShopState};
 
 /// The root fields that list the saved searches of a resource, and its `SearchResultType`.
-pub const ROOT_FIELDS: &[(&str, &str)] = &[
+const ROOT_FIELDS: &[(&str, &str)] = &[
     ("automaticDiscountSavedSearches", "PRICE_RULE"),
     ("codeDiscountSavedSearches", "PRICE_RULE"),
     ("collectionSavedSearches", "COLLECTION"),
@@ -112,12 +112,44 @@ fn search_of<'s>(state: &'s ShopState, id: &str) -> Option<&'s Record> {
         .filter(|_| state.type_of(id) == Some("SavedSearch"))
 }
 
-fn name_taken(state: &ShopState, name: &str, kind: &str, except: Option<&str>) -> bool {
-    state.all("SavedSearch").any(|search| {
-        search.get("name").and_then(Value::as_str) == Some(name)
-            && search.get("resourceType").and_then(Value::as_str) == Some(kind)
-            && search.get("id").and_then(Value::as_str) != except
-    })
+/// The resource type of the saved search `id`.
+fn kind_of(state: &ShopState, id: &str) -> Option<String> {
+    search_of(state, id)
+        .and_then(|search| search.get("resourceType").and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+/// The errors of a saved search's name: blank, or another's of the same resource type
+/// (`except` is the one renamed).
+fn check_name(
+    state: &ShopState,
+    name: &str,
+    kind: &str,
+    except: Option<&str>,
+    errors: &mut Vec<UserError>,
+) {
+    let taken = || {
+        state.all("SavedSearch").any(|search| {
+            search.get("name").and_then(Value::as_str) == Some(name)
+                && search.get("resourceType").and_then(Value::as_str) == Some(kind)
+                && search.get("id").and_then(Value::as_str) != except
+        })
+    };
+    if name.is_empty() {
+        errors.push(UserError::new(&["input", "name"], "Name can't be blank"));
+    } else if taken() {
+        errors.push(UserError::new(
+            &["input", "name"],
+            "Name has already been taken",
+        ));
+    }
+}
+
+/// [`split`], its error in `errors`.
+fn split_query(query: &str, errors: &mut Vec<UserError>) -> Option<(String, Vec<Value>)> {
+    split(query)
+        .map_err(|problem| errors.push(UserError::new(&["input", "query"], problem)))
+        .ok()
 }
 
 /// The topic of a change of a saved search: the customer groups' for customers, none (a topic
@@ -152,21 +184,8 @@ fn saved_search_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         text("resourceType"),
     );
     let mut errors = Vec::new();
-    if name.is_empty() {
-        errors.push(UserError::new(&["input", "name"], "Name can't be blank"));
-    } else if name_taken(m.state(), &name, &kind, None) {
-        errors.push(UserError::new(
-            &["input", "name"],
-            "Name has already been taken",
-        ));
-    }
-    let split = match split(&query) {
-        Ok(split) => Some(split),
-        Err(problem) => {
-            errors.push(UserError::new(&["input", "query"], problem));
-            None
-        }
-    };
+    check_name(m.state(), &name, &kind, None, &mut errors);
+    let split = split_query(&query, &mut errors);
     let (Some((terms, filters)), true) = (split, errors.is_empty()) else {
         return Ok(payload(json!({"savedSearch": null}), &errors));
     };
@@ -199,10 +218,7 @@ fn saved_search_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let Some(kind) = search_of(m.state(), &id)
-        .and_then(|search| search.get("resourceType").and_then(Value::as_str))
-        .map(str::to_string)
-    else {
+    let Some(kind) = kind_of(m.state(), &id) else {
         let error = UserError::new(&["input", "id"], "Saved search does not exist");
         return Ok(payload(json!({"savedSearch": null}), &[error]));
     };
@@ -215,28 +231,12 @@ fn saved_search_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_str)
         .map(str::to_string);
     let mut errors = Vec::new();
-    match &name {
-        Some(name) if name.is_empty() => {
-            errors.push(UserError::new(&["input", "name"], "Name can't be blank"));
-        }
-        Some(name) if name_taken(m.state(), name, &kind, Some(&id)) => {
-            errors.push(UserError::new(
-                &["input", "name"],
-                "Name has already been taken",
-            ));
-        }
-        _ => {}
+    if let Some(name) = &name {
+        check_name(m.state(), name, &kind, Some(&id), &mut errors);
     }
-    let split = match &query {
-        Some(query) => match split(query) {
-            Ok(split) => Some(split),
-            Err(problem) => {
-                errors.push(UserError::new(&["input", "query"], problem));
-                None
-            }
-        },
-        None => None,
-    };
+    let split = query
+        .as_deref()
+        .and_then(|query| split_query(query, &mut errors));
     if !errors.is_empty() {
         return Ok(payload(json!({"savedSearch": null}), &errors));
     }
@@ -264,10 +264,7 @@ fn saved_search_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let Some(kind) = search_of(m.state(), &id)
-        .and_then(|search| search.get("resourceType").and_then(Value::as_str))
-        .map(str::to_string)
-    else {
+    let Some(kind) = kind_of(m.state(), &id) else {
         let error = UserError::new(&["input", "id"], "Saved search does not exist");
         return Ok(payload(json!({"deletedSavedSearchId": null}), &[error]));
     };

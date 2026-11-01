@@ -100,24 +100,10 @@ pub fn register(registry: &mut Registry) {
             },
         )
         .search_field("MarketingEvent", "type", |_r, _item, event| {
-            Some(
-                event
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .map(|kind| crate::search::SearchValue::Keyword(kind.to_string()))
-                    .into_iter()
-                    .collect(),
-            )
+            Some(keyword(event, "type"))
         })
         .search_field("MarketingActivity", "tactic", |_r, _item, activity| {
-            Some(
-                activity
-                    .get("tactic")
-                    .and_then(Value::as_str)
-                    .map(|kind| crate::search::SearchValue::Keyword(kind.to_string()))
-                    .into_iter()
-                    .collect(),
-            )
+            Some(keyword(activity, "tactic"))
         })
         .default_text("MarketingActivity", |_r, activity| {
             activity
@@ -133,6 +119,16 @@ pub fn register(registry: &mut Registry) {
                 .map(|text| vec![text.to_string()])
                 .unwrap_or_default()
         });
+}
+
+/// A field of a record as a search keyword.
+fn keyword(record: &Record, field: &str) -> Vec<crate::search::SearchValue> {
+    record
+        .get(field)
+        .and_then(Value::as_str)
+        .map(|value| crate::search::SearchValue::Keyword(value.to_string()))
+        .into_iter()
+        .collect()
 }
 
 /// A date of an activity's marketing event, for a search filter.

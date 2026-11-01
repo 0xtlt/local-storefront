@@ -6,7 +6,7 @@
 //! of the shop's online and session tokens (`AssociatedUser::local`: "Shop Owner",
 //! `owner@<shop>`; `isShopOwner: true`, `accountType: REGULAR`, `active`), which
 //! `Shop.accountOwner` names *(chosen: every Shopify shop has an owner)*. The platform family
-//! seeds its record; this completes it (`initials`, `privateData`).
+//! seeds its record, and resolves what the Admin derives of it (`initials`, `privateData`).
 //!
 //! As shopify.dev's reference of 2026-10 describes them: `companyLocationAssignStaffMembers`
 //! "creates one or more mappings between a staff member at a shop and a company location" (a
@@ -26,6 +26,8 @@
 
 use serde_json::{Value, json};
 
+use crate::domains::catalog::gids;
+use crate::domains::customers::companies::not_found;
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
 use crate::state::ShopState;
@@ -52,42 +54,10 @@ pub fn owner_gid() -> String {
 }
 
 /// The shop's owner, the shop's `accountOwner` and the staff member point of sale opens sessions
-/// with. The platform family seeds its record (the tokens' user, run before this one); this
-/// completes it with what the Admin reads of an owner (`initials`, `privateData`), and makes the
-/// same record when it is missing.
+/// with. The platform family seeds its record (the tokens' user, run before this one); this names
+/// it the shop's `accountOwner`.
 pub fn seed(seed: &mut Seed) {
     let id = owner_gid();
-    let handle = seed
-        .state
-        .shop()
-        .and_then(|record| record.get("myshopifyDomain")?.as_str())
-        .and_then(|domain| domain.split('.').next())
-        .unwrap_or_default()
-        .to_string();
-    let private = json!({
-        "accountSettingsUrl": format!("https://admin.shopify.com/store/{handle}/settings/account"),
-        "createdAt": Seed::epoch_string(),
-        "permissions": [],
-    });
-    // The platform family seeds the owner, as the tokens' user; the same record otherwise, so
-    // that there is one owner, whoever seeds it.
-    if !seed.state.contains(&id) {
-        let domain = seed.state.domain().to_string();
-        seed.insert(crate::domains::platform::queries::staff_record(
-            &crate::auth::tokens::AssociatedUser::local(&domain, 1),
-            &domain,
-            &Seed::epoch_string(),
-        ));
-    }
-    if let Some(record) = seed.state.get_mut(&id) {
-        let initials: Vec<Value> = ["firstName", "lastName"]
-            .iter()
-            .filter_map(|field| record.get(*field)?.as_str()?.chars().next())
-            .map(|initial| json!(initial.to_string()))
-            .collect();
-        record.entry("initials").or_insert(Value::Array(initials));
-        record.entry("privateData").or_insert(private);
-    }
     if let Some(shop_gid) = seed.state.shop_gid().map(str::to_string)
         && let Some(record) = seed.state.get_mut(&shop_gid)
     {
@@ -99,23 +69,12 @@ fn is(state: &ShopState, id: &str, type_name: &str) -> bool {
     state.type_of(id) == Some(type_name)
 }
 
-fn not_found(field: &[&str]) -> UserError {
-    UserError::new(field, "Resource requested does not exist.").code("RESOURCE_NOT_FOUND")
-}
-
 fn assign_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let location = ctx
         .arg_str("companyLocationId")
         .unwrap_or_default()
         .to_string();
-    let staff: Vec<String> = ctx
-        .arg("staffMemberIds")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let staff = gids(ctx.arg("staffMemberIds"));
     let state = m.state();
     let mut errors = Vec::new();
     if !is(state, &location, "CompanyLocation") {
@@ -182,14 +141,7 @@ fn assign_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
 }
 
 fn remove_staff_members(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let ids: Vec<String> = ctx
-        .arg("companyLocationStaffMemberAssignmentIds")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let ids = gids(ctx.arg("companyLocationStaffMemberAssignmentIds"));
     let mut errors = Vec::new();
     for (index, id) in ids.iter().enumerate() {
         if !is(m.state(), id, "CompanyLocationStaffMemberAssignment") {

@@ -28,21 +28,21 @@ use crate::state::{Record, ShopState, gid};
 
 /// A standard metafield definition template: `(id, name, description, namespace, key, type,
 /// owner types, validations)`.
-pub struct MetafieldTemplate {
-    pub id: u64,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub namespace: &'static str,
-    pub key: &'static str,
-    pub kind: &'static str,
-    pub owner_types: &'static [&'static str],
-    pub validations: &'static [(&'static str, &'static str)],
+struct MetafieldTemplate {
+    id: u64,
+    name: &'static str,
+    description: &'static str,
+    namespace: &'static str,
+    key: &'static str,
+    kind: &'static str,
+    owner_types: &'static [&'static str],
+    validations: &'static [(&'static str, &'static str)],
 }
 
 const PRODUCT_AND_VARIANT: &[&str] = &["PRODUCT", "PRODUCTVARIANT"];
 
 /// shopify.dev's standard metafield definitions, in its order.
-pub const METAFIELD_TEMPLATES: &[MetafieldTemplate] = &[
+const METAFIELD_TEMPLATES: &[MetafieldTemplate] = &[
     MetafieldTemplate {
         id: 1,
         name: "Product subtitle",
@@ -210,18 +210,16 @@ pub const METAFIELD_TEMPLATES: &[MetafieldTemplate] = &[
 
 /// A standard metaobject definition template: its type, name, description, display name key,
 /// and fields (`(key, name, type, required)`).
-pub struct MetaobjectTemplate {
-    pub id: u64,
-    pub kind: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub display_name_key: &'static str,
-    pub fields: &'static [(&'static str, &'static str, &'static str, bool)],
+struct MetaobjectTemplate {
+    kind: &'static str,
+    name: &'static str,
+    description: &'static str,
+    display_name_key: &'static str,
+    fields: &'static [(&'static str, &'static str, &'static str, bool)],
 }
 
 /// shopify.dev's standard metaobject definitions.
-pub const METAOBJECT_TEMPLATES: &[MetaobjectTemplate] = &[MetaobjectTemplate {
-    id: 2,
+const METAOBJECT_TEMPLATES: &[MetaobjectTemplate] = &[MetaobjectTemplate {
     kind: "product_review",
     name: "Product Review",
     description: "Stores and manages product reviews, including ratings, review content, and associated metadata.",
@@ -272,7 +270,7 @@ pub const METAOBJECT_TEMPLATES: &[MetaobjectTemplate] = &[MetaobjectTemplate {
     ],
 }];
 
-pub fn template_gid(id: u64) -> String {
+fn template_gid(id: u64) -> String {
     gid("StandardMetafieldDefinitionTemplate", id)
 }
 
@@ -379,6 +377,15 @@ fn errors_of(payload: &Value, code_enum: &str) -> Vec<UserError> {
         .collect()
 }
 
+/// The errors of an inner mutation that created nothing: its own, or lsf's when it gave none.
+fn or_invalid(errors: Vec<UserError>) -> Vec<UserError> {
+    if errors.is_empty() {
+        vec![UserError::new(&[], "The definition could not be created").code("INVALID")]
+    } else {
+        errors
+    }
+}
+
 /// Runs a mutation of the registry within this one: what it changes is this mutation's.
 fn run_inner(m: &mut Mutation<'_>, query: &str, variables: Map<String, Value>) -> Value {
     let mut request = Request::new(query);
@@ -388,7 +395,6 @@ fn run_inner(m: &mut Mutation<'_>, query: &str, variables: Map<String, Value>) -
     graphql::run(schema, &mut resolver, &request, None).to_json()
 }
 
-/// `standardMetafieldDefinitionEnable`.
 fn metafield_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let refuse = |field: &[&str], message: &str, code: &str| {
         Ok(payload(
@@ -444,14 +450,10 @@ fn metafield_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     if let Some(pin) = ctx.arg_bool("pin") {
         definition["pin"] = json!(pin);
     }
-    if let Some(capabilities) = ctx.arg("capabilities").filter(|value| !value.is_null()) {
+    if let Some(capabilities) = ctx.arg("capabilities") {
         definition["capabilities"] = capabilities.clone();
     }
-    let mut access = ctx
-        .arg("access")
-        .filter(|value| !value.is_null())
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let mut access = ctx.arg("access").cloned().unwrap_or_else(|| json!({}));
     if ctx.arg_bool("visibleToStorefrontApi") == Some(false) && access.get("storefront").is_none() {
         access["storefront"] = json!("NONE");
     }
@@ -467,18 +469,16 @@ fn metafield_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     );
     let created = &answer["data"]["metafieldDefinitionCreate"];
     let errors = errors_of(created, "StandardMetafieldDefinitionEnableUserErrorCode");
-    if !errors.is_empty() || !created["createdDefinition"]["id"].is_string() {
-        let errors = if errors.is_empty() {
-            vec![UserError::new(&[], "The definition could not be created").code("INVALID")]
-        } else {
-            errors
-        };
-        return Ok(payload(json!({"createdDefinition": null}), &errors));
-    }
-    let id = created["createdDefinition"]["id"]
+    let Some(id) = created["createdDefinition"]["id"]
         .as_str()
-        .unwrap_or_default()
-        .to_string();
+        .filter(|_| errors.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(payload(
+            json!({"createdDefinition": null}),
+            &or_invalid(errors),
+        ));
+    };
     if let Some(record) = m.state_mut().get_mut(&id) {
         record.insert("standardTemplate".into(), json!(template_gid(template.id)));
     }
@@ -572,12 +572,10 @@ fn metaobject_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
         .filter(|_| errors.is_empty())
         .map(str::to_string)
     else {
-        let errors = if errors.is_empty() {
-            vec![UserError::new(&[], "The definition could not be created").code("INVALID")]
-        } else {
-            errors
-        };
-        return Ok(payload(json!({"metaobjectDefinition": null}), &errors));
+        return Ok(payload(
+            json!({"metaobjectDefinition": null}),
+            &or_invalid(errors),
+        ));
     };
     if let Some(record) = m.state_mut().get_mut(&id) {
         record.insert(
@@ -586,10 +584,4 @@ fn metaobject_enable(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
         );
     }
     Ok(payload(json!({"metaobjectDefinition": id}), &[]))
-}
-
-/// The record of a template as a value, for the tests.
-#[cfg(test)]
-pub fn template_record(state: &ShopState, id: u64) -> Option<Record> {
-    state.get(&template_gid(id)).cloned()
 }
