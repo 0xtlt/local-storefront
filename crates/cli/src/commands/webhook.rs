@@ -181,8 +181,10 @@ fn trigger(
         .as_ref()
         .map(|app| app.config.clone())
         .unwrap_or_default();
-    let (secret, _) =
+    let (secret, source) =
         lsf_admin::auth::client_secret(args.client_secret.as_deref(), app_dir.as_deref());
+    let dotenv = app_dir.as_ref().map(|dir| dir.join(".env"));
+    let refusal_hint = source.refusal(&secret, dotenv.as_deref());
     let samples = sample_records(theme, data, previews, app_dir.as_deref(), app.as_ref())?;
     let Some(payload) = samples
         .sample(topic)
@@ -193,9 +195,11 @@ fn trigger(
             lsf_admin::webhooks::payload::BUILT_TOPICS.join(", ")
         ));
     };
-    // As Shopify's: a triggered webhook is not retried.
+    // As Shopify's: a triggered webhook is not retried. One the backend refuses says which
+    // secret lsf signed it with.
     let options = DeliveryOptions {
         retry_delays: Vec::new(),
+        refusal_hint: Some(refusal_hint),
         ..DeliveryOptions::default()
     };
     // The payload is built in `--api-version`, as Shopify's CLI sends the sample of that version;
