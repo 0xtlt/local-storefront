@@ -177,11 +177,17 @@ It builds nothing without `--build`: in a fresh clone, where `dist/` is not comm
 `--build` (or run `npx local-storefront app build` first).
 
 A Function that ran in no scenario, such as a discount Function no scenario's discount names, is
-a warning: nothing checked it, and the exit code stays the same.
+a warning: nothing checked it, and the exit code stays the same. The last line, the summary,
+counts it too, rather than saying that every Function ran:
 
 ```text
 warning  volume-discount: ran in no scenario, so nothing checks it (a discount Function runs only for a discount that names it: …)
+checked 8 of 8 scenarios in 0.4 s: no Function failed, 1 Function ran in no scenario
 ```
+
+When every Function ran somewhere and none failed, the summary ends with `every Function ran`.
+When something failed, it counts the failures and the invalid scenarios:
+`1 failure, 0 invalid scenarios`.
 
 Exiting with `0` means no Function failed where it ran, not that it decided right: assert that
 with `app function run --format json`. CI: [checkout](checkout.md#in-ci).
@@ -267,9 +273,10 @@ a `shopify app dev` that is not running. As Shopify's, a triggered webhook is no
 
 Webhooks stay on this machine. One goes to another host only when that host is the scheme,
 host and port of `--app-url`, or the `--address` given: otherwise the command sends nothing,
-prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; …`
-and exits with `2`. A server logs the same delivery `not_sent`. So `application_url`, often your production
-backend or a dead tunnel, never gets one by accident.
+prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; give
+--app-url http://localhost:<port> (your backend) or --address <url>` and exits with `2`. A
+server logs the same delivery `not_sent`, and says to start lsf with `--app-url`. So
+`application_url`, often your production backend or a dead tunnel, never gets one by accident.
 
 The secret is the app's. Without the app (no `--app`, and run outside its folder), its `.env`
 is not read: give `--client-secret` or set `SHOPIFY_API_SECRET`. Without either, lsf signs with
@@ -278,7 +285,7 @@ its own secret, and the backend answers `401`.
 | Option | Environment variable | What it does |
 |---|---|---|
 | `--topic <topic>` | | The topic, as Shopify writes it (`orders/create`) or as the GraphQL enum does (`ORDERS_CREATE`). Every topic of the API version (`--api-version`) and the compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`). A topic close to an existing one is suggested. |
-| `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine). |
+| `--address <url>` | | Where to send it: `https://…`, or `http://localhost:<port>/<path>` (any address of this machine: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). |
 | `--api-version <version>` | | The version the payload is built in: `2026-10` (the default) or another lsf knows (`2027-01`). A topic the version does not have is refused. |
 | `--delivery-method <method>` | | `http`, `google-pub-sub` or `event-bridge`; without it, what the address says. lsf delivers over HTTP only: the other two are refused. |
 | `--client-secret <secret>` | `LSF_CLIENT_SECRET` | The secret of the signature. Default: `SHOPIFY_API_SECRET` of the environment, else of the app's `.env`, else lsf's local secret, `lsf-local-client-secret`. |

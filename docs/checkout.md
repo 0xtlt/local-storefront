@@ -105,7 +105,7 @@ A Function is a folder of `extensions/`:
 |---|---|
 | `shopify.extension.toml` | `type = "function"`, its `handle`, a `[[extensions.targeting]]` with its `target`, `input_query` and `export`, and `[extensions.build]` with `command = ""` and `path = "dist/function.wasm"`. |
 | `package.json` | `"@shopify/shopify_function": "2.0.1"` in `dependencies`: lsf needs it declared, not installed. The `codegen` section, for the types. |
-| `src/index.js` (or `.ts`) | `export * from "./cart_validations_generate_run";` |
+| `src/index.js` (or `.ts`) | `export * from "./<target>";`, the target with `_` for `.`: `./cart_lines_discounts_generate_run` for a discount. |
 | `src/<target>.graphql`, `src/<target>.js` | The input query, and the function the `export` names, in camel case (`cart-validations-generate-run`: `cartValidationsGenerateRun`). |
 
 Then build it at each save with `npx local-storefront app dev --watch`. A discount Function runs
@@ -459,7 +459,8 @@ start: edit them.
 discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
 (`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it. It
 warns only about a Function no scenario ran at all (`warning  <handle>: ran in no scenario, so
-nothing checks it`, and `ranInNoScenario` in JSON), and its exit code stays the same. To run it in
+nothing checks it`, `1 Function ran in no scenario` in the summary, and `ranInNoScenario` in
+JSON), and its exit code stays the same. To run it in
 every scenario, a B2B buyer, another country and a large cart included, give it a discount in the
 `checkout` section of the store data (`store.json`, or the file that has the section):
 
@@ -965,7 +966,8 @@ npx local-storefront app function run volume-discount --app ../my-app --scenario
 Builds the input of each Function from the store data and the [scenario](#scenarios), runs them
 in checkout order, and prints each input, output and log with the checkout that results. Without
 a handle, every Function of the app runs. Without `--scenario` or `--session`, the cart is the
-`session` of the store data, empty in the demo store: nothing runs on it.
+`session` of the store data, empty in the demo store: a Function that runs gets an empty cart
+and changes nothing. Give `--scenario`.
 
 ```text
 == scenario discount-automatic: An automatic discount
@@ -1047,7 +1049,7 @@ Functions it needs and no others, `--extension <handle>` repeated: a Function th
 | `GET /checkouts/cn/<token>` | The page. | HTML, with the state in it |
 | `GET /checkouts/cn/<token>.json` | The state of the checkout. | JSON |
 | `POST /checkouts/cn/<token>/update` | Applies `{"operations": [...]}`, in order. | `200` and the state, or `400` `{"error": "…"}` and nothing applied |
-| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}`, the order as the Admin API recorded it (`id` is the `admin_graphql_api_id` of its `orders/create`; the thank-you page shows the session's number, which can differ), `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
+| `POST /checkouts/cn/<token>/complete` | Places the order. | `200` `{"redirect": "…/thank-you", "order": {"id", "number", "name"}}`, the order as the Admin API recorded it: `number` is an integer (`1004`), `name` the string (`"#1004"`), `id` the `admin_graphql_api_id` of its `orders/create`. The state's `order.number` is a string, the session's, which can differ (below). Or `422` and the state with `errors`, or `409` and the fresh state when the cart changed meanwhile |
 | `GET /checkouts/cn/<token>/thank-you` | The page of the order. | HTML |
 | `GET /__lsf/checkout?session=<id>` | The state of a session's checkout, from outside its browser. | JSON |
 
@@ -1109,15 +1111,20 @@ the metafields, the `extensions` to load and `diagnostics`. Money is `{"amount":
 email, a payment method or, for a cart that ships, an address with a last name, a first line and
 a city. It empties the cart: the order is what the thank-you page shows, and the state's `order`
 (`id`, `number`, `processedAt`, `totalReceived`, `totalOutstanding`) once `status` is `completed`.
-That `number` is the session's (`#1004` every run); the `order` of `complete` has the Admin API's,
-`#1005` when the shop has a `#1004` already. It takes the cart only if the cart is still the one
-the Functions ran on: if it changed meanwhile (another tab), nothing is bought and the reply is
-`409`. Completing an order that was placed already leads to the same thank-you page, never to a
+That `number` is a string, the session's (`"#1004"` every run). The `order` of `complete` is the
+Admin API's, and there `number` is an integer (`1004`) and `name` the string (`"#1004"`); they
+are `1005` and `"#1005"` when the shop has a `#1004` already. To match the two, use `id`, which
+both have; never compare the two `number`s. The state's `number` is a string since 0.2.0, and
+stays one. `complete` takes the cart only if the cart is still the one the Functions ran on: if
+it changed meanwhile (another tab), nothing is bought and the reply is `409`. Completing an order that was placed already leads to the same thank-you page, never to a
 second order.
 
 ### In CI
 
-`dist/` is not committed: build the extensions before checking them. In the app's folder:
+Once, in the app's folder: `npm install --save-dev local-storefront`, then commit
+`package.json` and `package-lock.json`. In the job, `actions/setup-node` and `npm ci` come
+before these steps, as in [testing](testing.md#in-ci). `dist/` is not committed: build the
+extensions before checking them.
 
 ```yaml
 - run: npx local-storefront app build      # every Function and UI extension, without Node

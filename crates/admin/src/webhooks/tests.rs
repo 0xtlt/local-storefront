@@ -991,6 +991,79 @@ fn a_webhook_is_sent_to_this_machine_or_to_the_app_url_only() {
     assert_eq!(direct.state, DeliveryState::Delivered, "{direct:#?}");
 }
 
+/// RFC 6761 reserves the names under `localhost` for the loopback: lsf counts them as this
+/// machine, and connects to the loopback whatever the system resolver says, with their `Host`.
+#[test]
+fn a_name_under_localhost_is_this_machine_and_is_delivered_to_the_loopback() {
+    let backend = Backend::start(|_| (200, Duration::ZERO));
+    let port = backend.url.rsplit(':').next().unwrap();
+    // No `--app-url`: what decides is the rule of this machine, not the origin of `--app-url`.
+    let config = AppConfig {
+        application_url: Some(format!("http://app.localhost:{port}")),
+        webhooks_api_version: Some(API_VERSION.to_string()),
+        webhook_subscriptions: vec![
+            subscription(&["products/update"], "/joined"),
+            subscription(
+                &["products/update"],
+                &format!("http://shop.app.localhost:{port}/absolute"),
+            ),
+        ],
+        ..Default::default()
+    };
+    let webhooks = Webhooks::for_app(&config, None, SECRET.to_string(), options());
+    assert_eq!(
+        webhooks.summary(),
+        format!("2 subscriptions of shopify.app.toml → http://app.localhost:{port}")
+    );
+    // `webhookSubscriptionCreate` takes plain HTTP there, as to `localhost`.
+    webhooks
+        .registry()
+        .create(
+            SHOP,
+            "PRODUCTS_UPDATE",
+            SubscriptionInput {
+                uri: Some(format!("http://api.localhost:{port}/api")),
+                ..Default::default()
+            },
+            API_VERSION,
+            Utc::now(),
+        )
+        .unwrap();
+    // `lsf app webhook trigger` refuses none of them.
+    assert_eq!(
+        webhooks.refused_urls(SHOP, "products/update"),
+        Vec::<String>::new()
+    );
+    webhooks.emit(
+        &event("products/update", "gid://shopify/Product/1"),
+        &lookup(),
+    );
+    let deliveries = wait_for(&webhooks, 3);
+    for delivery in &deliveries {
+        assert_eq!(delivery.state, DeliveryState::Delivered, "{delivery:#?}");
+    }
+    let mut seen: Vec<(String, String)> = backend
+        .received()
+        .into_iter()
+        .map(|request| {
+            let host = request.header("host").unwrap_or("").to_string();
+            (request.path, host)
+        })
+        .collect();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            (
+                "/absolute".to_string(),
+                format!("shop.app.localhost:{port}")
+            ),
+            ("/api".to_string(), format!("api.localhost:{port}")),
+            ("/joined".to_string(), format!("app.localhost:{port}")),
+        ]
+    );
+}
+
 #[test]
 fn the_summary_says_where_the_webhooks_go() {
     let webhooks = webhooks(

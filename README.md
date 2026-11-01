@@ -67,12 +67,14 @@ Each test gets its own cart and customer, so tests run in parallel. One request 
 session in the state a test needs:
 
 ```ts
-await page.request.put('/__lsf/session', {
+// The demo store's customer and SKU (npx local-storefront init): put your own.
+const response = await page.request.put('/__lsf/session', {
   data: {
     customer: 'jane.doe@example.com',
     cart: { items: [{ variant: 'TEE-BLK-M', quantity: 2 }] },
   },
 });
+expect(response.ok()).toBeTruthy(); // 422 when the data has no such customer or SKU
 await page.goto('/cart');
 ```
 

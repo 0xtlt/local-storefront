@@ -4967,6 +4967,26 @@ fn what_the_functions_read_of_the_session_cannot_change_while_completing() {
     });
 }
 
+/// `order.number` has two shapes, and both stay: the state's, a string since 0.2.0, which tests
+/// read; and the Admin API's in the answer of `complete`, an integer beside `name`.
+#[test]
+fn the_order_number_is_a_string_in_the_state_and_an_integer_in_complete() {
+    let state = checkout_server(&[], false);
+    let path = ready_checkout(&state, "co-number");
+    let reply = post(&state, &format!("{path}/complete"), json!({}), "co-number");
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let completed = body_json(&reply)["order"].clone();
+    assert_eq!(completed["number"], json!(1004), "{completed}");
+    assert_eq!(completed["name"], json!("#1004"), "{completed}");
+
+    let control = body_json(&get(&state, "/__lsf/checkout?session=co-number", "other"));
+    assert_eq!(control["status"], "completed");
+    assert_eq!(control["order"]["number"], json!("#1004"), "{control}");
+    assert_eq!(control["order"]["id"], completed["id"]);
+    // The state's `number` is the `name` of `complete`.
+    assert_eq!(control["order"]["number"], completed["name"]);
+}
+
 #[test]
 fn an_update_after_the_completion_is_refused() {
     let state = checkout_server(&[], false);

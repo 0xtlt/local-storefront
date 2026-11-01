@@ -350,10 +350,12 @@ an uninstall, is sent on demand: `POST /__lsf/webhooks/trigger {"topic": "shop/r
 - **Where they go**: a `uri` that is a path joins `--app-url` (else `application_url`); an
   absolute one on the origin of `application_url` (the tunnel of a `shopify app dev` that is not
   running) moves to `--app-url`; another goes where it says. **Webhooks stay on this machine**:
-  lsf sends one to the loopback (`localhost`, `127.0.0.0/8`, `::1`), to the scheme, host and
-  port of `--app-url`, or to an address given on purpose (`--address`, `address` of
-  `POST /__lsf/webhooks/trigger`). `*.localhost`, `0.0.0.0` and `::ffff:127.0.0.1` do not count
-  as this machine. Anything else (a production backend, a stale tunnel) is not sent, and
+  lsf sends one to the loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), to the
+  scheme, host and port of `--app-url`, or to an address given on purpose (`--address`,
+  `address` of `POST /__lsf/webhooks/trigger`). A name under `localhost` (`app.localhost`) is
+  sent to the loopback whatever your system's resolver says, with its own `Host` header: the
+  name is reserved for the loopback (RFC 6761). `0.0.0.0` and `::ffff:127.0.0.1` do not count as
+  this machine. Anything else (a production backend, a stale tunnel) is not sent, and
   `GET /__lsf/webhooks` logs it `not_sent`, with the reason `lsf sends webhooks to this machine
   or to --app-url only: <url> is neither; start lsf with --app-url http://localhost:<port> (your
   backend)`. So give `--app-url`: without it, the subscriptions of `shopify.app.toml` point at
@@ -419,7 +421,8 @@ npx local-storefront app webhook trigger --topic app/uninstalled --app ../my-app
 
 The topic must be one `shopify.app.toml` subscribes to (or give `--address <url>`). Without
 `--app-url`, a subscription that leads off this machine is not sent: the command sends nothing,
-prints `error: lsf sends webhooks to this machine or to --app-url only: …` and exits `2`.
+prints `error: lsf sends webhooks to this machine or to --app-url only: <url> is neither; give
+--app-url http://localhost:<port> (your backend) or --address <url>` and exits `2`.
 `--format json` prints each delivery as `GET /__lsf/webhooks` lists it. See the
 [control API](control-api.md) and the [CLI](cli.md#app-webhook-trigger).
 

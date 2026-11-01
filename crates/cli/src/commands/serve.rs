@@ -458,10 +458,14 @@ fn app_summary(
     if !has_directory {
         return "no extensions: the Admin API, webhooks and the app proxy".to_string();
     }
+    let ui_extensions = crate::output::count(ui_extensions, "UI extension", "UI extensions");
     if no_functions {
-        return format!("{ui_extensions} UI extensions, no Function: --no-functions");
+        return format!("{ui_extensions}, no Function: --no-functions");
     }
-    format!("{functions} Functions, {ui_extensions} UI extensions")
+    format!(
+        "{}, {ui_extensions}",
+        crate::output::count(functions, "Function", "Functions")
+    )
 }
 
 #[cfg(test)]
@@ -472,15 +476,15 @@ mod tests {
     fn the_app_line_says_what_is_served() {
         assert_eq!(
             app_summary(2, 1, true, false),
-            "2 Functions, 1 UI extensions"
+            "2 Functions, 1 UI extension"
         );
         assert_eq!(
             app_summary(0, 0, false, false),
             "no extensions: the Admin API, webhooks and the app proxy"
         );
         assert_eq!(
-            app_summary(0, 1, true, true),
-            "1 UI extensions, no Function: --no-functions"
+            app_summary(0, 2, true, true),
+            "2 UI extensions, no Function: --no-functions"
         );
     }
 
