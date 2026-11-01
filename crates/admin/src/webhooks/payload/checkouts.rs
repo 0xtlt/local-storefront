@@ -113,7 +113,7 @@ fn checkout_line(
     let (total_tax, total_taxable) = tax;
     let line_total = cents(&bag_amount(field(line, "discountedTotalPriceSet")));
     let share = if total_taxable > 0 {
-        (i128::from(total_tax) * i128::from(line_total) / i128::from(total_taxable)) as i64
+        crate::domains::orders::model::share(total_tax, line_total, total_taxable)
     } else {
         0
     };

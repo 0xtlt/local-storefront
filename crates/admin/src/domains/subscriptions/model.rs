@@ -13,7 +13,6 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 use crate::domains::catalog::gids;
-use crate::domains::orders::TAX_RATE_SETTING;
 use crate::domains::orders::model::{cents, parse_cents, share};
 use crate::resolve::{UserError, coded, input_path};
 use crate::state::{Record, ShopState, value};
@@ -1223,10 +1222,7 @@ pub fn amounts(state: &ShopState, record: &Record) -> (i64, i64, i64, i64, i64, 
         };
         delivery_discounts = (delivery_discounts + off).min(delivery);
     }
-    let rate = state
-        .setting(TAX_RATE_SETTING)
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+    let rate = crate::domains::orders::tax_rate_setting(state);
     let included = state
         .shop()
         .and_then(|shop| shop.get("taxesIncluded"))
