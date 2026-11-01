@@ -154,11 +154,6 @@ pub fn written_form(text: &str) -> Option<&'static str> {
     default_topics().written_form(text)
 }
 
-/// [`Topics::every_written`] in the default version.
-pub fn every_written() -> impl Iterator<Item = &'static str> {
-    default_topics().every_written()
-}
-
 /// [`Topics::suggestion`] in the default version.
 pub fn suggestion(text: &str) -> Option<&'static str> {
     default_topics().suggestion(text)

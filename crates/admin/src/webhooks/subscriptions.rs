@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::topics::{self, Topics};
-use crate::state::{Record, gid, parse_gid};
+use crate::state::{Record, gid, parse_gid, value};
 use crate::version::{self, ApiVersion};
 
 /// The API version of a subscription that names none: [`version::DEFAULT`]. What a payload is
@@ -133,13 +133,10 @@ impl Subscription {
                 "displayName": self.api_version,
                 "supported": !version::is_inaccessible(&self.api_version),
             },
-            "createdAt": rfc3339(self.created_at),
-            "updatedAt": rfc3339(self.updated_at),
+            "createdAt": value::date_time(self.created_at),
+            "updatedAt": value::date_time(self.updated_at),
         });
-        match value {
-            Value::Object(record) => record,
-            _ => Record::new(),
-        }
+        value::object(value)
     }
 }
 
@@ -153,10 +150,6 @@ fn endpoint_of(uri: &str) -> Value {
         return json!({"__typename": "WebhookEventBridgeEndpoint", "arn": uri});
     }
     json!({"__typename": "WebhookHttpEndpoint", "callbackUrl": uri})
-}
-
-fn rfc3339(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// The subscriptions of `shopify.app.toml`: one per topic of each `[[webhooks.subscriptions]]`
@@ -430,10 +423,7 @@ impl Registry {
             .iter()
             .any(|existing| existing.topic == topic && existing.uri == uri)
         {
-            errors.push(UserError::new(
-                &["webhookSubscription", "callbackUrl"],
-                "Address for this topic has already been taken",
-            ));
+            errors.push(address_taken());
         }
         errors.extend(check_name(input.name.as_deref()));
         if !errors.is_empty() {
@@ -481,10 +471,7 @@ impl Registry {
             if self.list(shop).iter().any(|other| {
                 other.id != existing.id && other.topic == existing.topic && &other.uri == uri
             }) {
-                errors.push(UserError::new(
-                    &["webhookSubscription", "callbackUrl"],
-                    "Address for this topic has already been taken",
-                ));
+                errors.push(address_taken());
             }
         }
         errors.extend(check_name(input.name.as_deref()));
@@ -568,6 +555,13 @@ impl Registry {
 
 fn not_found() -> UserError {
     UserError::new(&["id"], "Webhook subscription does not exist")
+}
+
+fn address_taken() -> UserError {
+    UserError::new(
+        &["webhookSubscription", "callbackUrl"],
+        "Address for this topic has already been taken",
+    )
 }
 
 /// What Shopify accepts as the `uri` of a subscription created through the Admin API: HTTPS,

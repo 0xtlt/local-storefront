@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use super::customers::{email, phone};
 use super::{
     DELETED_AT, Lookup, PREVIOUS_ACCESS_SCOPES, boolean, field, first, id, items, lower, merge,
-    millis, money_amount, numeric, object, records, ref_gid, ref_id, resolve, text, time,
+    millis, money_amount, object, records, ref_gid, ref_id, resolve, text, text_or, time,
     weight_unit,
 };
 use crate::state::parse_gid;
@@ -50,10 +50,7 @@ pub(super) fn shop(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
             "phone": text(&address, "phone"),
             "latitude": field(&address, "latitude"),
             "longitude": field(&address, "longitude"),
-            "primary_locale": match text(&shop, "primaryLocale") {
-                Value::Null => json!("en"),
-                locale => locale,
-            },
+            "primary_locale": text_or(&shop, "primaryLocale", "en"),
             "address2": text(&address, "address2"),
         }),
         json!({
@@ -389,10 +386,7 @@ fn shop_fields(record: &Map<String, Value>, lookup: &dyn Lookup) -> (Value, Valu
 fn compliance_customer(record: &Map<String, Value>) -> (Value, Value) {
     let orders: Vec<Value> = items(field(record, "orders"))
         .iter()
-        .map(|order| match order {
-            Value::Object(order) => id(order),
-            gid => numeric(gid),
-        })
+        .map(ref_id)
         .filter(|id| !id.is_null())
         .collect();
     (

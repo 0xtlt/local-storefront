@@ -6,16 +6,11 @@ use sha2::{Digest, Sha256};
 
 use super::customers::{embedded, order_address};
 use super::{
-    Lookup, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first, grams, id,
-    integer, items, lower, merge, money_amount, money_set, numeric, object, price, price_or_zero,
-    records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time, zero_set,
+    Lookup, amount_set, attributes, bag_amount, bag_currency, boolean, decimal_text, field, first,
+    grams, id, integer, item_weight, items, lower, lower_or, merge, money_amount, money_set,
+    numeric, object, price, price_or_zero, records, ref_gid, ref_id, resolve, strings, tags, text,
+    text_or, time, zero_set,
 };
-
-/// The first of several `MoneyBag` fields that the record has: a `current…Set` and the original
-/// one, which are the same until the order is edited or refunded.
-fn bag<'a>(record: &'a Map<String, Value>, keys: &[&str]) -> &'a Value {
-    first(record, keys)
-}
 
 /// `orders/create`, `/updated`, `/paid`, `/cancelled`, `/fulfilled`, `/partially_fulfilled`: an
 /// `Order`.
@@ -25,22 +20,24 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     let shipping_lines = records(field(record, "shippingLines"), lookup);
     let applications = items(field(record, "discountApplications"));
     let currency = match text(record, "currencyCode") {
-        Value::Null => bag_currency(bag(record, &["totalPriceSet", "currentTotalPriceSet"])),
+        Value::Null => bag_currency(first(record, &["totalPriceSet", "currentTotalPriceSet"])),
         currency => currency,
     };
-    let total_price = bag(record, &["totalPriceSet", "currentTotalPriceSet"]);
-    let current_total_price = bag(record, &["currentTotalPriceSet", "totalPriceSet"]);
-    let subtotal = bag(record, &["subtotalPriceSet", "currentSubtotalPriceSet"]);
-    let current_subtotal = bag(record, &["currentSubtotalPriceSet", "subtotalPriceSet"]);
-    let discounts = bag(record, &["totalDiscountsSet", "currentTotalDiscountsSet"]);
-    let current_discounts = bag(record, &["currentTotalDiscountsSet", "totalDiscountsSet"]);
-    let tax = bag(record, &["totalTaxSet", "currentTotalTaxSet"]);
-    let current_tax = bag(record, &["currentTotalTaxSet", "totalTaxSet"]);
-    let shipping = bag(
+    // A `current…Set` and the original one are the same until the order is edited or refunded:
+    // each stands in for the other.
+    let total_price = first(record, &["totalPriceSet", "currentTotalPriceSet"]);
+    let current_total_price = first(record, &["currentTotalPriceSet", "totalPriceSet"]);
+    let subtotal = first(record, &["subtotalPriceSet", "currentSubtotalPriceSet"]);
+    let current_subtotal = first(record, &["currentSubtotalPriceSet", "subtotalPriceSet"]);
+    let discounts = first(record, &["totalDiscountsSet", "currentTotalDiscountsSet"]);
+    let current_discounts = first(record, &["currentTotalDiscountsSet", "totalDiscountsSet"]);
+    let tax = first(record, &["totalTaxSet", "currentTotalTaxSet"]);
+    let current_tax = first(record, &["currentTotalTaxSet", "totalTaxSet"]);
+    let shipping = first(
         record,
         &["totalShippingPriceSet", "currentShippingPriceSet"],
     );
-    let current_shipping = bag(
+    let current_shipping = first(
         record,
         &["currentShippingPriceSet", "totalShippingPriceSet"],
     );
@@ -104,10 +101,7 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
             "duties_included": boolean(record, "dutiesIncluded", false),
             "email": text(record, "email"),
             "estimated_taxes": boolean(record, "estimatedTaxes", false),
-            "financial_status": match lower(field(record, "displayFinancialStatus")) {
-                Value::Null => json!("pending"),
-                status => status,
-            },
+            "financial_status": lower_or(field(record, "displayFinancialStatus"), "pending"),
             "fulfillment_status": order_fulfillment_status(field(record, "displayFulfillmentStatus")),
             "landing_site": Value::Null,
             "landing_site_ref": Value::Null,
@@ -340,21 +334,13 @@ impl LineParts {
             },
         };
         let product = field(line, "product");
-        let variant = resolve(field(line, "variant"), lookup);
-        let tracked = variant
+        let item = resolve(field(line, "variant"), lookup)
+            .and_then(|variant| resolve(field(&variant, "inventoryItem"), lookup));
+        let tracked = item
             .as_ref()
-            .and_then(|variant| resolve(field(variant, "inventoryItem"), lookup))
-            .and_then(|item| field(&item, "tracked").as_bool());
+            .and_then(|item| field(item, "tracked").as_bool());
         let weight = match field(line, "weight") {
-            Value::Null => variant
-                .as_ref()
-                .and_then(|variant| resolve(field(variant, "inventoryItem"), lookup))
-                .and_then(|item| {
-                    item.get("measurement")
-                        .and_then(|m| m.get("weight"))
-                        .cloned()
-                })
-                .unwrap_or(Value::Null),
+            Value::Null => item.as_ref().map_or(Value::Null, item_weight),
             weight => weight.clone(),
         };
         let unit = first(line, &["originalUnitPriceSet", "originalUnitPrice"]);
@@ -460,8 +446,7 @@ fn sum_set(amounts: impl Iterator<Item = Option<(i128, Value)>>, currency: &Valu
     }
     let sign = if total < 0 { "-" } else { "" };
     let amount = format!("{sign}{}.{:02}", total.abs() / 100, total.abs() % 100);
-    let money = json!({"amount": amount, "currency_code": code});
-    json!({"shop_money": money.clone(), "presentment_money": money})
+    amount_set(&json!(amount), &code)
 }
 
 /// `taxLines` as REST writes them.
@@ -702,10 +687,7 @@ pub(super) fn draft_order(record: &Map<String, Value>, lookup: &dyn Lookup) -> V
         "name": text(record, "name"),
         "allow_discount_codes_in_checkout?": boolean(record, "allowDiscountCodesInCheckout", false),
         "b2b?": b2b,
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("open"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "open"),
         "line_items": records(field(record, "lineItems"), lookup)
             .iter()
             .map(draft_line_item)
@@ -726,17 +708,7 @@ pub(super) fn draft_order(record: &Map<String, Value>, lookup: &dyn Lookup) -> V
             }),
             _ => Value::Null,
         },
-        "tax_lines": items(field(record, "taxLines"))
-            .iter()
-            .map(|line| {
-                let line = object(line);
-                json!({
-                    "rate": field(&line, "rate"),
-                    "title": text(&line, "title"),
-                    "price": price_or_zero(&set_or_money_amount(first(&line, &["priceSet", "price"]))),
-                })
-            })
-            .collect::<Vec<_>>(),
+        "tax_lines": draft_tax_lines(field(record, "taxLines")),
         "tags": tags(field(record, "tags")),
         "note_attributes": attributes(field(record, "customAttributes")),
         "total_price": price_or_zero(&set_or_money_amount(field(record, "totalPriceSet"))),
@@ -842,17 +814,7 @@ fn draft_line_item(line: &Map<String, Value>) -> Value {
         "gift_card": boolean(line, "isGiftCard", false),
         "fulfillment_service": "manual",
         "grams": grams(&weight),
-        "tax_lines": items(field(line, "taxLines"))
-            .iter()
-            .map(|tax| {
-                let tax = object(tax);
-                json!({
-                    "rate": field(&tax, "rate"),
-                    "title": text(&tax, "title"),
-                    "price": price_or_zero(&set_or_money_amount(first(&tax, &["priceSet", "price"]))),
-                })
-            })
-            .collect::<Vec<_>>(),
+        "tax_lines": draft_tax_lines(field(line, "taxLines")),
         "applied_discount": applied_discount(field(line, "appliedDiscount")),
         "name": text(line, "name"),
         "properties": attributes(field(line, "customAttributes")),
@@ -860,6 +822,23 @@ fn draft_line_item(line: &Map<String, Value>) -> Value {
         "price": price_or_zero(&set_or_money_amount(unit)),
         "admin_graphql_api_id": text(line, "id"),
     })
+}
+
+/// The `taxLines` of a draft order or of its line items, as REST writes them there.
+fn draft_tax_lines(lines: &Value) -> Value {
+    Value::Array(
+        items(lines)
+            .iter()
+            .map(|line| {
+                let line = object(line);
+                json!({
+                    "rate": field(&line, "rate"),
+                    "title": text(&line, "title"),
+                    "price": price_or_zero(&set_or_money_amount(first(&line, &["priceSet", "price"]))),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// A `DraftOrderAppliedDiscount` as REST writes it.
@@ -928,10 +907,7 @@ pub(super) fn fulfillment(
     json!({
         "id": id(record),
         "order_id": order_id,
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("success"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "success"),
         "created_at": time(field(record, "createdAt")),
         "service": match field(record, "service") {
             Value::Object(service) => first(service, &["handle", "serviceName"]).clone(),
@@ -988,10 +964,7 @@ pub(super) fn refund(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value 
                 "quantity": integer(line, "quantity", json!(1)),
                 "line_item_id": item.as_ref().map_or(ref_id(field(line, "lineItem")), id),
                 "location_id": ref_id(field(line, "location")),
-                "restock_type": match lower(field(line, "restockType")) {
-                    Value::Null => json!("no_restock"),
-                    kind => kind,
-                },
+                "restock_type": lower_or(field(line, "restockType"), "no_restock"),
                 "subtotal": number(subtotal),
                 "total_tax": number(total_tax),
                 "subtotal_set": money_set(subtotal),

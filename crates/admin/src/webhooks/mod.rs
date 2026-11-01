@@ -35,7 +35,7 @@ pub use subscriptions::{
 pub use topics::Topic;
 
 use crate::state::{Event, Record};
-use crate::version::{ApiVersion, Served, adapt};
+use crate::version::{Served, adapt};
 use delivery::SubscriptionRef;
 use sign::HeaderValues;
 
@@ -149,21 +149,6 @@ impl Webhooks {
         self
     }
 
-    /// The versions payloads are built in.
-    pub fn versions(&self) -> &Served {
-        &self.versions
-    }
-
-    /// The version a delivery of `subscription` is built in, and what to say when it is not the
-    /// one the subscription asks for.
-    pub fn version_of(&self, subscription: &Subscription) -> (ApiVersion, Option<String>) {
-        self.versions.for_webhook(&subscription.api_version)
-    }
-
-    pub fn urls(&self) -> &AppUrls {
-        &self.urls
-    }
-
     /// The subscriptions of `shopify.app.toml`.
     pub fn app_subscriptions(&self) -> &[Subscription] {
         &self.app_subscriptions
@@ -191,24 +176,16 @@ impl Webhooks {
     pub fn subscribes(&self, shop: &str, topic: &str) -> bool {
         let registry = self.registry();
         registry.is_installed(shop)
-            && (self
+            && self
                 .app_subscriptions
                 .iter()
+                .chain(registry.list(shop))
                 .any(|subscription| subscription.topic == topic)
-                || registry
-                    .list(shop)
-                    .iter()
-                    .any(|subscription| subscription.topic == topic))
     }
 
     /// The log of deliveries.
     pub fn deliveries(&self) -> &Deliveries {
         &self.deliveries
-    }
-
-    /// Where a subscription delivers.
-    pub fn destination(&self, subscription: &Subscription) -> Destination {
-        resolve_uri(&subscription.uri, &self.urls)
     }
 
     /// What the server prints of the webhooks when it starts:
@@ -241,16 +218,15 @@ impl Webhooks {
             if !registry.is_installed(&event.shop) && event.topic != "app/uninstalled" {
                 return Vec::new();
             }
-            let mut all = self.app_subscriptions.clone();
-            all.extend(registry.list(&event.shop).iter().cloned());
-            all
+            self.app_subscriptions
+                .iter()
+                .chain(registry.list(&event.shop))
+                .filter(|subscription| {
+                    subscription.topic == event.topic && !subscription.is_compliance()
+                })
+                .cloned()
+                .collect()
         };
-        let subscriptions: Vec<Subscription> = subscriptions
-            .into_iter()
-            .filter(|subscription| {
-                subscription.topic == event.topic && !subscription.is_compliance()
-            })
-            .collect();
         if subscriptions.is_empty() {
             return Vec::new();
         }
@@ -357,7 +333,7 @@ impl Webhooks {
         payload: Result<&Value, &String>,
     ) -> u64 {
         let mut notes = Vec::new();
-        let (version, note) = self.version_of(subscription);
+        let (version, note) = self.versions.for_webhook(&subscription.api_version);
         notes.extend(note);
         let destination = resolve_uri(&subscription.uri, &self.urls);
         let url = match &destination {

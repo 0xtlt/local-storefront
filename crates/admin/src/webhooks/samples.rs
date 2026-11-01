@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use super::payload::{self, DELETED_AT, PREVIOUS_ACCESS_SCOPES, Records};
 use crate::state::Record;
+use crate::state::value::object;
 
 /// The record a webhook is about, and what it refers to.
 #[derive(Clone, Debug, Default)]
@@ -57,7 +58,7 @@ pub fn fixed(topic: &str) -> Option<Sample> {
         return None;
     }
     let (resource, _) = topic.split_once('/').unwrap_or((topic, ""));
-    let the_shop = Some(record(shop()));
+    let the_shop = Some(object(shop()));
     let (mut main, others): (Value, Vec<Value>) = match resource {
         "products" => (product(), variants()),
         "collections" => (collection(), Vec::new()),
@@ -196,9 +197,9 @@ pub fn fixed(topic: &str) -> Option<Sample> {
     if topic.ends_with("/delete") {
         main = main.with(DELETED_AT, json!("2018-08-29T08:00:00-04:00"));
     }
-    let main = record(main);
+    let main = object(main);
     let lookup = Records::of(
-        std::iter::once(main.clone()).chain(others.into_iter().map(record)),
+        std::iter::once(main.clone()).chain(others.into_iter().map(object)),
         the_shop,
     );
     Some(Sample {
@@ -226,13 +227,6 @@ impl With for Value {
             object.extend(other);
         }
         self
-    }
-}
-
-fn record(value: Value) -> Record {
-    match value {
-        Value::Object(record) => record,
-        _ => Record::new(),
     }
 }
 
@@ -995,10 +989,7 @@ fn order_transaction() -> Value {
         },
         "amountSet": bag("419.95"),
         "paymentId": "#9999.1",
-        "totalUnsettledSet": {
-            "presentmentMoney": {"amount": "419.95", "currencyCode": "USD"},
-            "shopMoney": {"amount": "419.95", "currencyCode": "USD"},
-        },
+        "totalUnsettledSet": bag("419.95"),
         "manualPaymentGateway": true,
     })
 }

@@ -11,31 +11,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
+
+use crate::auth::signing::{constant_time_eq, hmac_sha256, webhook_hmac};
 
 /// The `User-Agent` of Shopify's webhook deliveries.
 pub const USER_AGENT: &str = "Shopify-Captain-Hook";
 
-/// `X-Shopify-Hmac-Sha256`: the base64 HMAC-SHA256 of the raw body, keyed with the client
-/// secret of the app.
-pub fn hmac_sha256_base64(secret: &str, body: &[u8]) -> String {
-    // An HMAC takes a key of any length: this cannot fail.
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes())
-        .unwrap_or_else(|_| unreachable!("HMAC accepts keys of any length"));
-    mac.update(body);
-    base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
-}
-
-/// Whether `header` is the signature of `body` with `secret`: what a backend checks.
+/// Whether `header` is the signature of `body` with `secret`: what a backend checks. The header
+/// is decoded, so that any base64 of the digest is taken.
 pub fn verify(secret: &str, body: &[u8], header: &str) -> bool {
     let Ok(given) = base64::engine::general_purpose::STANDARD.decode(header.trim()) else {
         return false;
     };
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes())
-        .unwrap_or_else(|_| unreachable!("HMAC accepts keys of any length"));
-    mac.update(body);
-    mac.verify_slice(&given).is_ok()
+    constant_time_eq(&hmac_sha256(secret.as_bytes(), body), &given)
 }
 
 /// What the headers of a delivery say.
@@ -58,7 +46,7 @@ pub fn headers(values: &HeaderValues, secret: &str, body: &[u8]) -> Vec<(String,
     let mut headers = vec![
         ("Content-Type", "application/json".to_string()),
         ("X-Shopify-Topic", values.topic.to_string()),
-        ("X-Shopify-Hmac-Sha256", hmac_sha256_base64(secret, body)),
+        ("X-Shopify-Hmac-Sha256", webhook_hmac(secret, body)),
         ("X-Shopify-Shop-Domain", values.shop.to_string()),
         ("X-Shopify-API-Version", values.api_version.to_string()),
         ("X-Shopify-Webhook-Id", values.webhook_id.to_string()),
@@ -127,11 +115,11 @@ mod tests {
         // Computed with Python's `hmac` and `hashlib`.
         let body = br#"{"id":788032119674292922,"title":"Example T-Shirt"}"#;
         assert_eq!(
-            hmac_sha256_base64("hush", body),
+            webhook_hmac("hush", body),
             "PChQV/s9qVvLuYZx4s3CvtPkNn5M2k1OrvTkc0qHHSM="
         );
         assert_eq!(
-            hmac_sha256_base64("lsf-local-client-secret", b"{}"),
+            webhook_hmac("lsf-local-client-secret", b"{}"),
             "2DlNECN0cNPkVdkdyVuKNhnEDE+ErFPfpA64hhUdIzs="
         );
         assert!(verify(

@@ -49,10 +49,7 @@ fn context_items(record: &Map<String, Value>) -> Value {
 
 /// `{"id": <location GID>}` of a transfer's snapshot of a location, `Null` without one.
 fn location(snapshot: &Value) -> Value {
-    match snapshot.get("location").map(ref_gid) {
-        Some(Value::Null) | None => Value::Null,
-        Some(gid) => json!({"id": gid}),
-    }
+    reference(snapshot.get("location").unwrap_or(&Value::Null))
 }
 
 /// `inventory_transfers/…`: an `InventoryTransfer`.
@@ -178,11 +175,7 @@ fn reference(value: &Value) -> Value {
 
 /// The `fulfillment_orders/…` topics of the family: a `FulfillmentOrder`, with the context of
 /// the change.
-pub(super) fn fulfillment_order(
-    topic: &str,
-    record: &Map<String, Value>,
-    lookup: &dyn Lookup,
-) -> Value {
+pub(super) fn fulfillment_order(topic: &str, record: &Map<String, Value>) -> Value {
     let context = context(record);
     let head = fulfillment_order_head(record);
     match topic {
@@ -241,10 +234,7 @@ pub(super) fn fulfillment_order(
             })
         }
         // `order_routing_complete`.
-        _ => {
-            let _ = lookup;
-            json!({"fulfillment_order": head})
-        }
+        _ => json!({"fulfillment_order": head}),
     }
 }
 

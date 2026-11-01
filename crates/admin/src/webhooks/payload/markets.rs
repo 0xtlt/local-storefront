@@ -3,9 +3,10 @@
 
 use serde_json::{Map, Value, json};
 
+use super::catalog::{images, inventory_policy, option_values};
 use super::{
-    Lookup, boolean, field, first, grams, id, integer, lower, numeric, object, price, records,
-    ref_id, resolve, tags, text, time, weight_unit,
+    Lookup, boolean, field, first, grams, id, integer, item_weight, lower, lower_or, numeric,
+    object, price, records, ref_id, resolve, tags, text, text_or, time, weight_unit,
 };
 
 /// `markets/create`, `markets/update`: a `Market`'s id, name, type and status.
@@ -14,16 +15,8 @@ pub(super) fn market(record: &Map<String, Value>) -> Value {
         "id": id(record),
         "name": text(record, "name"),
         "type": lower(field(record, "type")),
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("active"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "active"),
     })
-}
-
-/// `markets/delete`: the id of the market.
-pub(super) fn market_deleted(record: &Map<String, Value>) -> Value {
-    json!({"id": id(record)})
 }
 
 /// `markets_backup_region/update`: the region, its GID written `MarketRegion` as the example
@@ -79,6 +72,23 @@ fn listing(record: &Map<String, Value>) -> Map<String, Value> {
     object(field(record, crate::domains::markets::LISTING))
 }
 
+/// When a listing was published: the listing's date, else the record's.
+fn published_at(listing: &Map<String, Value>, record: &Map<String, Value>) -> Value {
+    match field(listing, "publishedAt") {
+        Value::Null => time(field(record, "publishedAt")),
+        at => at.clone(),
+    }
+}
+
+/// The key a product listing payload holds the product under.
+fn listing_key(scheduled: bool) -> &'static str {
+    if scheduled {
+        "scheduled_product_listing"
+    } else {
+        "product_listing"
+    }
+}
+
 /// `collection_listings/add`, `collection_listings/update`: a `Collection` as a channel lists
 /// it.
 pub(super) fn collection_listing(record: &Map<String, Value>) -> Value {
@@ -103,10 +113,7 @@ pub(super) fn collection_listing(record: &Map<String, Value>) -> Value {
             "image": image,
             "title": text(record, "title"),
             "sort_order": lower(field(record, "sortOrder")),
-            "published_at": match field(&listing, "publishedAt") {
-                Value::Null => time(field(record, "publishedAt")),
-                at => at.clone(),
-            },
+            "published_at": published_at(&listing, record),
         }
     })
 }
@@ -138,7 +145,7 @@ pub(super) fn product_listing(
     let available = variants
         .iter()
         .any(|variant| field(variant, "availableForSale").as_bool() != Some(false));
-    let images = super::catalog::images(record, &product_id, &variants, lookup);
+    let images = images(record, &product_id, &variants, lookup);
     let mut body = Map::new();
     body.insert("product_id".into(), product_id.clone());
     body.insert("created_at".into(), time(field(record, "createdAt")));
@@ -148,25 +155,13 @@ pub(super) fn product_listing(
         first(record, &["descriptionHtml", "bodyHtml"]).clone(),
     );
     body.insert("handle".into(), text(record, "handle"));
-    body.insert(
-        "product_type".into(),
-        match text(record, "productType") {
-            Value::Null => json!(""),
-            kind => kind,
-        },
-    );
+    body.insert("product_type".into(), text_or(record, "productType", ""));
     body.insert("title".into(), text(record, "title"));
     body.insert("vendor".into(), text(record, "vendor"));
     body.insert("available".into(), json!(available));
     body.insert("tags".into(), tags(field(record, "tags")));
     if !scheduled {
-        body.insert(
-            "published_at".into(),
-            match field(&listing, "publishedAt") {
-                Value::Null => time(field(record, "publishedAt")),
-                at => at.clone(),
-            },
-        );
+        body.insert("published_at".into(), published_at(&listing, record));
     }
     body.insert(
         "variants".into(),
@@ -189,35 +184,19 @@ pub(super) fn product_listing(
                 .iter()
                 .enumerate()
                 .map(|(index, option)| {
-                    let values = match field(option, "values") {
-                        Value::Array(values) => Value::Array(values.clone()),
-                        _ => Value::Array(
-                            field(option, "optionValues")
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|value| value.get("name").cloned())
-                                .collect(),
-                        ),
-                    };
                     json!({
                         "id": id(option),
                         "name": text(option, "name"),
                         "product_id": product_id,
                         "position": integer(option, "position", Value::from(index + 1)),
-                        "values": values,
+                        "values": option_values(option),
                     })
                 })
                 .collect(),
         ),
     );
-    let key = if scheduled {
-        "scheduled_product_listing"
-    } else {
-        "product_listing"
-    };
     let mut payload = Map::new();
-    payload.insert(key.into(), Value::Object(body));
+    payload.insert(listing_key(scheduled).into(), Value::Object(body));
     Value::Object(payload)
 }
 
@@ -230,11 +209,7 @@ fn listing_variant(
     lookup: &dyn Lookup,
 ) -> Value {
     let item = resolve(field(variant, "inventoryItem"), lookup).unwrap_or_default();
-    let weight = item
-        .get("measurement")
-        .and_then(|measurement| measurement.get("weight"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let weight = item_weight(&item);
     let unit = weight.get("unit").cloned().unwrap_or(Value::Null);
     let price_cents = crate::domains::catalog::cents_of(variant.get("price")).unwrap_or(0);
     let option_values: Vec<Value> = field(variant, "selectedOptions")
@@ -270,10 +245,7 @@ fn listing_variant(
         "taxable": boolean(variant, "taxable", true),
         "position": integer(variant, "position", Value::from(index + 1)),
         "available": boolean(variant, "availableForSale", true),
-        "inventory_policy": match lower(field(variant, "inventoryPolicy")) {
-            Value::Null => json!("deny"),
-            policy => policy,
-        },
+        "inventory_policy": inventory_policy(variant),
         "inventory_quantity": integer(variant, "inventoryQuantity", Value::from(0)),
         "inventory_management": if tracked { json!("shopify") } else { Value::Null },
         "fulfillment_service": "manual",
@@ -287,12 +259,10 @@ fn listing_variant(
 
 /// `product_listings/remove`, `scheduled_product_listings/remove`: the product's id.
 pub(super) fn product_listing_removed(record: &Map<String, Value>, scheduled: bool) -> Value {
-    let key = if scheduled {
-        "scheduled_product_listing"
-    } else {
-        "product_listing"
-    };
     let mut payload = Map::new();
-    payload.insert(key.into(), json!({"product_id": id(record)}));
+    payload.insert(
+        listing_key(scheduled).into(),
+        json!({"product_id": id(record)}),
+    );
     Value::Object(payload)
 }

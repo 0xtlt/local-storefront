@@ -4,8 +4,8 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    Lookup, PREVIOUS, boolean, field, first, id, lower, millis, records, ref_gid, resolve, strings,
-    tags, text, time,
+    Lookup, PREVIOUS, boolean, field, first, id, lower, lower_or, millis, object, records, ref_gid,
+    resolve, strings, tags, text, time,
 };
 
 /// `customers/create`, `/update`, `/enable`, `/disable`: a `Customer`.
@@ -90,10 +90,7 @@ pub(super) fn deleted(record: &Map<String, Value>) -> Value {
 
 /// `DISABLED` is `disabled`.
 fn state(record: &Map<String, Value>) -> Value {
-    match lower(field(record, "state")) {
-        Value::Null => json!("disabled"),
-        state => state,
-    }
+    lower_or(field(record, "state"), "disabled")
 }
 
 /// `email`, deprecated in favour of `defaultEmailAddress.emailAddress`.
@@ -131,32 +128,45 @@ fn currency(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     }
 }
 
+/// The fields of a marketing consent REST writes for email and SMS alike, `null` when the
+/// customer has no consent.
+fn consent_fields(consent: &Value) -> Map<String, Value> {
+    let consent = object(consent);
+    let mut fields = Map::new();
+    fields.insert("state".into(), lower(field(&consent, "marketingState")));
+    fields.insert(
+        "opt_in_level".into(),
+        lower(field(&consent, "marketingOptInLevel")),
+    );
+    fields.insert(
+        "consent_updated_at".into(),
+        time(field(&consent, "consentUpdatedAt")),
+    );
+    fields
+}
+
 /// `CustomerEmailMarketingConsentState` as REST writes it.
 fn email_consent(consent: &Value) -> Value {
-    let Value::Object(consent) = consent else {
+    if !consent.is_object() {
         return Value::Null;
-    };
-    json!({
-        "state": lower(field(consent, "marketingState")),
-        "opt_in_level": lower(field(consent, "marketingOptInLevel")),
-        "consent_updated_at": time(field(consent, "consentUpdatedAt")),
-    })
+    }
+    Value::Object(consent_fields(consent))
 }
 
 /// `CustomerSmsMarketingConsentState` as REST writes it.
 fn sms_consent(consent: &Value) -> Value {
-    let Value::Object(consent) = consent else {
+    let Value::Object(object) = consent else {
         return Value::Null;
     };
-    json!({
-        "state": lower(field(consent, "marketingState")),
-        "opt_in_level": lower(field(consent, "marketingOptInLevel")),
-        "consent_updated_at": time(field(consent, "consentUpdatedAt")),
-        "consent_collected_from": match field(consent, "consentCollectedFrom") {
+    let mut fields = consent_fields(consent);
+    fields.insert(
+        "consent_collected_from".into(),
+        match field(object, "consentCollectedFrom") {
             Value::String(from) => json!(from),
             _ => json!("OTHER"),
         },
-    })
+    );
+    Value::Object(fields)
 }
 
 /// The country code of a `MailingAddress`: `countryCodeV2`, or the deprecated `countryCode`.
@@ -284,14 +294,10 @@ fn tag_list(record: &Map<String, Value>) -> Vec<String> {
 
 /// `customers_email_marketing_consent/update`: the customer's id, email and consent.
 pub(super) fn email_consent_update(record: &Map<String, Value>) -> Value {
-    let consent = match email_consent(field(record, "emailMarketingConsent")) {
-        Value::Null => json!({"state": null, "opt_in_level": null, "consent_updated_at": null}),
-        consent => consent,
-    };
     json!({
         "customer_id": id(record),
         "email_address": email(record),
-        "email_marketing_consent": consent,
+        "email_marketing_consent": consent_fields(field(record, "emailMarketingConsent")),
     })
 }
 
@@ -299,31 +305,18 @@ pub(super) fn email_consent_update(record: &Map<String, Value>) -> Value {
 /// `consent_collected_from` is in lowercase, as the topic's example writes it.
 pub(super) fn sms_consent_update(record: &Map<String, Value>) -> Value {
     let consent = field(record, "smsMarketingConsent");
-    let collected = match field(
-        consent.as_object().unwrap_or(&Map::new()),
-        "consentCollectedFrom",
-    ) {
-        Value::String(from) => json!(from.to_ascii_lowercase()),
-        _ => json!("other"),
-    };
-    let consent = match consent {
-        Value::Object(consent) => json!({
-            "state": lower(field(consent, "marketingState")),
-            "opt_in_level": lower(field(consent, "marketingOptInLevel")),
-            "consent_updated_at": time(field(consent, "consentUpdatedAt")),
-            "consent_collected_from": collected,
-        }),
-        _ => json!({
-            "state": null,
-            "opt_in_level": null,
-            "consent_updated_at": null,
-            "consent_collected_from": collected,
-        }),
-    };
+    let mut fields = consent_fields(consent);
+    fields.insert(
+        "consent_collected_from".into(),
+        match field(&object(consent), "consentCollectedFrom") {
+            Value::String(from) => json!(from.to_ascii_lowercase()),
+            _ => json!("other"),
+        },
+    );
     json!({
         "id": id(record),
         "phone": phone(record),
-        "sms_marketing_consent": consent,
+        "sms_marketing_consent": fields,
     })
 }
 
@@ -367,8 +360,7 @@ pub(super) fn company_contact(record: &Map<String, Value>, lookup: &dyn Lookup) 
 /// configuration is not documented. `tax_settings.tax_exempt` is the location's (`false`
 /// unless set), where the example has `null`.
 pub(super) fn company_location(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
-    let settings = field(record, "taxSettings");
-    let settings = settings.as_object().cloned().unwrap_or_default();
+    let settings = object(field(record, "taxSettings"));
     let exemptions = match field(&settings, "taxExemptions") {
         Value::Null => strings(field(record, "taxExemptions")),
         exemptions => strings(exemptions),

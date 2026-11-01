@@ -4,8 +4,9 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    Lookup, boolean, field, first, id, integer, items, lower, millis, object, price, records,
-    ref_gid, ref_id, resolve, strings, tags, text, text_or, time, weight_unit,
+    Lookup, boolean, field, first, id, integer, item_weight, items, lower, lower_or, millis,
+    object, price, records, ref_gid, ref_id, resolve, strings, tags, text, text_or, time,
+    weight_unit,
 };
 
 /// `products/create`, `products/update`: a `Product`.
@@ -45,10 +46,7 @@ pub(super) fn product(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value
         "title": text(record, "title"),
         "updated_at": time(field(record, "updatedAt")),
         "vendor": text(record, "vendor"),
-        "status": match lower(field(record, "status")) {
-            Value::Null => json!("active"),
-            status => status,
-        },
+        "status": lower_or(field(record, "status"), "active"),
         "published_scope": "web",
         "tags": tags(field(record, "tags")),
         "variants": variants
@@ -78,17 +76,6 @@ pub(super) fn product(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value
 
 /// A variant of a product payload.
 fn variant(variant: &Map<String, Value>, product_id: &Value, index: usize) -> Value {
-    let selected = field(variant, "selectedOptions")
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let option = |position: usize| {
-        selected
-            .get(position)
-            .and_then(|option| option.get("value"))
-            .cloned()
-            .unwrap_or(Value::Null)
-    };
     let quantity = integer(variant, "inventoryQuantity", Value::from(0));
     // `barcodes` is a connection of `ProductVariantBarcode`s; REST lists their values.
     let barcodes: Vec<Value> = match field(variant, "barcodes") {
@@ -111,10 +98,7 @@ fn variant(variant: &Map<String, Value>, product_id: &Value, index: usize) -> Va
         "compare_at_price": price(field(variant, "compareAtPrice")),
         "created_at": time(field(variant, "createdAt")),
         "id": id(variant),
-        "inventory_policy": match lower(field(variant, "inventoryPolicy")) {
-            Value::Null => json!("deny"),
-            policy => policy,
-        },
+        "inventory_policy": inventory_policy(variant),
         "position": integer(variant, "position", Value::from(index + 1)),
         "price": price(field(variant, "price")),
         "product_id": product_id,
@@ -122,9 +106,9 @@ fn variant(variant: &Map<String, Value>, product_id: &Value, index: usize) -> Va
         "taxable": boolean(variant, "taxable", true),
         "title": text(variant, "title"),
         "updated_at": time(field(variant, "updatedAt")),
-        "option1": option(0),
-        "option2": option(1),
-        "option3": option(2),
+        "option1": selected_option(variant, 0),
+        "option2": selected_option(variant, 1),
+        "option3": selected_option(variant, 2),
         "image_id": ref_id(image),
         "inventory_item_id": ref_id(field(variant, "inventoryItem")),
         "inventory_quantity": quantity,
@@ -133,9 +117,34 @@ fn variant(variant: &Map<String, Value>, product_id: &Value, index: usize) -> Va
     })
 }
 
+/// The value of a variant's selected option at `position`: REST's `option1` to `option3`.
+fn selected_option(variant: &Map<String, Value>, position: usize) -> Value {
+    field(variant, "selectedOptions")
+        .get(position)
+        .and_then(|option| option.get("value"))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+/// A variant's `inventory_policy`: `deny` unless it says otherwise.
+pub(super) fn inventory_policy(variant: &Map<String, Value>) -> Value {
+    lower_or(field(variant, "inventoryPolicy"), "deny")
+}
+
 /// An option of a product payload.
 fn option(option: &Map<String, Value>, product_id: &Value, index: usize) -> Value {
-    let values = match field(option, "values") {
+    json!({
+        "id": id(option),
+        "product_id": product_id,
+        "name": text(option, "name"),
+        "position": integer(option, "position", Value::from(index + 1)),
+        "values": option_values(option),
+    })
+}
+
+/// The values of a product option: its `values`, else the names of its `optionValues`.
+pub(super) fn option_values(option: &Map<String, Value>) -> Value {
+    match field(option, "values") {
         Value::Array(values) => Value::Array(values.clone()),
         _ => Value::Array(
             field(option, "optionValues")
@@ -145,14 +154,7 @@ fn option(option: &Map<String, Value>, product_id: &Value, index: usize) -> Valu
                 .filter_map(|value| value.get("name").cloned())
                 .collect(),
         ),
-    };
-    json!({
-        "id": id(option),
-        "product_id": product_id,
-        "name": text(option, "name"),
-        "position": integer(option, "position", Value::from(index + 1)),
-        "values": values,
-    })
+    }
 }
 
 /// The images of a product, REST's `images`: its `MediaImage`s (or its deprecated `images`).
@@ -316,10 +318,7 @@ pub(super) fn collection_deleted(record: &Map<String, Value>) -> Value {
 
 /// `inventory_items/create`, `inventory_items/update`: an `InventoryItem`.
 pub(super) fn inventory_item(record: &Map<String, Value>) -> Value {
-    let weight = field(record, "measurement")
-        .get("weight")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let weight = item_weight(record);
     json!({
         "id": id(record),
         "sku": text(record, "sku"),
@@ -431,17 +430,6 @@ pub(super) fn location(record: &Map<String, Value>) -> Value {
 /// `variants/in_stock`, `variants/out_of_stock`: a `ProductVariant`, in the keys of the
 /// reference's example (a REST variant without its inventory item and weight).
 pub(super) fn variant_stock(record: &Map<String, Value>) -> Value {
-    let selected = field(record, "selectedOptions")
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let option = |position: usize| {
-        selected
-            .get(position)
-            .and_then(|option| option.get("value"))
-            .cloned()
-            .unwrap_or(Value::Null)
-    };
     let quantity = integer(record, "inventoryQuantity", Value::from(0));
     json!({
         "id": id(record),
@@ -449,14 +437,11 @@ pub(super) fn variant_stock(record: &Map<String, Value>) -> Value {
         "title": text(record, "title"),
         "price": price(field(record, "price")),
         "position": integer(record, "position", Value::from(1)),
-        "inventory_policy": match lower(field(record, "inventoryPolicy")) {
-            Value::Null => json!("deny"),
-            policy => policy,
-        },
+        "inventory_policy": inventory_policy(record),
         "compare_at_price": price(field(record, "compareAtPrice")),
-        "option1": option(0),
-        "option2": option(1),
-        "option3": option(2),
+        "option1": selected_option(record, 0),
+        "option2": selected_option(record, 1),
+        "option3": selected_option(record, 2),
         "created_at": time(field(record, "createdAt")),
         "updated_at": time(field(record, "updatedAt")),
         "taxable": boolean(record, "taxable", true),
