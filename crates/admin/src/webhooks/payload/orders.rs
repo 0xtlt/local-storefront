@@ -12,12 +12,6 @@ use super::{
     zero_set,
 };
 
-/// The first of several `MoneyBag` fields that the record has: a `current…Set` and the original
-/// one, which are the same until the order is edited or refunded.
-fn bag<'a>(record: &'a Map<String, Value>, keys: &[&str]) -> &'a Value {
-    first(record, keys)
-}
-
 /// `orders/create`, `/updated`, `/paid`, `/cancelled`, `/fulfilled`, `/partially_fulfilled`: an
 /// `Order`.
 pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
@@ -26,22 +20,24 @@ pub(super) fn order(record: &Map<String, Value>, lookup: &dyn Lookup) -> Value {
     let shipping_lines = records(field(record, "shippingLines"), lookup);
     let applications = items(field(record, "discountApplications"));
     let currency = match text(record, "currencyCode") {
-        Value::Null => bag_currency(bag(record, &["totalPriceSet", "currentTotalPriceSet"])),
+        Value::Null => bag_currency(first(record, &["totalPriceSet", "currentTotalPriceSet"])),
         currency => currency,
     };
-    let total_price = bag(record, &["totalPriceSet", "currentTotalPriceSet"]);
-    let current_total_price = bag(record, &["currentTotalPriceSet", "totalPriceSet"]);
-    let subtotal = bag(record, &["subtotalPriceSet", "currentSubtotalPriceSet"]);
-    let current_subtotal = bag(record, &["currentSubtotalPriceSet", "subtotalPriceSet"]);
-    let discounts = bag(record, &["totalDiscountsSet", "currentTotalDiscountsSet"]);
-    let current_discounts = bag(record, &["currentTotalDiscountsSet", "totalDiscountsSet"]);
-    let tax = bag(record, &["totalTaxSet", "currentTotalTaxSet"]);
-    let current_tax = bag(record, &["currentTotalTaxSet", "totalTaxSet"]);
-    let shipping = bag(
+    // A `current…Set` and the original one are the same until the order is edited or refunded:
+    // each stands in for the other.
+    let total_price = first(record, &["totalPriceSet", "currentTotalPriceSet"]);
+    let current_total_price = first(record, &["currentTotalPriceSet", "totalPriceSet"]);
+    let subtotal = first(record, &["subtotalPriceSet", "currentSubtotalPriceSet"]);
+    let current_subtotal = first(record, &["currentSubtotalPriceSet", "subtotalPriceSet"]);
+    let discounts = first(record, &["totalDiscountsSet", "currentTotalDiscountsSet"]);
+    let current_discounts = first(record, &["currentTotalDiscountsSet", "totalDiscountsSet"]);
+    let tax = first(record, &["totalTaxSet", "currentTotalTaxSet"]);
+    let current_tax = first(record, &["currentTotalTaxSet", "totalTaxSet"]);
+    let shipping = first(
         record,
         &["totalShippingPriceSet", "currentShippingPriceSet"],
     );
-    let current_shipping = bag(
+    let current_shipping = first(
         record,
         &["currentShippingPriceSet", "totalShippingPriceSet"],
     );
@@ -718,17 +714,7 @@ pub(super) fn draft_order(record: &Map<String, Value>, lookup: &dyn Lookup) -> V
             }),
             _ => Value::Null,
         },
-        "tax_lines": items(field(record, "taxLines"))
-            .iter()
-            .map(|line| {
-                let line = object(line);
-                json!({
-                    "rate": field(&line, "rate"),
-                    "title": text(&line, "title"),
-                    "price": price_or_zero(&set_or_money_amount(first(&line, &["priceSet", "price"]))),
-                })
-            })
-            .collect::<Vec<_>>(),
+        "tax_lines": draft_tax_lines(field(record, "taxLines")),
         "tags": tags(field(record, "tags")),
         "note_attributes": attributes(field(record, "customAttributes")),
         "total_price": price_or_zero(&set_or_money_amount(field(record, "totalPriceSet"))),
@@ -834,17 +820,7 @@ fn draft_line_item(line: &Map<String, Value>) -> Value {
         "gift_card": boolean(line, "isGiftCard", false),
         "fulfillment_service": "manual",
         "grams": grams(&weight),
-        "tax_lines": items(field(line, "taxLines"))
-            .iter()
-            .map(|tax| {
-                let tax = object(tax);
-                json!({
-                    "rate": field(&tax, "rate"),
-                    "title": text(&tax, "title"),
-                    "price": price_or_zero(&set_or_money_amount(first(&tax, &["priceSet", "price"]))),
-                })
-            })
-            .collect::<Vec<_>>(),
+        "tax_lines": draft_tax_lines(field(line, "taxLines")),
         "applied_discount": applied_discount(field(line, "appliedDiscount")),
         "name": text(line, "name"),
         "properties": attributes(field(line, "customAttributes")),
@@ -852,6 +828,23 @@ fn draft_line_item(line: &Map<String, Value>) -> Value {
         "price": price_or_zero(&set_or_money_amount(unit)),
         "admin_graphql_api_id": text(line, "id"),
     })
+}
+
+/// The `taxLines` of a draft order or of its line items, as REST writes them there.
+fn draft_tax_lines(lines: &Value) -> Value {
+    Value::Array(
+        items(lines)
+            .iter()
+            .map(|line| {
+                let line = object(line);
+                json!({
+                    "rate": field(&line, "rate"),
+                    "title": text(&line, "title"),
+                    "price": price_or_zero(&set_or_money_amount(first(&line, &["priceSet", "price"]))),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// A `DraftOrderAppliedDiscount` as REST writes it.
