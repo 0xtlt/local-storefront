@@ -17,9 +17,10 @@
 //! their changes are `carrier_services/create`, `…/update`, `…/delete`, which no subscription can
 //! name.
 
+use lsf_core::urls::is_http_url;
 use serde_json::{Map, Value, json};
 
-use super::{is_url, profiles, text};
+use super::{profiles, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -72,7 +73,7 @@ fn check(
         errors.push(UserError::new(&["input", "name"], "Name has already been taken").code(code));
     }
     if let Some(url) = input.get("callbackUrl")
-        && url.as_str().is_none_or(|url| !is_url(url))
+        && url.as_str().is_none_or(|url| !is_http_url(url))
     {
         errors
             .push(UserError::new(&["input", "callbackUrl"], "Callback url is invalid").code(code));

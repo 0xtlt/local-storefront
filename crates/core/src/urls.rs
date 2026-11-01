@@ -106,6 +106,14 @@ pub fn with_sorted_params(base: &str, params: &[(&str, String)]) -> String {
     format!("{path}?{}", query.join("&"))
 }
 
+/// Whether `text` is an `http://` or `https://` URL with a host (`https:///path` has none).
+pub fn is_http_url(text: &str) -> bool {
+    ["http://", "https://"].iter().any(|scheme| {
+        text.strip_prefix(scheme)
+            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
+    })
+}
+
 /// Decodes the `%XX` escapes of a URL or a path (a `%` not followed by two hex digits stays as
 /// it is), the bytes read as UTF-8, an invalid sequence replaced by `\u{FFFD}`.
 pub fn percent_decode(input: &str) -> String {

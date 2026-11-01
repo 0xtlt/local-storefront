@@ -17,14 +17,12 @@ pub mod webhook;
 /// redirects and the app proxy go. Refused when the option is read, rather than by every delivery
 /// failing later (`localhost:3000` without its scheme).
 pub fn app_url(text: &str) -> Result<String, String> {
-    let host = text
-        .strip_prefix("http://")
-        .or_else(|| text.strip_prefix("https://"));
-    match host {
-        Some(host) if !host.is_empty() && !host.starts_with('/') => Ok(text.to_string()),
-        _ => Err(format!(
+    if lsf_core::urls::is_http_url(text) {
+        Ok(text.to_string())
+    } else {
+        Err(format!(
             "`{text}` is not an http:// or https:// address: give the backend's, like http://localhost:3000"
-        )),
+        ))
     }
 }
 

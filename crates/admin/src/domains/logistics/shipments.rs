@@ -37,8 +37,8 @@ use serde_json::{Map, Value, json};
 
 use super::transfers::{self, COMMITTED, SHIPPABLE, TRANSFER};
 use super::{
-    coded, emit_change, idempotent, int, is_url, keys_of, objects, push, record_of,
-    snapshot_location, stock, text,
+    coded, emit_change, idempotent, int, keys_of, objects, push, record_of, snapshot_location,
+    stock, text,
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
@@ -167,7 +167,7 @@ fn tracking_of(
         return Value::Null;
     };
     if let Some(url) = text(input, "trackingUrl")
-        && !is_url(url)
+        && !lsf_core::urls::is_http_url(url)
     {
         let mut at = path.to_vec();
         at.push("trackingUrl");
