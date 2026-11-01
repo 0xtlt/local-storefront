@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub mod receiver;
 pub mod shape;
 
 use std::path::{Path, PathBuf};
@@ -38,4 +39,10 @@ fn store(source: &DataSource) -> Store {
 /// The app of `tests/fixtures/app`.
 pub fn fixture_app() -> lsf_checkout::app::App {
     lsf_checkout::app::load(&fixture("app")).expect("the fixture app loads")
+}
+
+/// The JSON body of an answer of the Admin API.
+pub fn json_of(response: &lsf_admin::api::HttpResponse) -> serde_json::Value {
+    serde_json::from_slice(&response.body)
+        .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&response.body)))
 }

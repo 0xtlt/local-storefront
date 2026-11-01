@@ -6,15 +6,12 @@
 mod support;
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
-use lsf_admin::auth::signing::verify_webhook_hmac;
 use lsf_admin::webhooks::DeliveryOptions;
 use serde_json::{Value, json};
+use support::receiver::Receiver;
 
 const SECRET: &str = "test-secret";
 
@@ -74,75 +71,6 @@ fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
     answer
 }
 
-/// A webhook receiver: an HTTP listener that answers `200` and hands over each request.
-struct Receiver {
-    url: String,
-    requests: mpsc::Receiver<(HashMap<String, String>, Vec<u8>)>,
-}
-
-impl Receiver {
-    fn start() -> Receiver {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let (sender, requests) = mpsc::channel();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut headers = HashMap::new();
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                loop {
-                    line.clear();
-                    reader.read_line(&mut line).unwrap();
-                    let trimmed = line.trim_end();
-                    if trimmed.is_empty() {
-                        break;
-                    }
-                    if let Some((name, value)) = trimmed.split_once(':') {
-                        headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
-                    }
-                }
-                let length: usize = headers
-                    .get("content-length")
-                    .and_then(|length| length.parse().ok())
-                    .unwrap_or(0);
-                let mut body = vec![0; length];
-                reader.read_exact(&mut body).unwrap();
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                );
-                if sender.send((headers, body)).is_err() {
-                    break;
-                }
-            }
-        });
-        Receiver { url, requests }
-    }
-
-    /// The next delivery: its topic and its payload, its signature checked.
-    fn next(&self) -> (String, Value) {
-        let (headers, body) = self
-            .requests
-            .recv_timeout(Duration::from_secs(10))
-            .expect("a webhook was delivered");
-        assert!(verify_webhook_hmac(
-            SECRET,
-            &body,
-            &headers["x-shopify-hmac-sha256"]
-        ));
-        (
-            headers["x-shopify-topic"].clone(),
-            serde_json::from_slice(&body).unwrap(),
-        )
-    }
-
-    /// The next `count` deliveries.
-    fn take(&self, count: usize) -> Vec<(String, Value)> {
-        (0..count).map(|_| self.next()).collect()
-    }
-}
-
 fn subscribe(api: &AdminApi, receiver: &Receiver, topics: &[&str]) {
     for topic in topics {
         let answer = graphql(
@@ -170,7 +98,7 @@ fn topics(deliveries: &[(String, Value)]) -> Vec<&str> {
 #[test]
 fn a_b2b_order_on_net_terms_comes_due_and_is_paid() {
     let api = api();
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     subscribe(
         &api,
         &receiver,
@@ -343,7 +271,7 @@ fn a_b2b_order_on_net_terms_comes_due_and_is_paid() {
 #[test]
 fn an_order_is_paid_with_the_customers_store_credit() {
     let api = api();
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     subscribe(
         &api,
         &receiver,
@@ -419,7 +347,7 @@ fn an_order_is_paid_with_the_customers_store_credit() {
 #[test]
 fn what_buyers_and_shopify_do_to_an_order_is_delivered() {
     let api = api();
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     subscribe(
         &api,
         &receiver,
@@ -492,7 +420,7 @@ fn what_buyers_and_shopify_do_to_an_order_is_delivered() {
 #[test]
 fn a_chargeback_is_opened_answered_and_won() {
     let api = api();
-    let receiver = Receiver::start();
+    let receiver = Receiver::start(SECRET);
     subscribe(&api, &receiver, &["DISPUTES_CREATE", "DISPUTES_UPDATE"]);
     let orders = graphql(
         &api,
