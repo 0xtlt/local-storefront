@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 
 use super::model;
 pub(super) use crate::domains::test_support::{demo, rich, run, topics};
+use crate::graphql::{self, Request};
+use crate::resolve::{Registry, ShopResolver};
 use crate::state::ShopState;
 
 /// Every seeded order is left as the seed made it by `refresh_order`: the mutations and the
