@@ -5,8 +5,10 @@
 pub mod receiver;
 pub mod shape;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use lsf_admin::api::{HttpRequest, HttpResponse};
 use lsf_core::Store;
 use lsf_core::store::load::{DataSource, LoadOptions, load};
 
@@ -42,7 +44,23 @@ pub fn fixture_app() -> lsf_checkout::app::App {
 }
 
 /// The JSON body of an answer of the Admin API.
-pub fn json_of(response: &lsf_admin::api::HttpResponse) -> serde_json::Value {
+pub fn json_of(response: &HttpResponse) -> serde_json::Value {
     serde_json::from_slice(&response.body)
         .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&response.body)))
+}
+
+/// A GraphQL request to the endpoint of the default version, with `token`.
+pub fn graphql_request(token: &str, query: &str, variables: serde_json::Value) -> HttpRequest {
+    HttpRequest {
+        method: "POST".to_string(),
+        path: format!("/admin/api/{}/graphql.json", lsf_admin::version::DEFAULT),
+        headers: HashMap::from([
+            ("content-type".to_string(), "application/json".to_string()),
+            ("x-shopify-access-token".to_string(), token.to_string()),
+        ]),
+        body: serde_json::json!({"query": query, "variables": variables})
+            .to_string()
+            .into_bytes(),
+        ..HttpRequest::default()
+    }
 }

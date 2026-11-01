@@ -3,10 +3,9 @@
 
 mod support;
 
-use std::collections::HashMap;
 use std::time::Duration;
 
-use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
+use lsf_admin::api::{AdminApi, AdminOptions, ThrottleSetting};
 use lsf_admin::state::Clock;
 use lsf_admin::webhooks::DeliveryOptions;
 use serde_json::{Value, json};
@@ -33,18 +32,7 @@ fn api() -> AdminApi {
 fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
     let token = api.token(&api.default_shop());
     let response = api
-        .handle(&HttpRequest {
-            method: "POST".into(),
-            path: format!("/admin/api/{}/graphql.json", lsf_admin::version::SERVED[0]),
-            query: Vec::new(),
-            headers: HashMap::from([
-                ("content-type".to_string(), "application/json".to_string()),
-                ("x-shopify-access-token".to_string(), token),
-            ]),
-            body: json!({"query": query, "variables": variables})
-                .to_string()
-                .into_bytes(),
-        })
+        .handle(&support::graphql_request(&token, query, variables))
         .expect("the path is routed");
     serde_json::from_slice(&response.body).unwrap()
 }

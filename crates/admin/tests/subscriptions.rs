@@ -18,7 +18,6 @@ use serde_json::{Value, json};
 use support::receiver::Receiver;
 
 const SECRET: &str = "test-secret";
-const GRAPHQL: &str = "/admin/api/2026-10/graphql.json";
 
 /// The demo store, its clock frozen at noon (UTC) on 2026-01-15.
 fn api() -> AdminApi {
@@ -69,18 +68,7 @@ fn request(
 fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
     let token = api.token(&api.default_shop());
     let response = api
-        .handle(&HttpRequest {
-            method: "POST".into(),
-            path: GRAPHQL.into(),
-            query: Vec::new(),
-            headers: HashMap::from([
-                ("content-type".to_string(), "application/json".to_string()),
-                ("x-shopify-access-token".to_string(), token),
-            ]),
-            body: json!({"query": query, "variables": variables})
-                .to_string()
-                .into_bytes(),
-        })
+        .handle(&support::graphql_request(&token, query, variables))
         .expect("the Admin API is routed");
     assert_eq!(response.status, 200);
     let answer: Value = serde_json::from_slice(&response.body).unwrap();

@@ -4,10 +4,9 @@
 
 mod support;
 
-use std::collections::HashMap;
 use std::time::Duration;
 
-use lsf_admin::api::{AdminApi, AdminOptions, HttpRequest, ThrottleSetting};
+use lsf_admin::api::{AdminApi, AdminOptions, ThrottleSetting};
 use lsf_admin::webhooks::DeliveryOptions;
 use serde_json::{Value, json};
 use support::receiver::Receiver;
@@ -35,18 +34,8 @@ fn demo_api() -> AdminApi {
 /// The `data` of a GraphQL request with the shop's default token, which must have no error.
 fn graphql(api: &AdminApi, query: &str, variables: Value) -> Value {
     let token = api.token(&api.default_shop());
-    let body = json!({"query": query, "variables": variables}).to_string();
     let response = api
-        .handle(&HttpRequest {
-            method: "POST".to_string(),
-            path: "/admin/api/2026-10/graphql.json".to_string(),
-            query: Vec::new(),
-            headers: HashMap::from([
-                ("content-type".to_string(), "application/json".to_string()),
-                ("x-shopify-access-token".to_string(), token),
-            ]),
-            body: body.into_bytes(),
-        })
+        .handle(&support::graphql_request(&token, query, variables))
         .expect("the Admin API is routed");
     assert_eq!(response.status, 200);
     let answer: Value = serde_json::from_slice(&response.body).unwrap();
