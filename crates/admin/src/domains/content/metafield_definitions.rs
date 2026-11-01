@@ -347,6 +347,24 @@ fn metafields_of(state: &ShopState, owner_type: &str, namespace: &str, key: &str
         .collect()
 }
 
+/// `access.admin` is the app's to set, on its reserved namespaces only.
+fn check_admin_access(input: &Map<String, Value>, app_owned: bool, errors: &mut Vec<UserError>) {
+    if input
+        .get("access")
+        .and_then(|access| access.get("admin"))
+        .is_some_and(|admin| !admin.is_null())
+        && !app_owned
+    {
+        errors.push(
+            UserError::new(
+                &["definition", "access", "admin"],
+                "Admin access can only be specified for app-owned metafield definitions.",
+            )
+            .code("ADMIN_ACCESS_INPUT_NOT_ALLOWED"),
+        );
+    }
+}
+
 /// The checks of a definition's name and description.
 fn check_name(input: &Map<String, Value>, required: bool, errors: &mut Vec<UserError>) {
     match input.get("name").and_then(Value::as_str) {
@@ -439,20 +457,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         &["definition", "validations"],
         &mut errors,
     );
-    if input
-        .get("access")
-        .and_then(|access| access.get("admin"))
-        .is_some_and(|admin| !admin.is_null())
-        && !app_owned
-    {
-        errors.push(
-            UserError::new(
-                &["definition", "access", "admin"],
-                "Admin access can only be specified for app-owned metafield definitions.",
-            )
-            .code("ADMIN_ACCESS_INPUT_NOT_ALLOWED"),
-        );
-    }
+    check_admin_access(&input, app_owned, &mut errors);
     if !errors.is_empty() {
         return Ok(payload(json!({"createdDefinition": null}), &errors));
     }
@@ -593,20 +598,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
             &mut errors,
         )
     });
-    if input
-        .get("access")
-        .and_then(|access| access.get("admin"))
-        .is_some_and(|admin| !admin.is_null())
-        && !app_owned
-    {
-        errors.push(
-            UserError::new(
-                &["definition", "access", "admin"],
-                "Admin access can only be specified for app-owned metafield definitions.",
-            )
-            .code("ADMIN_ACCESS_INPUT_NOT_ALLOWED"),
-        );
-    }
+    check_admin_access(&input, app_owned, &mut errors);
     let pin = input.get("pin").and_then(Value::as_bool);
     let is_pinned = record
         .get("pinnedPosition")
