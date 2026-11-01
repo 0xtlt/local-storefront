@@ -7,6 +7,8 @@ app: [Admin API](admin.md).
 
 ## Endpoints
 
+### Storefront and tests
+
 | Request | What it does | Answer |
 |---|---|---|
 | `PUT /__lsf/session` | Sets the state of the caller's session. The body is a [session](data-reference.md#session): `customer`, `company_location`, `cart`, `country`, `data`, `throttle`. | `200` `{ "ok": true, "session": …, "diagnostics": [] }` (the warnings of `data`, such as a field it ignores), or `422` with diagnostics |
@@ -19,42 +21,54 @@ app: [Admin API](admin.md).
 | `GET /__lsf/timings` | How long templates, sections and blocks took so far. See [performance](performance.md#many-requests). | JSON |
 | `DELETE /__lsf/timings` | Forgets those times. | `{ "ok": true }` |
 | `GET /__lsf/profile?path=<path>` | The profile of a page, as the session sees it. `points=1`, `html=1`, `lines=1`, `all=1`, `runs=<n>`, `section_id=<id>`, `cost=<rules>`, `format=speedscope`. See [performance](performance.md#in-the-browser). | Text, HTML or JSON |
-| `GET /__lsf/checkout?session=<id>` | The state of a session's [checkout](checkout.md#test-it), when the server runs with `--app`. The caller's session without `session`. | JSON |
+| `GET /__lsf/schema/<kind>` | The JSON Schema of a kind of data file: `store`, `product`, `collection`, `page`, `blog`, `customer`, `menu`, `session`. | JSON Schema |
+| `GET /__lsf` | The status as a page for a browser, with a customer chooser and links to every page and its profiles. | HTML |
+
+### Apps: checkout and Admin API
+
+The checkout needs `--app`; the Admin API runs on every server, with the app of `--app` when there is one ([Admin API](admin.md)). What a backend's tests use first:
+
+| Request | What it does | Answer |
+|---|---|---|
+| `GET /__lsf/checkout?session=<id>` | The state of a session's [checkout](checkout.md#test-it), when the server runs with `--app`. The caller's session without `session`. Once the order is placed (`POST /checkouts/cn/<token>/complete`, which answers `{redirect, order: {id, number, name}}`), `status` is `completed` and `order` has its `id` (the `admin_graphql_api_id` of its `orders/create`), `number`, `processedAt`, `totalReceived`, `totalOutstanding`. | JSON |
 | `GET /__lsf/checkouts` | The home page of the checkout: the extensions of the app and its [checkout scenarios](checkout.md#scenarios). `?format=json` for what it says, `?locale=fr` for a language. With `--app`. | HTML or JSON |
 | `GET /checkout?scenario=<name>` | Opens a checkout for a scenario, in a new session whose cookie it sets. With `--app`. | A redirect |
 | `GET /__lsf/checkout/assets/<file>` | The files of the checkout page, which are in the binary. With `--app`. | The file |
 | `GET /__lsf/extensions/<handle>/<file>` | A file of the build (`dist/`) of a checkout UI extension. With `--app`. | The file |
-| `GET /__lsf/schema/<kind>` | The JSON Schema of a kind of data file: `store`, `product`, `collection`, `page`, `blog`, `customer`, `menu`, `session`. | JSON Schema |
-| `GET /__lsf` | The status as a page for a browser, with a customer chooser and links to every page and its profiles. | HTML |
 | `GET /__lsf/admin` | The [Admin API](admin.md): its shops, their tokens, record counts and webhook subscriptions, the app, the throttle, the mutations, each shop's outbox. | JSON, [below](#admin-api) |
-| `DELETE /__lsf/admin` | Puts every shop of the Admin API back to the store data (its clock and its outbox too), forgets the subscriptions the backend made and the tokens OAuth issued, and installs the app again (the printed token works). | `{ "ok": true, "shops": [...] }` |
+| `DELETE /__lsf/admin` | Puts every shop of the Admin API back to the store data (its clock and its outbox too), forgets the subscriptions the backend made and the tokens OAuth issued, and installs the app again (the printed token works). It revokes every token of the app, those of token exchange too, and sends no `app/uninstalled`: the backend's stored tokens are answered `401` ([reset between runs](admin.md#reset-between-runs)). | `{ "ok": true, "shops": [...] }` |
 | `POST /__lsf/admin/shops` | A new shop for one test, seeded from the same data, with the app installed: `{"shop": "test-1"}` makes `test-1.myshopify.com`. Each is a copy of the seed (about 2 MB for the demo store), kept until it is deleted: a reset keeps it. | `201` `{ "shop", "token", "graphql" }`; `409` when it exists, `422` for a bad name |
-| `DELETE /__lsf/admin/shops/<shop>` | Deletes a shop `POST /__lsf/admin/shops` made (`test-1` or `test-1.myshopify.com`) and frees what it held: its records, its tokens and installation, the subscriptions the backend made on it. Its token is then answered `401`; the name can be taken again. The default shop is the store data's and stays (`DELETE /__lsf/admin` puts it back). | `{ "ok": true, "shop", "revoked", "deletedSubscriptions" }`; `404` for no such shop, `409` for the default shop |
-| `GET /__lsf/admin/clock?shop=`, `POST /__lsf/admin/clock` | A shop's clock (`{shop, now, frozen}`), and moving it: `{"advance": "31d"}` (seconds, or `s`, `m`, `h`, `d`) or `{"now": "<RFC 3339>"}` (`at` too), with `"shop"?`. The clock then stays at that instant, and what waits on time happens, with its webhooks: a checkout left ten minutes is abandoned, a data erasure ten days old is processed (`customers/redact`), payment schedules that came due fire `payment_schedules/due`, store credit expires, Shopify Payments pays out the days left behind, the app's charges pending for two days expire, scheduled listings whose date passed are listed, abandoned checkouts three months old are deleted (`checkouts/delete`). The same runs before every Admin API request, by the shop's clock, frozen or not. `DELETE /__lsf/admin` puts the clock back. | `{ "ok", "shop", "now", "frozen", "erased", "deletedCheckouts" }`; `422` for a bad body or a time past the year 9999 |
+| `DELETE /__lsf/admin/shops/<shop>` | Deletes a shop `POST /__lsf/admin/shops` made (`test-1` or `test-1.myshopify.com`) and frees what it held: its records, its tokens and installation, the subscriptions the backend made on it. Its tokens, those of token exchange too, are then answered `401`, and no `app/uninstalled` is sent: `POST /__lsf/admin/uninstall` first, for the backend to hear it. The name can be taken again. The default shop is the store data's and stays (`DELETE /__lsf/admin` puts it back). | `{ "ok": true, "shop", "revoked", "deletedSubscriptions" }`; `404` for no such shop, `409` for the default shop |
+| `POST /__lsf/admin/session-token` | A session token (App Bridge's `id_token`) of a shop's user, `{"shop"?, "user"?}`, signed with the client secret: for a test to call the backend's authenticated routes. | `{ "token", "authorization", "shop", "claims" }` |
+| `GET /__lsf/admin/launch?shop=&path=` | Redirects to the app URL as the admin opens an embedded app: `embedded`, `hmac`, `host`, `id_token`, `locale`, `session`, `shop`, `timestamp`. | A redirect |
+| `GET /__lsf/admin/charges/<n>?shop=` | The page where the merchant approves a charge of the app (a subscription, a new capped amount, a one-time purchase): what the `confirmationUrl` of the billing mutations opens. `?format=json` for what it shows. | HTML or JSON |
+| `POST /__lsf/admin/charges/<n>/approve`, `…/decline` | The merchant's decision (`?shop=` or `{"shop"}`; charges count from 1 in each shop, and without `shop` the default shop's is meant: keep the `?shop=` of the `confirmationUrl`): the charge becomes `ACTIVE` or `DECLINED`, its webhook is delivered. From the page's form, a `303` to the charge's `returnUrl` with `charge_id`, as Shopify redirects. | `{ "ok": true, "charge", "redirect" }`; `409` when it is not waiting for the merchant |
 | `POST /__lsf/admin/uninstall` | Uninstalls the app from a shop (`{"shop"?}`, the default one without), as Shopify does: its tokens stop working, its subscription is cancelled, `app/uninstalled` is delivered, the subscriptions the backend made on the shop are deleted, and nothing more is delivered for the shop until the app is installed again. An app already uninstalled delivers nothing. | `{ "ok": true, "shop", "revoked": 1, "deletedSubscriptions": 2 }` |
 | `POST /__lsf/admin/install` | Installs the app again (`{"shop"?, "scopes"?}`): its default token works again, with the app's scopes or those given (a list, or `"read_products,read_orders"`), and the subscriptions of `shopify.app.toml` deliver for the shop again (OAuth and a token exchange install it too); `app/scopes_update` is delivered when they changed. | `{ "ok": true, "shop", "token", "scopes", "scopesChanged" }` |
-| `GET /__lsf/admin/outbox?shop=&channel=`, `DELETE …` | The [outbox](admin.md#the-outbox): what Shopify would have sent to the outside world, which lsf records instead (emails, shipping labels, Flow triggers, POS messages, data erasures), oldest first, the last 1000; of one channel (`email`, `carrier`, `flow`, `pos`, `data_erasure`) or all. `DELETE` forgets them; a reset empties it. | `{ "shop", "count", "outbox": [{ "id", "at", "channel", "to", "what", "about", "subject"?, "body"?, "data"? }] }`; `DELETE`: `{ "ok": true, "shop", "outbox": 3 }`; `422` for another channel |
-| `POST /__lsf/admin/session-token` | A session token (App Bridge's `id_token`) of a shop's user, `{"shop"?, "user"?}`, signed with the client secret: for a test to call the backend's authenticated routes. | `{ "token", "authorization", "shop", "claims" }` |
-| `GET /__lsf/admin/charges/<n>?shop=` | The page where the merchant approves a charge of the app (a subscription, a new capped amount, a one-time purchase): what the `confirmationUrl` of the billing mutations opens. `?format=json` for what it shows. | HTML or JSON |
-| `POST /__lsf/admin/charges/<n>/approve`, `…/decline` | The merchant's decision (`?shop=` or `{"shop"}`): the charge becomes `ACTIVE` or `DECLINED`, its webhook is delivered. From the page's form, a `303` to the charge's `returnUrl` with `charge_id`, as Shopify redirects. | `{ "ok": true, "charge", "redirect" }`; `409` when it is not waiting for the merchant |
+| `GET /__lsf/webhooks` | The webhook deliveries, oldest first, filtered by `topic`, `shop`, `state`, `resource` and `since`; `wait=<n>` waits until n of them are done. See [webhook deliveries](#webhook-deliveries). | `{ "count", "deliveries", "last", "waited"? }`; `408` when fewer are done |
+| `DELETE /__lsf/webhooks` | Forgets the deliveries. | `{ "ok": true, "deliveries": 3 }` |
+| `POST /__lsf/webhooks/trigger` | Sends one webhook: `{"topic", "id"?, "shop"?, "address"?, "payload"?, "wait"?}`. The payload is built from the record `id` names, else a representative one of the topic, else `payload` as given; it goes to `address`, else to the subscriptions of the topic. | `{ "count", "deliveries": [...] }`; `404` without a record or a subscription, `422` for a topic lsf does not build |
+| `GET /__lsf/admin/clock?shop=`, `POST /__lsf/admin/clock` | A shop's clock (`{shop, now, frozen}`), and moving it: `{"advance": "31d"}` (seconds, or `s`, `m`, `h`, `d`) or `{"now": "<RFC 3339>"}` (`at` too), with `"shop"?`. The clock then stays at that instant, and what waits on time happens, with its webhooks: a checkout left ten minutes is abandoned, a data erasure ten days old is processed (`customers/redact`), payment schedules that came due fire `payment_schedules/due`, store credit expires, Shopify Payments pays out the days left behind, the app's charges pending for two days expire, scheduled listings whose date passed are listed, abandoned checkouts three months old are deleted (`checkouts/delete`). The same runs before every Admin API request, by the shop's clock, frozen or not. `DELETE /__lsf/admin` puts the clock back. | `{ "ok", "shop", "now", "frozen", "erased", "deletedCheckouts" }`; `422` for a bad body or a time past the year 9999 |
+| `GET /__lsf/admin/outbox?shop=&channel=`, `DELETE …` | The [outbox](admin-reference.md#the-outbox): what Shopify would have sent to the outside world, which lsf records instead (emails, shipping labels, Flow triggers, POS messages, data erasures), oldest first, the last 1000; of one channel (`email`, `carrier`, `flow`, `pos`, `data_erasure`) or all. `DELETE` forgets them; a reset empties it. | `{ "shop", "count", "outbox": [{ "id", "at", "channel", "to", "what", "about", "subject"?, "body"?, "data"? }] }`; `DELETE`: `{ "ok": true, "shop", "outbox": 3 }`; `422` for another channel |
+| `GET /__lsf/admin/emails?shop=`, `DELETE …` | The outbox's emails: `/__lsf/admin/outbox?channel=email`. | `{ "shop", "count", "emails": [...] }`; `DELETE`: `{ "ok": true, "shop", "emails": 2 }` |
+
+The rest of what Shopify, buyers and banks do outside the Admin API:
+
+| Request | What it does | Answer |
+|---|---|---|
 | `POST /__lsf/admin/uploads/<shop>`, `PUT /__lsf/admin/uploads/<shop>/<key>` | Where clients upload to the targets of `stagedUploadsCreate`: the form of a `POST` target (multipart, the `file` last), or the body of a `PUT` one. `GET …/<key>` gives the file back. | `201` (XML, as Google Cloud Storage answers), `200` |
 | `GET /__lsf/admin/bulk/<shop>/<n>.jsonl` | The result of a bulk operation: its `url`. | JSON Lines |
-| `PUT /__lsf/admin/sources?url=<url>` | [Stubs a URL](admin.md#stubbed-urls): the body is what `themeCreate`, a `URL` body of `themeFilesUpsert` or `urlRedirectImportCreate` reads there from now on, never downloaded. Every shop's; a reset keeps it. Encode the URL (`encodeURIComponent`). | `{ "ok": true, "url", "size" }`; `422` for a URL that is not `http(s)`, or a staged upload of lsf |
+| `PUT /__lsf/admin/sources?url=<url>` | [Stubs a URL](admin-reference.md#stubbed-urls): the body is what `themeCreate`, a `URL` body of `themeFilesUpsert` or `urlRedirectImportCreate` reads there from now on, never downloaded. Every shop's; a reset keeps it. Encode the URL (`encodeURIComponent`). | `{ "ok": true, "url", "size" }`; `422` for a URL that is not `http(s)`, or a staged upload of lsf |
 | `GET /__lsf/admin/sources`, `GET …?url=` | The stubbed URLs, those of `--admin-source` included; with `?url=`, one's bytes. | `{ "count", "sources": [{ "url", "size", "from" }] }`, `from` the file or `"request"`; the bytes; `404` for a URL not stubbed |
 | `DELETE /__lsf/admin/sources`, `DELETE …?url=` | Forgets the stubs requests made, all of them or one. Those of `--admin-source` stay. | `{ "ok": true, "removed": 2 }` |
-| `POST /__lsf/admin/card-sessions` | lsf's card vault, as Shopify's (`https://deposit.shopifycs.com/sessions`): `{"credit_card": {"number", "first_name", "last_name", "month", "year", "verification_value"}}`. The id is the `sessionId` of `customerPaymentMethodCreditCardCreate` and `…Update`; the number says what charging the card does (the [test cards](admin.md#test-cards)). | `201` `{ "id" }`; `422` for what is not a card |
+| `POST /__lsf/admin/card-sessions` | lsf's card vault, as Shopify's (`https://deposit.shopifycs.com/sessions`): `{"credit_card": {"number", "first_name", "last_name", "month", "year", "verification_value"}}`. The id is the `sessionId` of `customerPaymentMethodCreditCardCreate` and `…Update`; the number says what charging the card does (the [test cards](admin-reference.md#test-cards)). | `201` `{ "id" }`; `422` for what is not a card |
 | `GET /__lsf/admin/subscriptions?shop=` | What the Subscriptions API did not send nor charge for real: its emails (`customerPaymentMethodSendUpdateEmail`, `paymentInstrumentSendAddEmail`, as in the outbox, the link in `data.url`), and every billing attempt with its outcome, its order and what it charged. | `{ "shop", "emails": [...], "charges": [...] }` |
 | `GET /__lsf/admin/billing-attempts/<n>/challenge?shop=` | The 3D Secure page of a challenged billing attempt: its `nextActionUrl`. Opening it makes the challenge `ON_SESSION_CHALLENGED`. `?format=json` for what it says. | HTML or JSON |
 | `POST /__lsf/admin/billing-attempts/<n>/challenge/complete`, `…/fail` | The customer passed (or failed) the challenge (`?shop=`): the attempt bills its order (`subscription_billing_attempts/success`) or fails with `AUTHENTICATION_FAILED` (`/failure`). | `{ "attempt", "state", "order", "errorCode" }`; `409` when it is not challenged |
 | `GET`, `POST /__lsf/admin/payment-methods/<token>/update?shop=` | The page of a payment method's update link (`customerPaymentMethodGetUpdateUrl`, the update email): a new card, `{"credit_card": {…}}` or the page's form, replaces the method's; `customer_payment_methods/update` is delivered. | HTML or `{ "ok": true, "customerPaymentMethod" }` |
-| `GET /__lsf/admin/emails?shop=`, `DELETE …` | The outbox's emails: `/__lsf/admin/outbox?channel=email`. | `{ "shop", "count", "emails": [...] }`; `DELETE`: `{ "ok": true, "shop", "emails": 2 }` |
 | `POST /__lsf/admin/disputes`, `POST /__lsf/admin/disputes/<n>/won`, `…/lost`, `…/accepted` | A buyer's bank opens a dispute on an order (`{"order", "amount"?, "type"?: "CHARGEBACK" or "INQUIRY", "reason"?}`: `disputes/create`), then decides it (`disputes/update`; won, a chargeback's amount comes back to the balance). | `201` `{ "ok": true, "shop", "dispute" }`, `200`; `422` for a bad order, `409` for a dispute decided already |
 | `POST /__lsf/admin/orders/protect`, `POST /__lsf/admin/orders/link-request` | Shopify Protect changes its view of an order (`{"order", "status"?, "eligibility"?}`: `orders/shopify_protect_eligibility_changed`); the buyer asks for a new link to the order's status page (`{"order"}`: the email in the outbox, `orders/link_requested`). | `{ "ok": true, "shop", "order" }`; `422` otherwise |
 | `POST /__lsf/admin/tax-app/activate` | The merchant turns on the tax app that `taxAppConfigure` made `READY`: `ACTIVE`, `tax_services/update`. | `{ "ok": true, "shop", "state" }`; `409` when it is not ready |
-| `GET /__lsf/admin/launch?shop=&path=` | Redirects to the app URL as the admin opens an embedded app: `embedded`, `hmac`, `host`, `id_token`, `locale`, `session`, `shop`, `timestamp`. | A redirect |
-| `GET /__lsf/webhooks` | The webhook deliveries, oldest first: `?topic=orders/create`, `?shop=`, `?state=delivered\|failed\|pending\|not_sent`; `?wait=<n>` waits until n of them are done (`?timeout=<ms>`, 10 s by default; `408` when they are not). | `{ "count", "deliveries": [...] }` |
-| `DELETE /__lsf/webhooks` | Forgets the deliveries. | `{ "ok": true, "deliveries": 3 }` |
-| `POST /__lsf/webhooks/trigger` | Sends one webhook: `{"topic", "id"?, "shop"?, "address"?, "payload"?, "wait"?}`. The payload is built from the record `id` names, else a representative one of the topic, else `payload` as given; it goes to `address`, else to the subscriptions of the topic. | `{ "count", "deliveries": [...] }`; `404` without a record or a subscription, `422` for a topic lsf does not build |
 
 ## Sessions
 
@@ -136,13 +150,45 @@ A test runner can wait on this URL to know the server is up.
 | `app` | `clientId`, `appUrl` (where webhooks and redirects go), `scopes` (what the app is installed with). |
 | `throttle` | `enabled`, `maximumAvailable`, `restoreRate`. |
 | `webhooks` | `summary`, `appSubscriptions` (those of `shopify.app.toml`), `deliveries` (how many the log has). |
-| `mutations` | The mutations lsf simulates: every one of the versions it serves ([what simulated means](admin.md#what-lsf-simulates)). |
+| `mutations` | The mutations lsf simulates: every one of the versions it serves ([what simulated means](admin-reference.md#what-lsf-simulates)). |
 | `storeSync` | [What the storefront sees](admin.md#what-the-storefront-and-the-checkout-see) of the default shop's changes: `enabled`, `generation` (moves when the overlay does; `0` is the files), `pending` (a change waits for the next page), `overlay` (`written`: entities by section, `removed`: their keys; `null` while the storefront is the files), `built` (`generation`, `ms`, `diagnostics`: what the store data refused). |
-| `shops` | Per shop: `shop`, `installed`, `scopes`, `token` (the default one), `changed` (whether the Admin API changed it), `records`, `counts` (records by type), `tokens` (every valid token: `mode`, `source`, `scopes`, `expiresAt`, `user`), `subscriptions` (those the backend made), `outbox` (the shop's [outbox](admin.md#the-outbox), as `GET /__lsf/admin/outbox` lists it). |
+| `shops` | Per shop: `shop`, `installed`, `scopes`, `token` (the default one), `changed` (whether the Admin API changed it), `records`, `counts` (records by type), `tokens` (every valid token: `mode`, `source`, `scopes`, `expiresAt`, `user`), `subscriptions` (those the backend made), `outbox` (the shop's [outbox](admin-reference.md#the-outbox), as `GET /__lsf/admin/outbox` lists it). |
 
-A delivery of `GET /__lsf/webhooks`: `id`, `webhookId`, `eventId`, `topic`, `shop`,
-`subscription`, `url`, `apiVersion`, `triggeredAt`, `request` (`headers`, `body`: exactly what was
-signed), `attempts` (`status`, `durationMs`, `response`, `error`), `state` and `reason`, `notes`.
+## Webhook deliveries
+
+`GET /__lsf/webhooks` lists the deliveries since the last `DELETE /__lsf/webhooks`, of every
+shop, oldest first. The filters combine:
+
+| Parameter | Keeps |
+|---|---|
+| `topic=orders/create` | One topic. |
+| `shop=test-1` | One shop, by its name (`test-1`) or its domain (`test-1.myshopify.com`). |
+| `state=delivered` | One state: `delivered`, `failed`, `pending` (still being tried) or `not_sent` (lsf did not send it, and `reason` says why: a topic it does not build, an address off this machine, an EventBridge or Pub/Sub subscription). |
+| `resource=<gid>` | The deliveries about one record (`gid://shopify/Order/…`). |
+| `since=<id>` | The deliveries after this one, by `id`. |
+
+`wait=<n>` makes the request wait until n deliveries match every filter and are done:
+`delivered`, `failed` or `not_sent`. It counts what the log already holds, the deliveries from
+before the request included: with no `since`, `wait=1` can answer at once with an old one.
+`timeout=<ms>` bounds the wait, 10 seconds by default; then the answer is `408`, with the same
+body. A delivery that the backend fails is retried after 1, 5 and 15 seconds, and stays `pending`
+until its last attempt, about 21 seconds after the first: to see it fail, give `timeout=25000`.
+
+```json
+{
+  "count": 1,
+  "deliveries": [{ "id": 24, "topic": "orders/create", "shop": "local-supply-co.myshopify.com", "state": "delivered", … }],
+  "last": 24,
+  "waited": { "for": 1, "complete": true, "timeoutMs": 10000 }
+}
+```
+
+<!-- check: since-field -->
+`last` is the id to pass as `since` next time, to wait for the next delivery only. `waited` is
+there with `wait`. A delivery has `id`, `webhookId`, `eventId`, `topic`, `shop`,
+`subscription`, `url`, `apiVersion`, `triggeredAt`, `request` (`headers`, `body`: exactly what
+was signed), `attempts` (`status`, `durationMs`, `response`, `error`), `state` and `reason`,
+`notes`.
 
 ## Response headers
 
