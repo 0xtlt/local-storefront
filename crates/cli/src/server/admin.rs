@@ -76,7 +76,10 @@ impl Admin {
         .with_sources(lsf_admin::sources::Stubs::configured(
             settings.sources.iter().cloned(),
         ))
-        .with_theme(theme.to_path_buf());
+        .with_theme(theme.to_path_buf())
+        // A token a reset, a shop deletion or an uninstall revoked: said once per token, even
+        // with `--quiet`, since the backend that sends it fails until it forgets it.
+        .with_log(Arc::new(|line: &str| eprintln!("admin:  {line}")));
         api.sync_store(store.clone());
         Admin {
             api,

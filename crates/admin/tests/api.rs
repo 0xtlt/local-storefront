@@ -947,3 +947,116 @@ fn a_request_nested_too_deeply_is_answered_not_crashed() {
         .unwrap();
     assert_eq!(response.status, 400);
 }
+
+#[test]
+fn a_revoked_token_says_what_revoked_it_and_how_to_recover_once_in_the_log() {
+    let said = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = std::sync::Arc::clone(&said);
+    let api = demo_api().with_log(std::sync::Arc::new(move |line: &str| {
+        log.lock().unwrap().push(line.to_string())
+    }));
+    let refused = |token: &str| {
+        let response = api
+            .handle(&support::graphql_request(
+                token,
+                "{ shop { name } }",
+                Value::Null,
+            ))
+            .unwrap();
+        assert_eq!(response.status, 401);
+        assert_eq!(json_of(&response), json!({"errors": INVALID_TOKEN}));
+        header(&response, "x-lsf-reason").unwrap().to_string()
+    };
+    let recover = ": run the token exchange or OAuth again for a new one (a backend that stored \
+                   this one in its session storage must forget it), or use a new shop name";
+
+    // A token exchange, then a reset.
+    let session_token =
+        json_of(&send(&api, "POST", "/__lsf/admin/session-token", json!({})))["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let exchanged = json_of(&send(
+        &api,
+        "POST",
+        "/admin/oauth/access_token",
+        json!({
+            "client_id": api.client_id(),
+            "client_secret": SECRET,
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": session_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+        }),
+    ))["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        send(&api, "DELETE", "/__lsf/admin", Value::Null).status,
+        200
+    );
+    let shop = api.default_shop();
+    let reason = refused(&exchanged);
+    assert_eq!(
+        reason,
+        format!(
+            "this access token of {shop} was revoked by a reset of the Admin API (DELETE \
+             /__lsf/admin){recover}"
+        )
+    );
+    // Every refusal says it; the log, once.
+    assert_eq!(refused(&exchanged), reason);
+    assert_eq!(
+        *said.lock().unwrap(),
+        [format!("401 for a revoked access token: {reason}")]
+    );
+    // The default token is the app's again.
+    let (status, _) = graphql(&api, &default_token(&api), "{ shop { name } }", Value::Null);
+    assert_eq!(status, 200);
+
+    // A deleted shop.
+    let created = json_of(&send(
+        &api,
+        "POST",
+        "/__lsf/admin/shops",
+        json!({"shop": "test-1"}),
+    ));
+    send(&api, "DELETE", "/__lsf/admin/shops/test-1", Value::Null);
+    assert_eq!(
+        refused(created["token"].as_str().unwrap()),
+        format!(
+            "this access token of test-1.myshopify.com was revoked when the shop was deleted \
+             (DELETE /__lsf/admin/shops/test-1){recover}"
+        )
+    );
+
+    // An uninstall.
+    let created = json_of(&send(
+        &api,
+        "POST",
+        "/__lsf/admin/shops",
+        json!({"shop": "test-2"}),
+    ));
+    send(
+        &api,
+        "POST",
+        "/__lsf/admin/uninstall",
+        json!({"shop": "test-2"}),
+    );
+    assert_eq!(
+        refused(created["token"].as_str().unwrap()),
+        format!(
+            "this access token of test-2.myshopify.com was revoked when the app was uninstalled \
+             from the shop (POST /__lsf/admin/uninstall, or appUninstall){recover}"
+        )
+    );
+    assert_eq!(said.lock().unwrap().len(), 3);
+
+    // A token lsf never issued says so.
+    assert!(
+        refused("shpat_00000000000000000000000000000000")
+            .starts_with("lsf did not issue this access token")
+    );
+    assert_eq!(said.lock().unwrap().len(), 3);
+}
