@@ -72,10 +72,9 @@ impl Webhooks {
                 HttpResponse::json(200, &json!({"ok": true, "deliveries": cleared}))
             }
             ("POST", "/__lsf/webhooks/trigger") => self.trigger_response(request, build),
-            (_, "/__lsf/webhooks" | "/__lsf/webhooks/trigger") => HttpResponse::json(
-                405,
-                &json!({"error": format!("{} is not allowed here", request.method)}),
-            ),
+            (_, "/__lsf/webhooks" | "/__lsf/webhooks/trigger") => {
+                HttpResponse::not_allowed(&request.method)
+            }
             _ => return None,
         })
     }
@@ -85,11 +84,9 @@ impl Webhooks {
             Some(state) => match DeliveryState::parse(state) {
                 Some(state) => Some(state),
                 None => {
-                    return HttpResponse::json(
+                    return HttpResponse::error(
                         422,
-                        &json!({"error": format!(
-                            "`{state}` is not a state: pending, delivered, failed or not_sent"
-                        )}),
+                        format!("`{state}` is not a state: pending, delivered, failed or not_sent"),
                     );
                 }
             },
@@ -116,9 +113,9 @@ impl Webhooks {
             );
         };
         let Ok(count) = wait.parse::<usize>() else {
-            return HttpResponse::json(
+            return HttpResponse::error(
                 422,
-                &json!({"error": format!("`wait` is a number of deliveries, got `{wait}`")}),
+                format!("`wait` is a number of deliveries, got `{wait}`"),
             );
         };
         let timeout = match timeout_of(request) {
@@ -140,11 +137,11 @@ impl Webhooks {
         let trigger: TriggerRequest = match serde_json::from_slice(&request.body) {
             Ok(trigger) => trigger,
             Err(error) => {
-                return HttpResponse::json(
+                return HttpResponse::error(
                     422,
-                    &json!({"error": format!(
+                    format!(
                         "the body is {{\"topic\", \"id\"?, \"shop\"?, \"address\"?, \"payload\"?, \"wait\"?}}: {error}"
-                    )}),
+                    ),
                 );
             }
         };
@@ -158,10 +155,10 @@ impl Webhooks {
         let (shop, payload) = match build(&normalized) {
             Ok(built) => built,
             Err(TriggerError::NotFound(message)) => {
-                return HttpResponse::json(404, &json!({"error": message}));
+                return HttpResponse::error(404, message);
             }
             Err(TriggerError::NotBuilt(message)) => {
-                return HttpResponse::json(422, &json!({"error": message}));
+                return HttpResponse::error(422, message);
             }
         };
         let ids = self.trigger(&Trigger {
@@ -172,12 +169,12 @@ impl Webhooks {
             at: Utc::now(),
         });
         if ids.is_empty() {
-            return HttpResponse::json(
+            return HttpResponse::error(
                 404,
-                &json!({"error": format!(
+                format!(
                     "no subscription to `{topic}` for {shop}, in shopify.app.toml or through the \
                      Admin API: subscribe to it, or give an `address`"
-                )}),
+                ),
             );
         }
         let filter = DeliveryFilter {
@@ -208,9 +205,9 @@ fn timeout_of(request: &HttpRequest) -> Result<Duration, HttpResponse> {
         None => Ok(DEFAULT_WAIT),
         Some(text) => match text.parse::<u64>() {
             Ok(ms) => Ok(Duration::from_millis(ms).min(LONGEST_WAIT)),
-            Err(_) => Err(HttpResponse::json(
+            Err(_) => Err(HttpResponse::error(
                 422,
-                &json!({"error": format!("`timeout` is in milliseconds, got `{text}`")}),
+                format!("`timeout` is in milliseconds, got `{text}`"),
             )),
         },
     }
@@ -220,11 +217,11 @@ fn unknown_topic(topic: &str) -> HttpResponse {
     let hint = topics::suggestion(topic)
         .map(|suggestion| format!(" (did you mean `{suggestion}`?)"))
         .unwrap_or_default();
-    HttpResponse::json(
+    HttpResponse::error(
         422,
-        &json!({"error": format!(
+        format!(
             "`{topic}` is not a webhook topic of API {}{hint}",
             crate::version::DEFAULT
-        )}),
+        ),
     )
 }
