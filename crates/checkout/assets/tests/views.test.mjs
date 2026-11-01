@@ -441,8 +441,8 @@ test('the overview has the skin switch, the extensions, the blocking errors and 
 });
 
 test('problems with the app show as banners', () => {
-  const tree = page(checkoutState({ diagnostics: ['gift-message: no bundle, run `shopify app build`'] }));
-  assert.match(text(byClass(tree, 'lsf-diagnostics')[0]), /shopify app build/);
+  const tree = page(checkoutState({ diagnostics: ['gift-message: not built (missing dist/gift-message.js): build it with `lsf app build gift-message` (or `--build`)'] }));
+  assert.match(text(byClass(tree, 'lsf-diagnostics')[0]), /lsf app build gift-message/);
 });
 
 test('a build of --watch that failed shows in a banner, in the badge and on the overview', () => {

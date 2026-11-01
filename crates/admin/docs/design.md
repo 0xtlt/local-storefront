@@ -1948,6 +1948,13 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   trailing slashes removed, as Shopify's CLI prepends `application_url`; an absolute one under
   `application_url` (or on its origin) moves to `--app-url` when it is given; another HTTP(S) URL
   is kept. `pubsub://`, `arn:aws:events:` and `kafka://` are logged as not sent, with why.
+  **Only to this machine or to `--app-url`** (`AppUrls::may_send_to`): a URL whose host is not the
+  loopback (`localhost`, `127.0.0.0/8`, `::1`), as the HTTP client reads it, is sent only when it
+  is on the origin of `--app-url`, or is an address given explicitly (`--address`, a trigger's
+  `address`). Anything else (a relative `uri` joined to a remote `application_url`, another host,
+  a subscription the backend made) is logged `not_sent` with `subscriptions::off_machine`, and
+  `lsf app webhook trigger` refuses it before sending anything (exit 2): a webhook is signed with
+  the app's real secret when `.env` has it.
 - **Payload**: the JSON of Shopify's webhooks, which is the REST representation of the resource
   (`id` as a number, `admin_graphql_api_id`, snake_case, prices as strings with two decimals,
   enums in lowercase, tags as one string), in the key order of Shopify's example payload of the
@@ -1987,9 +1994,11 @@ for each subscription of the shop whose topic matches and whose `filter` matches
   5 seconds (1 to connect) is a success; anything else, a redirect included, is retried after 1,
   5 and 15 seconds (Shopify retries 8 times over 4 hours), then marked failed. Each attempt is
   logged: the start, the duration, the status, the start of the answer, the error.
-- **Control**: `GET /__lsf/webhooks` lists the deliveries (`?topic=`, `?shop=`, `?state=`;
-  `?wait=<n>` waits until n of them are done, `?timeout=<ms>` at most, 10 s by default, and
-  answers `408` when they were not), `DELETE /__lsf/webhooks` forgets them,
+- **Control**: `GET /__lsf/webhooks` lists the deliveries (`?topic=`, `?shop=` short or full,
+  `?state=`, `?since=<id>`, `?resource=<gid>`, the record of the event, kept in each delivery's
+  `resource`; `?wait=<n>` waits until n of those that match every filter are done, `?timeout=<ms>`
+  at most, 10 s by default, and answers `408` when they were not), with `last`, the newest id of
+  the log (ids are never given twice), for the next `since`; `DELETE /__lsf/webhooks` forgets them,
   `POST /__lsf/webhooks/trigger` sends one (`{"topic", "id"?, "shop"?, "address"?, "payload"?,
   "wait"?}`: the api layer builds the payload from the state, `payload` gives it as is), as
   `lsf app webhook trigger` does from the command line.

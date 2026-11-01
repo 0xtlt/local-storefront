@@ -43,7 +43,8 @@
   function loadScript(init) {
     return new Promise((resolve, reject) => {
       if (typeof init.source !== 'string') {
-        reject(new Error('Could not load ' + init.script + '. Run `shopify app build` so the extension has a bundle in dist/.'));
+        const build = init.handle ? '`lsf app build ' + init.handle + '`' : '`lsf app build`';
+        reject(new Error('Could not load ' + init.script + '. Build it with ' + build + ' (or `--build`) so the extension has a bundle in dist/.'));
         return;
       }
       const blob = new Blob([init.source, '\n//# sourceURL=' + init.script], { type: 'text/javascript' });

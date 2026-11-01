@@ -133,6 +133,24 @@ impl FunctionExtension {
         self.wasm_path.is_file()
     }
 
+    /// What a Function whose module is not at its `wasm_path` says: lsf's own build, which
+    /// needs no Shopify CLI, or why lsf cannot build it. The diagnostic of the app, and the error
+    /// of a run.
+    pub fn missing_build(&self) -> String {
+        let path = self.wasm_path.display();
+        match self.build() {
+            Some(_) => format!(
+                "no Wasm module at {path}: build it with `lsf app build {}` (or `--build`)",
+                self.handle
+            ),
+            None => format!(
+                "no Wasm module at {path}, and no `[extensions.build] command` in its \
+                 shopify.extension.toml to build it with: add one, then run `lsf app build {}`",
+                self.handle
+            ),
+        }
+    }
+
     /// The command that builds the Function, as the pages and messages say it.
     pub fn build_hint(&self) -> Option<String> {
         self.build().map(|build| match build {
@@ -440,20 +458,6 @@ impl Selection {
     }
 }
 
-/// What the diagnostic of a Function whose module is not at `wasm_path` says.
-fn missing_module(wasm_path: &Path, build: Option<String>) -> String {
-    match build {
-        Some(build) => format!(
-            "no Wasm module at {}: build it with `{build}` (or `shopify app build`)",
-            wasm_path.display(),
-        ),
-        None => format!(
-            "no Wasm module at {}: run `shopify app build`",
-            wasm_path.display()
-        ),
-    }
-}
-
 /// Loads the app in `dir`. Fails only when `dir` is not a directory; everything else that is
 /// wrong with the app is reported in [`App::diagnostics`].
 pub fn load(dir: &Path) -> Result<App, String> {
@@ -504,14 +508,14 @@ impl App {
             return;
         };
         let function = &self.functions[index];
-        let before = missing_module(&function.wasm_path, function.build_hint());
+        let before = function.missing_build();
         let built = module.is_file();
-        let message = format!(
-            "no Wasm module yet: the watch builds it with `{}`",
-            function
-                .build_hint()
-                .unwrap_or_else(|| "shopify app build".to_string())
-        );
+        let message = match function.build_hint() {
+            Some(build) => format!("no Wasm module yet: the watch builds it with `{build}`"),
+            None => "no Wasm module yet, and no `[extensions.build] command` for the watch to \
+                     build it with"
+                .to_string(),
+        };
         self.diagnostics.retain(|diagnostic| {
             !(diagnostic.extension.as_deref() == Some(handle) && diagnostic.message == before)
         });
@@ -861,10 +865,7 @@ fn load_function(
         input_variables,
     };
     if !function.built() {
-        app.warn(
-            Some(handle),
-            missing_module(&function.wasm_path, function.build_hint()),
-        );
+        app.warn(Some(handle), function.missing_build());
     }
     function
 }
@@ -983,9 +984,12 @@ fn load_ui_extension(
                 .is_some_and(|module| dir.join(module).is_file())
         });
         let build = if has_source {
-            format!("build it with `lsf app build {handle}` (or `shopify app build`)")
+            format!("build it with `lsf app build {handle}` (or `--build`)")
         } else {
-            "run `shopify app build`".to_string()
+            format!(
+                "no `module` of its targets is there to build it from: name its sources, then \
+                 run `lsf app build {handle}`"
+            )
         };
         app.warn(
             Some(handle),
@@ -1320,7 +1324,9 @@ handle = "banner"
             messages
                 .iter()
                 .any(|m| m.starts_with("volume-discount: no Wasm module")
-                    && m.contains("cargo build")),
+                    && m.ends_with(
+                        ": build it with `lsf app build volume-discount` (or `--build`)"
+                    )),
             "{messages:?}"
         );
         // A customer account target is placed like a checkout one.
@@ -1377,15 +1383,99 @@ handle = "banner"
         );
         let app = load(&root).unwrap();
         assert!(!app.ui_extension("banner").unwrap().built());
-        assert!(
+        let said = |app: &App, handle: &str| -> Vec<String> {
             app.diagnostics
                 .iter()
-                .any(|d| d.message.contains("shopify app build"))
+                .filter(|d| d.extension.as_deref() == Some(handle))
+                .map(|d| d.message.clone())
+                .collect()
+        };
+        // No source to bundle: lsf says what it lacks, not to run Shopify's CLI.
+        assert!(
+            said(&app, "banner").iter().any(|m| m.ends_with(
+                "no `module` of its targets is there to build it from: name its sources, then \
+                 run `lsf app build banner`"
+            )),
+            "{:?}",
+            app.diagnostics
         );
         assert!(
             app.diagnostics
                 .iter()
                 .any(|d| d.message.contains("no shopify.app.toml"))
+        );
+        assert!(
+            !app.diagnostics
+                .iter()
+                .any(|d| d.message.contains("shopify app build")),
+            "{:?}",
+            app.diagnostics
+        );
+
+        // With its source, lsf builds it.
+        write(
+            &root,
+            "extensions/banner/shopify.extension.toml",
+            "[[extensions]]\ntype = \"ui_extension\"\nhandle = \"banner\"\n[[extensions.targeting]]\ntarget = \"purchase.checkout.block.render\"\nmodule = \"./src/index.js\"\n",
+        );
+        write(
+            &root,
+            "extensions/banner/src/index.js",
+            "export default 1;\n",
+        );
+        let app = load(&root).unwrap();
+        assert!(
+            said(&app, "banner")
+                .iter()
+                .any(|m| m.starts_with("not built (missing ")
+                    && m.ends_with(": build it with `lsf app build banner` (or `--build`)")),
+            "{:?}",
+            app.diagnostics
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_function_without_a_module_says_how_lsf_builds_it() {
+        let root = temp_app("missing-build");
+        // A build command: `lsf app build` runs it.
+        write(
+            &root,
+            "extensions/fn/shopify.extension.toml",
+            "type = \"function\"\nhandle = \"fn\"\napi_version = \"2026-10\"\n[[targeting]]\ntarget = \"purchase.validation.run\"\n[build]\ncommand = \"make\"\n",
+        );
+        // None, and not JavaScript: nothing lsf can build it with.
+        write(
+            &root,
+            "extensions/bare/shopify.extension.toml",
+            "type = \"function\"\nhandle = \"bare\"\napi_version = \"2026-10\"\n[[targeting]]\ntarget = \"purchase.validation.run\"\n",
+        );
+        let app = load(&root).unwrap();
+        let built = app.function("fn").unwrap();
+        assert_eq!(
+            built.missing_build(),
+            format!(
+                "no Wasm module at {}: build it with `lsf app build fn` (or `--build`)",
+                built.wasm_path.display()
+            )
+        );
+        let bare = app.function("bare").unwrap();
+        assert!(
+            bare.missing_build().ends_with(
+                ", and no `[extensions.build] command` in its shopify.extension.toml to build \
+                 it with: add one, then run `lsf app build bare`"
+            ),
+            "{}",
+            bare.missing_build()
+        );
+        let messages: Vec<String> = app.diagnostics.iter().map(ToString::to_string).collect();
+        assert!(
+            messages.contains(&format!("fn: {}", built.missing_build())),
+            "{messages:?}"
+        );
+        assert!(
+            !messages.iter().any(|m| m.contains("shopify app build")),
+            "{messages:?}"
         );
         let _ = std::fs::remove_dir_all(root);
     }

@@ -331,7 +331,7 @@ test('a bundle that does not load is an error that says why, without waiting for
   assert.match(result.errors[0], /^Could not load http:\/\/127\.0\.0\.1:9292\/__lsf\/extensions\/probed\/probed\.js/);
   const problem = verdict(result.targets, result.registered, result.errors, result.loaded);
   assert.equal(problem.severity, 'error');
-  assert.match(problem.message, /^its bundle does not load: Could not load .*`shopify app build`/);
+  assert.match(problem.message, /^its bundle does not load: Could not load .*`lsf app build probed` \(or `--build`\)/);
   assert.equal(page.frames[0].attached, false);
   assert.equal(page.listeners.size, 0);
 });

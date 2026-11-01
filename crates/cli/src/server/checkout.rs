@@ -39,6 +39,9 @@ pub struct CheckoutSession {
     pub variant: Option<Variant>,
     /// The state of the order the buyer completed, which the thank-you page shows.
     pub completed: Option<Json>,
+    /// The last order placed, as the Admin API recorded it: `{id, number, name}`, what `complete`
+    /// answers with so that a test can tell its order's webhooks from the others.
+    pub placed_order: Option<Json>,
     /// How many orders this session placed: a completion that started before one finished
     /// must not place another.
     pub placed: u64,
@@ -1641,14 +1644,15 @@ fn complete(state: &ServerState, incoming: &Incoming, token: &str) -> Reply {
     with_cookie(reply, &id, is_new)
 }
 
-/// The way to the thank-you page, in the language of the request.
+/// The way to the thank-you page, in the language of the request, and the order placed:
+/// `{"redirect", "order": {"id", "number", "name"}}`.
 fn redirect_to_thanks(state: &ServerState, incoming: &Incoming, id: &str, token: &str) -> Reply {
     let root = request_root(state, id, incoming);
-    Reply::json(
-        200,
-        &json!({"redirect": format!("{}/thank-you", checkout_path(&root, token))}),
-    )
-    .cached(cache::PRIVATE)
+    let mut answer = json!({"redirect": format!("{}/thank-you", checkout_path(&root, token))});
+    if let Some(order) = state.with_session(id, |entry| entry.checkout.placed_order.clone()) {
+        answer["order"] = order;
+    }
+    Reply::json(200, &answer).cached(cache::PRIVATE)
 }
 
 /// Whether the order of this checkout was placed already, and its cart taken: asking again
@@ -1732,7 +1736,8 @@ pub(super) fn place_order(
         // Recorded while the cart is taken, so that the page links to the order the Admin API
         // keeps. The Admin API never takes a session's lock: holding this one while it records
         // cannot deadlock.
-        let order_id = match record_in_admin(
+        // The Admin API's number is the session's unless an order of the shop has it already.
+        let (order_id, recorded_number) = match record_in_admin(
             state,
             &computed.result,
             &computed.checkout,
@@ -1740,9 +1745,15 @@ pub(super) fn place_order(
             number,
             processed_at,
         ) {
-            Some(recorded) => recorded.id,
-            None => format!("gid://shopify/Order/{number}"),
+            Some(recorded) => (recorded.id, recorded.number),
+            None => (format!("gid://shopify/Order/{number}"), number),
         };
+        // As its `orders/create` names it: `admin_graphql_api_id`, `order_number`, `name`.
+        entry.checkout.placed_order = Some(json!({
+            "id": order_id,
+            "number": recorded_number,
+            "name": format!("#{recorded_number}"),
+        }));
         order["status"] = json!("completed");
         // The order costs the whole price: what is paid now is received, and what a selling
         // plan defers is outstanding (`totalReceivedSet` and `totalOutstandingSet` of Shopify's

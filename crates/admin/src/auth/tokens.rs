@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasher, Hasher};
 
 use chrono::{DateTime, Duration, Utc};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -47,6 +48,57 @@ pub const MIGRATION_RECOVERY: i64 = 7 * 86_400;
 /// kept before an issue forgets it ([`Tokens::purge`]): a day, so that the app presenting it
 /// meanwhile is told why it is refused rather than that lsf never issued it.
 pub const PURGE_AFTER: i64 = 86_400;
+
+/// How many revoked access tokens are remembered, for their `401` to say why; the oldest are
+/// forgotten first, and then answer as a token lsf never issued.
+pub const REVOKED_KEPT: usize = 10_000;
+
+/// What revoked an access token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Revocation {
+    /// `DELETE /__lsf/admin`: every shop put back to the seed.
+    Reset,
+    /// `DELETE /__lsf/admin/shops/<shop>`.
+    ShopDeleted,
+    /// `POST /__lsf/admin/uninstall`, or `appUninstall`.
+    Uninstalled,
+}
+
+/// A revoked access token: the shop it was for and what revoked it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Revoked {
+    pub shop: String,
+    pub by: Revocation,
+    /// Whether a refusal of it was already reported (the server says it once per token).
+    told: bool,
+}
+
+impl Revoked {
+    /// The `X-Lsf-Reason` of the `401` that refuses it: what revoked it, and how to get a token
+    /// again. A backend that keeps its sessions sends the old one until it forgets it.
+    pub fn reason(&self) -> String {
+        let what = match self.by {
+            Revocation::Reset => "by a reset of the Admin API (DELETE /__lsf/admin)".to_string(),
+            Revocation::ShopDeleted => format!(
+                "when the shop was deleted (DELETE /__lsf/admin/shops/{})",
+                self.shop
+                    .strip_suffix(".myshopify.com")
+                    .unwrap_or(&self.shop)
+            ),
+            Revocation::Uninstalled => {
+                "when the app was uninstalled from the shop (POST /__lsf/admin/uninstall, or \
+                 appUninstall)"
+                    .to_string()
+            }
+        };
+        format!(
+            "this access token of {} was revoked {what}: run the token exchange or OAuth again \
+             for a new one (a backend that stored this one in its session storage must forget \
+             it), or use a new shop name",
+            self.shop
+        )
+    }
+}
 
 /// The token lsf installs the app with on `shop`: an offline token that never expires, the
 /// same for a shop and an app every run, so that a test can hard-code it. `shpat_` and 32 hex
@@ -294,6 +346,9 @@ pub struct Tokens {
     installs: BTreeMap<(String, String), Vec<String>>,
     /// Migrated non-expiring tokens, for a lost answer to be sent again.
     migrations: HashMap<String, Migration>,
+    /// The access tokens revoked by a reset, a shop deletion or an uninstall, the newest last:
+    /// their `401` says why ([`Tokens::revocation`]).
+    revoked: IndexMap<String, Revoked>,
 }
 
 impl Default for Tokens {
@@ -333,6 +388,7 @@ impl Tokens {
             codes: HashMap::new(),
             installs: BTreeMap::new(),
             migrations: HashMap::new(),
+            revoked: IndexMap::new(),
         }
     }
 
@@ -366,6 +422,8 @@ impl Tokens {
         // issued, by token exchange or OAuth, carry its new scopes from now on.
         self.set_scopes(shop, client_id, scopes);
         let token = default_token(shop, client_id);
+        // Installed again: the default token is valid again.
+        self.revoked.shift_remove(&token);
         self.access.insert(
             token.clone(),
             Grant {
@@ -453,6 +511,13 @@ impl Tokens {
         self.installs
             .remove(&(shop.to_string(), client_id.to_string()));
         let before = self.access.len();
+        let gone: Vec<String> = self
+            .access
+            .iter()
+            .filter(|(_, grant)| grant.shop == shop && grant.client_id == client_id)
+            .map(|(token, _)| token.clone())
+            .collect();
+        self.remember_revoked(gone, shop, Revocation::Uninstalled);
         self.access
             .retain(|_, grant| !(grant.shop == shop && grant.client_id == client_id));
         self.refresh
@@ -463,14 +528,59 @@ impl Tokens {
     }
 
     /// Revokes every token of every app on `shop`, and its installations: a shop reset or
-    /// deleted. Answers the number of access tokens revoked.
-    pub fn revoke_shop(&mut self, shop: &str) -> usize {
+    /// deleted, as `by` says. Answers the number of access tokens revoked.
+    pub fn revoke_shop(&mut self, shop: &str, by: Revocation) -> usize {
         self.installs.retain(|(installed, _), _| installed != shop);
         let before = self.access.len();
+        let gone: Vec<String> = self
+            .access
+            .iter()
+            .filter(|(_, grant)| grant.shop == shop)
+            .map(|(token, _)| token.clone())
+            .collect();
+        self.remember_revoked(gone, shop, by);
         self.access.retain(|_, grant| grant.shop != shop);
         self.refresh.retain(|_, entry| entry.shop != shop);
         self.codes.retain(|_, code| code.shop != shop);
         before - self.access.len()
+    }
+
+    /// Keeps what revoked `tokens`, the newest last, at most [`REVOKED_KEPT`].
+    fn remember_revoked(&mut self, tokens: Vec<String>, shop: &str, by: Revocation) {
+        for token in tokens {
+            self.revoked.shift_remove(&token);
+            self.revoked.insert(
+                token,
+                Revoked {
+                    shop: shop.to_string(),
+                    by,
+                    told: false,
+                },
+            );
+        }
+        while self.revoked.len() > REVOKED_KEPT {
+            self.revoked.shift_remove_index(0);
+        }
+    }
+
+    /// What revoked `token`, when a reset, a shop deletion or an uninstall did and it was not
+    /// issued again since: why [`Tokens::lookup`] finds nothing.
+    pub fn revocation(&self, token: &str) -> Option<&Revoked> {
+        if self.access.contains_key(token.trim()) {
+            return None;
+        }
+        self.revoked.get(token.trim())
+    }
+
+    /// Notes that a refusal of the revoked `token` was reported: `true` the first time only.
+    pub fn first_refusal(&mut self, token: &str) -> bool {
+        match self.revoked.get_mut(token.trim()) {
+            Some(revoked) if !revoked.told => {
+                revoked.told = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Revokes one access token. Whether it existed.
@@ -1176,8 +1286,63 @@ mod tests {
         );
         assert_eq!(tokens.installed_scopes(SHOP, "client"), None);
         assert!(tokens.lookup(&other_shop, at(1)).is_ok());
-        assert_eq!(tokens.revoke_shop("other.myshopify.com"), 1);
+        assert_eq!(
+            tokens.revoke_shop("other.myshopify.com", Revocation::ShopDeleted),
+            1
+        );
         assert!(tokens.grants().next().is_none());
+    }
+
+    #[test]
+    fn a_revoked_token_remembers_what_revoked_it_until_it_is_issued_again() {
+        let mut tokens = Tokens::with_seed(1);
+        let default = tokens.install(SHOP, "client", &scopes(), at(0));
+        let exchanged = tokens
+            .issue_offline(
+                SHOP,
+                "client",
+                &scopes(),
+                false,
+                GrantSource::TokenExchange,
+                at(0),
+            )
+            .access_token;
+        assert_eq!(tokens.revocation(&exchanged), None);
+        tokens.revoke_shop(SHOP, Revocation::Reset);
+        // A reset installs the app again: its default token is valid again, not the other.
+        tokens.install(SHOP, "client", &scopes(), at(1));
+        assert!(tokens.lookup(&default, at(1)).is_ok());
+        assert_eq!(tokens.revocation(&default), None);
+        let revoked = tokens.revocation(&exchanged).unwrap().clone();
+        assert_eq!(revoked.by, Revocation::Reset);
+        assert_eq!(
+            revoked.reason(),
+            "this access token of my-shop.myshopify.com was revoked by a reset of the Admin API \
+             (DELETE /__lsf/admin): run the token exchange or OAuth again for a new one (a \
+             backend that stored this one in its session storage must forget it), or use a new \
+             shop name"
+        );
+        // Said once.
+        assert!(tokens.first_refusal(&exchanged));
+        assert!(!tokens.first_refusal(&exchanged));
+        assert!(!tokens.first_refusal("shpat_never_issued"));
+
+        // An uninstall, then a deleted shop: the latest says why.
+        tokens.uninstall(SHOP, "client");
+        assert_eq!(
+            tokens.revocation(&default).map(|revoked| revoked.by),
+            Some(Revocation::Uninstalled)
+        );
+        let test = tokens.install("test-1.myshopify.com", "client", &scopes(), at(2));
+        tokens.revoke_shop("test-1.myshopify.com", Revocation::ShopDeleted);
+        assert!(
+            tokens
+                .revocation(&test)
+                .unwrap()
+                .reason()
+                .contains("when the shop was deleted (DELETE /__lsf/admin/shops/test-1)")
+        );
+        assert_eq!(tokens.revocation("shpat_never_issued"), None);
     }
 
     #[test]

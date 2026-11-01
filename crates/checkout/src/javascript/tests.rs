@@ -102,7 +102,7 @@ fn a_javascript_function_is_built_by_lsf_and_runs() {
             .iter()
             .any(|diagnostic| diagnostic
                 .message
-                .contains("build it with `lsf app function build bulk` (or `shopify app build`)")),
+                .contains("build it with `lsf app build bulk` (or `--build`)")),
     );
 
     let built = app.build().unwrap();
@@ -423,7 +423,7 @@ fn a_preact_checkout_ui_extension_is_built_without_node_modules() {
     assert!(shopify_app.diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("build it with `lsf app build banner` (or `shopify app build`)")
+            .contains("build it with `lsf app build banner` (or `--build`)")
     }));
     let bundle = build_extension(extension, &app.0).unwrap();
     assert_eq!(bundle, extension.dir.join("dist/banner.js"));

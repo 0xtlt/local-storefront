@@ -278,6 +278,123 @@ fn function_run_finds_the_app_and_says_why_a_function_did_not_run() {
 }
 
 #[test]
+fn function_run_says_when_the_scenario_leaves_the_function_out() {
+    let app = App::new("left-out");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    app.write(
+        "shopify-local/checkouts/only-limit.json",
+        r#"{"extensions": ["quantity-limit"],
+            "session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 3}]}},
+            "checkout": {"discounts": [{"function": "volume-discount", "title": "Volume"}]}}"#,
+    );
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "function",
+            "run",
+            "volume-discount",
+            "--scenario",
+            "only-limit",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "not run: volume-discount: the scenario's `extensions` leaves it out: add \
+             \"volume-discount\" to the `extensions` of checkouts/only-limit.json, or remove the \
+             list to run every extension"
+        ),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn app_check_names_the_functions_no_scenario_ran() {
+    let app = App::new("ran-nowhere");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    // No discount names `volume-discount`: it runs in no scenario.
+    app.write(
+        "shopify-local/checkouts/tees.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+    );
+    let only = ["app", "check", "--extension", "volume-discount"];
+    let output = lsf(&app.0, &only);
+    // A warning: the exit code is the check's.
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "warning  volume-discount: ran in no scenario, so nothing checks it (a discount \
+             Function runs only for a discount that names it"
+        ),
+        "{}",
+        text(&output)
+    );
+    let output = lsf(&app.0, &[&only[..], &["--format", "json"]].concat());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    assert_eq!(json["ok"], true, "{json}");
+    assert_eq!(
+        json["ranInNoScenario"],
+        serde_json::json!(["volume-discount"])
+    );
+
+    // A scenario with a discount that names it: it ran.
+    app.write(
+        "shopify-local/checkouts/discounted.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 3}]}},
+            "checkout": {"discounts": [{"function": "volume-discount", "title": "Volume"}]}}"#,
+    );
+    let output = lsf(&app.0, &[&only[..], &["--format", "json"]].concat());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("JSON: {}", text(&output)));
+    assert_eq!(json["ranInNoScenario"], serde_json::json!([]), "{json}");
+    let output = lsf(&app.0, &only);
+    assert!(
+        !text(&output).contains("ran in no scenario"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn a_missing_build_says_to_run_lsf_app_build() {
+    let app = App::new("unbuilt");
+    assert!(lsf(&app.0, &["init"]).status.success());
+    std::fs::remove_file(app.0.join("extensions/quantity-limit/dist/function.wasm")).unwrap();
+    app.write(
+        "shopify-local/checkouts/tees.json",
+        r#"{"session": {"cart": {"items": [{"variant": "TEE-BLK-M", "quantity": 2}]}}}"#,
+    );
+    let advice = "build it with `lsf app build quantity-limit` (or `--build`)";
+    for args in [
+        &["app", "check"][..],
+        &[
+            "app",
+            "function",
+            "run",
+            "quantity-limit",
+            "--scenario",
+            "tees",
+        ][..],
+    ] {
+        let output = lsf(&app.0, args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {}", text(&output));
+        assert!(
+            text(&output).contains(advice),
+            "{args:?}: {}",
+            text(&output)
+        );
+        assert!(
+            !text(&output).contains("shopify app build"),
+            "{args:?}: {}",
+            text(&output)
+        );
+    }
+}
+
+#[test]
 fn render_strict_fails_on_a_page_that_is_not_there() {
     let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
     let theme = theme.to_str().unwrap();
@@ -327,4 +444,25 @@ fn check_says_the_pages_of_classic_customer_accounts_are_not_rendered() {
         "{json}"
     );
     assert_eq!(json["diagnostics"][0]["severity"], "warning", "{json}");
+}
+
+#[test]
+fn every_path_routes_lists_renders_with_render_strict() {
+    let theme = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/fixtures/theme");
+    let theme = theme.to_str().unwrap();
+    // The demo store: the fixture theme has no data of its own.
+    let output = lsf(Path::new("/"), &["--theme", theme, "routes"]);
+    assert!(output.status.success(), "{}", text(&output));
+    let routes = String::from_utf8(output.stdout).unwrap();
+    let routes: Vec<&str> = routes.lines().collect();
+    assert!(routes.contains(&"/products/ceramic-mug"), "{routes:?}");
+    // The stand-in of the customer accounts is the server's, not the theme's.
+    assert!(!routes.contains(&"/account"), "{routes:?}");
+    for route in routes {
+        let output = lsf(
+            Path::new("/"),
+            &["--theme", theme, "render", route, "--strict"],
+        );
+        assert!(output.status.success(), "{route}: {}", text(&output));
+    }
 }

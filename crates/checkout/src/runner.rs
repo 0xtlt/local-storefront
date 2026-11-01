@@ -251,7 +251,7 @@ impl Runner {
     fn module(&self, engine: &Engine, wasm: &Path) -> Result<Module, String> {
         let metadata = std::fs::metadata(wasm).map_err(|_| {
             format!(
-                "no Wasm module at {}: build the Function (`shopify app build`)",
+                "no Wasm module at {}: build the Function (`lsf app build`, or `--build`)",
                 wasm.display()
             )
         })?;

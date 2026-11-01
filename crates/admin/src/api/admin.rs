@@ -15,7 +15,7 @@ use super::sync::{StoreSync, Synced};
 use super::{HttpRequest, HttpResponse};
 use crate::auth::oauth::{self, AppAuth};
 use crate::auth::scopes::{self, ALL_SCOPES};
-use crate::auth::tokens::{Grant, TokenError, Tokens};
+use crate::auth::tokens::{Grant, Revocation, TokenError, Tokens};
 use crate::domains::platform::{self, access::AuthEffect};
 use crate::domains::{app as app_domain, orders};
 use crate::graphql::{self, Bucket, Request};
@@ -141,10 +141,15 @@ pub struct AdminApi {
     fetch: crate::sources::FetchOptions,
     /// One set for every shop, kept when they are reset.
     stubs: crate::sources::Stubs,
+    /// Where what the server should print goes ([`AdminApi::with_log`]): nowhere by default.
+    log: Option<Log>,
     /// What a test runs once at a point of a request ([`Hook`]).
     #[cfg(test)]
     test_hooks: TestHooks,
 }
+
+/// What prints a line the server's terminal should show ([`AdminApi::with_log`]).
+pub type Log = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// A point of a GraphQL request a test runs code at.
 #[cfg(test)]
@@ -253,6 +258,7 @@ impl AdminApi {
             theme: None,
             fetch: crate::sources::FetchOptions::default(),
             stubs: crate::sources::Stubs::default(),
+            log: None,
             #[cfg(test)]
             test_hooks: Mutex::new(Default::default()),
         }
@@ -304,6 +310,13 @@ impl AdminApi {
     /// otherwise, as Shopify reaches nothing else.
     pub fn with_fetch(mut self, fetch: crate::sources::FetchOptions) -> AdminApi {
         self.fetch = fetch;
+        self
+    }
+
+    /// Prints with `log` what the server's terminal should say, a line at a time: a request
+    /// refused for a token a reset, a shop deletion or an uninstall revoked, once per token.
+    pub fn with_log(mut self, log: Log) -> AdminApi {
+        self.log = Some(log);
         self
     }
 
@@ -591,7 +604,7 @@ impl AdminApi {
             if live.default {
                 self.sync.changed();
             }
-            tokens.revoke_shop(&domain);
+            tokens.revoke_shop(&domain, Revocation::Reset);
             tokens.install(&domain, &self.auth.client_id, &self.scopes, Utc::now());
             live.auth_generation += 1;
             domains.push(domain);
@@ -654,7 +667,7 @@ impl AdminApi {
             }
         };
         // The map of the shops is released before the tokens are locked (see `AdminApi`).
-        let revoked = lock(&self.tokens).revoke_shop(&domain);
+        let revoked = lock(&self.tokens).revoke_shop(&domain, Revocation::ShopDeleted);
         if let Some(shop) = shop {
             lock(&shop).auth_generation += 1;
         }
@@ -1004,13 +1017,25 @@ impl AdminApi {
         else {
             return Err("no X-Shopify-Access-Token header: send the token the server printed when it started".to_string());
         };
-        match lock(&self.tokens).lookup(token, Utc::now()) {
-            Ok(grant) => Ok(grant.clone()),
+        let mut tokens = lock(&self.tokens);
+        let looked_up = tokens.lookup(token, Utc::now()).cloned();
+        match looked_up {
+            Ok(grant) => Ok(grant),
             Err(TokenError::Expired) => Err("the access token expired".to_string()),
-            Err(TokenError::Unknown) => Err(
-                "lsf did not issue this access token, or it was revoked (the app was uninstalled, or the server reset)"
-                    .to_string(),
-            ),
+            Err(TokenError::Unknown) => {
+                let Some(reason) = tokens.revocation(token).map(|revoked| revoked.reason()) else {
+                    return Err(
+                        "lsf did not issue this access token, or it was revoked (the app was uninstalled, or the server reset)"
+                            .to_string(),
+                    );
+                };
+                let first = tokens.first_refusal(token);
+                drop(tokens);
+                if first && let Some(log) = &self.log {
+                    log(&format!("401 for a revoked access token: {reason}"));
+                }
+                Err(reason)
+            }
         }
     }
 

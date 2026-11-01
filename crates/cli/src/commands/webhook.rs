@@ -12,7 +12,7 @@ use lsf_admin::api::samples::ShopSamples;
 use lsf_admin::state::ShopState;
 use lsf_admin::version::{ApiVersion, Served};
 use lsf_admin::webhooks::samples::Samples;
-use lsf_admin::webhooks::subscriptions::is_local_http;
+use lsf_admin::webhooks::subscriptions::{is_local_http, off_machine};
 use lsf_admin::webhooks::{
     API_VERSION, Delivery, DeliveryFilter, DeliveryOptions, DeliveryState, Trigger, Webhooks,
     topics,
@@ -86,9 +86,22 @@ pub struct TriggerArgs {
     #[arg(long, env = "LSF_APP_URL", value_name = "URL", value_parser = super::app_url)]
     app_url: Option<String>,
 
-    /// Print the deliveries as JSON: their request, their attempts, their state.
-    #[arg(long, short = 'j')]
+    /// How to print the deliveries: `text`, or `json` (`{ok, deliveries}`: their request, their
+    /// attempts, their state), as the other commands take it.
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+
+    /// `--format json`, by its old name.
+    #[arg(long, short = 'j', hide = true)]
     json: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Format {
+    /// What was sent and what the backend answered, for a person.
+    Text,
+    /// `{ok, deliveries: [{id, topic, shop, url, request, attempts, state, reason, …}]}`.
+    Json,
 }
 
 pub fn run(
@@ -190,6 +203,13 @@ fn trigger(
     let webhooks = Webhooks::for_app(&config, args.app_url.clone(), secret, options)
         .with_versions(Served::new([version]));
     let shop = samples.shop();
+    // A subscription's address that is neither this machine nor `--app-url` is refused before
+    // anything is sent: the webhook is signed with the app's secret.
+    if args.address.is_none()
+        && let Some(url) = webhooks.refused_urls(&shop, topic).first()
+    {
+        return Err(off_machine(url));
+    }
     let ids = webhooks.trigger(&Trigger {
         topic,
         shop: &shop,
@@ -217,7 +237,7 @@ fn trigger(
     let delivered = deliveries
         .iter()
         .all(|delivery| delivery.state == DeliveryState::Delivered);
-    if args.json {
+    if args.json || args.format == Format::Json {
         let json = serde_json::json!({
             "ok": delivered,
             "deliveries": deliveries,

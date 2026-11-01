@@ -139,6 +139,9 @@ pub struct Delivery {
     pub event_id: String,
     pub topic: String,
     pub shop: String,
+    /// The GID of the record the event is about (the payload's `admin_graphql_api_id`), when
+    /// there is one: what `?resource=` matches.
+    pub resource: Option<String>,
     /// `None` for a delivery to an address given explicitly (`lsf app webhook trigger
     /// --address`).
     pub subscription: Option<SubscriptionRef>,
@@ -165,6 +168,7 @@ pub struct NewDelivery {
     pub event_id: String,
     pub topic: String,
     pub shop: String,
+    pub resource: Option<String>,
     pub subscription: Option<SubscriptionRef>,
     pub url: Option<String>,
     pub api_version: String,
@@ -177,8 +181,13 @@ pub struct NewDelivery {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeliveryFilter {
     pub topic: Option<String>,
+    /// The shop's domain, written in full (`test-1.myshopify.com`).
     pub shop: Option<String>,
     pub state: Option<DeliveryState>,
+    /// Only the deliveries after this one, by id: those a test caused since it read the log.
+    pub since: Option<u64>,
+    /// Only those about this record, by GID ([`Delivery::resource`]).
+    pub resource: Option<String>,
     /// Only these deliveries, by id.
     pub ids: Option<Vec<u64>>,
 }
@@ -190,6 +199,11 @@ impl DeliveryFilter {
             .is_none_or(|topic| *topic == delivery.topic)
             && self.shop.as_ref().is_none_or(|shop| *shop == delivery.shop)
             && self.state.is_none_or(|state| state == delivery.state)
+            && self.since.is_none_or(|since| delivery.id > since)
+            && self
+                .resource
+                .as_ref()
+                .is_none_or(|resource| delivery.resource.as_ref() == Some(resource))
             && self
                 .ids
                 .as_ref()
@@ -212,6 +226,18 @@ pub struct Waited {
     pub deliveries: Vec<Delivery>,
     /// Whether as many as were waited for were done before the timeout.
     pub complete: bool,
+    /// The id of the newest delivery of the log when the wait ended ([`Deliveries::listing`]).
+    pub last: u64,
+}
+
+/// The deliveries that match, and the id of the newest delivery of the log, read together.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Listing {
+    pub deliveries: Vec<Delivery>,
+    /// The id of the newest delivery the log has made, whatever the filter (0 before the first):
+    /// what a test passes as `since` to see only the deliveries that come after. Ids are never
+    /// given twice, a `DELETE` or a full log notwithstanding.
+    pub last: u64,
 }
 
 struct Log {
@@ -311,13 +337,21 @@ impl Deliveries {
 
     /// The deliveries that match, in the order of the log.
     pub fn list(&self, filter: &DeliveryFilter) -> Vec<Delivery> {
-        self.shared
-            .lock()
-            .entries
-            .iter()
-            .filter(|delivery| filter.matches(delivery))
-            .cloned()
-            .collect()
+        self.listing(filter).deliveries
+    }
+
+    /// The deliveries that match, in the order of the log, and the id of its newest delivery.
+    pub fn listing(&self, filter: &DeliveryFilter) -> Listing {
+        let log = self.shared.lock();
+        Listing {
+            deliveries: log
+                .entries
+                .iter()
+                .filter(|delivery| filter.matches(delivery))
+                .cloned()
+                .collect(),
+            last: log.last_id,
+        }
     }
 
     /// Forgets every delivery, those still pending included (they are not sent). How many there
@@ -354,6 +388,7 @@ impl Deliveries {
                 return Waited {
                     deliveries,
                     complete: done >= count,
+                    last: log.last_id,
                 };
             }
             log = self
@@ -388,6 +423,7 @@ fn push(
         event_id: delivery.event_id,
         topic: delivery.topic,
         shop: delivery.shop,
+        resource: delivery.resource,
         subscription: delivery.subscription,
         url: delivery.url,
         api_version: delivery.api_version,

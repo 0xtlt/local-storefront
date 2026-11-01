@@ -29,7 +29,7 @@ test('a bundle the page could not fetch says so', async () => {
   win.receive(init({ handle: 'gone', target: TARGET }));
   for (let i = 0; i < 4; i++) await settle();
   const [error] = win.posts('error');
-  assert.match(error.message, /^Could not load http:\/\/localhost\/__lsf\/extensions\/gone\/gone\.js\. Run `shopify app build`/);
+  assert.match(error.message, /^Could not load http:\/\/localhost\/__lsf\/extensions\/gone\/gone\.js\. Build it with `lsf app build gone` \(or `--build`\)/);
   assert.equal(win.document.head.childNodes.some((node) => node.localName === 'script'), false);
 });
 

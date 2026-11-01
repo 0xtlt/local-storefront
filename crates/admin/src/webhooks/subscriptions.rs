@@ -209,6 +209,73 @@ impl AppUrls {
             .or(self.application_url.as_deref())
             .filter(|url| !url.is_empty())
     }
+
+    /// Whether lsf may post a webhook to `url`: one on this machine (the loopback), or on the
+    /// origin of `--app-url`, where the user pointed lsf. A webhook is signed with the app's
+    /// real secret when `.env` has it: sent to `application_url` (a production backend, a stale
+    /// tunnel) or to an address a subscription names, it would leave the machine unasked.
+    pub fn may_send_to(&self, url: &str) -> bool {
+        let Some(target) = Endpoint::of(url) else {
+            return false;
+        };
+        target.is_loopback()
+            || self
+                .app_url
+                .as_deref()
+                .and_then(Endpoint::of)
+                .is_some_and(|app| app == target)
+    }
+}
+
+/// Why a webhook to `url` is not sent: it is neither on this machine nor on `--app-url`
+/// ([`AppUrls::may_send_to`]).
+pub fn off_machine(url: &str) -> String {
+    format!(
+        "lsf sends webhooks to this machine or to --app-url only: {url} is neither; start lsf \
+         with --app-url http://localhost:<port> (your backend)"
+    )
+}
+
+/// Where a request to a URL connects: its scheme, host and port, read as the HTTP client of the
+/// deliveries reads them, so that what is checked is what is reached (`http://localhost@host/`
+/// connects to `host`).
+#[derive(Debug, PartialEq, Eq)]
+struct Endpoint {
+    scheme: String,
+    host: String,
+    port: u16,
+}
+
+impl Endpoint {
+    fn of(url: &str) -> Option<Endpoint> {
+        let uri: ureq::http::Uri = url.trim().parse().ok()?;
+        let scheme = uri.scheme_str()?.to_ascii_lowercase();
+        let default_port = match scheme.as_str() {
+            "http" => 80,
+            "https" => 443,
+            _ => return None,
+        };
+        let host = uri.host()?;
+        let host = host
+            .strip_prefix('[')
+            .and_then(|ipv6| ipv6.strip_suffix(']'))
+            .unwrap_or(host)
+            .to_ascii_lowercase();
+        Some(Endpoint {
+            port: uri.port_u16().unwrap_or(default_port),
+            scheme,
+            host,
+        })
+    }
+
+    /// `localhost`, `127.0.0.0/8` or `::1`.
+    fn is_loopback(&self) -> bool {
+        self.host == "localhost"
+            || self
+                .host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    }
 }
 
 /// Where a subscription delivers.
@@ -687,6 +754,50 @@ mod tests {
                 &urls(None, Some("https://tunnel.trycloudflare.com"))
             ),
             http("https://tunnel.trycloudflare.com/webhooks")
+        );
+    }
+
+    #[test]
+    fn webhooks_go_to_this_machine_or_to_the_app_url_only() {
+        let local = urls(None, Some("https://tunnel.trycloudflare.com"));
+        for url in [
+            "http://localhost:3000/webhooks",
+            "https://LOCALHOST/x",
+            "http://127.0.0.1:3000/x",
+            "http://127.1.2.3/x",
+            "http://[::1]:3000/x",
+        ] {
+            assert!(local.may_send_to(url), "{url} is this machine");
+        }
+        for url in [
+            // `application_url` is not where the user pointed lsf.
+            "https://tunnel.trycloudflare.com/webhooks",
+            "https://hooks.example.com/x",
+            // What the client connects to is the host after the user info.
+            "http://localhost@hooks.example.com/x",
+            "http://localhost.example.com/x",
+            "http://app.localhost/x",
+            "http://0.0.0.0:3000/x",
+            "http://[::ffff:127.0.0.1]/x",
+            "not a url",
+        ] {
+            assert!(!local.may_send_to(url), "{url} is not this machine");
+        }
+        // The origin of `--app-url`, wherever it is: scheme, host and port.
+        let pointed = urls(
+            Some("https://Backend.example.com/app"),
+            Some("https://tunnel.trycloudflare.com"),
+        );
+        assert!(pointed.may_send_to("https://backend.example.com/webhooks"));
+        assert!(pointed.may_send_to("https://backend.example.com:443/webhooks"));
+        assert!(!pointed.may_send_to("http://backend.example.com/webhooks"));
+        assert!(!pointed.may_send_to("https://backend.example.com:8443/webhooks"));
+        assert!(!pointed.may_send_to("https://tunnel.trycloudflare.com/webhooks"));
+        assert!(pointed.may_send_to("http://localhost:3000/webhooks"));
+        assert_eq!(
+            off_machine("https://hooks.example.com/x"),
+            "lsf sends webhooks to this machine or to --app-url only: https://hooks.example.com/x \
+             is neither; start lsf with --app-url http://localhost:<port> (your backend)"
         );
     }
 

@@ -48,6 +48,9 @@ pub struct Report {
     pub checked: usize,
     pub total: usize,
     pub elapsed: Duration,
+    /// The handles of the Functions that ran in at least one scenario, failing or not, in the
+    /// order they first ran.
+    pub ran: Vec<String>,
 }
 
 impl Report {
@@ -80,8 +83,9 @@ impl Report {
     }
 }
 
-/// What one scenario came to: its runs that failed, or why it could not run.
-type Outcome = Result<Vec<(String, String, String)>, String>;
+/// What one scenario came to: the Functions that ran and the runs that failed, or why it could
+/// not run.
+type Outcome = Result<(Vec<String>, Vec<(String, String, String)>), String>;
 
 /// Runs the Functions of each scenario of `store` that opens, until `budget` is spent. No
 /// request of a `.fetch` target is sent. The budget is checked before each Function runs: a
@@ -115,12 +119,13 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
         })) {
             Ok(Ok(result)) => {
                 let complete = !result.interrupted;
+                let ran = result.runs.iter().map(|run| run.handle.clone()).collect();
                 let failed = result
                     .runs
                     .into_iter()
                     .filter_map(|run| run.error.map(|error| (run.handle, run.target, error)))
                     .collect();
-                (Ok(failed), complete)
+                (Ok((ran, failed)), complete)
             }
             Ok(Err(problem)) => (Err(problem), true),
             Err(_) => (Err("running its Functions panicked".to_string()), true),
@@ -152,9 +157,14 @@ pub fn run(state: &ServerState, app: &App, store: &Store, budget: Duration) -> R
         let name = &runnable[index].name;
         // A scenario that could not run at all has errors of its own, which the page lists
         // anyway: it is not a failure.
-        let Ok(failed) = outcome else {
+        let Ok((ran, failed)) = outcome else {
             continue;
         };
+        for handle in ran {
+            if !report.ran.contains(&handle) {
+                report.ran.push(handle);
+            }
+        }
         for (handle, target, error) in failed {
             match report
                 .failures
