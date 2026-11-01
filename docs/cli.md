@@ -177,11 +177,17 @@ It builds nothing without `--build`: in a fresh clone, where `dist/` is not comm
 `--build` (or run `npx local-storefront app build` first).
 
 A Function that ran in no scenario, such as a discount Function no scenario's discount names, is
-a warning: nothing checked it, and the exit code stays the same.
+a warning: nothing checked it, and the exit code stays the same. The last line, the summary,
+counts it too, rather than saying that every Function ran:
 
 ```text
 warning  volume-discount: ran in no scenario, so nothing checks it (a discount Function runs only for a discount that names it: …)
+checked 8 of 8 scenarios in 0.4 s: no Function failed, 1 Function ran in no scenario
 ```
+
+When every Function ran somewhere and none failed, the summary ends with `every Function ran`.
+When something failed, it counts the failures and the invalid scenarios:
+`1 failure, 0 invalid scenarios`.
 
 Exiting with `0` means no Function failed where it ran, not that it decided right: assert that
 with `app function run --format json`. CI: [checkout](checkout.md#in-ci).

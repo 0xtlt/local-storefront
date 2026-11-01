@@ -459,7 +459,8 @@ start: edit them.
 discount that names it ([set up the checkout](#set-up-the-checkout)), and the other scenarios
 (`b2b`, `abroad`, `large-cart`, …) have none: `app check` passes on them without running it. It
 warns only about a Function no scenario ran at all (`warning  <handle>: ran in no scenario, so
-nothing checks it`, and `ranInNoScenario` in JSON), and its exit code stays the same. To run it in
+nothing checks it`, `1 Function ran in no scenario` in the summary, and `ranInNoScenario` in
+JSON), and its exit code stays the same. To run it in
 every scenario, a B2B buyer, another country and a large cart included, give it a discount in the
 `checkout` section of the store data (`store.json`, or the file that has the section):
 

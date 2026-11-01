@@ -113,7 +113,9 @@ the same data every run.
     downloaded; `PUT /__lsf/admin/sources?url=` stubs one from a test.
 - **`lsf app check --build`** builds the extensions first, for a clone where `dist/` is not
   committed. `app check` also warns about a Function that ran in no scenario, so that nothing
-  checks it (`ranInNoScenario` in JSON); the exit code does not change. A missing build says
+  checks it (`ranInNoScenario` in JSON), and its summary counts it (`no Function failed, 1
+  Function ran in no scenario`); the exit code does not change. `app check --help` describes
+  the JSON it prints. A missing build says
   to run `lsf app build <handle>`.
 - **The docs ship in the npm package.** `node_modules/local-storefront/` has the `llms.txt`,
   `docs/` and `CHANGELOG.md` of the version you installed, for a tool or an agent to read
