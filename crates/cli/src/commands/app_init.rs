@@ -13,6 +13,7 @@ use lsf_core::store::{CheckoutCharge, CheckoutMetafield, Store};
 use serde_json::{Value as Json, json};
 
 use crate::commands::{init, schema};
+use crate::output::count;
 
 #[derive(clap::Args)]
 pub struct InitArgs {
@@ -801,7 +802,8 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
         .count();
     if store_errors > 0 {
         eprintln!(
-            "warning: the store data has {store_errors} error(s): run `{} validate`. The scenarios are written for what could be read.",
+            "warning: the store data has {}: run `{} validate`. The scenarios are written for what could be read.",
+            count(store_errors, "error", "errors"),
             lsf_core::util::command()
         );
     }
@@ -839,16 +841,22 @@ pub fn run(theme: &Path, data: Option<&Path>, args: InitArgs) -> Result<ExitCode
     }
     let target = match &shopify_app {
         Some(app) => format!(
-            "{} Function(s) and {} checkout UI extension(s) of {}",
-            app.functions.len(),
-            app.ui_extensions.len(),
+            "{} and {} of {}",
+            count(app.functions.len(), "Function", "Functions"),
+            count(
+                app.ui_extensions.len(),
+                "checkout UI extension",
+                "checkout UI extensions"
+            ),
             app.name.as_deref().unwrap_or("the app")
         ),
         None => "no app: the generic set".to_string(),
     };
     eprintln!(
-        "{}: wrote {written} scenario(s), kept {kept} existing one(s), for {target}",
-        directory.join("checkouts").display()
+        "{}: wrote {}, kept {}, for {target}",
+        directory.join("checkouts").display(),
+        count(written, "scenario", "scenarios"),
+        count(kept, "existing one", "existing ones")
     );
     let lsf = lsf_core::util::command();
     match &app_dir {

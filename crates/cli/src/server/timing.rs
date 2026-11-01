@@ -116,7 +116,8 @@ fn of_sections(timings: &Timings) -> Vec<String> {
         .collect();
     if count > 0 {
         kept.push(format!(
-            "omitted;desc=\"the {count} fastest blocks: see /__lsf/timings\""
+            "omitted;desc=\"the {}: see /__lsf/timings\"",
+            crate::output::count(count, "fastest block", "fastest blocks")
         ));
     }
     kept

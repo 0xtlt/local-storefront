@@ -68,8 +68,10 @@ pub fn run(theme: &Path, data: Option<&Path>, args: Args) -> Result<ExitCode, St
     schema::write_all(&directory.join("schema"))?;
 
     eprintln!(
-        "{}: wrote {written} file(s), kept {skipped} existing one(s), refreshed schema/",
-        directory.display()
+        "{}: wrote {}, kept {}, refreshed schema/",
+        directory.display(),
+        crate::output::count(written, "file", "files"),
+        crate::output::count(skipped, "existing one", "existing ones")
     );
     eprintln!(
         "next: the `serve` command shows the theme, and `validate` checks the data after you edit it"

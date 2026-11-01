@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use lsf_core::theme::Revalidate;
 
 use crate::app::App;
-use crate::output::print_diagnostics;
+use crate::output::{count, print_diagnostics};
 
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Format {
@@ -134,28 +134,32 @@ pub fn run(
             }
             if let Some(app) = &shopify_app {
                 println!(
-                    "app {}: {} ({} error(s), {} warning(s))",
+                    "app {}: {} ({}, {})",
                     app.name.as_deref().unwrap_or("(no name)"),
                     if app_errors == 0 {
                         "valid"
                     } else {
                         "not valid"
                     },
-                    app_errors,
-                    app_problems.len() - app_errors
+                    count(app_errors, "error", "errors"),
+                    count(app_problems.len() - app_errors, "warning", "warnings")
                 );
             }
             if !diagnostics.has_errors() {
                 println!(
-                    "{}: valid ({} products, {} collections, {} pages, {} blogs, {} customers, {} menus, {} checkout scenarios)",
+                    "{}: valid ({}, {}, {}, {}, {}, {}, {})",
                     app.describe_source(),
-                    store.products.len(),
-                    store.collections.len(),
-                    store.pages.len(),
-                    store.blogs.len(),
-                    store.customers.len(),
-                    store.menus.len(),
-                    store.scenarios.len()
+                    count(store.products.len(), "product", "products"),
+                    count(store.collections.len(), "collection", "collections"),
+                    count(store.pages.len(), "page", "pages"),
+                    count(store.blogs.len(), "blog", "blogs"),
+                    count(store.customers.len(), "customer", "customers"),
+                    count(store.menus.len(), "menu", "menus"),
+                    count(
+                        store.scenarios.len(),
+                        "checkout scenario",
+                        "checkout scenarios"
+                    )
                 );
             }
         }

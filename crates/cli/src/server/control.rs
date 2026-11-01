@@ -18,6 +18,7 @@ use super::store_sync::SessionData;
 use super::storefront::Visit;
 use super::throttle::Throttle;
 use super::{Incoming, SESSION_COOKIE, ServerState, speedscope};
+use crate::output::count;
 use crate::profile::Unit;
 
 pub fn handle(state: &ServerState, incoming: &Incoming) -> Reply {
@@ -448,9 +449,9 @@ fn dashboard(state: &ServerState, incoming: &Incoming) -> Reply {
             .map(|item| format!("<li><pre>{}</pre></li>", escape_html(&item.to_string())))
             .collect();
         format!(
-            "<p class=\"bad\">{} error(s), {} warning(s) in the store data.</p><ul>{items}</ul>",
-            diagnostics.error_count(),
-            diagnostics.warning_count()
+            "<p class=\"bad\">{}, {} in the store data.</p><ul>{items}</ul>",
+            count(diagnostics.error_count(), "error", "errors"),
+            count(diagnostics.warning_count(), "warning", "warnings")
         )
     };
     let links: String = routes(state)

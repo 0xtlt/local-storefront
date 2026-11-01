@@ -976,7 +976,8 @@ fn full_sync(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Valu
     state.emit("channels/full_sync", &channel);
     if catalog::feeds::feeds_of(state, &channel).is_empty() {
         mutation.note(format!(
-            "channelFullSync: the channel has no product feed (`productFeedCreate`): no `product_feeds/full_sync` was sent for its {products} products"
+            "channelFullSync: the channel has no product feed (`productFeedCreate`): no `product_feeds/full_sync` was sent for its {}",
+            lsf_core::util::count(products, "product", "products")
         ));
     }
     Ok(payload(json!({"fullSyncTraceInfo": traces}), &[]))

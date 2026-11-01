@@ -303,10 +303,11 @@ fn format_files(theme: &Path, args: Args) -> Result<ExitCode, String> {
     } else {
         String::new()
     };
+    let files = crate::output::count(changed, "file", "files");
     if args.check {
-        eprintln!("{changed} file(s) to format, {unchanged} already formatted{failures}");
+        eprintln!("{files} to format, {unchanged} already formatted{failures}");
     } else {
-        eprintln!("{changed} file(s) formatted, {unchanged} unchanged{failures}");
+        eprintln!("{files} formatted, {unchanged} unchanged{failures}");
     }
     Ok(if failed > 0 {
         ExitCode::from(2)

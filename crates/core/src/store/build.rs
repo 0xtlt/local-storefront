@@ -15,7 +15,7 @@ use super::reference;
 use super::*;
 use crate::Session;
 use crate::diagnostics::Diagnostics;
-use crate::util::{closest_match, handleize, humanize, short_hash, stable_id};
+use crate::util::{closest_match, count, handleize, humanize, short_hash, stable_id};
 
 /// Where a piece of data was written, for diagnostics.
 #[derive(Clone, Debug, Default)]
@@ -828,9 +828,9 @@ fn build_products(
                         "option_mismatch",
                         &variant_origin.child("options"),
                         format!(
-                            "the variant gives {} option value(s) but the product has {} option(s): {}",
-                            options.len(),
-                            option_names.len(),
+                            "the variant gives {} but the product has {}: {}",
+                            count(options.len(), "option value", "option values"),
+                            count(option_names.len(), "option", "options"),
                             option_names.join(", ")
                         ),
                     )
@@ -1575,9 +1575,9 @@ fn build_selling_plans(
                         "option_mismatch",
                         &plan_origin.child("options"),
                         format!(
-                            "the selling plan gives {} option value(s) but the group has {} option(s): {}",
-                            plan_options.len(),
-                            options.len(),
+                            "the selling plan gives {} but the group has {}: {}",
+                            count(plan_options.len(), "option value", "option values"),
+                            count(options.len(), "option", "options"),
                             options.join(", ")
                         ),
                     )

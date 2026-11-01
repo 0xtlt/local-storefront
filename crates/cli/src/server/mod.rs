@@ -712,7 +712,13 @@ async fn handle(
             .headers
             .iter()
             .find(|(name, _)| name == "x-lsf-liquid-errors")
-            .map(|(_, count)| format!(" ({count} Liquid errors)"))
+            .and_then(|(_, count)| count.parse().ok())
+            .map(|n| {
+                format!(
+                    " ({})",
+                    crate::output::count(n, "Liquid error", "Liquid errors")
+                )
+            })
             .unwrap_or_default();
         eprintln!(
             "{} {log_line} {:.1}ms{errors}",
