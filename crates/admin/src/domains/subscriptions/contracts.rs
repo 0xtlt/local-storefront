@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use super::cycles;
 use super::model::{self, CONTRACT, draft_error, lines, object, refresh, status_error, text};
 use crate::graphql::{FieldContext, FieldError, Output};
-use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
+use crate::resolve::{Mutation, Obj, Registry, ShopResolver, payload};
 use crate::search::SearchValue;
 use crate::state::{Record, ShopState, value};
 
@@ -247,7 +247,7 @@ pub fn commit_update(state: &mut ShopState, contract: &str, record: &Record) {
     }
 }
 
-/// The contract of an argument, or the error of the field.
+/// The contract of an id, when it is one of the shop.
 pub fn contract_arg(state: &ShopState, id: &str) -> Option<Record> {
     state
         .get(id)
@@ -275,10 +275,10 @@ fn set_status(
     let Some(contract) = contract_arg(state, &id) else {
         return Ok(payload(
             json!({"contract": null}),
-            &[
-                UserError::new(&["subscriptionContractId"], "Contract does not exist")
-                    .code("INVALID"),
-            ],
+            &[model::invalid_error(
+                &["subscriptionContractId"],
+                "Contract does not exist",
+            )],
         ));
     };
     if is_terminated(&contract) && text(&contract, "status") != Some(status) {
@@ -319,10 +319,10 @@ fn product_change(
     let Some(mut contract) = contract_arg(state, &id) else {
         return Ok(payload(
             empty,
-            &[
-                UserError::new(&["subscriptionContractId"], "Contract does not exist")
-                    .code("INVALID"),
-            ],
+            &[model::invalid_error(
+                &["subscriptionContractId"],
+                "Contract does not exist",
+            )],
         ));
     };
     if cycles::has_future_contract_edits(state, &contract) {
@@ -339,7 +339,7 @@ fn product_change(
     else {
         return Ok(payload(
             empty,
-            &[UserError::new(&["lineId"], "Line does not exist").code("INVALID")],
+            &[model::invalid_error(&["lineId"], "Line does not exist")],
         ));
     };
     if let Err(errors) = model::update_line(state, line, &input, &currency, &["input"]) {
@@ -380,13 +380,16 @@ fn set_next_billing_date(
     if contract_arg(state, &id).is_none() {
         return Ok(payload(
             json!({"contract": null}),
-            &[UserError::new(&["contractId"], "Contract does not exist").code("INVALID")],
+            &[model::invalid_error(
+                &["contractId"],
+                "Contract does not exist",
+            )],
         ));
     }
     let Some(date) = ctx.arg_str("date").and_then(model::date_time) else {
         return Ok(payload(
             json!({"contract": null}),
-            &[UserError::new(&["date"], "Date is invalid").code("INVALID")],
+            &[model::invalid_error(&["date"], "Date is invalid")],
         ));
     };
     let state = mutation.state_mut();

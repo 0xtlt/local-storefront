@@ -35,7 +35,7 @@
 use base64::Engine;
 use serde_json::{Map, Value, json};
 
-use super::model::{CONTRACT, PAYMENT_METHOD, Pointer, object, text};
+use super::model::{CONTRACT, PAYMENT_METHOD, Pointer, invalid_error, object, text};
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{Channel, Entry};
@@ -505,11 +505,10 @@ fn paypal_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         // lsf's wording of shopify.dev's "The billing agreement ID (starting with 'B-')".
         return Ok(payload(
             empty,
-            &[UserError::new(
+            &[invalid_error(
                 &["billingAgreementId"],
                 "Billing agreement ID must start with B-",
-            )
-            .code("INVALID")],
+            )],
         ));
     }
     let taken = state.all(PAYMENT_METHOD).any(|method| {
@@ -596,10 +595,10 @@ fn paypal_update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
     {
         return Ok(payload(
             empty,
-            &[
-                UserError::new(&["id"], "Payment method is not a PayPal billing agreement")
-                    .code("INVALID"),
-            ],
+            &[invalid_error(
+                &["id"],
+                "Payment method is not a PayPal billing agreement",
+            )],
         ));
     }
     let address = paypal_address(ctx.arg("billingAddress"));

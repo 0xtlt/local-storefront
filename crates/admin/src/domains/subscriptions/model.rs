@@ -53,6 +53,12 @@ pub fn draft_error(field: &[&str], code: &str) -> UserError {
     UserError::new(field, described("SubscriptionDraftErrorCode", code)).code(code)
 }
 
+/// A user error coded `INVALID`, with its message: lsf's wording, for what Shopify documents no
+/// message of (a record that does not exist, a value out of range).
+pub fn invalid_error(field: &[&str], message: impl Into<String>) -> UserError {
+    UserError::new(field, message).code("INVALID")
+}
+
 /// A `SubscriptionContractStatusUpdateUserError`.
 pub fn status_error(field: &[&str], code: &str) -> UserError {
     UserError::new(
@@ -72,7 +78,7 @@ pub fn cycle_error(field: &[&str], code: &str) -> UserError {
     UserError::new(field, described("SubscriptionBillingCycleErrorCode", code)).code(code)
 }
 
-/// A field of a path given as `String`s, for the errors of nested inputs.
+/// The path of a nested input field: `prefix`, then `rest`.
 pub fn path<'a>(prefix: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
     prefix.iter().chain(rest).copied().collect()
 }
@@ -221,14 +227,9 @@ pub fn check_anchors(anchors: &Value, path: &[&str], errors: &mut Vec<UserError>
         };
         if !valid {
             let index = index.to_string();
-            errors.push(draft_error(&path_owned(path, &[&index]), "NOT_IN_RANGE"));
+            errors.push(draft_error(&self::path(path, &[&index]), "NOT_IN_RANGE"));
         }
     }
-}
-
-/// A path of borrowed and owned parts.
-fn path_owned<'a>(prefix: &[&'a str], rest: &[&'a str]) -> Vec<&'a str> {
-    path(prefix, rest)
 }
 
 /// A `SubscriptionBillingPolicy` from the draft API's input.
@@ -332,16 +333,11 @@ pub fn check_policies(
     errors: &mut Vec<UserError>,
 ) {
     if let Some(billing) = billing {
-        let at = |field: &str| -> Vec<String> {
-            path.iter()
-                .map(|part| part.to_string())
-                .chain(["billingPolicy".to_string(), field.to_string()])
-                .collect()
-        };
         let push = |errors: &mut Vec<UserError>, field: &str, code: &str| {
-            let owned = at(field);
-            let parts: Vec<&str> = owned.iter().map(String::as_str).collect();
-            errors.push(draft_error(&parts, code));
+            errors.push(draft_error(
+                &self::path(path, &["billingPolicy", field]),
+                code,
+            ));
         };
         if billing
             .get("intervalCount")
@@ -368,9 +364,11 @@ pub fn check_policies(
                 "SELLING_PLAN_MAX_CYCLES_MUST_BE_GREATER_THAN_MIN_CYCLES",
             );
         }
-        let mut anchors_path: Vec<&str> = path.to_vec();
-        anchors_path.extend(["billingPolicy", "anchors"]);
-        check_anchors(&billing["anchors"], &anchors_path, errors);
+        check_anchors(
+            &billing["anchors"],
+            &self::path(path, &["billingPolicy", "anchors"]),
+            errors,
+        );
     }
     if let Some(delivery) = delivery {
         if delivery
@@ -379,13 +377,16 @@ pub fn check_policies(
             .unwrap_or(1)
             < 1
         {
-            let mut at: Vec<&str> = path.to_vec();
-            at.extend(["deliveryPolicy", "intervalCount"]);
-            errors.push(draft_error(&at, "GREATER_THAN"));
+            errors.push(draft_error(
+                &self::path(path, &["deliveryPolicy", "intervalCount"]),
+                "GREATER_THAN",
+            ));
         }
-        let mut anchors_path: Vec<&str> = path.to_vec();
-        anchors_path.extend(["deliveryPolicy", "anchors"]);
-        check_anchors(&delivery["anchors"], &anchors_path, errors);
+        check_anchors(
+            &delivery["anchors"],
+            &self::path(path, &["deliveryPolicy", "anchors"]),
+            errors,
+        );
     }
     if let (Some(billing), Some(delivery)) = (billing, delivery) {
         let (billing_months, billing_span) = span(billing);
@@ -396,9 +397,10 @@ pub fn check_policies(
             && billing_span > 0
             && (billing_span < delivery_span || billing_span % delivery_span != 0)
         {
-            let mut at: Vec<&str> = path.to_vec();
-            at.push("deliveryPolicy");
-            errors.push(draft_error(&at, "DELIVERY_MUST_BE_MULTIPLE_OF_BILLING"));
+            errors.push(draft_error(
+                &self::path(path, &["deliveryPolicy"]),
+                "DELIVERY_MUST_BE_MULTIPLE_OF_BILLING",
+            ));
         }
     }
 }
@@ -435,6 +437,17 @@ pub fn located(mut address: Value) -> Value {
     address
 }
 
+/// The code and titles of a delivery method's option, as its input gives them.
+fn delivery_option(input: Option<&Value>) -> Value {
+    let field = |name: &str| input.and_then(|input| input.get(name));
+    json!({
+        "code": field("code"),
+        "description": field("description"),
+        "presentmentTitle": field("presentmentTitle"),
+        "title": field("title"),
+    })
+}
+
 /// A `SubscriptionDeliveryMethod` from the draft API's input (`shipping`, `localDelivery`,
 /// `pickup`), or its errors (`path` the input's).
 pub fn delivery_method(
@@ -442,21 +455,12 @@ pub fn delivery_method(
     input: &Map<String, Value>,
     path: &[&str],
 ) -> Result<Value, Vec<UserError>> {
-    let option = |value: Option<&Value>| -> Value {
-        let option = object(value);
-        json!({
-            "code": option.get("code"),
-            "description": option.get("description"),
-            "presentmentTitle": option.get("presentmentTitle"),
-            "title": option.get("title"),
-        })
-    };
     if let Some(shipping) = input.get("shipping").filter(|value| !value.is_null()) {
         let address = shipping
             .get("address")
             .and_then(|address| self::address(state, address))
             .unwrap_or(Value::Null);
-        let mut shipping_option = option(shipping.get("shippingOption"));
+        let mut shipping_option = delivery_option(shipping.get("shippingOption"));
         // Deprecated: "This field has never been implemented."
         shipping_option["carrierService"] = Value::Null;
         return Ok(json!({
@@ -471,7 +475,7 @@ pub fn delivery_method(
             .filter(|value| !value.is_null())
         else {
             return Err(vec![draft_error(
-                &path_owned(path, &["localDelivery", "localDeliveryOption"]),
+                &self::path(path, &["localDelivery", "localDeliveryOption"]),
                 "MISSING_LOCAL_DELIVERY_OPTIONS",
             )]);
         };
@@ -479,7 +483,7 @@ pub fn delivery_method(
             .get("address")
             .and_then(|address| self::address(state, address))
             .unwrap_or(Value::Null);
-        let mut option = option(Some(delivery_option));
+        let mut option = self::delivery_option(Some(delivery_option));
         option["phone"] = delivery_option.get("phone").cloned().unwrap_or(json!(""));
         option["instructions"] = delivery_option
             .get("instructions")
@@ -492,15 +496,18 @@ pub fn delivery_method(
         }));
     }
     if let Some(pickup) = input.get("pickup").filter(|value| !value.is_null()) {
-        let pickup_option = object(pickup.get("pickupOption"));
-        let location = text(&pickup_option, "locationId").unwrap_or_default();
+        let pickup_option = pickup.get("pickupOption");
+        let location = pickup_option
+            .and_then(|option| option.get("locationId"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if state.type_of(location) != Some("Location") {
             return Err(vec![draft_error(
-                &path_owned(path, &["pickup", "pickupOption", "locationId"]),
+                &self::path(path, &["pickup", "pickupOption", "locationId"]),
                 "INVALID",
             )]);
         }
-        let mut option = option(Some(&Value::Object(pickup_option.clone())));
+        let mut option = delivery_option(pickup_option);
         option["location"] = json!(location);
         return Ok(json!({
             "__typename": "SubscriptionDeliveryMethodPickup",
@@ -529,14 +536,6 @@ pub fn calculated_delivery_method(
         return Ok(Some((Value::Null, 0)));
     }
     let price = |method: &Value| cents(method.get("deliveryPrice"));
-    let option = |method: &Value| {
-        json!({
-            "code": method.get("code"),
-            "description": method.get("description"),
-            "presentmentTitle": method.get("presentmentTitle"),
-            "title": method.get("title"),
-        })
-    };
     if let Some(shipping) = input.get("shipping").filter(|value| !value.is_null()) {
         let address = shipping
             .get("address")
@@ -545,7 +544,7 @@ pub fn calculated_delivery_method(
             json!({
                 "__typename": "SubscriptionDeliveryMethodShipping",
                 "address": address,
-                "shippingOption": option(shipping),
+                "shippingOption": delivery_option(Some(shipping)),
             }),
             price(shipping),
         )));
@@ -554,14 +553,14 @@ pub fn calculated_delivery_method(
         let address = local
             .get("address")
             .and_then(|address| self::address(state, address));
-        let mut delivery_option = option(local);
-        delivery_option["phone"] = local.get("phone").cloned().unwrap_or(json!(""));
-        delivery_option["instructions"] = local.get("instructions").cloned().unwrap_or(Value::Null);
+        let mut local_option = delivery_option(Some(local));
+        local_option["phone"] = local.get("phone").cloned().unwrap_or(json!(""));
+        local_option["instructions"] = local.get("instructions").cloned().unwrap_or(Value::Null);
         return Ok(Some((
             json!({
                 "__typename": "SubscriptionDeliveryMethodLocalDelivery",
                 "address": address,
-                "localDeliveryOption": delivery_option,
+                "localDeliveryOption": local_option,
             }),
             price(local),
         )));
@@ -572,15 +571,12 @@ pub fn calculated_delivery_method(
             .and_then(Value::as_str)
             .unwrap_or_default();
         if state.type_of(location) != Some("Location") {
-            return Err(vec![
-                UserError::new(
-                    &path_owned(path, &["pickup", "locationId"]),
-                    "Location does not exist",
-                )
-                .code("INVALID"),
-            ]);
+            return Err(vec![invalid_error(
+                &self::path(path, &["pickup", "locationId"]),
+                "Location does not exist",
+            )]);
         }
-        let mut pickup_option = option(pickup);
+        let mut pickup_option = delivery_option(Some(pickup));
         pickup_option["location"] = json!(location);
         return Ok(Some((
             json!({
@@ -673,10 +669,6 @@ pub fn pricing_policy(input: &Value, currency: &str) -> Value {
     if input.is_null() {
         return Value::Null;
     }
-    let amount = |value: Option<&Value>| match value {
-        Some(Value::Object(_)) => cents(value),
-        other => decimal_cents(other).unwrap_or(0),
-    };
     let adjustments = input
         .get("cycleDiscounts")
         .or_else(|| input.get("cyclePriceAdjustments"));
@@ -702,12 +694,12 @@ pub fn pricing_policy(input: &Value, currency: &str) -> Value {
                 "adjustmentType": kind,
                 "adjustmentValue": adjustment_value,
                 "afterCycle": adjustment.get("afterCycle").cloned().unwrap_or(json!(0)),
-                "computedPrice": money(amount(adjustment.get("computedPrice")), currency),
+                "computedPrice": money(cents(adjustment.get("computedPrice")), currency),
             })
         })
         .collect();
     json!({
-        "basePrice": money(amount(input.get("basePrice")), currency),
+        "basePrice": money(cents(input.get("basePrice")), currency),
         "cycleDiscounts": cycle_discounts,
     })
 }
@@ -739,7 +731,7 @@ pub fn check_pricing_policy(input: &Value, path: &[&str], errors: &mut Vec<UserE
             .get("fixedValue")
             .is_some_and(|value| !value.is_null());
         let kind = text(adjustment, "adjustmentType").unwrap_or("PERCENTAGE");
-        let at = path_owned(path, &[&index, "adjustmentValue"]);
+        let at = self::path(path, &[&index, "adjustmentValue"]);
         if percentage == fixed {
             errors.push(draft_error(&at, "INVALID_ADJUSTMENT_VALUE"));
         } else if (kind == "PERCENTAGE") != percentage {
@@ -770,49 +762,40 @@ pub fn new_line(
     let variant = text(input, "productVariantId").unwrap_or_default();
     let fields = variant_fields(state, variant);
     if fields.is_none() {
-        errors.push(
-            UserError::new(
-                &path_owned(path, &["productVariantId"]),
-                "Product variant does not exist",
-            )
-            .code("INVALID"),
-        );
+        errors.push(invalid_error(
+            &self::path(path, &["productVariantId"]),
+            "Product variant does not exist",
+        ));
     }
     let quantity = input.get("quantity").and_then(Value::as_i64).unwrap_or(0);
     if quantity < 1 {
         errors.push(draft_error(
-            &path_owned(path, &["quantity"]),
+            &self::path(path, &["quantity"]),
             "GREATER_THAN_OR_EQUAL_TO",
         ));
     }
     let price = decimal_cents(input.get("currentPrice"));
     match price {
         Some(price) if price < 0 => errors.push(draft_error(
-            &path_owned(path, &["currentPrice"]),
+            &self::path(path, &["currentPrice"]),
             "GREATER_THAN_OR_EQUAL_TO",
         )),
         Some(price) if !value::money_in_bounds(price.saturating_mul(quantity.max(1))) => errors
-            .push(
-                UserError::new(
-                    &path_owned(path, &["currentPrice"]),
-                    value::money_too_large("Price"),
-                )
-                .code("INVALID"),
-            ),
-        None => errors.push(draft_error(&path_owned(path, &["currentPrice"]), "BLANK")),
+            .push(invalid_error(
+                &self::path(path, &["currentPrice"]),
+                value::money_too_large("Price"),
+            )),
+        None => errors.push(draft_error(&self::path(path, &["currentPrice"]), "BLANK")),
         _ => {}
     }
     let plan = text(input, "sellingPlanId");
     if let Some(plan) = plan
         && state.type_of(plan) != Some("SellingPlan")
     {
-        errors.push(
-            UserError::new(
-                &path_owned(path, &["sellingPlanId"]),
-                "Selling plan does not exist",
-            )
-            .code("INVALID"),
-        );
+        errors.push(invalid_error(
+            &self::path(path, &["sellingPlanId"]),
+            "Selling plan does not exist",
+        ));
     }
     if let Some(policy) = input
         .get("pricingPolicy")
@@ -820,7 +803,7 @@ pub fn new_line(
     {
         check_pricing_policy(
             policy,
-            &path_owned(path, &["pricingPolicy", "cycleDiscounts"]),
+            &self::path(path, &["pricingPolicy", "cycleDiscounts"]),
             &mut errors,
         );
     }
@@ -903,20 +886,17 @@ pub fn update_line(
                     line[key.as_str()] = value;
                 }
             }
-            None => errors.push(
-                UserError::new(
-                    &path_owned(path, &["productVariantId"]),
-                    "Product variant does not exist",
-                )
-                .code("INVALID"),
-            ),
+            None => errors.push(invalid_error(
+                &self::path(path, &["productVariantId"]),
+                "Product variant does not exist",
+            )),
         }
     }
     if let Some(quantity) = input.get("quantity").filter(|value| !value.is_null()) {
         match quantity.as_i64() {
             Some(quantity) if quantity >= 1 => line["quantity"] = json!(quantity),
             _ => errors.push(draft_error(
-                &path_owned(path, &["quantity"]),
+                &self::path(path, &["quantity"]),
                 "GREATER_THAN_OR_EQUAL_TO",
             )),
         }
@@ -930,7 +910,7 @@ pub fn update_line(
                 line["currentPrice"] = money(price, currency);
             }
             _ => errors.push(draft_error(
-                &path_owned(path, &["currentPrice"]),
+                &self::path(path, &["currentPrice"]),
                 "GREATER_THAN_OR_EQUAL_TO",
             )),
         }
@@ -939,13 +919,10 @@ pub fn update_line(
         if let Some(plan) = plan.as_str()
             && state.type_of(plan) != Some("SellingPlan")
         {
-            errors.push(
-                UserError::new(
-                    &path_owned(path, &["sellingPlanId"]),
-                    "Selling plan does not exist",
-                )
-                .code("INVALID"),
-            );
+            errors.push(invalid_error(
+                &self::path(path, &["sellingPlanId"]),
+                "Selling plan does not exist",
+            ));
         }
         line["sellingPlanId"] = plan.clone();
         if !input.contains_key("sellingPlanName") {
@@ -962,7 +939,7 @@ pub fn update_line(
         if !policy.is_null() {
             check_pricing_policy(
                 policy,
-                &path_owned(path, &["pricingPolicy", "cycleDiscounts"]),
+                &self::path(path, &["pricingPolicy", "cycleDiscounts"]),
                 &mut errors,
             );
         }
@@ -975,20 +952,22 @@ pub fn update_line(
     }
 }
 
+/// The items of an array field of a record, none when it holds no array.
+fn array<'r>(record: &'r Record, field: &str) -> &'r [Value] {
+    record
+        .get(field)
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
 /// The lines of a contract-like record.
 pub fn lines(record: &Record) -> Vec<Value> {
-    record
-        .get("lines")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+    array(record, "lines").to_vec()
 }
 
 /// The line of a contract-like record by its id.
 pub fn line_of<'r>(record: &'r Record, id: &str) -> Option<&'r Value> {
-    record
-        .get("lines")
-        .and_then(Value::as_array)?
+    array(record, "lines")
         .iter()
         .find(|line| line.get("id").and_then(Value::as_str) == Some(id))
 }
@@ -1006,13 +985,9 @@ pub fn discount_value(input: &Map<String, Value>, currency: &str) -> Option<Valu
     }
     let fixed = object(value.get("fixedAmount"));
     if !fixed.is_empty() {
-        let amount = match fixed.get("amount") {
-            Some(Value::Object(_)) => cents(fixed.get("amount")),
-            other => decimal_cents(other).unwrap_or(0),
-        };
         return Some(json!({
             "__typename": "SubscriptionDiscountFixedAmountValue",
-            "amount": money(amount, currency),
+            "amount": money(cents(fixed.get("amount")), currency),
             "appliesOnEachItem": fixed.get("appliesOnEachItem").and_then(Value::as_bool).unwrap_or(false),
         }));
     }
@@ -1046,11 +1021,7 @@ pub fn manual_discount(
 
 /// The discounts of a contract-like record.
 pub fn discounts(record: &Record) -> Vec<Value> {
-    record
-        .get("discounts")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+    array(record, "discounts").to_vec()
 }
 
 /// Whether a discount still applies: not rejected, and not used up (`recurringCycleLimit`
@@ -1082,6 +1053,21 @@ fn allocated(discount: &Value) -> Value {
     discount
 }
 
+/// Whether a discount is on a line: on all of them, or on those it lists.
+fn entitles(discount: &Value) -> impl Fn(&Value) -> bool + use<> {
+    let all = discount
+        .pointer("/entitledLines/all")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let listed = gids(discount.pointer("/entitledLines/lsfLineIds"));
+    move |line| {
+        all || line
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| listed.iter().any(|known| known == id))
+    }
+}
+
 /// What a line costs before discounts, in cents.
 pub fn line_total(line: &Value) -> i64 {
     let quantity = line.get("quantity").and_then(Value::as_i64).unwrap_or(0);
@@ -1102,23 +1088,14 @@ pub fn refresh(state: &ShopState, record: &mut Record) {
         if discount.get("targetType").and_then(Value::as_str) == Some("SHIPPING_LINE") {
             continue;
         }
-        let all = discount
-            .pointer("/entitledLines/all")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
-        let listed = gids(discount.pointer("/entitledLines/lsfLineIds"));
+        let entitles = entitles(discount);
         let entitled: Vec<usize> = lines
             .iter()
             .enumerate()
-            .filter(|(_, line)| {
-                all || line
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| listed.iter().any(|known| known == id))
-            })
+            .filter(|(_, line)| entitles(line))
             .map(|(index, _)| index)
             .collect();
-        let value = discount.get("value").cloned().unwrap_or(Value::Null);
+        let value = &discount["value"];
         let mut amounts = vec![0i64; lines.len()];
         if let Some(percentage) = value.get("percentage").and_then(Value::as_i64) {
             for &index in &entitled {
@@ -1175,19 +1152,10 @@ pub fn refresh(state: &ShopState, record: &mut Record) {
         .into_iter()
         .map(|mut discount| {
             if discount.get("entitledLines").is_some() {
-                let all = discount
-                    .pointer("/entitledLines/all")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
-                let listed = gids(discount.pointer("/entitledLines/lsfLineIds"));
+                let entitles = entitles(&discount);
                 let entitled: Vec<Value> = lines
                     .iter()
-                    .filter(|line| {
-                        all || line
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .is_some_and(|id| listed.iter().any(|known| known == id))
-                    })
+                    .filter(|line| entitles(line))
                     .map(|line| {
                         let mut line = line.clone();
                         line["discountAllocations"] = json!([]);
@@ -1201,7 +1169,7 @@ pub fn refresh(state: &ShopState, record: &mut Record) {
         .collect();
     record.insert("lines".into(), Value::Array(lines));
     record.insert("discounts".into(), Value::Array(discounts));
-    if text(record, "__typename") == Some(super::model::CONTRACT) {
+    if text(record, "__typename") == Some(CONTRACT) {
         let totals = projected_totals(state, record);
         record.insert("latestCommittedProjectedOrderTotals".into(), totals);
     }
@@ -1215,7 +1183,6 @@ pub fn projected_totals(state: &ShopState, record: &Record) -> Value {
     let (subtotal, merchandise_discounts, delivery, delivery_discounts, tax, total) =
         amounts(state, record);
     let currency = text(record, "currencyCode").unwrap_or("USD");
-    let _ = merchandise_discounts;
     json!({
         "subtotal": money(subtotal, currency),
         "totalMerchandiseDiscounts": money(merchandise_discounts, currency),
@@ -1230,7 +1197,7 @@ pub fn projected_totals(state: &ShopState, record: &Record) -> Value {
 /// their discounts), the merchandise discounts, the delivery price, the delivery discounts, the
 /// tax and the total.
 pub fn amounts(state: &ShopState, record: &Record) -> (i64, i64, i64, i64, i64, i64) {
-    let lines = lines(record);
+    let lines = array(record, "lines");
     let before: i64 = lines.iter().map(line_total).sum();
     let subtotal: i64 = lines
         .iter()
@@ -1243,14 +1210,14 @@ pub fn amounts(state: &ShopState, record: &Record) -> (i64, i64, i64, i64, i64, 
         .sum();
     let delivery = cents(record.get("deliveryPrice"));
     let mut delivery_discounts = 0;
-    for discount in discounts(record)
+    for discount in array(record, "discounts")
         .iter()
         .filter(|discount| applies(discount))
     {
         if discount.get("targetType").and_then(Value::as_str) != Some("SHIPPING_LINE") {
             continue;
         }
-        let value = discount.get("value").cloned().unwrap_or(Value::Null);
+        let value = &discount["value"];
         let off = match value.get("percentage").and_then(Value::as_i64) {
             Some(percentage) => share(delivery, percentage.clamp(0, 100), 100),
             None => cents(value.get("amount")),
@@ -1293,7 +1260,7 @@ pub fn amounts(state: &ShopState, record: &Record) -> (i64, i64, i64, i64, i64, 
 
 /// Whether a line of a contract-like record ships.
 pub fn requires_shipping(record: &Record) -> bool {
-    lines(record)
+    array(record, "lines")
         .iter()
         .any(|line| line.get("requiresShipping").and_then(Value::as_bool) != Some(false))
 }
@@ -1301,33 +1268,33 @@ pub fn requires_shipping(record: &Record) -> bool {
 /// The errors of a contract-like record about to become a contract (`path` the input the
 /// errors are reported at): its lines, its delivery method, its discounts.
 pub fn check_committable(record: &Record, path: &[&str], errors: &mut Vec<UserError>) {
-    let count = lines(record).len();
+    let count = array(record, "lines").len();
     if count == 0 {
-        errors.push(draft_error(&path_owned(path, &["lines"]), "INVALID_LINES"));
+        errors.push(draft_error(&self::path(path, &["lines"]), "INVALID_LINES"));
     } else if count > MAX_LINES {
-        errors.push(draft_error(&path_owned(path, &["lines"]), "TOO_MANY_LINES"));
+        errors.push(draft_error(&self::path(path, &["lines"]), "TOO_MANY_LINES"));
     }
-    if discounts(record).len() > MAX_DISCOUNTS {
+    if array(record, "discounts").len() > MAX_DISCOUNTS {
         errors.push(draft_error(
-            &path_owned(path, &["discounts"]),
+            &self::path(path, &["discounts"]),
             "TOO_MANY_DISCOUNTS",
         ));
     }
     if requires_shipping(record) && record.get("deliveryMethod").is_none_or(Value::is_null) {
         errors.push(draft_error(
-            &path_owned(path, &["deliveryMethod"]),
+            &self::path(path, &["deliveryMethod"]),
             "DELIVERY_METHOD_REQUIRED",
         ));
     }
     if record.get("billingPolicy").is_none_or(Value::is_null) {
         errors.push(draft_error(
-            &path_owned(path, &["billingPolicy"]),
+            &self::path(path, &["billingPolicy"]),
             "PRESENCE",
         ));
     }
     if record.get("deliveryPolicy").is_none_or(Value::is_null) {
         errors.push(draft_error(
-            &path_owned(path, &["deliveryPolicy"]),
+            &self::path(path, &["deliveryPolicy"]),
             "PRESENCE",
         ));
     }
@@ -1337,7 +1304,7 @@ pub fn check_committable(record: &Record, path: &[&str], errors: &mut Vec<UserEr
 pub fn check_note(input: &Map<String, Value>, path: &[&str], errors: &mut Vec<UserError>) {
     if text(input, "note").is_some_and(|note| note.chars().count() > MAX_NOTE) {
         errors.push(draft_error(
-            &path_owned(path, &["note"]),
+            &self::path(path, &["note"]),
             "INVALID_NOTE_LENGTH",
         ));
     }
@@ -1356,18 +1323,20 @@ pub fn check_payment_method(
         .get(id)
         .filter(|_| state.type_of(id) == Some(PAYMENT_METHOD))
     else {
-        return Some(
-            UserError::new(field, "Customer payment method does not exist").code("INVALID"),
-        );
+        return Some(invalid_error(
+            field,
+            "Customer payment method does not exist",
+        ));
     };
     if method
         .get("revokedAt")
         .is_some_and(|revoked| !revoked.is_null())
     {
         // lsf's wording: a revoked method cannot pay for a contract.
-        return Some(
-            UserError::new(field, "Customer payment method has been revoked").code("INVALID"),
-        );
+        return Some(invalid_error(
+            field,
+            "Customer payment method has been revoked",
+        ));
     }
     if customer.is_some() && text(method, "customer") != customer {
         return Some(draft_error(field, "CUSTOMER_MISMATCH"));
@@ -1413,7 +1382,7 @@ pub fn apply_draft_input(
             match delivery_method(
                 state,
                 &object(Some(method)),
-                &path_owned(path, &["deliveryMethod"]),
+                &self::path(path, &["deliveryMethod"]),
             ) {
                 Ok(method) => {
                     record.insert("deliveryMethod".into(), method);
@@ -1431,7 +1400,7 @@ pub fn apply_draft_input(
                 record.insert("deliveryPrice".into(), money(price, &currency));
             }
             _ => errors.push(draft_error(
-                &path_owned(path, &["deliveryPrice"]),
+                &self::path(path, &["deliveryPrice"]),
                 "GREATER_THAN_OR_EQUAL_TO",
             )),
         }
@@ -1444,7 +1413,7 @@ pub fn apply_draft_input(
                     state,
                     method,
                     customer.as_deref(),
-                    &path_owned(path, &["paymentMethodId"]),
+                    &self::path(path, &["paymentMethodId"]),
                 ) {
                     Some(error) => errors.push(error),
                     None => {
@@ -1476,7 +1445,7 @@ pub fn apply_draft_input(
                 record.insert("nextBillingDate".into(), json!(value::date_time(date)));
             }
             None => errors.push(draft_error(
-                &path_owned(path, &["nextBillingDate"]),
+                &self::path(path, &["nextBillingDate"]),
                 "INVALID_BILLING_DATE",
             )),
         }
