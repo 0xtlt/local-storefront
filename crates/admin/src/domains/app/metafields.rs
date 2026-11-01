@@ -15,6 +15,7 @@
 
 use serde_json::{Value, json};
 
+use crate::domains::catalog::gids;
 use crate::domains::content::metafields as content_metafields;
 use crate::resolve::UserError;
 use crate::state::ShopState;
@@ -87,15 +88,7 @@ pub fn apply(state: &mut ShopState, owner: &str, owner_type: &str, inputs: &[Val
 
 /// Removes the metafields of an owner that is being deleted: they go with it, as on Shopify.
 pub fn remove_all(state: &mut ShopState, owner: &str) {
-    let owned: Vec<String> = state
-        .get(owner)
-        .and_then(|record| record.get("metafields"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let owned = gids(state.get(owner).and_then(|record| record.get("metafields")));
     for gid in owned {
         let definition = state
             .get(&gid)

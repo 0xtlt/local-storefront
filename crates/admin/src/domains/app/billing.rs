@@ -42,6 +42,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
 
 use super::CHANGED;
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{Record, ShopState, gid, parse_gid, value};
@@ -981,15 +982,7 @@ pub fn decide(
         }
         _ if charge.status == "ACTIVE" => {
             // A new capped amount.
-            let lines: Vec<String> = state
-                .get(&id)
-                .and_then(|record| record.get("lineItems"))
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect();
+            let lines = gids(state.get(&id).and_then(|record| record.get("lineItems")));
             for line in lines {
                 let Some(record) = state.get_mut(&line) else {
                     continue;

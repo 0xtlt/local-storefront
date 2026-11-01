@@ -25,6 +25,7 @@
 use serde_json::{Map, Value, json};
 
 use super::{CHANGED, metafields};
+use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::state::{ShopState, value};
@@ -537,14 +538,7 @@ fn activation(
     owner: &Owner,
 ) -> Result<Value, FieldError> {
     let enabled = ctx.arg_bool("enabled").unwrap_or(false);
-    let ids: Vec<String> = ctx
-        .arg("ids")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let ids = gids(ctx.arg("ids"));
     let state = mutation.state();
     let (code, message) = owner.not_found;
     let errors: Vec<UserError> = ids
