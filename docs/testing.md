@@ -89,13 +89,14 @@ test('a logged-in customer sees their cart', async ({ page }) => {
   expect(response.ok()).toBeTruthy();
 
   await page.goto('/cart');
-  await expect(
-    page.getByRole('main').getByRole('link', { name: 'Organic Cotton T-Shirt', exact: true }),
-  ).toBeVisible();
+  const lines = page.getByRole('main').getByRole('table');
+  await expect(lines.getByRole('link', { name: 'Organic Cotton T-Shirt', exact: true })).toBeVisible();
 });
 ```
 
-Look in `main`: the menu of the header often names the same products.
+Look in the cart's table, where Dawn and Horizon put the lines of the cart. The menu of the
+header, and the products listed under the cart (Horizon's "You may also like"), often name the
+same products.
 
 Variants are referenced by SKU, by id, or by a product handle (its first variant). When the body
 is wrong the answer is `422` with the same diagnostics as

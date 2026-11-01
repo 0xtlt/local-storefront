@@ -63,11 +63,18 @@ shopify-local/
 
 **Starting from your own data.** The files of the demo store name each other:
 `collections.json`, `menus.json` and the `selling_plan_groups` of `store.json` name its
-products, and `gift_cards.json` names a product and a customer. Replace `products/` and
-`customers.json` with yours, delete what you don't need (`gift_cards.json`), then run
-`npx local-storefront validate`: each name left over is an error (`unknown_product`,
-`unknown_reference`, `unknown_customer`) with its file and pointer. Keep `schema/`, for your
-editor.
+products, `menus.json` names its pages and its blog, and `gift_cards.json` names a product and
+a customer. Replace `products/` and `customers.json` with yours, and edit `collections.json`
+and `menus.json`. Delete what you don't need: `gift_cards.json`, the `selling_plan_groups` of
+`store.json`. Then run `npx local-storefront validate`: each name left over is an error
+(`unknown_product`, `unknown_reference`, `unknown_customer`) with its file and pointer. Keep
+`schema/`, for your editor.
+
+No error points at the rest of the demo content, so replace it too: the shop's name in
+`store.json` (`Local Supply Co.`), the pages of `pages.json` and the articles of `blogs.json`
+(or delete them, with their links in `menus.json`). The demo's automated
+[collections](#collections) pick products by `type` and by the tag `sale`: give yours a `type`
+and `tags`, or these collections stay empty.
 
 Every `*.json` file at the root is a **data file**: an object with any of the keys `shop`,
 `products`, `collections`, `pages`, `blogs`, `menus`, `customers`, `companies`, `gift_cards`,
