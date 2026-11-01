@@ -36,7 +36,7 @@ use crate::state::ShopState;
 
 /// The annotation types apps may create, by category: ShopifyQL's "Annotation categories and
 /// types" whose GraphQL operations are "Return, create, update".
-pub const ANNOTATION_TYPES: &[(&str, &[&str])] = &[
+const ANNOTATION_TYPES: &[(&str, &[&str])] = &[
     (
         "product_events",
         &[
@@ -121,7 +121,7 @@ pub const ANNOTATION_TYPES: &[(&str, &[&str])] = &[
 ];
 
 /// Whether apps may create annotations of a type: `campaign` or `marketing_events.campaign`.
-pub fn creatable_type(kind: &str) -> bool {
+fn creatable_type(kind: &str) -> bool {
     let (category, name) = match kind.split_once('.') {
         Some((category, name)) => (Some(category), name),
         None => (None, kind),
@@ -279,10 +279,7 @@ fn annotation_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
         return Ok(payload(json!({"analyticsAnnotation": null}), &[error]));
     }
     let input = input_of(ctx);
-    let mut merged = m.state().get(&id).cloned().unwrap_or_default();
-    for (field, value) in &input {
-        merged.insert(field.clone(), value.clone());
-    }
+    let merged = merged(m.state(), &id, &input);
     let mut checked = Map::new();
     for field in ["title", "type"] {
         if input.contains_key(field) {
@@ -335,13 +332,35 @@ fn is_metric(metric: &str) -> bool {
         .any(|(name, _, _)| *name == metric)
 }
 
-/// The query that measures a target.
-fn target_query(metric: &str, filters: Option<&str>, start: &str, end: &str) -> String {
-    let filter = filters
+/// The query that measures a target of these fields.
+fn target_query(fields: &Map<String, Value>) -> String {
+    let text = |field: &str| {
+        fields
+            .get(field)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    let filter = fields
+        .get("filters")
+        .and_then(Value::as_str)
         .filter(|filters| !filters.trim().is_empty())
         .map(|filters| format!(" WHERE {filters}"))
         .unwrap_or_default();
-    format!("FROM sales SHOW {metric}{filter} SINCE {start} UNTIL {end}")
+    format!(
+        "FROM sales SHOW {}{filter} SINCE {} UNTIL {}",
+        text("metric"),
+        text("startDate"),
+        text("endDate")
+    )
+}
+
+/// A record with the fields of an update's input over its own.
+fn merged(state: &ShopState, id: &str, input: &Map<String, Value>) -> Map<String, Value> {
+    let mut merged = state.get(id).cloned().unwrap_or_default();
+    for (field, value) in input {
+        merged.insert(field.clone(), value.clone());
+    }
+    merged
 }
 
 /// What is wrong with a target as it would be.
@@ -419,13 +438,7 @@ fn target_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     }
     let now = m.timestamp();
     let currency = crate::domains::orders::model::currency(m.state());
-    let text = |field: &str| input.get(field).and_then(Value::as_str).unwrap_or_default();
-    let query = target_query(
-        text("metric"),
-        input.get("filters").and_then(Value::as_str),
-        text("startDate"),
-        text("endDate"),
-    );
+    let query = target_query(&input);
     let state = m.state_mut();
     let id = state.new_gid("AnalyticsTarget");
     state.insert_as(
@@ -460,27 +473,13 @@ fn target_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         return Ok(payload(json!({"analyticsTarget": null}), &[error]));
     }
     let input = input_of(ctx);
-    let mut merged = m.state().get(&id).cloned().unwrap_or_default();
-    for (field, value) in &input {
-        merged.insert(field.clone(), value.clone());
-    }
+    let merged = merged(m.state(), &id, &input);
     let errors = target_errors(m.state(), &merged, Some(&id));
     if !errors.is_empty() {
         return Ok(payload(json!({"analyticsTarget": null}), &errors));
     }
     let now = m.timestamp();
-    let text = |field: &str| {
-        merged
-            .get(field)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-    };
-    let query = target_query(
-        text("metric"),
-        merged.get("filters").and_then(Value::as_str),
-        text("startDate"),
-        text("endDate"),
-    );
+    let query = target_query(&merged);
     let state = m.state_mut();
     if let Some(record) = state.get_mut(&id) {
         for (field, value) in &input {
@@ -498,14 +497,7 @@ fn target_update(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
 }
 
 fn targets_delete(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
-    let ids: Vec<String> = ctx
-        .arg("ids")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+    let ids = crate::domains::catalog::gids(ctx.arg("ids"));
     let mut errors = Vec::new();
     let mut deleted = Vec::new();
     for (index, id) in ids.iter().enumerate() {

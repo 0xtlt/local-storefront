@@ -167,7 +167,7 @@ pub const SALES_METRICS: &[(&str, &str, &str)] = &[
 ];
 
 /// The metrics lsf computes.
-pub const COMPUTED: &[&str] = &[
+const COMPUTED: &[&str] = &[
     "average_order_value",
     "customers",
     "discounts",
@@ -188,7 +188,7 @@ pub const COMPUTED: &[&str] = &[
 ];
 
 /// The dimensions lsf reads: name, data type, display name.
-pub const DIMENSIONS: &[(&str, &str, &str)] = &[
+const DIMENSIONS: &[(&str, &str, &str)] = &[
     ("hour", "HOUR_TIMESTAMP", "Hour"),
     ("day", "DAY_TIMESTAMP", "Day"),
     ("week", "WEEK_TIMESTAMP", "Week"),
