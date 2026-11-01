@@ -14,7 +14,7 @@
 //!   schema/           JSON Schemas written by `lsf init` for editor support (ignored here)
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -695,7 +695,7 @@ fn apply_overlay(
     // are both kept, for the build to say that the store data cannot have both.
     macro_rules! upsert {
         ($field:ident, $key:expr) => {
-            let mut written = std::collections::HashSet::new();
+            let mut written = HashSet::new();
             for (index, value) in input.$field.into_iter().enumerate() {
                 let key = $key(&value);
                 let sourced = Sourced {
@@ -705,124 +705,67 @@ fn apply_overlay(
                 let position = merged.$field.iter().enumerate().position(|(at, existing)| {
                     !written.contains(&at) && $key(&existing.value) == key
                 });
-                match position {
-                    Some(position) => {
-                        merged.$field[position] = sourced;
-                        written.insert(position);
-                    }
-                    None => {
-                        written.insert(merged.$field.len());
-                        merged.$field.push(sourced);
-                    }
-                }
+                put(&mut merged.$field, position, sourced, &mut written);
             }
         };
-        ($field:ident, $key:expr, $id:expr) => {
-            let mut written = std::collections::HashSet::new();
+        // An entity of a `$kind` with ids: the id of one already there is the one it gives, else
+        // the one the build derives from its key.
+        ($field:ident, $kind:literal, $key:expr) => {
+            let mut written = HashSet::new();
             for (index, value) in input.$field.into_iter().enumerate() {
                 let key = $key(&value);
-                let explicit = value.id.and_then(|_| $id(&value));
+                let given = value.id;
                 let sourced = Sourced {
                     value,
                     origin: origin(format!("/{}/{index}", stringify!($field))),
                 };
-                let position = explicit
+                let position = given
                     .and_then(|id| {
-                        merged
-                            .$field
-                            .iter()
-                            .position(|existing| $id(&existing.value) == Some(id))
+                        merged.$field.iter().position(|existing| {
+                            existing.value.id.unwrap_or_else(|| {
+                                crate::util::stable_id($kind, &$key(&existing.value))
+                            }) == id
+                        })
                     })
                     .or_else(|| {
                         merged.$field.iter().enumerate().position(|(at, existing)| {
                             !written.contains(&at) && $key(&existing.value) == key
                         })
                     });
-                match position {
-                    Some(position) => {
-                        merged.$field[position] = sourced;
-                        written.insert(position);
-                    }
-                    None => {
-                        written.insert(merged.$field.len());
-                        merged.$field.push(sourced);
-                    }
-                }
+                put(&mut merged.$field, position, sourced, &mut written);
             }
         };
     }
-    // The id of an entity, given or derived from its key as the build derives it.
-    let derived = |kind: &str, given: Option<u64>, key: &str| {
-        Some(given.unwrap_or_else(|| crate::util::stable_id(kind, key)))
-    };
-    upsert!(
-        products,
-        |product: &model::ProductInput| effective_handle(&product.handle, &product.title),
-        |product: &model::ProductInput| derived(
-            "product",
-            product.id,
-            &effective_handle(&product.handle, &product.title)
-        )
-    );
+    upsert!(products, "product", |product: &model::ProductInput| {
+        effective_handle(&product.handle, &product.title)
+    });
     upsert!(
         collections,
+        "collection",
         |collection: &model::CollectionInput| {
             effective_handle(&collection.handle, &collection.title)
-        },
-        |collection: &model::CollectionInput| derived(
-            "collection",
-            collection.id,
-            &effective_handle(&collection.handle, &collection.title)
-        )
+        }
     );
-    upsert!(
-        pages,
-        |page: &model::PageInput| effective_handle(&page.handle, &page.title),
-        |page: &model::PageInput| derived(
-            "page",
-            page.id,
-            &effective_handle(&page.handle, &page.title)
-        )
-    );
-    upsert!(
-        blogs,
-        |blog: &model::BlogInput| effective_handle(&blog.handle, &blog.title),
-        |blog: &model::BlogInput| derived(
-            "blog",
-            blog.id,
-            &effective_handle(&blog.handle, &blog.title)
-        )
-    );
-    upsert!(
-        customers,
-        |customer: &model::CustomerInput| customer.email.to_lowercase(),
-        |customer: &model::CustomerInput| derived(
-            "customer",
-            customer.id,
-            &customer.email.to_lowercase()
-        )
-    );
-    upsert!(
-        companies,
-        |company: &model::CompanyInput| company.name.to_lowercase(),
-        |company: &model::CompanyInput| derived(
-            "company",
-            company.id,
-            &company.name.to_lowercase()
-        )
-    );
+    upsert!(pages, "page", |page: &model::PageInput| effective_handle(
+        &page.handle,
+        &page.title
+    ));
+    upsert!(blogs, "blog", |blog: &model::BlogInput| effective_handle(
+        &blog.handle,
+        &blog.title
+    ));
+    upsert!(customers, "customer", |customer: &model::CustomerInput| {
+        customer.email.to_lowercase()
+    });
+    upsert!(companies, "company", |company: &model::CompanyInput| {
+        company.name.to_lowercase()
+    });
     upsert!(gift_cards, |card: &model::GiftCardInput| card
         .code
         .to_uppercase());
-    upsert!(
-        locations,
-        |location: &model::LocationInput| location.name.to_lowercase(),
-        |location: &model::LocationInput| derived(
-            "location",
-            location.id,
-            &location.name.to_lowercase()
-        )
-    );
+    upsert!(locations, "location", |location: &model::LocationInput| {
+        location.name.to_lowercase()
+    });
     upsert!(
         selling_plan_groups,
         |group: &model::SellingPlanGroupInput| { group.name.to_lowercase() }
@@ -894,6 +837,21 @@ fn apply_overlay(
     merged.theme_settings.extend(input.theme_settings);
 }
 
+/// Puts `item` at `position`, in place of the entity there, or after the others, and notes where
+/// it went.
+fn put<T>(list: &mut Vec<T>, position: Option<usize>, item: T, written: &mut HashSet<usize>) {
+    match position {
+        Some(position) => {
+            list[position] = item;
+            written.insert(position);
+        }
+        None => {
+            written.insert(list.len());
+            list.push(item);
+        }
+    }
+}
+
 /// Loads the store with extra data applied on top of the files, as tests do to set up the
 /// exact situation they need without touching the shared fixtures. Its problems are reported
 /// under [`OVERLAY_FILE`].
@@ -953,11 +911,6 @@ impl SourceData {
             files_directory,
             images: Mutex::new(HashMap::new()),
         }
-    }
-
-    /// The problems of the files themselves, before any overlay or build.
-    pub fn diagnostics(&self) -> &Diagnostics {
-        &self.diagnostics
     }
 
     /// The store of the files with `overlays` applied on top, one after the other, and its

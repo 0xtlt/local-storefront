@@ -796,18 +796,7 @@ fn compute(
     );
     // The checkout as the buyer sees it, for the Admin API: `checkouts/create`, then
     // `checkouts/update` when it changes.
-    let payment = checkout.selected_payment.as_ref().and_then(|handle| {
-        result
-            .payment_methods
-            .iter()
-            .find(|method| &method.handle == handle)
-            .map(|method| method.name.clone())
-    });
-    let attributes: Vec<(String, String)> = session
-        .cart_attributes
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
+    let attributes = super::admin::pairs(&session.cart_attributes);
     super::admin::record_checkout(
         state,
         &lsf_admin::domains::checkouts::Checkout {
@@ -820,7 +809,7 @@ fn compute(
             shipping_address: checkout.shipping_address.as_ref(),
             note: &session.cart_note,
             attributes: &attributes,
-            payment: payment.as_deref(),
+            payment: payment_name(&checkout, &result),
             locale: Some(language.iso_code.as_str()),
         },
     );
@@ -1737,12 +1726,7 @@ pub(super) fn place_order(
             customer_id: entry.session.customer_id,
             company_location,
             note: entry.session.cart_note.clone(),
-            attributes: entry
-                .session
-                .cart_attributes
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
+            attributes: super::admin::pairs(&entry.session.cart_attributes),
         };
         let number = last + entry.checkout.placed + 1;
         // Recorded while the cart is taken, so that the page links to the order the Admin API
@@ -1818,13 +1802,6 @@ fn record_in_admin(
     processed_at: chrono::DateTime<chrono::Utc>,
 ) -> Option<lsf_admin::domains::orders::RecordedOrder> {
     let admin = state.admin.as_ref()?;
-    let payment = checkout.selected_payment.as_ref().and_then(|handle| {
-        result
-            .payment_methods
-            .iter()
-            .find(|method| &method.handle == handle)
-            .map(|method| method.name.as_str())
-    });
     admin
         .api
         .record_order(&lsf_admin::domains::orders::PlacedOrder {
@@ -1839,8 +1816,18 @@ fn record_in_admin(
             shipping_address: checkout.shipping_address.as_ref(),
             note: Some(placed.note.as_str()).filter(|note| !note.is_empty()),
             attributes: &placed.attributes,
-            payment,
+            payment: payment_name(checkout, result),
         })
+}
+
+/// The name of the payment method the buyer selected, as the checkout offered it.
+fn payment_name<'a>(checkout: &CheckoutState, result: &'a CheckoutResult) -> Option<&'a str> {
+    let handle = checkout.selected_payment.as_ref()?;
+    result
+        .payment_methods
+        .iter()
+        .find(|method| &method.handle == handle)
+        .map(|method| method.name.as_str())
 }
 
 /// A file of the page, from the binary.

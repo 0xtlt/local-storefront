@@ -14,7 +14,7 @@ use super::super::{ServeOptions, ServerState};
 use super::{
     ScenarioData, admin_query, admin_request, admin_server, body_json, buyer_details,
     checkout_server_with, copy_directory, fixture_app, get, header, log_in_as, operations, post,
-    request, text,
+    request, retitle, text, title_on_page,
 };
 use crate::app::App;
 
@@ -61,31 +61,6 @@ fn product_gid(state: &ServerState, handle: &str) -> String {
             .product_by_handle(handle)
             .expect("a product"),
     )
-}
-
-/// `productUpdate` of a product's title.
-fn rename(state: &ServerState, handle: &str, title: &str) {
-    let id = product_gid(state, handle);
-    let updated = admin_query(
-        state,
-        &format!(
-            r#"mutation {{ productUpdate(product: {{id: "{id}", title: "{title}"}}) {{ userErrors {{ message }} }} }}"#
-        ),
-    );
-    assert_eq!(
-        updated["data"]["productUpdate"]["userErrors"],
-        json!([]),
-        "{updated}"
-    );
-}
-
-/// The `<h1>` of a product page.
-fn title_on_page(state: &ServerState, handle: &str, session: &str) -> String {
-    let page = text(&get(state, &format!("/products/{handle}"), session));
-    page.split_once("<h1>")
-        .and_then(|(_, rest)| rest.split_once("</h1>"))
-        .map(|(title, _)| title.to_string())
-        .unwrap_or_else(|| panic!("no title in {page}"))
 }
 
 /// Puts `session` in a cart of `items`, without data of its own, and returns the path of its
@@ -392,7 +367,7 @@ fn a_session_with_its_own_data_sees_what_the_backend_changes() {
         assert_eq!(reply.status, 200, "{}", text(&reply));
     };
     own_data("own", "Session Scarf");
-    rename(&state, "ceramic-mug", "Stoneware Mug");
+    retitle(&state, "ceramic-mug", "Stoneware Mug");
 
     // Its data, on top of what the backend changed.
     assert_eq!(title_on_page(&state, "ceramic-mug", "own"), "Stoneware Mug");
@@ -414,7 +389,7 @@ fn a_session_with_its_own_data_sees_what_the_backend_changes() {
     );
     assert_eq!(title_on_page(&state, "late-scarf", "late"), "Late Scarf");
     // And again after the next change.
-    rename(&state, "ceramic-mug", "Clay Mug");
+    retitle(&state, "ceramic-mug", "Clay Mug");
     assert_eq!(title_on_page(&state, "ceramic-mug", "own"), "Clay Mug");
     assert_eq!(
         title_on_page(&state, "session-scarf", "own"),
@@ -430,7 +405,7 @@ fn open_pages_reload_when_the_backend_changes_the_store() {
     admin_query(&state, "{ shop { name } }");
     assert_eq!(state.observe_changes(), token);
 
-    rename(&state, "ceramic-mug", "Stoneware Mug");
+    retitle(&state, "ceramic-mug", "Stoneware Mug");
     let changed = state.observe_changes();
     assert_ne!(changed, token);
     // The store was built before the token changed: the page that reloads finds it.
@@ -467,7 +442,7 @@ fn a_change_of_the_files_and_a_reset_bring_the_files_back() {
             checkout: None,
         },
     );
-    rename(&state, "ceramic-mug", "Stoneware Mug");
+    retitle(&state, "ceramic-mug", "Stoneware Mug");
     assert_eq!(title_on_page(&state, "ceramic-mug", "w"), "Stoneware Mug");
     assert_eq!(sync_status(&state)["generation"], 1);
 
@@ -483,7 +458,7 @@ fn a_change_of_the_files_and_a_reset_bring_the_files_back() {
     assert_eq!(sync_status(&state)["overlay"], Json::Null);
 
     // `DELETE /__lsf/admin` does as much.
-    rename(&state, "ceramic-mug", "Clay Mug");
+    retitle(&state, "ceramic-mug", "Clay Mug");
     assert_eq!(title_on_page(&state, "ceramic-mug", "w"), "Clay Mug");
     assert_eq!(
         admin_request(&state, "DELETE", "/__lsf/admin", "").status,
@@ -499,7 +474,7 @@ fn an_order_placed_at_the_checkout_does_not_build_the_store_again() {
     let state = checkout_admin_server();
     let admin = state.admin.as_ref().unwrap();
     // The backend changed the store first: the order must not undo it, nor build it again.
-    rename(&state, "ceramic-mug", "Stoneware Mug");
+    retitle(&state, "ceramic-mug", "Stoneware Mug");
     assert_eq!(get(&state, "/", "co-order").status, 200);
     let before = state.loaded();
     assert_eq!(before.synced.generation, 1);
@@ -553,7 +528,7 @@ fn what_the_store_data_refuses_of_a_change_is_told_and_the_rest_is_served() {
                 .clone()
         })
         .collect();
-    rename(&state, "ceramic-mug", "Stoneware Mug");
+    retitle(&state, "ceramic-mug", "Stoneware Mug");
     assert_eq!(title_on_page(&state, "ceramic-mug", "bad"), "Stoneware Mug");
     let loaded = state.loaded();
     assert!(

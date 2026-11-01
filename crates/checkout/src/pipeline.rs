@@ -916,8 +916,6 @@ impl<'a> Pipeline<'a> {
 
     // ---- discounts ----
 
-    /// The discounts a Function backs that are active now: automatic ones, and those whose code
-    /// the buyer entered.
     /// The discounts that run: those of an enabled Function, automatic or with a code the buyer
     /// entered, with the number of their GID.
     fn active_discounts(&self) -> Vec<(u64, &'a DiscountConfig, Option<String>)> {

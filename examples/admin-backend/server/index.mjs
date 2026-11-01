@@ -18,6 +18,15 @@ const json = (value, init = {}) =>
     headers: { "Content-Type": "application/json", ...init.headers },
   });
 
+// A route of the front end's API: `authenticate.admin`, as a loader calls it, then `call` with the
+// admin context and the request, answered as JSON.
+const adminApi = (call) => async (request) => {
+  const { admin } = await shopify.authenticate.admin(request);
+  return json(await call(admin, request));
+};
+// The same, `call` taking the JSON body of the request.
+const adminApiWithBody = (call) => adminApi(async (admin, request) => call(admin, await request.json()));
+
 const routes = [
   // The embedded app's home, as the admin opens it: authenticate.admin reads the session token of
   // the URL and exchanges it for an access token.
@@ -87,46 +96,19 @@ const routes = [
   }],
 
   // The API the app's front end calls with `fetch` (App Bridge adds the session token).
-  ["GET", /^\/api\/products$/, async (request) => json(await api.listProducts((await shopify.authenticate.admin(request)).admin))],
-  ["POST", /^\/api\/products$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.createProduct(admin, await request.json()));
-  }],
-  ["POST", /^\/api\/products\/delete$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.deleteProduct(admin, await request.json()));
-  }],
-  ["POST", /^\/api\/customers$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.createCustomer(admin, await request.json()));
-  }],
-  ["POST", /^\/api\/customers\/update$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.updateCustomer(admin, await request.json()));
-  }],
-  ["POST", /^\/api\/orders$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.processOrder(admin, await request.json()));
-  }],
-  ["POST", /^\/api\/discounts$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.createDiscount(admin, await request.json()));
-  }],
-  ["POST", /^\/api\/bulk$/, async (request) => json(await api.bulkExport((await shopify.authenticate.admin(request)).admin))],
-  ["POST", /^\/api\/bulk\/import$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.bulkImport(admin, await request.json()));
-  }],
-  ["POST", /^\/api\/files$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    const { filename, base64, mimeType } = await request.json();
-    return json(await api.uploadFile(admin, { filename, mimeType, bytes: Buffer.from(base64, "base64") }));
-  }],
-  ["POST", /^\/api\/webhooks$/, async (request) => {
-    const { admin } = await shopify.authenticate.admin(request);
-    return json(await api.subscribe(admin, await request.json()));
-  }],
-  ["GET", /^\/api\/cost$/, async (request) => json(await api.queryCost((await shopify.authenticate.admin(request)).admin))],
+  ["GET", /^\/api\/products$/, adminApi(api.listProducts)],
+  ["POST", /^\/api\/products$/, adminApiWithBody(api.createProduct)],
+  ["POST", /^\/api\/products\/delete$/, adminApiWithBody(api.deleteProduct)],
+  ["POST", /^\/api\/customers$/, adminApiWithBody(api.createCustomer)],
+  ["POST", /^\/api\/customers\/update$/, adminApiWithBody(api.updateCustomer)],
+  ["POST", /^\/api\/orders$/, adminApiWithBody(api.processOrder)],
+  ["POST", /^\/api\/discounts$/, adminApiWithBody(api.createDiscount)],
+  ["POST", /^\/api\/bulk$/, adminApi(api.bulkExport)],
+  ["POST", /^\/api\/bulk\/import$/, adminApiWithBody(api.bulkImport)],
+  ["POST", /^\/api\/files$/, adminApiWithBody((admin, { filename, base64, mimeType }) =>
+    api.uploadFile(admin, { filename, mimeType, bytes: Buffer.from(base64, "base64") }))],
+  ["POST", /^\/api\/webhooks$/, adminApiWithBody(api.subscribe)],
+  ["GET", /^\/api\/cost$/, adminApi(api.queryCost)],
 
   // Billing: request a plan (the library answers the confirmation URL), then check it.
   ["POST", /^\/api\/billing\/request$/, async (request) => {

@@ -113,7 +113,7 @@ async function main() {
       { cwd: appRoot, env: { ...process.env, PORT: String(backendPort), LSF_URL: lsf, SHOPIFY_APP_URL: appUrl } },
       (text) => text.includes("backend: "),
     );
-    const results = await runChecks({ lsf, appUrl, token, lsfLog: lsfProcess.log, backendLog: backendProcess.log });
+    const results = await runChecks({ lsf, appUrl, token });
     const failed = report(results);
     if (failed && !verbose) {
       console.log("\nThe last lines of the backend's log:\n" + backendProcess.log.join("").split("\n").slice(-25).join("\n"));
@@ -165,6 +165,9 @@ async function runChecks({ lsf, appUrl, token }) {
     return answer.json();
   };
   const backendState = async () => (await fetch(`${appUrl}/debug/state`)).json();
+  // A shop of its own (`POST /__lsf/admin/shops`): its domain and its token.
+  const newShop = async (name) =>
+    (await fetch(`${lsf}/__lsf/admin/shops`, { method: "POST", body: JSON.stringify({ shop: `${name}-${Date.now()}` }) })).json();
   // Waits until the backend accepted a webhook of `topic` that `match` keeps.
   const received = async (topic, match = () => true, timeout = 8000) => {
     const deadline = Date.now() + timeout;
@@ -268,7 +271,7 @@ async function runChecks({ lsf, appUrl, token }) {
     return `requested ${cost.requestedQueryCost}, actual ${cost.actualQueryCost}, ${cost.throttleStatus.currentlyAvailable}/${cost.throttleStatus.maximumAvailable}`;
   });
   await check("errors", "errors: MAX_COST_EXCEEDED and THROTTLED", async () => {
-    const shop = await (await fetch(`${lsf}/__lsf/admin/shops`, { method: "POST", body: JSON.stringify({ shop: `throttle-${Date.now()}` }) })).json();
+    const shop = await newShop("throttle");
     const client = createAdminApiClient({ storeDomain: shop.shop, apiVersion: "2026-10", accessToken: shop.token, customFetchApi: lsfFetch(lsf) });
     const tooBig = await client.request(`query { products(first: 250) { nodes { variants(first: 3) { nodes { id } } } } }`);
     const maxCost = tooBig.errors?.graphQLErrors?.[0]?.extensions?.code;
@@ -444,7 +447,7 @@ async function runChecks({ lsf, appUrl, token }) {
     return `charge_id=${returned?.charge_id}, ${check.appSubscriptions[0].name} ${check.appSubscriptions[0].status}, trial ${check.appSubscriptions[0].trialDays} days`;
   });
   await check("billing", "billing: billing.require from a page (exit-iframe)", async () => {
-    const shop = (await (await fetch(`${lsf}/__lsf/admin/shops`, { method: "POST", body: JSON.stringify({ shop: `billing-${Date.now()}` }) })).json()).shop;
+    const { shop } = await newShop("billing");
     const launch = await browser.fetch(`${lsf}/__lsf/admin/launch?shop=${shop}&path=/billing`);
     const page = await browser.fetch(launch.headers.get("location"));
     assert(page.status === 302, `the loader answered ${page.status}`);

@@ -247,9 +247,10 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
     let theme = &state.app.theme;
     let files = theme.files();
     let missing = || Reply::not_found().cached(cache::MISSING_ASSET);
+    let relative = format!("assets/{name}");
     // A file the Admin API wrote over the directory's, or deleted: served as it is.
-    if files.overlaid(&format!("assets/{name}")) {
-        return match files.bytes(&format!("assets/{name}")) {
+    if files.overlaid(&relative) {
+        return match files.bytes(&relative) {
             Some(bytes) if RASTER_EXTENSIONS.contains(&extension(name).as_str()) => {
                 Reply::new(200, content_type(name), bytes.to_vec()).cached(cache::ASSET)
             }
@@ -259,7 +260,7 @@ fn asset(state: &ServerState, incoming: &Incoming, name: &str) -> Reply {
             None => missing(),
         };
     }
-    let Some(path) = files.resolve(&format!("assets/{name}")) else {
+    let Some(path) = files.resolve(&relative) else {
         return missing();
     };
     // An image of the theme goes through Shopify's image CDN like any other.

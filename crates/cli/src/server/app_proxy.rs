@@ -33,11 +33,11 @@ use lsf_core::render::page::{Page, Resource};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use super::reply::{Reply, cache};
-use super::storefront::{Visit, reply_from};
+use super::storefront::{Visit, header_text, reply_from};
 use super::{Incoming, SESSION_COOKIE, SESSION_HEADER, ServerState};
 
 /// The first segment of the proxied path, as shopify.dev lists the values a `prefix` may take.
-pub const PREFIXES: [&str; 4] = ["a", "apps", "community", "tools"];
+const PREFIXES: [&str; 4] = ["a", "apps", "community", "tools"];
 
 /// The `subpath`s Shopify refuses ("About app proxies").
 const RESERVED_SUBPATHS: [&str; 4] = ["admin", "services", "password", "login"];
@@ -46,7 +46,7 @@ const RESERVED_SUBPATHS: [&str; 4] = ["admin", "services", "password", "login"];
 /// proxies; lsf waits as long as shopify.dev says Shopify waits for its own APIs ("Shopify waits
 /// up to 10 seconds for a response", the `504 Gateway Timeout` of "API response status and error
 /// codes").
-pub const TIMEOUT: Duration = Duration::from_secs(10);
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The most of an answer that is read: the bodies of the requests the server reads are capped
 /// at the same.
@@ -54,7 +54,7 @@ const MAX_ANSWER: u64 = 32 * 1024 * 1024;
 
 /// The headers Shopify strips from the answers of app proxies, "due to security concerns"
 /// (shopify.dev, "About app proxies", "Disallowed headers"), lowercase.
-pub const DISALLOWED_RESPONSE_HEADERS: [&str; 19] = [
+const DISALLOWED_RESPONSE_HEADERS: [&str; 19] = [
     "accept-patch",
     "accept-ranges",
     "connection",
@@ -110,14 +110,14 @@ const PATH_SEGMENT: &AsciiSet = &CONTROLS
 pub struct AppProxy {
     /// `/<prefix>/<subpath>`: the storefront path that is proxied, and the `path_prefix` the
     /// backend is given. Shopify lets a merchant change both; lsf serves the app's.
-    pub path_prefix: String,
+    path_prefix: String,
     /// `url` of `[app_proxy]`, as written.
-    pub url: String,
+    url: String,
     /// Where the requests go: `url` resolved as the `uri` of a webhook (a path joins the app
     /// URL; on the origin of `application_url`, it moves to `--app-url`), or why it cannot be.
-    pub target: Destination,
+    target: Destination,
     /// Why the proxy is not served: an `[app_proxy]` Shopify would not take.
-    pub problem: Option<String>,
+    problem: Option<String>,
     /// How long the backend has to answer: [`TIMEOUT`], shorter in tests.
     timeout: Duration,
     agent: ureq::Agent,
@@ -132,7 +132,7 @@ impl AppProxy {
     }
 
     /// The app proxy of a `shopify.app.toml`, with the backend on `app_url` (`--app-url`).
-    pub fn new(config: &AppConfig, app_url: Option<&str>) -> Option<AppProxy> {
+    fn new(config: &AppConfig, app_url: Option<&str>) -> Option<AppProxy> {
         let proxy = config.app_proxy.as_ref()?;
         let prefix = proxy.prefix.trim().trim_matches('/');
         let subpath = proxy.subpath.trim().trim_matches('/');
@@ -199,7 +199,7 @@ impl AppProxy {
 
     /// The part of a storefront path (its locale prefix removed) below the proxied path: `""`
     /// for the proxied path itself, `/extra/path` below it, `None` elsewhere.
-    pub fn rest_of<'a>(&self, path: &'a str) -> Option<&'a str> {
+    fn rest_of<'a>(&self, path: &'a str) -> Option<&'a str> {
         let rest = path.strip_prefix(&self.path_prefix)?;
         (rest.is_empty() || rest.starts_with('/')).then_some(rest)
     }
@@ -243,7 +243,6 @@ pub fn route(state: &ServerState, incoming: &Incoming) -> Option<Reply> {
     })
 }
 
-/// What the backend answered: its status, its headers and its body.
 struct Answer {
     status: u16,
     headers: Vec<(String, String)>,
@@ -395,7 +394,6 @@ fn forwarded_headers(incoming: &Incoming, language: Option<&str>) -> Vec<(String
     headers
 }
 
-/// Sends the request to the backend, and reads its answer.
 fn send(
     agent: &ureq::Agent,
     method: &str,
@@ -555,24 +553,9 @@ fn unreachable_page(state: &ServerState, status: u16, url: &str, reason: &str) -
         .cached(cache::PRIVATE)
 }
 
-/// A reason as a header value: printable ASCII only.
-fn header_text(reason: &str) -> String {
-    reason
-        .chars()
-        .map(|c| {
-            if c.is_ascii() && !c.is_ascii_control() {
-                c
-            } else {
-                '?'
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::io::{BufRead, BufReader, Read, Write};
     use std::path::PathBuf;
     use std::sync::mpsc;
 
@@ -583,110 +566,13 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::server::admin::AdminSettings;
+    use crate::server::tests::{Seen, backend, http};
     use crate::server::{ServeOptions, ServerState};
 
     const SECRET: &str = "hush";
 
     /// `[app_proxy]` on the origin of `application_url`, as `shopify app dev` leaves it.
     const PROXY: &str = "url = \"https://example.trycloudflare.com/proxy\"\nsubpath = \"reviews\"\nprefix = \"apps\"";
-
-    /// A request as the backend received it.
-    struct Seen {
-        method: String,
-        /// The path and the query, as sent.
-        target: String,
-        headers: HashMap<String, String>,
-        body: Vec<u8>,
-    }
-
-    impl Seen {
-        fn path(&self) -> &str {
-            self.target.split('?').next().unwrap_or_default()
-        }
-
-        /// The query, decoded as `URLSearchParams` decodes it, in order.
-        fn query(&self) -> Vec<(String, String)> {
-            let query = self.target.split_once('?').map_or("", |(_, query)| query);
-            form_urlencoded::parse(query.as_bytes())
-                .into_owned()
-                .collect()
-        }
-
-        fn param(&self, name: &str) -> Option<String> {
-            self.query()
-                .into_iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| value)
-        }
-    }
-
-    /// A backend on a port of its own: each request is answered with the raw HTTP `answer`
-    /// writes for it, then sent to the channel.
-    fn backend(
-        answer: impl Fn(&Seen) -> String + Send + 'static,
-    ) -> (String, mpsc::Receiver<Seen>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let (sender, received) = mpsc::channel();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut line = String::new();
-                if reader.read_line(&mut line).is_err() {
-                    continue;
-                }
-                let mut parts = line.split(' ');
-                let method = parts.next().unwrap_or_default().to_string();
-                let target = parts.next().unwrap_or_default().to_string();
-                let mut headers = HashMap::new();
-                loop {
-                    line.clear();
-                    if reader.read_line(&mut line).is_err() {
-                        break;
-                    }
-                    match line.trim_end().split_once(':') {
-                        Some((name, value)) => {
-                            headers
-                                .insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
-                        }
-                        None => break,
-                    }
-                }
-                let length = headers
-                    .get("content-length")
-                    .and_then(|length| length.parse().ok())
-                    .unwrap_or(0);
-                let mut body = vec![0; length];
-                let _ = reader.read_exact(&mut body);
-                let seen = Seen {
-                    method,
-                    target,
-                    headers,
-                    body,
-                };
-                let _ = stream.write_all(answer(&seen).as_bytes());
-                if sender.send(seen).is_err() {
-                    break;
-                }
-            }
-        });
-        (url, received)
-    }
-
-    /// A raw HTTP answer.
-    fn http(status: &str, headers: &[(&str, &str)], body: &str) -> String {
-        let mut answer = format!(
-            "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n",
-            body.len()
-        );
-        for (name, value) in headers {
-            answer.push_str(&format!("{name}: {value}\r\n"));
-        }
-        answer.push_str("\r\n");
-        answer.push_str(body);
-        answer
-    }
 
     /// A Liquid answer, as `liquid()` of the app templates sends it.
     fn liquid(body: &str) -> String {

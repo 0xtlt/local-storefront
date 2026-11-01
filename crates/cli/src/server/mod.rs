@@ -241,21 +241,45 @@ fn fingerprint(root: &Path) -> u64 {
     hasher.finish()
 }
 
-impl ServerState {
-    pub fn new(app: App, options: ServeOptions) -> (ServerState, Diagnostics) {
+/// Locks `mutex`, even after a panic while it was held: the locks this takes guard no data a
+/// panic can leave half done.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl Loaded {
+    /// The store of the files of `app` alone, read now.
+    fn of_files(app: &App) -> Loaded {
         let source = Arc::new(app.read_store());
         let load_options = app.load_options();
         let (store, diagnostics) = source.build(&load_options, &[]);
         let base = Arc::new(store);
-        let fingerprint = app
-            .data_dir()
-            .map_or(0, |directory| fingerprint(&directory));
+        Loaded {
+            store: base.clone(),
+            diagnostics,
+            fingerprint: app
+                .data_dir()
+                .map_or(0, |directory| fingerprint(&directory)),
+            base,
+            source,
+            load_options,
+            synced: Default::default(),
+        }
+    }
+}
+
+impl ServerState {
+    pub fn new(app: App, options: ServeOptions) -> (ServerState, Diagnostics) {
+        let files = Loaded::of_files(&app);
+        let diagnostics = files.diagnostics.clone();
         let admin = options.admin.as_ref().map(|settings| {
             let app_dir = options
                 .checkout
                 .as_ref()
                 .map(|checkout| checkout.app_dir.as_path());
-            admin::Admin::new(&base, settings, app_dir, app.theme.files().root())
+            admin::Admin::new(&files.base, settings, app_dir, app.theme.files().root())
         });
         let app_proxy = options.admin.as_ref().and_then(|settings| {
             let app_dir = options.checkout.as_ref()?.app_dir.as_path();
@@ -263,15 +287,7 @@ impl ServerState {
         });
         let admin_changes = admin.as_ref().map_or(0, |admin| admin.api.store_changes());
         let state = ServerState {
-            loaded: RwLock::new(Arc::new(Loaded {
-                store: base.clone(),
-                diagnostics: diagnostics.clone(),
-                fingerprint,
-                base,
-                source,
-                load_options,
-                synced: Default::default(),
-            })),
+            loaded: RwLock::new(Arc::new(files)),
             rebuilding: Mutex::new(()),
             admin_changes: AtomicU64::new(admin_changes),
             app,
@@ -310,27 +326,8 @@ impl ServerState {
     /// the store is the files', and the theme the directory's, without the Admin API's files or
     /// script tags.
     pub fn reload(&self) -> Arc<Loaded> {
-        // A build that panicked leaves nothing half done behind this lock: it guards no data.
-        let _rebuilding = self
-            .rebuilding
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let source = Arc::new(self.app.read_store());
-        let load_options = self.app.load_options();
-        let (store, diagnostics) = source.build(&load_options, &[]);
-        let base = Arc::new(store);
-        let files = Loaded {
-            store: base.clone(),
-            diagnostics,
-            fingerprint: self
-                .app
-                .data_dir()
-                .map_or(0, |directory| fingerprint(&directory)),
-            base,
-            source,
-            load_options,
-            synced: Default::default(),
-        };
+        let _rebuilding = lock(&self.rebuilding);
+        let files = Loaded::of_files(&self.app);
         let loaded = match &self.admin {
             Some(admin) => {
                 let reseeded = admin.api.reseed(&files.base);
@@ -755,7 +752,6 @@ pub const UPLOAD_BODY_LIMIT: usize = (1 << 30) + (1 << 20);
 /// `ZIP_TOO_LARGE`.
 pub const SOURCE_BODY_LIMIT: usize = lsf_admin::sources::MAX_SOURCE_BYTES + (1 << 20);
 
-/// The largest body a request to `path` may have.
 fn body_limit(path: &str) -> usize {
     if path.starts_with(lsf_admin::domains::app::uploads::UPLOADS_PATH) {
         UPLOAD_BODY_LIMIT
@@ -766,7 +762,6 @@ fn body_limit(path: &str) -> usize {
     }
 }
 
-/// Why a body was not read.
 #[derive(Debug, PartialEq)]
 enum BodyRefused {
     /// More than the limit: `413`, rather than an empty body, which an upload took for an empty

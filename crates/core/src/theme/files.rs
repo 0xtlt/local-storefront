@@ -164,6 +164,16 @@ impl ThemeFiles {
         self.overlay.read().ok()?.clone()
     }
 
+    /// What the overlay says of `relative`, through `answer` (the file, or `None` for a file it
+    /// deletes or an exclusive overlay lacks); `None` when the directory decides.
+    fn in_overlay<T>(
+        &self,
+        relative: &str,
+        answer: impl FnOnce(Option<&OverlayFile>) -> T,
+    ) -> Option<T> {
+        self.overlay()?.entry(relative).map(answer)
+    }
+
     /// The generation of the overlay served: `0` without one.
     pub fn overlay_generation(&self) -> u64 {
         self.overlay().map_or(0, |overlay| overlay.generation)
@@ -178,10 +188,8 @@ impl ThemeFiles {
     /// The bytes of a file: the overlay's, else the directory's. What a file that is not text
     /// (an image of `assets/`) is served from.
     pub fn bytes(&self, relative: &str) -> Option<Arc<[u8]>> {
-        if let Some(overlay) = self.overlay()
-            && let Some(entry) = overlay.entry(relative)
-        {
-            return entry.map(|file| file.bytes.clone());
+        if let Some(bytes) = self.in_overlay(relative, |file| file.map(|file| file.bytes.clone())) {
+            return bytes;
         }
         let path = self.resolve(relative)?;
         std::fs::read(path).ok().map(Arc::from)
@@ -190,8 +198,7 @@ impl ThemeFiles {
     /// Whether the overlay decides what a path is: the directory's file at it is not served
     /// (it was written over, deleted, or the overlay is the whole theme).
     pub fn overlaid(&self, relative: &str) -> bool {
-        self.overlay()
-            .is_some_and(|overlay| overlay.entry(relative).is_some())
+        self.in_overlay(relative, |_| ()).is_some()
     }
 
     pub fn root(&self) -> &Path {
@@ -253,11 +260,10 @@ impl ThemeFiles {
     /// The content of a theme file (`snippets/price.liquid`), or `None` when it does not exist.
     /// The returned `Arc` is stable while the file is unchanged, so it doubles as a cache key.
     pub fn read(&self, relative: &str) -> Option<Arc<str>> {
-        if self.has_overlay.load(Ordering::Acquire)
-            && let Some(overlay) = self.overlay()
-            && let Some(entry) = overlay.entry(relative)
+        if let Some(text) =
+            self.in_overlay(relative, |file| file.and_then(|file| file.text.clone()))
         {
-            return entry.and_then(|file| file.text.clone());
+            return text;
         }
         if let Ok(cache) = self.cache.read()
             && let Some(entry) = cache.get(relative)
@@ -292,11 +298,8 @@ impl ThemeFiles {
     }
 
     pub fn exists(&self, relative: &str) -> bool {
-        if self.has_overlay.load(Ordering::Acquire)
-            && let Some(overlay) = self.overlay()
-            && let Some(entry) = overlay.entry(relative)
-        {
-            return entry.is_some();
+        if let Some(exists) = self.in_overlay(relative, |file| file.is_some()) {
+            return exists;
         }
         let Some(path) = self.resolve(relative) else {
             return false;
@@ -308,12 +311,7 @@ impl ThemeFiles {
     /// the directory's that it does not delete.
     pub fn list(&self, directory: &str) -> Arc<[String]> {
         let listed = self.list_directory(directory);
-        let Some(overlay) = self
-            .has_overlay
-            .load(Ordering::Acquire)
-            .then(|| self.overlay())
-            .flatten()
-        else {
+        let Some(overlay) = self.overlay() else {
             return listed;
         };
         let prefix = format!("{}/", directory.trim_end_matches('/'));
@@ -362,11 +360,10 @@ impl ThemeFiles {
     /// It derives from the content rather than the modification time, so that the same theme
     /// renders the same HTML on every machine.
     pub fn version(&self, relative: &str) -> u64 {
-        if self.has_overlay.load(Ordering::Acquire)
-            && let Some(overlay) = self.overlay()
-            && let Some(entry) = overlay.entry(relative)
-        {
-            return entry.map_or(0, |file| content_version(&file.bytes));
+        if let Some(version) = self.in_overlay(relative, |file| {
+            file.map_or(0, |file| content_version(&file.bytes))
+        }) {
+            return version;
         }
         let Some(path) = self.resolve(relative) else {
             return 0;
