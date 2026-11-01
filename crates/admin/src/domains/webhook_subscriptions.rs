@@ -17,7 +17,7 @@ use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
 use crate::search::Filter;
 use crate::webhooks::subscriptions::{
-    Format, MetafieldIdentifier, SubscriptionInput, UserError as RegistryError,
+    Format, MetafieldIdentifier, Subscription, SubscriptionInput, UserError as RegistryError,
 };
 use crate::webhooks::{Webhooks, topics};
 
@@ -158,6 +158,17 @@ fn converted(errors: Vec<RegistryError>) -> Vec<UserError> {
         .collect()
 }
 
+/// The payload of `webhookSubscriptionCreate` and `webhookSubscriptionUpdate`.
+fn answered(result: Result<Subscription, Vec<RegistryError>>) -> Value {
+    match result {
+        Ok(subscription) => payload(
+            json!({"webhookSubscription": subscription.to_record()}),
+            &[],
+        ),
+        Err(errors) => payload(json!({"webhookSubscription": null}), &converted(errors)),
+    }
+}
+
 /// The webhooks of the server, which a resolver run alone may not have.
 fn webhooks_of<'m>(mutation: &'m Mutation<'_>) -> Result<&'m Webhooks, FieldError> {
     mutation
@@ -210,13 +221,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let created = webhooks_of(mutation)?
         .registry()
         .create(&shop, &topic, input, &version, now);
-    Ok(match created {
-        Ok(subscription) => payload(
-            json!({"webhookSubscription": subscription.to_record()}),
-            &[],
-        ),
-        Err(errors) => payload(json!({"webhookSubscription": null}), &converted(errors)),
-    })
+    Ok(answered(created))
 }
 
 fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
@@ -230,13 +235,7 @@ fn update(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
     let updated = webhooks_of(mutation)?
         .registry()
         .update(&shop, &id, input, chrono::Utc::now());
-    Ok(match updated {
-        Ok(subscription) => payload(
-            json!({"webhookSubscription": subscription.to_record()}),
-            &[],
-        ),
-        Err(errors) => payload(json!({"webhookSubscription": null}), &converted(errors)),
-    })
+    Ok(answered(updated))
 }
 
 fn delete(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
