@@ -181,6 +181,35 @@ fn kept<'a>(
 }
 
 /// The tags and the note the merged customer would have.
+/// The default address and the addresses of the merged customer: the default one is the other
+/// customer's when `from_other`, else the kept one's, else the other's; the addresses are the kept
+/// customer's, then those of the other it lacks, the default first.
+fn merged_addresses(a: &Record, b: &Record, from_other: bool) -> (Value, Vec<Value>) {
+    let default_of = |record: &Record| record.get("defaultAddress").cloned().unwrap_or(Value::Null);
+    let default_address = if from_other {
+        default_of(b)
+    } else {
+        Some(default_of(a))
+            .filter(|address| !address.is_null())
+            .unwrap_or_else(|| default_of(b))
+    };
+    let mut addresses: Vec<Value> = Vec::new();
+    for address in [a, b]
+        .into_iter()
+        .filter_map(|record| record.get("addressesV2").and_then(Value::as_array))
+        .flatten()
+    {
+        if !addresses.contains(address) {
+            addresses.push(address.clone());
+        }
+    }
+    if !default_address.is_null() {
+        addresses.retain(|address| *address != default_address);
+        addresses.insert(0, default_address.clone());
+    }
+    (default_address, addresses)
+}
+
 fn merged_tags_and_note(
     a: &Record,
     b: &Record,
@@ -382,33 +411,8 @@ fn merge_into(state: &mut ShopState, keep: &str, gone: &str, overrides: &Map<Str
     }
     let chosen = |field: &str| overrides.get(field).and_then(Value::as_str) == Some(gone);
     let from_gone = |field: &str| b.get(field).cloned().unwrap_or(Value::Null);
-    let mut addresses: Vec<Value> = a
-        .get("addressesV2")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for address in b
-        .get("addressesV2")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        if !addresses.contains(address) {
-            addresses.push(address.clone());
-        }
-    }
-    let default_address = if chosen("customerIdOfDefaultAddressToKeep") {
-        from_gone("defaultAddress")
-    } else {
-        a.get("defaultAddress")
-            .cloned()
-            .filter(|address| !address.is_null())
-            .unwrap_or_else(|| from_gone("defaultAddress"))
-    };
-    if !default_address.is_null() {
-        addresses.retain(|address| *address != default_address);
-        addresses.insert(0, default_address.clone());
-    }
+    let (default_address, addresses) =
+        merged_addresses(&a, &b, chosen("customerIdOfDefaultAddressToKeep"));
     let mut metafields: Vec<Value> = a
         .get("metafields")
         .and_then(Value::as_array)
@@ -564,16 +568,15 @@ fn customer_merge_preview(
     };
     let draft_orders = owned("DraftOrder", "customer");
     let gift_cards = owned("GiftCard", "customer");
-    let addresses: Vec<Value> = [a, b]
-        .iter()
-        .flat_map(|record| {
-            record
-                .get("addressesV2")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-        })
-        .collect();
+    // What the merge makes of them: no address twice, the default one first.
+    let (default_address, addresses) = merged_addresses(
+        a,
+        b,
+        overrides
+            .get("customerIdOfDefaultAddressToKeep")
+            .and_then(Value::as_str)
+            == Some(other),
+    );
     let metafields = [a, b]
         .iter()
         .map(|record| {
@@ -608,7 +611,7 @@ fn customer_merge_preview(
             "displayName": display,
             "email": pick("customerIdOfEmailToKeep", "defaultEmailAddress"),
             "phoneNumber": pick("customerIdOfPhoneNumberToKeep", "defaultPhoneNumber"),
-            "defaultAddress": pick("customerIdOfDefaultAddressToKeep", "defaultAddress"),
+            "defaultAddress": default_address,
             "addresses": addresses,
             "tags": tags,
             "note": note,
@@ -730,6 +733,46 @@ mod tests {
     use serde_json::{Value, json};
 
     use crate::domains::segments::tests::{customer, data, demo, run, topics};
+
+    fn with_addresses(addresses: Value, default: Value) -> super::Record {
+        json!({"addressesV2": addresses, "defaultAddress": default})
+            .as_object()
+            .cloned()
+            .unwrap()
+    }
+
+    /// The preview listed both customers' addresses end to end, a shared one twice, while the
+    /// merge keeps each once with the default first: both use `merged_addresses`.
+    #[test]
+    fn merged_addresses_are_listed_once_the_default_first() {
+        let (home, work, shared) = (
+            json!({"a": "home"}),
+            json!({"a": "work"}),
+            json!({"a": "both"}),
+        );
+        let kept = with_addresses(json!([home, shared]), home.clone());
+        let other = with_addresses(json!([shared, work]), work.clone());
+        assert_eq!(
+            super::merged_addresses(&kept, &other, false),
+            (
+                home.clone(),
+                vec![home.clone(), shared.clone(), work.clone()]
+            )
+        );
+        assert_eq!(
+            super::merged_addresses(&kept, &other, true),
+            (
+                work.clone(),
+                vec![work.clone(), home.clone(), shared.clone()]
+            )
+        );
+        // Without a default of its own, the kept customer takes the other's.
+        let bare = with_addresses(json!([shared]), Value::Null);
+        assert_eq!(
+            super::merged_addresses(&bare, &other, false),
+            (work.clone(), vec![work, shared])
+        );
+    }
 
     #[test]
     fn two_customers_merge_into_the_one_with_an_account_or_an_email() {
