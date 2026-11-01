@@ -527,7 +527,7 @@ counts the others.
 | `strict_liquid_rejected` | Markup Shopify's strict parser rejects. |
 | `strict_liquid_reinterpreted` | Markup Shopify's strict parser reads differently from today. |
 | `liquid_syntax` | A file that does not parse at all. |
-| `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
+| `unknown_filter` | A filter local-storefront does not know. Either a typo: Shopify skips an unknown filter, and the value comes out unchanged. A filter of Shopify one or two letters away, with the same letters, or a name of another template language (`uppercase`) is in the `hint`. Or a filter of Shopify that local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues). |
 | `block_outside_template` | `{% block %}` outside `layout/` and `templates/` (with `--preview liquid-july-26`). |
 | `invalid_json` | A JSON file that does not parse. |
 | `fix_fallback` | A warning: what the code meant could not be written for this file, so only the fixes that keep the output were. |
@@ -547,6 +547,7 @@ The diagnostics of the strict parser have more keys:
 | `fix.left_out` | `{ variables, snippet }`: arguments the fix drops, which the snippet does not read. |
 | `fix.changes_output` | What renders differently with the fix. Absent when the output stays the same. |
 | `no_fix` | Why there is no fix, when there is none. |
+| `hint` | For an `unknown_filter`, the filter of Shopify it is probably a typo of: `did you mean "upcase"?`. Absent when none is close. |
 
 Exits with `1` when a problem is left, whatever the format.
 

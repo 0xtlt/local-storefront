@@ -167,7 +167,8 @@ npx local-storefront check --format json
 ```
 
 This is the dry run: each `fix` is exactly what `--fix` writes. A diagnostic with `no_fix`, or
-with neither key (an `unknown_filter`), is not fixed by `--fix`: see the rules of the next task.
+with neither key (an `unknown_filter`, which may have a `hint`), is not fixed by `--fix`: see
+the rules of the next task.
 Exit `1` while a problem is left. Every key and code: [CLI reference](cli.md#the-json-format).
 
 `check` reads the files and renders none: a Liquid error at render time (a division by zero)
@@ -193,9 +194,9 @@ Rules for an agent:
   Apply the rewrite, and report it as you report a `changes_output`: the page changes. Any other
   `no_fix` needs a person's decision. Do not invent a rewrite: report it with its `file`,
   `line` and `no_fix`.
-- An `unknown_filter` named almost like a filter of Shopify is a typo (`uppercas` for
-  `upcase`): fix the name, and report it, since the page changes. Any other may be a filter
-  that local-storefront lacks: report it.
+- An `unknown_filter` with a `hint` is a typo (`uppercas`, `did you mean "upcase"?`): apply
+  the hint, and report it, since the page changes. One without a `hint` may be a filter that
+  local-storefront lacks: report it.
 - It is safe to run twice: the second run writes nothing.
 - Run `npx local-storefront check --format json` again: `problems` is `0`, or every problem left
   is reported to the person.

@@ -42,11 +42,14 @@ The report lists unknown filters too:
 
 ```text
 snippets/title.liquid:5: unknown filter `uppercas` (Shopify ignores unknown filters; this one is not implemented here)
+  hint: did you mean "upcase"?
 ```
 
 Either it is a typo: Shopify skips a filter it does not know, and prints the value unchanged, so
-the page looks almost right. Fix the name (`upcase`). Or it is a filter of Shopify that
-local-storefront lacks: [report it](https://github.com/0xtlt/local-storefront/issues).
+the page looks almost right. Fix the name: the `hint` gives it when a filter of Shopify is one or
+two letters away, has the same letters, or does what a filter of another template language
+does (`uppercase`). Or it is a filter of Shopify that local-storefront lacks:
+[report it](https://github.com/0xtlt/local-storefront/issues).
 
 ## Fix it
 
