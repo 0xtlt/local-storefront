@@ -12,7 +12,7 @@ use lsf_admin::api::samples::ShopSamples;
 use lsf_admin::state::ShopState;
 use lsf_admin::version::{ApiVersion, Served};
 use lsf_admin::webhooks::samples::Samples;
-use lsf_admin::webhooks::subscriptions::is_local_http;
+use lsf_admin::webhooks::subscriptions::{is_local_http, off_machine};
 use lsf_admin::webhooks::{
     API_VERSION, Delivery, DeliveryFilter, DeliveryOptions, DeliveryState, Trigger, Webhooks,
     topics,
@@ -190,6 +190,13 @@ fn trigger(
     let webhooks = Webhooks::for_app(&config, args.app_url.clone(), secret, options)
         .with_versions(Served::new([version]));
     let shop = samples.shop();
+    // A subscription's address that is neither this machine nor `--app-url` is refused before
+    // anything is sent: the webhook is signed with the app's secret.
+    if args.address.is_none()
+        && let Some(url) = webhooks.refused_urls(&shop, topic).first()
+    {
+        return Err(off_machine(url));
+    }
     let ids = webhooks.trigger(&Trigger {
         topic,
         shop: &shop,

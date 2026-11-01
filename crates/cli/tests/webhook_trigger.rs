@@ -309,3 +309,78 @@ fn what_cannot_be_sent_is_refused_with_why() {
         text(&output)
     );
 }
+
+#[test]
+fn a_subscription_that_leaves_the_machine_is_refused_before_anything_is_sent() {
+    let (url, received) = backend(200);
+    let app = App::new(
+        "remote",
+        r#"
+client_id = "abc"
+application_url = "https://my-app.example.com"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/update"]
+  uri = "/webhooks/products"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "https://hooks.example.net/orders"
+"#,
+    );
+    let advice = "start lsf with --app-url http://localhost:<port> (your backend)";
+    // A relative `uri`, and no `--app-url`: it would join `application_url`.
+    let output = lsf(
+        &app.0,
+        &["app", "webhook", "trigger", "--topic", "products/update"],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains(
+            "error: lsf sends webhooks to this machine or to --app-url only: \
+             https://my-app.example.com/webhooks/products is neither; "
+        ),
+        "{}",
+        text(&output)
+    );
+    assert!(text(&output).contains(advice), "{}", text(&output));
+    // An absolute `uri` on another host, `--app-url` or not.
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "orders/create",
+            "--app-url",
+            &url,
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("https://hooks.example.net/orders is neither"),
+        "{}",
+        text(&output)
+    );
+    // With `--app-url`, the relative one goes there.
+    let output = lsf(
+        &app.0,
+        &[
+            "app",
+            "webhook",
+            "trigger",
+            "--topic",
+            "products/update",
+            "--app-url",
+            &url,
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let received = received.lock().unwrap();
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].0, "/webhooks/products");
+}

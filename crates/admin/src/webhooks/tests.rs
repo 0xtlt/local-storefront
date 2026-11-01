@@ -801,6 +801,129 @@ fn a_subscription_of_the_admin_api_is_delivered_for_its_shop_only() {
 }
 
 #[test]
+fn a_webhook_is_sent_to_this_machine_or_to_the_app_url_only() {
+    let backend = Backend::start(|_| (200, Duration::ZERO));
+    // `localhost` rather than the backend's `127.0.0.1`: another name of the loopback.
+    let port = backend.url.rsplit(':').next().unwrap();
+    let webhooks = webhooks(
+        vec![
+            subscription(&["products/update"], "/joined"),
+            subscription(
+                &["products/update"],
+                &format!("http://localhost:{port}/loopback"),
+            ),
+            // On the origin of `application_url`: moved to `--app-url`.
+            subscription(
+                &["products/update"],
+                "https://tunnel.trycloudflare.com/moved",
+            ),
+            subscription(&["products/update"], "https://hooks.example.com/remote"),
+        ],
+        &backend.url,
+        options(),
+    );
+    // A subscription the backend makes through the Admin API, to another host.
+    webhooks
+        .registry()
+        .create(
+            SHOP,
+            "PRODUCTS_UPDATE",
+            SubscriptionInput {
+                uri: Some("https://hooks.example.net/api".to_string()),
+                ..Default::default()
+            },
+            API_VERSION,
+            Utc::now(),
+        )
+        .unwrap();
+    webhooks.emit(
+        &event("products/update", "gid://shopify/Product/1"),
+        &lookup(),
+    );
+    let deliveries = wait_for(&webhooks, 5);
+    let outcome: Vec<(&str, DeliveryState)> = deliveries
+        .iter()
+        .map(|delivery| (delivery.url.as_deref().unwrap(), delivery.state))
+        .collect();
+    assert_eq!(
+        outcome,
+        [
+            (
+                format!("{}/joined", backend.url).as_str(),
+                DeliveryState::Delivered
+            ),
+            (
+                format!("http://localhost:{port}/loopback").as_str(),
+                DeliveryState::Delivered
+            ),
+            (
+                format!("{}/moved", backend.url).as_str(),
+                DeliveryState::Delivered
+            ),
+            ("https://hooks.example.com/remote", DeliveryState::NotSent),
+            ("https://hooks.example.net/api", DeliveryState::NotSent),
+        ]
+    );
+    assert_eq!(
+        deliveries[3].reason.as_deref(),
+        Some(subscriptions::off_machine("https://hooks.example.com/remote").as_str())
+    );
+    // What would have been sent is in the log all the same.
+    assert!(deliveries[4].request.is_some());
+    let mut paths: Vec<String> = backend.received().into_iter().map(|r| r.path).collect();
+    paths.sort();
+    assert_eq!(paths, ["/joined", "/loopback", "/moved"]);
+    assert_eq!(
+        webhooks.refused_urls(SHOP, "products/update"),
+        [
+            "https://hooks.example.com/remote",
+            "https://hooks.example.net/api"
+        ]
+    );
+
+    // Without `--app-url`, a relative `uri` joins `application_url`, which is not this machine.
+    let config = AppConfig {
+        application_url: Some("https://my-app.example.com".to_string()),
+        webhook_subscriptions: vec![subscription(&["products/update"], "/hooks")],
+        ..Default::default()
+    };
+    let remote = Webhooks::for_app(&config, None, SECRET.to_string(), options());
+    remote.emit(
+        &event("products/update", "gid://shopify/Product/1"),
+        &lookup(),
+    );
+    let delivery = &wait_for(&remote, 1)[0];
+    assert_eq!(delivery.state, DeliveryState::NotSent);
+    assert_eq!(
+        delivery.reason.as_deref(),
+        Some(
+            "lsf sends webhooks to this machine or to --app-url only: \
+             https://my-app.example.com/hooks is neither; start lsf with --app-url \
+             http://localhost:<port> (your backend)"
+        )
+    );
+    assert!(
+        remote.summary().ends_with(
+            "→ https://my-app.example.com, not this machine: not sent (give --app-url http://localhost:<port>)"
+        ),
+        "{}",
+        remote.summary()
+    );
+    // An address given explicitly goes where it says.
+    let payload = json!({"id": 1});
+    let address = format!("{}/direct", backend.url);
+    remote.trigger(&Trigger {
+        topic: "products/update",
+        shop: SHOP,
+        payload: &payload,
+        address: Some(&address),
+        at: Utc::now(),
+    });
+    let direct = &wait_for(&remote, 2)[1];
+    assert_eq!(direct.state, DeliveryState::Delivered, "{direct:#?}");
+}
+
+#[test]
 fn the_summary_says_where_the_webhooks_go() {
     let webhooks = webhooks(
         vec![

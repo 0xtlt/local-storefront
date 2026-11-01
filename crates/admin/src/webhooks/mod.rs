@@ -183,6 +183,22 @@ impl Webhooks {
                 .any(|subscription| subscription.topic == topic)
     }
 
+    /// Where the subscriptions of the shop to `topic` would deliver that lsf does not send to:
+    /// neither this machine nor `--app-url` ([`AppUrls::may_send_to`]). What
+    /// `lsf app webhook trigger` refuses before it sends anything.
+    pub fn refused_urls(&self, shop: &str, topic: &str) -> Vec<String> {
+        self.subscriptions(shop)
+            .iter()
+            .filter(|subscription| subscription.topic == topic)
+            .filter_map(
+                |subscription| match resolve_uri(&subscription.uri, &self.urls) {
+                    Destination::Http { url } if !self.urls.may_send_to(&url) => Some(url),
+                    _ => None,
+                },
+            )
+            .collect()
+    }
+
     /// The log of deliveries.
     pub fn deliveries(&self) -> &Deliveries {
         &self.deliveries
@@ -192,7 +208,13 @@ impl Webhooks {
     /// `3 subscriptions of shopify.app.toml → http://localhost:3000`.
     pub fn summary(&self) -> String {
         let count = self.app_subscriptions.len();
-        let target = self.urls.base().unwrap_or("no app URL (give --app-url)");
+        let target = match self.urls.base() {
+            None => "no app URL (give --app-url)".to_string(),
+            Some(base) if !self.urls.may_send_to(base) => format!(
+                "{base}, not this machine: not sent (give --app-url http://localhost:<port>)"
+            ),
+            Some(base) => base.to_string(),
+        };
         format!(
             "{count} subscription{} of shopify.app.toml → {target}",
             if count == 1 { "" } else { "s" }
@@ -320,7 +342,9 @@ impl Webhooks {
     }
 
     /// One delivery of `payload` for `subscription`, logged, and queued unless something keeps
-    /// it from being sent.
+    /// it from being sent. `reference` is `None` for an address given explicitly (`--address`,
+    /// the `address` of a trigger), which is sent where it says; a subscription's goes only to
+    /// this machine or to `--app-url` ([`AppUrls::may_send_to`]).
     #[allow(clippy::too_many_arguments)]
     fn deliver_to(
         &self,
@@ -340,6 +364,10 @@ impl Webhooks {
             Destination::Http { url } => Some(url.clone()),
             Destination::Undeliverable { .. } => None,
         };
+        let off_machine = url
+            .as_deref()
+            .filter(|url| reference.is_some() && !self.urls.may_send_to(url))
+            .map(subscriptions::off_machine);
         let webhook_id = sign::new_id();
         let delivery = |request: Option<Request>, notes: Vec<String>| NewDelivery {
             webhook_id: webhook_id.clone(),
@@ -426,9 +454,10 @@ impl Webhooks {
         if let Some(reason) = filtered_out {
             return self.deliveries.not_sent(new, reason);
         }
-        match destination {
-            Destination::Http { .. } => self.deliveries.send(new),
-            Destination::Undeliverable { reason } => self.deliveries.not_sent(new, reason),
+        match (destination, off_machine) {
+            (Destination::Http { .. }, None) => self.deliveries.send(new),
+            (Destination::Http { .. }, Some(reason))
+            | (Destination::Undeliverable { reason }, _) => self.deliveries.not_sent(new, reason),
         }
     }
 }
