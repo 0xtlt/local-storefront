@@ -8596,6 +8596,7 @@ fn an_order_placed_at_the_checkout_is_an_order_of_the_admin_api() {
     );
     let reply = post(&state, &format!("{path}/complete"), json!({}), "co-admin");
     assert_eq!(reply.status, 200, "{}", text(&reply));
+    let completed = body_json(&reply);
 
     let Seen {
         target: webhook_path,
@@ -8625,6 +8626,74 @@ fn an_order_placed_at_the_checkout_is_an_order_of_the_admin_api() {
         json!([{"sku": "TEE-BLK-M", "quantity": 2}])
     );
     assert_eq!(order["data"]["order"]["name"], payload["name"]);
+    // `complete` names the order as its `orders/create` does.
+    assert_eq!(
+        completed,
+        json!({
+            "redirect": format!("{path}/thank-you"),
+            "order": {
+                "id": payload["admin_graphql_api_id"],
+                "number": payload["order_number"],
+                "name": payload["name"],
+            },
+        })
+    );
+    // Asked again, the same order.
+    let again = post(&state, &format!("{path}/complete"), json!({}), "co-admin");
+    assert_eq!(body_json(&again), completed);
+}
+
+/// When the shop has an order of the session's number already, the Admin API records the
+/// checkout's order under its next one: `complete` answers that one, the one of the webhooks.
+#[test]
+fn complete_answers_the_order_the_admin_api_recorded() {
+    let state = checkout_server_with(fixture_app(), &[], true, None, Some(Default::default()));
+    let installed = admin_request(
+        &state,
+        "POST",
+        "/__lsf/admin/install",
+        r#"{"scopes": "write_orders"}"#,
+    );
+    assert_eq!(installed.status, 200, "{}", text(&installed));
+    admin_query(
+        &state,
+        r#"mutation { orderCreate(order: {lineItems: [{title: "Service", quantity: 1, priceSet: {shopMoney: {amount: "5.00", currencyCode: USD}}}]}) { order { name } } }"#,
+    );
+    let path = start_checkout(
+        &state,
+        "co-numbered",
+        json!([{"variant": "TEE-BLK-M", "quantity": 1}]),
+        json!({}),
+    );
+    assert_eq!(
+        operations(&state, &path, "co-numbered", buyer_details()).status,
+        200
+    );
+    let reply = post(
+        &state,
+        &format!("{path}/complete"),
+        json!({}),
+        "co-numbered",
+    );
+    assert_eq!(reply.status, 200, "{}", text(&reply));
+    let order = body_json(&reply)["order"].clone();
+    assert_eq!(order["number"], 1005, "{order}");
+    assert_eq!(order["name"], "#1005");
+    let id = order["id"].as_str().unwrap();
+    assert!(id.starts_with("gid://shopify/Order/"), "{id}");
+    let recorded = admin_query(
+        &state,
+        &format!(r#"{{ order(id: "{id}") {{ name number }} }}"#),
+    );
+    assert_eq!(
+        recorded["data"]["order"],
+        json!({"name": "#1005", "number": 1005}),
+        "{recorded}"
+    );
+    // The session's own number, which the thank-you page shows, is still #1004.
+    let state_json = body_json(&get(&state, &format!("{path}.json"), "co-numbered"));
+    assert_eq!(state_json["order"]["number"], "#1004");
+    assert_eq!(state_json["order"]["id"], order["id"]);
 }
 
 /// With the Admin API, the checkout's orders and the Admin API's share one numbering: the
