@@ -436,7 +436,7 @@ fn product_to_update(
 /// value}`; the namespace defaults to the app's), as `customId` finds it.
 pub fn product_by_custom_id(state: &ShopState, custom: &Value) -> Option<String> {
     let namespace = crate::domains::content::admin_namespace(
-        records::app_id(state),
+        state.app_id(),
         custom
             .get("namespace")
             .and_then(Value::as_str)

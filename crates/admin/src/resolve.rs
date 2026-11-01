@@ -828,7 +828,7 @@ impl<'a> ShopResolver<'a> {
     /// A namespace as the Admin API stores it: `$app` and `$app:x` are the app's reserved
     /// namespaces, `app--<id>` and `app--<id>--x`.
     pub fn app_namespace(&self, namespace: &str) -> String {
-        let app_id = self.state.keys("App").next().map_or(0, gid_number);
+        let app_id = self.state.app_id();
         crate::domains::content::admin_namespace(app_id, namespace)
     }
 

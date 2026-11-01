@@ -184,7 +184,7 @@ fn assessment_create(
         .iter()
         .map(|fact| json!({"description": fact.get("description"), "sentiment": fact.get("sentiment")}))
         .collect();
-    let provider = state.keys("App").next().map(str::to_string);
+    let provider = state.app_gid().map(str::to_string);
     let assessment = json!({
         "riskLevel": input.get("riskLevel"),
         "facts": facts,

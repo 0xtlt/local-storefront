@@ -711,11 +711,6 @@ pub(super) fn the_rest(
         .collect()
 }
 
-/// The app's GID, which holds what it puts on hold.
-fn app_gid(state: &ShopState) -> Option<String> {
-    state.keys("App").next().map(str::to_string)
-}
-
 /// `fulfillmentOrderHold`.
 fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -744,7 +739,7 @@ fn hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, Fi
             "The fulfillment order is not in a state that can be held.",
         )]);
     }
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     let holds: Vec<serde_json::Map<String, Value>> = gids(record.get("fulfillmentHolds"))
         .iter()
         .filter_map(|hold| state.get(hold).cloned())
@@ -881,7 +876,7 @@ fn release_hold(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<V
             "FULFILLMENT_ORDER_NOT_FOUND",
         )]);
     };
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     let holds = gids(record.get("fulfillmentHolds"));
     let asked: Option<Vec<String>> = ctx.arg("holdIds").map(|ids| gids(Some(ids)));
     let external = ctx.arg_str("externalId");

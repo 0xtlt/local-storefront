@@ -56,11 +56,6 @@ pub fn origin(state: &ShopState) -> String {
         .to_string()
 }
 
-/// The id of the app, for its reserved metafield namespaces.
-pub fn app_id(state: &ShopState) -> u64 {
-    state.keys("App").next().map_or(0, gid_number)
-}
-
 /// Whether a record of `type_name` other than `except` has `handle`.
 pub fn handle_taken(
     state: &ShopState,

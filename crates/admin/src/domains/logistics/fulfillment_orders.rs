@@ -39,7 +39,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{app_gid, coded, emit_change, int, keys_of, objects, push, text};
+use super::{coded, emit_change, int, keys_of, objects, push, text};
 use crate::domains::catalog::{self, gids};
 use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
@@ -535,7 +535,7 @@ fn report_progress(
         .cloned()
         .unwrap_or(Value::Null);
     let state = mutation.state_mut();
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     let initial = record
         .get(PROGRESS)
         .and_then(|progress| progress.get("initialStatus"))
@@ -568,7 +568,7 @@ pub fn stop_progress(mutation: &mut Mutation<'_>, id: &str) -> Option<Value> {
         return None;
     }
     let state = mutation.state_mut();
-    let app = app_gid(state);
+    let app = state.app_gid().map(str::to_string);
     if let Some(record) = state.get_mut(id) {
         record.insert("status".into(), json!("OPEN"));
         record.remove(PROGRESS);

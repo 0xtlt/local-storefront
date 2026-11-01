@@ -207,11 +207,6 @@ pub fn keys_of(state: &ShopState, record: &str, field: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The app's GID.
-pub fn app_gid(state: &ShopState) -> Option<String> {
-    state.keys("App").next().map(str::to_string)
-}
-
 /// The event context a payload of the family reads (see `webhooks::payload::logistics`): the
 /// time of the change and what it was about, kept as the event's snapshot so that two changes in
 /// one request each keep theirs.

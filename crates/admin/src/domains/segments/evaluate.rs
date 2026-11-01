@@ -231,15 +231,6 @@ pub fn created_by_app(state: &ShopState) -> HashSet<String> {
         .collect()
 }
 
-/// The app's numeric id: the app that creates what the Admin API creates.
-pub fn app_id(state: &ShopState) -> Option<u64> {
-    state
-        .keys("App")
-        .next()
-        .and_then(parse_gid)
-        .map(|(_, id)| id)
-}
-
 /// What the filters read of a customer.
 pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) -> Facts {
     let text = |value: Option<&Json>| value.and_then(Json::as_str).map(str::to_string);
@@ -364,7 +355,10 @@ pub fn facts(state: &ShopState, customer: &Record, created: &HashSet<String>) ->
         cities,
         coordinates,
         companies,
-        created_by_app: created.contains(&id).then(|| app_id(state)).flatten(),
+        created_by_app: created
+            .contains(&id)
+            .then(|| state.app_gid().and_then(parse_gid).map(|(_, id)| id))
+            .flatten(),
         abandoned_checkout: crate::domains::checkouts::last_abandonment(state, &id),
         product_subscription: text(customer.get("productSubscriberStatus"))
             .unwrap_or_else(|| "NEVER_SUBSCRIBED".into()),

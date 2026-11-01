@@ -395,7 +395,7 @@ fn write_external(
 
 /// Creates an external activity and its event from an input of `…UpsertExternal`.
 fn create_external(state: &mut ShopState, input: &Map<String, Value>, now: &str) -> String {
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let activity = state.new_gid("MarketingActivity");
     let event = state.new_gid("MarketingEvent");
     let parent = input
@@ -801,7 +801,7 @@ fn activity_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value
         .to_string();
     let now = m.timestamp();
     let state = m.state_mut();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let activity = state.new_gid("MarketingActivity");
     let title = input
         .get("marketingActivityTitle")

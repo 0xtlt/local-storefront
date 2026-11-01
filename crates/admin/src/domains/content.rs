@@ -1179,11 +1179,6 @@ pub fn attach_definition(state: &mut ShopState, metafield: &str) -> Option<Strin
     Some(id)
 }
 
-/// The numeric id of the app (`gid://shopify/App/<id>`), which its reserved namespaces name.
-pub fn app_id(state: &ShopState) -> u64 {
-    state.keys("App").next().map_or(0, crate::state::gid_number)
-}
-
 /// The custom resolvers and the mutations of this family: see "Writing a resolver or a
 /// mutation" in `crates/admin/docs/design.md`.
 pub fn register(registry: &mut crate::resolve::Registry) {

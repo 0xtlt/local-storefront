@@ -450,7 +450,7 @@ fn customer_update(
 /// value.
 fn by_custom_id(state: &ShopState, custom: &Map<String, Value>) -> Option<String> {
     let text = |name: &str| custom.get(name).and_then(Value::as_str);
-    let app = state.keys("App").next().map_or(0, gid_number);
+    let app = state.app_id();
     let namespace =
         crate::domains::content::admin_namespace(app, text("namespace").unwrap_or("$app"));
     state.keys("Customer").find_map(|customer| {

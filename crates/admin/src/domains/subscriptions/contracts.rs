@@ -185,7 +185,7 @@ pub fn commit_new(state: &mut ShopState, record: &Record, origin_order: Option<&
         json!(origin_order.into_iter().collect::<Vec<_>>()),
     );
     contract.insert("billingAttempts".into(), json!([]));
-    contract.insert("app".into(), json!(state.keys("App").next()));
+    contract.insert("app".into(), json!(state.app_gid()));
     contract.insert("appAdminUrl".into(), Value::Null);
     contract.insert("lastPaymentStatus".into(), Value::Null);
     contract.insert("lastBillingAttemptErrorType".into(), Value::Null);

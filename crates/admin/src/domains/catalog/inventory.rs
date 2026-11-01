@@ -237,7 +237,7 @@ fn adjustment_group(
     changes: &[Change],
 ) -> String {
     let now = state.timestamp();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let id = state.new_gid("InventoryAdjustmentGroup");
     let changes: Vec<Value> = changes
         .iter()

@@ -445,8 +445,7 @@ impl<'s> Sync<'s> {
             }
         }
         let app_namespace = state
-            .keys("App")
-            .next()
+            .app_gid()
             .and_then(parse_gid)
             .map(|(_, id)| format!("app--{id}"));
         let locations_in_data = !store.locations.is_empty()

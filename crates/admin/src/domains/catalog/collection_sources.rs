@@ -1335,11 +1335,6 @@ pub fn note_inputs(mutation: &mut Mutation<'_>, name: &str, value: &Value) {
 
 // --- Mutations ---
 
-/// The app of the request, which owns the shareable sources it makes.
-fn app_of(state: &ShopState) -> Option<String> {
-    state.keys("App").next().map(str::to_string)
-}
-
 /// The shareable source of an id, the app's.
 fn shareable(state: &ShopState, id: &str) -> bool {
     state.get(id).is_some_and(|source| {
@@ -1349,7 +1344,7 @@ fn shareable(state: &ShopState, id: &str) -> bool {
                 .get("app")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                == app_of(state)
+                == state.app_gid().map(str::to_string)
     })
 }
 
@@ -1371,7 +1366,7 @@ fn source_create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<
         "collectionConditionsSourceCreate",
         &Value::Object(input.clone()),
     );
-    let app = app_of(mutation.state());
+    let app = mutation.state().app_gid().map(str::to_string);
     let state = mutation.state_mut();
     let source = create_conditions_source(state, &input, None, app);
     // Shopify has no topic for collection sources.

@@ -634,7 +634,7 @@ fn ensure_abandonment(state: &mut ShopState, checkout: &str) {
             })
         })
         .collect();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let id = state.new_gid("Abandonment");
     state.insert_as(
         id.clone(),

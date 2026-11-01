@@ -1188,7 +1188,7 @@ pub fn edited_contract(state: &ShopState, record: &Record, contract: &str, index
     let now = state.timestamp();
     edited.insert("createdAt".into(), json!(now));
     edited.insert("updatedAt".into(), json!(now));
-    edited.insert("app".into(), json!(state.keys("App").next()));
+    edited.insert("app".into(), json!(state.app_gid()));
     edited.insert("appAdminUrl".into(), Value::Null);
     edited.insert("orders".into(), json!([]));
     edited.insert("lsfContract".into(), json!(contract));

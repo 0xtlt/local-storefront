@@ -235,7 +235,7 @@ fn annotation_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
     }
     let now = m.timestamp();
     let state = m.state_mut();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let id = state.new_gid("AnalyticsAnnotation");
     state.insert_as(
         id.clone(),
@@ -259,7 +259,7 @@ fn annotation_create(m: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Val
 
 /// An annotation this app made.
 fn own_annotation(state: &ShopState, id: &str) -> bool {
-    let app = state.keys("App").next();
+    let app = state.app_gid();
     state
         .get_of(id, "AnalyticsAnnotation")
         .is_some_and(|record| record.get("createdByApp").and_then(Value::as_str) == app)

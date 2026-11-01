@@ -34,7 +34,7 @@ pub fn register(registry: &mut Registry) {
 
 /// The key of the app's tax configuration: not a record of a GID (its type has no id).
 fn key(state: &ShopState) -> String {
-    let app = state.keys("App").next().map_or(0, gid_number);
+    let app = state.app_id();
     format!("TaxAppConfiguration/{app}")
 }
 
@@ -51,7 +51,7 @@ pub fn tax_state(state: &ShopState) -> String {
 /// or `tax_services/update`.
 fn set_state(state: &mut ShopState, next: &str) {
     let key = key(state);
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let app_record = app
         .as_deref()
         .and_then(|app| state.get(app))

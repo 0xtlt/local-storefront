@@ -761,7 +761,7 @@ fn create(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, 
         "channelCreate: lsf has no channel specification to read: the channel covers every country of the shop's active region markets",
     );
     let state = mutation.state();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let regions = coverage(state);
     let state = mutation.state_mut();
     let channel = state.new_gid("Channel");
@@ -1262,7 +1262,7 @@ fn shop_feedback_create(
     .and_then(Value::as_str)
     .unwrap_or_default()
     .to_string();
-    let app = state.keys("App").next().map(str::to_string);
+    let app = state.app_gid().map(str::to_string);
     let at = generated.map(value::date_time);
     let state = mutation.state_mut();
     state.set_memo(memo, json!(at));

@@ -89,7 +89,7 @@ fn sets_metafields_on_any_owner_and_reads_them_back() {
     assert_eq!(metafields[2]["reference"]["handle"], "coffee-subscription");
     assert_eq!(
         metafields[3]["namespace"],
-        json!(format!("app--{}", super::app_id(&shop))),
+        json!(format!("app--{}", shop.app_id())),
         "the app's reserved namespace"
     );
     assert_eq!(metafields[3]["value"], "{\"a\":[1,2]}");
@@ -563,7 +563,7 @@ fn creates_metaobject_definitions_and_entries() {
     let mut shop = rich();
     shop.take_events();
     let definition = author_type(&mut shop);
-    let app_type = format!("app--{}--author", super::app_id(&shop));
+    let app_type = format!("app--{}--author", shop.app_id());
     assert_eq!(definition["type"], json!(app_type));
     assert_eq!(definition["name"], "Author");
     assert_eq!(definition["fieldDefinitions"][0]["name"], "Full name");

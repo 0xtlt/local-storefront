@@ -39,7 +39,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::types::{self, Context};
-use super::{admin_namespace, app_id, metafield_gid};
+use super::{admin_namespace, metafield_gid};
 use crate::auth::scopes::{self, Root};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::access::denied;
@@ -180,12 +180,12 @@ fn check_owner_access(
 /// The namespace of an input as the Admin API stores it: omitted, the app's (`app--<id>`);
 /// `$app` and `$app:x`, the app's reserved ones.
 pub fn stored_namespace(state: &ShopState, namespace: Option<&str>) -> String {
-    admin_namespace(app_id(state), namespace.unwrap_or("$app"))
+    admin_namespace(state.app_id(), namespace.unwrap_or("$app"))
 }
 
 /// Whether a stored namespace is the reserved namespace of another app.
 pub fn other_apps(state: &ShopState, namespace: &str) -> bool {
-    let own = format!("app--{}", app_id(state));
+    let own = format!("app--{}", state.app_id());
     namespace.starts_with("app--")
         && namespace != own
         && !namespace.starts_with(&format!("{own}--"))

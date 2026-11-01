@@ -337,6 +337,17 @@ impl ShopState {
         self.shop_gid().and_then(|gid| self.get(gid))
     }
 
+    /// The GID of the `App` record: the app the shop runs with, which creates what the Admin API
+    /// creates.
+    pub fn app_gid(&self) -> Option<&str> {
+        self.keys("App").next()
+    }
+
+    /// The number of [`ShopState::app_gid`] (its reserved namespaces name it), 0 without an app.
+    pub fn app_id(&self) -> u64 {
+        self.app_gid().map_or(0, gid_number)
+    }
+
     /// The currency of the shop (`Shop.currencyCode`, `USD` without one): every amount of an
     /// order is in it.
     pub fn currency(&self) -> String {
@@ -1295,6 +1306,24 @@ mod tests {
         state.get_mut(&shop).unwrap()["ianaTimezone"] = json!("Mars/Olympus");
         assert_eq!(state.iana_time_zone(), None);
         assert_eq!(state.time_zone(), Tz::UTC);
+    }
+
+    #[test]
+    fn reads_the_app_and_the_currency_of_the_shop() {
+        let mut state = ShopState::new("a.myshopify.com", Clock::System);
+        assert_eq!((state.app_gid(), state.app_id()), (None, 0));
+        assert_eq!(state.currency(), "USD");
+        state.insert(record(
+            json!({"__typename": "App", "id": "gid://shopify/App/42"}),
+        ));
+        state.insert(record(json!({
+            "__typename": "Shop",
+            "id": "gid://shopify/Shop/1",
+            "currencyCode": "EUR",
+        })));
+        assert_eq!(state.app_gid(), Some("gid://shopify/App/42"));
+        assert_eq!(state.app_id(), 42);
+        assert_eq!(state.currency(), "EUR");
     }
 
     #[test]

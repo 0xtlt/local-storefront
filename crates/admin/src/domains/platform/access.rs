@@ -151,7 +151,7 @@ fn handles(record: Option<&Record>, field: &str) -> Vec<String> {
 /// The app and its installation: their keys.
 fn app_and_installation(state: &ShopState) -> (Option<String>, Option<String>) {
     (
-        state.keys("App").next().map(str::to_string),
+        state.app_gid().map(str::to_string),
         state.keys("AppInstallation").next().map(str::to_string),
     )
 }
