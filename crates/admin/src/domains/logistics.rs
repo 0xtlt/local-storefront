@@ -143,6 +143,14 @@ pub fn snapshot_location(snapshot: Option<&Value>) -> Option<String> {
     snapshot?.get("location")?.as_str().map(str::to_string)
 }
 
+/// Whether a text is an `http(s)` URL with a host: a carrier's callback, a tracking link.
+pub fn is_url(text: &str) -> bool {
+    ["http://", "https://"].iter().any(|scheme| {
+        text.strip_prefix(scheme)
+            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
+    })
+}
+
 /// The text of a field of a record.
 pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
     record.get(field).and_then(Value::as_str)

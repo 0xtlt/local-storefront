@@ -37,8 +37,8 @@ use serde_json::{Map, Value, json};
 
 use super::transfers::{self, COMMITTED, SHIPPABLE, TRANSFER};
 use super::{
-    coded, emit_change, idempotent, int, keys_of, objects, push, record_of, snapshot_location,
-    stock, text,
+    coded, emit_change, idempotent, int, is_url, keys_of, objects, push, record_of,
+    snapshot_location, stock, text,
 };
 use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError};
@@ -129,14 +129,6 @@ fn transfer_of(state: &ShopState, shipment: &Record) -> Option<String> {
     text(shipment, TRANSFER)
         .filter(|transfer| state.contains(transfer))
         .map(str::to_string)
-}
-
-/// Whether a URL is one a tracking link can be: `http(s)://` and a host.
-fn is_url(text: &str) -> bool {
-    ["http://", "https://"].iter().any(|scheme| {
-        text.strip_prefix(scheme)
-            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
-    })
 }
 
 /// The checks of a barcode, under `path`.

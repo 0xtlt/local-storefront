@@ -19,7 +19,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{profiles, text};
+use super::{is_url, profiles, text};
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -50,14 +50,6 @@ pub fn register(registry: &mut Registry) {
 /// The record field where a carrier service keeps when it last changed, which its type has no
 /// field for: what `carrierServices(sortKey: UPDATED_AT)` sorts by.
 const UPDATED_AT: &str = "lsfUpdatedAt";
-
-/// Whether a text is an `http(s)` URL with a host.
-fn is_url(text: &str) -> bool {
-    ["http://", "https://"].iter().any(|scheme| {
-        text.strip_prefix(scheme)
-            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
-    })
-}
 
 /// The checks of a carrier service input (`creating`: the fields it must have), with `code`.
 fn check(
