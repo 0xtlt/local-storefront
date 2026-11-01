@@ -419,7 +419,7 @@ pub fn insert_order(state: &mut ShopState, draft: &OrderDraft) -> String {
     let mut line_discounts = 0;
     let mut quantity = 0;
     let mut grams: u64 = 0;
-    let order_number = crate::state::parse_gid(&order).map_or(0, |(_, id)| id);
+    let order_number = model::number(&order);
     for (position, line) in draft.lines.iter().enumerate() {
         let id = line_item_gid(order_number, position);
         let discounted = line.unit_price * i64::from(line.quantity) - line.discount;

@@ -53,10 +53,6 @@ pub fn register(registry: &mut Registry) {
         .mutation("orderEditCommit", commit);
 }
 
-fn number(id: &str) -> u64 {
-    parse_gid(id).map_or(0, |(_, number)| number)
-}
-
 /// `orderEditBegin`.
 fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, FieldError> {
     let id = ctx.arg_str("id").unwrap_or_default().to_string();
@@ -92,7 +88,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
         let ordered = int(item, "quantity").max(1);
         let unit = field_cents(item, "discountedTotalSet") / ordered;
         lines.push(json!({
-            "id": gid("CalculatedLineItem", number(&line)),
+            "id": gid("CalculatedLineItem", model::number(&line)),
             "title": item.get("title"),
             "variantTitle": item.get("variantTitle"),
             "sku": item.get("sku"),
@@ -118,7 +114,7 @@ fn begin(mutation: &mut Mutation<'_>, ctx: &FieldContext<'_>) -> Result<Value, F
     }
     let state = mutation.state_mut();
     let calculated = state.new_gid("CalculatedOrder");
-    let session = gid("OrderEditSession", number(&calculated));
+    let session = gid("OrderEditSession", model::number(&calculated));
     state.insert(value::object(json!({
         "__typename": "OrderEditSession",
         "id": session,
@@ -189,7 +185,7 @@ pub(super) fn staged(
     let line = line.and_then(|line| calculated_line(state, calculated, line));
     let mut fields = json!({
         "calculatedOrder": calculated,
-        "orderEditSession": gid("OrderEditSession", number(calculated)),
+        "orderEditSession": gid("OrderEditSession", model::number(calculated)),
         "calculatedLineItem": line,
     });
     if let (Value::Object(fields), Value::Object(extra)) = (&mut fields, extra) {

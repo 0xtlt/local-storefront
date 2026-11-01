@@ -40,7 +40,7 @@ use super::{FinancialStatus, FulfillmentState, LineDraft, OrderDraft, ShippingDr
 use crate::domains::catalog::{gids, tags_of};
 use crate::graphql::{FieldContext, FieldError};
 use crate::resolve::{Mutation, Registry, UserError, payload};
-use crate::state::{Record, ShopState, parse_gid, value};
+use crate::state::{Record, ShopState, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -851,10 +851,7 @@ fn new_draft(state: &mut ShopState) -> String {
     let currency = model::currency(state);
     let shop = state.shop().cloned().unwrap_or_default();
     let origin = text(&shop, "url").unwrap_or_default().to_string();
-    let shop_number = state
-        .shop_gid()
-        .and_then(parse_gid)
-        .map_or(0, |(_, number)| number);
+    let shop_number = state.shop_gid().map_or(0, model::number);
     let key = format!("{}/{id}", state.domain());
     let token = format!(
         "{:016x}{:016x}",

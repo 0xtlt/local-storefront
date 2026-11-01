@@ -409,7 +409,7 @@ pub fn request_link(state: &mut ShopState, order: &str) -> Result<(), String> {
         .and_then(|shop| text(shop, "url"))
         .unwrap_or_default()
         .to_string();
-    let number = crate::state::parse_gid(order).map_or(0, |(_, number)| number);
+    let number = model::number(order);
     let key = value::uuid(&format!("{}/{order}/{}", state.domain(), state.timestamp()));
     outbox::record(
         state,

@@ -47,6 +47,7 @@ use lsf_core::util::stable_id;
 use serde_json::{Value, json};
 
 use crate::domains::catalog::cents_of;
+use crate::domains::orders::model;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::resolve::sort::SortValue;
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
@@ -350,7 +351,7 @@ pub fn record_cart(state: &mut ShopState, cart: &Cart<'_>) {
         "note": cart.note,
         "attributes": cart.attributes.iter().map(|(key, value)| json!({"key": key, "value": value})).collect::<Vec<_>>(),
         "lineItems": cart_lines(state, cart.lines),
-        "currencyCode": crate::domains::orders::model::currency(state),
+        "currencyCode": model::currency(state),
         "createdAt": created,
         "updatedAt": now,
     }));
@@ -419,7 +420,7 @@ fn mailing_address(address: &lsf_checkout::Address, id: &str) -> Value {
 fn checkout_fields(state: &ShopState, id: &str, checkout: &Checkout<'_>) -> Record {
     let result = checkout.result;
     let currency = if result.cost.currency_code.is_empty() {
-        crate::domains::orders::model::currency(state)
+        model::currency(state)
     } else {
         result.cost.currency_code.to_ascii_uppercase()
     };
@@ -572,7 +573,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
         }
         None => {
             let id = state.new_gid("AbandonedCheckout");
-            let number = crate::state::parse_gid(&id).map_or(0, |(_, n)| n);
+            let number = model::number(&id);
             let domain = state
                 .shop()
                 .and_then(|shop| shop.get("primaryDomain"))
@@ -582,10 +583,7 @@ pub fn record_checkout(state: &mut ShopState, checkout: &Checkout<'_>) -> Option
                 .and_then(Value::as_str)
                 .unwrap_or(state.domain())
                 .to_string();
-            let shop_number = state
-                .shop_gid()
-                .and_then(crate::state::parse_gid)
-                .map_or(0, |(_, n)| n);
+            let shop_number = state.shop_gid().map_or(0, model::number);
             let key = value::uuid(&format!("abandoned-checkout-key/{id}")).replace('-', "");
             let mut record = value::object(json!({
                 "__typename": "AbandonedCheckout",

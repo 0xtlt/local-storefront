@@ -287,6 +287,11 @@ pub fn text<'r>(record: &'r Record, field: &str) -> Option<&'r str> {
     record.get(field).and_then(Value::as_str)
 }
 
+/// The number of a GID (`gid://shopify/Order/7` is 7), 0 when it is not one.
+pub fn number(gid: &str) -> u64 {
+    crate::state::parse_gid(gid).map_or(0, |(_, number)| number)
+}
+
 /// An integer field of a record, 0 when it has none.
 pub fn int(record: &Record, field: &str) -> i64 {
     match record.get(field) {

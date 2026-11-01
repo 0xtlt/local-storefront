@@ -54,7 +54,7 @@ use crate::domains::catalog::gids;
 use crate::graphql::{FieldContext, FieldError, Output};
 use crate::outbox::{self, Entry};
 use crate::resolve::{Mutation, Obj, Registry, ShopResolver, UserError, payload};
-use crate::state::{Record, ShopState, gid, parse_gid, value};
+use crate::state::{Record, ShopState, gid, value};
 
 pub fn register(registry: &mut Registry) {
     registry
@@ -1052,9 +1052,7 @@ fn collection_details(
             .shop()
             .and_then(|shop| text(shop, "url"))
             .unwrap_or_default();
-        let number = text(order, "id")
-            .and_then(parse_gid)
-            .map_or(0, |(_, number)| number);
+        let number = text(order, "id").map_or(0, model::number);
         format!("{origin}/orders/{number}/pay")
     });
     let methods: Vec<Value> = mandates(state, order)
@@ -1350,13 +1348,7 @@ pub fn record_tender(state: &mut ShopState, transaction: &str) -> Option<String>
         .or_else(|| record.get("authorizationCode"))
         .filter(|value| !value.is_null())
         .cloned()
-        .unwrap_or_else(|| {
-            json!(
-                parse_gid(transaction)
-                    .map_or(0, |(_, number)| number)
-                    .to_string()
-            )
-        });
+        .unwrap_or_else(|| json!(model::number(transaction).to_string()));
     state.insert(value::object(json!({
         "__typename": "TenderTransaction",
         "id": tender,
